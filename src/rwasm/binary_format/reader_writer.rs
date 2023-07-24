@@ -1,4 +1,5 @@
 use crate::rwasm::binary_format::BinaryFormatError;
+use alloc::vec::Vec;
 use byteorder::{BigEndian, ByteOrder};
 
 pub struct BinaryFormatWriter<'a> {
@@ -67,7 +68,6 @@ impl<'a> BinaryFormatWriter<'a> {
         Ok(())
     }
 
-    #[cfg(feature = "std")]
     pub fn to_vec(&self) -> Vec<u8> {
         self.sink[0..self.pos].to_vec()
     }

@@ -1,26 +1,32 @@
-use crate::compiler::Translator;
-use wazm_core::{DropKeep, Index, InstructionSet, OpCode, WazmResult};
+use crate::engine::bytecode::{Instruction, LocalDepth};
+use crate::engine::DropKeep;
+use crate::rwasm::compiler::Translator;
+use crate::rwasm::instruction_set::InstructionSet;
+use crate::rwasm::WazmResult;
+use alloc::vec::Vec;
 
-pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> WazmResult<Vec<OpCode>> {
+pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> WazmResult<Vec<Instruction>> {
     let mut result = Vec::new();
     let (drop, keep) = (drop_keep.drop(), drop_keep.keep());
     if drop == 0 {
         return Ok(result);
     }
     if drop >= keep {
-        (0..keep).for_each(|_| result.push(OpCode::LocalSet(Index::from(drop as u32))));
-        (0..(drop - keep)).for_each(|_| result.push(OpCode::Drop));
+        (0..keep).for_each(|_| result.push(Instruction::LocalSet(LocalDepth::from(drop as u32))));
+        (0..(drop - keep)).for_each(|_| result.push(Instruction::Drop));
     } else {
         (0..keep).for_each(|i| {
-            result.push(OpCode::LocalGet(Index::from(keep as u32 - i as u32 - 1)));
-            result.push(OpCode::LocalSet(Index::from(keep as u32 + drop as u32 - i as u32)));
+            result.push(Instruction::LocalGet(LocalDepth::from(keep as u32 - i as u32 - 1)));
+            result.push(Instruction::LocalSet(LocalDepth::from(
+                keep as u32 + drop as u32 - i as u32,
+            )));
         });
-        (0..(keep - drop)).for_each(|_| result.push(OpCode::Drop));
+        (0..(keep - drop)).for_each(|_| result.push(Instruction::Drop));
     }
     Ok(result)
 }
 
-impl Translator for wazm_wasmi::DropKeep {
+impl Translator for DropKeep {
     fn translate(&self, result: &mut InstructionSet) -> WazmResult<()> {
         let drop_keep_opcodes = translate_drop_keep(*self)?;
         result.0.extend(&drop_keep_opcodes);
@@ -30,14 +36,15 @@ impl Translator for wazm_wasmi::DropKeep {
 
 #[cfg(test)]
 mod tests {
-    use crate::drop_keep::translate_drop_keep;
-    use wazm_core::{DropKeep, OpCode};
+    use crate::engine::bytecode::Instruction;
+    use crate::engine::DropKeep;
+    use crate::rwasm::compiler::drop_keep::translate_drop_keep;
 
     #[test]
     fn test_drop_keep_translation() {
         macro_rules! drop_keep {
             ($drop:literal, $keep:literal) => {
-                DropKeep::new($drop, $keep)
+                DropKeep::new($drop, $keep).unwrap()
             };
         }
         let tests = vec![
@@ -54,18 +61,18 @@ mod tests {
             let mut stack = input.clone();
             for opcode in opcodes.iter() {
                 match opcode {
-                    OpCode::LocalSet(index) => {
+                    Instruction::LocalSet(index) => {
                         let last = stack.last().unwrap();
                         let len = stack.len();
-                        *stack.get_mut(len - 1 - index.0 as usize).unwrap() = *last;
+                        *stack.get_mut(len - 1 - index.to_usize()).unwrap() = *last;
                         stack.pop();
                     }
-                    OpCode::LocalGet(index) => {
+                    Instruction::LocalGet(index) => {
                         let len = stack.len();
-                        let item = *stack.get(len - 1 - index.0 as usize).unwrap();
+                        let item = *stack.get(len - 1 - index.to_usize()).unwrap();
                         stack.push(item);
                     }
-                    OpCode::Drop => {
+                    Instruction::Drop => {
                         stack.pop();
                     }
                     _ => unreachable!("unknown opcode: {:?}", opcode),

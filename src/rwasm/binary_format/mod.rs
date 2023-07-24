@@ -4,9 +4,10 @@ mod number;
 mod reader_writer;
 mod utils;
 
-use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
 use alloc::vec::Vec;
 use byteorder::ByteOrder;
+
+pub use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
 
 #[derive(Debug, Copy, Clone)]
 pub enum BinaryFormatError {

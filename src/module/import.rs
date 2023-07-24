@@ -20,11 +20,11 @@ pub struct ImportName {
     /// The name of the [`Module`] that defines the imported item.
     ///
     /// [`Module`]: [`super::Module`]
-    module: Box<str>,
+    pub(crate) module: Box<str>,
     /// The name of the imported item within the [`Module`] namespace.
     ///
     /// [`Module`]: [`super::Module`]
-    field: Box<str>,
+    pub(crate) field: Box<str>,
 }
 
 impl Display for ImportName {
@@ -66,9 +66,9 @@ impl From<wasmparser::Import<'_>> for Import {
             TypeRef::Table(ty) => ExternTypeIdx::Table(TableType::from_wasmparser(ty)),
             TypeRef::Memory(ty) => ExternTypeIdx::Memory(MemoryType::from_wasmparser(ty)),
             TypeRef::Global(ty) => ExternTypeIdx::Global(GlobalType::from_wasmparser(ty)),
-            TypeRef::Tag(tag) => panic!(
-                "wasmi does not support the `exception-handling` Wasm proposal but found: {tag:?}"
-            ),
+            TypeRef::Tag(tag) => {
+                panic!("wasmi does not support the `exception-handling` Wasm proposal but found: {tag:?}")
+            }
         };
         Self::new(import.module, import.name, kind)
     }
