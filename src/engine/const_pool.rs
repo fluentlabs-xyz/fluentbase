@@ -1,11 +1,11 @@
 use super::{func_builder::TranslationErrorInner, TranslationError};
+use crate::common::UntypedValue;
 use alloc::{
     collections::{btree_map, BTreeMap},
     vec::Vec,
 };
-use crate::common::UntypedValue;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct ConstRef(u32);
 
 impl TryFrom<usize> for ConstRef {
@@ -14,9 +14,7 @@ impl TryFrom<usize> for ConstRef {
     fn try_from(index: usize) -> Result<Self, Self::Error> {
         match u32::try_from(index) {
             Ok(index) => Ok(Self(index)),
-            Err(_) => Err(TranslationError::new(
-                TranslationErrorInner::ConstRefOutOfBounds,
-            )),
+            Err(_) => Err(TranslationError::new(TranslationErrorInner::ConstRefOutOfBounds)),
         }
     }
 }

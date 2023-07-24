@@ -1,4 +1,3 @@
-use core::ops::Index;
 use crate::arena::{ArenaIndex, DedupArena, GuardedEntity};
 use super::{EngineIdx, Guarded};
 use crate::FuncType;

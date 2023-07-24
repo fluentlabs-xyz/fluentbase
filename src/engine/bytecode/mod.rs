@@ -6,23 +6,13 @@ mod utils;
 mod tests;
 
 pub use self::utils::{
-    AddressOffset,
-    BlockFuel,
-    BranchOffset,
-    BranchTableTargets,
-    DataSegmentIdx,
-    DropKeep,
-    DropKeepError,
-    ElementSegmentIdx,
-    FuncIdx,
-    GlobalIdx,
-    LocalDepth,
-    SignatureIdx,
-    TableIdx,
+    AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, DropKeep, DropKeepError,
+    ElementSegmentIdx, FuncIdx, GlobalIdx, LocalDepth, SignatureIdx, TableIdx,
 };
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
+use crate::common::{UntypedValue, F32};
 use core::fmt::Debug;
-use crate::common::F32;
+use strum_macros::EnumIter;
 
 /// The internal `wasmi` bytecode that is stored for Wasm functions.
 ///
@@ -32,7 +22,7 @@ use crate::common::F32;
 ///
 /// For example the `BrTable` instruction is unrolled into separate instructions
 /// each representing either the `BrTable` head or one of its branching targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter)]
 pub enum Instruction {
     LocalGet(LocalDepth),
     LocalSet(LocalDepth),
@@ -203,17 +193,9 @@ pub enum Instruction {
     TableInit(ElementSegmentIdx),
     ElemDrop(ElementSegmentIdx),
     RefFunc(FuncIdx),
-    /// A 32-bit constant value.
-    Const32([u8; 4]),
-    /// A 64-bit integer value losslessly encoded as 32-bit integer.
-    ///
-    /// Upon execution the 32-bit integer is sign-extended to the 64-bit integer.
-    ///
-    /// # Note
-    ///
-    /// This is a space-optimized variant of [`Instruction::ConstRef`] but can
-    /// only used for small integer values that fit into a 24-bit integer value.
-    I64Const32(i32),
+    /// A 32/64-bit constant value.
+    I32Const(UntypedValue),
+    I64Const(UntypedValue),
     /// Pushes a constant value onto the stack.
     ///
     /// The constant value is referred to indirectly by the [`ConstRef`].
@@ -355,12 +337,13 @@ pub enum Instruction {
 impl Instruction {
     /// Creates an [`Instruction::Const32`] from the given `i32` constant value.
     pub fn i32_const(value: i32) -> Self {
-        Self::Const32(value.to_ne_bytes())
+        Self::I32Const(UntypedValue::from(value))
     }
 
     /// Creates an [`Instruction::Const32`] from the given `f32` constant value.
     pub fn f32_const(value: F32) -> Self {
-        Self::Const32(value.to_bits().to_ne_bytes())
+        unreachable!("not supported yet")
+        // Self::Const32(value.to_bits().to_ne_bytes())
     }
 
     /// Creates a new `local.get` instruction from the given local depth.
