@@ -2,7 +2,7 @@ use crate::engine::{func_builder::TranslationErrorInner, Instr, TranslationError
 use core::fmt::{self, Display};
 
 /// A function index.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct FuncIdx(u32);
 
@@ -38,7 +38,7 @@ impl TableIdx {
 }
 
 /// An index of a unique function signature.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct SignatureIdx(u32);
 
@@ -62,7 +62,7 @@ impl SignatureIdx {
 /// The depth refers to the relative position of a local
 /// variable on the value stack with respect to the height
 /// of the value stack at the time of access.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct LocalDepth(u32);
 
@@ -86,7 +86,7 @@ impl LocalDepth {
 /// Refers to a global variable of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct GlobalIdx(u32);
 
@@ -110,7 +110,7 @@ impl GlobalIdx {
 /// Refers to a data segment of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct DataSegmentIdx(u32);
 
@@ -134,7 +134,7 @@ impl DataSegmentIdx {
 /// Refers to a data segment of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct ElementSegmentIdx(u32);
 
@@ -154,7 +154,7 @@ impl ElementSegmentIdx {
 /// The number of branches of an [`Instruction::BrTable`].
 ///
 /// [`Instruction::BrTable`]: [`super::Instruction::BrTable`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct BranchTableTargets(u32);
 
@@ -171,6 +171,12 @@ impl TryFrom<usize> for BranchTableTargets {
     }
 }
 
+impl From<u32> for BranchTableTargets {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
 impl BranchTableTargets {
     /// Returns the index value as `usize`.
     pub fn to_usize(self) -> usize {
@@ -181,7 +187,7 @@ impl BranchTableTargets {
 /// The accumulated fuel to execute a block via [`Instruction::ConsumeFuel`].
 ///
 /// [`Instruction::ConsumeFuel`]: [`super::Instruction::ConsumeFuel`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct BlockFuel(u32);
 
@@ -191,10 +197,14 @@ impl TryFrom<u64> for BlockFuel {
     fn try_from(index: u64) -> Result<Self, Self::Error> {
         match u32::try_from(index) {
             Ok(index) => Ok(Self(index)),
-            Err(_) => Err(TranslationError::new(
-                TranslationErrorInner::BlockFuelOutOfBounds,
-            )),
+            Err(_) => Err(TranslationError::new(TranslationErrorInner::BlockFuelOutOfBounds)),
         }
+    }
+}
+
+impl From<u32> for BlockFuel {
+    fn from(value: u32) -> Self {
+        BlockFuel(value)
     }
 }
 
@@ -227,7 +237,7 @@ impl BlockFuel {
 /// # Note
 ///
 /// Used to calculate the effective address of a linear memory access.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct AddressOffset(u32);
 
@@ -248,10 +258,9 @@ impl AddressOffset {
 ///
 /// This defines how much the instruction pointer is offset
 /// upon taking the respective branch.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct BranchOffset(i32);
 
-#[cfg(test)]
 impl From<i32> for BranchOffset {
     fn from(index: i32) -> Self {
         Self(index)
@@ -308,7 +317,7 @@ impl BranchOffset {
 }
 
 /// Defines how many stack values are going to be dropped and kept after branching.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub struct DropKeep {
     drop: u16,
     keep: u16,
@@ -346,6 +355,10 @@ impl Display for DropKeepError {
 }
 
 impl DropKeep {
+    pub fn none() -> Self {
+        Self { drop: 0, keep: 0 }
+    }
+
     /// Returns the amount of stack values to keep.
     pub fn keep(self) -> u16 {
         self.keep

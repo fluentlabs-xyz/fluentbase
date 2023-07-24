@@ -4,7 +4,6 @@
 //! These allocators mainly serve as the backbone for an efficient Wasm store
 //! implementation.
 
-#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(
 clippy::cast_lossless,
 clippy::missing_errors_doc,
@@ -16,6 +15,7 @@ clippy::default_trait_access,
 clippy::map_unwrap_or,
 clippy::items_after_statements
 )]
+#[allow(dead_code)]
 
 mod component_vec;
 mod dedup;

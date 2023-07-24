@@ -1,11 +1,11 @@
 //! Datastructure to efficiently store function bodies and their instructions.
 
 use super::Instruction;
-use alloc::vec::Vec;
 use crate::arena::ArenaIndex;
+use alloc::vec::Vec;
 
 /// A reference to a compiled function stored in the [`CodeMap`] of an [`Engine`](crate::Engine).
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct CompiledFunc(u32);
 
 impl ArenaIndex for CompiledFunc {
@@ -14,8 +14,7 @@ impl ArenaIndex for CompiledFunc {
     }
 
     fn from_usize(index: usize) -> Self {
-        let index = u32::try_from(index)
-            .unwrap_or_else(|_| panic!("out of bounds compiled func index: {index}"));
+        let index = u32::try_from(index).unwrap_or_else(|_| panic!("out of bounds compiled func index: {index}"));
         CompiledFunc(index)
     }
 }
@@ -167,19 +166,11 @@ impl CodeMap {
     ///
     /// - If `func` is an invalid [`CompiledFunc`] reference for this [`CodeMap`].
     /// - If `func` refers to an already initialized [`CompiledFunc`].
-    pub fn init_func<I>(
-        &mut self,
-        func: CompiledFunc,
-        len_locals: usize,
-        local_stack_height: usize,
-        instrs: I,
-    ) where
+    pub fn init_func<I>(&mut self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, instrs: I)
+    where
         I: IntoIterator<Item = Instruction>,
     {
-        assert!(
-            self.header(func).is_uninit(),
-            "func {func:?} is already initialized"
-        );
+        assert!(self.header(func).is_uninit(), "func {func:?} is already initialized");
         let start = self.instrs.len();
         self.instrs.extend(instrs);
         let iref = InstructionsRef::new(start);

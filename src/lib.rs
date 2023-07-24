@@ -15,7 +15,7 @@
 //!
 //! ```
 //! use anyhow::{anyhow, Result};
-//! use wasmi::*;
+//! use fluentbase_rwasm::*;
 //!
 //! fn main() -> Result<()> {
 //!     // First step is to create the Wasm execution engine with some config.
@@ -102,6 +102,7 @@ mod module;
 mod store;
 mod table;
 mod value;
+mod rwasm;
 
 /// Defines some errors that may occur upon interaction with `wasmi`.
 pub mod errors {
