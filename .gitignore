@@ -7,3 +7,5 @@ spec/target
 **/fuzz/corpus/
 **/fuzz/target/
 **/fuzz/artifacts/
+
+/.idea
