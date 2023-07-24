@@ -1,10 +1,61 @@
 #![allow(dead_code)]
 
-mod binary_format;
+use crate::rwasm::binary_format::BinaryFormatError;
+use alloc::fmt;
+use alloc::fmt::Display;
+
+pub mod binary_format;
+mod compiler;
 mod instruction_set;
-// mod compiler;
 // mod executor;
 // mod module;
+
+#[derive(Debug)]
+pub enum WazmError {
+    TranslationError,
+    ModuleError(crate::Error),
+    MissingEntrypoint,
+    NotSupportedOpcode,
+    MissingFunction,
+    NotSupportedImport,
+    NotSupportedMemory(&'static str),
+    ParseError(&'static str),
+    OutOfBuffer,
+    ReachedUnreachable,
+    IllegalOpcode(u8),
+    ImpossibleJump,
+    InternalError(&'static str),
+    MemoryOverflow,
+    EmptyBytecode,
+    BinaryFormat(BinaryFormatError),
+}
+
+impl Display for WazmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WazmError::TranslationError => write!(f, "translation error"),
+            WazmError::MissingEntrypoint => write!(f, "missing entrypoint"),
+            WazmError::NotSupportedOpcode => write!(f, "not supported opcode"),
+            WazmError::MissingFunction => write!(f, "missing function"),
+            WazmError::NotSupportedImport => write!(f, "not supported import"),
+            WazmError::NotSupportedMemory(err) => write!(f, "not supported memory ({})", err),
+            WazmError::ParseError(err) => write!(f, "parse error ({})", err),
+            WazmError::OutOfBuffer => write!(f, "out of buffer"),
+            WazmError::ReachedUnreachable => write!(f, "reached unreachable"),
+            WazmError::IllegalOpcode(code) => write!(f, "illegal opcode ({})", code),
+            WazmError::ImpossibleJump => write!(f, "impossible jump"),
+            WazmError::InternalError(err) => write!(f, "internal error ({})", err),
+            WazmError::MemoryOverflow => write!(f, "memory overflow"),
+            WazmError::EmptyBytecode => write!(f, "empty bytecode"),
+            _ => write!(f, "unknown error"),
+        }
+    }
+}
+
+pub type WazmResult<T> = Result<T, WazmError>;
+
+pub const MAX_MEMORY_PAGES: u32 = 512;
+pub const MAX_MEMORY_SIZE: u32 = 512 * 0x10000;
 
 // #[cfg(test)]
 // mod tests {

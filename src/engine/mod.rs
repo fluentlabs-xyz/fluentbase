@@ -20,13 +20,7 @@ pub use self::{
     bytecode::DropKeep,
     code_map::CompiledFunc,
     config::{Config, FuelConsumptionMode},
-    func_builder::{
-        FuncBuilder,
-        FuncTranslatorAllocations,
-        Instr,
-        RelativeDepth,
-        TranslationError,
-    },
+    func_builder::{FuncBuilder, FuncTranslatorAllocations, Instr, RelativeDepth, TranslationError},
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
     traits::{CallParams, CallResults},
@@ -45,20 +39,16 @@ pub(crate) use self::{
     func_args::{FuncFinished, FuncParams, FuncResults},
     func_types::DedupFuncType,
 };
+use crate::arena::{ArenaIndex, GuardedEntity};
+use crate::common::UntypedValue;
 use crate::{
     common::{Trap, TrapCode},
     func::FuncEntity,
-    AsContext,
-    AsContextMut,
-    Func,
-    FuncType,
-    StoreContextMut,
+    AsContext, AsContextMut, Func, FuncType, StoreContextMut,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};
-use crate::arena::{GuardedEntity, ArenaIndex};
-use crate::common::UntypedValue;
 
 /// A unique engine index.
 ///
@@ -74,9 +64,9 @@ impl ArenaIndex for EngineIdx {
     }
 
     fn from_usize(value: usize) -> Self {
-        let value = value.try_into().unwrap_or_else(|error| {
-            panic!("index {value} is out of bounds as engine index: {error}")
-        });
+        let value = value
+            .try_into()
+            .unwrap_or_else(|error| panic!("index {value} is out of bounds as engine index: {error}"));
         Self(value)
     }
 }
@@ -174,17 +164,11 @@ impl Engine {
     ///
     /// - If `func` is an invalid [`CompiledFunc`] reference for this [`CodeMap`].
     /// - If `func` refers to an already initialized [`CompiledFunc`].
-    pub(super) fn init_func<I>(
-        &self,
-        func: CompiledFunc,
-        len_locals: usize,
-        local_stack_height: usize,
-        instrs: I,
-    ) where
+    pub(super) fn init_func<I>(&self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, instrs: I)
+    where
         I: IntoIterator<Item = Instruction>,
     {
-        self.inner
-            .init_func(func, len_locals, local_stack_height, instrs)
+        self.inner.init_func(func, len_locals, local_stack_height, instrs)
     }
 
     /// Resolves the [`CompiledFunc`] to the underlying `wasmi` bytecode instructions.
@@ -198,13 +182,12 @@ impl Engine {
     /// # Panics
     ///
     /// If the [`CompiledFunc`] is invalid for the [`Engine`].
-    #[cfg(test)]
-    pub(crate) fn resolve_instr(
-        &self,
-        func_body: CompiledFunc,
-        index: usize,
-    ) -> Option<Instruction> {
+    pub(crate) fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
         self.inner.resolve_instr(func_body, index)
+    }
+
+    pub fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {
+        self.inner.instr_vec(func_body)
     }
 
     /// Executes the given [`Func`] with parameters `params`.
@@ -273,8 +256,7 @@ impl Engine {
     where
         Results: CallResults,
     {
-        self.inner
-            .execute_func_resumable(ctx, func, params, results)
+        self.inner.execute_func_resumable(ctx, func, params, results)
     }
 
     /// Resumes the given `invocation` given the `params`.
@@ -415,13 +397,8 @@ impl EngineInner {
     ///
     /// - If `func` is an invalid [`CompiledFunc`] reference for this [`CodeMap`].
     /// - If `func` refers to an already initialized [`CompiledFunc`].
-    fn init_func<I>(
-        &self,
-        func: CompiledFunc,
-        len_locals: usize,
-        local_stack_height: usize,
-        instrs: I,
-    ) where
+    fn init_func<I>(&self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, instrs: I)
+    where
         I: IntoIterator<Item = Instruction>,
     {
         self.res
@@ -437,13 +414,12 @@ impl EngineInner {
         f(self.res.read().func_types.resolve_func_type(func_type))
     }
 
-    #[cfg(test)]
     fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
-        self.res
-            .read()
-            .code_map
-            .get_instr(func_body, index)
-            .copied()
+        self.res.read().code_map.get_instr(func_body, index).copied()
+    }
+
+    fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {
+        self.res.read().code_map.instr_vec(func_body)
     }
 
     fn execute_func<T, Results>(
@@ -477,12 +453,7 @@ impl EngineInner {
     {
         let res = self.res.read();
         let mut stack = self.stacks.lock().reuse_or_new();
-        let results = EngineExecutor::new(&res, &mut stack).execute_func(
-            ctx.as_context_mut(),
-            func,
-            params,
-            results,
-        );
+        let results = EngineExecutor::new(&res, &mut stack).execute_func(ctx.as_context_mut(), func, params, results);
         match results {
             Ok(results) => {
                 self.stacks.lock().recycle(stack);
@@ -492,16 +463,15 @@ impl EngineInner {
                 self.stacks.lock().recycle(stack);
                 Err(trap)
             }
-            Err(TaggedTrap::Host {
-                host_func,
-                host_trap,
-            }) => Ok(ResumableCallBase::Resumable(ResumableInvocation::new(
-                ctx.as_context().store.engine().clone(),
-                *func,
-                host_func,
-                host_trap,
-                stack,
-            ))),
+            Err(TaggedTrap::Host { host_func, host_trap }) => {
+                Ok(ResumableCallBase::Resumable(ResumableInvocation::new(
+                    ctx.as_context().store.engine().clone(),
+                    *func,
+                    host_func,
+                    host_trap,
+                    stack,
+                )))
+            }
         }
     }
 
@@ -517,8 +487,7 @@ impl EngineInner {
     {
         let res = self.res.read();
         let host_func = invocation.host_func();
-        let results = EngineExecutor::new(&res, &mut invocation.stack)
-            .resume_func(ctx, host_func, params, results);
+        let results = EngineExecutor::new(&res, &mut invocation.stack).resume_func(ctx, host_func, params, results);
         match results {
             Ok(results) => {
                 self.stacks.lock().recycle(invocation.take_stack());
@@ -528,10 +497,7 @@ impl EngineInner {
                 self.stacks.lock().recycle(invocation.take_stack());
                 Err(trap)
             }
-            Err(TaggedTrap::Host {
-                host_func,
-                host_trap,
-            }) => {
+            Err(TaggedTrap::Host { host_func, host_trap }) => {
                 invocation.update(host_func, host_trap);
                 Ok(ResumableCallBase::Resumable(invocation))
             }
@@ -585,10 +551,7 @@ enum TaggedTrap {
 impl TaggedTrap {
     /// Creates a [`TaggedTrap`] from a host error.
     pub fn host(host_func: Func, host_trap: Trap) -> Self {
-        Self::Host {
-            host_func,
-            host_trap,
-        }
+        Self::Host { host_func, host_trap }
     }
 
     /// Returns the [`Trap`] of the [`TaggedTrap`].
@@ -650,17 +613,13 @@ impl<'engine> EngineExecutor<'engine> {
         self.stack.values.extend(params.call_params());
         match ctx.as_context().store.inner.resolve_func(func) {
             FuncEntity::Wasm(wasm_func) => {
-                self.stack
-                    .prepare_wasm_call(wasm_func, &self.res.code_map)?;
+                self.stack.prepare_wasm_call(wasm_func, &self.res.code_map)?;
                 self.execute_wasm_func(ctx.as_context_mut())?;
             }
             FuncEntity::Host(host_func) => {
                 let host_func = *host_func;
-                self.stack.call_host_as_root(
-                    ctx.as_context_mut(),
-                    host_func,
-                    &self.res.func_types,
-                )?;
+                self.stack
+                    .call_host_as_root(ctx.as_context_mut(), host_func, &self.res.func_types)?;
             }
         };
         let results = self.write_results_back(results);
@@ -686,9 +645,7 @@ impl<'engine> EngineExecutor<'engine> {
     where
         Results: CallResults,
     {
-        self.stack
-            .values
-            .drop(host_func.ty(ctx.as_context()).params().len());
+        self.stack.values.drop(host_func.ty(ctx.as_context()).params().len());
         self.stack.values.extend(params.call_params());
         assert!(
             self.stack.frames.peek().is_some(),
@@ -778,11 +735,7 @@ impl<'engine> EngineExecutor<'engine> {
     ///
     /// If the Wasm execution traps.
     #[inline(always)]
-    fn execute_wasm<T>(
-        &mut self,
-        ctx: StoreContextMut<T>,
-        cache: &mut InstanceCache,
-    ) -> Result<WasmOutcome, Trap> {
+    fn execute_wasm<T>(&mut self, ctx: StoreContextMut<T>, cache: &mut InstanceCache) -> Result<WasmOutcome, Trap> {
         /// Converts a [`TrapCode`] into a [`Trap`].
         ///
         /// This function exists for performance reasons since its `#[cold]`

@@ -189,13 +189,19 @@ impl CodeMap {
     }
 
     /// Resolves the instruction at `index` of the compiled [`CompiledFunc`].
-    #[cfg(test)]
     pub fn get_instr(&self, func_body: CompiledFunc, index: usize) -> Option<&Instruction> {
         let header = self.header(func_body);
         let start = header.iref.to_usize();
         let end = self.instr_end(func_body);
         let instrs = &self.instrs[start..end];
         instrs.get(index)
+    }
+
+    pub fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {
+        let header = self.header(func_body);
+        let start = header.iref.index;
+        let end = self.instr_end(func_body);
+        self.instrs[start..end].to_vec()
     }
 
     /// Returns the `end` index of the instructions of [`CompiledFunc`].

@@ -99,6 +99,13 @@ impl ExternIdx {
             }
         }
     }
+
+    pub fn into_func_idx(self) -> Option<u32> {
+        match self {
+            ExternIdx::Func(idx) => Some(idx.into_u32()),
+            _ => None,
+        }
+    }
 }
 
 /// An iterator over the exports of a [`Module`].
