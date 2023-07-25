@@ -20,6 +20,7 @@ paste = "1"
 byteorder = "1.4.3"
 strum = "0.25.0"
 strum_macros = "0.25.1"
+lazy_static = "1.4.0"
 
 [dev-dependencies]
 wat = "1"
