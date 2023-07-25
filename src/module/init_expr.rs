@@ -7,11 +7,11 @@
 //! [`s1vm`]: https://github.com/Neopallium/s1vm
 
 use super::FuncIdx;
+use crate::common::{UntypedValue, F32, F64};
 use crate::{ExternRef, FuncRef, Value};
 use alloc::boxed::Box;
 use core::fmt;
 use smallvec::SmallVec;
-use crate::common::{UntypedValue, F32, F64};
 
 /// Types that allow evluation given an evaluation context.
 pub trait Eval {
@@ -158,9 +158,7 @@ impl Op {
     where
         T: Fn(&dyn EvalContext) -> Option<UntypedValue> + Send + Sync + 'static,
     {
-        Self::Expr(ExprOp {
-            expr: Box::new(expr),
-        })
+        Self::Expr(ExprOp { expr: Box::new(expr) })
     }
 }
 
@@ -203,6 +201,14 @@ macro_rules! def_expr {
 }
 
 impl ConstExpr {
+    pub fn zero() -> Self {
+        Self {
+            op: Op::Const(ConstOp {
+                value: Default::default(),
+            }),
+        }
+    }
+
     /// Creates a new [`ConstExpr`] from the given Wasm [`ConstExpr`].
     ///
     /// # Note
@@ -213,10 +219,7 @@ impl ConstExpr {
         /// A buffer required for translation of Wasm const expressions.
         type TranslationBuffer = SmallVec<[Op; 3]>;
         /// Convenience function to create the various expression operators.
-        fn expr_op(
-            stack: &mut TranslationBuffer,
-            expr: fn(UntypedValue, UntypedValue) -> UntypedValue,
-        ) {
+        fn expr_op(stack: &mut TranslationBuffer, expr: fn(UntypedValue, UntypedValue) -> UntypedValue) {
             let rhs = stack
                 .pop()
                 .expect("must have rhs operator on the stack due to Wasm validation");
@@ -249,9 +252,9 @@ impl ConstExpr {
         //       only have one operator via the small vector data structure.
         let mut stack = TranslationBuffer::new();
         loop {
-            let op = reader.read().unwrap_or_else(|error| {
-                panic!("unexpectedly encountered invalid const expression operator: {error}")
-            });
+            let op = reader
+                .read()
+                .unwrap_or_else(|error| panic!("unexpectedly encountered invalid const expression operator: {error}"));
             match op {
                 wasmparser::Operator::I32Const { value } => {
                     stack.push(Op::constant(value));
@@ -366,9 +369,6 @@ impl ConstExpr {
                 Some((self.func_get)(index))
             }
         }
-        self.eval(&WrappedEvalContext::<G, F> {
-            global_get,
-            func_get,
-        })
+        self.eval(&WrappedEvalContext::<G, F> { global_get, func_get })
     }
 }

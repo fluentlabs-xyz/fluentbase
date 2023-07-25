@@ -5,7 +5,6 @@ mod reader_writer;
 mod utils;
 
 use alloc::vec::Vec;
-use byteorder::ByteOrder;
 
 pub use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
 
@@ -18,22 +17,29 @@ pub enum BinaryFormatError {
 pub trait BinaryFormat<'a> {
     type SelfType;
 
-    fn write_binary_to_vec(&self, buf: &'a mut Vec<u8>) -> Result<(), BinaryFormatError> {
-        let buf = unsafe { alloc::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.capacity()) };
+    fn write_binary_to_vec(&self, target: &'a mut Vec<u8>) -> Result<usize, BinaryFormatError> {
+        let buf = unsafe { alloc::slice::from_raw_parts_mut(target.as_mut_ptr(), target.capacity()) };
         let mut sink = BinaryFormatWriter::<'a>::new(buf);
-        self.write_binary(&mut sink)?;
-        Ok(())
+        let n = self.write_binary(&mut sink)?;
+        target.resize(n, 0);
+        sink.reset();
+        let n = self.write_binary(&mut sink)?;
+        Ok(n)
     }
 
-    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<(), BinaryFormatError>;
+    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError>;
     fn read_binary(sink: &mut BinaryFormatReader<'a>) -> Result<Self::SelfType, BinaryFormatError>;
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bytecode::Instruction;
-    use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
-    use crate::rwasm::binary_format::BinaryFormat;
+    use crate::{
+        engine::bytecode::Instruction,
+        engine::CompiledFunc,
+        rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter},
+        rwasm::binary_format::BinaryFormat,
+    };
+    use alloc::vec::Vec;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -46,5 +52,15 @@ mod tests {
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
             assert_eq!(opcode, opcode2);
         }
+    }
+
+    #[test]
+    fn test_call_internal_encoding() {
+        let opcode = Instruction::CallInternal(CompiledFunc::from(7));
+        let mut buff = Vec::with_capacity(100);
+        opcode.write_binary_to_vec(&mut buff).unwrap();
+        let mut binary_reader = BinaryFormatReader::new(buff.as_slice());
+        let opcode2 = Instruction::read_binary(&mut binary_reader).unwrap();
+        assert_eq!(opcode, opcode2)
     }
 }

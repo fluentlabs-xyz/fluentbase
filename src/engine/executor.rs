@@ -977,6 +977,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     fn visit_const_32(&mut self, bytes: [u8; 4]) {
         let bytes = u32::from_ne_bytes(bytes);
         self.sp.push(UntypedValue::from(bytes));
@@ -984,6 +985,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     fn visit_i64_const_32(&mut self, value: i32) {
         let sign_extended = i64::from(value);
         self.sp.push(UntypedValue::from(sign_extended));

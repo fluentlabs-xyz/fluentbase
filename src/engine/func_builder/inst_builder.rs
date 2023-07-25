@@ -4,6 +4,7 @@ use super::{
     labels::{LabelRef, LabelRegistry},
     TranslationError,
 };
+use crate::engine::bytecode::FuncIdx;
 use crate::engine::{
     bytecode::{BranchOffset, Instruction},
     CompiledFunc, DropKeep, Engine,
@@ -221,7 +222,18 @@ impl Instruction {
             Instruction::BrIfNez(offset) => Some(*offset),
             Instruction::BrAdjust(offset) => Some(*offset),
             Instruction::BrAdjustIfNez(offset) => Some(*offset),
+            Instruction::BrAdjustIfNez(offset) => Some(*offset),
             _ => None,
+        }
+    }
+
+    pub fn update_call_index(&mut self, new_index: u32) {
+        match self {
+            Instruction::ReturnCall(func) => *func = FuncIdx::from(new_index),
+            Instruction::Call(func) => *func = FuncIdx::from(new_index),
+            Instruction::ReturnCallInternal(func) => *func = CompiledFunc::from(new_index),
+            Instruction::CallInternal(func) => *func = CompiledFunc::from(new_index),
+            _ => panic!("tried to update call index of a non-call instruction: {self:?}"),
         }
     }
 

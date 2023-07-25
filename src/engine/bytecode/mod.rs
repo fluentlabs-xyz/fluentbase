@@ -394,3 +394,20 @@ impl Instruction {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct InstrMeta(usize, u8);
+
+impl InstrMeta {
+    pub fn new(pos: usize, code: u8) -> Self {
+        Self(pos, code)
+    }
+
+    pub fn pos(&self) -> usize {
+        self.0
+    }
+
+    pub fn code(&self) -> u8 {
+        self.1
+    }
+}

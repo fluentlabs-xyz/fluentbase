@@ -12,60 +12,64 @@ impl<'a> BinaryFormatWriter<'a> {
         Self { sink, pos: 0 }
     }
 
-    pub fn write_u8(&mut self, value: u8) -> Result<(), BinaryFormatError> {
-        self.require(1)?;
+    pub fn write_u8(&mut self, value: u8) -> Result<usize, BinaryFormatError> {
+        let n = self.require(1)?;
         self.sink[self.pos] = value;
-        self.skip(1)
+        self.skip(n)
     }
 
-    pub fn write_u16_be(&mut self, value: u16) -> Result<(), BinaryFormatError> {
-        self.require(2)?;
+    pub fn write_u16_be(&mut self, value: u16) -> Result<usize, BinaryFormatError> {
+        let n = self.require(2)?;
         BigEndian::write_u16(&mut self.sink[self.pos..], value);
-        self.skip(2)
+        self.skip(n)
     }
 
-    pub fn write_i16_be(&mut self, value: i16) -> Result<(), BinaryFormatError> {
-        self.require(2)?;
+    pub fn write_i16_be(&mut self, value: i16) -> Result<usize, BinaryFormatError> {
+        let n = self.require(2)?;
         BigEndian::write_i16(&mut self.sink[self.pos..], value);
-        self.skip(3)
+        self.skip(n)
     }
 
-    pub fn write_u32_be(&mut self, value: u32) -> Result<(), BinaryFormatError> {
-        self.require(4)?;
+    pub fn write_u32_be(&mut self, value: u32) -> Result<usize, BinaryFormatError> {
+        let n = self.require(4)?;
         BigEndian::write_u32(&mut self.sink[self.pos..], value);
-        self.skip(4)
+        self.skip(n)
     }
 
-    pub fn write_i32_be(&mut self, value: i32) -> Result<(), BinaryFormatError> {
-        self.require(4)?;
+    pub fn write_i32_be(&mut self, value: i32) -> Result<usize, BinaryFormatError> {
+        let n = self.require(4)?;
         BigEndian::write_i32(&mut self.sink[self.pos..], value);
-        self.skip(4)
+        self.skip(n)
     }
 
-    pub fn write_u64_be(&mut self, value: u64) -> Result<(), BinaryFormatError> {
-        self.require(8)?;
+    pub fn write_u64_be(&mut self, value: u64) -> Result<usize, BinaryFormatError> {
+        let n = self.require(8)?;
         BigEndian::write_u64(&mut self.sink[self.pos..], value);
-        self.skip(8)
+        self.skip(n)
     }
 
-    pub fn write_i64_be(&mut self, value: i64) -> Result<(), BinaryFormatError> {
-        self.require(8)?;
+    pub fn write_i64_be(&mut self, value: i64) -> Result<usize, BinaryFormatError> {
+        let n = self.require(8)?;
         BigEndian::write_i64(&mut self.sink[self.pos..], value);
-        self.skip(8)
+        self.skip(n)
     }
 
-    fn require(&self, n: usize) -> Result<(), BinaryFormatError> {
+    fn require(&self, n: usize) -> Result<usize, BinaryFormatError> {
         if self.sink.len() < self.pos + n {
             Err(BinaryFormatError::NeedMore(self.pos + n - self.sink.len()))
         } else {
-            Ok(())
+            Ok(n)
         }
     }
 
-    fn skip(&mut self, n: usize) -> Result<(), BinaryFormatError> {
+    pub fn reset(&mut self) {
+        self.pos = 0;
+    }
+
+    fn skip(&mut self, n: usize) -> Result<usize, BinaryFormatError> {
         assert!(self.sink.len() >= self.pos + n);
         self.pos += n;
-        Ok(())
+        Ok(n)
     }
 
     pub fn to_vec(&self) -> Vec<u8> {

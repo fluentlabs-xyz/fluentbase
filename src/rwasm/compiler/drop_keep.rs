@@ -1,11 +1,12 @@
-use crate::engine::bytecode::{Instruction, LocalDepth};
-use crate::engine::DropKeep;
-use crate::rwasm::compiler::Translator;
-use crate::rwasm::instruction_set::InstructionSet;
-use crate::rwasm::WazmResult;
+use crate::{
+    engine::bytecode::{Instruction, LocalDepth},
+    engine::DropKeep,
+    rwasm::compiler::{CompilerError, Translator},
+    rwasm::instruction_set::InstructionSet,
+};
 use alloc::vec::Vec;
 
-pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> WazmResult<Vec<Instruction>> {
+pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> Result<Vec<Instruction>, CompilerError> {
     let mut result = Vec::new();
     let (drop, keep) = (drop_keep.drop(), drop_keep.keep());
     if drop == 0 {
@@ -27,7 +28,7 @@ pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> WazmResult<Vec<Instruc
 }
 
 impl Translator for DropKeep {
-    fn translate(&self, result: &mut InstructionSet) -> WazmResult<()> {
+    fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
         let drop_keep_opcodes = translate_drop_keep(*self)?;
         result.0.extend(&drop_keep_opcodes);
         Ok(())

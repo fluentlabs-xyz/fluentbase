@@ -391,31 +391,31 @@ impl<'parser> FuncTranslator<'parser> {
         init_value: Option<&ConstExpr>,
         engine: &Engine,
     ) -> Result<Option<Instruction>, TranslationError> {
-        if let (Mutability::Const, Some(init_expr)) = (global_type.mutability(), init_value) {
-            if let Some(value) = init_expr.eval_const() {
-                // We can optimize `global.get` to the constant value.
-                if global_type.content() == ValueType::I32 {
-                    return Ok(Some(Instruction::i32_const(i32::from(value))));
-                }
-                if global_type.content() == ValueType::F32 {
-                    return Ok(Some(Instruction::f32_const(F32::from(value))));
-                }
-                if global_type.content() == ValueType::I64 {
-                    if let Ok(value) = i32::try_from(i64::from(value)) {
-                        return Ok(Some(Instruction::I32Const(UntypedValue::from(value))));
-                    }
-                }
-                // No optimized case was applicable so we have to allocate
-                // a constant value in the const pool and reference it.
-                let cref = engine.alloc_const(value)?;
-                return Ok(Some(Instruction::ConstRef(cref)));
-            }
-            if let Some(func_index) = init_expr.funcref() {
-                // We can optimize `global.get` to the equivalent `ref.func x` instruction.
-                let func_index = bytecode::FuncIdx::from(func_index.into_u32());
-                return Ok(Some(Instruction::RefFunc(func_index)));
-            }
-        }
+        // if let (Mutability::Const, Some(init_expr)) = (global_type.mutability(), init_value) {
+        //     if let Some(value) = init_expr.eval_const() {
+        //         // We can optimize `global.get` to the constant value.
+        //         if global_type.content() == ValueType::I32 {
+        //             return Ok(Some(Instruction::i32_const(i32::from(value))));
+        //         }
+        //         if global_type.content() == ValueType::F32 {
+        //             return Ok(Some(Instruction::f32_const(F32::from(value))));
+        //         }
+        //         if global_type.content() == ValueType::I64 {
+        //             if let Ok(value) = i32::try_from(i64::from(value)) {
+        //                 return Ok(Some(Instruction::I32Const(UntypedValue::from(value))));
+        //             }
+        //         }
+        //         // No optimized case was applicable so we have to allocate
+        //         // a constant value in the const pool and reference it.
+        //         let cref = engine.alloc_const(value)?;
+        //         return Ok(Some(Instruction::ConstRef(cref)));
+        //     }
+        //     if let Some(func_index) = init_expr.funcref() {
+        //         // We can optimize `global.get` to the equivalent `ref.func x` instruction.
+        //         let func_index = bytecode::FuncIdx::from(func_index.into_u32());
+        //         return Ok(Some(Instruction::RefFunc(func_index)));
+        //     }
+        // }
         Ok(None)
     }
 

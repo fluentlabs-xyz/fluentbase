@@ -12,17 +12,9 @@ mod parser;
 mod read;
 mod utils;
 
-use self::{
-    builder::ModuleBuilder,
-    export::ExternIdx,
-    global::Global,
-    import::{ExternTypeIdx, Import},
-    parser::parse,
-    read::ReadError,
-};
 pub use self::{
-    builder::ModuleResources,
-    compile::BlockType,
+    builder::{ModuleBuilder, ModuleResources},
+    compile::{translate, BlockType},
     error::ModuleError,
     export::{ExportType, FuncIdx, MemoryIdx, ModuleExportsIter, TableIdx},
     global::GlobalIdx,
@@ -35,6 +27,13 @@ pub(crate) use self::{
     data::{DataSegment, DataSegmentKind},
     element::{ElementSegment, ElementSegmentItems, ElementSegmentKind},
     init_expr::ConstExpr,
+};
+use self::{
+    export::ExternIdx,
+    global::Global,
+    import::{ExternTypeIdx, Import},
+    parser::parse,
+    read::ReadError,
 };
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
@@ -143,7 +142,7 @@ impl Module {
     }
 
     /// Creates a new [`Module`] from the [`ModuleBuilder`].
-    fn from_builder(builder: ModuleBuilder) -> Self {
+    pub fn from_builder(builder: ModuleBuilder) -> Self {
         Self {
             engine: builder.engine().clone(),
             func_types: builder.func_types.into(),
