@@ -1,16 +1,19 @@
-use crate::engine::bytecode::Instruction;
-use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
-use crate::rwasm::binary_format::{BinaryFormat, BinaryFormatError};
-use crate::rwasm::instruction_set::InstructionSet;
+use crate::{
+    engine::bytecode::Instruction,
+    rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter},
+    rwasm::binary_format::{BinaryFormat, BinaryFormatError},
+    rwasm::instruction_set::InstructionSet,
+};
 
 impl<'a> BinaryFormat<'a> for InstructionSet {
     type SelfType = InstructionSet;
 
-    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<(), BinaryFormatError> {
+    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError> {
+        let mut n = 0;
         for opcode in self.0.iter() {
-            opcode.write_binary(sink)?;
+            n += opcode.write_binary(sink)?;
         }
-        Ok(())
+        Ok(n)
     }
 
     fn read_binary(sink: &mut BinaryFormatReader<'a>) -> Result<InstructionSet, BinaryFormatError> {

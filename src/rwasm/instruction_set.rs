@@ -1,8 +1,11 @@
-use crate::common::UntypedValue;
-use crate::engine::bytecode::{BlockFuel, Instruction, LocalDepth};
-use alloc::vec::Vec;
+use crate::{
+    common::UntypedValue,
+    engine::bytecode::{BlockFuel, BranchOffset, FuncIdx, Instruction, LocalDepth, SignatureIdx},
+    engine::{CompiledFunc, DropKeep},
+};
+use alloc::{slice::SliceIndex, vec::Vec};
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct InstructionSet(pub Vec<Instruction>);
 
 macro_rules! impl_opcode {
@@ -40,6 +43,13 @@ impl InstructionSet {
         opcode_pos
     }
 
+    pub fn get_mut<I>(&mut self, index: I) -> Option<&mut Instruction>
+    where
+        I: SliceIndex<[Instruction], Output = Instruction>,
+    {
+        self.0.get_mut(index)
+    }
+
     pub fn len(&self) -> u32 {
         self.0.len() as u32
     }
@@ -51,13 +61,19 @@ impl InstructionSet {
     impl_opcode!(op_local_get, LocalGet(LocalDepth));
     impl_opcode!(op_local_set, LocalSet(LocalDepth));
     impl_opcode!(op_local_tee, LocalTee(LocalDepth));
-    // impl_opcode!(op_br, Br(BranchParams));
-    // impl_opcode!(op_br_if_eqz, BrIfEqz(BranchParams));
-    // impl_opcode!(op_br_if_nez, BrIfNez(BranchParams));
+    impl_opcode!(op_br, Br(BranchOffset));
+    impl_opcode!(op_br_if_eqz, BrIfEqz(BranchOffset));
+    impl_opcode!(op_br_if_nez, BrIfNez(BranchOffset));
+    impl_opcode!(op_br_adjust, BrAdjust(BranchOffset));
+    impl_opcode!(op_br_adjust_if_nez, BrAdjustIfNez(BranchOffset));
     // impl_opcode!(op_br_table, BrTable(Index));
-    // impl_opcode!(op_return, Return(DropKeep));
-    // impl_opcode!(op_return_call_indirect, ReturnCallIndirect(Index, DropKeep));
-    // impl_opcode!(op_call, Call(Index));
+    impl_opcode!(op_return, Return(DropKeep));
+    impl_opcode!(op_return_if_nez, ReturnIfNez(DropKeep));
+    impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
+    impl_opcode!(op_return_call, ReturnCall(FuncIdx));
+    impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
+    impl_opcode!(op_call, Call(FuncIdx));
+    impl_opcode!(op_call_internal, CallInternal(CompiledFunc));
     // impl_opcode!(op_call_indirect, CallIndirect(Index));
     // impl_opcode!(op_global_get, GlobalGet(Index));
     // impl_opcode!(op_global_set, GlobalSet(Index));

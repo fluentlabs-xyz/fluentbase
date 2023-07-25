@@ -1,208 +1,84 @@
-use crate::common::UntypedValue;
-use crate::engine::bytecode::{
-    AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx, FuncIdx, GlobalIdx,
-    Instruction, LocalDepth, SignatureIdx, TableIdx,
+use crate::{
+    common::UntypedValue,
+    engine::bytecode::{
+        AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx, FuncIdx,
+        GlobalIdx, Instruction, LocalDepth, SignatureIdx, TableIdx,
+    },
+    engine::{CompiledFunc, DropKeep},
+    rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter},
+    rwasm::binary_format::{BinaryFormat, BinaryFormatError},
 };
-use crate::engine::DropKeep;
-use crate::rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter};
-use crate::rwasm::binary_format::{BinaryFormat, BinaryFormatError};
 
 impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
 
-    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<(), BinaryFormatError> {
-        match self {
+    fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError> {
+        let n = match self {
             Instruction::Unreachable => sink.write_u8(0x00)?,
-            Instruction::ConsumeFuel(u) => {
-                sink.write_u8(0x01)?;
-                u.write_binary(sink)?;
-            }
+            Instruction::ConsumeFuel(u) => sink.write_u8(0x01)? + u.write_binary(sink)?,
             Instruction::Drop => sink.write_u8(0x02)?,
             Instruction::Select => sink.write_u8(0x04)?,
 
             // local Instruction family
-            Instruction::LocalGet(index) => {
-                sink.write_u8(0x10)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::LocalSet(index) => {
-                sink.write_u8(0x11)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::LocalTee(index) => {
-                sink.write_u8(0x12)?;
-                index.write_binary(sink)?;
-            }
+            Instruction::LocalGet(index) => sink.write_u8(0x10)? + index.write_binary(sink)?,
+            Instruction::LocalSet(index) => sink.write_u8(0x11)? + index.write_binary(sink)?,
+            Instruction::LocalTee(index) => sink.write_u8(0x12)? + index.write_binary(sink)?,
 
             // control flow Instruction family
-            Instruction::Br(branch_params) => {
-                sink.write_u8(0x20)?;
-                branch_params.write_binary(sink)?;
-            }
-            Instruction::BrIfEqz(branch_params) => {
-                sink.write_u8(0x21)?;
-                branch_params.write_binary(sink)?;
-            }
-            Instruction::BrIfNez(branch_params) => {
-                sink.write_u8(0x22)?;
-                branch_params.write_binary(sink)?;
-            }
-            Instruction::BrTable(index) => {
-                sink.write_u8(0x23)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::Return(drop_keep) => {
-                sink.write_u8(0x24)?;
-            }
-            Instruction::ReturnIfNez(drop_keep) => {
-                sink.write_u8(0x25)?;
-            }
-            Instruction::ReturnCall(func) => {
-                sink.write_u8(0x26)?;
-                func.write_binary(sink)?;
-            }
-            Instruction::ReturnCallIndirect(sig) => {
-                sink.write_u8(0x27)?;
-                sig.write_binary(sink)?;
-            }
-            Instruction::Call(jump_dest) => {
-                sink.write_u8(0x28)?;
-                jump_dest.write_binary(sink)?;
-            }
-            Instruction::CallIndirect(table) => {
-                sink.write_u8(0x2A)?;
-                table.write_binary(sink)?;
-            }
+            Instruction::Br(branch_params) => sink.write_u8(0x20)? + branch_params.write_binary(sink)?,
+            Instruction::BrIfEqz(branch_params) => sink.write_u8(0x21)? + branch_params.write_binary(sink)?,
+            Instruction::BrIfNez(branch_params) => sink.write_u8(0x22)? + branch_params.write_binary(sink)?,
+            Instruction::BrAdjust(branch_params) => sink.write_u8(0x23)? + branch_params.write_binary(sink)?,
+            Instruction::BrAdjustIfNez(branch_params) => sink.write_u8(0x24)? + branch_params.write_binary(sink)?,
+            Instruction::BrTable(index) => sink.write_u8(0x25)? + index.write_binary(sink)?,
+            Instruction::Return(_) => sink.write_u8(0x26)?,
+            Instruction::ReturnIfNez(_) => sink.write_u8(0x27)?,
+            Instruction::ReturnCallInternal(func) => sink.write_u8(0x28)? + func.write_binary(sink)?,
+            Instruction::ReturnCall(func) => sink.write_u8(0x29)? + func.write_binary(sink)?,
+            Instruction::ReturnCallIndirect(sig) => sink.write_u8(0x2A)? + sig.write_binary(sink)?,
+            Instruction::CallInternal(sig) => sink.write_u8(0x2B)? + sig.write_binary(sink)?,
+            Instruction::Call(jump_dest) => sink.write_u8(0x2C)? + jump_dest.write_binary(sink)?,
+            Instruction::CallIndirect(table) => sink.write_u8(0x2D)? + table.write_binary(sink)?,
 
             // global Instruction family
-            Instruction::GlobalGet(index) => {
-                sink.write_u8(0x30)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::GlobalSet(index) => {
-                sink.write_u8(0x31)?;
-                index.write_binary(sink)?;
-            }
+            Instruction::GlobalGet(index) => sink.write_u8(0x30)? + index.write_binary(sink)?,
+            Instruction::GlobalSet(index) => sink.write_u8(0x31)? + index.write_binary(sink)?,
 
             // memory Instruction family
-            Instruction::I32Load(offset) => {
-                sink.write_u8(0x40)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load(offset) => {
-                sink.write_u8(0x41)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Load8S(offset) => {
-                sink.write_u8(0x42)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Load8U(offset) => {
-                sink.write_u8(0x43)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Load16S(offset) => {
-                sink.write_u8(0x44)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Load16U(offset) => {
-                sink.write_u8(0x45)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load8S(offset) => {
-                sink.write_u8(0x46)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load8U(offset) => {
-                sink.write_u8(0x47)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load16S(offset) => {
-                sink.write_u8(0x48)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load16U(offset) => {
-                sink.write_u8(0x49)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load32S(offset) => {
-                sink.write_u8(0x4A)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Load32U(offset) => {
-                sink.write_u8(0x4B)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Store(offset) => {
-                sink.write_u8(0x4C)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Store(offset) => {
-                sink.write_u8(0x4D)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Store8(offset) => {
-                sink.write_u8(0x4E)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I32Store16(offset) => {
-                sink.write_u8(0x4F)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Store8(offset) => {
-                sink.write_u8(0x50)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Store16(offset) => {
-                sink.write_u8(0x51)?;
-                offset.write_binary(sink)?;
-            }
-            Instruction::I64Store32(offset) => {
-                sink.write_u8(0x52)?;
-                offset.write_binary(sink)?;
-            }
+            Instruction::I32Load(offset) => sink.write_u8(0x40)? + offset.write_binary(sink)?,
+            Instruction::I64Load(offset) => sink.write_u8(0x41)? + offset.write_binary(sink)?,
+            Instruction::I32Load8S(offset) => sink.write_u8(0x42)? + offset.write_binary(sink)?,
+            Instruction::I32Load8U(offset) => sink.write_u8(0x43)? + offset.write_binary(sink)?,
+            Instruction::I32Load16S(offset) => sink.write_u8(0x44)? + offset.write_binary(sink)?,
+            Instruction::I32Load16U(offset) => sink.write_u8(0x45)? + offset.write_binary(sink)?,
+            Instruction::I64Load8S(offset) => sink.write_u8(0x46)? + offset.write_binary(sink)?,
+            Instruction::I64Load8U(offset) => sink.write_u8(0x47)? + offset.write_binary(sink)?,
+            Instruction::I64Load16S(offset) => sink.write_u8(0x48)? + offset.write_binary(sink)?,
+            Instruction::I64Load16U(offset) => sink.write_u8(0x49)? + offset.write_binary(sink)?,
+            Instruction::I64Load32S(offset) => sink.write_u8(0x4A)? + offset.write_binary(sink)?,
+            Instruction::I64Load32U(offset) => sink.write_u8(0x4B)? + offset.write_binary(sink)?,
+            Instruction::I32Store(offset) => sink.write_u8(0x4C)? + offset.write_binary(sink)?,
+            Instruction::I64Store(offset) => sink.write_u8(0x4D)? + offset.write_binary(sink)?,
+            Instruction::I32Store8(offset) => sink.write_u8(0x4E)? + offset.write_binary(sink)?,
+            Instruction::I32Store16(offset) => sink.write_u8(0x4F)? + offset.write_binary(sink)?,
+            Instruction::I64Store8(offset) => sink.write_u8(0x50)? + offset.write_binary(sink)?,
+            Instruction::I64Store16(offset) => sink.write_u8(0x51)? + offset.write_binary(sink)?,
+            Instruction::I64Store32(offset) => sink.write_u8(0x52)? + offset.write_binary(sink)?,
 
             // memory data Instruction family (?)
             Instruction::MemorySize => sink.write_u8(0x53)?,
             Instruction::MemoryGrow => sink.write_u8(0x54)?,
             Instruction::MemoryFill => sink.write_u8(0x55)?,
             Instruction::MemoryCopy => sink.write_u8(0x56)?,
-            Instruction::MemoryInit(index) => {
-                sink.write_u8(0x57)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::DataDrop(index) => {
-                sink.write_u8(0x58)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableSize(index) => {
-                sink.write_u8(0x59)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableGrow(index) => {
-                sink.write_u8(0x5a)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableFill(index) => {
-                sink.write_u8(0x5b)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableGet(index) => {
-                sink.write_u8(0x5c)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableSet(index) => {
-                sink.write_u8(0x5d)?;
-                index.write_binary(sink)?;
-            }
-            Instruction::TableCopy(idx) => {
-                sink.write_u8(0x5e)?;
-                idx.write_binary(sink)?;
-            }
-            Instruction::TableInit(idx) => {
-                sink.write_u8(0x5f)?;
-                idx.write_binary(sink)?;
-            }
+            Instruction::MemoryInit(index) => sink.write_u8(0x57)? + index.write_binary(sink)?,
+            Instruction::DataDrop(index) => sink.write_u8(0x58)? + index.write_binary(sink)?,
+            Instruction::TableSize(index) => sink.write_u8(0x59)? + index.write_binary(sink)?,
+            Instruction::TableGrow(index) => sink.write_u8(0x5a)? + index.write_binary(sink)?,
+            Instruction::TableFill(index) => sink.write_u8(0x5b)? + index.write_binary(sink)?,
+            Instruction::TableGet(index) => sink.write_u8(0x5c)? + index.write_binary(sink)?,
+            Instruction::TableSet(index) => sink.write_u8(0x5d)? + index.write_binary(sink)?,
+            Instruction::TableCopy(idx) => sink.write_u8(0x5e)? + idx.write_binary(sink)?,
+            Instruction::TableInit(idx) => sink.write_u8(0x5f)? + idx.write_binary(sink)?,
             // Instruction::ElemDrop(index) => {
             //     sink.write_u8(0x60)?;
             //     index.write_binary(sink)?;
@@ -213,14 +89,8 @@ impl<'a> BinaryFormat<'a> for Instruction {
             // }
 
             // i32/i64 Instruction family
-            Instruction::I64Const(untyped_value) => {
-                sink.write_u8(0x60)?;
-                untyped_value.write_binary(sink)?;
-            }
-            Instruction::I32Const(untyped_value) => {
-                sink.write_u8(0x61)?;
-                untyped_value.write_binary(sink)?;
-            }
+            Instruction::I64Const(untyped_value) => sink.write_u8(0x60)? + untyped_value.write_binary(sink)?,
+            Instruction::I32Const(untyped_value) => sink.write_u8(0x61)? + untyped_value.write_binary(sink)?,
             Instruction::I32Eqz => sink.write_u8(0x62)?,
             Instruction::I32Eq => sink.write_u8(0x63)?,
             Instruction::I32Ne => sink.write_u8(0x64)?,
@@ -288,9 +158,9 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::I64Extend16S => sink.write_u8(0xA2)?,
             Instruction::I64Extend32S => sink.write_u8(0xA3)?,
 
-            _ => return Ok(()),
-        }
-        Ok(())
+            _ => unreachable!("not supported opcode: ({:?})", self),
+        };
+        Ok(n)
     }
 
     fn read_binary(sink: &mut BinaryFormatReader<'a>) -> Result<Instruction, BinaryFormatError> {
@@ -310,13 +180,17 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0x20 => Instruction::Br(BranchOffset::read_binary(sink)?),
             0x21 => Instruction::BrIfEqz(BranchOffset::read_binary(sink)?),
             0x22 => Instruction::BrIfNez(BranchOffset::read_binary(sink)?),
-            0x23 => Instruction::BrTable(BranchTableTargets::read_binary(sink)?),
-            0x24 => Instruction::Return(DropKeep::none()),
-            0x25 => Instruction::ReturnIfNez(DropKeep::none()),
-            0x26 => Instruction::ReturnCall(FuncIdx::read_binary(sink)?),
-            0x27 => Instruction::ReturnCallIndirect(SignatureIdx::read_binary(sink)?),
-            0x28 => Instruction::Call(FuncIdx::read_binary(sink)?),
-            0x2A => Instruction::CallIndirect(SignatureIdx::read_binary(sink)?),
+            0x23 => Instruction::BrAdjust(BranchOffset::read_binary(sink)?),
+            0x24 => Instruction::BrAdjustIfNez(BranchOffset::read_binary(sink)?),
+            0x25 => Instruction::BrTable(BranchTableTargets::read_binary(sink)?),
+            0x26 => Instruction::Return(DropKeep::none()),
+            0x27 => Instruction::ReturnIfNez(DropKeep::none()),
+            0x28 => Instruction::ReturnCallInternal(CompiledFunc::read_binary(sink)?),
+            0x29 => Instruction::ReturnCall(FuncIdx::read_binary(sink)?),
+            0x2A => Instruction::ReturnCallIndirect(SignatureIdx::read_binary(sink)?),
+            0x2B => Instruction::CallInternal(CompiledFunc::read_binary(sink)?),
+            0x2C => Instruction::Call(FuncIdx::read_binary(sink)?),
+            0x2D => Instruction::CallIndirect(SignatureIdx::read_binary(sink)?),
 
             // global Instruction family
             0x30 => Instruction::GlobalGet(GlobalIdx::read_binary(sink)?),

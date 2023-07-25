@@ -41,6 +41,7 @@ pub(crate) use self::{
 };
 use crate::arena::{ArenaIndex, GuardedEntity};
 use crate::common::UntypedValue;
+use crate::engine::code_map::InstructionPtr;
 use crate::{
     common::{Trap, TrapCode},
     func::FuncEntity,
@@ -171,6 +172,10 @@ impl Engine {
         self.inner.init_func(func, len_locals, local_stack_height, instrs)
     }
 
+    pub(super) fn mark_func(&self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, start: usize) {
+        self.inner.mark_func(func, len_locals, local_stack_height, start)
+    }
+
     /// Resolves the [`CompiledFunc`] to the underlying `wasmi` bytecode instructions.
     ///
     /// # Note
@@ -184,6 +189,10 @@ impl Engine {
     /// If the [`CompiledFunc`] is invalid for the [`Engine`].
     pub(crate) fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
         self.inner.resolve_instr(func_body, index)
+    }
+
+    pub fn instr_ptr(&self, func_body: CompiledFunc) -> (InstructionPtr, InstructionPtr) {
+        self.inner.instr_ptr(func_body)
     }
 
     pub fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {
@@ -407,6 +416,13 @@ impl EngineInner {
             .init_func(func, len_locals, local_stack_height, instrs)
     }
 
+    fn mark_func(&self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, start: usize) {
+        self.res
+            .write()
+            .code_map
+            .mark_func(func, len_locals, local_stack_height, start)
+    }
+
     fn resolve_func_type<F, R>(&self, func_type: &DedupFuncType, f: F) -> R
     where
         F: FnOnce(&FuncType) -> R,
@@ -416,6 +432,10 @@ impl EngineInner {
 
     fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
         self.res.read().code_map.get_instr(func_body, index).copied()
+    }
+
+    fn instr_ptr(&self, func_body: CompiledFunc) -> (InstructionPtr, InstructionPtr) {
+        self.res.read().code_map.instr_ptr_with_end(func_body)
     }
 
     fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {

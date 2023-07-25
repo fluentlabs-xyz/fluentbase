@@ -1,25 +1,12 @@
 use super::{
-    export::ExternIdx,
-    import::FuncTypeIdx,
-    ConstExpr,
-    DataSegment,
-    ElementSegment,
-    ExternTypeIdx,
-    FuncIdx,
-    Global,
-    GlobalIdx,
-    Import,
-    ImportName,
-    Module,
+    export::ExternIdx, import::FuncTypeIdx, ConstExpr, DataSegment, ElementSegment, ExternTypeIdx, FuncIdx, Global,
+    GlobalIdx, Import, ImportName, Module,
 };
+use crate::common::ValueType;
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
-    Engine,
-    FuncType,
-    GlobalType,
-    MemoryType,
-    TableType,
+    Engine, FuncType, GlobalType, MemoryType, Mutability, TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 
@@ -312,6 +299,15 @@ impl<'engine> ModuleBuilder<'engine> {
             self.globals.push(global_decl);
             self.globals_init.push(global_init);
         }
+        Ok(())
+    }
+
+    pub fn push_empty_i64_globals(&mut self, num_globals: usize) -> Result<(), ModuleError> {
+        let global_decl = GlobalType::new(ValueType::I64, Mutability::Var);
+        (0..num_globals).for_each(|_| {
+            self.globals.push(global_decl);
+            self.globals_init.push(ConstExpr::zero());
+        });
         Ok(())
     }
 

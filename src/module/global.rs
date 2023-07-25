@@ -40,14 +40,15 @@ impl From<wasmparser::Global<'_>> for Global {
     fn from(global: wasmparser::Global<'_>) -> Self {
         let global_type = GlobalType::from_wasmparser(global.ty);
         let init_expr = ConstExpr::new(global.init_expr);
-        Self {
-            global_type,
-            init_expr,
-        }
+        Self { global_type, init_expr }
     }
 }
 
 impl Global {
+    pub fn from_type_and_init(global_type: GlobalType, init_expr: ConstExpr) -> Self {
+        Self { global_type, init_expr }
+    }
+
     /// Splits the [`Global`] into its global type and its global initializer.
     pub fn into_type_and_init(self) -> (GlobalType, ConstExpr) {
         (self.global_type, self.init_expr)

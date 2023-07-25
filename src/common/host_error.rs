@@ -14,7 +14,7 @@ use downcast_rs::{impl_downcast, DowncastSync};
 ///
 /// ```rust
 /// use std::fmt;
-/// use crate::common::{Trap, HostError};
+/// use fluentbase_rwasm::common::{Trap, HostError};
 ///
 /// #[derive(Debug, Copy, Clone)]
 /// struct MyError {

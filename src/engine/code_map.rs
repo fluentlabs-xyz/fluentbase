@@ -19,6 +19,18 @@ impl ArenaIndex for CompiledFunc {
     }
 }
 
+impl From<u32> for CompiledFunc {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl CompiledFunc {
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
 /// A reference to the instructions of a compiled Wasm function.
 #[derive(Debug, Copy, Clone)]
 pub struct InstructionsRef {
@@ -177,10 +189,36 @@ impl CodeMap {
         self.headers[func.into_usize()] = FuncHeader::new(iref, len_locals, local_stack_height);
     }
 
+    pub fn mark_func(&mut self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, start: usize) {
+        // first byte is reserved for unreachable
+        let start = start + 1;
+        assert!(self.header(func).is_uninit(), "func {func:?} is already initialized");
+        let iref = InstructionsRef::new(start);
+        assert!(
+            start < self.instrs.len(),
+            "instruction overflow ({} > {})",
+            start,
+            self.instrs.len()
+        );
+        self.headers[func.into_usize()] = FuncHeader::new(iref, len_locals, local_stack_height);
+    }
+
     /// Returns an [`InstructionPtr`] to the instruction at [`InstructionsRef`].
     #[inline]
     pub fn instr_ptr(&self, iref: InstructionsRef) -> InstructionPtr {
         InstructionPtr::new(self.instrs[iref.to_usize()..].as_ptr())
+    }
+
+    /// Returns an [`InstructionPtr`] to the instruction at [`InstructionsRef`].
+    #[inline]
+    pub fn instr_ptr_with_end(&self, func_body: CompiledFunc) -> (InstructionPtr, InstructionPtr) {
+        let header = self.header(func_body);
+        let start = header.iref.to_usize();
+        let end = self.instr_end(func_body);
+        let start_ptr = InstructionPtr::new(self.instrs[start..end].as_ptr());
+        let mut end_ptr = start_ptr;
+        end_ptr.add(end - start);
+        (start_ptr, end_ptr)
     }
 
     /// Returns the [`FuncHeader`] of the [`CompiledFunc`].
@@ -208,7 +246,6 @@ impl CodeMap {
     ///
     /// This is important to synthesize how many instructions there are in
     /// the function referred to by [`CompiledFunc`].
-    #[cfg(test)]
     pub fn instr_end(&self, func_body: CompiledFunc) -> usize {
         self.headers
             .get(func_body.into_usize() + 1)
@@ -218,7 +255,7 @@ impl CodeMap {
 }
 
 /// The instruction pointer to the instruction of a function on the call stack.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct InstructionPtr {
     /// The pointer to the instruction.
     ptr: *const Instruction,

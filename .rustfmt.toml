@@ -1,4 +1,5 @@
 imports_granularity = "Crate"
+group_imports = "One"
 imports_layout = "HorizontalVertical"
 edition = "2021"
 
@@ -8,3 +9,4 @@ newline_style = "Unix"
 #normalize_comments = true
 reorder_imports = true
 wrap_comments = true
+use_unstable_features = true

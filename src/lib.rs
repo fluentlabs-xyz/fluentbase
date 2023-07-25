@@ -32,7 +32,7 @@
 //!     // Wasmi does not yet support parsing `.wat` so we have to convert
 //!     // out `.wat` into `.wasm` before we compile and validate it.
 //!     let wasm = wat::parse_str(&wat)?;
-//!     let module = Module::new(&engine, &mut &wasm[..])?;
+//!     let module = Module::new(&engine, &wasm[..])?;
 //!
 //!     // All Wasm objects operate within the context of a `Store`.
 //!     // Each `Store` has a type parameter to store host-specific data,
@@ -87,22 +87,22 @@ extern crate std as alloc;
 #[macro_use]
 mod foreach_tuple;
 
-mod arena;
-mod common;
-mod engine;
-mod error;
-mod externref;
-mod func;
-mod global;
-mod instance;
-mod limits;
-mod linker;
-mod memory;
-mod module;
-mod store;
-mod table;
-mod value;
-mod rwasm;
+pub mod arena;
+pub mod common;
+pub mod engine;
+pub mod error;
+pub mod externref;
+pub mod func;
+pub mod global;
+pub mod instance;
+pub mod limits;
+pub mod linker;
+pub mod memory;
+pub mod module;
+pub mod rwasm;
+pub mod store;
+pub mod table;
+pub mod value;
 
 /// Defines some errors that may occur upon interaction with `wasmi`.
 pub mod errors {
@@ -119,44 +119,20 @@ pub mod errors {
 
 pub use self::{
     engine::{
-        Config,
-        Engine,
-        FuelConsumptionMode,
-        ResumableCall,
-        ResumableInvocation,
-        StackLimits,
-        TypedResumableCall,
+        Config, Engine, FuelConsumptionMode, ResumableCall, ResumableInvocation, StackLimits, TypedResumableCall,
         TypedResumableInvocation,
     },
     error::Error,
     externref::ExternRef,
     func::{
-        Caller,
-        Func,
-        FuncRef,
-        FuncType,
-        IntoFunc,
-        TypedFunc,
-        WasmParams,
-        WasmResults,
-        WasmRet,
-        WasmType,
-        WasmTypeList,
+        Caller, Func, FuncRef, FuncType, IntoFunc, TypedFunc, WasmParams, WasmResults, WasmRet, WasmType, WasmTypeList,
     },
     global::{Global, GlobalType, Mutability},
     instance::{Export, ExportsIter, Extern, ExternType, Instance},
     limits::{ResourceLimiter, StoreLimits, StoreLimitsBuilder},
     linker::Linker,
     memory::{Memory, MemoryType},
-    module::{
-        ExportType,
-        ImportType,
-        InstancePre,
-        Module,
-        ModuleExportsIter,
-        ModuleImportsIter,
-        Read,
-    },
+    module::{ExportType, ImportType, InstancePre, Module, ModuleExportsIter, ModuleImportsIter, Read},
     store::{AsContext, AsContextMut, Store, StoreContext, StoreContextMut},
     table::{Table, TableType},
     value::Value,
