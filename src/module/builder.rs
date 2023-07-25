@@ -159,6 +159,12 @@ impl<'engine> ModuleBuilder<'engine> {
         Ok(())
     }
 
+    pub fn push_func_type(&mut self, func_type: FuncType) -> Result<(), ModuleError> {
+        let dedup = self.engine.alloc_func_type(func_type);
+        self.func_types.push(dedup);
+        Ok(())
+    }
+
     /// Pushes the given imports to the [`Module`] under construction.
     ///
     /// # Errors
@@ -195,6 +201,13 @@ impl<'engine> ModuleBuilder<'engine> {
                 }
             }
         }
+        Ok(())
+    }
+
+    pub fn push_function_import(&mut self, name: ImportName, func_type_idx: FuncTypeIdx) -> Result<(), ModuleError> {
+        self.imports.funcs.push(name);
+        let func_type = self.func_types[func_type_idx.into_u32() as usize];
+        self.funcs.push(func_type);
         Ok(())
     }
 
@@ -272,6 +285,11 @@ impl<'engine> ModuleBuilder<'engine> {
             let memory = memory?;
             self.memories.push(memory);
         }
+        Ok(())
+    }
+
+    pub fn push_default_memory(&mut self, initial: u32, maximum: Option<u32>) -> Result<(), ModuleError> {
+        self.memories.push(MemoryType::new(initial, maximum).unwrap());
         Ok(())
     }
 

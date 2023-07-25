@@ -2,17 +2,19 @@ use crate::{
     arena::ArenaIndex,
     common::UntypedValue,
     engine::bytecode::BranchOffset,
+    engine::bytecode::FuncIdx,
     engine::bytecode::{AddressOffset, Instruction},
     engine::code_map::InstructionPtr,
     engine::DropKeep,
     module::DataSegmentKind,
+    module::{ImportName, Imported},
     rwasm::binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
     rwasm::instruction_set::InstructionSet,
-    Config, Engine, Linker, Module,
+    Config, Engine, Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use byteorder::{BigEndian, ByteOrder};
-use core::ptr::replace;
+use core::ops::Deref;
 
 mod drop_keep;
 
@@ -24,6 +26,8 @@ pub enum CompilerError {
     NotSupported(&'static str),
     OutOfBuffer,
     BinaryFormat(BinaryFormatError),
+    NotSupportedImport,
+    UnknownImport(ImportName),
 }
 
 pub trait Translator {
@@ -33,27 +37,31 @@ pub trait Translator {
 pub struct Compiler {
     engine: Engine,
     module: Module,
-    linker: Linker<()>,
     // translation state
     pub(crate) code_section: InstructionSet,
     function_mapping: BTreeMap<u32, u32>,
-    call_mapping: BTreeMap<u32, u32>,
+    host_function_mapping: BTreeMap<ImportName, u32>,
 }
 
 impl Compiler {
     pub fn new(wasm_binary: &Vec<u8>) -> Result<Self, CompilerError> {
+        Self::new_with_linker(wasm_binary, BTreeMap::new())
+    }
+
+    pub fn new_with_linker(
+        wasm_binary: &Vec<u8>,
+        host_function_mapping: BTreeMap<ImportName, u32>,
+    ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
         config.consume_fuel(false);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice()).map_err(|e| CompilerError::ModuleError(e))?;
-        let linker = Linker::new(&engine);
         Ok(Compiler {
             engine,
             module,
-            linker,
             code_section: InstructionSet::new(),
             function_mapping: BTreeMap::new(),
-            call_mapping: BTreeMap::new(),
+            host_function_mapping,
         })
     }
 
@@ -244,12 +252,9 @@ impl Compiler {
             WI::CallInternal(func_idx) => {
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
-                // remember opcode offset for the function index to fix break jump offset later
-                let opcode_offset = self.code_section.len();
-                self.call_mapping.insert(fn_index, opcode_offset - 1);
             }
             WI::Call(func_idx) => {
-                // return self.translate_host_call(func_idx.to_u32())
+                self.translate_host_call(func_idx.to_u32())?;
             }
             _ => {
                 self.code_section.push(*instr_ptr.get());
@@ -260,19 +265,21 @@ impl Compiler {
     }
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
-        // let imports = self.module.imports.items.deref();
-        // if fn_index >= imports.len() as u32 {
-        //     return Err(WazmError::NotSupportedImport);
-        // }
-        // let imported = &imports[fn_index as usize];
-        // let import_name = match imported {
-        //     Imported::Func(import_name) => import_name,
-        //     _ => return Err(WazmError::NotSupportedImport),
-        // };
-        // let import_code = resolve_host_call(import_name.module.deref(), import_name.field.deref())?;
-        // self.code_section.push(Instruction::Call(import_code));
-        // Ok(())
-        unreachable!("not supported yet");
+        let imports = self.module.imports.items.deref();
+        if fn_index >= imports.len() as u32 {
+            return Err(CompilerError::NotSupportedImport);
+        }
+        let imported = &imports[fn_index as usize];
+        let import_name = match imported {
+            Imported::Func(import_name) => import_name,
+            _ => return Err(CompilerError::NotSupportedImport),
+        };
+        let import_index = self
+            .host_function_mapping
+            .get(import_name)
+            .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
+        self.code_section.push(Instruction::Call(FuncIdx::from(*import_index)));
+        Ok(())
     }
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
@@ -295,14 +302,6 @@ impl Compiler {
             let mut code = code.clone();
             let mut affected = false;
             match code {
-                Instruction::Call(func) | Instruction::ReturnCall(func) => {
-                    let func_offset = self
-                        .call_mapping
-                        .get(&func.to_u32())
-                        .ok_or(CompilerError::MissingFunction)?;
-                    code.update_call_index(*func_offset);
-                    affected = true;
-                }
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
                     let func_offset = self
                         .function_mapping

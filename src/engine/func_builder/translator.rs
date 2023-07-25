@@ -387,9 +387,9 @@ impl<'parser> FuncTranslator<'parser> {
     /// Only internal (non-imported) and constant (non-mutable) globals
     /// have a chance to be optimized to more efficient instructions.
     fn optimize_global_get(
-        global_type: &GlobalType,
-        init_value: Option<&ConstExpr>,
-        engine: &Engine,
+        _global_type: &GlobalType,
+        _init_value: Option<&ConstExpr>,
+        _engine: &Engine,
     ) -> Result<Option<Instruction>, TranslationError> {
         // if let (Mutability::Const, Some(init_expr)) = (global_type.mutability(), init_value) {
         //     if let Some(value) = init_expr.eval_const() {

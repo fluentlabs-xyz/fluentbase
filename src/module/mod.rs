@@ -58,6 +58,7 @@ pub struct Module {
     pub(crate) compiled_funcs: Box<[CompiledFunc]>,
     pub(crate) element_segments: Box<[ElementSegment]>,
     pub(crate) data_segments: Box<[DataSegment]>,
+    pub(crate) is_rwasm: bool,
 }
 
 /// The index of the default Wasm linear memory.
@@ -157,7 +158,12 @@ impl Module {
             compiled_funcs: builder.compiled_funcs.into(),
             element_segments: builder.element_segments.into(),
             data_segments: builder.data_segments.into(),
+            is_rwasm: false,
         }
+    }
+
+    pub(crate) fn set_rwasm(&mut self) {
+        self.is_rwasm = true;
     }
 
     /// Returns the number of non-imported functions of the [`Module`].
@@ -188,12 +194,18 @@ impl Module {
 
     /// Returns an iterator over the imports of the [`Module`].
     pub fn imports(&self) -> ModuleImportsIter {
-        let len_imported_funcs = self.imports.len_funcs;
+        let mut len_imported_funcs = self.imports.len_funcs;
         let len_imported_globals = self.imports.len_globals;
+        // TODO: "a tiny hack for rWASM import section goes after function section"
+        let funcs_iter = if self.is_rwasm {
+            self.funcs[len_imported_funcs..].iter()
+        } else {
+            self.funcs[..len_imported_funcs].iter()
+        };
         ModuleImportsIter {
             engine: &self.engine,
             names: self.imports.items.iter(),
-            funcs: self.funcs[..len_imported_funcs].iter(),
+            funcs: funcs_iter,
             tables: self.tables.iter(),
             memories: self.memories.iter(),
             globals: self.globals[..len_imported_globals].iter(),

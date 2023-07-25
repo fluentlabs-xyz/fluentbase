@@ -1,13 +1,14 @@
-use crate::common::ValueType;
-use crate::module::{translate, FuncIdx, FuncTypeIdx, ModuleBuilder, ModuleError};
-use crate::rwasm::instruction_set::InstructionSet;
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+
+use crate::module::ModuleResources;
+use crate::rwasm::platform::ImportLinker;
 use crate::{
     engine::bytecode::{BranchOffset, InstrMeta, Instruction},
+    module::{FuncIdx, FuncTypeIdx, ModuleBuilder, ModuleError},
     rwasm::binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatReader},
+    rwasm::instruction_set::InstructionSet,
     Engine, FuncType, Module,
 };
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use wasmparser::FunctionBody;
 
 #[derive(Debug)]
 pub enum ReducedModuleError {
@@ -26,6 +27,8 @@ pub enum ReducedModuleError {
     EmptyBytecode,
     BinaryFormat(BinaryFormatError),
 }
+
+const MAX_MEMORY_PAGES: u32 = 512;
 
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
@@ -95,47 +98,89 @@ impl ReducedModule {
         &self.metas
     }
 
-    pub fn to_module(&self, engine: &Engine) -> Result<Module, ModuleError> {
+    pub fn to_module(&self, engine: &Engine, import_linker: &mut ImportLinker) -> Result<Module, ModuleError> {
         let mut builder = ModuleBuilder::new(engine);
+
         // main function has empty inputs and outputs
-        let main_func_type = Result::<FuncType, ModuleError>::Ok(FuncType::new([], []));
-        builder.push_func_types(vec![main_func_type])?;
-        // reconstruct all functions and fix bytecode calls
+        let mut default_func_types = BTreeMap::new();
+        let mut get_func_type_or_create = |func_type: FuncType, builder: &mut ModuleBuilder| -> FuncTypeIdx {
+            let func_type_idx = default_func_types.get(&func_type);
+            let func_type_idx = if let Some(idx) = func_type_idx {
+                *idx
+            } else {
+                let idx = default_func_types.len();
+                default_func_types.insert(func_type.clone(), idx);
+                builder.push_func_type(func_type).unwrap();
+                idx
+            };
+            FuncTypeIdx::from(func_type_idx as u32)
+        };
+        get_func_type_or_create(FuncType::new([], []), &mut builder);
+
         let mut code_section = self.bytecode().clone();
+
+        // find all used imports and map them
+        let mut import_mapping = BTreeMap::new();
+        for instr in code_section.0.iter_mut() {
+            let host_index = match instr {
+                Instruction::Call(func) => func.to_u32(),
+                _ => continue,
+            };
+            let func_index = import_mapping.len() as u32;
+            import_mapping.insert(host_index, func_index);
+            instr.update_call_index(func_index);
+            let import_func = import_linker
+                .resolve_by_index(host_index)
+                .ok_or_else(|| unreachable!("unknown host index: ({:?})", host_index))
+                .unwrap();
+            let func_type = import_func.func_type().clone();
+            let func_type_idx = get_func_type_or_create(func_type, &mut builder);
+            builder
+                .push_function_import(import_func.import_name().clone(), func_type_idx)
+                .unwrap();
+        }
+
+        // reconstruct all functions and fix bytecode calls
         let mut func_index_offset = BTreeMap::new();
-        func_index_offset.insert(0, 0);
+        func_index_offset.insert(import_mapping.len() as u32, 0);
         for instr in code_section.0.iter_mut() {
             let func_offset = match instr {
                 Instruction::CallInternal(func) => func.to_u32(),
                 _ => continue,
             };
-            let func_index = func_index_offset.len() as u32;
+            let func_index = import_mapping.len() as u32 + func_index_offset.len() as u32;
             instr.update_call_index(func_index);
             let relative_pos = self.relative_position.get(&func_offset).unwrap();
             func_index_offset.insert(func_index, *relative_pos);
         }
-        // mark headers for missing functions inside binary
+
+        // push main functions
         let funcs: Vec<Result<FuncTypeIdx, ModuleError>> = func_index_offset
             .iter()
             .map(|_| Result::<FuncTypeIdx, ModuleError>::Ok(FuncTypeIdx::from(0)))
             .collect();
         builder.push_funcs(funcs)?;
+
+        // mark headers for missing functions inside binary
+        let mut resources = ModuleResources::new(&builder);
         for (func_index, func_offset) in func_index_offset.iter() {
-            let last_compiled_func = builder.compiled_funcs.get(*func_index as usize).unwrap();
-            assert_eq!(last_compiled_func.to_u32(), *func_index);
+            let compiled_func = resources.get_compiled_func(FuncIdx::from(*func_index)).unwrap();
             // for 0 function (main) init with entire bytecode section
-            if *func_index == 0 {
-                engine.init_func(*last_compiled_func, 0, 0, code_section.0.clone());
+            if compiled_func.to_u32() == 0 {
+                engine.init_func(compiled_func, 0, 0, code_section.0.clone());
             } else {
-                engine.mark_func(*last_compiled_func, 0, 0, *func_offset as usize);
+                engine.mark_func(compiled_func, 0, 0, *func_offset as usize);
             }
         }
-        // set 0 function as an entrypoint
-        builder.set_start(FuncIdx::from(0));
+        // allocate default memory
+        builder.push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))?;
+        // set 0 function as an entrypoint (it goes right after import section)
+        builder.set_start(FuncIdx::from(import_mapping.len() as u32));
         // push required amount of globals
         builder.push_empty_i64_globals(self.num_globals as usize)?;
         // finalize module
-        let module = builder.finish();
+        let mut module = builder.finish();
+        // module.set_rwasm();
         Ok(module)
     }
 
