@@ -341,9 +341,8 @@ impl Instruction {
     }
 
     /// Creates an [`Instruction::Const32`] from the given `f32` constant value.
-    pub fn f32_const(_value: F32) -> Self {
-        unreachable!("not supported yet")
-        // Self::Const32(value.to_bits().to_ne_bytes())
+    pub fn f32_const(value: F32) -> Self {
+        Self::I32Const(UntypedValue::from(value.to_bits()))
     }
 
     /// Creates a new `local.get` instruction from the given local depth.
