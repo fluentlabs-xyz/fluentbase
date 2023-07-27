@@ -6,6 +6,8 @@ mod instruction_set;
 mod module;
 mod platform;
 
+pub use self::{binary_format::*, compiler::*, instruction_set::*, module::*, platform::*};
+
 #[cfg(test)]
 mod tests {
     use crate::{

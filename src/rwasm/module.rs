@@ -162,7 +162,7 @@ impl ReducedModule {
         builder.push_funcs(funcs)?;
 
         // mark headers for missing functions inside binary
-        let mut resources = ModuleResources::new(&builder);
+        let resources = ModuleResources::new(&builder);
         for (func_index, func_offset) in func_index_offset.iter() {
             let compiled_func = resources.get_compiled_func(FuncIdx::from(*func_index)).unwrap();
             // for 0 function (main) init with entire bytecode section
@@ -180,7 +180,7 @@ impl ReducedModule {
         builder.push_empty_i64_globals(self.num_globals as usize)?;
         // finalize module
         let mut module = builder.finish();
-        // module.set_rwasm();
+        module.set_rwasm();
         Ok(module)
     }
 

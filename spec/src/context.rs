@@ -1,5 +1,6 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
+use fluentbase_rwasm::rwasm::{Compiler, CompilerError, DefaultImportHandler, ImportLinker, ReducedModule};
 use fluentbase_rwasm::{
     common::{ValueType, F32, F64},
     Config, Engine, Extern, Func, Global, Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table,
@@ -14,9 +15,9 @@ pub struct TestContext<'a> {
     /// The `runtime` engine used for executing functions used during the test.
     engine: Engine,
     /// The linker for linking together Wasm test modules.
-    linker: Linker<()>,
+    linker: Linker<DefaultImportHandler>,
     /// The store to hold all runtime data during the test.
-    store: Store<()>,
+    store: Store<DefaultImportHandler>,
     /// The list of all encountered Wasm modules belonging to the test.
     modules: Vec<Module>,
     /// The list of all instantiated modules.
@@ -37,8 +38,8 @@ impl<'a> TestContext<'a> {
     /// Creates a new [`TestContext`] with the given [`TestDescriptor`].
     pub fn new(descriptor: &'a TestDescriptor, config: Config) -> Self {
         let engine = Engine::new(&config);
-        let mut linker = Linker::new(&engine);
-        let mut store = Store::new(&engine, ());
+        let mut linker = Linker::<DefaultImportHandler>::new(&engine);
+        let mut store = Store::new(&engine, DefaultImportHandler::default());
         let default_memory = Memory::new(&mut store, MemoryType::new(1, Some(2)).unwrap()).unwrap();
         let default_table = Table::new(
             &mut store,
@@ -115,12 +116,12 @@ impl TestContext<'_> {
     }
 
     /// Returns a shared reference to the underlying [`Store`].
-    pub fn store(&self) -> &Store<()> {
+    pub fn store(&self) -> &Store<DefaultImportHandler> {
         &self.store
     }
 
     /// Returns an exclusive reference to the underlying [`Store`].
-    pub fn store_mut(&mut self) -> &mut Store<()> {
+    pub fn store_mut(&mut self) -> &mut Store<DefaultImportHandler> {
         &mut self.store
     }
 
@@ -143,18 +144,17 @@ impl TestContext<'_> {
                 error
             )
         });
-        // let mut compiler = Compiler::new(&wasm).map_err(|e| match e {
-        //     // WazmError::TranslationError(e) => TestError::Wasmi(e),
-        //     _ => TestError::Wazm(e),
-        // })?;
-        // compiler.translate_wo_entrypoint().unwrap();
-        // let binary = compiler.finalize().unwrap();
-        // println!("{:?}", binary);
-        // let module = CompiledModule::from_vec(&binary).unwrap();
-        // let trace = module.trace_binary();
-        // println!("{}", trace);
-
-        let module = Module::new(self.engine(), &wasm[..])?;
+        let mut compiler = Compiler::new(&wasm).map_err(|e| match e {
+            CompilerError::ModuleError(e) => TestError::Wasmi(e),
+            _ => TestError::Compiler(e),
+        })?;
+        let original_module = Module::new(self.engine(), wasm.as_slice())?;
+        compiler.translate_wo_entrypoint().unwrap();
+        let binary = compiler.finalize().unwrap();
+        let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
+        let mut import_linker = ImportLinker::default();
+        let module = reduced_module.to_module(self.engine(), &mut import_linker).unwrap();
+        import_linker.attach_linker(&mut self.linker, &mut self.store).unwrap();
         let instance_pre = self.linker.instantiate(&mut self.store, &module)?;
         let instance = instance_pre.start(&mut self.store)?;
         self.modules.push(module);

@@ -1,8 +1,11 @@
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use lazy_static::lazy_static;
 
-use crate::{common::ValueType, linker::LinkerError, module::ImportName, Caller, Func, FuncType, Linker, Store};
+use crate::{
+    common::ValueType, linker::LinkerError, module::ImportName, AsContextMut, Caller, Func, FuncType, Linker, Store,
+};
 
 pub trait ImportHandler {
     // sys calls
@@ -11,6 +14,41 @@ pub trait ImportHandler {
     fn sys_read(&mut self, _offset: u32, _length: u32) {}
     // evm calls
     fn evm_return(&mut self, _offset: u32, _length: u32) {}
+}
+
+#[derive(Default, Debug)]
+pub struct DefaultImportHandler {
+    input: Vec<u8>,
+    exit_code: u32,
+    output: Vec<u8>,
+}
+
+impl ImportHandler for DefaultImportHandler {
+    fn sys_halt(&mut self, exit_code: u32) {
+        self.exit_code = exit_code;
+    }
+
+    fn sys_write(&mut self, _offset: u32, _length: u32) {}
+    fn sys_read(&mut self, _offset: u32, _length: u32) {}
+
+    fn evm_return(&mut self, _offset: u32, _length: u32) {}
+}
+
+impl DefaultImportHandler {
+    pub fn new(input: Vec<u8>) -> Self {
+        Self {
+            input,
+            ..Default::default()
+        }
+    }
+
+    pub fn exit_code(&self) -> u32 {
+        self.exit_code
+    }
+
+    pub fn output(&self) -> &Vec<u8> {
+        &self.output
+    }
 }
 
 // SYS host functions (starts with 0xAA00)
@@ -117,6 +155,18 @@ impl Default for ImportLinker {
             [ValueType::I32; 1],
             [],
         ));
+        result.insert_function(ImportFunc::new_env(
+            "_sys_read",
+            IMPORT_SYS_READ,
+            [ValueType::I32; 2],
+            [],
+        ));
+        result.insert_function(ImportFunc::new_env(
+            "_sys_write",
+            IMPORT_SYS_WRITE,
+            [ValueType::I32; 2],
+            [],
+        ));
         result
     }
 }
@@ -137,17 +187,34 @@ impl ImportLinker {
         D: ImportHandler,
     {
         macro_rules! link_call {
+            ($fn_name:ident($arg1:ident: $type1:ident, $arg2:ident: $type2:ident)) => {
+                linker.define(
+                    "env",
+                    concat!("_", stringify!($fn_name)),
+                    Func::wrap(
+                        store.as_context_mut(),
+                        |mut caller: Caller<'_, D>, $arg1: $type1, $arg2: $type2| {
+                            caller.data_mut().$fn_name($arg1, $arg2);
+                        },
+                    ),
+                )?;
+            };
             ($fn_name:ident($arg1:ident: $type1:ident)) => {
                 linker.define(
                     "env",
                     concat!("_", stringify!($fn_name)),
-                    Func::wrap(store, |mut caller: Caller<'_, D>, $arg1: $type1| {
-                        caller.data_mut().$fn_name($arg1);
-                    }),
+                    Func::wrap(
+                        store.as_context_mut(),
+                        |mut caller: Caller<'_, D>, $arg1: $type1| {
+                            caller.data_mut().$fn_name($arg1);
+                        },
+                    ),
                 )?;
             };
         }
         link_call!(sys_halt(exit_code: u32));
+        link_call!(sys_write(offset: u32, length: u32));
+        link_call!(sys_read(offset: u32, length: u32));
         Ok(())
     }
 

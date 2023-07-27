@@ -1,3 +1,4 @@
+use fluentbase_rwasm::rwasm::CompilerError;
 use fluentbase_rwasm::Error as WasmiError;
 use std::{error::Error, fmt, fmt::Display};
 
@@ -17,6 +18,7 @@ pub enum TestError {
         module_name: Option<String>,
         global_name: String,
     },
+    Compiler(CompilerError),
 }
 
 impl Error for TestError {}
@@ -40,6 +42,9 @@ impl Display for TestError {
                 write!(f, "missing global variable exported as: {module_name:?}::{global_name}",)
             }
             Self::Wasmi(wasmi_error) => Display::fmt(wasmi_error, f),
+            Self::Compiler(_) => {
+                write!(f, "compiler error")
+            }
         }
     }
 }

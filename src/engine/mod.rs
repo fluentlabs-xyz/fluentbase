@@ -29,13 +29,13 @@ use self::{
     bytecode::Instruction,
     cache::InstanceCache,
     code_map::CodeMap,
-    const_pool::{ConstPool, ConstPoolView, ConstRef},
     executor::{execute_wasm, WasmOutcome},
     func_types::FuncTypeRegistry,
     resumable::ResumableCallBase,
     stack::{FuncFrame, Stack, ValueStack},
 };
 pub(crate) use self::{
+    const_pool::{ConstPool, ConstPoolView, ConstRef},
     func_args::{FuncFinished, FuncParams, FuncResults},
     func_types::DedupFuncType,
 };
@@ -187,6 +187,7 @@ impl Engine {
     /// # Panics
     ///
     /// If the [`CompiledFunc`] is invalid for the [`Engine`].
+    #[cfg(test)]
     pub(crate) fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
         self.inner.resolve_instr(func_body, index)
     }
@@ -430,6 +431,7 @@ impl EngineInner {
         f(self.res.read().func_types.resolve_func_type(func_type))
     }
 
+    #[cfg(test)]
     fn resolve_instr(&self, func_body: CompiledFunc, index: usize) -> Option<Instruction> {
         self.res.read().code_map.get_instr(func_body, index).copied()
     }

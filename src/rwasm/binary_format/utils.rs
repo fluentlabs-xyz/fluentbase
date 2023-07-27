@@ -1,3 +1,4 @@
+use crate::engine::ConstRef;
 use crate::{
     common::UntypedValue,
     engine::bytecode::{
@@ -49,3 +50,4 @@ impl_default_idx!(BlockFuel, to_u64, u32);
 impl_default_idx!(AddressOffset, into_inner, u32);
 impl_default_idx!(BranchOffset, to_i32, i32);
 impl_default_idx!(CompiledFunc, to_u32, u32);
+impl_default_idx!(ConstRef, to_usize, u32);

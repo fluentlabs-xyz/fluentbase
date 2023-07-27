@@ -1,6 +1,7 @@
 use super::{error::TestError, TestContext, TestDescriptor};
 use anyhow::Result;
 use fluentbase_rwasm::common::{F32, F64};
+use fluentbase_rwasm::rwasm::DefaultImportHandler;
 use fluentbase_rwasm::{Config, ExternRef, FuncRef, Instance, Store, Value};
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
@@ -310,7 +311,7 @@ fn execute_wast_invoke(context: &mut TestContext, span: Span, invoke: WastInvoke
 }
 
 /// Converts the [`WastArgCore`][`wast::core::WastArgCore`] into a [`wasmi::Value`] if possible.
-fn value(ctx: &mut Store<()>, value: &wast::core::WastArgCore) -> Option<Value> {
+fn value(ctx: &mut Store<DefaultImportHandler>, value: &wast::core::WastArgCore) -> Option<Value> {
     Some(match value {
         wast::core::WastArgCore::I32(arg) => Value::I32(*arg),
         wast::core::WastArgCore::I64(arg) => Value::I64(*arg),
