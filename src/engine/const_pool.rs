@@ -19,6 +19,12 @@ impl TryFrom<usize> for ConstRef {
     }
 }
 
+impl From<u32> for ConstRef {
+    fn from(value: u32) -> Self {
+        ConstRef(value)
+    }
+}
+
 impl ConstRef {
     /// Returns the index of the [`ConstRef`] as `usize` value.
     pub fn to_usize(self) -> usize {
