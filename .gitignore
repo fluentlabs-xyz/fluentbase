@@ -1,11 +1,12 @@
 
 /target/
 **/*.rs.bk
-Cargo.lock
-spec/target
+rwasm/Cargo.lock
+rwasm/spec/target
 
 **/fuzz/corpus/
 **/fuzz/target/
 **/fuzz/artifacts/
 
 /.idea
+.DS_Store
