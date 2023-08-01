@@ -369,7 +369,7 @@ impl<'a> ExactSizeIterator for ModuleImportsIter<'a> {
 /// This type is primarily accessed from the [`Module::imports`] method.
 /// Each [`ImportType`] describes an import into the Wasm module with the `module/name`
 /// that it is imported from as well as the type of item that is being imported.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImportType<'module> {
     /// The name of the imported item.
     name: &'module ImportName,
