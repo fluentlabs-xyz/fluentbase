@@ -1,5 +1,8 @@
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use lazy_static::lazy_static;
 
@@ -101,14 +104,23 @@ pub const IMPORT_EVM_REVERT: u32 = 0xEE29;
 pub const IMPORT_EVM_SELFDESTRUCT: u32 = 0xEE2A;
 
 #[derive(Debug, Clone)]
+pub struct ImportFuncName(String, String);
+
+impl Into<ImportName> for ImportFuncName {
+    fn into(self) -> ImportName {
+        ImportName::new(self.0.as_str(), self.1.as_str())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ImportFunc {
-    import_name: ImportName,
+    import_name: ImportFuncName,
     index: u32,
     func_type: FuncType,
 }
 
 impl ImportFunc {
-    pub fn new(import_name: ImportName, index: u32, func_type: FuncType) -> Self {
+    pub fn new(import_name: ImportFuncName, index: u32, func_type: FuncType) -> Self {
         Self {
             import_name,
             index,
@@ -116,17 +128,19 @@ impl ImportFunc {
         }
     }
 
-    pub fn new_env<P, R>(fn_name: &'static str, index: u32, input: P, output: R) -> Self
-    where
-        P: IntoIterator<Item = ValueType>,
-        R: IntoIterator<Item = ValueType>,
-    {
-        let func_type = FuncType::new::<P, R>(input, output);
-        Self::new(ImportName::new("env", fn_name), index, func_type)
+    pub fn new_env<'a>(
+        module_name: String,
+        fn_name: String,
+        index: u32,
+        input: &'a [ValueType],
+        output: &'a [ValueType],
+    ) -> Self {
+        let func_type = FuncType::new_with_refs(input, output);
+        Self::new(ImportFuncName(module_name, fn_name), index, func_type)
     }
 
-    pub fn import_name(&self) -> &ImportName {
-        &self.import_name
+    pub fn import_name(&self) -> ImportName {
+        ImportName::new(self.import_name.0.as_str(), self.import_name.1.as_str())
     }
 
     pub fn index(&self) -> u32 {
@@ -150,22 +164,25 @@ impl Default for ImportLinker {
             func_by_name: Default::default(),
         };
         result.insert_function(ImportFunc::new_env(
-            "_sys_halt",
+            "env".to_string(),
+            "_sys_halt".to_string(),
             IMPORT_SYS_HALT,
-            [ValueType::I32; 1],
-            [],
+            &[ValueType::I32; 1],
+            &[],
         ));
         result.insert_function(ImportFunc::new_env(
-            "_sys_read",
+            "env".to_string(),
+            "_sys_read".to_string(),
             IMPORT_SYS_READ,
-            [ValueType::I32; 2],
-            [],
+            &[ValueType::I32; 2],
+            &[],
         ));
         result.insert_function(ImportFunc::new_env(
-            "_sys_write",
+            "env".to_string(),
+            "_sys_write".to_string(),
             IMPORT_SYS_WRITE,
-            [ValueType::I32; 2],
-            [],
+            &[ValueType::I32; 2],
+            &[],
         ));
         result
     }
@@ -175,11 +192,11 @@ impl ImportLinker {
     pub fn insert_function(&mut self, import_func: ImportFunc) {
         assert!(!self.func_by_index.contains_key(&import_func.index), "already persist");
         assert!(
-            !self.func_by_name.contains_key(&import_func.import_name),
+            !self.func_by_name.contains_key(&import_func.import_name()),
             "already persist"
         );
         self.func_by_index.insert(import_func.index, import_func.clone());
-        self.func_by_name.insert(import_func.import_name, import_func.index);
+        self.func_by_name.insert(import_func.import_name(), import_func.index);
     }
 
     pub fn attach_linker<D>(&mut self, linker: &mut Linker<D>, store: &mut Store<D>) -> Result<(), LinkerError>

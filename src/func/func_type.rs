@@ -48,6 +48,18 @@ impl FuncType {
         }
     }
 
+    /// Creates a new [`FuncType`].
+    pub fn new_with_refs<'a>(params: &'a [ValueType], results: &'a [ValueType]) -> Self {
+        let mut params_results = Vec::new();
+        params_results.extend_from_slice(params);
+        let len_params = params_results.len();
+        params_results.extend_from_slice(results);
+        Self {
+            params_results: params_results.into(),
+            len_params,
+        }
+    }
+
     /// Returns the parameter types of the function type.
     pub fn params(&self) -> &[ValueType] {
         &self.params_results[..self.len_params]
@@ -76,12 +88,7 @@ impl FuncType {
         if self.params().len() != params.len() {
             return Err(FuncError::MismatchingParameterLen);
         }
-        if self
-            .params()
-            .iter()
-            .copied()
-            .ne(params.iter().map(<T as Ty>::ty))
-        {
+        if self.params().iter().copied().ne(params.iter().map(<T as Ty>::ty)) {
             return Err(FuncError::MismatchingParameterType);
         }
         Ok(())
@@ -104,13 +111,7 @@ impl FuncType {
         if self.results().len() != results.len() {
             return Err(FuncError::MismatchingResultLen);
         }
-        if check_type
-            && self
-                .results()
-                .iter()
-                .copied()
-                .ne(results.iter().map(<T as Ty>::ty))
-        {
+        if check_type && self.results().iter().copied().ne(results.iter().map(<T as Ty>::ty)) {
             return Err(FuncError::MismatchingResultType);
         }
         Ok(())
@@ -184,12 +185,7 @@ mod tests {
             &[ValueType::F64][..],
             &[ValueType::I32, ValueType::I32][..],
             &[ValueType::I32, ValueType::I32, ValueType::I32][..],
-            &[
-                ValueType::I32,
-                ValueType::I32,
-                ValueType::I32,
-                ValueType::I32,
-            ][..],
+            &[ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32][..],
             &[
                 ValueType::I32,
                 ValueType::I32,
@@ -200,12 +196,7 @@ mod tests {
                 ValueType::I32,
                 ValueType::I32,
             ][..],
-            &[
-                ValueType::I32,
-                ValueType::I64,
-                ValueType::F32,
-                ValueType::F64,
-            ][..],
+            &[ValueType::I32, ValueType::I64, ValueType::F32, ValueType::F64][..],
         ];
         for params in types {
             for results in types {
