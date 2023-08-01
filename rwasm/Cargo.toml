@@ -1,0 +1,31 @@
+[package]
+name = "fluentbase-rwasm"
+version = "0.30.0"
+documentation = "https://docs.rs/wasmi/"
+description = "WebAssembly interpreter"
+edition = "2021"
+
+[dependencies]
+wasmparser = { version = "0.100.1", package = "wasmparser-nostd", default-features = false }
+spin = { version = "0.9", default-features = false, features = [
+    "mutex",
+    "spin_mutex",
+    "rwlock",
+] }
+smallvec = { version = "1.10.0", features = ["union"] }
+libm = "0.2.1"
+num-traits = { version = "0.2.8", default-features = false }
+downcast-rs = "1.2.0"
+paste = "1"
+byteorder = "1.4.3"
+strum = "0.25.0"
+strum_macros = "0.25.1"
+lazy_static = "1.4.0"
+
+[dev-dependencies]
+wat = "1"
+assert_matches = "1.5"
+wast = "52.0"
+anyhow = "1.0"
+criterion = { version = "0.4", default-features = false }
+rand = "0.8.2"

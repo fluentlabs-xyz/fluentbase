@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-core"
+description = "Fluentbase SDK"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+byteorder = "1.4.3"
+fixed-bigint = "0.1.9"
+wat = "1.0.66"
+wee_alloc = "0.4.5"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = true
+opt-level = 'z'
+strip = true

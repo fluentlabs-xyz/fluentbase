@@ -1,0 +1,11 @@
+[package]
+name = "fluentbase-circuits"
+version = "0.30.0"
+documentation = "https://docs.rs/wasmi/"
+description = "WebAssembly interpreter"
+edition = "2021"
+
+[dependencies]
+
+
+[dev-dependencies]
