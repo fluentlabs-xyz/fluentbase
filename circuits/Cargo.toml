@@ -1,11 +1,13 @@
 [package]
 name = "fluentbase-circuits"
-version = "0.30.0"
-documentation = "https://docs.rs/wasmi/"
-description = "WebAssembly interpreter"
+version = "0.1.0"
+authors = [
+    "Dmitry Savonin <dmitry@wasm0.io>",
+]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-
+halo2-mpt-circuits = { git = "https://github.com/scroll-tech/mpt-circuit", branch = "v0.4" }
 
 [dev-dependencies]

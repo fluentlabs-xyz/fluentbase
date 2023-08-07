@@ -1,13 +1,19 @@
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
-
-use crate::module::ModuleResources;
-use crate::rwasm::platform::ImportLinker;
 use crate::{
     engine::bytecode::{BranchOffset, InstrMeta, Instruction},
-    module::{FuncIdx, FuncTypeIdx, ModuleBuilder, ModuleError},
-    rwasm::binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatReader},
-    rwasm::instruction_set::InstructionSet,
-    Engine, FuncType, Module,
+    module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleBuilder, ModuleError, ModuleResources},
+    rwasm::{
+        binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatReader},
+        instruction_set::InstructionSet,
+        platform::ImportLinker,
+    },
+    Engine,
+    FuncType,
+    Module,
+};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
 };
 
 #[derive(Debug)]
@@ -98,7 +104,7 @@ impl ReducedModule {
         &self.metas
     }
 
-    pub fn to_module(&self, engine: &Engine, import_linker: &mut ImportLinker) -> Result<Module, ModuleError> {
+    pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Result<Module, ModuleError> {
         let mut builder = ModuleBuilder::new(engine);
 
         // main function has empty inputs and outputs
@@ -174,8 +180,11 @@ impl ReducedModule {
         }
         // allocate default memory
         builder.push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))?;
+        builder.push_export("memory".to_string().into_boxed_str(), MemoryIdx::from(0))?;
         // set 0 function as an entrypoint (it goes right after import section)
-        builder.set_start(FuncIdx::from(import_mapping.len() as u32));
+        let main_index = import_mapping.len() as u32;
+        builder.set_start(FuncIdx::from(main_index));
+        builder.push_export("main".to_string().into_boxed_str(), FuncIdx::from(main_index))?;
         // push required amount of globals
         builder.push_empty_i64_globals(self.num_globals as usize)?;
         // finalize module

@@ -1,0 +1,15 @@
+[package]
+name = "greeting"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-core = { path = "../../../core" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+opt-level = 'z'
+strip = true
