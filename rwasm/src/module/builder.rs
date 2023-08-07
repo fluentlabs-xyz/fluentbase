@@ -1,12 +1,27 @@
 use super::{
-    export::ExternIdx, import::FuncTypeIdx, ConstExpr, DataSegment, ElementSegment, ExternTypeIdx, FuncIdx, Global,
-    GlobalIdx, Import, ImportName, Module,
+    export::ExternIdx,
+    import::FuncTypeIdx,
+    ConstExpr,
+    DataSegment,
+    ElementSegment,
+    ExternTypeIdx,
+    FuncIdx,
+    Global,
+    GlobalIdx,
+    Import,
+    ImportName,
+    Module,
 };
-use crate::common::ValueType;
 use crate::{
+    common::ValueType,
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
-    Engine, FuncType, GlobalType, MemoryType, Mutability, TableType,
+    Engine,
+    FuncType,
+    GlobalType,
+    MemoryType,
+    Mutability,
+    TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 
@@ -347,6 +362,14 @@ impl<'engine> ModuleBuilder<'engine> {
             "tried to initialize module export declarations twice"
         );
         self.exports = exports.into_iter().collect::<Result<BTreeMap<_, _>, _>>()?;
+        Ok(())
+    }
+
+    pub fn push_export<I>(&mut self, name: Box<str>, index: I) -> Result<(), ModuleError>
+    where
+        I: Into<ExternIdx>,
+    {
+        self.exports.insert(name, index.into());
         Ok(())
     }
 

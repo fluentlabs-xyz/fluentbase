@@ -2,6 +2,8 @@
 members = [
     "circuits",
     "core",
+    "runtime",
+    "runtime/examples/greeting",
     "rwasm",
     "rwasm/e2e",
 ]

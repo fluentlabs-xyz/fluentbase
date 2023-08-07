@@ -1,14 +1,20 @@
+use crate::{
+    common::ValueType,
+    linker::LinkerError,
+    module::ImportName,
+    AsContextMut,
+    Caller,
+    Func,
+    FuncType,
+    Linker,
+    Store,
+};
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
-
 use lazy_static::lazy_static;
-
-use crate::{
-    common::ValueType, linker::LinkerError, module::ImportName, AsContextMut, Caller, Func, FuncType, Linker, Store,
-};
 
 pub trait ImportHandler {
     // sys calls
@@ -152,40 +158,10 @@ impl ImportFunc {
     }
 }
 
+#[derive(Default)]
 pub struct ImportLinker {
     func_by_index: BTreeMap<u32, ImportFunc>,
     func_by_name: BTreeMap<ImportName, u32>,
-}
-
-impl Default for ImportLinker {
-    fn default() -> Self {
-        let mut result = Self {
-            func_by_index: Default::default(),
-            func_by_name: Default::default(),
-        };
-        result.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_halt".to_string(),
-            IMPORT_SYS_HALT,
-            &[ValueType::I32; 1],
-            &[],
-        ));
-        result.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_read".to_string(),
-            IMPORT_SYS_READ,
-            &[ValueType::I32; 2],
-            &[],
-        ));
-        result.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_write".to_string(),
-            IMPORT_SYS_WRITE,
-            &[ValueType::I32; 2],
-            &[],
-        ));
-        result
-    }
 }
 
 impl ImportLinker {

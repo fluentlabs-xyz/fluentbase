@@ -82,6 +82,27 @@ pub enum ExternIdx {
     Global(GlobalIdx),
 }
 
+impl From<FuncIdx> for ExternIdx {
+    fn from(value: FuncIdx) -> Self {
+        Self::Func(value)
+    }
+}
+impl From<TableIdx> for ExternIdx {
+    fn from(value: TableIdx) -> Self {
+        Self::Table(value)
+    }
+}
+impl From<MemoryIdx> for ExternIdx {
+    fn from(value: MemoryIdx) -> Self {
+        Self::Memory(value)
+    }
+}
+impl From<GlobalIdx> for ExternIdx {
+    fn from(value: GlobalIdx) -> Self {
+        Self::Global(value)
+    }
+}
+
 impl ExternIdx {
     /// Create a new [`ExternIdx`] from the given [`wasmparser::ExternalKind`] and `index`.
     ///

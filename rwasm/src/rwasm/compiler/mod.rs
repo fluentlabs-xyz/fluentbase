@@ -1,16 +1,19 @@
 use crate::{
     arena::ArenaIndex,
     common::UntypedValue,
-    engine::bytecode::BranchOffset,
-    engine::bytecode::FuncIdx,
-    engine::bytecode::{AddressOffset, Instruction},
-    engine::code_map::InstructionPtr,
-    engine::DropKeep,
-    module::DataSegmentKind,
-    module::{ImportName, Imported},
-    rwasm::binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-    rwasm::instruction_set::InstructionSet,
-    Config, Engine, Module,
+    engine::{
+        bytecode::{AddressOffset, BranchOffset, FuncIdx, Instruction},
+        code_map::InstructionPtr,
+        DropKeep,
+    },
+    module::{DataSegmentKind, ImportName, Imported},
+    rwasm::{
+        binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
+        instruction_set::InstructionSet,
+    },
+    Config,
+    Engine,
+    Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use byteorder::{BigEndian, ByteOrder};
@@ -41,6 +44,7 @@ pub struct Compiler {
     pub(crate) code_section: InstructionSet,
     function_mapping: BTreeMap<u32, u32>,
     host_function_mapping: BTreeMap<ImportName, u32>,
+    is_translated: bool,
 }
 
 impl Compiler {
@@ -62,10 +66,14 @@ impl Compiler {
             code_section: InstructionSet::new(),
             function_mapping: BTreeMap::new(),
             host_function_mapping,
+            is_translated: false,
         })
     }
 
     pub fn translate(&mut self) -> Result<(), CompilerError> {
+        if self.is_translated {
+            unreachable!("already translated");
+        }
         // translate memory and global first
         let total_globals = self.module.globals.len();
         for i in 0..total_globals {
@@ -93,6 +101,9 @@ impl Compiler {
     }
 
     pub fn translate_wo_entrypoint(&mut self) -> Result<(), CompilerError> {
+        if self.is_translated {
+            unreachable!("already translated");
+        }
         // translate memory and global first
         let total_globals = self.module.globals.len();
         for i in 0..total_globals {
@@ -283,6 +294,10 @@ impl Compiler {
     }
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
+        if !self.is_translated {
+            self.translate()?;
+        }
+
         let bytecode = &mut self.code_section;
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();

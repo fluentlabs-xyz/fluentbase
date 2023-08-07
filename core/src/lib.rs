@@ -1,5 +1,5 @@
 #![feature(lang_items)]
-// #![no_std]
+#![no_std]
 
 #[cfg(feature = "std")]
 extern crate wee_alloc;
