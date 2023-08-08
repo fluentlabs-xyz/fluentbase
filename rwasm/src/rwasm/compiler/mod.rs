@@ -185,10 +185,11 @@ impl Compiler {
         if fn_index < import_len as u32 {
             return Ok(());
         }
+        let fn_index = fn_index - import_len as u32;
         let func_body = self
             .module
             .compiled_funcs
-            .get(fn_index as usize - import_len)
+            .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
         let beginning_offset = self.code_section.len();
         // translate instructions
@@ -232,7 +233,8 @@ impl Compiler {
             }
             WI::ReturnCallInternal(func) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_return_call_internal(func);
+                let fn_index = func.into_usize() as u32;
+                self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return(DropKeep::none());
             }
             WI::ReturnCall(func) => {
@@ -289,7 +291,7 @@ impl Compiler {
             .host_function_mapping
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        self.code_section.push(Instruction::Call(FuncIdx::from(*import_index)));
+        self.code_section.op_call(*import_index);
         Ok(())
     }
 
@@ -302,7 +304,7 @@ impl Compiler {
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;
-        for code in bytecode.0.iter() {
+        for code in bytecode.instr.iter() {
             let mut buffer: [u8; 100] = [0; 100];
             let mut binary_writer = BinaryFormatWriter::new(&mut buffer[..]);
             code.write_binary(&mut binary_writer)
@@ -313,7 +315,7 @@ impl Compiler {
             buffer_offset += buffer_size;
         }
 
-        for (i, code) in bytecode.0.iter().enumerate() {
+        for (i, code) in bytecode.instr.iter().enumerate() {
             let mut code = code.clone();
             let mut affected = false;
             match code {

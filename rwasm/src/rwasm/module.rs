@@ -20,7 +20,6 @@ use alloc::{
 pub enum ReducedModuleError {
     MissingEntrypoint,
     NotSupportedOpcode,
-    MissingFunction,
     NotSupportedImport,
     NotSupportedMemory(&'static str),
     ParseError(&'static str),
@@ -38,9 +37,7 @@ const MAX_MEMORY_PAGES: u32 = 512;
 
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
-    metas: Vec<InstrMeta>,
     relative_position: BTreeMap<u32, u32>,
-    num_globals: u32,
 }
 
 impl ReducedModule {
@@ -48,7 +45,6 @@ impl ReducedModule {
         let mut reader = BinaryFormatReader::new(sink);
 
         let mut instruction_set = InstructionSet::new();
-        let mut metas = Vec::new();
 
         // here we store mapping from jump destination to the opcode offset
         let mut relative_position: BTreeMap<u32, u32> = BTreeMap::new();
@@ -56,19 +52,16 @@ impl ReducedModule {
         // read all opcodes from binary
         while !reader.is_empty() {
             let offset = reader.pos();
-            let code = reader.sink[0];
+            let code = reader.sink[0] as u16;
 
             let instr = Instruction::read_binary(&mut reader).map_err(|e| ReducedModuleError::BinaryFormat(e))?;
-            // println!("{:#04x}: {:?}", offset, instr);
 
             relative_position.insert(offset as u32, instruction_set.len());
-            instruction_set.push(instr);
-            metas.push(InstrMeta::new(offset, code));
+            instruction_set.push_with_meta(instr, InstrMeta::new(offset, code));
         }
-        // println!();
 
         // if instruction has jump offset then its br-like and we should re-write jump offset
-        for (index, opcode) in instruction_set.0.iter_mut().enumerate() {
+        for (index, opcode) in instruction_set.instr.iter_mut().enumerate() {
             if let Some(jump_offset) = opcode.get_jump_offset() {
                 let relative_offset = relative_position
                     .get(&(jump_offset.to_i32() as u32))
@@ -77,31 +70,14 @@ impl ReducedModule {
             }
         }
 
-        let num_globals = instruction_set
-            .0
-            .iter()
-            .filter_map(|opcode| match opcode {
-                Instruction::GlobalGet(index) | Instruction::GlobalSet(index) => Some(index.to_u32()),
-                _ => None,
-            })
-            .max()
-            .map(|v| v + 1)
-            .unwrap_or_default();
-
         Ok(ReducedModule {
             instruction_set,
-            metas,
             relative_position,
-            num_globals,
         })
     }
 
     pub fn bytecode(&self) -> &InstructionSet {
         &self.instruction_set
-    }
-
-    pub fn metas(&self) -> &Vec<InstrMeta> {
-        &self.metas
     }
 
     pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Result<Module, ModuleError> {
@@ -127,13 +103,12 @@ impl ReducedModule {
 
         // find all used imports and map them
         let mut import_mapping = BTreeMap::new();
-        for instr in code_section.0.iter_mut() {
+        for instr in code_section.instr.iter_mut() {
             let host_index = match instr {
                 Instruction::Call(func) => func.to_u32(),
                 _ => continue,
             };
             let func_index = import_mapping.len() as u32;
-            import_mapping.insert(host_index, func_index);
             instr.update_call_index(func_index);
             let import_func = import_linker
                 .resolve_by_index(host_index)
@@ -141,26 +116,30 @@ impl ReducedModule {
                 .unwrap();
             let func_type = import_func.func_type().clone();
             let func_type_idx = get_func_type_or_create(func_type, &mut builder);
-            builder
-                .push_function_import(import_func.import_name().clone(), func_type_idx)
-                .unwrap();
+            if !import_mapping.contains_key(&host_index) {
+                import_mapping.insert(host_index, func_index);
+                builder
+                    .push_function_import(import_func.import_name().clone(), func_type_idx)
+                    .unwrap();
+            }
         }
+        let import_len = import_mapping.len() as u32;
 
         // reconstruct all functions and fix bytecode calls
         let mut func_index_offset = BTreeMap::new();
-        func_index_offset.insert(import_mapping.len() as u32, 0);
-        for instr in code_section.0.iter_mut() {
+        func_index_offset.insert(import_len, 0);
+        for instr in code_section.instr.iter_mut() {
             let func_offset = match instr {
                 Instruction::CallInternal(func) => func.to_u32(),
                 _ => continue,
             };
-            let func_index = import_mapping.len() as u32 + func_index_offset.len() as u32;
+            let func_index = import_len + func_index_offset.len() as u32;
             instr.update_call_index(func_index);
             let relative_pos = self.relative_position.get(&func_offset).unwrap();
             func_index_offset.insert(func_index, *relative_pos);
         }
 
-        // push main functions
+        // push main functions (we collapse all functions into one)
         let funcs: Vec<Result<FuncTypeIdx, ModuleError>> = func_index_offset
             .iter()
             .map(|_| Result::<FuncTypeIdx, ModuleError>::Ok(FuncTypeIdx::from(0)))
@@ -171,9 +150,12 @@ impl ReducedModule {
         let resources = ModuleResources::new(&builder);
         for (func_index, func_offset) in func_index_offset.iter() {
             let compiled_func = resources.get_compiled_func(FuncIdx::from(*func_index)).unwrap();
-            // for 0 function (main) init with entire bytecode section
-            if compiled_func.to_u32() == 0 {
-                engine.init_func(compiled_func, 0, 0, code_section.0.clone());
+            if *func_offset == 0 || compiled_func.to_u32() == 0 {
+                assert_eq!(compiled_func.to_u32(), 0, "main function doesn't have zero offset");
+            }
+            // function main has 0 offset, init bytecode for entire section
+            if *func_offset == 0 {
+                engine.init_func(compiled_func, 0, 0, code_section.instr.clone());
             } else {
                 engine.mark_func(compiled_func, 0, 0, *func_offset as usize);
             }
@@ -186,7 +168,8 @@ impl ReducedModule {
         builder.set_start(FuncIdx::from(main_index));
         builder.push_export("main".to_string().into_boxed_str(), FuncIdx::from(main_index))?;
         // push required amount of globals
-        builder.push_empty_i64_globals(self.num_globals as usize)?;
+        let num_globals = self.bytecode().count_globals();
+        builder.push_empty_i64_globals(num_globals as usize)?;
         // finalize module
         let mut module = builder.finish();
         module.set_rwasm();
@@ -195,7 +178,7 @@ impl ReducedModule {
 
     pub fn trace_binary(&self) -> String {
         let mut result = String::new();
-        for opcode in self.bytecode().0.iter() {
+        for opcode in self.bytecode().instr.iter() {
             let str = format!("{:?}\n", opcode);
             result += str.as_str();
         }
