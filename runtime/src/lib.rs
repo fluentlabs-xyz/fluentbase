@@ -1,13 +1,13 @@
-extern crate core;
-
-#[allow(dead_code)]
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 
 mod platform;
 mod runtime;
 
+mod instruction;
+mod macros;
 #[cfg(test)]
 mod test;
+mod types;
 
 #[derive(Debug)]
 pub enum Error {
@@ -53,6 +53,7 @@ pub trait StateHandler<D> {
 }
 
 #[derive(Default, Debug)]
+#[allow(dead_code)]
 pub struct MemoryStateHandler {
     input: Vec<u8>,
     exit_code: u32,

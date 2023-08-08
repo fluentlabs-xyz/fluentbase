@@ -6,8 +6,19 @@ mod utils;
 mod tests;
 
 pub use self::utils::{
-    AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, DropKeep, DropKeepError,
-    ElementSegmentIdx, FuncIdx, GlobalIdx, LocalDepth, SignatureIdx, TableIdx,
+    AddressOffset,
+    BlockFuel,
+    BranchOffset,
+    BranchTableTargets,
+    DataSegmentIdx,
+    DropKeep,
+    DropKeepError,
+    ElementSegmentIdx,
+    FuncIdx,
+    GlobalIdx,
+    LocalDepth,
+    SignatureIdx,
+    TableIdx,
 };
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
 use crate::common::{UntypedValue, F32};
@@ -394,11 +405,11 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct InstrMeta(usize, u8);
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct InstrMeta(usize, u16);
 
 impl InstrMeta {
-    pub fn new(pos: usize, code: u8) -> Self {
+    pub fn new(pos: usize, code: u16) -> Self {
         Self(pos, code)
     }
 
@@ -406,7 +417,7 @@ impl InstrMeta {
         self.0
     }
 
-    pub fn code(&self) -> u8 {
+    pub fn code(&self) -> u16 {
         self.1
     }
 }

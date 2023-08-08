@@ -1,8 +1,12 @@
 use crate::{
-    engine::bytecode::{Instruction, LocalDepth},
-    engine::DropKeep,
-    rwasm::compiler::{CompilerError, Translator},
-    rwasm::instruction_set::InstructionSet,
+    engine::{
+        bytecode::{Instruction, LocalDepth},
+        DropKeep,
+    },
+    rwasm::{
+        compiler::{CompilerError, Translator},
+        instruction_set::InstructionSet,
+    },
 };
 use alloc::vec::Vec;
 
@@ -30,16 +34,17 @@ pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> Result<Vec<Instruction
 impl Translator for DropKeep {
     fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
         let drop_keep_opcodes = translate_drop_keep(*self)?;
-        result.0.extend(&drop_keep_opcodes);
+        result.instr.extend(&drop_keep_opcodes);
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bytecode::Instruction;
-    use crate::engine::DropKeep;
-    use crate::rwasm::compiler::drop_keep::translate_drop_keep;
+    use crate::{
+        engine::{bytecode::Instruction, DropKeep},
+        rwasm::compiler::drop_keep::translate_drop_keep,
+    };
 
     #[test]
     fn test_drop_keep_translation() {

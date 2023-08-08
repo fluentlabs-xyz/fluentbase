@@ -10,13 +10,14 @@ fn wat2rwasm(wat: &str) -> Vec<u8> {
 }
 
 fn wasm2rwasm(wasm_binary: &[u8], host_function_mapping: Option<BTreeMap<ImportName, u32>>) -> Vec<u8> {
-    let mut compiler = if let Some(host_function_mapping) = host_function_mapping {
+    if let Some(host_function_mapping) = host_function_mapping {
         Compiler::new_with_linker(&wasm_binary.to_vec(), host_function_mapping)
     } else {
         Compiler::new(&wasm_binary.to_vec())
     }
-    .unwrap();
-    compiler.finalize().unwrap()
+    .unwrap()
+    .finalize()
+    .unwrap()
 }
 
 #[test]

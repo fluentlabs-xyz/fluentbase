@@ -1,7 +1,7 @@
 use crate::{
-    platform::{IMPORT_SYS_HALT, IMPORT_SYS_READ, IMPORT_SYS_WRITE},
+    macros::{forward_call, forward_call_args},
+    platform::{IMPORT_EVM_RETURN, IMPORT_EVM_STOP, IMPORT_SYS_HALT, IMPORT_SYS_READ, IMPORT_SYS_WRITE},
     Error,
-    StateHandler,
 };
 use fluentbase_rwasm::{
     common::{Trap, ValueType},
@@ -10,17 +10,27 @@ use fluentbase_rwasm::{
     Caller,
     Config,
     Engine,
-    Extern,
     Func,
     Linker,
     Module,
     Store,
 };
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RuntimeContext {
-    input: Vec<u8>,
+    pub(crate) input: Vec<u8>,
+    pub(crate) output: Vec<u8>,
 }
 
+impl RuntimeContext {
+    pub(crate) fn return_data(&mut self, value: &[u8]) {
+        self.output.clear();
+        self.output.clone_from_slice(value);
+    }
+}
+
+#[allow(dead_code)]
 pub struct Runtime {
     engine: Engine,
     module: Module,
@@ -41,6 +51,13 @@ impl Runtime {
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
+            "_sys_write".to_string(),
+            IMPORT_SYS_WRITE,
+            &[ValueType::I32; 3],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
             "_sys_read".to_string(),
             IMPORT_SYS_READ,
             &[ValueType::I32; 3],
@@ -48,16 +65,23 @@ impl Runtime {
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "_sys_write".to_string(),
-            IMPORT_SYS_WRITE,
-            &[ValueType::I32; 3],
+            "_evm_stop".to_string(),
+            IMPORT_EVM_STOP,
+            &[ValueType::I32; 0],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_return".to_string(),
+            IMPORT_EVM_RETURN,
+            &[ValueType::I32; 2],
             &[],
         ));
 
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<Self, Error> {
+    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<RuntimeContext, Error> {
         let import_linker = Self::new_linker();
         Self::run_with_linker(rwasm_binary, input_data, &import_linker)
     }
@@ -66,20 +90,21 @@ impl Runtime {
         rwasm_binary: &[u8],
         input_data: &[u8],
         import_linker: &ImportLinker,
-    ) -> Result<Self, Error> {
+    ) -> Result<RuntimeContext, Error> {
         let config = Config::default();
         let engine = Engine::new(&config);
 
         let runtime_context = RuntimeContext {
             input: input_data.to_vec(),
+            output: Vec::new(),
         };
 
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module
             .to_module(&engine, import_linker)
             .map_err(Into::<Error>::into)?;
-        let mut linker = Linker::<RuntimeContext>::new(&engine);
-        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+        let linker = Linker::<RuntimeContext>::new(&engine);
+        let store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
         #[allow(unused_mut)]
         let mut res = Self {
@@ -89,69 +114,18 @@ impl Runtime {
             store,
         };
 
-        res.linker.define(
-            "env",
-            "_sys_halt",
-            Func::wrap(
-                res.store.as_context_mut(),
-                |caller: Caller<'_, RuntimeContext>, exit_code: u32| -> Result<(), Trap> {
-                    Err(Trap::i32_exit(exit_code as i32))
-                },
-            ),
-        )?;
-        res.linker.define(
-            "env",
-            "_sys_write",
-            Func::wrap(
-                res.store.as_context_mut(),
-                |mut caller: Caller<'_, RuntimeContext>, source: u32, offset: u32, length: u32| -> Result<(), Trap> {
-                    let memory = caller.get_export("memory").unwrap();
-                    let memory = match memory {
-                        Extern::Memory(memory) => memory,
-                        _ => unreachable!("there is no memory export inside"),
-                    };
-                    let input = &caller.data().input;
-                    // let mut memory = memory.data_mut(caller.as_context());
-                    // TODO: "add overflow checks"
-                    // memory[(source as usize)..((source + length) as usize)].clone_from_slice(input.as_slice());
-                    Ok(())
-                },
-            ),
-        )?;
-        res.linker.define(
-            "env",
-            "_sys_read",
-            Func::wrap(
-                res.store.as_context_mut(),
-                |mut caller: Caller<'_, RuntimeContext>, target: u32, offset: u32, length: u32| -> Result<u32, Trap> {
-                    let memory = caller.get_export("memory").unwrap();
-                    let memory = match memory {
-                        Extern::Memory(memory) => memory,
-                        _ => unreachable!("there is no memory export inside"),
-                    };
-                    let input = caller.data().input.clone();
-                    let memory = memory.data_mut(caller.as_context_mut());
-                    let length = if length > input.len() as u32 {
-                        input.len() as u32
-                    } else {
-                        length
-                    };
-                    memory[(target as usize)..((target + length) as usize)].clone_from_slice(input.as_slice());
-                    Ok(length)
-                },
-            ),
-        )?;
+        forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> u32);
 
-        // link_call!("_sys_halt", fn sys_halt(exit_code: u32));
-        // link_call!("_sys_write", fn sys_write(offset: u32, length: u32));
-        // link_call!("_sys_read", fn sys_read(target: u32, offset: u32, length: u32));
+        forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
+        forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
 
         res.linker
             .instantiate(&mut res.store, &res.module)
             .map_err(Into::<Error>::into)?
             .start(&mut res.store)?;
 
-        Ok(res)
+        Ok(res.store.data().clone())
     }
 }
 

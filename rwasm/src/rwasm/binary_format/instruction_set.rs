@@ -1,8 +1,13 @@
 use crate::{
     engine::bytecode::Instruction,
-    rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-    rwasm::binary_format::{BinaryFormat, BinaryFormatError},
-    rwasm::instruction_set::InstructionSet,
+    rwasm::{
+        binary_format::{
+            reader_writer::{BinaryFormatReader, BinaryFormatWriter},
+            BinaryFormat,
+            BinaryFormatError,
+        },
+        instruction_set::InstructionSet,
+    },
 };
 
 impl<'a> BinaryFormat<'a> for InstructionSet {
@@ -10,7 +15,7 @@ impl<'a> BinaryFormat<'a> for InstructionSet {
 
     fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError> {
         let mut n = 0;
-        for opcode in self.0.iter() {
+        for opcode in self.instr.iter() {
             n += opcode.write_binary(sink)?;
         }
         Ok(n)

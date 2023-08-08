@@ -11,5 +11,5 @@ pub extern "C" fn main() {
     }
     let sum = input.iter().fold(0u32, |r, v| r + *v as u32);
     let sum_bytes = sum.to_be_bytes();
-    sys_write_slice(&sum_bytes, 0)
+    evm_return_slice(&sum_bytes)
 }
