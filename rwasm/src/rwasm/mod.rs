@@ -11,12 +11,19 @@ pub use self::{binary_format::*, compiler::*, instruction_set::*, module::*, pla
 #[cfg(test)]
 mod tests {
     use crate::{
-        rwasm::compiler::Compiler,
-        rwasm::module::ReducedModule,
-        rwasm::platform::{ImportHandler, ImportLinker},
-        Config, Engine, Linker, Store,
+        common::ValueType,
+        rwasm::{
+            compiler::Compiler,
+            module::ReducedModule,
+            platform::{ImportHandler, ImportLinker},
+            ImportFunc,
+        },
+        Config,
+        Engine,
+        Linker,
+        Store,
     };
-    use alloc::vec::Vec;
+    use alloc::{string::ToString, vec::Vec};
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -34,6 +41,13 @@ mod tests {
         let wasm_binary = wat::parse_str(wat).unwrap();
         // translate and compile module
         let mut import_linker = ImportLinker::default();
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_halt".to_string(),
+            10,
+            &[ValueType::I32],
+            &[],
+        ));
         let mut translator = Compiler::new_with_linker(&wasm_binary, import_linker.index_mapping()).unwrap();
         translator.translate().unwrap();
         let binary = translator.finalize().unwrap();
@@ -148,37 +162,4 @@ mod tests {
         );
         assert_eq!(host_state.exit_code, 123);
     }
-
-    #[test]
-    fn test_host_call() {
-        execute_binary(
-            r#"
-    (module
-      (type (;0;) (func (param i32 i32)))
-      (type (;1;) (func))
-      (import "env" "_evm_return" (func (;0;) (type 0)))
-      (func (;1;) (type 1)
-        i32.const 1048576
-        i32.const 12
-        call 0)
-      (memory (;0;) 17)
-      (global (;0;) (mut i32) (i32.const 1048576))
-      (global (;1;) i32 (i32.const 1048588))
-      (global (;2;) i32 (i32.const 1048592))
-      (export "memory" (memory 0))
-      (export "main" (func 1))
-      (export "__data_end" (global 1))
-      (export "__heap_base" (global 2))
-      (data (;0;) (i32.const 1048576) "Hello, World"))
-        "#,
-        );
-    }
-
-    //     #[test]
-    //     #[ignore]
-    //     fn test_self_translation() {
-    //         let wast_data = fs::read(Path::new("../../test/wazm_contract.wat")).unwrap();
-    //         let wast_data = String::from_utf8(wast_data).unwrap();
-    //         execute_binary(wast_data.as_str()).unwrap();
-    //     }
 }

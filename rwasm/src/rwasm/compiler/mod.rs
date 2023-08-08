@@ -2,7 +2,7 @@ use crate::{
     arena::ArenaIndex,
     common::UntypedValue,
     engine::{
-        bytecode::{AddressOffset, BranchOffset, FuncIdx, Instruction},
+        bytecode::{AddressOffset, BranchOffset, Instruction},
         code_map::InstructionPtr,
         DropKeep,
     },
