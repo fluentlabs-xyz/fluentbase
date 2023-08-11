@@ -32,7 +32,7 @@
 //!     // Wasmi does not yet support parsing `.wat` so we have to convert
 //!     // out `.wat` into `.wasm` before we compile and validate it.
 //!     let wasm = wat::parse_str(&wat)?;
-//!     let module = Module::new(&engine, &wasm[..])?;
+//!     let module = Module::new(&engine, &wasm[..]).unwrap();
 //!
 //!     // All Wasm objects operate within the context of a `Store`.
 //!     // Each `Store` has a type parameter to store host-specific data,
@@ -52,14 +52,16 @@
 //!     // type signature of the function with `get_typed_func`.
 //!     //
 //!     // Also before using an instance created this way we need to start it.
-//!     linker.define("host", "hello", host_hello)?;
+//!     linker.define("host", "hello", host_hello).unwrap();
 //!     let instance = linker
-//!         .instantiate(&mut store, &module)?
-//!         .start(&mut store)?;
-//!     let hello = instance.get_typed_func::<(), ()>(&store, "hello")?;
+//!         .instantiate(&mut store, &module)
+//!         .unwrap()
+//!         .start(&mut store)
+//!         .unwrap();
+//!     let hello = instance.get_typed_func::<(), ()>(&store, "hello").unwrap();
 //!
 //!     // And finally we can call the wasm!
-//!     hello.call(&mut store, ())?;
+//!     hello.call(&mut store, ()).unwrap();
 //!
 //!     Ok(())
 //! }
@@ -119,13 +121,29 @@ pub mod errors {
 
 pub use self::{
     engine::{
-        Config, Engine, FuelConsumptionMode, ResumableCall, ResumableInvocation, StackLimits, TypedResumableCall,
+        Config,
+        Engine,
+        FuelConsumptionMode,
+        ResumableCall,
+        ResumableInvocation,
+        StackLimits,
+        TypedResumableCall,
         TypedResumableInvocation,
     },
     error::Error,
     externref::ExternRef,
     func::{
-        Caller, Func, FuncRef, FuncType, IntoFunc, TypedFunc, WasmParams, WasmResults, WasmRet, WasmType, WasmTypeList,
+        Caller,
+        Func,
+        FuncRef,
+        FuncType,
+        IntoFunc,
+        TypedFunc,
+        WasmParams,
+        WasmResults,
+        WasmRet,
+        WasmType,
+        WasmTypeList,
     },
     global::{Global, GlobalType, Mutability},
     instance::{Export, ExportsIter, Extern, ExternType, Instance},

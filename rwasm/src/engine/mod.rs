@@ -20,7 +20,7 @@ pub use self::{
     bytecode::DropKeep,
     code_map::CompiledFunc,
     config::{Config, FuelConsumptionMode},
-    func_builder::{FuncBuilder, FuncTranslatorAllocations, Instr, RelativeDepth, TranslationError},
+    func_builder::{FuncBuilder, FuncTranslatorAllocations, Instr, RelativeDepth, TranslationError, ValueStackHeight},
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
     traits::{CallParams, CallResults},
@@ -39,13 +39,16 @@ pub(crate) use self::{
     func_args::{FuncFinished, FuncParams, FuncResults},
     func_types::DedupFuncType,
 };
-use crate::arena::{ArenaIndex, GuardedEntity};
-use crate::common::UntypedValue;
-use crate::engine::code_map::InstructionPtr;
 use crate::{
-    common::{Trap, TrapCode},
+    arena::{ArenaIndex, GuardedEntity},
+    common::{Trap, TrapCode, UntypedValue},
+    engine::code_map::InstructionPtr,
     func::FuncEntity,
-    AsContext, AsContextMut, Func, FuncType, StoreContextMut,
+    AsContext,
+    AsContextMut,
+    Func,
+    FuncType,
+    StoreContextMut,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -90,8 +93,8 @@ type Guarded<Idx> = GuardedEntity<EngineIdx, Idx>;
 /// # Note
 ///
 /// - The current `wasmi` engine implements a bytecode interpreter.
-/// - This structure is intentionally cheap to copy.
-///   Most of its API has a `&self` receiver, so can be shared easily.
+/// - This structure is intentionally cheap to copy. Most of its API has a `&self` receiver, so can
+///   be shared easily.
 #[derive(Debug, Clone)]
 pub struct Engine {
     inner: Arc<EngineInner>,
@@ -139,6 +142,10 @@ impl Engine {
         self.inner.alloc_const(value)
     }
 
+    pub(super) fn resolve_const(&self, cref: ConstRef) -> Option<UntypedValue> {
+        self.inner.resolve_const(cref)
+    }
+
     /// Resolves a deduplicated function type into a [`FuncType`] entity.
     ///
     /// # Panics
@@ -180,9 +187,9 @@ impl Engine {
     ///
     /// # Note
     ///
-    /// - This API is mainly intended for unit testing purposes and shall not be used
-    ///   outside of this context. The function bodies are intended to be data private
-    ///   to the `wasmi` interpreter.
+    /// - This API is mainly intended for unit testing purposes and shall not be used outside of
+    ///   this context. The function bodies are intended to be data private to the `wasmi`
+    ///   interpreter.
     ///
     /// # Panics
     ///
@@ -200,17 +207,20 @@ impl Engine {
         self.inner.instr_vec(func_body)
     }
 
+    pub fn num_locals(&self, func_body: CompiledFunc) -> u32 {
+        self.inner.num_locals(func_body)
+    }
+
     /// Executes the given [`Func`] with parameters `params`.
     ///
     /// Stores the execution result into `results` upon a successful execution.
     ///
     /// # Note
     ///
-    /// - Assumes that the `params` and `results` are well typed.
-    ///   Type checks are done at the [`Func::call`] API or when creating
-    ///   a new [`TypedFunc`] instance via [`Func::typed`].
-    /// - The `params` out parameter is in a valid but unspecified state if this
-    ///   function returns with an error.
+    /// - Assumes that the `params` and `results` are well typed. Type checks are done at the
+    ///   [`Func::call`] API or when creating a new [`TypedFunc`] instance via [`Func::typed`].
+    /// - The `params` out parameter is in a valid but unspecified state if this function returns
+    ///   with an error.
     ///
     /// # Errors
     ///
@@ -241,11 +251,10 @@ impl Engine {
     ///
     /// # Note
     ///
-    /// - Assumes that the `params` and `results` are well typed.
-    ///   Type checks are done at the [`Func::call`] API or when creating
-    ///   a new [`TypedFunc`] instance via [`Func::typed`].
-    /// - The `params` out parameter is in a valid but unspecified state if this
-    ///   function returns with an error.
+    /// - Assumes that the `params` and `results` are well typed. Type checks are done at the
+    ///   [`Func::call`] API or when creating a new [`TypedFunc`] instance via [`Func::typed`].
+    /// - The `params` out parameter is in a valid but unspecified state if this function returns
+    ///   with an error.
     ///
     /// # Errors
     ///
@@ -277,11 +286,10 @@ impl Engine {
     ///
     /// # Note
     ///
-    /// - Assumes that the `params` and `results` are well typed.
-    ///   Type checks are done at the [`Func::call`] API or when creating
-    ///   a new [`TypedFunc`] instance via [`Func::typed`].
-    /// - The `params` out parameter is in a valid but unspecified state if this
-    ///   function returns with an error.
+    /// - Assumes that the `params` and `results` are well typed. Type checks are done at the
+    ///   [`Func::call`] API or when creating a new [`TypedFunc`] instance via [`Func::typed`].
+    /// - The `params` out parameter is in a valid but unspecified state if this function returns
+    ///   with an error.
     ///
     /// # Errors
     ///
@@ -394,6 +402,10 @@ impl EngineInner {
         self.res.write().const_pool.alloc(value)
     }
 
+    fn resolve_const(&self, cref: ConstRef) -> Option<UntypedValue> {
+        self.res.write().const_pool.get(cref)
+    }
+
     /// Allocates a new uninitialized [`CompiledFunc`] to the [`EngineInner`].
     ///
     /// Returns a [`CompiledFunc`] reference to allow accessing the allocated [`CompiledFunc`].
@@ -442,6 +454,10 @@ impl EngineInner {
 
     fn instr_vec(&self, func_body: CompiledFunc) -> Vec<Instruction> {
         self.res.read().code_map.instr_vec(func_body)
+    }
+
+    fn num_locals(&self, func_body: CompiledFunc) -> u32 {
+        self.res.read().code_map.num_locals(func_body)
     }
 
     fn execute_func<T, Results>(

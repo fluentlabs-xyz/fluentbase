@@ -59,7 +59,8 @@ impl InstructionsRef {
         Self { index: 0 }
     }
 
-    /// Returns `true` if the [`InstructionsRef`] refers to an uninitialized sequence of instructions.
+    /// Returns `true` if the [`InstructionsRef`] refers to an uninitialized sequence of
+    /// instructions.
     fn is_uninit(self) -> bool {
         self.index == 0
     }
@@ -242,6 +243,11 @@ impl CodeMap {
         self.instrs[start..end].to_vec()
     }
 
+    pub fn num_locals(&self, func_body: CompiledFunc) -> u32 {
+        let header = self.header(func_body);
+        header.len_locals as u32
+    }
+
     /// Returns the `end` index of the instructions of [`CompiledFunc`].
     ///
     /// This is important to synthesize how many instructions there are in
@@ -259,6 +265,7 @@ impl CodeMap {
 pub struct InstructionPtr {
     /// The pointer to the instruction.
     ptr: *const Instruction,
+    source: *const Instruction,
 }
 
 /// It is safe to send an [`InstructionPtr`] to another thread.
@@ -275,7 +282,14 @@ impl InstructionPtr {
     /// Creates a new [`InstructionPtr`] for `instr`.
     #[inline]
     pub fn new(ptr: *const Instruction) -> Self {
-        Self { ptr }
+        Self { ptr, source: ptr }
+    }
+
+    #[inline(always)]
+    pub fn pc(&self) -> u32 {
+        let size = core::mem::size_of::<Instruction>() as u32;
+        let diff = self.ptr as u32 - self.source as u32;
+        diff / size
     }
 
     /// Offset the [`InstructionPtr`] by the given value.

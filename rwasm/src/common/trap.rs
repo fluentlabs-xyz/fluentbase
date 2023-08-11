@@ -1,7 +1,6 @@
 use crate::common::HostError;
 use alloc::{boxed::Box, string::String};
 use core::fmt::{self, Display};
-
 #[cfg(feature = "std")]
 use std::error::Error as StdError;
 
@@ -19,10 +18,7 @@ pub struct Trap {
 
 #[test]
 fn trap_size() {
-    assert_eq!(
-        core::mem::size_of::<Trap>(),
-        core::mem::size_of::<*const ()>()
-    );
+    assert_eq!(core::mem::size_of::<Trap>(), core::mem::size_of::<*const ()>());
 }
 
 /// The reason of a [`Trap`].
@@ -216,7 +212,7 @@ impl StdError for Trap {
 /// See [`Trap`] for details.
 ///
 /// [`Trap`]: struct.Trap.html
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TrapCode {
     /// Wasm code executed `unreachable` opcode.
     ///

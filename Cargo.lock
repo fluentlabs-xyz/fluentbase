@@ -652,6 +652,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-runtime-example"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-core",
+]
+
+[[package]]
 name = "fluentbase-rwasm"
 version = "0.30.0"
 dependencies = [
@@ -671,6 +678,17 @@ dependencies = [
  "strum_macros 0.25.1",
  "wasmparser-nostd",
  "wast 52.0.3",
+ "wat",
+]
+
+[[package]]
+name = "fluentbase-rwasm-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "fluentbase-rwasm",
+ "wast 62.0.1",
  "wat",
 ]
 
@@ -699,13 +717,6 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "wasi",
-]
-
-[[package]]
-name = "greeting"
-version = "0.1.0"
-dependencies = [
- "fluentbase-core",
 ]
 
 [[package]]
@@ -1512,17 +1523,6 @@ name = "smallvec"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62bb4feee49fdd9f707ef802e22365a35de4b7b299de4763d44bfea899442ff9"
-
-[[package]]
-name = "spec"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "fluentbase-rwasm",
- "wast 62.0.1",
- "wat",
-]
 
 [[package]]
 name = "spin"

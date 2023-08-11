@@ -1,8 +1,11 @@
+FILES = greeting panic
 
-bin/greeting.wasm: greeting/src/lib.rs
-	cd greeting
-	cargo b --release --target=wasm32-unknown-unknown
-	cd ..
+all: $(FILES)
+
+.PHONY: $(FILES)
+$(FILES):
+	cargo b --release --target=wasm32-unknown-unknown --features=$@
 	mkdir -p bin
-	cp ../../target/wasm32-unknown-unknown/release/greeting.wasm ./bin/greeting.wasm
-	wasm2wat ./bin/greeting.wasm > ./bin/greeting.wat
+	cp ../../target/wasm32-unknown-unknown/release/fluentbase_runtime_example.wasm ./bin/$@.wasm
+	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+

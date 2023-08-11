@@ -11,11 +11,7 @@ fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     }
 }
 
-fn exported_memory_slice<'a>(
-    caller: &'a mut Caller<'_, RuntimeContext>,
-    offset: usize,
-    length: usize,
-) -> (&'a mut [u8]) {
+fn exported_memory_slice<'a>(caller: &'a mut Caller<'_, RuntimeContext>, offset: usize, length: usize) -> &'a mut [u8] {
     if length == 0 {
         return &mut [];
     }

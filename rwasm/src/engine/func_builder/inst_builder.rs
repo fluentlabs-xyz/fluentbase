@@ -4,10 +4,11 @@ use super::{
     labels::{LabelRef, LabelRegistry},
     TranslationError,
 };
-use crate::engine::bytecode::FuncIdx;
 use crate::engine::{
-    bytecode::{BranchOffset, Instruction},
-    CompiledFunc, DropKeep, Engine,
+    bytecode::{BranchOffset, FuncIdx, Instruction},
+    CompiledFunc,
+    DropKeep,
+    Engine,
 };
 use alloc::vec::Vec;
 

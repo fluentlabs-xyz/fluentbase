@@ -6,7 +6,7 @@ mod runtime;
 mod instruction;
 mod macros;
 #[cfg(test)]
-mod test;
+mod tests;
 mod types;
 
 #[derive(Debug)]
