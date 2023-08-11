@@ -48,7 +48,21 @@ mod tests {
             &[ValueType::I32],
             &[],
         ));
-        let mut translator = Compiler::new_with_linker(&wasm_binary, import_linker.index_mapping()).unwrap();
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_read".to_string(),
+            11,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_return".to_string(),
+            12,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
         translator.translate().unwrap();
         let binary = translator.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();

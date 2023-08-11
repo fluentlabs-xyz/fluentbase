@@ -9,7 +9,9 @@ use crate::{
     module::{DataSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
+        compiler::sanitizer::Sanitizer,
         instruction_set::InstructionSet,
+        ImportLinker,
     },
     Config,
     Engine,
@@ -20,6 +22,7 @@ use byteorder::{BigEndian, ByteOrder};
 use core::ops::Deref;
 
 mod drop_keep;
+mod sanitizer;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -37,24 +40,25 @@ pub trait Translator {
     fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError>;
 }
 
-pub struct Compiler {
+pub struct Compiler<'linker> {
     engine: Engine,
     module: Module,
     // translation state
     pub(crate) code_section: InstructionSet,
     function_mapping: BTreeMap<u32, u32>,
-    host_function_mapping: BTreeMap<ImportName, u32>,
+    import_linker: Option<&'linker ImportLinker>,
     is_translated: bool,
+    sanitizer: Option<Sanitizer>,
 }
 
-impl Compiler {
+impl<'linker> Compiler<'linker> {
     pub fn new(wasm_binary: &Vec<u8>) -> Result<Self, CompilerError> {
-        Self::new_with_linker(wasm_binary, BTreeMap::new())
+        Self::new_with_linker(wasm_binary, None)
     }
 
     pub fn new_with_linker(
         wasm_binary: &Vec<u8>,
-        host_function_mapping: BTreeMap<ImportName, u32>,
+        import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
         config.consume_fuel(false);
@@ -65,8 +69,9 @@ impl Compiler {
             module,
             code_section: InstructionSet::new(),
             function_mapping: BTreeMap::new(),
-            host_function_mapping,
+            import_linker,
             is_translated: false,
+            sanitizer: None, //Some(Sanitizer::new()),
         })
     }
 
@@ -97,6 +102,7 @@ impl Compiler {
                 self.translate_function(i as u32)?;
             }
         }
+        self.is_translated = true;
         Ok(())
     }
 
@@ -192,6 +198,11 @@ impl Compiler {
             .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
         let beginning_offset = self.code_section.len();
+        // reserve stack for locals
+        let len_locals = self.engine.num_locals(*func_body);
+        (0..len_locals).for_each(|_| {
+            self.code_section.op_i32_const(0);
+        });
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
         while instr_ptr != instr_end {
@@ -269,6 +280,10 @@ impl Compiler {
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
             }
+            WI::ConstRef(const_ref) => {
+                let resolved_const = self.engine.resolve_const(const_ref).unwrap();
+                self.code_section.op_i64_const(resolved_const);
+            }
             _ => {
                 self.code_section.push(*instr_ptr.get());
             }
@@ -288,7 +303,9 @@ impl Compiler {
             _ => return Err(CompilerError::NotSupportedImport),
         };
         let import_index = self
-            .host_function_mapping
+            .import_linker
+            .ok_or(CompilerError::UnknownImport(import_name.clone()))?
+            .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
         self.code_section.op_call(*import_index);
@@ -301,6 +318,47 @@ impl Compiler {
         }
 
         let bytecode = &mut self.code_section;
+
+        if let Some(mut sanitizer) = self.sanitizer.clone() {
+            let import_len = self.module.imports.len_funcs;
+            let bytecode2 = bytecode.instr.clone();
+            let mut iter = bytecode2.iter().enumerate();
+            let mut j = 0;
+            while let Some((i, instr)) = iter.next() {
+                // let is_fn = self.function_mapping.iter().filter(|(_, v)| **v == i as u32).last();
+                // if let Some((fn_index, _)) = is_fn {
+                //     let func_type = self.module.funcs[*fn_index as usize + import_len];
+                //     let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+                //     sanitizer.register_internal_fn(&func_type, bytecode, i);
+                //     iter.next();
+                // }
+                let pos = i + j;
+                match instr {
+                    Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
+                        let func_type = self.module.funcs[func.to_u32() as usize + import_len];
+                        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+                        sanitizer.check_stack_height_call(&instr, &func_type, bytecode, pos);
+                        iter.next();
+                        j += 1;
+                    }
+                    Instruction::Call(func) | Instruction::ReturnCall(func) => {
+                        // we can safely unwrap because we already know that import exists
+                        let import_func = self.import_linker.unwrap().resolve_by_index(func.to_u32()).unwrap();
+                        let func_type = import_func.func_type();
+                        sanitizer.check_stack_height_call(&instr, func_type, bytecode, pos);
+                        iter.next();
+                        j += 1;
+                    }
+                    _ => {
+                        if sanitizer.check_stack_height(&instr, bytecode, pos) {
+                            j += 1;
+                        }
+                    }
+                }
+            }
+            // let (stack_height, max_height) = sanitizer.stack_height();
+            // assert!(stack_height == 0 && max_height < 1024);
+        }
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;

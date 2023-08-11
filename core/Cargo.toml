@@ -13,7 +13,7 @@ wee_alloc = "0.4.5"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[profile.release]
-lto = true
-opt-level = 'z'
-strip = true
+#[profile.release]
+#lto = true
+#opt-level = 'z'
+#strip = true

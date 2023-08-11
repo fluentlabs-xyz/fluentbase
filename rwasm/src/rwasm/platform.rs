@@ -153,7 +153,6 @@ impl ImportLinker {
         }
         link_call!(sys_halt(exit_code: u32));
         link_call!(sys_write(offset: u32, length: u32));
-        link_call!(sys_read(offset: u32, length: u32));
         Ok(())
     }
 
@@ -161,7 +160,7 @@ impl ImportLinker {
         self.func_by_index.get(&index)
     }
 
-    pub fn index_mapping(&self) -> BTreeMap<ImportName, u32> {
-        self.func_by_name.clone()
+    pub fn index_mapping(&self) -> &BTreeMap<ImportName, u32> {
+        &self.func_by_name
     }
 }

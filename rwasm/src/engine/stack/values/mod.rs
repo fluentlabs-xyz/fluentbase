@@ -7,10 +7,12 @@ mod tests;
 
 pub use self::sp::ValueStackPtr;
 use super::{err_stack_overflow, DEFAULT_MAX_VALUE_STACK_HEIGHT, DEFAULT_MIN_VALUE_STACK_HEIGHT};
-use crate::{common::TrapCode, engine::code_map::FuncHeader};
+use crate::{
+    common::{TrapCode, UntypedValue},
+    engine::code_map::FuncHeader,
+};
 use alloc::vec::Vec;
 use core::{fmt, fmt::Debug, iter, mem::size_of};
-use crate::common::UntypedValue;
 
 /// The value stack that is used to execute Wasm bytecode.
 ///
@@ -44,8 +46,7 @@ impl Debug for ValueStack {
 
 impl PartialEq for ValueStack {
     fn eq(&self, other: &Self) -> bool {
-        self.stack_ptr == other.stack_ptr
-            && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
+        self.stack_ptr == other.stack_ptr && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
     }
 }
 
@@ -95,11 +96,21 @@ impl ValueStack {
         self.base_ptr().into_add(self.stack_ptr)
     }
 
+    pub fn stack_len(&mut self, sp: ValueStackPtr) -> usize {
+        let base = self.base_ptr();
+        sp.offset_from(base) as usize
+    }
+
+    pub fn dump_stack(&mut self, sp: ValueStackPtr) -> Vec<UntypedValue> {
+        let size = self.stack_len(sp);
+        self.entries[0..size].to_vec()
+    }
+
     /// Returns the base [`ValueStackPtr`] of `self`.
     ///
     /// The returned [`ValueStackPtr`] points to the first value on the [`ValueStack`].
     #[inline]
-    fn base_ptr(&mut self) -> ValueStackPtr {
+    pub(crate) fn base_ptr(&mut self) -> ValueStackPtr {
         ValueStackPtr::from(self.entries.as_mut_ptr())
     }
 
@@ -107,6 +118,7 @@ impl ValueStack {
     #[inline]
     pub fn sync_stack_ptr(&mut self, new_sp: ValueStackPtr) {
         let offset = new_sp.offset_from(self.base_ptr());
+        assert!(offset >= 0, "sp offset can't be negative: {}", offset);
         self.stack_ptr = offset as usize;
     }
 
@@ -122,10 +134,7 @@ impl ValueStack {
     /// - If the `initial_len` is zero.
     /// - If the `initial_len` is greater than `maximum_len`.
     pub fn new(initial_len: usize, maximum_len: usize) -> Self {
-        assert!(
-            initial_len > 0,
-            "cannot initialize the value stack with zero length",
-        );
+        assert!(initial_len > 0, "cannot initialize the value stack with zero length",);
         assert!(
             initial_len <= maximum_len,
             "initial value stack length is greater than maximum value stack length",
@@ -197,11 +206,10 @@ impl ValueStack {
     ///
     /// # Note
     ///
-    /// - This operation heavily relies on the prior validation of
-    ///   the executed WebAssembly bytecode for correctness.
-    /// - Especially the stack-depth analysis during compilation with
-    ///   a manual stack extension before function call prevents this
-    ///   procedure from panicking.
+    /// - This operation heavily relies on the prior validation of the executed WebAssembly bytecode
+    ///   for correctness.
+    /// - Especially the stack-depth analysis during compilation with a manual stack extension
+    ///   before function call prevents this procedure from panicking.
     #[inline]
     pub fn push(&mut self, entry: UntypedValue) {
         *self.get_release_unchecked_mut(self.stack_ptr) = entry;
@@ -241,8 +249,7 @@ impl ValueStack {
             // Note: By extending with the new length we effectively double
             // the current value stack length and add the additional flat amount
             // on top. This avoids too many frequent reallocations.
-            self.entries
-                .extend(iter::repeat(UntypedValue::default()).take(new_len));
+            self.entries.extend(iter::repeat(UntypedValue::default()).take(new_len));
         }
         Ok(())
     }

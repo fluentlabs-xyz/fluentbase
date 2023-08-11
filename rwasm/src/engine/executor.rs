@@ -1,22 +1,37 @@
 use super::{bytecode::BranchOffset, const_pool::ConstRef, CompiledFunc, ConstPoolView};
-use crate::common::{Pages, UntypedValue};
 use crate::{
-    common::TrapCode,
+    common::{Pages, TrapCode, UntypedValue},
     engine::{
         bytecode::{
-            AddressOffset, BlockFuel, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx, FuncIdx, GlobalIdx,
-            Instruction, LocalDepth, SignatureIdx, TableIdx,
+            AddressOffset,
+            BlockFuel,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            Instruction,
+            LocalDepth,
+            SignatureIdx,
+            TableIdx,
         },
         cache::InstanceCache,
         code_map::{CodeMap, InstructionPtr},
         config::FuelCosts,
         stack::{CallStack, ValueStackPtr},
-        DropKeep, FuncFrame, ValueStack,
+        DropKeep,
+        FuncFrame,
+        ValueStack,
     },
     func::FuncEntity,
     store::ResourceLimiterRef,
     table::TableEntity,
-    FuelConsumptionMode, Func, FuncRef, Instance, StoreInner, Table,
+    FuelConsumptionMode,
+    Func,
+    FuncRef,
+    Instance,
+    StoreInner,
+    Table,
 };
 use core::cmp::{self};
 
@@ -189,7 +204,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn execute(mut self, resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
+        let mut stack_diff_before: i32 = 0;
+        let mut stack_diff_after: i32 = 0;
+        let mut prev_opcode: alloc::vec::Vec<Instr> = Default::default();
         loop {
+            prev_opcode.push(*self.ip.get());
+            match *self.ip.get() {
+                Instr::SanitizerStackCheck(_) => stack_diff_after = self.stack_diff() as i32,
+                _ => stack_diff_before = self.stack_diff() as i32,
+            }
             match *self.ip.get() {
                 Instr::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
@@ -401,6 +424,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::I64Extend8S => self.visit_i64_extend8_s(),
                 Instr::I64Extend16S => self.visit_i64_extend16_s(),
                 Instr::I64Extend32S => self.visit_i64_extend32_s(),
+                Instr::SanitizerStackCheck(stack_height) => {
+                    self.visit_sanitizer_stack_check(stack_height, stack_diff_after - stack_diff_before, &prev_opcode)
+                }
             }
         }
     }
@@ -557,6 +583,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         self.value_stack.sync_stack_ptr(self.sp);
     }
 
+    fn stack_diff(&mut self) -> isize {
+        self.sp.offset_from(self.value_stack.base_ptr())
+    }
+
     /// Calls the given [`Func`].
     ///
     /// This also prepares the instruction pointer and stack pointer for
@@ -633,9 +663,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     /// # Note
     ///
     /// - `delta` is only evaluated if fuel metering is enabled.
-    /// - `exec` is only evaluated if the remaining fuel is sufficient
-    ///    for amount of required fuel determined by `delta` or if
-    ///    fuel metering is disabled.
+    /// - `exec` is only evaluated if the remaining fuel is sufficient for amount of required fuel
+    ///   determined by `delta` or if fuel metering is disabled.
     ///
     /// # Errors
     ///
@@ -790,12 +819,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     ///
     /// # Note
     ///
-    /// - This is done by encoding an [`Instruction::Return`] instruction
-    ///   word following the actual instruction where the [`DropKeep`]
-    ///   paremeter belongs to.
-    /// - This is required for some instructions that do not fit into
-    ///   a single instruction word and store a [`DropKeep`] value in
-    ///   another instruction word.
+    /// - This is done by encoding an [`Instruction::Return`] instruction word following the actual
+    ///   instruction where the [`DropKeep`] paremeter belongs to.
+    /// - This is required for some instructions that do not fit into a single instruction word and
+    ///   store a [`DropKeep`] value in another instruction word.
     fn fetch_drop_keep(&self, offset: usize) -> DropKeep {
         let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
@@ -809,12 +836,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     ///
     /// # Note
     ///
-    /// - This is done by encoding an [`Instruction::TableGet`] instruction
-    ///   word following the actual instruction where the [`TableIdx`]
-    ///   paremeter belongs to.
-    /// - This is required for some instructions that do not fit into
-    ///   a single instruction word and store a [`TableIdx`] value in
-    ///   another instruction word.
+    /// - This is done by encoding an [`Instruction::TableGet`] instruction word following the
+    ///   actual instruction where the [`TableIdx`] paremeter belongs to.
+    /// - This is required for some instructions that do not fit into a single instruction word and
+    ///   store a [`TableIdx`] value in another instruction word.
     fn fetch_table_idx(&self, offset: usize) -> TableIdx {
         let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
@@ -999,6 +1024,24 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .get(cref)
             .unwrap_or_else(|| unreachable!("missing constant value for const reference"));
         self.sp.push(value);
+        self.next_instr()
+    }
+
+    #[inline(always)]
+    fn visit_sanitizer_stack_check(
+        &mut self,
+        stack_diff: i32,
+        value_diff: i32,
+        prev_opcodes: &alloc::vec::Vec<Instruction>,
+    ) {
+        if value_diff != stack_diff {
+            let stack_dump = self.value_stack.dump_stack(self.sp);
+            // assert!(
+            //     false,
+            //     "corrupted stack ({} != {}): dump={:?}, prev_opcodes={:?}",
+            //     stack_diff, value_diff, stack_dump, prev_opcodes
+            // )
+        }
         self.next_instr()
     }
 

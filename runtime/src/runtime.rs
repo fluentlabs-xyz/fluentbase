@@ -25,8 +25,8 @@ pub struct RuntimeContext {
 
 impl RuntimeContext {
     pub(crate) fn return_data(&mut self, value: &[u8]) {
-        self.output.clear();
-        self.output.clone_from_slice(value);
+        self.output.resize(value.len(), 0);
+        self.output.copy_from_slice(value);
     }
 }
 

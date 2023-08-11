@@ -131,12 +131,13 @@ impl ReducedModule {
         for instr in code_section.instr.iter_mut() {
             let func_offset = match instr {
                 Instruction::CallInternal(func) => func.to_u32(),
+                Instruction::ReturnCallInternal(func) => func.to_u32(),
                 _ => continue,
             };
-            let func_index = import_len + func_index_offset.len() as u32;
+            let func_index = func_index_offset.len() as u32;
             instr.update_call_index(func_index);
             let relative_pos = self.relative_position.get(&func_offset).unwrap();
-            func_index_offset.insert(func_index, *relative_pos);
+            func_index_offset.insert(func_index + import_len, *relative_pos);
         }
 
         // push main functions (we collapse all functions into one)

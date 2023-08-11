@@ -7,15 +7,12 @@ mod locals_registry;
 mod translator;
 mod value_stack;
 
-use self::{
-    control_frame::ControlFrame,
-    control_stack::ControlFlowStack,
-    translator::FuncTranslator,
-};
+use self::{control_frame::ControlFrame, control_stack::ControlFlowStack, translator::FuncTranslator};
 pub use self::{
     error::{TranslationError, TranslationErrorInner},
     inst_builder::{Instr, InstructionsBuilder, RelativeDepth},
     translator::FuncTranslatorAllocations,
+    value_stack::ValueStackHeight,
 };
 use super::CompiledFunc;
 use crate::module::{FuncIdx, ModuleResources, ReusableAllocations};
@@ -99,11 +96,7 @@ impl<'parser> FuncBuilder<'parser> {
     }
 
     /// Translates into `wasmi` bytecode if the current code path is reachable.
-    fn validate_then_translate<V, T>(
-        &mut self,
-        validate: V,
-        translate: T,
-    ) -> Result<(), TranslationError>
+    fn validate_then_translate<V, T>(&mut self, validate: V, translate: T) -> Result<(), TranslationError>
     where
         V: FnOnce(&mut FuncValidator) -> Result<(), BinaryReaderError>,
         T: FnOnce(&mut FuncTranslator<'parser>) -> Result<(), TranslationError>,

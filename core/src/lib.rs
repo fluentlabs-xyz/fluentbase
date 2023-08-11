@@ -10,6 +10,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
+#[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
         evm_return_raw(panic_message.as_ptr(), panic_message.len() as u32);

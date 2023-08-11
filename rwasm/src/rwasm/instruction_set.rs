@@ -27,17 +27,17 @@ pub struct InstructionSet {
 macro_rules! impl_opcode {
     ($name:ident, $opcode:ident($into:ident)) => {
         pub fn $name<I: Into<$into>>(&mut self, value: I) {
-            self.instr.push(Instruction::$opcode(value.into()));
+            self.push(Instruction::$opcode(value.into()));
         }
     };
     ($name:ident, $opcode:ident($into:ident, $into2:ident)) => {
         pub fn $name<I: Into<$into>, J: Into<$into2>>(&mut self, value: I, value2: J) {
-            self.instr.push(Instruction::$opcode(value.into(), value2.into()));
+            self.push(Instruction::$opcode(value.into(), value2.into()));
         }
     };
     ($name:ident, $opcode:ident) => {
         pub fn $name(&mut self) {
-            self.instr.push(Instruction::$opcode);
+            self.push(Instruction::$opcode);
         }
     };
 }
@@ -128,6 +128,7 @@ impl InstructionSet {
     // TODO: "add more opcodes"
     impl_opcode!(op_i32_const, I32Const(UntypedValue));
     impl_opcode!(op_i64_const, I64Const(UntypedValue));
+    impl_opcode!(op_sanitizer_stack_check, SanitizerStackCheck(i32));
 
     pub fn extend<I: Into<InstructionSet>>(&mut self, with: I) {
         self.instr.extend(Into::<InstructionSet>::into(with).instr);

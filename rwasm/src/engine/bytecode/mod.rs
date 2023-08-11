@@ -343,6 +343,8 @@ pub enum Instruction {
     I64TruncSatF32U,
     I64TruncSatF64S,
     I64TruncSatF64U,
+    // sanitizer params
+    SanitizerStackCheck(i32),
 }
 
 impl Instruction {

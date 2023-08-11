@@ -1,0 +1,14 @@
+[package]
+name = "fluentbase-runtime-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-core = { path = "../../core" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+greeting = []
+panic = []

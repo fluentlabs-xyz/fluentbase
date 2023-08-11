@@ -3,7 +3,7 @@ members = [
     "circuits",
     "core",
     "runtime",
-    "runtime/examples/greeting",
+    "runtime/examples",
     "rwasm",
     "rwasm/e2e",
 ]
@@ -26,13 +26,19 @@ lto = "fat"
 codegen-units = 1
 
 [profile.release]
-opt-level = 1
-debug = false
-debug-assertions = false
-overflow-checks = false
-lto = true
 panic = "abort"
-incremental = false
-codegen-units = 1
-rpath = false
-strip = true
+lto = true
+opt-level = 'z'
+#strip = true
+
+#[profile.release]
+#opt-level = 1
+#debug = false
+#debug-assertions = false
+#overflow-checks = false
+#lto = true
+#panic = "abort"
+#incremental = false
+#codegen-units = 1
+#rpath = false
+#strip = true
