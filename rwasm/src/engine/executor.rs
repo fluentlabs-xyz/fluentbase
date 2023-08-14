@@ -242,10 +242,16 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::ReturnCallIndirect(func_type) => {
                     forward_call!(self.visit_return_call_indirect(func_type))
                 }
+                Instr::ReturnCallIndirectUnsafe(func_type) => {
+                    forward_call!(self.visit_return_call_indirect_unsafe(func_type))
+                }
                 Instr::CallInternal(compiled_func) => self.visit_call_internal(compiled_func)?,
                 Instr::Call(func) => forward_call!(self.visit_call(func)),
                 Instr::CallIndirect(func_type) => {
                     forward_call!(self.visit_call_indirect(func_type))
+                }
+                Instr::CallIndirectUnsafe(table) => {
+                    forward_call!(self.visit_call_indirect_unsafe(table))
                 }
                 Instr::Drop => self.visit_drop(),
                 Instr::Select => self.visit_select(),
@@ -776,27 +782,32 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         skip: usize,
         table: TableIdx,
         func_index: u32,
-        func_type: SignatureIdx,
+        func_type: Option<SignatureIdx>,
         kind: CallKind,
     ) -> Result<CallOutcome, TrapCode> {
         let table = self.cache.get_table(self.ctx, table);
-        let funcref = self
-            .ctx
-            .resolve_table(&table)
-            .get_untyped(func_index)
-            .map(FuncRef::from)
-            .ok_or(TrapCode::TableOutOfBounds)?;
-        let func = funcref.func().ok_or(TrapCode::IndirectCallToNull)?;
-        let actual_signature = self.ctx.resolve_func(func).ty_dedup();
-        let expected_signature = self
-            .ctx
-            .resolve_instance(self.cache.instance())
-            .get_signature(func_type.to_u32())
-            .unwrap_or_else(|| panic!("missing signature for call_indirect at index: {func_type:?}"));
-        if actual_signature != expected_signature {
-            return Err(TrapCode::BadSignature).map_err(Into::into);
-        }
-        self.call_func(skip, func, kind)
+        let func = if let Some(func_type) = func_type {
+            let funcref = self
+                .ctx
+                .resolve_table(&table)
+                .get_untyped(func_index)
+                .map(FuncRef::from)
+                .ok_or(TrapCode::TableOutOfBounds)?;
+            let func = funcref.func().ok_or(TrapCode::IndirectCallToNull)?;
+            let actual_signature = self.ctx.resolve_func(func).ty_dedup();
+            let expected_signature = self
+                .ctx
+                .resolve_instance(self.cache.instance())
+                .get_signature(func_type.to_u32())
+                .unwrap_or_else(|| panic!("missing signature for call_indirect at index: {func_type:?}"));
+            if actual_signature != expected_signature {
+                return Err(TrapCode::BadSignature).map_err(Into::into);
+            }
+            *func
+        } else {
+            self.cache.get_func(self.ctx, FuncIdx::from(func_index))
+        };
+        self.call_func(skip, &func, kind)
     }
 }
 
@@ -974,7 +985,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         let table = self.fetch_table_idx(2);
         let func_index: u32 = self.sp.pop_as();
         self.sp.drop_keep(drop_keep);
-        self.execute_call_indirect(3, table, func_index, func_type, CallKind::Tail)
+        self.execute_call_indirect(3, table, func_index, Some(func_type), CallKind::Tail)
+    }
+
+    #[inline(always)]
+    fn visit_return_call_indirect_unsafe(&mut self, table: TableIdx) -> Result<CallOutcome, TrapCode> {
+        let drop_keep = self.fetch_drop_keep(1);
+        let func_index: u32 = self.sp.pop_as();
+        self.sp.drop_keep(drop_keep);
+        self.execute_call_indirect(2, table, func_index, None, CallKind::Tail)
     }
 
     #[inline(always)]
@@ -992,7 +1011,13 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     fn visit_call_indirect(&mut self, func_type: SignatureIdx) -> Result<CallOutcome, TrapCode> {
         let table = self.fetch_table_idx(1);
         let func_index: u32 = self.sp.pop_as();
-        self.execute_call_indirect(2, table, func_index, func_type, CallKind::Nested)
+        self.execute_call_indirect(2, table, func_index, Some(func_type), CallKind::Nested)
+    }
+
+    #[inline(always)]
+    fn visit_call_indirect_unsafe(&mut self, table: TableIdx) -> Result<CallOutcome, TrapCode> {
+        let func_index: u32 = self.sp.pop_as();
+        self.execute_call_indirect(1, table, func_index, None, CallKind::Nested)
     }
 
     #[inline(always)]
