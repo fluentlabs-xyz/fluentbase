@@ -16,6 +16,12 @@ The biggest WASM problem is relative offsets for type mappings, function mapping
 rWASM binary format has more flatten structure w/o relative offsets and rWASM doesn't require type mapping validator and must be executed as is.
 Such flatten structure makes easier to proof correctness of each opcode execution and put several verification steps on developer's hands.
 
+## Technology
+
+rWASM is based on WASMi's IR developed by Parity Tech.
+We decided to choose on WASMi virtual machine because it's IR fully identical to the original WASM's opcode position.
+For rWASM we follow the same statement. Also, we don't touch WASMi's IR, instead we only modify binary representation to achieve ZK-friendliness. 
+
 Here is a list of differences:
 1. Deterministic function order based their position in the codebase
 2. Function indices are replaced with PC offset
@@ -27,13 +33,42 @@ Here is a list of differences:
 8. Type mappings are not required anymore since code is validated
 9. Drop/keep is replaced with Get/Set/Tee local instructions
 
-The new binary representation produces 100% valida WASMi's runtime module from binary.
+The new binary representation produces 100% valid WASMi's runtime module from binary.
 There are several features that are not supported anymore, like exports since the only way to interact with rWASM is only though start section.
 
 List of non-supported features:
 1. Export section doesn't work anymore (it can be fixed by injecting router inside)
 2. Passive mode data sections (it can be simulated via memory copy)
-3. 
+
+### Function order based on the position
+
+There is no need to store information about each function inside WASM binary, like function section and code section.
+Instead of can say that all bytecode is presented in flat structure, and we store functions one by one.
+To achieve this we mark function positions in the bytecode and remember each function position.
+
+### Function order and internal calls
+
+For internal calls WASMi uses `CallInternal` IR code.
+It stores function index inside (same is for original WASM binary).
+Sometimes it's quite expensive to prove these function indices because it refers to the function section, and we must parse and verify entire function section and lookup right function with right type inside this section.
+To avoid this we replace function index with bytecode offset index.
+
+For example, let's say we have two internal functions inside function and code sections.
+Let it be `foo` and `bar` function.
+Each internal function has position in the code section like a binary offset.
+Since we know that all functions are ordered and one function code can't collide with another then we can sort all functions and replace function index with the position in the bytecode.
+Let's say function `foo` has index 0 and position 120. Then we replace `CallInternal(0)` with `CallInternal(120)`.
+It makes much easier to prove PC and there is no need to parse function and code sections for offset matching.
+
+### Function local variables
+
+Each function might have local variables.
+In the reduced binary we don't store type mappings, so we need to avoid using local variables inside functions.
+To fix this problem we declare that each function has zero local variables and replace function init with `i32.const 0` opcodes.
+
+### Global variables
+
+Global variables init we inject inside start section of the binary
 
 ## WebAssembly's problems and ways to solve them
 

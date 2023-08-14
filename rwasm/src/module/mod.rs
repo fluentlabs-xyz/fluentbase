@@ -37,7 +37,13 @@ use self::{
 };
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
-    Engine, Error, ExternType, FuncType, GlobalType, MemoryType, TableType,
+    Engine,
+    Error,
+    ExternType,
+    FuncType,
+    GlobalType,
+    MemoryType,
+    TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 use core::{iter, slice::Iter as SliceIter};
@@ -271,6 +277,14 @@ impl Module {
         let idx = self.exports.get(name).copied()?;
         let ty = self.get_extern_type(idx);
         Some(ty)
+    }
+
+    pub fn get_export_func_index(&self, name: &str) -> Option<FuncIdx> {
+        let idx = self.exports.get(name).copied()?;
+        match idx {
+            ExternIdx::Func(func_idx) => Some(func_idx),
+            _ => None,
+        }
     }
 
     /// Returns the [`ExternType`] for a given [`ExternIdx`].

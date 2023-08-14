@@ -1,10 +1,23 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
-use fluentbase_rwasm::rwasm::{Compiler, CompilerError, DefaultImportHandler, ImportFunc, ImportLinker, ReducedModule};
 use fluentbase_rwasm::{
     common::{ValueType, F32, F64},
-    Config, Engine, Extern, ExternType, Func, Global, Instance, Linker, Memory, MemoryType, Module, Mutability, Store,
-    Table, TableType, Value,
+    rwasm::{Compiler, CompilerError, DefaultImportHandler, ImportLinker, ReducedModule},
+    Config,
+    Engine,
+    Extern,
+    Func,
+    Global,
+    Instance,
+    Linker,
+    Memory,
+    MemoryType,
+    Module,
+    Mutability,
+    Store,
+    Table,
+    TableType,
+    Value,
 };
 use std::collections::HashMap;
 use wast::token::{Id, Span};
@@ -149,31 +162,37 @@ impl TestContext<'_> {
             _ => TestError::Compiler(e),
         })?;
         let mut import_linker = ImportLinker::default();
-        {
-            let original_module = Module::new(self.engine(), wasm.as_slice())?;
-            for (i, export_type) in original_module.exports().enumerate() {
-                let module_name = "env".to_string();
-                let fn_name = export_type.name().to_owned();
-                match export_type.ty() {
-                    ExternType::Func(func_type) => {
-                        let import_func = ImportFunc::new_env(
-                            module_name,
-                            fn_name,
-                            0x1000 + i as u32,
-                            func_type.params(),
-                            func_type.results(),
-                        );
-                        import_linker.insert_function(import_func)
-                    }
-                    _ => break,
-                }
-            }
-        }
         compiler.translate_wo_entrypoint().unwrap();
         let binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
-        let module = reduced_module.to_module(self.engine(), &mut import_linker).unwrap();
-        import_linker.attach_linker(&mut self.linker, &mut self.store).unwrap();
+        let mut module_builder = reduced_module
+            .to_module_builder(self.engine(), &mut import_linker)
+            .unwrap();
+
+        {
+            let original_module = Module::new(self.engine(), wasm.as_slice())?;
+            for (i, export_type) in original_module.exports().enumerate() {
+                // let module_name = "env".to_string();
+                let fn_name = export_type.name().to_owned();
+                // let func_type = match export_type.ty() {
+                //     ExternType::Func(func_type) => func_type,
+                //     _ => break,
+                // };
+                let func_idx = original_module.get_export_func_index(export_type.name()).unwrap();
+                module_builder.push_export(fn_name.into_boxed_str(), func_idx).unwrap();
+                // let import_func = ImportFunc::new_env(
+                //     module_name,
+                //     fn_name,
+                //     0x1000 + i as u32,
+                //     func_type.params(),
+                //     func_type.results(),
+                // );
+                // import_linker.insert_function(import_func)
+            }
+        }
+
+        let module = module_builder.finish();
+
         let instance_pre = self.linker.instantiate(&mut self.store, &module)?;
         let instance = instance_pre.start(&mut self.store)?;
         self.modules.push(module);

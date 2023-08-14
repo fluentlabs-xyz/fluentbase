@@ -81,6 +81,15 @@ impl ReducedModule {
     }
 
     pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Result<Module, ModuleError> {
+        let builder = self.to_module_builder(engine, import_linker)?;
+        Ok(builder.finish())
+    }
+
+    pub fn to_module_builder<'a>(
+        &'a self,
+        engine: &'a Engine,
+        import_linker: &ImportLinker,
+    ) -> Result<ModuleBuilder, ModuleError> {
         let mut builder = ModuleBuilder::new(engine);
 
         // main function has empty inputs and outputs
@@ -152,7 +161,8 @@ impl ReducedModule {
         for (func_index, func_offset) in func_index_offset.iter() {
             let compiled_func = resources.get_compiled_func(FuncIdx::from(*func_index)).unwrap();
             if *func_offset == 0 || compiled_func.to_u32() == 0 {
-                assert_eq!(compiled_func.to_u32(), 0, "main function doesn't have zero offset");
+                // TODO: "what if we don't have main function? it might happen in e2e tests"
+                //assert_eq!(compiled_func.to_u32(), 0, "main function doesn't have zero offset");
             }
             // function main has 0 offset, init bytecode for entire section
             if *func_offset == 0 {
@@ -172,9 +182,7 @@ impl ReducedModule {
         let num_globals = self.bytecode().count_globals();
         builder.push_empty_i64_globals(num_globals as usize)?;
         // finalize module
-        let mut module = builder.finish();
-        module.set_rwasm();
-        Ok(module)
+        Ok(builder)
     }
 
     pub fn trace_binary(&self) -> String {

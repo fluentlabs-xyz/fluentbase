@@ -121,6 +121,7 @@ impl<'linker> Compiler<'linker> {
         for i in 0..total_fns {
             self.translate_function(i as u32)?;
         }
+        self.is_translated = true;
         Ok(())
     }
 
