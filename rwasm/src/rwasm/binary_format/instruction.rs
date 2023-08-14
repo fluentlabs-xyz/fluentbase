@@ -48,10 +48,12 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::ReturnIfNez(_) => sink.write_u8(0x0c)?,
             Instruction::ReturnCallInternal(func) => sink.write_u8(0x0d)? + func.write_binary(sink)?,
             Instruction::ReturnCall(func) => sink.write_u8(0x0f)? + func.write_binary(sink)?,
-            Instruction::ReturnCallIndirect(sig) => sink.write_u8(0x10)? + sig.write_binary(sink)?,
+            // Instruction::ReturnCallIndirect(sig) => sink.write_u8(0x10)? + sig.write_binary(sink)?,
+            Instruction::ReturnCallIndirectUnsafe(table) => sink.write_u8(0x10)? + table.write_binary(sink)?,
             Instruction::CallInternal(sig) => sink.write_u8(0x11)? + sig.write_binary(sink)?,
             Instruction::Call(jump_dest) => sink.write_u8(0x13)? + jump_dest.write_binary(sink)?,
-            Instruction::CallIndirect(table) => sink.write_u8(0x14)? + table.write_binary(sink)?,
+            // Instruction::CallIndirect(signature) => sink.write_u8(0x14)? + signature.write_binary(sink)?,
+            Instruction::CallIndirectUnsafe(table) => sink.write_u8(0x14)? + table.write_binary(sink)?,
             Instruction::Drop => sink.write_u8(0x15)?,
             Instruction::Select => sink.write_u8(0x16)?,
             // global Instruction family
@@ -234,6 +236,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::I64TruncSatF64S => sink.write_u8(0xc4)?,
             Instruction::I64TruncSatF64U => sink.write_u8(0xc5)?,
             Instruction::SanitizerStackCheck(note) => sink.write_u8(0xc6)? + note.write_binary(sink)?,
+            _ => unreachable!("not supported opcode: {:?}", self),
         };
         Ok(n)
     }
@@ -258,10 +261,12 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0x0c => Instruction::ReturnIfNez(DropKeep::none()),
             0x0d => Instruction::ReturnCallInternal(CompiledFunc::read_binary(sink)?),
             0x0f => Instruction::ReturnCall(FuncIdx::read_binary(sink)?),
-            0x10 => Instruction::ReturnCallIndirect(SignatureIdx::read_binary(sink)?),
+            // 0x10 => Instruction::ReturnCallIndirect(SignatureIdx::read_binary(sink)?),
+            0x10 => Instruction::ReturnCallIndirectUnsafe(TableIdx::read_binary(sink)?),
             0x11 => Instruction::CallInternal(CompiledFunc::read_binary(sink)?),
             0x13 => Instruction::Call(FuncIdx::read_binary(sink)?),
-            0x14 => Instruction::CallIndirect(SignatureIdx::read_binary(sink)?),
+            // 0x14 => Instruction::CallIndirect(SignatureIdx::read_binary(sink)?),
+            0x14 => Instruction::CallIndirectUnsafe(TableIdx::read_binary(sink)?),
             0x15 => Instruction::Drop,
             0x16 => Instruction::Select,
             // global Instruction family
