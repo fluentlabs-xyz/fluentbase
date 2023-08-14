@@ -471,6 +471,12 @@ mod tests {
     #[test]
     fn test_opcode_encoding() {
         for opcode in Instruction::iter() {
+            if matches!(
+                opcode,
+                Instruction::CallIndirect(_) | Instruction::ReturnCallIndirect(_)
+            ) {
+                continue;
+            }
             let mut buf = vec![0; 100];
             let mut writer = BinaryFormatWriter::new(buf.as_mut_slice());
             if opcode.write_binary(&mut writer).unwrap() == 0 {

@@ -1,6 +1,6 @@
 use crate::{runtime::Runtime, Error};
 use fluentbase_rwasm::{
-    common::{Trap, TrapCode},
+    common::Trap,
     rwasm::{Compiler, ImportLinker},
 };
 
