@@ -387,6 +387,15 @@ impl<'linker> Compiler<'linker> {
                     code.update_call_index(state.0);
                     affected = true;
                 }
+                Instruction::RefFunc(func_idx) => {
+                    let func_offset = self
+                        .function_mapping
+                        .get(&func_idx.to_u32())
+                        .ok_or(CompilerError::MissingFunction)?;
+                    let state = &states[*func_offset as usize];
+                    code.update_call_index(state.0);
+                    affected = true;
+                }
                 _ => {}
             };
             if let Some(jump_offset) = code.get_jump_offset() {

@@ -8,6 +8,39 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-halo2-mpt-circuits = { git = "https://github.com/scroll-tech/mpt-circuit", branch = "v0.4" }
+ethers-core = "0.17.0"
+itertools = "0.10.5"
+hash-circuit = { package = "poseidon-circuit", git = "https://github.com/scroll-tech/poseidon-circuit.git", branch = "scroll-dev-0619", features=['short']}
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2022_09_10" }
+rand = "0.8"
+lazy_static = "1.4.0"
+num-traits = "0.2.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strum = "0.24"
+strum_macros = "0.24"
+num-bigint = "0.4"
+hex = "0.4"
+thiserror = "1.0"
+log = "0.4"
+
+[patch."https://github.com/privacy-scaling-explorations/halo2.git"]
+halo2_proofs = { git = "https://github.com/scroll-tech/halo2.git", branch = "scroll-dev-0220" }
+
+[features]
+# printout the layout of circuits for demo and some unittests
+print_layout = ["halo2_proofs/dev-graph"]
 
 [dev-dependencies]
+rand_chacha = "0.3.0"
+plotters = "0.3"
+bencher = "0.1"
+subtle = "2"
+
+#[[bin]]
+#name = "integration-test"
+#path = "integration-tests/src/main.rs"
+
+[profile.test]
+opt-level = 3
+debug-assertions = true

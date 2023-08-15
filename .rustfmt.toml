@@ -4,7 +4,7 @@ imports_layout = "HorizontalVertical"
 edition = "2021"
 
 comment_width = 100
-max_width = 120
+max_width = 100
 newline_style = "Unix"
 #normalize_comments = true
 reorder_imports = true
