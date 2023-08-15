@@ -233,6 +233,7 @@ impl Instruction {
             Instruction::Call(func) => *func = FuncIdx::from(new_index),
             Instruction::ReturnCallInternal(func) => *func = CompiledFunc::from(new_index),
             Instruction::CallInternal(func) => *func = CompiledFunc::from(new_index),
+            Instruction::RefFunc(func) => *func = FuncIdx::from(new_index),
             _ => panic!("tried to update call index of a non-call instruction: {self:?}"),
         }
     }

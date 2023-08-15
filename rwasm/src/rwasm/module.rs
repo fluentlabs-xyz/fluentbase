@@ -141,6 +141,7 @@ impl ReducedModule {
             let func_offset = match instr {
                 Instruction::CallInternal(func) => func.to_u32(),
                 Instruction::ReturnCallInternal(func) => func.to_u32(),
+                Instruction::RefFunc(func) => func.to_u32(),
                 _ => continue,
             };
             let func_index = func_index_offset.len() as u32;
