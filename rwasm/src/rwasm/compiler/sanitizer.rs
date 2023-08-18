@@ -11,7 +11,12 @@ impl Sanitizer {
         Self::default()
     }
 
-    pub fn register_internal_fn(&mut self, func_type: &FuncType, instruction_set: &mut InstructionSet, pos: usize) {
+    pub fn register_internal_fn(
+        &mut self,
+        func_type: &FuncType,
+        instruction_set: &mut InstructionSet,
+        pos: usize,
+    ) {
         let mut stack_height = 0i32;
         let input_len = func_type.params().len();
         stack_height += input_len as i32;
@@ -34,11 +39,11 @@ impl Sanitizer {
     pub fn check_stack_height_call(
         &mut self,
         instr: &Instruction,
-        func_type: &FuncType,
+        _func_type: &FuncType,
         instruction_set: &mut InstructionSet,
         pos: usize,
     ) {
-        let mut stack_height = 0i32;
+        let stack_height = 0i32;
         // let input_len = func_type.params().len();
         // stack_height -= input_len as i32;
         // let output_len = func_type.results().len();
@@ -188,7 +193,9 @@ impl Sanitizer {
             Instruction::GlobalGet(_) => stack_height += 1,
             Instruction::GlobalSet(_) => stack_height -= 1,
             Instruction::MemorySize => stack_height += 1,
-            Instruction::MemoryInit(_) | Instruction::MemoryFill | Instruction::MemoryCopy => stack_height -= 3,
+            Instruction::MemoryInit(_) | Instruction::MemoryFill | Instruction::MemoryCopy => {
+                stack_height -= 3
+            }
             Instruction::TableSize(_) => stack_height += 1,
             Instruction::TableGrow(_) => stack_height -= 1,
             Instruction::TableCopy(_) | Instruction::TableFill(_) => stack_height -= 3,

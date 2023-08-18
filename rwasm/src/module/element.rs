@@ -1,7 +1,6 @@
 use super::{ConstExpr, TableIdx};
-use crate::module::utils::WasmiValueType;
+use crate::{common::ValueType, module::utils::WasmiValueType};
 use alloc::sync::Arc;
-use crate::common::ValueType;
 
 /// A table element segment within a [`Module`].
 ///
@@ -9,11 +8,11 @@ use crate::common::ValueType;
 #[derive(Debug)]
 pub struct ElementSegment {
     /// The kind of the [`ElementSegment`].
-    kind: ElementSegmentKind,
+    pub(crate) kind: ElementSegmentKind,
     /// The type of elements of the [`ElementSegment`].
-    ty: ValueType,
+    pub(crate) ty: ValueType,
     /// The items of the [`ElementSegment`].
-    items: ElementSegmentItems,
+    pub(crate) items: ElementSegmentItems,
 }
 
 /// The items of an [`ElementSegment`].

@@ -101,15 +101,21 @@ pub fn execute_wasm<'ctx, 'engine>(
     const_pool: ConstPoolView<'engine>,
     resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>,
 ) -> Result<WasmOutcome, TrapCode> {
-    Executor::new(ctx, cache, value_stack, call_stack, code_map, const_pool).execute(resource_limiter)
+    Executor::new(ctx, cache, value_stack, call_stack, code_map, const_pool)
+        .execute(resource_limiter)
 }
 
 /// The function signature of Wasm load operations.
-type WasmLoadOp = fn(memory: &[u8], address: UntypedValue, offset: u32) -> Result<UntypedValue, TrapCode>;
+type WasmLoadOp =
+    fn(memory: &[u8], address: UntypedValue, offset: u32) -> Result<UntypedValue, TrapCode>;
 
 /// The function signature of Wasm store operations.
-type WasmStoreOp =
-    fn(memory: &mut [u8], address: UntypedValue, offset: u32, value: UntypedValue) -> Result<(), TrapCode>;
+type WasmStoreOp = fn(
+    memory: &mut [u8],
+    address: UntypedValue,
+    offset: u32,
+    value: UntypedValue,
+) -> Result<(), TrapCode>;
 
 /// An error that can occur upon `memory.grow` or `table.grow`.
 #[derive(Copy, Clone)]
@@ -168,8 +174,15 @@ struct Executor<'ctx, 'engine> {
 
 macro_rules! forward_call {
     ($expr:expr) => {{
-        if let CallOutcome::Call { host_func, instance } = $expr? {
-            return Ok(WasmOutcome::Call { host_func, instance });
+        if let CallOutcome::Call {
+            host_func,
+            instance,
+        } = $expr?
+        {
+            return Ok(WasmOutcome::Call {
+                host_func,
+                instance,
+            });
         }
     }};
 }
@@ -202,7 +215,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     /// Executes the function frame until it returns or traps.
     #[inline(always)]
-    fn execute(mut self, resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>) -> Result<WasmOutcome, TrapCode> {
+    fn execute(
+        mut self,
+        resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>,
+    ) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
         let mut stack_diff_before: i32 = 0;
         let mut stack_diff_after: i32 = 0;
@@ -235,7 +251,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                         return Ok(WasmOutcome::Return);
                     }
                 }
-                Instr::ReturnCallInternal(compiled_func) => self.visit_return_call_internal(compiled_func)?,
+                Instr::ReturnCallInternal(compiled_func) => {
+                    self.visit_return_call_internal(compiled_func)?
+                }
                 Instr::ReturnCall(func) => {
                     forward_call!(self.visit_return_call(func))
                 }
@@ -430,9 +448,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::I64Extend8S => self.visit_i64_extend8_s(),
                 Instr::I64Extend16S => self.visit_i64_extend16_s(),
                 Instr::I64Extend32S => self.visit_i64_extend32_s(),
-                Instr::SanitizerStackCheck(stack_height) => {
-                    self.visit_sanitizer_stack_check(stack_height, stack_diff_after - stack_diff_before, &prev_opcode)
-                }
+                Instr::SanitizerStackCheck(stack_height) => self.visit_sanitizer_stack_check(
+                    stack_height,
+                    stack_diff_after - stack_diff_before,
+                    &prev_opcode,
+                ),
             }
         }
     }
@@ -451,7 +471,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     /// - `i64.load32_s`
     /// - `i64.load32_u`
     #[inline(always)]
-    fn execute_load_extend(&mut self, offset: AddressOffset, load_extend: WasmLoadOp) -> Result<(), TrapCode> {
+    fn execute_load_extend(
+        &mut self,
+        offset: AddressOffset,
+        load_extend: WasmLoadOp,
+    ) -> Result<(), TrapCode> {
         self.sp.try_eval_top(|address| {
             let memory = self.cache.default_memory_bytes(self.ctx);
             let value = load_extend(memory, address, offset.into_inner())?;
@@ -471,7 +495,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     /// - `{i32, i64}.store16`
     /// - `i64.store32`
     #[inline(always)]
-    fn execute_store_wrap(&mut self, offset: AddressOffset, store_wrap: WasmStoreOp) -> Result<(), TrapCode> {
+    fn execute_store_wrap(
+        &mut self,
+        offset: AddressOffset,
+        store_wrap: WasmStoreOp,
+    ) -> Result<(), TrapCode> {
         let (address, value) = self.sp.pop2();
         let memory = self.cache.default_memory_bytes(self.ctx);
         store_wrap(memory, address, offset.into_inner(), value)?;
@@ -487,7 +515,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     /// Executes a fallible unary `wasmi` instruction.
     #[inline(always)]
-    fn try_execute_unary(&mut self, f: fn(UntypedValue) -> Result<UntypedValue, TrapCode>) -> Result<(), TrapCode> {
+    fn try_execute_unary(
+        &mut self,
+        f: fn(UntypedValue) -> Result<UntypedValue, TrapCode>,
+    ) -> Result<(), TrapCode> {
         self.sp.try_eval_top(f)?;
         self.try_next_instr()
     }
@@ -599,11 +630,17 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     /// the function call so that the stack and execution state is synchronized
     /// with the outer structures.
     #[inline(always)]
-    fn call_func(&mut self, skip: usize, func: &Func, kind: CallKind) -> Result<CallOutcome, TrapCode> {
+    fn call_func(
+        &mut self,
+        skip: usize,
+        func: &Func,
+        kind: CallKind,
+    ) -> Result<CallOutcome, TrapCode> {
         self.next_instr_at(skip);
         self.sync_stack_ptr();
         if matches!(kind, CallKind::Nested) {
-            self.call_stack.push(FuncFrame::new(self.ip, self.cache.instance()))?;
+            self.call_stack
+                .push(FuncFrame::new(self.ip, self.cache.instance()))?;
         }
         match self.ctx.resolve_func(func) {
             FuncEntity::Wasm(wasm_func) => {
@@ -637,7 +674,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         });
         self.sync_stack_ptr();
         if matches!(kind, CallKind::Nested) {
-            self.call_stack.push(FuncFrame::new(self.ip, self.cache.instance()))?;
+            self.call_stack
+                .push(FuncFrame::new(self.ip, self.cache.instance()))?;
         }
         let header = self.code_map.header(func);
         self.value_stack.prepare_wasm_call(header)?;
@@ -727,7 +765,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     /// - If the [`StoreInner`] ran out of fuel.
     /// - If the `exec` closure traps.
     #[inline(always)]
-    fn consume_fuel_with_lazy<T, E>(&mut self, delta: u64, exec: impl FnOnce(&mut Self) -> Result<T, E>) -> Result<T, E>
+    fn consume_fuel_with_lazy<T, E>(
+        &mut self,
+        delta: u64,
+        exec: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
     where
         E: From<TrapCode>,
     {
@@ -799,7 +841,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 .ctx
                 .resolve_instance(self.cache.instance())
                 .get_signature(func_type.to_u32())
-                .unwrap_or_else(|| panic!("missing signature for call_indirect at index: {func_type:?}"));
+                .unwrap_or_else(|| {
+                    panic!("missing signature for call_indirect at index: {func_type:?}")
+                });
             if actual_signature != expected_signature {
                 return Err(TrapCode::BadSignature).map_err(Into::into);
             }
@@ -980,7 +1024,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_return_call_indirect(&mut self, func_type: SignatureIdx) -> Result<CallOutcome, TrapCode> {
+    fn visit_return_call_indirect(
+        &mut self,
+        func_type: SignatureIdx,
+    ) -> Result<CallOutcome, TrapCode> {
         let drop_keep = self.fetch_drop_keep(1);
         let table = self.fetch_table_idx(2);
         let func_index: u32 = self.sp.pop_as();
@@ -989,7 +1036,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_return_call_indirect_unsafe(&mut self, table: TableIdx) -> Result<CallOutcome, TrapCode> {
+    fn visit_return_call_indirect_unsafe(
+        &mut self,
+        table: TableIdx,
+    ) -> Result<CallOutcome, TrapCode> {
         let drop_keep = self.fetch_drop_keep(1);
         let func_index: u32 = self.sp.pop_as();
         self.sp.drop_keep(drop_keep);
@@ -1057,10 +1107,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         &mut self,
         stack_diff: i32,
         value_diff: i32,
-        prev_opcodes: &alloc::vec::Vec<Instruction>,
+        _prev_opcodes: &alloc::vec::Vec<Instruction>,
     ) {
         if value_diff != stack_diff {
-            let stack_dump = self.value_stack.dump_stack(self.sp);
+            // let stack_dump = self.value_stack.dump_stack(self.sp);
             // assert!(
             //     false,
             //     "corrupted stack ({} != {}): dump={:?}, prev_opcodes={:?}",
@@ -1098,7 +1148,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_memory_grow(&mut self, resource_limiter: &mut ResourceLimiterRef<'ctx>) -> Result<(), TrapCode> {
+    fn visit_memory_grow(
+        &mut self,
+        resource_limiter: &mut ResourceLimiterRef<'ctx>,
+    ) -> Result<(), TrapCode> {
         let delta: u32 = self.sp.pop_as();
         let delta = match Pages::new(delta) {
             Some(pages) => pages,
@@ -1194,7 +1247,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         self.consume_fuel_with(
             |costs| costs.fuel_for_bytes(n as u64),
             |this| {
-                let (memory, data) = this.cache.get_default_memory_and_data_segment(this.ctx, segment);
+                let (memory, data) = this
+                    .cache
+                    .get_default_memory_and_data_segment(this.ctx, segment);
                 let memory = memory
                     .get_mut(dst_offset..)
                     .and_then(|memory| memory.get_mut(..n))
@@ -1212,7 +1267,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     #[inline(always)]
     fn visit_data_drop(&mut self, segment_index: DataSegmentIdx) {
-        let segment = self.cache.get_data_segment(self.ctx, segment_index.to_u32());
+        let segment = self
+            .cache
+            .get_data_segment(self.ctx, segment_index.to_u32());
         self.ctx.resolve_data_segment_mut(&segment).drop_bytes();
         self.next_instr();
     }
@@ -1261,7 +1318,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             |costs| costs.fuel_for_elements(u64::from(len)),
             |this| {
                 let table = this.cache.get_table(this.ctx, table_index);
-                this.ctx.resolve_table_mut(&table).fill_untyped(dst, val, len)?;
+                this.ctx
+                    .resolve_table_mut(&table)
+                    .fill_untyped(dst, val, len)?;
                 Ok(())
             },
         )?;
@@ -1333,7 +1392,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         self.consume_fuel_with(
             |costs| costs.fuel_for_elements(u64::from(len)),
             |this| {
-                let (instance, table, element) = this.cache.get_table_and_element_segment(this.ctx, table, elem);
+                let (instance, table, element) = this
+                    .cache
+                    .get_table_and_element_segment(this.ctx, table, elem);
                 table.init(dst_index, element, src_index, len, |func_index| {
                     instance
                         .get_func(func_index)

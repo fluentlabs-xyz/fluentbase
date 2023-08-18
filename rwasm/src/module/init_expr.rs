@@ -7,8 +7,12 @@
 //! [`s1vm`]: https://github.com/Neopallium/s1vm
 
 use super::FuncIdx;
-use crate::common::{UntypedValue, F32, F64};
-use crate::{ExternRef, FuncRef, Value};
+use crate::{
+    common::{UntypedValue, F32, F64},
+    ExternRef,
+    FuncRef,
+    Value,
+};
 use alloc::boxed::Box;
 use core::fmt;
 use smallvec::SmallVec;
@@ -64,7 +68,7 @@ pub enum Op {
 /// - `f32.const`
 /// - `f64.const`
 /// - `ref.null`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstOp {
     /// The underlying precomputed untyped value.
     value: UntypedValue,
@@ -78,7 +82,7 @@ impl Eval for ConstOp {
 
 /// Represents a Wasm `global.get` operator.
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct GlobalOp {
     /// The index of the global variable.
     global_index: u32,
@@ -92,7 +96,7 @@ impl Eval for GlobalOp {
 
 /// Represents a Wasm `func.ref` operator.
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct FuncRefOp {
     /// The index of the function.
     function_index: u32,
@@ -158,7 +162,9 @@ impl Op {
     where
         T: Fn(&dyn EvalContext) -> Option<UntypedValue> + Send + Sync + 'static,
     {
-        Self::Expr(ExprOp { expr: Box::new(expr) })
+        Self::Expr(ExprOp {
+            expr: Box::new(expr),
+        })
     }
 }
 
@@ -181,7 +187,7 @@ impl Eval for Op {
 #[derive(Debug)]
 pub struct ConstExpr {
     /// The root operator of the [`ConstExpr`].
-    op: Op,
+    pub(crate) op: Op,
 }
 
 impl Eval for ConstExpr {
@@ -219,7 +225,10 @@ impl ConstExpr {
         /// A buffer required for translation of Wasm const expressions.
         type TranslationBuffer = SmallVec<[Op; 3]>;
         /// Convenience function to create the various expression operators.
-        fn expr_op(stack: &mut TranslationBuffer, expr: fn(UntypedValue, UntypedValue) -> UntypedValue) {
+        fn expr_op(
+            stack: &mut TranslationBuffer,
+            expr: fn(UntypedValue, UntypedValue) -> UntypedValue,
+        ) {
             let rhs = stack
                 .pop()
                 .expect("must have rhs operator on the stack due to Wasm validation");
@@ -252,9 +261,9 @@ impl ConstExpr {
         //       only have one operator via the small vector data structure.
         let mut stack = TranslationBuffer::new();
         loop {
-            let op = reader
-                .read()
-                .unwrap_or_else(|error| panic!("unexpectedly encountered invalid const expression operator: {error}"));
+            let op = reader.read().unwrap_or_else(|error| {
+                panic!("unexpectedly encountered invalid const expression operator: {error}")
+            });
             match op {
                 wasmparser::Operator::I32Const { value } => {
                     stack.push(Op::constant(value));
@@ -369,6 +378,9 @@ impl ConstExpr {
                 Some((self.func_get)(index))
             }
         }
-        self.eval(&WrappedEvalContext::<G, F> { global_get, func_get })
+        self.eval(&WrappedEvalContext::<G, F> {
+            global_get,
+            func_get,
+        })
     }
 }
