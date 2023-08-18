@@ -1,12 +1,12 @@
 use crate::{
     arena::ArenaIndex,
-    common::UntypedValue,
+    common::{UntypedValue, ValueType},
     engine::{
         bytecode::{AddressOffset, BranchOffset, Instruction},
         code_map::InstructionPtr,
         DropKeep,
     },
-    module::{DataSegmentKind, ImportName, Imported},
+    module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         compiler::sanitizer::Sanitizer,
@@ -63,7 +63,8 @@ impl<'linker> Compiler<'linker> {
         let mut config = Config::default();
         config.consume_fuel(false);
         let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice()).map_err(|e| CompilerError::ModuleError(e))?;
+        let module = Module::new(&engine, wasm_binary.as_slice())
+            .map_err(|e| CompilerError::ModuleError(e))?;
         Ok(Compiler {
             engine,
             module,
@@ -79,10 +80,14 @@ impl<'linker> Compiler<'linker> {
         if self.is_translated {
             unreachable!("already translated");
         }
-        // translate memory and global first
+        // translate globals, tables and memory
         let total_globals = self.module.globals.len();
         for i in 0..total_globals {
             self.translate_global(i as u32)?;
+        }
+        let total_tables = self.module.tables.len();
+        for i in 0..total_tables {
+            self.translate_table(i as u32)?;
         }
         self.translate_memory()?;
         // find main entrypoint (it must starts with `main` keyword)
@@ -157,7 +162,10 @@ impl<'linker> Compiler<'linker> {
                         Instruction::I32Store16(AddressOffset::from(0)),
                         BigEndian::read_u16(chunk) as u64,
                     ),
-                    1 => (Instruction::I32Store8(AddressOffset::from(0)), chunk[0] as u64),
+                    1 => (
+                        Instruction::I32Store8(AddressOffset::from(0)),
+                        chunk[0] as u64,
+                    ),
                     _ => {
                         unreachable!("not possible chunk len: {}", chunk.len())
                     }
@@ -177,12 +185,54 @@ impl<'linker> Compiler<'linker> {
         assert!(global_index < globals.len() as u32);
         let global_inits = &self.module.globals_init;
         assert!(global_index < global_inits.len() as u32);
-        let init_value = global_inits[global_index as usize]
-            .eval_const()
-            .ok_or(CompilerError::NotSupported("only static global variables supported"))?;
         self.code_section
-            .push(Instruction::I64Const(UntypedValue::from(init_value.to_bits())));
-        self.code_section.push(Instruction::GlobalSet((global_index).into()));
+            .op_i64_const(self.translate_const_expr(&global_inits[global_index as usize])?);
+        self.code_section.op_global_set(global_index);
+        Ok(())
+    }
+
+    fn translate_const_expr(&self, const_expr: &ConstExpr) -> Result<UntypedValue, CompilerError> {
+        let init_value = const_expr.eval_const().ok_or(CompilerError::NotSupported(
+            "only static global variables supported",
+        ))?;
+        Ok(init_value)
+    }
+
+    fn translate_table(&mut self, table_index: u32) -> Result<(), CompilerError> {
+        assert!(table_index < self.module.tables.len() as u32);
+        let table = &self.module.tables[table_index as usize];
+        if table.element() != ValueType::FuncRef {
+            return Err(CompilerError::NotSupported(
+                "only funcref type is supported for tables",
+            ));
+        }
+        self.code_section
+            .op_i64_const(table.maximum().unwrap_or_default());
+        self.code_section.op_table_grow(table_index);
+        for e in self.module.element_segments.iter() {
+            let aes = match &e.kind {
+                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "passive or declared mode for element segments is not supported",
+                    ))
+                }
+                ElementSegmentKind::Active(aes) => aes,
+            };
+            if aes.table_index().into_u32() != table_index {
+                continue;
+            }
+            if e.ty != ValueType::FuncRef {
+                return Err(CompilerError::NotSupported(
+                    "only funcref type is supported for element segments",
+                ));
+            }
+            let table_idx = self.translate_const_expr(aes.offset())?;
+            for item in e.items.items().iter() {
+                let res = self.translate_const_expr(item)?;
+                self.code_section.op_i64_const(res);
+                self.code_section.op_table_set(table_idx.to_bits() as u32);
+            }
+        }
         Ok(())
     }
 
@@ -344,7 +394,11 @@ impl<'linker> Compiler<'linker> {
                     }
                     Instruction::Call(func) | Instruction::ReturnCall(func) => {
                         // we can safely unwrap because we already know that import exists
-                        let import_func = self.import_linker.unwrap().resolve_by_index(func.to_u32()).unwrap();
+                        let import_func = self
+                            .import_linker
+                            .unwrap()
+                            .resolve_by_index(func.to_u32())
+                            .unwrap();
                         let func_type = import_func.func_type();
                         sanitizer.check_stack_height_call(&instr, func_type, bytecode, pos);
                         iter.next();

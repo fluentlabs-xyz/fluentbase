@@ -121,7 +121,11 @@ impl ModuleImports {
         let tables = imports.tables.into_iter().map(Imported::Table);
         let memories = imports.memories.into_iter().map(Imported::Memory);
         let globals = imports.globals.into_iter().map(Imported::Global);
-        let items = funcs.chain(tables).chain(memories).chain(globals).collect::<Box<[_]>>();
+        let items = funcs
+            .chain(tables)
+            .chain(memories)
+            .chain(globals)
+            .collect::<Box<[_]>>();
         Self {
             items,
             len_funcs,
@@ -168,6 +172,7 @@ impl Module {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_rwasm(&mut self) {
         self.is_rwasm = true;
     }
@@ -334,32 +339,28 @@ impl<'a> Iterator for ModuleImportsIter<'a> {
             None => return None,
             Some(imported) => match imported {
                 Imported::Func(name) => {
-                    let func_type = self
-                        .funcs
-                        .next()
-                        .unwrap_or_else(|| panic!("unexpected missing imported function for {name:?}"));
+                    let func_type = self.funcs.next().unwrap_or_else(|| {
+                        panic!("unexpected missing imported function for {name:?}")
+                    });
                     let func_type = self.engine.resolve_func_type(func_type, FuncType::clone);
                     ImportType::new(name, func_type)
                 }
                 Imported::Table(name) => {
-                    let table_type = self
-                        .tables
-                        .next()
-                        .unwrap_or_else(|| panic!("unexpected missing imported table for {name:?}"));
+                    let table_type = self.tables.next().unwrap_or_else(|| {
+                        panic!("unexpected missing imported table for {name:?}")
+                    });
                     ImportType::new(name, *table_type)
                 }
                 Imported::Memory(name) => {
-                    let memory_type = self
-                        .memories
-                        .next()
-                        .unwrap_or_else(|| panic!("unexpected missing imported linear memory for {name:?}"));
+                    let memory_type = self.memories.next().unwrap_or_else(|| {
+                        panic!("unexpected missing imported linear memory for {name:?}")
+                    });
                     ImportType::new(name, *memory_type)
                 }
                 Imported::Global(name) => {
-                    let global_type = self
-                        .globals
-                        .next()
-                        .unwrap_or_else(|| panic!("unexpected missing imported global variable for {name:?}"));
+                    let global_type = self.globals.next().unwrap_or_else(|| {
+                        panic!("unexpected missing imported global variable for {name:?}")
+                    });
                     ImportType::new(name, *global_type)
                 }
             },
@@ -397,7 +398,10 @@ impl<'module> ImportType<'module> {
     where
         T: Into<ExternType>,
     {
-        Self { name, ty: ty.into() }
+        Self {
+            name,
+            ty: ty.into(),
+        }
     }
 
     /// Returns the import name.
@@ -431,7 +435,9 @@ impl<'a> Iterator for InternalFuncsIter<'a> {
     type Item = (DedupFuncType, CompiledFunc);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(func_type, func_body)| (*func_type, *func_body))
+        self.iter
+            .next()
+            .map(|(func_type, func_body)| (*func_type, *func_body))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

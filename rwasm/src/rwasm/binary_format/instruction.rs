@@ -12,7 +12,6 @@ use crate::{
             GlobalIdx,
             Instruction,
             LocalDepth,
-            SignatureIdx,
             TableIdx,
         },
         CompiledFunc,
@@ -36,24 +35,42 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::LocalSet(index) => sink.write_u8(0x01)? + index.write_binary(sink)?,
             Instruction::LocalTee(index) => sink.write_u8(0x02)? + index.write_binary(sink)?,
             // control flow Instruction family
-            Instruction::Br(branch_params) => sink.write_u8(0x03)? + branch_params.write_binary(sink)?,
-            Instruction::BrIfEqz(branch_params) => sink.write_u8(0x04)? + branch_params.write_binary(sink)?,
-            Instruction::BrIfNez(branch_params) => sink.write_u8(0x05)? + branch_params.write_binary(sink)?,
-            Instruction::BrAdjust(branch_params) => sink.write_u8(0x06)? + branch_params.write_binary(sink)?,
-            Instruction::BrAdjustIfNez(branch_params) => sink.write_u8(0x07)? + branch_params.write_binary(sink)?,
+            Instruction::Br(branch_params) => {
+                sink.write_u8(0x03)? + branch_params.write_binary(sink)?
+            }
+            Instruction::BrIfEqz(branch_params) => {
+                sink.write_u8(0x04)? + branch_params.write_binary(sink)?
+            }
+            Instruction::BrIfNez(branch_params) => {
+                sink.write_u8(0x05)? + branch_params.write_binary(sink)?
+            }
+            Instruction::BrAdjust(branch_params) => {
+                sink.write_u8(0x06)? + branch_params.write_binary(sink)?
+            }
+            Instruction::BrAdjustIfNez(branch_params) => {
+                sink.write_u8(0x07)? + branch_params.write_binary(sink)?
+            }
             Instruction::BrTable(index) => sink.write_u8(0x08)? + index.write_binary(sink)?,
             Instruction::Unreachable => sink.write_u8(0x09)?,
             Instruction::ConsumeFuel(u) => sink.write_u8(0x0a)? + u.write_binary(sink)?,
             Instruction::Return(_) => sink.write_u8(0x0b)?,
             Instruction::ReturnIfNez(_) => sink.write_u8(0x0c)?,
-            Instruction::ReturnCallInternal(func) => sink.write_u8(0x0d)? + func.write_binary(sink)?,
+            Instruction::ReturnCallInternal(func) => {
+                sink.write_u8(0x0d)? + func.write_binary(sink)?
+            }
             Instruction::ReturnCall(func) => sink.write_u8(0x0f)? + func.write_binary(sink)?,
-            // Instruction::ReturnCallIndirect(sig) => sink.write_u8(0x10)? + sig.write_binary(sink)?,
-            Instruction::ReturnCallIndirectUnsafe(table) => sink.write_u8(0x10)? + table.write_binary(sink)?,
+            // Instruction::ReturnCallIndirect(sig) => sink.write_u8(0x10)? +
+            // sig.write_binary(sink)?,
+            Instruction::ReturnCallIndirectUnsafe(table) => {
+                sink.write_u8(0x10)? + table.write_binary(sink)?
+            }
             Instruction::CallInternal(sig) => sink.write_u8(0x11)? + sig.write_binary(sink)?,
             Instruction::Call(jump_dest) => sink.write_u8(0x13)? + jump_dest.write_binary(sink)?,
-            // Instruction::CallIndirect(signature) => sink.write_u8(0x14)? + signature.write_binary(sink)?,
-            Instruction::CallIndirectUnsafe(table) => sink.write_u8(0x14)? + table.write_binary(sink)?,
+            // Instruction::CallIndirect(signature) => sink.write_u8(0x14)? +
+            // signature.write_binary(sink)?,
+            Instruction::CallIndirectUnsafe(table) => {
+                sink.write_u8(0x14)? + table.write_binary(sink)?
+            }
             Instruction::Drop => sink.write_u8(0x15)?,
             Instruction::Select => sink.write_u8(0x16)?,
             // global Instruction family
@@ -100,9 +117,15 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::ElemDrop(idx) => sink.write_u8(0x3d)? + idx.write_binary(sink)?,
             Instruction::RefFunc(idx) => sink.write_u8(0x3e)? + idx.write_binary(sink)?,
             // i32/i64 Instruction family
-            Instruction::I32Const(untyped_value) => sink.write_u8(0x3f)? + untyped_value.write_binary(sink)?,
-            Instruction::I64Const(untyped_value) => sink.write_u8(0x40)? + untyped_value.write_binary(sink)?,
-            Instruction::ConstRef(const_ref) => sink.write_u8(0x41)? + const_ref.write_binary(sink)?,
+            Instruction::I32Const(untyped_value) => {
+                sink.write_u8(0x3f)? + untyped_value.write_binary(sink)?
+            }
+            Instruction::I64Const(untyped_value) => {
+                sink.write_u8(0x40)? + untyped_value.write_binary(sink)?
+            }
+            Instruction::ConstRef(const_ref) => {
+                sink.write_u8(0x41)? + const_ref.write_binary(sink)?
+            }
             Instruction::I32Eqz => sink.write_u8(0x42)?,
             Instruction::I32Eq => sink.write_u8(0x43)?,
             Instruction::I32Ne => sink.write_u8(0x44)?,
@@ -235,7 +258,9 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::I64TruncSatF32U => sink.write_u8(0xc3)?,
             Instruction::I64TruncSatF64S => sink.write_u8(0xc4)?,
             Instruction::I64TruncSatF64U => sink.write_u8(0xc5)?,
-            Instruction::SanitizerStackCheck(note) => sink.write_u8(0xc6)? + note.write_binary(sink)?,
+            Instruction::SanitizerStackCheck(note) => {
+                sink.write_u8(0xc6)? + note.write_binary(sink)?
+            }
             _ => unreachable!("not supported opcode: {:?}", self),
         };
         Ok(n)
