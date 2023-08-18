@@ -24,6 +24,7 @@ use crate::{
         BinaryFormatError,
     },
 };
+use alloc::vec::Vec;
 
 impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
@@ -481,6 +482,85 @@ impl<'a> BinaryFormat<'a> for Instruction {
     }
 }
 
+impl Instruction {
+    pub fn is_supported(&self) -> bool {
+        match self {
+            Instruction::CallIndirect(_) | Instruction::ReturnCallIndirect(_) => false,
+            _ => true,
+        }
+    }
+
+    pub fn aux_value(&self) -> Option<UntypedValue> {
+        let value: UntypedValue = match self {
+            Instruction::LocalGet(val)
+            | Instruction::LocalSet(val)
+            | Instruction::LocalTee(val) => val.to_usize().into(),
+            Instruction::Br(val)
+            | Instruction::BrIfEqz(val)
+            | Instruction::BrIfNez(val)
+            | Instruction::BrAdjust(val)
+            | Instruction::BrAdjustIfNez(val) => val.to_i32().into(),
+            Instruction::BrTable(val) => val.to_usize().into(),
+            Instruction::ConsumeFuel(val) => val.to_u64().into(),
+            Instruction::ReturnCallInternal(val) | Instruction::CallInternal(val) => {
+                val.to_u32().into()
+            }
+            Instruction::ReturnCall(val) | Instruction::Call(val) => val.to_u32().into(),
+            Instruction::ReturnCallIndirect(val) | Instruction::CallIndirect(val) => {
+                val.to_u32().into()
+            }
+            Instruction::ReturnCallIndirectUnsafe(val) | Instruction::CallIndirectUnsafe(val) => {
+                val.to_u32().into()
+            }
+            Instruction::GlobalGet(val) | Instruction::GlobalSet(val) => val.to_u32().into(),
+            Instruction::I32Load(val)
+            | Instruction::I64Load(val)
+            | Instruction::F32Load(val)
+            | Instruction::F64Load(val)
+            | Instruction::I32Load8S(val)
+            | Instruction::I32Load8U(val)
+            | Instruction::I32Load16S(val)
+            | Instruction::I32Load16U(val)
+            | Instruction::I64Load8S(val)
+            | Instruction::I64Load8U(val)
+            | Instruction::I64Load16S(val)
+            | Instruction::I64Load16U(val)
+            | Instruction::I64Load32S(val)
+            | Instruction::I64Load32U(val)
+            | Instruction::I32Store(val)
+            | Instruction::I64Store(val)
+            | Instruction::F32Store(val)
+            | Instruction::F64Store(val)
+            | Instruction::I32Store8(val)
+            | Instruction::I32Store16(val)
+            | Instruction::I64Store8(val)
+            | Instruction::I64Store16(val)
+            | Instruction::I64Store32(val) => val.into_inner().into(),
+            Instruction::MemoryInit(val) | Instruction::DataDrop(val) => val.to_u32().into(),
+            Instruction::TableSize(val)
+            | Instruction::TableGrow(val)
+            | Instruction::TableFill(val)
+            | Instruction::TableGet(val)
+            | Instruction::TableSet(val)
+            | Instruction::TableCopy(val) => val.to_u32().into(),
+            Instruction::TableInit(val) | Instruction::ElemDrop(val) => val.to_u32().into(),
+            Instruction::RefFunc(val) => val.to_u32().into(),
+            Instruction::I32Const(val) | Instruction::I64Const(val) => *val,
+            Instruction::ConstRef(val) => val.to_usize().into(),
+            Instruction::SanitizerStackCheck(val) => (*val).into(),
+            _ => return None,
+        };
+        Some(value)
+    }
+
+    pub fn info(&self) -> (u8, usize) {
+        let mut sink: Vec<u8> = vec![0; 100];
+        let mut binary_writer = BinaryFormatWriter::new(sink.as_mut_slice());
+        let size = self.write_binary(&mut binary_writer).unwrap();
+        (sink[0], size - 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -496,10 +576,7 @@ mod tests {
     #[test]
     fn test_opcode_encoding() {
         for opcode in Instruction::iter() {
-            if matches!(
-                opcode,
-                Instruction::CallIndirect(_) | Instruction::ReturnCallIndirect(_)
-            ) {
+            if !opcode.is_supported() {
                 continue;
             }
             let mut buf = vec![0; 100];
@@ -507,6 +584,8 @@ mod tests {
             if opcode.write_binary(&mut writer).unwrap() == 0 {
                 continue;
             }
+            let (first_byte, _hint_size) = opcode.info();
+            assert_eq!(first_byte, buf[0]);
             let mut reader = BinaryFormatReader::new(buf.as_slice());
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
             assert_eq!(opcode, opcode2);

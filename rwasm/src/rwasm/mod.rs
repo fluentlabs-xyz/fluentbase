@@ -73,8 +73,10 @@ mod tests {
         let engine = Engine::new(&config);
         let mut store = Store::new(&engine, HostState::default());
         let mut linker = Linker::<HostState>::new(&engine);
-        let module = reduced_module.to_module(&engine, &mut import_linker).unwrap();
-        import_linker.attach_linker(&mut linker, &mut store).unwrap();
+        let module = reduced_module.to_module(&engine, &mut import_linker);
+        import_linker
+            .attach_linker(&mut linker, &mut store)
+            .unwrap();
         // run start entrypoint
         linker
             .instantiate(&mut store, &module)

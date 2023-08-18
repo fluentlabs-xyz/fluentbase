@@ -1,4 +1,5 @@
 use crate::{
+    common::UntypedValue,
     engine::bytecode::{BranchOffset, InstrMeta, Instruction},
     module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleBuilder, ModuleError, ModuleResources},
     rwasm::{
@@ -35,6 +36,75 @@ pub enum ReducedModuleError {
 
 const MAX_MEMORY_PAGES: u32 = 512;
 
+pub struct ReducedModuleTrace {
+    pub offset: usize,
+    pub code: u8,
+    pub aux_size: usize,
+    pub aux: UntypedValue,
+    pub instr: Result<Instruction, BinaryFormatError>,
+}
+
+pub struct ReducedModuleReader<'a> {
+    reader: BinaryFormatReader<'a>,
+    instruction_set: InstructionSet,
+    relative_position: BTreeMap<u32, u32>,
+}
+
+impl<'a> ReducedModuleReader<'a> {
+    pub fn new(sink: &'a [u8]) -> Self {
+        Self {
+            reader: BinaryFormatReader::new(sink),
+            instruction_set: InstructionSet::new(),
+            relative_position: BTreeMap::new(),
+        }
+    }
+
+    pub fn trace_opcode(&mut self) -> Option<ReducedModuleTrace> {
+        if self.reader.is_empty() {
+            return None;
+        }
+
+        let pos_before = self.reader.pos();
+
+        let instr = Instruction::read_binary(&mut self.reader);
+        let aux = instr
+            .map(|instr| instr.aux_value().unwrap_or_default())
+            .unwrap_or_default();
+
+        let trace = ReducedModuleTrace {
+            offset: pos_before,
+            code: self.reader.sink[0],
+            aux_size: self.reader.pos() - pos_before - 1,
+            aux,
+            instr,
+        };
+
+        self.relative_position
+            .insert(trace.offset as u32, self.instruction_set.len());
+        self.instruction_set.push_with_meta(
+            trace.instr.unwrap(),
+            InstrMeta::new(trace.offset, trace.code as u16),
+        );
+
+        Some(trace)
+    }
+
+    pub fn rewrite_offsets(&mut self) -> Result<(), ReducedModuleError> {
+        for (index, opcode) in self.instruction_set.instr.iter_mut().enumerate() {
+            if let Some(jump_offset) = opcode.get_jump_offset() {
+                let relative_offset = self
+                    .relative_position
+                    .get(&(jump_offset.to_i32() as u32))
+                    .ok_or(ReducedModuleError::ReachedUnreachable)?;
+                opcode.update_branch_offset(BranchOffset::from(
+                    *relative_offset as i32 - index as i32,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
     relative_position: BTreeMap<u32, u32>,
@@ -54,7 +124,8 @@ impl ReducedModule {
             let offset = reader.pos();
             let code = reader.sink[0] as u16;
 
-            let instr = Instruction::read_binary(&mut reader).map_err(|e| ReducedModuleError::BinaryFormat(e))?;
+            let instr = Instruction::read_binary(&mut reader)
+                .map_err(|e| ReducedModuleError::BinaryFormat(e))?;
 
             relative_position.insert(offset as u32, instruction_set.len());
             instruction_set.push_with_meta(instr, InstrMeta::new(offset, code));
@@ -66,7 +137,9 @@ impl ReducedModule {
                 let relative_offset = relative_position
                     .get(&(jump_offset.to_i32() as u32))
                     .ok_or(ReducedModuleError::ReachedUnreachable)?;
-                opcode.update_branch_offset(BranchOffset::from(*relative_offset as i32 - index as i32));
+                opcode.update_branch_offset(BranchOffset::from(
+                    *relative_offset as i32 - index as i32,
+                ));
             }
         }
 
@@ -80,32 +153,33 @@ impl ReducedModule {
         &self.instruction_set
     }
 
-    pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Result<Module, ModuleError> {
-        let builder = self.to_module_builder(engine, import_linker)?;
-        Ok(builder.finish())
+    pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Module {
+        let builder = self.to_module_builder(engine, import_linker);
+        builder.finish()
     }
 
     pub fn to_module_builder<'a>(
         &'a self,
         engine: &'a Engine,
         import_linker: &ImportLinker,
-    ) -> Result<ModuleBuilder, ModuleError> {
+    ) -> ModuleBuilder {
         let mut builder = ModuleBuilder::new(engine);
 
         // main function has empty inputs and outputs
         let mut default_func_types = BTreeMap::new();
-        let mut get_func_type_or_create = |func_type: FuncType, builder: &mut ModuleBuilder| -> FuncTypeIdx {
-            let func_type_idx = default_func_types.get(&func_type);
-            let func_type_idx = if let Some(idx) = func_type_idx {
-                *idx
-            } else {
-                let idx = default_func_types.len();
-                default_func_types.insert(func_type.clone(), idx);
-                builder.push_func_type(func_type).unwrap();
-                idx
+        let mut get_func_type_or_create =
+            |func_type: FuncType, builder: &mut ModuleBuilder| -> FuncTypeIdx {
+                let func_type_idx = default_func_types.get(&func_type);
+                let func_type_idx = if let Some(idx) = func_type_idx {
+                    *idx
+                } else {
+                    let idx = default_func_types.len();
+                    default_func_types.insert(func_type.clone(), idx);
+                    builder.push_func_type(func_type).unwrap();
+                    idx
+                };
+                FuncTypeIdx::from(func_type_idx as u32)
             };
-            FuncTypeIdx::from(func_type_idx as u32)
-        };
         get_func_type_or_create(FuncType::new([], []), &mut builder);
 
         let mut code_section = self.bytecode().clone();
@@ -155,12 +229,14 @@ impl ReducedModule {
             .iter()
             .map(|_| Result::<FuncTypeIdx, ModuleError>::Ok(FuncTypeIdx::from(0)))
             .collect();
-        builder.push_funcs(funcs)?;
+        builder.push_funcs(funcs).unwrap();
 
         // mark headers for missing functions inside binary
         let resources = ModuleResources::new(&builder);
         for (func_index, func_offset) in func_index_offset.iter() {
-            let compiled_func = resources.get_compiled_func(FuncIdx::from(*func_index)).unwrap();
+            let compiled_func = resources
+                .get_compiled_func(FuncIdx::from(*func_index))
+                .unwrap();
             if *func_offset == 0 || compiled_func.to_u32() == 0 {
                 // TODO: "what if we don't have main function? it might happen in e2e tests"
                 //assert_eq!(compiled_func.to_u32(), 0, "main function doesn't have zero offset");
@@ -173,17 +249,28 @@ impl ReducedModule {
             }
         }
         // allocate default memory
-        builder.push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))?;
-        builder.push_export("memory".to_string().into_boxed_str(), MemoryIdx::from(0))?;
+        builder
+            .push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))
+            .unwrap();
+        builder
+            .push_export("memory".to_string().into_boxed_str(), MemoryIdx::from(0))
+            .unwrap();
         // set 0 function as an entrypoint (it goes right after import section)
         let main_index = import_mapping.len() as u32;
         builder.set_start(FuncIdx::from(main_index));
-        builder.push_export("main".to_string().into_boxed_str(), FuncIdx::from(main_index))?;
+        builder
+            .push_export(
+                "main".to_string().into_boxed_str(),
+                FuncIdx::from(main_index),
+            )
+            .unwrap();
         // push required amount of globals
         let num_globals = self.bytecode().count_globals();
-        builder.push_empty_i64_globals(num_globals as usize)?;
+        builder
+            .push_empty_i64_globals(num_globals as usize)
+            .unwrap();
         // finalize module
-        Ok(builder)
+        builder
     }
 
     pub fn trace_binary(&self) -> String {

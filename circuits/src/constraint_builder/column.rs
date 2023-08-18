@@ -14,6 +14,10 @@ impl SelectorColumn {
         self.rotation(0)
     }
 
+    pub fn next<F: FieldExt>(self) -> BinaryQuery<F> {
+        self.rotation(1)
+    }
+
     pub fn rotation<F: FieldExt>(self, i: i32) -> BinaryQuery<F> {
         BinaryQuery(Query::Fixed(self.0, i))
     }
@@ -60,7 +64,7 @@ impl FixedColumn {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct AdviceColumn(pub Column<Advice>);
 
 impl AdviceColumn {

@@ -1,7 +1,17 @@
 use crate::common::{
     value::{LoadInto, StoreFrom},
-    ArithmeticOps, ExtendInto, Float, Integer, LittleEndianConvert, SignExtendFrom, TrapCode, TruncateSaturateInto,
-    TryTruncateInto, WrapInto, F32, F64,
+    ArithmeticOps,
+    ExtendInto,
+    Float,
+    Integer,
+    LittleEndianConvert,
+    SignExtendFrom,
+    TrapCode,
+    TruncateSaturateInto,
+    TryTruncateInto,
+    WrapInto,
+    F32,
+    F64,
 };
 use core::{
     fmt::{self, Display},
@@ -75,7 +85,7 @@ macro_rules! impl_from_unsigned_prim {
 }
 #[rustfmt::skip]
 impl_from_unsigned_prim!(
-    bool, u8, u16, u32, u64,
+    bool, u8, u16, u32, u64, usize,
 );
 
 macro_rules! impl_from_signed_prim {
@@ -146,7 +156,9 @@ impl UntypedValue {
         let address = effective_address(raw_address, offset)?;
         let mut buffer = <<U as LittleEndianConvert>::Bytes as Default>::default();
         buffer.load_into(memory, address)?;
-        let value: Self = <U as LittleEndianConvert>::from_le_bytes(buffer).extend_into().into();
+        let value: Self = <U as LittleEndianConvert>::from_le_bytes(buffer)
+            .extend_into()
+            .into();
         Ok(value)
     }
 
@@ -309,7 +321,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    fn store_wrap<T, U>(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode>
+    fn store_wrap<T, U>(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode>
     where
         T: From<Self> + WrapInto<U>,
         U: LittleEndianConvert,
@@ -341,7 +358,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i32_store(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i32_store(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store::<i32>(memory, address, offset, value)
     }
 
@@ -351,7 +373,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i64_store(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i64_store(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store::<i64>(memory, address, offset, value)
     }
 
@@ -361,7 +388,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn f32_store(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn f32_store(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store::<F32>(memory, address, offset, value)
     }
 
@@ -371,7 +403,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn f64_store(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn f64_store(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store::<F64>(memory, address, offset, value)
     }
 
@@ -381,7 +418,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i32_store8(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i32_store8(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store_wrap::<i32, i8>(memory, address, offset, value)
     }
 
@@ -391,7 +433,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i32_store16(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i32_store16(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store_wrap::<i32, i16>(memory, address, offset, value)
     }
 
@@ -401,7 +448,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i64_store8(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i64_store8(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store_wrap::<i64, i8>(memory, address, offset, value)
     }
 
@@ -411,7 +463,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i64_store16(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i64_store16(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store_wrap::<i64, i16>(memory, address, offset, value)
     }
 
@@ -421,7 +478,12 @@ impl UntypedValue {
     ///
     /// - If `address + offset` overflows.
     /// - If `address + offset` stores out of bounds from `memory`.
-    pub fn i64_store32(memory: &mut [u8], address: Self, offset: u32, value: Self) -> Result<(), TrapCode> {
+    pub fn i64_store32(
+        memory: &mut [u8],
+        address: Self,
+        offset: u32,
+        value: Self,
+    ) -> Result<(), TrapCode> {
         Self::store_wrap::<i64, i32>(memory, address, offset, value)
     }
 
@@ -453,7 +515,11 @@ impl UntypedValue {
     }
 
     /// Execute a fallible generic operation on `T` that returns an `R`.
-    fn try_execute_binary<T, R>(self, rhs: Self, op: fn(T, T) -> Result<R, TrapCode>) -> Result<Self, TrapCode>
+    fn try_execute_binary<T, R>(
+        self,
+        rhs: Self,
+        op: fn(T, T) -> Result<R, TrapCode>,
+    ) -> Result<Self, TrapCode>
     where
         T: From<Self>,
         R: Into<Self>,
