@@ -315,3 +315,32 @@ impl InstructionSet {
         self.instr.clone()
     }
 }
+
+#[macro_export]
+macro_rules! instruction_set_internal {
+    // Nothing left to do
+    ($code:ident, ) => {};
+    ($code:ident, $x:ident ($v:expr) $($rest:tt)*) => {{
+        $code.$x($v);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+    // Default opcode without any inputs
+    ($code:ident, $x:ident $($rest:tt)*) => {{
+        $code.write_op($crate::evm_types::OpcodeId::$x);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+    // Function calls
+    ($code:ident, .$function:ident ($($args:expr),* $(,)?) $($rest:tt)*) => {{
+        $code.$function($($args,)*);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+}
+
+#[macro_export]
+macro_rules! instruction_set {
+    ($($args:tt)*) => {{
+        let mut code = $crate::rwasm::InstructionSet::new();
+        $crate::instruction_set_internal!(code, $($args)*);
+        code
+    }};
+}

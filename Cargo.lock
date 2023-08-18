@@ -888,6 +888,7 @@ version = "0.1.0"
 dependencies = [
  "bencher",
  "ethers-core",
+ "fluentbase-rwasm",
  "halo2_proofs",
  "hex",
  "itertools",
@@ -901,10 +902,11 @@ dependencies = [
  "rand_chacha",
  "serde",
  "serde_json",
- "strum 0.24.1",
- "strum_macros 0.24.3",
+ "strum 0.25.0",
+ "strum_macros 0.25.1",
  "subtle",
  "thiserror",
+ "wat",
 ]
 
 [[package]]

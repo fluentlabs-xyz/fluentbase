@@ -1,10 +1,9 @@
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 
-mod platform;
-mod runtime;
-
 mod instruction;
 mod macros;
+mod platform;
+mod runtime;
 #[cfg(test)]
 mod tests;
 mod types;

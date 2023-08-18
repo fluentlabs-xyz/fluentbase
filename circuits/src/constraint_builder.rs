@@ -1,6 +1,6 @@
 use halo2_proofs::{
     arithmetic::FieldExt,
-    plonk::{ConstraintSystem, SecondPhase},
+    plonk::{ConstraintSystem, Expression, SecondPhase},
 };
 
 mod binary_column;
@@ -119,6 +119,18 @@ impl<F: FieldExt> ConstraintBuilder<F> {
         cs: &mut ConstraintSystem<F>,
     ) -> [AdviceColumn; N] {
         [0; N].map(|_| AdviceColumn(cs.advice_column()))
+    }
+
+    pub fn advice_column(&self, cs: &mut ConstraintSystem<F>) -> AdviceColumn {
+        AdviceColumn(cs.advice_column())
+    }
+
+    pub fn fixed_columns<const N: usize>(&self, cs: &mut ConstraintSystem<F>) -> [FixedColumn; N] {
+        [0; N].map(|_| FixedColumn(cs.fixed_column()))
+    }
+
+    pub fn fixed_column(&self, cs: &mut ConstraintSystem<F>) -> FixedColumn {
+        FixedColumn(cs.fixed_column())
     }
 
     pub fn second_phase_advice_columns<const N: usize>(

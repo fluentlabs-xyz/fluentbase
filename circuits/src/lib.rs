@@ -3,9 +3,12 @@
 #![deny(unsafe_code)]
 
 pub mod constraint_builder;
+pub mod fluentbase_circuit;
 pub mod gadgets;
-
-pub mod rwasm_runtime;
+mod rwasm_circuit;
 mod util;
 
-pub use rwasm_runtime::RwasmRuntimeConfig;
+pub use fluentbase_circuit::FluentbaseCircuitConfig;
+
+#[macro_use]
+extern crate strum_macros;
