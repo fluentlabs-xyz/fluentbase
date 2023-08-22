@@ -3,10 +3,10 @@
 pub mod binary_format;
 mod compiler;
 mod instruction_set;
-mod module;
 mod platform;
+mod reduced_module;
 
-pub use self::{binary_format::*, compiler::*, instruction_set::*, module::*, platform::*};
+pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, reduced_module::*};
 
 #[cfg(test)]
 mod tests {
@@ -14,8 +14,8 @@ mod tests {
         common::ValueType,
         rwasm::{
             compiler::Compiler,
-            module::ReducedModule,
             platform::{ImportHandler, ImportLinker},
+            reduced_module::ReducedModule,
             ImportFunc,
         },
         Config,
