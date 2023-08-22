@@ -1,11 +1,13 @@
 use crate::{
-    common::UntypedValue,
-    engine::bytecode::{BranchOffset, InstrMeta, Instruction},
+    engine::bytecode::Instruction,
     module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleBuilder, ModuleError, ModuleResources},
     rwasm::{
-        binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatReader},
         instruction_set::InstructionSet,
         platform::ImportLinker,
+        reduced_module::{
+            reader::ReducedModuleReader,
+            types::{ReducedModuleError, MAX_MEMORY_PAGES},
+        },
     },
     Engine,
     FuncType,
@@ -17,99 +19,6 @@ use alloc::{
     vec::Vec,
 };
 
-#[derive(Debug)]
-pub enum ReducedModuleError {
-    MissingEntrypoint,
-    NotSupportedOpcode,
-    NotSupportedImport,
-    NotSupportedMemory(&'static str),
-    ParseError(&'static str),
-    OutOfBuffer,
-    ReachedUnreachable,
-    IllegalOpcode(u8),
-    ImpossibleJump,
-    InternalError(&'static str),
-    MemoryOverflow,
-    EmptyBytecode,
-    BinaryFormat(BinaryFormatError),
-}
-
-const MAX_MEMORY_PAGES: u32 = 512;
-
-#[derive(Debug, Clone)]
-pub struct ReducedModuleTrace {
-    pub offset: usize,
-    pub code: u8,
-    pub aux_size: usize,
-    pub aux: UntypedValue,
-    pub instr: Result<Instruction, BinaryFormatError>,
-}
-
-pub struct ReducedModuleReader<'a> {
-    reader: BinaryFormatReader<'a>,
-    instruction_set: InstructionSet,
-    relative_position: BTreeMap<u32, u32>,
-}
-
-impl<'a> ReducedModuleReader<'a> {
-    pub fn new(sink: &'a [u8]) -> Self {
-        Self {
-            reader: BinaryFormatReader::new(sink),
-            instruction_set: InstructionSet::new(),
-            relative_position: BTreeMap::new(),
-        }
-    }
-
-    pub fn trace_opcode(&mut self) -> Option<ReducedModuleTrace> {
-        if self.reader.is_empty() {
-            // if reader is empty then we've reached end of the stream
-            return None;
-        } else if self.instruction_set.len() as usize != self.relative_position.len() {
-            // if we have such mismatch then last record is error
-            return None;
-        }
-
-        let pos_before = self.reader.pos();
-
-        let instr = Instruction::read_binary(&mut self.reader);
-        let aux = instr
-            .map(|instr| instr.aux_value().unwrap_or_default())
-            .unwrap_or_default();
-
-        let trace = ReducedModuleTrace {
-            offset: pos_before,
-            code: self.reader.sink[pos_before],
-            aux_size: self.reader.pos() - pos_before - 1,
-            aux,
-            instr,
-        };
-
-        self.relative_position
-            .insert(trace.offset as u32, self.instruction_set.len());
-        if let Ok(instr) = instr {
-            self.instruction_set
-                .push_with_meta(instr, InstrMeta::new(trace.offset, trace.code as u16));
-        }
-
-        Some(trace)
-    }
-
-    pub fn rewrite_offsets(&mut self) -> Result<(), ReducedModuleError> {
-        for (index, opcode) in self.instruction_set.instr.iter_mut().enumerate() {
-            if let Some(jump_offset) = opcode.get_jump_offset() {
-                let relative_offset = self
-                    .relative_position
-                    .get(&(jump_offset.to_i32() as u32))
-                    .ok_or(ReducedModuleError::ReachedUnreachable)?;
-                opcode.update_branch_offset(BranchOffset::from(
-                    *relative_offset as i32 - index as i32,
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
     relative_position: BTreeMap<u32, u32>,
@@ -117,40 +26,14 @@ pub struct ReducedModule {
 
 impl ReducedModule {
     pub fn new(sink: &[u8]) -> Result<ReducedModule, ReducedModuleError> {
-        let mut reader = BinaryFormatReader::new(sink);
-
-        let mut instruction_set = InstructionSet::new();
-
-        // here we store mapping from jump destination to the opcode offset
-        let mut relative_position: BTreeMap<u32, u32> = BTreeMap::new();
-
-        // read all opcodes from binary
-        while !reader.is_empty() {
-            let offset = reader.pos();
-            let code = reader.sink[0] as u16;
-
-            let instr = Instruction::read_binary(&mut reader)
-                .map_err(|e| ReducedModuleError::BinaryFormat(e))?;
-
-            relative_position.insert(offset as u32, instruction_set.len());
-            instruction_set.push_with_meta(instr, InstrMeta::new(offset, code));
-        }
-
-        // if instruction has jump offset then its br-like and we should re-write jump offset
-        for (index, opcode) in instruction_set.instr.iter_mut().enumerate() {
-            if let Some(jump_offset) = opcode.get_jump_offset() {
-                let relative_offset = relative_position
-                    .get(&(jump_offset.to_i32() as u32))
-                    .ok_or(ReducedModuleError::ReachedUnreachable)?;
-                opcode.update_branch_offset(BranchOffset::from(
-                    *relative_offset as i32 - index as i32,
-                ));
-            }
-        }
+        let mut reader = ReducedModuleReader::new(sink);
+        reader
+            .read_till_error()
+            .map_err(|e| ReducedModuleError::BinaryFormat(e))?;
 
         Ok(ReducedModule {
-            instruction_set,
-            relative_position,
+            instruction_set: reader.instruction_set,
+            relative_position: reader.relative_position,
         })
     }
 
