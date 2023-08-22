@@ -36,6 +36,7 @@ pub enum ReducedModuleError {
 
 const MAX_MEMORY_PAGES: u32 = 512;
 
+#[derive(Debug, Clone)]
 pub struct ReducedModuleTrace {
     pub offset: usize,
     pub code: u8,
@@ -61,6 +62,10 @@ impl<'a> ReducedModuleReader<'a> {
 
     pub fn trace_opcode(&mut self) -> Option<ReducedModuleTrace> {
         if self.reader.is_empty() {
+            // if reader is empty then we've reached end of the stream
+            return None;
+        } else if self.instruction_set.len() as usize != self.relative_position.len() {
+            // if we have such mismatch then last record is error
             return None;
         }
 
@@ -73,7 +78,7 @@ impl<'a> ReducedModuleReader<'a> {
 
         let trace = ReducedModuleTrace {
             offset: pos_before,
-            code: self.reader.sink[0],
+            code: self.reader.sink[pos_before],
             aux_size: self.reader.pos() - pos_before - 1,
             aux,
             instr,
@@ -81,10 +86,10 @@ impl<'a> ReducedModuleReader<'a> {
 
         self.relative_position
             .insert(trace.offset as u32, self.instruction_set.len());
-        self.instruction_set.push_with_meta(
-            trace.instr.unwrap(),
-            InstrMeta::new(trace.offset, trace.code as u16),
-        );
+        if let Ok(instr) = instr {
+            self.instruction_set
+                .push_with_meta(instr, InstrMeta::new(trace.offset, trace.code as u16));
+        }
 
         Some(trace)
     }

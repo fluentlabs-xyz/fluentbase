@@ -25,12 +25,14 @@ thiserror = "1.0"
 log = "0.4"
 fluentbase-rwasm = {path = "../rwasm"}
 wat = "1.0.69"
+plotters = "0.3"
 
 [patch."https://github.com/privacy-scaling-explorations/halo2.git"]
 halo2_proofs = { git = "https://github.com/scroll-tech/halo2.git", branch = "scroll-dev-0220" }
 
 [features]
-# printout the layout of circuits for demo and some unittests
+default = ["dev-graph"]
+dev-graph = ["halo2_proofs/dev-graph"]
 print_layout = ["halo2_proofs/dev-graph"]
 
 [dev-dependencies]

@@ -1,6 +1,6 @@
 use halo2_proofs::{
     arithmetic::FieldExt,
-    plonk::{ConstraintSystem, Expression, SecondPhase},
+    plonk::{ConstraintSystem, SecondPhase},
 };
 
 mod binary_column;

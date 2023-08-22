@@ -20,6 +20,7 @@ use crate::{
         ConstRef,
         DropKeep,
     },
+    rwasm::{BinaryFormat, BinaryFormatWriter},
 };
 use alloc::{slice::SliceIndex, vec::Vec};
 
@@ -27,6 +28,16 @@ use alloc::{slice::SliceIndex, vec::Vec};
 pub struct InstructionSet {
     pub instr: Vec<Instruction>,
     pub metas: Option<Vec<InstrMeta>>,
+}
+
+impl Into<Vec<u8>> for InstructionSet {
+    fn into(self) -> Vec<u8> {
+        let mut buffer = vec![0; 65536];
+        let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
+        let n = self.write_binary(&mut binary_writer).unwrap();
+        buffer.resize(n, 0);
+        buffer
+    }
 }
 
 macro_rules! impl_opcode {
