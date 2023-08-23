@@ -1,12 +1,12 @@
-use crate::constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query};
 #[cfg(test)]
 use crate::util::hash as poseidon_hash;
-use halo2_proofs::{
-    arithmetic::FieldExt,
-    plonk::{Advice, Column, Fixed},
+use crate::{
+    constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query},
+    util::Field,
 };
+use halo2_proofs::plonk::{Advice, Column, Fixed};
 #[cfg(test)]
-use halo2_proofs::{circuit::Region, halo2curves::bn256::Fr, plonk::ConstraintSystem};
+use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
 /// Lookup  represent the poseidon table in zkevm circuit
 pub trait PoseidonLookup {
@@ -20,15 +20,20 @@ pub trait PoseidonLookup {
     }
 }
 
-impl<F: FieldExt> ConstraintBuilder<F> {
-    pub fn poseidon_lookup(&mut self, name: &'static str, queries: [Query<F>; 3], poseidon: &impl PoseidonLookup) {
+impl<F: Field> ConstraintBuilder<F> {
+    pub fn poseidon_lookup(
+        &mut self,
+        name: &'static str,
+        queries: [Query<F>; 3],
+        poseidon: &impl PoseidonLookup,
+    ) {
         let extended_queries = [
-            Query::one(),
-            queries[2].clone(),
-            queries[0].clone(),
-            queries[1].clone(),
-            Query::zero(),
-            Query::one(),
+            Query::one(),       // selector
+            queries[2].clone(), // hash
+            queries[0].clone(), // left
+            queries[1].clone(), // right
+            Query::zero(),      // control
+            Query::one(),       // head mark
         ];
 
         let (q_enable, [hash, left, right, control, head_mark]) = poseidon.lookup_columns();
@@ -51,18 +56,19 @@ impl<F: FieldExt> ConstraintBuilder<F> {
 #[cfg(test)]
 #[derive(Clone, Copy)]
 pub struct PoseidonTable {
-    q_enable: FixedColumn,
-    left: AdviceColumn,
-    right: AdviceColumn,
-    hash: AdviceColumn,
-    control: AdviceColumn,
-    head_mark: AdviceColumn,
+    pub(crate) q_enable: FixedColumn,
+    pub(crate) left: AdviceColumn,
+    pub(crate) right: AdviceColumn,
+    pub(crate) hash: AdviceColumn,
+    pub(crate) control: AdviceColumn,
+    pub(crate) head_mark: AdviceColumn,
 }
 
 #[cfg(test)]
 impl PoseidonTable {
-    pub fn configure<F: FieldExt>(cs: &mut ConstraintSystem<F>) -> Self {
-        let [hash, left, right, control, head_mark] = [0; 5].map(|_| AdviceColumn(cs.advice_column()));
+    pub fn configure<F: Field>(cs: &mut ConstraintSystem<F>) -> Self {
+        let [hash, left, right, control, head_mark] =
+            [0; 5].map(|_| AdviceColumn(cs.advice_column()));
         Self {
             left,
             right,
@@ -73,30 +79,41 @@ impl PoseidonTable {
         }
     }
 
-    pub fn load(&self, region: &mut Region<'_, Fr>, hash_traces: &[(Fr, Fr, Fr)]) {
-        for (offset, hash_trace) in hash_traces.iter().enumerate() {
-            assert!(
-                poseidon_hash(hash_trace.0, hash_trace.1) == hash_trace.2,
+    pub fn load<'a, F: Field, I: Iterator<Item = &'a [F; 3]>>(
+        &self,
+        region: &mut Region<'_, F>,
+        hash_traces: I,
+    ) {
+        for (offset, hash_trace) in hash_traces.enumerate() {
+            assert_eq!(
+                poseidon_hash(hash_trace[0], hash_trace[1]),
+                hash_trace[2],
                 "{:?}",
-                (hash_trace.0, hash_trace.1, hash_trace.2)
+                (hash_trace[0], hash_trace[1], hash_trace[2])
             );
             for (column, value) in [
-                (self.left, hash_trace.0),
-                (self.right, hash_trace.1),
-                (self.hash, hash_trace.2),
-                (self.control, Fr::zero()),
-                (self.head_mark, Fr::one()),
+                (self.left, hash_trace[0]),
+                (self.right, hash_trace[1]),
+                (self.hash, hash_trace[2]),
+                (self.control, F::zero()),
+                (self.head_mark, F::one()),
             ] {
                 column.assign(region, offset, value);
             }
-            self.q_enable.assign(region, offset, Fr::one());
+            self.q_enable.assign(region, offset, F::one());
         }
     }
 
     pub fn table_columns(&self) -> (Column<Fixed>, [Column<Advice>; 5]) {
         (
             self.q_enable.0,
-            [self.hash.0, self.left.0, self.right.0, self.control.0, self.head_mark.0],
+            [
+                self.hash.0,
+                self.left.0,
+                self.right.0,
+                self.control.0,
+                self.head_mark.0,
+            ],
         )
     }
 }
@@ -106,7 +123,13 @@ impl PoseidonLookup for PoseidonTable {
     fn lookup_columns(&self) -> (FixedColumn, [AdviceColumn; 5]) {
         (
             self.q_enable,
-            [self.hash, self.left, self.right, self.control, self.head_mark],
+            [
+                self.hash,
+                self.left,
+                self.right,
+                self.control,
+                self.head_mark,
+            ],
         )
     }
 }

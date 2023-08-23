@@ -116,6 +116,14 @@ impl InstructionSet {
             .unwrap_or_default()
     }
 
+    pub fn instr(&self) -> &Vec<Instruction> {
+        &self.instr
+    }
+
+    pub fn instr_mut(&mut self) -> &mut Vec<Instruction> {
+        &mut self.instr
+    }
+
     pub fn len(&self) -> u32 {
         self.instr.len() as u32
     }

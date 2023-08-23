@@ -1,55 +1,74 @@
-mod op_const;
-
 use crate::{
-    constraint_builder::{ConstraintBuilder, SelectorColumn},
-    gadgets::poseidon::{PoseidonLookup, PoseidonTable},
-    util::unroll_to_hash_input,
+    gadgets::poseidon::PoseidonTable,
+    poseidon_circuit::PoseidonCircuitConfig,
+    rwasm_circuit::RwasmCircuitConfig,
+    unrolled_bytecode::UnrolledBytecode,
+    util::Field,
 };
 use halo2_proofs::{
-    arithmetic::FieldExt,
-    circuit::{Chip, Layouter, Region},
+    circuit::{Layouter, SimpleFloorPlanner},
     halo2curves::bn256::Fr,
-    plonk::{ConstraintSystem, Error},
+    plonk::{Circuit, ConstraintSystem, Error},
 };
-use hash_circuit::hash::{PoseidonHashChip, PoseidonHashConfig, PoseidonHashTable};
+use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct FluentbaseCircuitConfig {
-    poseidon_config: PoseidonHashConfig<Fr>,
-    poseidon_table: PoseidonTable,
+pub struct FluentbaseCircuitConfig<F: Field> {
+    poseidon_circuit_config: PoseidonCircuitConfig<F>,
+    rwasm_circuit_config: RwasmCircuitConfig<F>,
 }
 
-impl FluentbaseCircuitConfig {
-    pub fn configure(cs: &mut ConstraintSystem<Fr>, cb: &mut ConstraintBuilder<Fr>) -> Self {
+impl<F: Field> FluentbaseCircuitConfig<F> {
+    pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
+        // init shared poseidon table
         let poseidon_table = PoseidonTable::configure(cs);
-        let poseidon_config =
-            PoseidonHashConfig::configure_sub(cs, poseidon_table.table_columns(), 32);
-        // cb.poseidon_lookup("lookup", )
+        // init poseidon and rwasm circuits
+        let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, poseidon_table.clone());
+        let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, poseidon_table.clone());
         Self {
-            poseidon_config,
-            poseidon_table,
+            poseidon_circuit_config,
+            rwasm_circuit_config,
         }
     }
 
-    pub fn assign(&self, region: &mut Region<'_, Fr>, rwasm_binary: &Vec<u8>) -> Result<(), Error> {
+    pub fn assign(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        bytecode: &UnrolledBytecode<F>,
+    ) -> Result<(), Error> {
+        self.poseidon_circuit_config
+            .assign_bytecode(layouter, bytecode)?;
+        self.rwasm_circuit_config.assign(layouter, bytecode)?;
+        self.rwasm_circuit_config.load(layouter)?;
         Ok(())
     }
+}
 
-    pub fn load(
+#[derive(Clone, Default, Debug)]
+struct FluentbaseCircuit<F: Field> {
+    bytecode: UnrolledBytecode<F>,
+    _pd: PhantomData<F>,
+}
+
+impl<F: Field> Circuit<F> for FluentbaseCircuit<F> {
+    type Config = FluentbaseCircuitConfig<F>;
+    type FloorPlanner = SimpleFloorPlanner;
+
+    fn without_witnesses(&self) -> Self {
+        Self::default()
+    }
+
+    fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
+        let rwasm_runtime = FluentbaseCircuitConfig::configure(cs);
+        rwasm_runtime
+    }
+
+    fn synthesize(
         &self,
-        layouter: &mut impl Layouter<Fr>,
-        rwasm_binary: &Vec<u8>,
+        config: Self::Config,
+        mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        const STEP: usize = 31;
-        let hash_input = unroll_to_hash_input::<Fr, STEP, 2>(rwasm_binary.iter().copied());
-        let mut poseidon_hash_table = PoseidonHashTable::default();
-        poseidon_hash_table.stream_inputs(&hash_input, rwasm_binary.len() as u64, STEP);
-        let poseidon_hash_chip = PoseidonHashChip::<'_, Fr, STEP>::construct(
-            self.poseidon_config.clone(),
-            &poseidon_hash_table,
-            rwasm_binary.len(),
-        );
-        poseidon_hash_chip.load(layouter)?;
+        config.assign(&mut layouter, &self.bytecode)?;
         Ok(())
     }
 }
@@ -57,62 +76,48 @@ impl FluentbaseCircuitConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_proofs::{circuit::SimpleFloorPlanner, dev::MockProver, plonk::Circuit};
+    use fluentbase_rwasm::instruction_set;
+    use halo2_proofs::dev::MockProver;
 
-    #[derive(Clone, Default, Debug)]
-    struct TestCircuit {
-        rwasm_binary: Vec<u8>,
-    }
-
-    impl Circuit<Fr> for TestCircuit {
-        type Config = (SelectorColumn, FluentbaseCircuitConfig);
-        type FloorPlanner = SimpleFloorPlanner;
-
-        fn without_witnesses(&self) -> Self {
-            Self::default()
-        }
-
-        fn configure(cs: &mut ConstraintSystem<Fr>) -> Self::Config {
-            let selector = SelectorColumn(cs.fixed_column());
-            let mut cb = ConstraintBuilder::new(selector);
-            let rwasm_runtime = FluentbaseCircuitConfig::configure(cs, &mut cb);
-            cb.build(cs);
-            (selector, rwasm_runtime)
-        }
-
-        fn synthesize(
-            &self,
-            config: Self::Config,
-            mut layouter: impl Layouter<Fr>,
-        ) -> Result<(), Error> {
-            let (selector, rwasm_config) = config;
-            layouter.assign_region(
-                || "test",
-                |mut region| {
-                    for offset in 0..self.rwasm_binary.len() {
-                        selector.enable(&mut region, offset);
-                    }
-                    rwasm_config.assign(&mut region, &self.rwasm_binary)?;
-                    Ok(())
-                },
-            )?;
-            rwasm_config.load(&mut layouter, &self.rwasm_binary)?;
-            Ok(())
-        }
+    fn test_ok<I: Into<Vec<u8>>>(bytecode: I) {
+        let bytecode: Vec<u8> = bytecode.into();
+        let circuit = FluentbaseCircuit {
+            bytecode: UnrolledBytecode::new(bytecode.as_slice()),
+            _pd: Default::default(),
+        };
+        let k = 10;
+        let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
+        prover.assert_satisfied();
     }
 
     #[test]
-    fn test_basic_circuit() {
-        let circuit = TestCircuit {
-            rwasm_binary: "hello, world".to_string().into_bytes(),
-        };
-        let k = 8;
-        let is_ok = true;
-        let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
-        if is_ok {
-            prover.assert_satisfied();
-        } else {
-            assert!(prover.verify().is_err());
-        }
+    fn test_add_three_numbers() {
+        test_ok(instruction_set!(
+            .op_i32_const(100)
+            .op_i32_const(20)
+            .op_i32_add()
+            .op_i32_const(3)
+            .op_i32_add()
+            .op_drop()
+        ));
+    }
+
+    #[test]
+    fn test_illegal_opcode() {
+        let bytecode = vec![0xf3];
+        test_ok(bytecode);
+    }
+
+    #[test]
+    fn test_need_more() {
+        // 63 is `i32.const` code, it should has 8 bytes after
+        let bytecode = vec![63];
+        test_ok(bytecode);
+        // 63 is `i32.const` code, it should has 8 bytes after
+        let bytecode = vec![63, 0x00, 0x00, 0x00];
+        test_ok(bytecode);
+        // 63 is `i32.const` code, it should has 8 bytes after
+        let bytecode = vec![63, 0x00, 0x00, 0x00, 0x00];
+        test_ok(bytecode);
     }
 }

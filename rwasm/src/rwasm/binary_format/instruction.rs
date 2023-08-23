@@ -119,7 +119,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::RefFunc(idx) => sink.write_u8(0x3e)? + idx.write_binary(sink)?,
             // i32/i64 Instruction family
             Instruction::I32Const(untyped_value) => {
-                sink.write_u8(0x3f)? + (untyped_value.to_bits() as i32).write_binary(sink)?
+                sink.write_u8(0x3f)? + untyped_value.write_binary(sink)?
             }
             Instruction::I64Const(untyped_value) => {
                 sink.write_u8(0x40)? + untyped_value.write_binary(sink)?
@@ -339,7 +339,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0x3d => Instruction::ElemDrop(ElementSegmentIdx::read_binary(sink)?),
             0x3e => Instruction::RefFunc(FuncIdx::read_binary(sink)?),
             // i32/i64 Instruction family
-            0x3f => Instruction::I32Const(UntypedValue::from(i32::read_binary(sink)?)),
+            0x3f => Instruction::I32Const(UntypedValue::read_binary(sink)?),
             0x40 => Instruction::I64Const(UntypedValue::read_binary(sink)?),
             0x41 => Instruction::ConstRef(ConstRef::read_binary(sink)?),
             0x42 => Instruction::I32Eqz,
@@ -553,6 +553,11 @@ impl Instruction {
         Some(value)
     }
 
+    pub fn code_value(&self) -> u8 {
+        let (code_value, _) = self.info();
+        code_value
+    }
+
     pub fn info(&self) -> (u8, usize) {
         let mut sink: Vec<u8> = vec![0; 100];
         let mut binary_writer = BinaryFormatWriter::new(sink.as_mut_slice());
@@ -584,7 +589,7 @@ mod tests {
             if opcode.write_binary(&mut writer).unwrap() == 0 {
                 continue;
             }
-            let (first_byte, _hint_size) = opcode.info();
+            let (first_byte, _aux_size) = opcode.info();
             assert_eq!(first_byte, buf[0]);
             let mut reader = BinaryFormatReader::new(buf.as_slice());
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
