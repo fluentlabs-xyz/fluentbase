@@ -3,10 +3,14 @@ use ethers_core::{
     types::{Address, U256},
 };
 use halo2_proofs::{arithmetic::FieldExt, halo2curves::bn256::Fr};
-use hash_circuit::hash::Hashable;
+use hash_circuit::hash::{Hashable, MessageHashable};
 use num_bigint::BigUint;
 
-pub(crate) fn hash(x: Fr, y: Fr) -> Fr {
+pub trait Field: FieldExt + Hashable + MessageHashable {}
+
+impl Field for Fr {}
+
+pub(crate) fn hash<F: Field>(x: F, y: F) -> F {
     Hashable::hash([x, y])
 }
 
@@ -24,14 +28,14 @@ impl Bit for Fr {
     }
 }
 
-pub(crate) fn split_word(x: U256) -> (Fr, Fr) {
+pub(crate) fn split_word<F: Field>(x: U256) -> (F, F) {
     let mut bytes = [0; 32];
     x.to_big_endian(&mut bytes);
     let high_bytes: [u8; 16] = bytes[..16].try_into().unwrap();
     let low_bytes: [u8; 16] = bytes[16..].try_into().unwrap();
 
-    let high = Fr::from_u128(u128::from_be_bytes(high_bytes));
-    let low = Fr::from_u128(u128::from_be_bytes(low_bytes));
+    let high = F::from_u128(u128::from_be_bytes(high_bytes));
+    let low = F::from_u128(u128::from_be_bytes(low_bytes));
     (high, low)
 
     // TODO: what's wrong with this?
@@ -41,12 +45,12 @@ pub(crate) fn split_word(x: U256) -> (Fr, Fr) {
     // hash(key_high, key_low)
 }
 
-pub(crate) fn hi_lo(x: &BigUint) -> (Fr, Fr) {
+pub(crate) fn hi_lo<F: Field>(x: &BigUint) -> (F, F) {
     let mut u64_digits = x.to_u64_digits();
     u64_digits.resize(4, 0);
     (
-        Fr::from_u128((u128::from(u64_digits[3]) << 64) + u128::from(u64_digits[2])),
-        Fr::from_u128((u128::from(u64_digits[1]) << 64) + u128::from(u64_digits[0])),
+        F::from_u128((u128::from(u64_digits[3]) << 64) + u128::from(u64_digits[2])),
+        F::from_u128((u128::from(u64_digits[1]) << 64) + u128::from(u64_digits[0])),
     )
 }
 
@@ -90,17 +94,17 @@ pub fn u256_to_big_endian(x: &U256) -> Vec<u8> {
     bytes.to_vec()
 }
 
-pub fn storage_key_hash(key: U256) -> Fr {
+pub fn storage_key_hash<F: Field>(key: U256) -> F {
     let (high, low) = split_word(key);
     hash(high, low)
 }
 
-pub fn account_key(address: Address) -> Fr {
+pub fn account_key<F: Field>(address: Address) -> F {
     let high_bytes: [u8; 16] = address.0[..16].try_into().unwrap();
     let low_bytes: [u8; 4] = address.0[16..].try_into().unwrap();
 
-    let address_high = Fr::from_u128(u128::from_be_bytes(high_bytes));
-    let address_low = Fr::from_u128(u128::from(u32::from_be_bytes(low_bytes)) << 96);
+    let address_high = F::from_u128(u128::from_be_bytes(high_bytes));
+    let address_low = F::from_u128(u128::from(u32::from_be_bytes(low_bytes)) << 96);
     hash(address_high, address_low)
 }
 

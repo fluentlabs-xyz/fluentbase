@@ -1,18 +1,16 @@
-use crate::constraint_builder::{
-    AdviceColumn,
-    ConstraintBuilder,
-    FixedColumn,
-    Query,
-    SelectorColumn,
+use crate::{
+    constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
+    gadgets::poseidon::PoseidonTable,
+    unrolled_bytecode::UnrolledBytecode,
+    util::Field,
 };
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
-    rwasm::{BinaryFormatError, ReducedModuleReader},
+    rwasm::{BinaryFormatError, ReducedModuleTrace},
 };
 use halo2_proofs::{
-    arithmetic::FieldExt,
-    circuit::{Layouter, Region, SimpleFloorPlanner},
-    plonk::{Circuit, ConstraintSystem, Error},
+    circuit::{Layouter, Region},
+    plonk::{ConstraintSystem, Error},
 };
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
@@ -20,12 +18,14 @@ use strum::IntoEnumIterator;
 const N_OPCODE_LOOKUP_TABLE: usize = 3;
 const N_RWASM_LOOKUP_TABLE: usize = 3;
 
-pub trait RwasmLookup<F: FieldExt> {
+pub trait RwasmLookup<F: Field> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE];
 }
 
+pub type OpcodeTable = [FixedColumn; N_OPCODE_LOOKUP_TABLE];
+
 #[derive(Clone)]
-pub struct RwasmCircuitConfig<F: FieldExt> {
+pub struct RwasmCircuitConfig<F: Field> {
     // selectors
     q_enable: SelectorColumn,
     q_first: SelectorColumn,
@@ -35,21 +35,24 @@ pub struct RwasmCircuitConfig<F: FieldExt> {
     code: AdviceColumn,
     aux_size: AdviceColumn,
     aux: AdviceColumn,
-    illegal_opcode: SelectorColumn,
+    reached_unreachable: SelectorColumn,
     need_more: SelectorColumn,
+    illegal_opcode: SelectorColumn,
+    code_hash: AdviceColumn,
     // lookup tables
-    opcode_table: [FixedColumn; N_OPCODE_LOOKUP_TABLE],
+    poseidon_table: PoseidonTable,
+    opcode_table: OpcodeTable,
     _pd: PhantomData<F>,
 }
 
-impl<F: FieldExt> RwasmLookup<F> for RwasmCircuitConfig<F> {
+impl<F: Field> RwasmLookup<F> for RwasmCircuitConfig<F> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE] {
         unreachable!("not implemented yet");
     }
 }
 
-impl<F: FieldExt> RwasmCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
+impl<F: Field> RwasmCircuitConfig<F> {
+    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_table: PoseidonTable) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let q_first = SelectorColumn(cs.fixed_column());
         let q_last = SelectorColumn(cs.fixed_column());
@@ -60,8 +63,11 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
         let code = cb.advice_column(cs);
         let aux_size = cb.advice_column(cs);
         let aux = cb.advice_column(cs);
-        let illegal_opcode = SelectorColumn(cs.fixed_column());
+        let reached_unreachable = SelectorColumn(cs.fixed_column());
         let need_more = SelectorColumn(cs.fixed_column());
+        let illegal_opcode = SelectorColumn(cs.fixed_column());
+        let code_hash = cb.advice_column(cs);
+
         let opcode_table = cb.fixed_columns(cs);
 
         // first row always starts with 0 offset
@@ -76,6 +82,11 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
                 "offset+aux_size+1=next_offset",
                 offset.current() + aux_size.current() + 1,
                 offset.next(),
+            );
+            cb.assert_equal(
+                "cur_code_hash=next_code_hash",
+                code_hash.current(),
+                code_hash.next(),
             );
         });
 
@@ -101,9 +112,22 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
         });
 
         // if we have error then it's always last row
-        cb.condition(illegal_opcode.current().or(need_more.current()), |cb| {
-            cb.assert("if (q_need_more) q_last is 1", q_last.current());
-        });
+        cb.condition(
+            illegal_opcode
+                .current()
+                .or(need_more.current())
+                .or(reached_unreachable.current()),
+            |cb| {
+                cb.assert("if (q_need_more) q_last is 1", q_last.current());
+            },
+        );
+
+        // lookup poseidon state
+        cb.poseidon_lookup(
+            "poseidon_lookup(code,aux,code_hash)",
+            [code.current(), aux.current(), code_hash.current()],
+            &poseidon_table,
+        );
 
         cb.build(cs);
 
@@ -115,14 +139,17 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
             code,
             aux_size,
             aux,
-            illegal_opcode,
+            reached_unreachable,
             need_more,
+            illegal_opcode,
+            code_hash,
+            poseidon_table,
             opcode_table,
             _pd: Default::default(),
         }
     }
 
-    pub fn load(&mut self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+    pub fn load(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         layouter.assign_region(
             || "opcode table",
             |mut region| {
@@ -146,40 +173,50 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn assign_internal(
-        &mut self,
+    pub fn assign_trace(
+        &self,
         region: &mut Region<'_, F>,
-        mut offset: usize,
-        bytecode: &[u8],
-    ) -> usize {
-        let mut module_reader = ReducedModuleReader::new(bytecode);
-        self.q_first.enable(region, offset);
-        let mut last_row_offset = offset;
-        loop {
-            let trace = match module_reader.trace_opcode() {
-                Some(state) => state,
-                None => break,
-            };
-            self.q_enable.enable(region, offset);
-            println!("{:?}", trace);
-            self.offset
-                .assign(region, offset, F::from(trace.offset as u64));
-            self.code.assign(region, offset, F::from(trace.code as u64));
-            self.aux_size
-                .assign(region, offset, F::from(trace.aux_size as u64));
-            self.aux
-                .assign(region, offset, F::from(trace.aux.to_bits()));
-            if let Err(e) = trace.instr {
-                match e {
-                    BinaryFormatError::NeedMore(_) => {
-                        self.need_more.enable(region, offset);
-                    }
-                    BinaryFormatError::IllegalOpcode(_) => {
-                        self.illegal_opcode.enable(region, offset);
-                    }
+        offset: usize,
+        code_hash: F,
+        trace: &ReducedModuleTrace,
+    ) {
+        self.q_enable.enable(region, offset);
+        println!("{:?}", trace);
+        self.offset
+            .assign(region, offset, F::from(trace.offset as u64));
+        self.code.assign(region, offset, F::from(trace.code as u64));
+        self.aux_size
+            .assign(region, offset, F::from(trace.aux_size as u64));
+        self.aux
+            .assign(region, offset, F::from(trace.aux.to_bits()));
+        if let Err(e) = trace.instr {
+            match e {
+                BinaryFormatError::ReachedUnreachable => {
+                    self.reached_unreachable.enable(region, offset);
+                }
+                BinaryFormatError::NeedMore(_) => {
+                    self.need_more.enable(region, offset);
+                }
+                BinaryFormatError::IllegalOpcode(_) => {
+                    self.illegal_opcode.enable(region, offset);
                 }
             }
+        }
+        self.code_hash.assign(region, offset, code_hash);
+    }
+
+    pub fn assign_bytecode(
+        &self,
+        region: &mut Region<'_, F>,
+        mut offset: usize,
+        bytecode: &UnrolledBytecode<F>,
+    ) -> usize {
+        self.q_first.enable(region, offset);
+        let mut last_row_offset = offset;
+        let code_hash = bytecode.code_hash();
+        for trace in bytecode.read_traces() {
             last_row_offset = offset;
+            self.assign_trace(region, offset, code_hash.clone(), &trace);
             offset += 1;
         }
         self.q_last.enable(region, last_row_offset);
@@ -187,98 +224,17 @@ impl<F: FieldExt> RwasmCircuitConfig<F> {
     }
 
     pub fn assign(
-        &mut self,
+        &self,
         layouter: &mut impl Layouter<F>,
-        bytecodes: &Vec<&[u8]>,
+        bytecode: &UnrolledBytecode<F>,
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "bytecode",
             |mut region| {
-                let mut offset = 0;
-                for bytecode in bytecodes.iter().copied() {
-                    offset = self.assign_internal(&mut region, offset, bytecode);
-                }
+                self.assign_bytecode(&mut region, 0, bytecode);
                 Ok(())
             },
         )?;
         Ok(())
-    }
-}
-
-#[derive(Default)]
-pub struct RwasmCircuit<'a, F: FieldExt> {
-    bytecodes: Vec<&'a [u8]>,
-    _pd: PhantomData<F>,
-}
-
-impl<'a, F: FieldExt> Circuit<F> for RwasmCircuit<'a, F> {
-    type Config = RwasmCircuitConfig<F>;
-    type FloorPlanner = SimpleFloorPlanner;
-
-    fn without_witnesses(&self) -> Self {
-        Self::default()
-    }
-
-    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-        Self::Config::configure(meta)
-    }
-
-    fn synthesize(
-        &self,
-        mut config: Self::Config,
-        mut layouter: impl Layouter<F>,
-    ) -> Result<(), Error> {
-        config.load(&mut layouter)?;
-        config.assign(&mut layouter, &self.bytecodes)?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::rwasm_circuit::RwasmCircuit;
-    use fluentbase_rwasm::instruction_set;
-    use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr};
-
-    fn test_ok<I: Into<Vec<u8>>>(bytecode: I) {
-        let bytecode: Vec<u8> = bytecode.into();
-        let circuit = RwasmCircuit {
-            bytecodes: vec![bytecode.as_slice()],
-            _pd: Default::default(),
-        };
-        let k = 10;
-        let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
-        prover.assert_satisfied();
-    }
-
-    #[test]
-    fn test_add_three_numbers() {
-        test_ok(instruction_set!(
-            .op_i32_const(100)
-            .op_i32_const(20)
-            .op_i32_add()
-            .op_i32_const(3)
-            .op_i32_add()
-            .op_drop()
-        ));
-    }
-
-    #[test]
-    fn test_illegal_opcode() {
-        let bytecode = vec![0xf3];
-        test_ok(bytecode);
-    }
-
-    #[test]
-    fn test_need_more() {
-        // 63 is `i32.const` code, it should has 4 bytes after
-        let bytecode = vec![63];
-        test_ok(bytecode);
-        // 63 is `i32.const` code, it should has 4 bytes after
-        let bytecode = vec![63, 0x00, 0x00, 0x00];
-        test_ok(bytecode);
-        // 63 is `i32.const` code, it should has 4 bytes after
-        let bytecode = vec![63, 0x00, 0x00, 0x00, 0x00];
-        test_ok(bytecode);
     }
 }

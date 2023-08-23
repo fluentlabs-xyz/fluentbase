@@ -2,10 +2,12 @@
 #![allow(clippy::too_many_arguments)]
 #![deny(unsafe_code)]
 
-pub mod constraint_builder;
-// pub mod fluentbase_circuit;
-pub mod gadgets;
-mod rwasm_circuit;
-mod util;
+extern crate core;
 
-// pub use fluentbase_circuit::FluentbaseCircuitConfig;
+mod constraint_builder;
+mod fluentbase_circuit;
+mod gadgets;
+mod poseidon_circuit;
+mod rwasm_circuit;
+mod unrolled_bytecode;
+mod util;
