@@ -915,7 +915,6 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "fixed-bigint",
- "wat",
  "wee_alloc",
 ]
 
@@ -932,6 +931,7 @@ name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
  "fluentbase-core",
+ "fluentbase-rwasm",
 ]
 
 [[package]]
@@ -943,7 +943,6 @@ dependencies = [
  "byteorder",
  "criterion",
  "downcast-rs",
- "lazy_static",
  "libm",
  "num-traits",
  "paste",

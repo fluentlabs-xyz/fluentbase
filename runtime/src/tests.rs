@@ -49,7 +49,9 @@ fn test_greeting() {
     let wasm_binary = include_bytes!("../examples/bin/greeting.wasm");
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
+    let output =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &[100, 20, 3], &import_linker).unwrap();
+    assert_eq!(output.output, vec![0, 0, 0, 123]);
 }
 
 fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
@@ -57,7 +59,10 @@ fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
     match err {
         Error::Rwasm(err) => match err {
             fluentbase_rwasm::Error::Trap(trap) => {
-                assert_eq!(trap.i32_exit_status().unwrap(), trap_code.i32_exit_status().unwrap())
+                assert_eq!(
+                    trap.i32_exit_status().unwrap(),
+                    trap_code.i32_exit_status().unwrap()
+                )
             }
             _ => unreachable!("incorrect error type"),
         },
@@ -72,4 +77,13 @@ fn test_panic() {
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
     let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker);
     assert_trap_i32_exit(result, Trap::i32_exit(1));
+}
+
+#[test]
+fn test_translator() {
+    let wasm_binary = include_bytes!("../examples/bin/translator.wasm");
+    let import_linker = Runtime::new_linker();
+    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+    let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
+    println!("{:?}", result.output);
 }

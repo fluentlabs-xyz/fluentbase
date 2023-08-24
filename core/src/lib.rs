@@ -19,7 +19,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-pub mod binding;
+mod binding;
 pub use binding::*;
 
 const HALT_CODE_EXIT: u32 = 0;

@@ -1,6 +1,12 @@
 use crate::{
     macros::{forward_call, forward_call_args},
-    platform::{IMPORT_EVM_RETURN, IMPORT_EVM_STOP, IMPORT_SYS_HALT, IMPORT_SYS_READ, IMPORT_SYS_WRITE},
+    platform::{
+        IMPORT_EVM_RETURN,
+        IMPORT_EVM_STOP,
+        IMPORT_SYS_HALT,
+        IMPORT_SYS_READ,
+        IMPORT_SYS_WRITE,
+    },
     Error,
 };
 use fluentbase_rwasm::{
@@ -100,9 +106,7 @@ impl Runtime {
         };
 
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
-        let module = reduced_module
-            .to_module(&engine, import_linker)
-            .map_err(Into::<Error>::into)?;
+        let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
         let store = Store::<RuntimeContext>::new(&engine, runtime_context);
 

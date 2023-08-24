@@ -91,17 +91,24 @@ impl<F: Field> RwasmCircuitConfig<F> {
         });
 
         // make sure code is in the range and opcode status is correct
+        cb.condition(illegal_opcode.current(), |cb| {
+            cb.add_lookup(
+                "lookup_opcode(code,aux_size,error)",
+                [code.current(), 0.into(), 1.into()],
+                opcode_table.map(|v| v.current()),
+            );
+        });
         cb.condition(need_more.current(), |cb| {
             // for `q_need_more` selector we don't know exact `aux_size`, but still lets check
             cb.add_lookup(
-                "lookup_opcode(code,aux_size,illegal_opcode)",
+                "lookup_opcode(code,aux_size,error)",
                 [code.current(), opcode_table[1].current(), 0.into()],
                 opcode_table.map(|v| v.current()),
             );
         });
         cb.condition(!need_more.current(), |cb| {
             cb.add_lookup(
-                "lookup_opcode(code,aux_size,illegal_opcode)",
+                "lookup_opcode(code,aux_size,error)",
                 [
                     code.current(),
                     aux_size.current(),
