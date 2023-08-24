@@ -220,14 +220,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>,
     ) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
-        let mut stack_diff_before: i32 = 0;
-        let mut stack_diff_after: i32 = 0;
+        let mut stack_diff_before: i64 = 0;
+        let mut stack_diff_after: i64 = 0;
         let mut prev_opcode: alloc::vec::Vec<Instr> = Default::default();
         loop {
             prev_opcode.push(*self.ip.get());
             match *self.ip.get() {
-                Instr::SanitizerStackCheck(_) => stack_diff_after = self.stack_diff() as i32,
-                _ => stack_diff_before = self.stack_diff() as i32,
+                Instr::SanitizerStackCheck(_) => stack_diff_after = self.stack_diff() as i64,
+                _ => stack_diff_before = self.stack_diff() as i64,
             }
             match *self.ip.get() {
                 Instr::LocalGet(local_depth) => self.visit_local_get(local_depth),
@@ -1105,8 +1105,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn visit_sanitizer_stack_check(
         &mut self,
-        stack_diff: i32,
-        value_diff: i32,
+        stack_diff: i64,
+        value_diff: i64,
         _prev_opcodes: &alloc::vec::Vec<Instruction>,
     ) {
         if value_diff != stack_diff {

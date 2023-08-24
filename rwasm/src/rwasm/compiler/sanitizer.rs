@@ -33,7 +33,7 @@ impl Sanitizer {
         self.str += format!("{instr:?}: {}\n", stack_height).as_str();
         instruction_set
             .instr
-            .insert(pos, Instruction::SanitizerStackCheck(stack_height));
+            .insert(pos, Instruction::SanitizerStackCheck(stack_height as i64));
     }
 
     pub fn check_stack_height_call(

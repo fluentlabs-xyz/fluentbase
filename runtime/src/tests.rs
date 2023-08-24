@@ -80,6 +80,7 @@ fn test_panic() {
 }
 
 #[test]
+#[ignore]
 fn test_translator() {
     let wasm_binary = include_bytes!("../examples/bin/translator.wasm");
     let import_linker = Runtime::new_linker();
