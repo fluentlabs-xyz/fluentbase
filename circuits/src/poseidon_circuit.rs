@@ -5,7 +5,7 @@ use halo2_proofs::{
 };
 use hash_circuit::hash::{PoseidonHashChip, PoseidonHashConfig, PoseidonHashTable};
 
-pub const HASH_BYTES_IN_FIELD: usize = 1;
+pub const HASH_BYTES_IN_FIELD: usize = 9;
 pub const HASH_BLOCK_STEP_SIZE: usize = HASH_BYTES_IN_FIELD * 2;
 
 #[derive(Clone)]
@@ -38,13 +38,13 @@ impl<F: Field> PoseidonCircuitConfig<F> {
         poseidon_hash_table.stream_inputs_with_check(
             &hash_traces,
             Some(code_hash),
-            2 * hash_traces.len() as u64,
+            bytecode.len() as u64,
             HASH_BLOCK_STEP_SIZE,
         );
         let poseidon_hash_chip = PoseidonHashChip::<'_, F, { HASH_BYTES_IN_FIELD }>::construct(
             self.poseidon_config.clone(),
             &poseidon_hash_table,
-            2 * hash_traces.len(),
+            HASH_BYTES_IN_FIELD * hash_traces.len(),
         );
         poseidon_hash_chip.load(layouter)?;
         Ok(())

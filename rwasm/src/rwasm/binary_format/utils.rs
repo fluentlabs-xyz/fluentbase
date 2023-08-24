@@ -1,13 +1,27 @@
-use crate::engine::ConstRef;
 use crate::{
     common::UntypedValue,
-    engine::bytecode::{
-        AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx, FuncIdx,
-        GlobalIdx, LocalDepth, SignatureIdx, TableIdx,
+    engine::{
+        bytecode::{
+            AddressOffset,
+            BlockFuel,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            LocalDepth,
+            SignatureIdx,
+            TableIdx,
+        },
+        CompiledFunc,
+        ConstRef,
     },
-    engine::CompiledFunc,
-    rwasm::binary_format::reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-    rwasm::binary_format::{BinaryFormat, BinaryFormatError},
+    rwasm::binary_format::{
+        reader_writer::{BinaryFormatReader, BinaryFormatWriter},
+        BinaryFormat,
+        BinaryFormatError,
+    },
 };
 
 impl<'a> BinaryFormat<'a> for UntypedValue {
@@ -27,12 +41,17 @@ macro_rules! impl_default_idx {
         impl<'a> BinaryFormat<'a> for $name {
             type SelfType = $name;
 
-            fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError> {
-                ((*self).$to_method() as $nested_type).write_binary(sink)
+            fn write_binary(
+                &self,
+                sink: &mut BinaryFormatWriter<'a>,
+            ) -> Result<usize, BinaryFormatError> {
+                ((*self).$to_method() as u64).write_binary(sink)
             }
 
-            fn read_binary(sink: &mut BinaryFormatReader<'a>) -> Result<Self::SelfType, BinaryFormatError> {
-                Ok($name::from($nested_type::read_binary(sink)?))
+            fn read_binary(
+                sink: &mut BinaryFormatReader<'a>,
+            ) -> Result<Self::SelfType, BinaryFormatError> {
+                Ok($name::from(u64::read_binary(sink)? as $nested_type))
             }
         }
     };

@@ -30,7 +30,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
 
     fn write_binary(&self, sink: &mut BinaryFormatWriter<'a>) -> Result<usize, BinaryFormatError> {
-        let n = match self {
+        let mut n = match self {
             // local Instruction family
             Instruction::LocalGet(index) => sink.write_u8(0x00)? + index.write_binary(sink)?,
             Instruction::LocalSet(index) => sink.write_u8(0x01)? + index.write_binary(sink)?,
@@ -264,12 +264,17 @@ impl<'a> BinaryFormat<'a> for Instruction {
             }
             _ => unreachable!("not supported opcode: {:?}", self),
         };
+        // we align all opcodes to 9 bytes
+        if n == 1 {
+            n += sink.write_u64_be(0)?;
+        }
         Ok(n)
     }
 
     fn read_binary(sink: &mut BinaryFormatReader<'a>) -> Result<Instruction, BinaryFormatError> {
+        let current_pos = sink.pos();
         let byte = sink.read_u8()?;
-        Ok(match byte {
+        let instr = match byte {
             // local Instruction family
             0x00 => Instruction::LocalGet(LocalDepth::read_binary(sink)?),
             0x01 => Instruction::LocalSet(LocalDepth::read_binary(sink)?),
@@ -475,10 +480,15 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0xc4 => Instruction::I64TruncSatF64S,
             0xc5 => Instruction::I64TruncSatF64U,
 
-            0xc6 => Instruction::SanitizerStackCheck(i32::read_binary(sink)?),
+            0xc6 => Instruction::SanitizerStackCheck(i64::read_binary(sink)?),
 
             _ => return Err(BinaryFormatError::IllegalOpcode(byte)),
-        })
+        };
+        // we align all opcodes to 9 bytes
+        if sink.pos() - current_pos == 1 {
+            sink.read_u64_be()?;
+        }
+        Ok(instr)
     }
 }
 
@@ -589,8 +599,14 @@ mod tests {
             if opcode.write_binary(&mut writer).unwrap() == 0 {
                 continue;
             }
-            let (first_byte, _aux_size) = opcode.info();
-            assert_eq!(first_byte, buf[0]);
+            let (first_byte, aux_size) = opcode.info();
+            assert_eq!(
+                first_byte, buf[0],
+                "first byte mismatch for opcode {:?}",
+                opcode
+            );
+            // make sure serialized bytes are always 9 bytes (1 for code and 8 for aux)
+            assert_eq!(aux_size, 8, "opcode {:?} length is not 9 bytes", opcode);
             let mut reader = BinaryFormatReader::new(buf.as_slice());
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
             assert_eq!(opcode, opcode2);
