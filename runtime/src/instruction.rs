@@ -11,18 +11,26 @@ fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     }
 }
 
-fn exported_memory_slice<'a>(caller: &'a mut Caller<'_, RuntimeContext>, offset: usize, length: usize) -> &'a mut [u8] {
+fn exported_memory_slice<'a>(
+    caller: &'a mut Caller<'_, RuntimeContext>,
+    offset: usize,
+    length: usize,
+) -> &'a mut [u8] {
     if length == 0 {
         return &mut [];
     }
-    let memory = exported_memory(caller).data_mut::<'a>(caller.as_context_mut());
+    let memory = exported_memory(caller).data_mut(caller.as_context_mut());
     if memory.len() > offset {
         return &mut memory[offset..(offset + length)];
     }
     return &mut [];
 }
 
-fn exported_memory_vec(caller: &mut Caller<'_, RuntimeContext>, offset: usize, length: usize) -> Vec<u8> {
+fn exported_memory_vec(
+    caller: &mut Caller<'_, RuntimeContext>,
+    offset: usize,
+    length: usize,
+) -> Vec<u8> {
     if length == 0 {
         return Default::default();
     }
@@ -59,7 +67,11 @@ pub(crate) fn evm_stop(_: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     Err(Trap::i32_exit(EXIT_CODE_EVM_STOP))
 }
 
-pub(crate) fn evm_return(mut caller: Caller<'_, RuntimeContext>, offset: u32, length: u32) -> Result<(), Trap> {
+pub(crate) fn evm_return(
+    mut caller: Caller<'_, RuntimeContext>,
+    offset: u32,
+    length: u32,
+) -> Result<(), Trap> {
     let memory = exported_memory_vec(&mut caller, offset as usize, length as usize);
     caller.data_mut().return_data(memory.as_slice());
     Ok(())

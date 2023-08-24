@@ -23,6 +23,7 @@ pub use self::utils::{
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
 use crate::common::{UntypedValue, F32};
 use core::fmt::Debug;
+#[cfg(test)]
 use strum_macros::EnumIter;
 
 /// The internal `wasmi` bytecode that is stored for Wasm functions.
@@ -33,7 +34,8 @@ use strum_macros::EnumIter;
 ///
 /// For example the `BrTable` instruction is unrolled into separate instructions
 /// each representing either the `BrTable` head or one of its branching targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(EnumIter))]
 pub enum Instruction {
     LocalGet(LocalDepth),
     LocalSet(LocalDepth),

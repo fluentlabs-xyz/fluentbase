@@ -1,4 +1,4 @@
-FILES = greeting panic
+FILES = greeting panic translator
 
 all: $(FILES)
 

@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-core = { path = "../../core" }
+fluentbase-core = { path = "../../core", default-features = false }
+fluentbase-rwasm = { path = "../../rwasm", default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
@@ -12,3 +13,4 @@ crate-type = ["cdylib"]
 [features]
 greeting = []
 panic = []
+translator = []

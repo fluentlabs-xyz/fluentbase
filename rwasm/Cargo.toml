@@ -15,12 +15,12 @@ spin = { version = "0.9", default-features = false, features = [
 smallvec = { version = "1.10.0", features = ["union"] }
 libm = "0.2.1"
 num-traits = { version = "0.2.8", default-features = false }
-downcast-rs = "1.2.0"
+downcast-rs = { version = "1.2.0", default-features = false }
 paste = "1"
-byteorder = "1.4.3"
-strum = "0.25.0"
-strum_macros = "0.25.1"
-lazy_static = "1.4.0"
+byteorder = { version = "1.4.3", default-features = false }
+# strum is used only with test cfg
+strum = { version = "0.25.0" }
+strum_macros = { version = "0.25.1" }
 
 [dev-dependencies]
 wat = "1"
@@ -29,6 +29,11 @@ wast = "52.0"
 anyhow = "1.0"
 criterion = { version = "0.4", default-features = false }
 rand = "0.8.2"
+
+[features]
+default = []
+# Use `no-default-features` for a `no_std` build.
+#std = ["num-traits/std", "downcast-rs/std","byteorder/std"]
 
 [profile.release]
 lto = "fat"
