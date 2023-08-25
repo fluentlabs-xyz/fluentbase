@@ -137,17 +137,17 @@ impl<F: Field> RwasmCircuitConfig<F> {
 
         // lookup poseidon state
 
-        cb.poseidon_lookup(
-            "poseidon_lookup(code,aux,code_hash)",
-            code_hash.current(),   // code hash
-            field_input.current(), // left
-            field_input.next(),    // right
-            &poseidon_table,
-        );
+        // cb.poseidon_lookup(
+        //     "poseidon_lookup(code,aux,code_hash)",
+        //     code_hash.current(),   // code hash
+        //     field_input.current(), // left
+        //     field_input.next(),    // right
+        //     &poseidon_table,
+        // );
 
         // cb.condition(lookup_hash.current(), |cb| {
         //     cb.poseidon_lookup_input(
-        //         "poseidon_lookup(code,aux,code_hash)",
+        //         "poseidon_lookup(code_hash,field_input)",
         //         code_hash.current(),
         //         field_input.current(),
         //         true,

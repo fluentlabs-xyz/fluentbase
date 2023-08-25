@@ -1,17 +1,17 @@
-use ethers_core::{
-    k256::elliptic_curve::PrimeField,
-    types::{Address, U256},
-};
+use ethers_core::types::U256;
 use halo2_proofs::{arithmetic::FieldExt, halo2curves::bn256::Fr};
-use num_bigint::BigUint;
 use poseidon_circuit::hash::{Hashable, MessageHashable};
 
 pub trait Field: FieldExt + Hashable + MessageHashable {}
 
 impl Field for Fr {}
 
+pub(crate) fn poseidon_domain<F: Field>() -> F {
+    F::zero()
+}
+
 pub(crate) fn hash<F: Field>(x: F, y: F) -> F {
-    Hashable::hash([x, y])
+    Hashable::hash_with_domain([x, y], poseidon_domain::<F>())
 }
 
 pub(crate) trait Bit {
@@ -26,86 +26,6 @@ impl Bit for Fr {
             .get(31 - i / 8)
             .map_or_else(|| false, |&byte| byte & (1 << (i % 8)) != 0)
     }
-}
-
-pub(crate) fn split_word<F: Field>(x: U256) -> (F, F) {
-    let mut bytes = [0; 32];
-    x.to_big_endian(&mut bytes);
-    let high_bytes: [u8; 16] = bytes[..16].try_into().unwrap();
-    let low_bytes: [u8; 16] = bytes[16..].try_into().unwrap();
-
-    let high = F::from_u128(u128::from_be_bytes(high_bytes));
-    let low = F::from_u128(u128::from_be_bytes(low_bytes));
-    (high, low)
-
-    // TODO: what's wrong with this?
-    // let [limb_0, limb_1, limb_2, limb_3] = key.0;
-    // let key_high = Fr::from_u128(u128::from(limb_2) + u128::from(limb_3) << 64);
-    // let key_low = Fr::from_u128(u128::from(limb_0) + u128::from(limb_1) << 64);
-    // hash(key_high, key_low)
-}
-
-pub(crate) fn hi_lo<F: Field>(x: &BigUint) -> (F, F) {
-    let mut u64_digits = x.to_u64_digits();
-    u64_digits.resize(4, 0);
-    (
-        F::from_u128((u128::from(u64_digits[3]) << 64) + u128::from(u64_digits[2])),
-        F::from_u128((u128::from(u64_digits[1]) << 64) + u128::from(u64_digits[0])),
-    )
-}
-
-pub(crate) fn u256_hi_lo(x: &U256) -> (u128, u128) {
-    let u64_digits = x.0;
-    (
-        (u128::from(u64_digits[3]) << 64) + u128::from(u64_digits[2]),
-        (u128::from(u64_digits[1]) << 64) + u128::from(u64_digits[0]),
-    )
-}
-pub(crate) fn fr_from_biguint(b: &BigUint) -> Fr {
-    b.to_u64_digits()
-        .iter()
-        .rev() // to_u64_digits has least significant digit first
-        .fold(Fr::zero(), |a, b| {
-            a * Fr::from(1 << 32).square() + Fr::from(*b)
-        })
-}
-
-pub fn rlc(be_bytes: &[u8], randomness: Fr) -> Fr {
-    let x = be_bytes.iter().fold(Fr::zero(), |acc, byte| {
-        randomness * acc + Fr::from(u64::from(*byte))
-    });
-    // dbg!(x);
-    x
-}
-
-pub fn u256_from_biguint(x: &BigUint) -> U256 {
-    U256::from_big_endian(&x.to_bytes_be())
-}
-
-pub fn u256_to_fr(x: U256) -> Fr {
-    let mut bytes = [0u8; 32];
-    x.to_little_endian(&mut bytes);
-    Fr::from_repr(bytes).unwrap()
-}
-
-pub fn u256_to_big_endian(x: &U256) -> Vec<u8> {
-    let mut bytes = [0; 32];
-    x.to_big_endian(&mut bytes);
-    bytes.to_vec()
-}
-
-pub fn storage_key_hash<F: Field>(key: U256) -> F {
-    let (high, low) = split_word(key);
-    hash(high, low)
-}
-
-pub fn account_key<F: Field>(address: Address) -> F {
-    let high_bytes: [u8; 16] = address.0[..16].try_into().unwrap();
-    let low_bytes: [u8; 4] = address.0[16..].try_into().unwrap();
-
-    let address_high = F::from_u128(u128::from_be_bytes(high_bytes));
-    let address_low = F::from_u128(u128::from(u32::from_be_bytes(low_bytes)) << 96);
-    hash(address_high, address_low)
 }
 
 pub fn unroll_to_hash_input<F: FieldExt, const BYTES_IN_FIELD: usize, const INPUT_LEN: usize>(
@@ -163,14 +83,4 @@ pub fn unroll_to_hash_input<F: FieldExt, const BYTES_IN_FIELD: usize, const INPU
 
     inputs.push(last.map(|v| v.unwrap()));
     inputs
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_u256_hi_lo() {
-        assert_eq!(u256_hi_lo(&U256::one()), (0, 1));
-    }
 }
