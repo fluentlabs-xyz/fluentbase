@@ -76,23 +76,32 @@ impl<F: Field> RwasmCircuitConfig<F> {
 
         let opcode_table = cb.fixed_columns(cs);
 
-        // first row always starts with 0 offset
-        cb.condition(q_first.current(), |cb| {
-            cb.assert_zero("if (q_first) offset is 0", offset.current());
-        });
+        let if_error = || {
+            reached_unreachable
+                .current()
+                .or(need_more.current())
+                .or(illegal_opcode.current())
+        };
 
         // if row is not last
         cb.condition(!q_last.current(), |cb| {
             // next offset is current offset plus aux size
             cb.assert_equal(
-                "offset+aux_size+1=next_offset",
-                offset.current() + aux_size.current() + 1,
-                offset.next(),
+                "next_offset+aux_size+1=offset",
+                offset.current(),
+                offset.next() + aux_size.current() + 1,
             );
             cb.assert_equal(
                 "cur_code_hash=next_code_hash",
                 code_hash.current(),
                 code_hash.next(),
+            );
+        });
+        cb.condition(q_last.current().and(!if_error()), |cb| {
+            cb.assert_equal(
+                "offset is aligned",
+                offset.current(),
+                Query::from(HASH_BYTES_IN_FIELD as u64),
             );
         });
 
@@ -136,26 +145,16 @@ impl<F: Field> RwasmCircuitConfig<F> {
         );
 
         // lookup poseidon state
-
-        // cb.poseidon_lookup(
-        //     "poseidon_lookup(code,aux,code_hash)",
-        //     code_hash.current(),   // code hash
-        //     field_input.current(), // left
-        //     field_input.next(),    // right
-        //     &poseidon_table,
-        // );
-
-        // cb.condition(lookup_hash.current(), |cb| {
-        //     cb.poseidon_lookup_input(
-        //         "poseidon_lookup(code_hash,field_input)",
-        //         code_hash.current(),
-        //         field_input.current(),
-        //         true,
-        //         &poseidon_table,
-        //     );
-        // });
-        // code.current() * Query::Constant(F::from_u128(0x10000000000000000)) +aux.current(),
-        // cb.condition(side.current(), |cb| {});
+        cb.condition(lookup_hash.current(), |cb| {
+            cb.poseidon_lookup(
+                "poseidon_lookup(code,aux,code_hash)",
+                code_hash.current(),   // code hash
+                field_input.current(), // left
+                field_input.next(),    // right
+                offset.current(),      // offset
+                &poseidon_table,
+            );
+        });
 
         cb.build(cs);
 
@@ -212,8 +211,11 @@ impl<F: Field> RwasmCircuitConfig<F> {
     ) {
         self.q_enable.enable(region, offset);
         println!("{:?}", trace);
-        self.offset
-            .assign(region, offset, F::from(trace.offset as u64));
+        self.offset.assign(
+            region,
+            offset,
+            F::from((trace.bytecode_length - trace.offset) as u64),
+        );
         self.code.assign(region, offset, F::from(trace.code as u64));
         self.aux_size
             .assign(region, offset, F::from(trace.aux_size as u64));

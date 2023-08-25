@@ -7,6 +7,7 @@ use crate::{
 use halo2_proofs::plonk::{Advice, Column, Fixed};
 #[cfg(test)]
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
+use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 
 /// Lookup  represent the poseidon table in zkevm circuit
 pub trait PoseidonLookup {
@@ -27,18 +28,18 @@ impl<F: Field> ConstraintBuilder<F> {
         code_hash: Query<F>,
         left_input: Query<F>,
         right_input: Query<F>,
+        offset: Query<F>,
         poseidon: &impl PoseidonLookup,
     ) {
         let extended_queries = [
-            Query::one(),        // selector
-            code_hash,           // hash
-            left_input.clone(),  // left
-            right_input.clone(), // right
-            Query::zero(),       // control
-            Query::one(),        // head mark */
+            Query::one(),                                                 // selector
+            code_hash,                                                    // hash
+            left_input.clone(),                                           // left
+            right_input.clone(),                                          // right
+            offset * Query::Constant(F::from_u128(HASHABLE_DOMAIN_SPEC)), // control
         ];
 
-        let (q_enable, [hash, left, right, control, head_mark]) = poseidon.lookup_columns();
+        let (q_enable, [hash, left, right, control, _]) = poseidon.lookup_columns();
 
         self.add_lookup(
             name,
@@ -49,7 +50,6 @@ impl<F: Field> ConstraintBuilder<F> {
                 left.current(),
                 right.current(),
                 control.current(),
-                head_mark.current(),
             ],
         )
     }

@@ -42,7 +42,7 @@ impl<F: Field> PoseidonCircuitConfig<F> {
             HASH_BLOCK_STEP_SIZE,
         );
 
-        let poseidon_hash_chip = PoseidonHashChip::<'_, F, { HASH_BYTES_IN_FIELD }>::construct(
+        let poseidon_hash_chip = PoseidonHashChip::<'_, F, { HASH_BLOCK_STEP_SIZE }>::construct(
             self.poseidon_config.clone(),
             &poseidon_hash_table,
             hash_traces.len() + 1,

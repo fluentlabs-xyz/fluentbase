@@ -1,15 +1,15 @@
 use crate::{
-    poseidon_circuit::HASH_BYTES_IN_FIELD,
+    poseidon_circuit::{HASH_BLOCK_STEP_SIZE, HASH_BYTES_IN_FIELD},
     util::{unroll_to_hash_input, Field},
 };
 use fluentbase_rwasm::rwasm::{InstructionSet, ReducedModuleReader, ReducedModuleTrace};
 use itertools::Itertools;
 use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
-use std::marker::PhantomData;
+use std::{iter, marker::PhantomData};
 
 #[derive(Clone, Default, Debug)]
 pub struct UnrolledBytecode<F: Field> {
-    aligned_bytecode: Vec<u8>,
+    original_bytecode: Vec<u8>,
     read_traces: Vec<ReducedModuleTrace>,
     instruction_set: InstructionSet,
     _pd: PhantomData<F>,
@@ -17,7 +17,15 @@ pub struct UnrolledBytecode<F: Field> {
 
 impl<F: Field> UnrolledBytecode<F> {
     pub fn new(bytecode: &[u8]) -> Self {
-        let mut module_reader = ReducedModuleReader::new(bytecode);
+        // TODO: "if codesize is aligned then poseidon circuit fails"
+        let mut aligned_bytecode = bytecode.to_vec();
+        if aligned_bytecode.len() % HASH_BLOCK_STEP_SIZE != 0 {
+            let missing_bytes =
+                HASH_BLOCK_STEP_SIZE - aligned_bytecode.len() % HASH_BLOCK_STEP_SIZE;
+            aligned_bytecode.extend(iter::repeat(0).take(missing_bytes));
+        }
+
+        let mut module_reader = ReducedModuleReader::new(aligned_bytecode.as_slice());
         let mut traces: Vec<ReducedModuleTrace> = Vec::new();
         loop {
             let trace = match module_reader.trace_opcode() {
@@ -26,13 +34,8 @@ impl<F: Field> UnrolledBytecode<F> {
             };
             traces.push(trace);
         }
-        let mut aligned_bytecode = Vec::from(bytecode);
-        // TODO: "if codesize is aligned then poseidon circuit fails"
-        if aligned_bytecode.len() % (2 * HASH_BYTES_IN_FIELD) == 0 {
-            aligned_bytecode.push(0);
-        }
         Self {
-            aligned_bytecode,
+            original_bytecode: aligned_bytecode.clone(),
             read_traces: traces,
             instruction_set: module_reader.instruction_set,
             _pd: Default::default(),
@@ -40,7 +43,7 @@ impl<F: Field> UnrolledBytecode<F> {
     }
 
     pub fn len(&self) -> usize {
-        self.aligned_bytecode.len()
+        self.original_bytecode.len()
     }
 
     pub fn read_traces(&self) -> &Vec<ReducedModuleTrace> {
@@ -48,7 +51,9 @@ impl<F: Field> UnrolledBytecode<F> {
     }
 
     pub fn hash_traces(&self) -> Vec<[F; 2]> {
-        unroll_to_hash_input::<F, { HASH_BYTES_IN_FIELD }, 2>(self.aligned_bytecode.iter().copied())
+        unroll_to_hash_input::<F, { HASH_BYTES_IN_FIELD }, 2>(
+            self.original_bytecode.iter().copied(),
+        )
     }
 
     pub fn code_hash(&self) -> F {
