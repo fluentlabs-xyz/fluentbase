@@ -34,6 +34,7 @@ pub struct RwasmCircuitConfig<F: Field> {
     q_first: SelectorColumn,
     q_last: SelectorColumn,
     // columns
+    index: AdviceColumn,
     offset: AdviceColumn,
     code: AdviceColumn,
     aux_size: AdviceColumn,
@@ -52,7 +53,11 @@ pub struct RwasmCircuitConfig<F: Field> {
 
 impl<F: Field> RwasmLookup<F> for RwasmCircuitConfig<F> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE] {
-        unreachable!("not implemented yet");
+        [
+            self.index.current(),
+            self.code.current(),
+            self.aux.current(),
+        ]
     }
 }
 
@@ -64,6 +69,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
 
         let mut cb = ConstraintBuilder::new(q_enable);
 
+        let index = cb.advice_column(cs);
         let offset = cb.advice_column(cs);
         let code = cb.advice_column(cs);
         let aux_size = cb.advice_column(cs);
@@ -77,15 +83,16 @@ impl<F: Field> RwasmCircuitConfig<F> {
 
         let opcode_table = cb.fixed_columns(cs);
 
-        // let if_error = || {
-        //     reached_unreachable
-        //         .current()
-        //         .or(need_more.current())
-        //         .or(illegal_opcode.current())
-        // };
-
         // if row is not last
+        cb.condition(q_first.current(), |cb| {
+            cb.assert_zero("if (q_first) index=0", index.current());
+        });
         cb.condition(!q_last.current(), |cb| {
+            cb.assert_equal(
+                "next_index=index+aux_size+1",
+                index.current() + aux_size.current() + 1,
+                index.next(),
+            );
             // next offset is current offset plus aux size
             cb.assert_equal(
                 "next_offset+aux_size+1=offset",
@@ -172,6 +179,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
             q_enable,
             q_first,
             q_last,
+            index,
             offset,
             code,
             aux_size,
@@ -221,6 +229,8 @@ impl<F: Field> RwasmCircuitConfig<F> {
     ) {
         self.q_enable.enable(region, offset);
         println!("{:?}", trace);
+        self.index
+            .assign(region, offset, F::from(trace.offset as u64));
         self.offset.assign(
             region,
             offset,
