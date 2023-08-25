@@ -24,16 +24,18 @@ impl<F: Field> ConstraintBuilder<F> {
     pub fn poseidon_lookup(
         &mut self,
         name: &'static str,
-        queries: [Query<F>; 3],
+        code_hash: Query<F>,
+        left_input: Query<F>,
+        right_input: Query<F>,
         poseidon: &impl PoseidonLookup,
     ) {
         let extended_queries = [
-            Query::one(),       // selector
-            queries[2].clone(), // hash
-            queries[0].clone(), // left
-            queries[1].clone(), // right
-            Query::zero(),      // control
-            Query::one(),       // head mark
+            Query::one(),        // selector
+            code_hash,           // hash
+            left_input.clone(),  // left
+            right_input.clone(), // right
+            Query::zero(),       // control
+            Query::one(),        // head mark */
         ];
 
         let (q_enable, [hash, left, right, control, head_mark]) = poseidon.lookup_columns();
@@ -46,6 +48,41 @@ impl<F: Field> ConstraintBuilder<F> {
                 hash.current(),
                 left.current(),
                 right.current(),
+                control.current(),
+                head_mark.current(),
+            ],
+        )
+    }
+
+    pub fn poseidon_lookup_input(
+        &mut self,
+        name: &'static str,
+        code_hash: Query<F>,
+        input: Query<F>,
+        is_left: bool,
+        poseidon: &impl PoseidonLookup,
+    ) {
+        let extended_queries = [
+            Query::one(),      // selector
+            code_hash.clone(), // code hash
+            input.clone(),     //input
+            Query::zero(),     // control
+            Query::one(),      // head mark
+        ];
+
+        let (q_enable, [hash, left, right, control, head_mark]) = poseidon.lookup_columns();
+
+        self.add_lookup(
+            name,
+            extended_queries,
+            [
+                q_enable.current(),
+                hash.current(),
+                if is_left {
+                    left.current()
+                } else {
+                    right.current()
+                },
                 control.current(),
                 head_mark.current(),
             ],

@@ -3,8 +3,8 @@ use ethers_core::{
     types::{Address, U256},
 };
 use halo2_proofs::{arithmetic::FieldExt, halo2curves::bn256::Fr};
-use hash_circuit::hash::{Hashable, MessageHashable};
 use num_bigint::BigUint;
+use poseidon_circuit::hash::{Hashable, MessageHashable};
 
 pub trait Field: FieldExt + Hashable + MessageHashable {}
 

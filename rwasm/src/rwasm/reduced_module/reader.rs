@@ -9,6 +9,7 @@ use alloc::collections::BTreeMap;
 pub struct ReducedModuleTrace {
     pub offset: usize,
     pub code: u8,
+    pub raw_bytes: Vec<u8>,
     pub aux_size: usize,
     pub aux: UntypedValue,
     pub instr: Result<Instruction, BinaryFormatError>,
@@ -66,11 +67,13 @@ impl<'a> ReducedModuleReader<'a> {
         let aux = instr
             .map(|instr| instr.aux_value().unwrap_or_default())
             .unwrap_or_default();
+        let pos_after = self.binary_format_reader.pos();
 
         let trace = ReducedModuleTrace {
             offset: pos_before,
             code: self.binary_format_reader.sink[pos_before],
-            aux_size: self.binary_format_reader.pos() - pos_before - 1,
+            raw_bytes: self.binary_format_reader.sink[pos_before..pos_after].to_vec(),
+            aux_size: pos_after - pos_before - 1,
             aux,
             instr,
         };

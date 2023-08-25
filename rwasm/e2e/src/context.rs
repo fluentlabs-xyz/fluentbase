@@ -96,8 +96,12 @@ impl<'a> TestContext<'a> {
         linker.define("spectest", "print_i64", print_i64).unwrap();
         linker.define("spectest", "print_f32", print_f32).unwrap();
         linker.define("spectest", "print_f64", print_f64).unwrap();
-        linker.define("spectest", "print_i32_f32", print_i32_f32).unwrap();
-        linker.define("spectest", "print_f64_f64", print_f64_f64).unwrap();
+        linker
+            .define("spectest", "print_i32_f32", print_i32_f32)
+            .unwrap();
+        linker
+            .define("spectest", "print_f64_f64", print_f64_f64)
+            .unwrap();
         TestContext {
             engine,
             linker,
@@ -148,7 +152,10 @@ impl TestContext<'_> {
     /// # Errors
     ///
     /// If creating the [`Module`] fails.
-    pub fn compile_and_instantiate(&mut self, mut module: wast::core::Module) -> Result<Instance, TestError> {
+    pub fn compile_and_instantiate(
+        &mut self,
+        mut module: wast::core::Module,
+    ) -> Result<Instance, TestError> {
         let module_name = module.id.map(|id| id.name());
         let wasm = module.encode().unwrap_or_else(|error| {
             panic!(
@@ -165,9 +172,8 @@ impl TestContext<'_> {
         compiler.translate_wo_entrypoint().unwrap();
         let binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
-        let mut module_builder = reduced_module
-            .to_module_builder(self.engine(), &mut import_linker)
-            .unwrap();
+        let mut module_builder =
+            reduced_module.to_module_builder(self.engine(), &mut import_linker);
 
         {
             let original_module = Module::new(self.engine(), wasm.as_slice())?;
@@ -178,8 +184,12 @@ impl TestContext<'_> {
                 //     ExternType::Func(func_type) => func_type,
                 //     _ => break,
                 // };
-                let func_idx = original_module.get_export_func_index(export_type.name()).unwrap();
-                module_builder.push_export(fn_name.into_boxed_str(), func_idx).unwrap();
+                let func_idx = original_module
+                    .get_export_func_index(export_type.name())
+                    .unwrap();
+                module_builder
+                    .push_export(fn_name.into_boxed_str(), func_idx)
+                    .unwrap();
                 // let import_func = ImportFunc::new_env(
                 //     module_name,
                 //     fn_name,
@@ -199,7 +209,8 @@ impl TestContext<'_> {
         if let Some(module_name) = module_name {
             self.instances.insert(module_name.to_string(), instance);
             for export in instance.exports(&self.store) {
-                self.linker.define(module_name, export.name(), export.into_extern())?;
+                self.linker
+                    .define(module_name, export.name(), export.into_extern())?;
             }
         }
         self.last_instance = Some(instance);
@@ -215,7 +226,9 @@ impl TestContext<'_> {
         self.instances
             .get(name)
             .copied()
-            .ok_or_else(|| TestError::InstanceNotRegistered { name: name.to_owned() })
+            .ok_or_else(|| TestError::InstanceNotRegistered {
+                name: name.to_owned(),
+            })
     }
 
     /// Loads the Wasm module instance with the given name or the last instantiated one.
@@ -292,7 +305,11 @@ impl TestContext<'_> {
     ///
     /// - If no module instances can be found.
     /// - If no global variable identifier with `global_name` can be found.
-    pub fn get_global(&self, module_name: Option<Id>, global_name: &str) -> Result<Value, TestError> {
+    pub fn get_global(
+        &self,
+        module_name: Option<Id>,
+        global_name: &str,
+    ) -> Result<Value, TestError> {
         let module_name = module_name.map(|id| id.name());
         let instance = self.instance_by_name_or_last(module_name)?;
         let global = instance
