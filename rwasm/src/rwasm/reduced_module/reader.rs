@@ -16,6 +16,18 @@ pub struct ReducedModuleTrace {
     pub instr: Result<Instruction, BinaryFormatError>,
 }
 
+impl ReducedModuleTrace {
+    pub fn raw_bytes_padded(&self, pad_length: usize) -> Vec<u8> {
+        if self.raw_bytes.len() % pad_length == 0 {
+            return self.raw_bytes.clone();
+        }
+        let add_bytes = pad_length - self.raw_bytes.len() % pad_length;
+        let mut padded_bytes = self.raw_bytes.clone();
+        padded_bytes.resize(padded_bytes.len() + add_bytes, 0);
+        padded_bytes
+    }
+}
+
 pub struct ReducedModuleReader<'a> {
     pub binary_format_reader: BinaryFormatReader<'a>,
     pub instruction_set: InstructionSet,

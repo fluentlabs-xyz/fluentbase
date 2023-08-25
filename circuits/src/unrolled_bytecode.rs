@@ -17,14 +17,7 @@ pub struct UnrolledBytecode<F: Field> {
 
 impl<F: Field> UnrolledBytecode<F> {
     pub fn new(bytecode: &[u8]) -> Self {
-        // TODO: "if codesize is aligned then poseidon circuit fails"
         let mut aligned_bytecode = bytecode.to_vec();
-        if aligned_bytecode.len() % HASH_BLOCK_STEP_SIZE != 0 {
-            let missing_bytes =
-                HASH_BLOCK_STEP_SIZE - aligned_bytecode.len() % HASH_BLOCK_STEP_SIZE;
-            aligned_bytecode.extend(iter::repeat(0).take(missing_bytes));
-        }
-
         let mut module_reader = ReducedModuleReader::new(aligned_bytecode.as_slice());
         let mut traces: Vec<ReducedModuleTrace> = Vec::new();
         loop {
