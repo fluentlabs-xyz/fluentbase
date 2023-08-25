@@ -7,7 +7,11 @@ mod locals_registry;
 mod translator;
 mod value_stack;
 
-use self::{control_frame::ControlFrame, control_stack::ControlFlowStack, translator::FuncTranslator};
+use self::{
+    control_frame::ControlFrame,
+    control_stack::ControlFlowStack,
+    translator::FuncTranslator,
+};
 pub use self::{
     error::{TranslationError, TranslationErrorInner},
     inst_builder::{Instr, InstructionsBuilder, RelativeDepth},
@@ -75,6 +79,12 @@ impl<'parser> FuncBuilder<'parser> {
     }
 
     /// Updates the current position within the Wasm binary while parsing operators.
+    pub fn update_pos_with_opcode(&mut self, pos: usize, opcode: u16) {
+        self.pos = pos;
+        self.translator.register_opcode_metadata(pos, opcode);
+    }
+
+    /// Updates the current position within the Wasm binary while parsing operators.
     pub fn update_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
@@ -96,7 +106,11 @@ impl<'parser> FuncBuilder<'parser> {
     }
 
     /// Translates into `wasmi` bytecode if the current code path is reachable.
-    fn validate_then_translate<V, T>(&mut self, validate: V, translate: T) -> Result<(), TranslationError>
+    fn validate_then_translate<V, T>(
+        &mut self,
+        validate: V,
+        translate: T,
+    ) -> Result<(), TranslationError>
     where
         V: FnOnce(&mut FuncValidator) -> Result<(), BinaryReaderError>,
         T: FnOnce(&mut FuncTranslator<'parser>) -> Result<(), TranslationError>,

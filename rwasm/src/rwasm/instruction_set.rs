@@ -325,7 +325,6 @@ impl InstructionSet {
     impl_opcode!(op_i64_trunc_sat_f32u, I64TruncSatF32U);
     impl_opcode!(op_i64_trunc_sat_f64s, I64TruncSatF64S);
     impl_opcode!(op_i64_trunc_sat_f64u, I64TruncSatF64U);
-    impl_opcode!(op_sanitizer_stack_check, SanitizerStackCheck(i64));
 
     pub fn extend<I: Into<InstructionSet>>(&mut self, with: I) {
         self.instr.extend(Into::<InstructionSet>::into(with).instr);

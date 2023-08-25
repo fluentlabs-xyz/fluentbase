@@ -1,23 +1,53 @@
 use super::{
-    control_frame::{BlockControlFrame, ControlFrame, IfControlFrame, LoopControlFrame, UnreachableControlFrame},
+    control_frame::{
+        BlockControlFrame,
+        ControlFrame,
+        IfControlFrame,
+        LoopControlFrame,
+        UnreachableControlFrame,
+    },
     labels::LabelRef,
     locals_registry::LocalsRegistry,
     value_stack::ValueStackHeight,
-    ControlFlowStack, InstructionsBuilder, TranslationError,
+    ControlFlowStack,
+    InstructionsBuilder,
+    TranslationError,
 };
-use crate::common::{UntypedValue, ValueType, F32, F64};
 use crate::{
+    common::{UntypedValue, ValueType, F32, F64},
     engine::{
         bytecode::{
-            self, AddressOffset, BranchOffset, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx, Instruction,
-            SignatureIdx, TableIdx,
+            self,
+            AddressOffset,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            Instruction,
+            SignatureIdx,
+            TableIdx,
         },
         config::FuelCosts,
         func_builder::control_frame::ControlFrameKind,
-        CompiledFunc, DropKeep, Instr, RelativeDepth,
+        CompiledFunc,
+        DropKeep,
+        Instr,
+        RelativeDepth,
     },
-    module::{BlockType, ConstExpr, FuncIdx, FuncTypeIdx, GlobalIdx, MemoryIdx, ModuleResources, DEFAULT_MEMORY_INDEX},
-    Engine, FuncType, GlobalType, Mutability,
+    module::{
+        BlockType,
+        ConstExpr,
+        FuncIdx,
+        FuncTypeIdx,
+        GlobalIdx,
+        MemoryIdx,
+        ModuleResources,
+        DEFAULT_MEMORY_INDEX,
+    },
+    Engine,
+    FuncType,
+    GlobalType,
+    Mutability,
 };
 use alloc::vec::Vec;
 use wasmparser::VisitOperator;
@@ -115,9 +145,11 @@ impl<'parser> FuncTranslator<'parser> {
         let func_type = self.res.get_type_of_func(self.func);
         let block_type = BlockType::func_type(func_type);
         let end_label = self.alloc.inst_builder.new_label();
-        let consume_fuel = self
-            .is_fuel_metering_enabled()
-            .then(|| self.alloc.inst_builder.push_inst(self.make_consume_fuel_base()));
+        let consume_fuel = self.is_fuel_metering_enabled().then(|| {
+            self.alloc
+                .inst_builder
+                .push_inst(self.make_consume_fuel_base())
+        });
         let block_frame = BlockControlFrame::new(block_type, end_label, 0, consume_fuel);
         self.alloc.control_frames.push_frame(block_frame);
     }
@@ -136,6 +168,10 @@ impl<'parser> FuncTranslator<'parser> {
     /// If too many local variables have been registered.
     pub fn register_locals(&mut self, amount: u32) {
         self.locals.register_locals(amount);
+    }
+
+    pub fn register_opcode_metadata(&mut self, pos: usize, opcode: u16) {
+        self.alloc.inst_builder.register_meta(pos, opcode);
     }
 
     /// This informs the [`FuncTranslator`] that the function header translation is finished.
@@ -207,7 +243,9 @@ impl<'parser> FuncTranslator<'parser> {
     /// [`ConsumeFuel`]: enum.Instruction.html#variant.ConsumeFuel
     fn bump_fuel_consumption(&mut self, delta: u64) -> Result<(), TranslationError> {
         if let Some(instr) = self.consume_fuel_instr() {
-            self.alloc.inst_builder.bump_fuel_consumption(instr, delta)?;
+            self.alloc
+                .inst_builder
+                .bump_fuel_consumption(instr, delta)?;
         }
         Ok(())
     }
@@ -215,20 +253,25 @@ impl<'parser> FuncTranslator<'parser> {
     /// Returns the [`FuncType`] of the function that is currently translated.
     fn func_type(&self) -> FuncType {
         let dedup_func_type = self.res.get_type_of_func(self.func);
-        self.engine().resolve_func_type(dedup_func_type, Clone::clone)
+        self.engine()
+            .resolve_func_type(dedup_func_type, Clone::clone)
     }
 
     /// Resolves the [`FuncType`] of the given [`FuncTypeIdx`].
     fn func_type_at(&self, func_type_index: SignatureIdx) -> FuncType {
         let func_type_index = FuncTypeIdx::from(func_type_index.to_u32()); // TODO: use the same type
         let dedup_func_type = self.res.get_func_type(func_type_index);
-        self.res.engine().resolve_func_type(dedup_func_type, Clone::clone)
+        self.res
+            .engine()
+            .resolve_func_type(dedup_func_type, Clone::clone)
     }
 
     /// Resolves the [`FuncType`] of the given [`FuncIdx`].
     fn func_type_of(&self, func_index: FuncIdx) -> FuncType {
         let dedup_func_type = self.res.get_type_of_func(func_index);
-        self.res.engine().resolve_func_type(dedup_func_type, Clone::clone)
+        self.res
+            .engine()
+            .resolve_func_type(dedup_func_type, Clone::clone)
     }
 
     /// Returns the number of local variables of the function under construction.
@@ -287,7 +330,9 @@ impl<'parser> FuncTranslator<'parser> {
         let frame = self.alloc.control_frames.nth_back(depth);
         // Find out how many values we need to keep (copy to the new stack location after the drop).
         let keep = match frame.kind() {
-            ControlFrameKind::Block | ControlFrameKind::If => frame.block_type().len_results(self.res.engine()),
+            ControlFrameKind::Block | ControlFrameKind::If => {
+                frame.block_type().len_results(self.res.engine())
+            }
             ControlFrameKind::Loop => frame.block_type().len_params(self.res.engine()),
         };
         // Find out how many values we need to drop.
@@ -514,7 +559,10 @@ impl<'parser> FuncTranslator<'parser> {
             let value = value.into();
             builder.stack_height.push();
             let cref = builder.engine().alloc_const(value)?;
-            builder.alloc.inst_builder.push_inst(Instruction::ConstRef(cref));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::ConstRef(cref));
             Ok(())
         })
     }
@@ -527,7 +575,11 @@ impl<'parser> FuncTranslator<'parser> {
     ///
     /// - `i32.eqz`
     /// - `i64.eqz`
-    fn translate_unary_cmp(&mut self, _input_type: ValueType, inst: Instruction) -> Result<(), TranslationError> {
+    fn translate_unary_cmp(
+        &mut self,
+        _input_type: ValueType,
+        inst: Instruction,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.alloc.inst_builder.push_inst(inst);
@@ -547,7 +599,11 @@ impl<'parser> FuncTranslator<'parser> {
     /// - `{i32, u32, i64, u64, f32, f64}.le`
     /// - `{i32, u32, i64, u64, f32, f64}.gt`
     /// - `{i32, u32, i64, u64, f32, f64}.ge`
-    fn translate_binary_cmp(&mut self, _input_type: ValueType, inst: Instruction) -> Result<(), TranslationError> {
+    fn translate_binary_cmp(
+        &mut self,
+        _input_type: ValueType,
+        inst: Instruction,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.stack_height.pop2();
@@ -573,7 +629,11 @@ impl<'parser> FuncTranslator<'parser> {
     /// - `{f32, f64}.trunc`
     /// - `{f32, f64}.nearest`
     /// - `{f32, f64}.sqrt`
-    fn translate_unary_operation(&mut self, _value_type: ValueType, inst: Instruction) -> Result<(), TranslationError> {
+    fn translate_unary_operation(
+        &mut self,
+        _value_type: ValueType,
+        inst: Instruction,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.alloc.inst_builder.push_inst(inst);
@@ -657,7 +717,11 @@ impl<'parser> FuncTranslator<'parser> {
             let drop_keep = self.drop_keep_return()?;
             Ok(AcquiredTarget::Return(drop_keep))
         } else {
-            let label = self.alloc.control_frames.nth_back(relative_depth).branch_destination();
+            let label = self
+                .alloc
+                .control_frames
+                .nth_back(relative_depth)
+                .branch_destination();
             let drop_keep = self.compute_drop_keep(relative_depth)?;
             Ok(AcquiredTarget::Branch(label, drop_keep))
         }
@@ -669,7 +733,11 @@ impl<'parser> FuncTranslator<'parser> {
     ///
     /// The `wasmi` translation simply ignores reinterpret instructions since
     /// `wasmi` bytecode in itself it untyped.
-    fn visit_reinterpret(&mut self, _input_type: ValueType, _output_type: ValueType) -> Result<(), TranslationError> {
+    fn visit_reinterpret(
+        &mut self,
+        _input_type: ValueType,
+        _output_type: ValueType,
+    ) -> Result<(), TranslationError> {
         Ok(())
     }
 
@@ -771,7 +839,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
     fn visit_unreachable(&mut self) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
-            builder.alloc.inst_builder.push_inst(Instruction::Unreachable);
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::Unreachable);
             builder.reachable = false;
             Ok(())
         })
@@ -795,7 +866,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         } else {
             self.alloc
                 .control_frames
-                .push_frame(UnreachableControlFrame::new(ControlFrameKind::Block, block_type));
+                .push_frame(UnreachableControlFrame::new(
+                    ControlFrameKind::Block,
+                    block_type,
+                ));
         }
         Ok(())
     }
@@ -806,16 +880,24 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             let stack_height = self.frame_stack_height(block_type);
             let header = self.alloc.inst_builder.new_label();
             self.alloc.inst_builder.pin_label(header);
-            let consume_fuel = self
-                .is_fuel_metering_enabled()
-                .then(|| self.alloc.inst_builder.push_inst(self.make_consume_fuel_base()));
-            self.alloc
-                .control_frames
-                .push_frame(LoopControlFrame::new(block_type, header, stack_height, consume_fuel));
+            let consume_fuel = self.is_fuel_metering_enabled().then(|| {
+                self.alloc
+                    .inst_builder
+                    .push_inst(self.make_consume_fuel_base())
+            });
+            self.alloc.control_frames.push_frame(LoopControlFrame::new(
+                block_type,
+                header,
+                stack_height,
+                consume_fuel,
+            ));
         } else {
             self.alloc
                 .control_frames
-                .push_frame(UnreachableControlFrame::new(ControlFrameKind::Loop, block_type));
+                .push_frame(UnreachableControlFrame::new(
+                    ControlFrameKind::Loop,
+                    block_type,
+                ));
         }
         Ok(())
     }
@@ -829,10 +911,14 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             let end_label = self.alloc.inst_builder.new_label();
             self.bump_fuel_consumption(self.fuel_costs().base)?;
             let branch_offset = self.branch_offset(else_label)?;
-            self.alloc.inst_builder.push_inst(Instruction::BrIfEqz(branch_offset));
-            let consume_fuel = self
-                .is_fuel_metering_enabled()
-                .then(|| self.alloc.inst_builder.push_inst(self.make_consume_fuel_base()));
+            self.alloc
+                .inst_builder
+                .push_inst(Instruction::BrIfEqz(branch_offset));
+            let consume_fuel = self.is_fuel_metering_enabled().then(|| {
+                self.alloc
+                    .inst_builder
+                    .push_inst(self.make_consume_fuel_base())
+            });
             self.alloc.control_frames.push_frame(IfControlFrame::new(
                 block_type,
                 end_label,
@@ -843,7 +929,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         } else {
             self.alloc
                 .control_frames
-                .push_frame(UnreachableControlFrame::new(ControlFrameKind::If, block_type));
+                .push_frame(UnreachableControlFrame::new(
+                    ControlFrameKind::If,
+                    block_type,
+                ));
         }
         Ok(())
     }
@@ -885,16 +974,21 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         // since the `ConsumeFuel` instruction for the `then` block is no longer
         // used from this point on.
         self.is_fuel_metering_enabled().then(|| {
-            let consume_fuel = self.alloc.inst_builder.push_inst(self.make_consume_fuel_base());
+            let consume_fuel = self
+                .alloc
+                .inst_builder
+                .push_inst(self.make_consume_fuel_base());
             if_frame.update_consume_fuel_instr(consume_fuel);
         });
         // We need to reset the value stack to exactly how it has been
         // when entering the `if` in the first place so that the `else`
         // block has the same parameters on top of the stack.
         self.stack_height.shrink_to(if_frame.stack_height());
-        if_frame.block_type().foreach_param(self.res.engine(), |_param| {
-            self.stack_height.push();
-        });
+        if_frame
+            .block_type()
+            .foreach_param(self.res.engine(), |_param| {
+                self.stack_height.push();
+            });
         self.alloc.control_frames.push_frame(if_frame);
         // We can reset reachability now since the parent `if` block was reachable.
         self.reachable = true;
@@ -908,7 +1002,9 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             //
             // Note: The `Else` label might have already been resolved
             //       in case there was an `Else` block.
-            self.alloc.inst_builder.pin_label_if_unpinned(if_frame.else_label());
+            self.alloc
+                .inst_builder
+                .pin_label_if_unpinned(if_frame.else_label());
         }
         if frame.is_reachable() && !matches!(frame.kind(), ControlFrameKind::Loop) {
             // At this point we can resolve the `End` labels.
@@ -945,10 +1041,18 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     builder.bump_fuel_consumption(builder.fuel_costs().base)?;
                     let offset = builder.branch_offset(end_label)?;
                     if drop_keep.is_noop() {
-                        builder.alloc.inst_builder.push_inst(Instruction::Br(offset));
+                        builder
+                            .alloc
+                            .inst_builder
+                            .push_inst(Instruction::Br(offset));
                     } else {
-                        builder.bump_fuel_consumption(builder.fuel_costs().fuel_for_drop_keep(drop_keep))?;
-                        builder.alloc.inst_builder.push_br_adjust_instr(offset, drop_keep);
+                        builder.bump_fuel_consumption(
+                            builder.fuel_costs().fuel_for_drop_keep(drop_keep),
+                        )?;
+                        builder
+                            .alloc
+                            .inst_builder
+                            .push_br_adjust_instr(offset, drop_keep);
                     }
                 }
                 AcquiredTarget::Return(_) => {
@@ -969,10 +1073,18 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     builder.bump_fuel_consumption(builder.fuel_costs().base)?;
                     let offset = builder.branch_offset(end_label)?;
                     if drop_keep.is_noop() {
-                        builder.alloc.inst_builder.push_inst(Instruction::BrIfNez(offset));
+                        builder
+                            .alloc
+                            .inst_builder
+                            .push_inst(Instruction::BrIfNez(offset));
                     } else {
-                        builder.bump_fuel_consumption(builder.fuel_costs().fuel_for_drop_keep(drop_keep))?;
-                        builder.alloc.inst_builder.push_br_adjust_nez_instr(offset, drop_keep);
+                        builder.bump_fuel_consumption(
+                            builder.fuel_costs().fuel_for_drop_keep(drop_keep),
+                        )?;
+                        builder
+                            .alloc
+                            .inst_builder
+                            .push_br_adjust_nez_instr(offset, drop_keep);
                     }
                 }
                 AcquiredTarget::Return(drop_keep) => {
@@ -1006,16 +1118,19 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             ) -> Result<BrTableTarget, TranslationError> {
                 match builder.acquire_target(depth.into_u32())? {
                     AcquiredTarget::Branch(label, drop_keep) => {
-                        *max_drop_keep_fuel =
-                            (*max_drop_keep_fuel).max(builder.fuel_costs().fuel_for_drop_keep(drop_keep));
+                        *max_drop_keep_fuel = (*max_drop_keep_fuel)
+                            .max(builder.fuel_costs().fuel_for_drop_keep(drop_keep));
                         let base = builder.alloc.inst_builder.current_pc();
                         let instr = offset_instr(base, 2 * n + 1);
-                        let offset = builder.alloc.inst_builder.try_resolve_label_for(label, instr)?;
+                        let offset = builder
+                            .alloc
+                            .inst_builder
+                            .try_resolve_label_for(label, instr)?;
                         Ok(BrTableTarget::Br(offset, drop_keep))
                     }
                     AcquiredTarget::Return(drop_keep) => {
-                        *max_drop_keep_fuel =
-                            (*max_drop_keep_fuel).max(builder.fuel_costs().fuel_for_drop_keep(drop_keep));
+                        *max_drop_keep_fuel = (*max_drop_keep_fuel)
+                            .max(builder.fuel_costs().fuel_for_drop_keep(drop_keep));
                         Ok(BrTableTarget::Return(drop_keep))
                     }
                 }
@@ -1030,8 +1145,9 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                         stream.push(Instruction::Return(drop_keep));
                     }
                     BrTableTarget::Return(drop_keep) => {
-                        // Case: We push `Return` two times to make all branch targets use 2 instruction words.
-                        //       This is important to make `br_table` dispatch efficient.
+                        // Case: We push `Return` two times to make all branch targets use 2
+                        // instruction words.       This is important to
+                        // make `br_table` dispatch efficient.
                         stream.push(Instruction::Return(drop_keep));
                         stream.push(Instruction::Return(drop_keep));
                     }
@@ -1064,11 +1180,16 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                 encode_br_table_target(&mut builder.alloc.br_table_branches, target)
             }
 
-            // We include the default target in `len_branches`. Each branch takes up 2 instruction words.
+            // We include the default target in `len_branches`. Each branch takes up 2 instruction
+            // words.
             let len_branches = builder.alloc.br_table_branches.len() / 2;
-            let default_branch = compute_instr(builder, len_branches, default, &mut max_drop_keep_fuel)?;
+            let default_branch =
+                compute_instr(builder, len_branches, default, &mut max_drop_keep_fuel)?;
             let len_targets = BranchTableTargets::try_from(len_branches + 1)?;
-            builder.alloc.inst_builder.push_inst(Instruction::BrTable(len_targets));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::BrTable(len_targets));
             encode_br_table_target(&mut builder.alloc.br_table_branches, default_branch);
             for branch in builder.alloc.br_table_branches.drain(..) {
                 builder.alloc.inst_builder.push_inst(branch);
@@ -1084,7 +1205,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             let drop_keep = builder.drop_keep_return()?;
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.bump_fuel_consumption(builder.fuel_costs().fuel_for_drop_keep(drop_keep))?;
-            builder.alloc.inst_builder.push_inst(Instruction::Return(drop_keep));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::Return(drop_keep));
             builder.reachable = false;
             Ok(())
         })
@@ -1109,16 +1233,26 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     // Case: We are calling an imported function and must use the
                     //       general calling operator for it.
                     let func = bytecode::FuncIdx::from(func_idx);
-                    builder.alloc.inst_builder.push_inst(Instruction::ReturnCall(func));
+                    builder
+                        .alloc
+                        .inst_builder
+                        .push_inst(Instruction::ReturnCall(func));
                 }
             }
-            builder.alloc.inst_builder.push_inst(Instruction::Return(drop_keep));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::Return(drop_keep));
             builder.reachable = false;
             Ok(())
         })
     }
 
-    fn visit_return_call_indirect(&mut self, func_type_index: u32, table_index: u32) -> Result<(), TranslationError> {
+    fn visit_return_call_indirect(
+        &mut self,
+        func_type_index: u32,
+        table_index: u32,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             let signature = SignatureIdx::from(func_type_index);
             let func_type = builder.func_type_at(signature);
@@ -1131,8 +1265,14 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                 .alloc
                 .inst_builder
                 .push_inst(Instruction::ReturnCallIndirect(signature));
-            builder.alloc.inst_builder.push_inst(Instruction::Return(drop_keep));
-            builder.alloc.inst_builder.push_inst(Instruction::TableGet(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::Return(drop_keep));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGet(table));
             builder.reachable = false;
             Ok(())
         })
@@ -1157,7 +1297,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     // Case: We are calling an imported function and must use the
                     //       general calling operator for it.
                     let func_idx = bytecode::FuncIdx::from(func_idx.into_u32());
-                    builder.alloc.inst_builder.push_inst(Instruction::Call(func_idx));
+                    builder
+                        .alloc
+                        .inst_builder
+                        .push_inst(Instruction::Call(func_idx));
                 }
             }
             Ok(())
@@ -1180,7 +1323,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                 .alloc
                 .inst_builder
                 .push_inst(Instruction::CallIndirect(func_type));
-            builder.alloc.inst_builder.push_inst(Instruction::TableGet(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGet(table));
             Ok(())
         })
     }
@@ -1228,7 +1374,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             let func_index = bytecode::FuncIdx::from(func_index);
-            builder.alloc.inst_builder.push_inst(Instruction::RefFunc(func_index));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::RefFunc(func_index));
             builder.stack_height.push();
             Ok(())
         })
@@ -1297,7 +1446,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             debug_assert_eq!(global_type.mutability(), Mutability::Var);
             builder.stack_height.pop1();
             let global_idx = bytecode::GlobalIdx::from(global_idx.into_u32());
-            builder.alloc.inst_builder.push_inst(Instruction::GlobalSet(global_idx));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::GlobalSet(global_idx));
             Ok(())
         })
     }
@@ -1394,27 +1546,45 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         self.translate_store(memarg, ValueType::I64, Instruction::I64Store32)
     }
 
-    fn visit_memory_size(&mut self, memory_idx: u32, _mem_byte: u8) -> Result<(), TranslationError> {
+    fn visit_memory_size(
+        &mut self,
+        memory_idx: u32,
+        _mem_byte: u8,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let memory_idx = MemoryIdx::from(memory_idx);
             debug_assert_eq!(memory_idx.into_u32(), DEFAULT_MEMORY_INDEX);
             builder.stack_height.push();
-            builder.alloc.inst_builder.push_inst(Instruction::MemorySize);
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::MemorySize);
             Ok(())
         })
     }
 
-    fn visit_memory_grow(&mut self, memory_index: u32, _mem_byte: u8) -> Result<(), TranslationError> {
+    fn visit_memory_grow(
+        &mut self,
+        memory_index: u32,
+        _mem_byte: u8,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             debug_assert_eq!(memory_index, DEFAULT_MEMORY_INDEX);
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
-            builder.alloc.inst_builder.push_inst(Instruction::MemoryGrow);
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::MemoryGrow);
             Ok(())
         })
     }
 
-    fn visit_memory_init(&mut self, segment_index: u32, memory_index: u32) -> Result<(), TranslationError> {
+    fn visit_memory_init(
+        &mut self,
+        segment_index: u32,
+        memory_index: u32,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             debug_assert_eq!(memory_index, DEFAULT_MEMORY_INDEX);
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
@@ -1432,7 +1602,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             debug_assert_eq!(memory_index, DEFAULT_MEMORY_INDEX);
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             builder.stack_height.pop3();
-            builder.alloc.inst_builder.push_inst(Instruction::MemoryFill);
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::MemoryFill);
             Ok(())
         })
     }
@@ -1443,7 +1616,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             debug_assert_eq!(src_mem, DEFAULT_MEMORY_INDEX);
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             builder.stack_height.pop3();
-            builder.alloc.inst_builder.push_inst(Instruction::MemoryCopy);
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::MemoryCopy);
             Ok(())
         })
     }
@@ -1465,7 +1641,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let table = TableIdx::from(table_index);
             builder.stack_height.push();
-            builder.alloc.inst_builder.push_inst(Instruction::TableSize(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableSize(table));
             Ok(())
         })
     }
@@ -1475,7 +1654,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let table = TableIdx::from(table_index);
             builder.stack_height.pop1();
-            builder.alloc.inst_builder.push_inst(Instruction::TableGrow(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGrow(table));
             Ok(())
         })
     }
@@ -1486,8 +1668,14 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             let dst = TableIdx::from(dst_table);
             let src = TableIdx::from(src_table);
             builder.stack_height.pop3();
-            builder.alloc.inst_builder.push_inst(Instruction::TableCopy(dst));
-            builder.alloc.inst_builder.push_inst(Instruction::TableGet(src));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableCopy(dst));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGet(src));
             Ok(())
         })
     }
@@ -1497,7 +1685,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let table = TableIdx::from(table_index);
             builder.stack_height.pop3();
-            builder.alloc.inst_builder.push_inst(Instruction::TableFill(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableFill(table));
             Ok(())
         })
     }
@@ -1506,7 +1697,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let table = TableIdx::from(table_index);
-            builder.alloc.inst_builder.push_inst(Instruction::TableGet(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGet(table));
             Ok(())
         })
     }
@@ -1516,19 +1710,32 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             let table = TableIdx::from(table_index);
             builder.stack_height.pop2();
-            builder.alloc.inst_builder.push_inst(Instruction::TableSet(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableSet(table));
             Ok(())
         })
     }
 
-    fn visit_table_init(&mut self, segment_index: u32, table_index: u32) -> Result<(), TranslationError> {
+    fn visit_table_init(
+        &mut self,
+        segment_index: u32,
+        table_index: u32,
+    ) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().entity)?;
             builder.stack_height.pop3();
             let table = TableIdx::from(table_index);
             let elem = ElementSegmentIdx::from(segment_index);
-            builder.alloc.inst_builder.push_inst(Instruction::TableInit(elem));
-            builder.alloc.inst_builder.push_inst(Instruction::TableGet(table));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableInit(elem));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::TableGet(table));
             Ok(())
         })
     }
@@ -1539,7 +1746,9 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
             builder
                 .alloc
                 .inst_builder
-                .push_inst(Instruction::ElemDrop(ElementSegmentIdx::from(segment_index)));
+                .push_inst(Instruction::ElemDrop(ElementSegmentIdx::from(
+                    segment_index,
+                )));
             Ok(())
         })
     }
@@ -1548,7 +1757,10 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
         self.translate_if_reachable(|builder| {
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.stack_height.push();
-            builder.alloc.inst_builder.push_inst(Instruction::i32_const(value));
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::i32_const(value));
             Ok(())
         })
     }

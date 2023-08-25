@@ -347,8 +347,6 @@ pub enum Instruction {
     I64TruncSatF32U,
     I64TruncSatF64S,
     I64TruncSatF64U,
-    // sanitizer params
-    SanitizerStackCheck(i64),
 }
 
 impl Instruction {
@@ -411,7 +409,7 @@ impl Instruction {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq)]
 pub struct InstrMeta(usize, u16);
 
 impl InstrMeta {

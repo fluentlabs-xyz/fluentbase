@@ -259,9 +259,6 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::I64TruncSatF32U => sink.write_u8(0xc3)?,
             Instruction::I64TruncSatF64S => sink.write_u8(0xc4)?,
             Instruction::I64TruncSatF64U => sink.write_u8(0xc5)?,
-            Instruction::SanitizerStackCheck(note) => {
-                sink.write_u8(0xc6)? + note.write_binary(sink)?
-            }
             _ => unreachable!("not supported opcode: {:?}", self),
         };
         // we align all opcodes to 9 bytes
@@ -480,8 +477,6 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0xc4 => Instruction::I64TruncSatF64S,
             0xc5 => Instruction::I64TruncSatF64U,
 
-            0xc6 => Instruction::SanitizerStackCheck(i64::read_binary(sink)?),
-
             _ => return Err(BinaryFormatError::IllegalOpcode(byte)),
         };
         // we align all opcodes to 9 bytes
@@ -557,7 +552,6 @@ impl Instruction {
             Instruction::RefFunc(val) => val.to_u32().into(),
             Instruction::I32Const(val) | Instruction::I64Const(val) => *val,
             Instruction::ConstRef(val) => val.to_usize().into(),
-            Instruction::SanitizerStackCheck(val) => (*val).into(),
             _ => return None,
         };
         Some(value)

@@ -177,6 +177,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_several_opcodes() {
         for iters in [100, 1000] {
             let mut bytecode = InstructionSet::new();

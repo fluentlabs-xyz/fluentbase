@@ -19,6 +19,7 @@ use crate::{
         code_map::{CodeMap, InstructionPtr},
         config::FuelCosts,
         stack::{CallStack, ValueStackPtr},
+        tracer::Tracer,
         DropKeep,
         FuncFrame,
         ValueStack,
@@ -100,9 +101,18 @@ pub fn execute_wasm<'ctx, 'engine>(
     code_map: &'engine CodeMap,
     const_pool: ConstPoolView<'engine>,
     resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>,
+    tracer: &'engine mut Tracer,
 ) -> Result<WasmOutcome, TrapCode> {
-    Executor::new(ctx, cache, value_stack, call_stack, code_map, const_pool)
-        .execute(resource_limiter)
+    Executor::new(
+        ctx,
+        cache,
+        value_stack,
+        call_stack,
+        code_map,
+        const_pool,
+        tracer,
+    )
+    .execute(resource_limiter)
 }
 
 /// The function signature of Wasm load operations.
@@ -170,6 +180,8 @@ struct Executor<'ctx, 'engine> {
     code_map: &'engine CodeMap,
     /// A read-only view to a pool of constant values.
     const_pool: ConstPoolView<'engine>,
+    /// A tracer that stores execution info
+    tracer: &'engine mut Tracer,
 }
 
 macro_rules! forward_call {
@@ -197,6 +209,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         call_stack: &'engine mut CallStack,
         code_map: &'engine CodeMap,
         const_pool: ConstPoolView<'engine>,
+        tracer: &'engine mut Tracer,
     ) -> Self {
         let frame = call_stack.pop().expect("must have frame on the call stack");
         let sp = value_stack.stack_ptr();
@@ -210,6 +223,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             call_stack,
             code_map,
             const_pool,
+            tracer,
         }
     }
 
@@ -220,16 +234,19 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         resource_limiter: &'ctx mut ResourceLimiterRef<'ctx>,
     ) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
-        let mut stack_diff_before: i64 = 0;
-        let mut stack_diff_after: i64 = 0;
-        let mut prev_opcode: alloc::vec::Vec<Instr> = Default::default();
         loop {
-            prev_opcode.push(*self.ip.get());
-            match *self.ip.get() {
-                Instr::SanitizerStackCheck(_) => stack_diff_after = self.stack_diff() as i64,
-                _ => stack_diff_before = self.stack_diff() as i64,
-            }
-            match *self.ip.get() {
+            let instr = *self.ip.get();
+            let meta = *self.ip.meta();
+
+            // handle pre-instruction state
+            self.tracer.pre_opcode_state(
+                self.ip.pc(),
+                instr,
+                self.value_stack.dump_stack(self.sp),
+                &meta,
+            );
+
+            match instr {
                 Instr::LocalGet(local_depth) => self.visit_local_get(local_depth),
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instr::LocalTee(local_depth) => self.visit_local_tee(local_depth),
@@ -448,11 +465,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::I64Extend8S => self.visit_i64_extend8_s(),
                 Instr::I64Extend16S => self.visit_i64_extend16_s(),
                 Instr::I64Extend32S => self.visit_i64_extend32_s(),
-                Instr::SanitizerStackCheck(stack_height) => self.visit_sanitizer_stack_check(
-                    stack_height,
-                    stack_diff_after - stack_diff_before,
-                    &prev_opcode,
-                ),
             }
         }
     }
@@ -499,10 +511,18 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         &mut self,
         offset: AddressOffset,
         store_wrap: WasmStoreOp,
+        len: u32,
     ) -> Result<(), TrapCode> {
         let (address, value) = self.sp.pop2();
         let memory = self.cache.default_memory_bytes(self.ctx);
         store_wrap(memory, address, offset.into_inner(), value)?;
+        self.ip.offset(0);
+        let address = u32::from(address);
+        self.tracer.memory_change(
+            address,
+            len,
+            &memory[address as usize..(address + len) as usize],
+        );
         self.try_next_instr()
     }
 
@@ -635,6 +655,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         skip: usize,
         func: &Func,
         kind: CallKind,
+        func_index: u32,
     ) -> Result<CallOutcome, TrapCode> {
         self.next_instr_at(skip);
         self.sync_stack_ptr();
@@ -645,6 +666,12 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         match self.ctx.resolve_func(func) {
             FuncEntity::Wasm(wasm_func) => {
                 let header = self.code_map.header(wasm_func.func_body());
+                self.tracer.function_call(
+                    func_index,
+                    header.max_stack_height(),
+                    header.len_locals(),
+                    String::new(),
+                );
                 self.value_stack.prepare_wasm_call(header)?;
                 self.sp = self.value_stack.stack_ptr();
                 self.cache.update_instance(wasm_func.instance());
@@ -851,7 +878,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         } else {
             self.cache.get_func(self.ctx, FuncIdx::from(func_index))
         };
-        self.call_func(skip, &func, kind)
+        self.call_func(skip, &func, kind, func_index)
     }
 }
 
@@ -1020,7 +1047,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         let drop_keep = self.fetch_drop_keep(1);
         self.sp.drop_keep(drop_keep);
         let callee = self.cache.get_func(self.ctx, func_index);
-        self.call_func(2, &callee, CallKind::Tail)
+        self.call_func(2, &callee, CallKind::Tail, func_index.to_u32())
     }
 
     #[inline(always)]
@@ -1054,7 +1081,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn visit_call(&mut self, func_index: FuncIdx) -> Result<CallOutcome, TrapCode> {
         let callee = self.cache.get_func(self.ctx, func_index);
-        self.call_func(1, &callee, CallKind::Nested)
+        self.call_func(1, &callee, CallKind::Nested, func_index.to_u32())
     }
 
     #[inline(always)]
@@ -1099,24 +1126,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .get(cref)
             .unwrap_or_else(|| unreachable!("missing constant value for const reference"));
         self.sp.push(value);
-        self.next_instr()
-    }
-
-    #[inline(always)]
-    fn visit_sanitizer_stack_check(
-        &mut self,
-        stack_diff: i64,
-        value_diff: i64,
-        _prev_opcodes: &alloc::vec::Vec<Instruction>,
-    ) {
-        if value_diff != stack_diff {
-            // let stack_dump = self.value_stack.dump_stack(self.sp);
-            // assert!(
-            //     false,
-            //     "corrupted stack ({} != {}): dump={:?}, prev_opcodes={:?}",
-            //     stack_diff, value_diff, stack_dump, prev_opcodes
-            // )
-        }
         self.next_instr()
     }
 
@@ -1206,6 +1215,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     .and_then(|memory| memory.get_mut(..n))
                     .ok_or(TrapCode::MemoryOutOfBounds)?;
                 memory.fill(byte);
+                this.tracer.memory_change(offset as u32, n as u32, memory);
                 Ok(())
             },
         )?;
@@ -1231,6 +1241,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     .and_then(|memory| memory.get(..n))
                     .ok_or(TrapCode::MemoryOutOfBounds)?;
                 data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
+                this.tracer.memory_change(dst_offset as u32, n as u32, data);
                 Ok(())
             },
         )?;
@@ -1259,6 +1270,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     .and_then(|data| data.get(..n))
                     .ok_or(TrapCode::MemoryOutOfBounds)?;
                 memory.copy_from_slice(data);
+                this.tracer
+                    .global_memory(dst_offset as u32, n as u32, memory);
                 Ok(())
             },
         )?;
@@ -1457,31 +1470,31 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 }
 
 macro_rules! impl_visit_store {
-    ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
+    ( $( fn $visit_ident:ident($untyped_ident:ident, $type_size:literal); )* ) => {
         $(
             #[inline(always)]
             fn $visit_ident(
                 &mut self,
                 offset: AddressOffset,
             ) -> Result<(), TrapCode> {
-                self.execute_store_wrap(offset, UntypedValue::$untyped_ident)
+                self.execute_store_wrap(offset, UntypedValue::$untyped_ident, $type_size)
             }
         )*
     }
 }
 impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     impl_visit_store! {
-        fn visit_i32_store(i32_store);
-        fn visit_i64_store(i64_store);
-        fn visit_f32_store(f32_store);
-        fn visit_f64_store(f64_store);
+        fn visit_i32_store(i32_store, 4);
+        fn visit_i64_store(i64_store, 8);
+        fn visit_f32_store(f32_store, 4);
+        fn visit_f64_store(f64_store, 8);
 
-        fn visit_i32_store_8(i32_store8);
-        fn visit_i32_store_16(i32_store16);
+        fn visit_i32_store_8(i32_store8, 1);
+        fn visit_i32_store_16(i32_store16, 2);
 
-        fn visit_i64_store_8(i64_store8);
-        fn visit_i64_store_16(i64_store16);
-        fn visit_i64_store_32(i64_store32);
+        fn visit_i64_store_8(i64_store8, 1);
+        fn visit_i64_store_16(i64_store16, 2);
+        fn visit_i64_store_32(i64_store32, 4);
     }
 }
 
