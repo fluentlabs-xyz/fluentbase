@@ -14,6 +14,7 @@ use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
+use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 
@@ -97,13 +98,6 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 code_hash.next(),
             );
         });
-        // cb.condition(q_last.current().and(!if_error()), |cb| {
-        //     cb.assert_equal(
-        //         "offset is aligned",
-        //         offset.current(),
-        //         Query::from(HASH_BYTES_IN_FIELD as u64),
-        //     );
-        // });
 
         // make sure code is in the range and opcode status is correct
         cb.condition(illegal_opcode.current(), |cb| {
@@ -147,7 +141,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         // lookup poseidon state
         cb.condition(lookup_hash.current().and(q_last.current()), |cb| {
             cb.poseidon_lookup(
-                "poseidon_lookup(code,aux,code_hash)",
+                "poseidon_lookup(code_hash,input,0,offset)",
                 code_hash.current(),   // code hash
                 field_input.current(), // left
                 Query::zero(),         // right
@@ -157,7 +151,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         });
         cb.condition(lookup_hash.current().and(!q_last.current()), |cb| {
             cb.poseidon_lookup(
-                "poseidon_lookup(code,aux,code_hash)",
+                "poseidon_lookup(code_hash,input1,input2,offset)",
                 code_hash.current(),   // code hash
                 field_input.current(), // left
                 field_input.next(),    // right
@@ -165,6 +159,12 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 &poseidon_table,
             );
         });
+
+        cb.assert_equal(
+            "field_input=code<<64|code",
+            code.current() * Query::Constant(F::from_u128(0x10000000000000000u128)) + aux.current(),
+            field_input.current(),
+        );
 
         cb.build(cs);
 
@@ -231,12 +231,18 @@ impl<F: Field> RwasmCircuitConfig<F> {
             .assign(region, offset, F::from(trace.aux_size as u64));
         self.aux
             .assign(region, offset, F::from(trace.aux.to_bits()));
-        debug_assert_eq!(HASH_BYTES_IN_FIELD, 9);
+
         let mut raw_field: [u8; 64] = [0; 64];
         U256::from_big_endian(&trace.raw_bytes_padded(HASH_BYTES_IN_FIELD))
             .to_little_endian(&mut raw_field[0..32]);
         let field_input = F::from_bytes_wide(&raw_field);
+        debug_assert_eq!(
+            field_input,
+            F::from(trace.code as u64) * F::from_u128(0x10000000000000000u128)
+                + F::from(trace.aux.to_bits())
+        );
         self.field_input.assign(region, offset, field_input);
+
         if let Err(e) = trace.instr {
             match e {
                 BinaryFormatError::ReachedUnreachable => {
