@@ -1,4 +1,5 @@
 use crate::{
+    bail_illegal_opcode,
     constraint_builder::AdviceColumnPhase2,
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, ToExpr},
@@ -6,6 +7,7 @@ use crate::{
     },
     util::Field,
 };
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{circuit::Region, plonk::Error};
 use std::marker::PhantomData;
 
@@ -26,7 +28,16 @@ impl<F: Field> ExecutionGadget<F> for DropGadget<F> {
         }
     }
 
-    fn assign_exec_step(&self, region: &mut Region<'_, F>, offset: usize) -> Result<(), Error> {
+    fn assign_exec_step(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        instr: Instruction,
+    ) -> Result<(), Error> {
+        match instr {
+            Instruction::Drop => {}
+            _ => bail_illegal_opcode!(instr),
+        };
         Ok(())
     }
 }

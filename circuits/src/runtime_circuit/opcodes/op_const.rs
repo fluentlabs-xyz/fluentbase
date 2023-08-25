@@ -1,4 +1,5 @@
 use crate::{
+    bail_illegal_opcode,
     constraint_builder::AdviceColumn,
     runtime_circuit::{constraint_builder::OpConstraintBuilder, opcodes::ExecutionGadget},
     util::Field,
@@ -25,7 +26,17 @@ impl<F: Field> ExecutionGadget<F> for ConstGadget<F> {
         }
     }
 
-    fn assign_exec_step(&self, region: &mut Region<'_, F>, offset: usize) -> Result<(), Error> {
+    fn assign_exec_step(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        instr: Instruction,
+    ) -> Result<(), Error> {
+        let value = match instr {
+            Instruction::I32Const(val) | Instruction::I64Const(val) => val,
+            _ => bail_illegal_opcode!(instr),
+        };
+        self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }
 }

@@ -1,5 +1,12 @@
 use crate::{
-    constraint_builder::{AdviceColumn, AdviceColumnPhase2, BinaryQuery, ConstraintBuilder, Query},
+    constraint_builder::{
+        AdviceColumn,
+        AdviceColumnPhase2,
+        BinaryQuery,
+        ConstraintBuilder,
+        FixedColumn,
+        Query,
+    },
     util::Field,
 };
 use halo2_proofs::plonk::ConstraintSystem;
@@ -12,6 +19,10 @@ pub struct OpConstraintBuilder<'cs, F: Field> {
 impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     pub fn query_cell(&mut self) -> AdviceColumn {
         self.base.advice_column(self.cs)
+    }
+
+    pub fn query_fixed(&mut self) -> FixedColumn {
+        self.base.fixed_column(self.cs)
     }
 
     pub fn query_cell_phase2(&mut self) -> AdviceColumnPhase2 {
@@ -74,6 +85,11 @@ impl ToExpr for AdviceColumn {
     }
 }
 impl ToExpr for AdviceColumnPhase2 {
+    fn expr<F: Field>(&self) -> Query<F> {
+        self.current()
+    }
+}
+impl ToExpr for FixedColumn {
     fn expr<F: Field>(&self) -> Query<F> {
         self.current()
     }
