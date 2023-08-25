@@ -145,7 +145,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         );
 
         // lookup poseidon state
-        cb.condition(q_first.current().and(q_last.current()), |cb| {
+        cb.condition(lookup_hash.current().and(q_last.current()), |cb| {
             cb.poseidon_lookup(
                 "poseidon_lookup(code,aux,code_hash)",
                 code_hash.current(),   // code hash
