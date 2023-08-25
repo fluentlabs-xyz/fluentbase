@@ -977,6 +977,7 @@ dependencies = [
  "strum_macros 0.25.1",
  "subtle",
  "thiserror",
+ "wasm-encoder 0.31.1",
  "wat",
 ]
 

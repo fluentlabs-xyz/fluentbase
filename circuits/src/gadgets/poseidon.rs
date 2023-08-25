@@ -1,12 +1,11 @@
-#[cfg(test)]
-use crate::util::hash as poseidon_hash;
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query},
-    util::Field,
+    util::{hash as poseidon_hash, Field},
 };
-use halo2_proofs::plonk::{Advice, Column, Fixed};
-#[cfg(test)]
-use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
+use halo2_proofs::{
+    circuit::Region,
+    plonk::{Advice, Column, ConstraintSystem, Fixed},
+};
 use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 
 /// Lookup  represent the poseidon table in zkevm circuit

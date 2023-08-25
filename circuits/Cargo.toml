@@ -28,6 +28,7 @@ log = "0.4"
 fluentbase-rwasm = {path = "../rwasm"}
 wat = "1.0.69"
 plotters = "0.3"
+wasm-encoder = "0.31.1"
 
 [features]
 default = ["dev-graph", "std"]

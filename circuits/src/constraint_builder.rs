@@ -8,12 +8,13 @@ mod binary_query;
 mod column;
 mod query;
 
+use crate::util::Field;
 pub use binary_column::BinaryColumn;
 pub use binary_query::BinaryQuery;
 pub use column::{AdviceColumn, FixedColumn, SecondPhaseAdviceColumn, SelectorColumn};
 pub use query::Query;
 
-pub struct ConstraintBuilder<F: FieldExt> {
+pub struct ConstraintBuilder<F: Field> {
     constraints: Vec<(&'static str, Query<F>)>,
     #[allow(clippy::type_complexity)]
     lookups: Vec<(&'static str, Vec<(Query<F>, Query<F>)>)>,
@@ -21,7 +22,7 @@ pub struct ConstraintBuilder<F: FieldExt> {
     conditions: Vec<BinaryQuery<F>>,
 }
 
-impl<F: FieldExt> ConstraintBuilder<F> {
+impl<F: Field> ConstraintBuilder<F> {
     pub fn new(every_row: SelectorColumn) -> Self {
         Self {
             constraints: vec![],
@@ -61,6 +62,14 @@ impl<F: FieldExt> ConstraintBuilder<F> {
     pub fn condition(&mut self, condition: BinaryQuery<F>, configure: impl FnOnce(&mut Self)) {
         self.conditions.push(condition);
         configure(self);
+        self.conditions.pop().unwrap();
+    }
+
+    pub fn enter_condition(&mut self, condition: BinaryQuery<F>) {
+        self.conditions.push(condition);
+    }
+
+    pub fn leave_condition(&mut self) {
         self.conditions.pop().unwrap();
     }
 
