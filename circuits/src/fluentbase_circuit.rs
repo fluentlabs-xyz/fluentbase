@@ -94,11 +94,11 @@ mod tests {
     fn test_add_three_numbers() {
         test_ok(instruction_set!(
             .op_i32_const(100)
-            // .op_i32_const(20)
-            // .op_i32_add()
-            // .op_i32_const(3)
-            // .op_i32_add()
-            // .op_drop()
+            .op_i32_const(20)
+            .op_i32_add()
+            .op_i32_const(3)
+            .op_i32_add()
+            .op_drop()
         ));
     }
 

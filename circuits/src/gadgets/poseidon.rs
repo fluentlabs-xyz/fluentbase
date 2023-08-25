@@ -90,7 +90,6 @@ impl<F: Field> ConstraintBuilder<F> {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy)]
 pub struct PoseidonTable {
     pub(crate) q_enable: FixedColumn,
@@ -98,19 +97,20 @@ pub struct PoseidonTable {
     pub(crate) right: AdviceColumn,
     pub(crate) hash: AdviceColumn,
     pub(crate) control: AdviceColumn,
+    pub(crate) domain: AdviceColumn,
     pub(crate) head_mark: AdviceColumn,
 }
 
-#[cfg(test)]
 impl PoseidonTable {
     pub fn configure<F: Field>(cs: &mut ConstraintSystem<F>) -> Self {
-        let [hash, left, right, control, head_mark] =
-            [0; 5].map(|_| AdviceColumn(cs.advice_column()));
+        let [hash, left, right, control, domain, head_mark] =
+            [0; 6].map(|_| AdviceColumn(cs.advice_column()));
         Self {
             left,
             right,
             hash,
             control,
+            domain,
             head_mark,
             q_enable: FixedColumn(cs.fixed_column()),
         }
@@ -141,7 +141,7 @@ impl PoseidonTable {
         }
     }
 
-    pub fn table_columns(&self) -> (Column<Fixed>, [Column<Advice>; 5]) {
+    pub fn table_columns(&self) -> (Column<Fixed>, [Column<Advice>; 6]) {
         (
             self.q_enable.0,
             [
@@ -149,13 +149,13 @@ impl PoseidonTable {
                 self.left.0,
                 self.right.0,
                 self.control.0,
+                self.domain.0,
                 self.head_mark.0,
             ],
         )
     }
 }
 
-#[cfg(test)]
 impl PoseidonLookup for PoseidonTable {
     fn lookup_columns(&self) -> (FixedColumn, [AdviceColumn; 5]) {
         (

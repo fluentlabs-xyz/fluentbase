@@ -1738,11 +1738,14 @@ dependencies = [
 [[package]]
 name = "poseidon-circuit"
 version = "0.1.0"
-source = "git+https://github.com/scroll-tech/poseidon-circuit.git?branch=scroll-dev-0619#50015b7cfbd5fe3263ec683cb291396c1b99cd1f"
+source = "git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main#1652d54bf7ca9d8f286b53fe077d9efefdcf6d5f"
 dependencies = [
  "bitvec",
  "halo2_proofs",
  "lazy_static",
+ "log",
+ "rand",
+ "rand_xorshift",
  "thiserror",
 ]
 
@@ -1880,6 +1883,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25bf25ec5ae4a3f1b92f929810509a2f53d7dca2f50b794ff57e3face536c8f"
+dependencies = [
+ "rand_core",
 ]
 
 [[package]]
