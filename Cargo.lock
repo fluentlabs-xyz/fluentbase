@@ -971,6 +971,7 @@ dependencies = [
  "poseidon-circuit",
  "rand",
  "rand_chacha",
+ "rand_xorshift",
  "serde",
  "serde_json",
  "strum 0.25.0",

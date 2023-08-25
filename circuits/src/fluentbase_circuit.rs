@@ -10,7 +10,6 @@ use halo2_proofs::{
     halo2curves::bn256::Fr,
     plonk::{Circuit, ConstraintSystem, Error},
 };
-use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct FluentbaseCircuitConfig<F: Field> {
@@ -45,9 +44,8 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
 }
 
 #[derive(Clone, Default, Debug)]
-struct FluentbaseCircuit<F: Field> {
-    bytecode: UnrolledBytecode<F>,
-    _pd: PhantomData<F>,
+pub struct FluentbaseCircuit<F: Field> {
+    pub(crate) bytecode: UnrolledBytecode<F>,
 }
 
 impl<F: Field> Circuit<F> for FluentbaseCircuit<F> {
@@ -83,7 +81,6 @@ mod tests {
         let bytecode: Vec<u8> = bytecode.into();
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
-            _pd: Default::default(),
         };
         let k = 10;
         let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();

@@ -32,9 +32,10 @@ pub struct InstructionSet {
 
 impl Into<Vec<u8>> for InstructionSet {
     fn into(self) -> Vec<u8> {
-        let mut buffer = vec![0; 65536];
+        let mut buffer = vec![0; 65536 * 2];
         let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
         let n = self.write_binary(&mut binary_writer).unwrap();
+        assert_ne!(n, buffer.len());
         buffer.resize(n, 0);
         buffer
     }
