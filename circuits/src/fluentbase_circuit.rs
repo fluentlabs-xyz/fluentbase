@@ -92,6 +92,13 @@ mod tests {
 
     #[test]
     fn test_add_three_numbers() {
+        // test for odd instruction number
+        test_ok(instruction_set!(
+            .op_i32_const(100)
+            .op_i32_const(20)
+            .op_i32_add()
+        ));
+        // test for even instruction number
         test_ok(instruction_set!(
             .op_i32_const(100)
             .op_i32_const(20)
