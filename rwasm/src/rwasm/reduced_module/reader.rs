@@ -8,6 +8,7 @@ use alloc::collections::BTreeMap;
 #[derive(Debug, Clone)]
 pub struct ReducedModuleTrace {
     pub offset: usize,
+    pub bytecode_length: usize,
     pub code: u8,
     pub raw_bytes: Vec<u8>,
     pub aux_size: usize,
@@ -19,6 +20,7 @@ pub struct ReducedModuleReader<'a> {
     pub binary_format_reader: BinaryFormatReader<'a>,
     pub instruction_set: InstructionSet,
     pub relative_position: BTreeMap<u32, u32>,
+    pub bytecode_length: usize,
 }
 
 impl<'a> ReducedModuleReader<'a> {
@@ -27,6 +29,7 @@ impl<'a> ReducedModuleReader<'a> {
             binary_format_reader: BinaryFormatReader::new(sink),
             instruction_set: InstructionSet::new(),
             relative_position: BTreeMap::new(),
+            bytecode_length: sink.len(),
         }
     }
 
@@ -71,6 +74,7 @@ impl<'a> ReducedModuleReader<'a> {
 
         let trace = ReducedModuleTrace {
             offset: pos_before,
+            bytecode_length: self.bytecode_length,
             code: self.binary_format_reader.sink[pos_before],
             raw_bytes: self.binary_format_reader.sink[pos_before..pos_after].to_vec(),
             aux_size: pos_after - pos_before - 1,
