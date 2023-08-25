@@ -1,19 +1,21 @@
 use crate::{
-    constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query},
+    constraint_builder::{AdviceColumn, AdviceColumnPhase2, BinaryQuery, ConstraintBuilder, Query},
     util::Field,
 };
+use halo2_proofs::plonk::ConstraintSystem;
 
-pub struct OpConstraintBuilder<F: Field> {
+pub struct OpConstraintBuilder<'cs, F: Field> {
     base: ConstraintBuilder<F>,
+    cs: &'cs mut ConstraintSystem<F>,
 }
 
-impl<F: Field> OpConstraintBuilder<F> {
+impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     pub fn query_cell(&mut self) -> AdviceColumn {
-        unreachable!("not implemented yet")
+        self.base.advice_column(self.cs)
     }
 
-    pub fn query_cell_phase2(&mut self) -> AdviceColumn {
-        unreachable!("not implemented yet")
+    pub fn query_cell_phase2(&mut self) -> AdviceColumnPhase2 {
+        self.base.advice_column_phase2(self.cs)
     }
 
     pub fn stack_push(&mut self, value: Query<F>) {
@@ -65,3 +67,14 @@ impl_expr!(u8);
 impl_expr!(i8);
 impl_expr!(usize);
 impl_expr!(isize);
+
+impl ToExpr for AdviceColumn {
+    fn expr<F: Field>(&self) -> Query<F> {
+        self.current()
+    }
+}
+impl ToExpr for AdviceColumnPhase2 {
+    fn expr<F: Field>(&self) -> Query<F> {
+        self.current()
+    }
+}

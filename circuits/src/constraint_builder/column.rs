@@ -112,9 +112,9 @@ impl AdviceColumn {
 }
 
 #[derive(Clone, Copy)]
-pub struct SecondPhaseAdviceColumn(pub Column<Advice>);
+pub struct AdviceColumnPhase2(pub Column<Advice>);
 
-impl SecondPhaseAdviceColumn {
+impl AdviceColumnPhase2 {
     fn rotation<F: FieldExt>(self, i: i32) -> Query<F> {
         Query::Advice(self.0, i)
     }

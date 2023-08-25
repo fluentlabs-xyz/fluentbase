@@ -1,6 +1,6 @@
 use super::{byte_bit::RangeCheck256Lookup, is_zero::IsZeroGadget, rlc_randomness::RlcRandomness};
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SecondPhaseAdviceColumn},
+    constraint_builder::{AdviceColumn, AdviceColumnPhase2, ConstraintBuilder, Query},
     util::Field,
 };
 use ethers_core::types::{Address, H256};
@@ -25,7 +25,7 @@ pub trait BytesLookup {
 pub struct ByteRepresentationConfig {
     // lookup columns
     value: AdviceColumn,
-    rlc: SecondPhaseAdviceColumn,
+    rlc: AdviceColumnPhase2,
     index: AdviceColumn,
 
     // internal columns

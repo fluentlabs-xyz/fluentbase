@@ -1,18 +1,20 @@
 use crate::{
-    constraint_builder::AdviceColumn,
-    runtime_circuit::{constraint_builder::OpConstraintBuilder, opcodes::ExecutionGadget},
+    constraint_builder::AdviceColumnPhase2,
+    runtime_circuit::{
+        constraint_builder::{OpConstraintBuilder, ToExpr},
+        opcodes::ExecutionGadget,
+    },
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::Error};
 use std::marker::PhantomData;
 
-#[derive(Clone, Debug)]
-pub(crate) struct WasmDropGadget<F> {
-    phase2_value: AdviceColumn,
+pub(crate) struct DropGadget<F> {
+    phase2_value: AdviceColumnPhase2,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasmDropGadget<F> {
+impl<F: Field> ExecutionGadget<F> for DropGadget<F> {
     const NAME: &'static str = "WASM_DROP";
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
