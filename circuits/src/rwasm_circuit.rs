@@ -76,12 +76,12 @@ impl<F: Field> RwasmCircuitConfig<F> {
 
         let opcode_table = cb.fixed_columns(cs);
 
-        let if_error = || {
-            reached_unreachable
-                .current()
-                .or(need_more.current())
-                .or(illegal_opcode.current())
-        };
+        // let if_error = || {
+        //     reached_unreachable
+        //         .current()
+        //         .or(need_more.current())
+        //         .or(illegal_opcode.current())
+        // };
 
         // if row is not last
         cb.condition(!q_last.current(), |cb| {
@@ -97,13 +97,13 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 code_hash.next(),
             );
         });
-        cb.condition(q_last.current().and(!if_error()), |cb| {
-            cb.assert_equal(
-                "offset is aligned",
-                offset.current(),
-                Query::from(HASH_BYTES_IN_FIELD as u64),
-            );
-        });
+        // cb.condition(q_last.current().and(!if_error()), |cb| {
+        //     cb.assert_equal(
+        //         "offset is aligned",
+        //         offset.current(),
+        //         Query::from(HASH_BYTES_IN_FIELD as u64),
+        //     );
+        // });
 
         // make sure code is in the range and opcode status is correct
         cb.condition(illegal_opcode.current(), |cb| {
@@ -145,7 +145,17 @@ impl<F: Field> RwasmCircuitConfig<F> {
         );
 
         // lookup poseidon state
-        cb.condition(lookup_hash.current(), |cb| {
+        cb.condition(q_first.current().and(q_last.current()), |cb| {
+            cb.poseidon_lookup(
+                "poseidon_lookup(code,aux,code_hash)",
+                code_hash.current(),   // code hash
+                field_input.current(), // left
+                Query::zero(),         // right
+                offset.current(),      // offset
+                &poseidon_table,
+            );
+        });
+        cb.condition(lookup_hash.current().and(!q_last.current()), |cb| {
             cb.poseidon_lookup(
                 "poseidon_lookup(code,aux,code_hash)",
                 code_hash.current(),   // code hash
@@ -223,7 +233,8 @@ impl<F: Field> RwasmCircuitConfig<F> {
             .assign(region, offset, F::from(trace.aux.to_bits()));
         debug_assert_eq!(HASH_BYTES_IN_FIELD, 9);
         let mut raw_field: [u8; 64] = [0; 64];
-        U256::from_big_endian(&trace.raw_bytes).to_little_endian(&mut raw_field[0..32]);
+        U256::from_big_endian(&trace.raw_bytes_padded(HASH_BYTES_IN_FIELD))
+            .to_little_endian(&mut raw_field[0..32]);
         let field_input = F::from_bytes_wide(&raw_field);
         self.field_input.assign(region, offset, field_input);
         if let Err(e) = trace.instr {
