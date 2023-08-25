@@ -6,6 +6,7 @@ members = [
     "runtime/examples",
     "rwasm",
     "rwasm/e2e",
+    "sdk",
 ]
 exclude = []
 resolver = "2"

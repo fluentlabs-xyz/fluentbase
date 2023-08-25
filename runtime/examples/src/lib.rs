@@ -1,7 +1,7 @@
 #![no_std]
 
-use fluentbase_core::{evm_return_slice, sys_read};
 use fluentbase_rwasm::rwasm::Compiler;
+use fluentbase_sdk::{evm_return_slice, sys_read};
 
 fn greeting() {
     let mut input: [u8; 10] = [0; 10];

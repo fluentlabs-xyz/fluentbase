@@ -22,6 +22,6 @@ pub(crate) trait ExecutionGadget<F: Field> {
 #[macro_export]
 macro_rules! bail_illegal_opcode {
     ($instr:expr) => {
-        unreachable!("illegal opcode {:?}", $instr)
+        unreachable!("illegal opcode place {:?}", $instr)
     };
 }
