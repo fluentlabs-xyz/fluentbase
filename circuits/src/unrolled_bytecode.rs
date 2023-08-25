@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
 pub struct UnrolledBytecode<F: Field> {
-    original_bytecode: Vec<u8>,
+    aligned_bytecode: Vec<u8>,
     read_traces: Vec<ReducedModuleTrace>,
     instruction_set: InstructionSet,
     _pd: PhantomData<F>,
@@ -26,8 +26,13 @@ impl<F: Field> UnrolledBytecode<F> {
             };
             traces.push(trace);
         }
+        let mut aligned_bytecode = Vec::from(bytecode);
+        // TODO: "if codesize is aligned then poseidon circuit fails"
+        if aligned_bytecode.len() % (2 * HASH_BYTES_IN_FIELD) == 0 {
+            aligned_bytecode.push(0);
+        }
         Self {
-            original_bytecode: Vec::from(bytecode),
+            aligned_bytecode,
             read_traces: traces,
             instruction_set: module_reader.instruction_set,
             _pd: Default::default(),
@@ -35,7 +40,7 @@ impl<F: Field> UnrolledBytecode<F> {
     }
 
     pub fn len(&self) -> usize {
-        self.original_bytecode.len()
+        self.aligned_bytecode.len()
     }
 
     pub fn read_traces(&self) -> &Vec<ReducedModuleTrace> {
@@ -43,9 +48,7 @@ impl<F: Field> UnrolledBytecode<F> {
     }
 
     pub fn hash_traces(&self) -> Vec<[F; 2]> {
-        unroll_to_hash_input::<F, { HASH_BYTES_IN_FIELD }, 2>(
-            self.original_bytecode.iter().copied(),
-        )
+        unroll_to_hash_input::<F, { HASH_BYTES_IN_FIELD }, 2>(self.aligned_bytecode.iter().copied())
     }
 
     pub fn code_hash(&self) -> F {
