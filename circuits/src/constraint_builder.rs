@@ -1,7 +1,4 @@
-use halo2_proofs::{
-    arithmetic::FieldExt,
-    plonk::{ConstraintSystem, SecondPhase},
-};
+use halo2_proofs::plonk::{ConstraintSystem, SecondPhase};
 
 mod binary_column;
 mod binary_query;
