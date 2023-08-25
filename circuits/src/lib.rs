@@ -8,6 +8,7 @@ mod constraint_builder;
 mod fluentbase_circuit;
 mod gadgets;
 mod poseidon_circuit;
+mod prover;
 mod runtime_circuit;
 mod rwasm_circuit;
 mod unrolled_bytecode;

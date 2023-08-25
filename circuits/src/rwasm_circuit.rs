@@ -227,7 +227,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         trace: &ReducedModuleTrace,
     ) {
         self.q_enable.enable(region, offset);
-        println!("{:?}", trace);
+        // println!("{:?}", trace);
         self.index
             .assign(region, offset, F::from(trace.offset as u64));
         self.offset.assign(
