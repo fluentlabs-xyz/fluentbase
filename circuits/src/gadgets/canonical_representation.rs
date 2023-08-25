@@ -1,9 +1,16 @@
-use super::super::constraint_builder::{
-    AdviceColumn, BinaryColumn, ConstraintBuilder, FixedColumn, Query, SecondPhaseAdviceColumn,
-    SelectorColumn,
-};
 use super::{
-    byte_bit::RangeCheck256Lookup, byte_representation::RlcLookup, is_zero::IsZeroGadget,
+    super::constraint_builder::{
+        AdviceColumn,
+        AdviceColumnPhase2,
+        BinaryColumn,
+        ConstraintBuilder,
+        FixedColumn,
+        Query,
+        SelectorColumn,
+    },
+    byte_bit::RangeCheck256Lookup,
+    byte_representation::RlcLookup,
+    is_zero::IsZeroGadget,
     rlc_randomness::RlcRandomness,
 };
 use ethers_core::types::U256;
@@ -26,7 +33,8 @@ pub struct CanonicalRepresentationConfig {
     value: AdviceColumn, // We're proving value.to_le_bytes()[i] = byte in this gadget
     index: FixedColumn,  // (0..32).repeat()
     byte: AdviceColumn,  // we need to prove that bytes form the canonical representation of value.
-    rlc: SecondPhaseAdviceColumn, // Accumulated random linear combination of canonical representation bytes.
+    rlc: AdviceColumnPhase2, /* Accumulated random linear combination of canonical representation
+                          * bytes. */
 
     // Witness columns
     index_is_zero: SelectorColumn, // (0..32).repeat().map(|i| i == 0)
@@ -34,7 +42,8 @@ pub struct CanonicalRepresentationConfig {
     modulus_byte: FixedColumn, // (0..32).repeat().map(|i| Fr::MODULUS.to_be_bytes()[i])
     difference: AdviceColumn,  // modulus_byte - byte
     difference_is_zero: IsZeroGadget,
-    differences_are_zero_so_far: BinaryColumn, // difference[0] ... difference[index - 1] are all 0.
+    differences_are_zero_so_far: BinaryColumn, /* difference[0] ... difference[index - 1] are
+                                                * all 0. */
 }
 
 impl CanonicalRepresentationConfig {
@@ -100,7 +109,8 @@ impl CanonicalRepresentationConfig {
         cb.condition(is_first_nonzero_difference, |cb| {
             cb.add_lookup(
                 "0 <= first nonzero difference < 256",
-                // We know that the first nonzero difference is actually non-zero, but we don't have a [1..255] range check.
+                // We know that the first nonzero difference is actually non-zero, but we don't
+                // have a [1..255] range check.
                 [difference.current()],
                 range_check.lookup(),
             );
@@ -138,7 +148,8 @@ impl CanonicalRepresentationConfig {
         modulus.to_big_endian(&mut modulus_bytes);
 
         let mut offset = 0;
-        // TODO: we add a final Fr::zero() to handle the always enabled selector. Add a default assignment instead?
+        // TODO: we add a final Fr::zero() to handle the always enabled selector. Add a default
+        // assignment instead?
         for value in values.into_iter().copied().chain([Fr::zero()]) {
             let mut bytes = value.to_bytes();
             bytes.reverse();

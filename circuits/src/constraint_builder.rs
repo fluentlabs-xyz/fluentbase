@@ -8,7 +8,7 @@ mod query;
 use crate::util::Field;
 pub use binary_column::BinaryColumn;
 pub use binary_query::BinaryQuery;
-pub use column::{AdviceColumn, FixedColumn, SecondPhaseAdviceColumn, SelectorColumn};
+pub use column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, SelectorColumn};
 pub use query::Query;
 
 pub struct ConstraintBuilder<F: Field> {
@@ -131,6 +131,10 @@ impl<F: Field> ConstraintBuilder<F> {
         AdviceColumn(cs.advice_column())
     }
 
+    pub fn advice_column_phase2(&self, cs: &mut ConstraintSystem<F>) -> AdviceColumnPhase2 {
+        AdviceColumnPhase2(cs.advice_column_in(SecondPhase))
+    }
+
     pub fn fixed_columns<const N: usize>(&self, cs: &mut ConstraintSystem<F>) -> [FixedColumn; N] {
         [0; N].map(|_| FixedColumn(cs.fixed_column()))
     }
@@ -142,8 +146,8 @@ impl<F: Field> ConstraintBuilder<F> {
     pub fn second_phase_advice_columns<const N: usize>(
         &self,
         cs: &mut ConstraintSystem<F>,
-    ) -> [SecondPhaseAdviceColumn; N] {
-        [0; N].map(|_| SecondPhaseAdviceColumn(cs.advice_column_in(SecondPhase)))
+    ) -> [AdviceColumnPhase2; N] {
+        [0; N].map(|_| AdviceColumnPhase2(cs.advice_column_in(SecondPhase)))
     }
 
     pub fn binary_columns<const N: usize>(
