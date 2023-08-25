@@ -985,11 +985,6 @@ dependencies = [
 [[package]]
 name = "fluentbase-core"
 version = "0.1.0"
-dependencies = [
- "byteorder",
- "fixed-bigint",
- "wee_alloc",
-]
 
 [[package]]
 name = "fluentbase-runtime"
@@ -1003,8 +998,8 @@ dependencies = [
 name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
- "fluentbase-core",
  "fluentbase-rwasm",
+ "fluentbase-sdk",
 ]
 
 [[package]]
@@ -1038,6 +1033,15 @@ dependencies = [
  "fluentbase-rwasm",
  "wast 62.0.1",
  "wat",
+]
+
+[[package]]
+name = "fluentbase-sdk"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "fixed-bigint",
+ "wee_alloc",
 ]
 
 [[package]]
