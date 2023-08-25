@@ -17,8 +17,7 @@ pub struct UnrolledBytecode<F: Field> {
 
 impl<F: Field> UnrolledBytecode<F> {
     pub fn new(bytecode: &[u8]) -> Self {
-        let mut aligned_bytecode = bytecode.to_vec();
-        let mut module_reader = ReducedModuleReader::new(aligned_bytecode.as_slice());
+        let mut module_reader = ReducedModuleReader::new(bytecode);
         let mut traces: Vec<ReducedModuleTrace> = Vec::new();
         loop {
             let trace = match module_reader.trace_opcode() {
@@ -28,7 +27,7 @@ impl<F: Field> UnrolledBytecode<F> {
             traces.push(trace);
         }
         Self {
-            original_bytecode: aligned_bytecode.clone(),
+            original_bytecode: bytecode.to_vec(),
             read_traces: traces,
             instruction_set: module_reader.instruction_set,
             _pd: Default::default(),

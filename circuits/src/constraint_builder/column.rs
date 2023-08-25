@@ -72,6 +72,10 @@ impl AdviceColumn {
         Query::Advice(self.0, i)
     }
 
+    pub fn expr<F: FieldExt>(self) -> Query<F> {
+        self.rotation(0)
+    }
+
     pub fn current<F: FieldExt>(self) -> Query<F> {
         self.rotation(0)
     }

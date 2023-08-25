@@ -1,19 +1,21 @@
 use super::{byte_bit::RangeCheck256Lookup, is_zero::IsZeroGadget, rlc_randomness::RlcRandomness};
-use crate::constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SecondPhaseAdviceColumn};
+use crate::{
+    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SecondPhaseAdviceColumn},
+    util::Field,
+};
 use ethers_core::types::{Address, H256};
 use halo2_proofs::{
-    arithmetic::FieldExt,
     circuit::{Region, Value},
     halo2curves::bn256::Fr,
     plonk::ConstraintSystem,
 };
 
 pub trait RlcLookup {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3];
+    fn lookup<F: Field>(&self) -> [Query<F>; 3];
 }
 
 pub trait BytesLookup {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 2];
+    fn lookup<F: Field>(&self) -> [Query<F>; 2];
 }
 
 // Right the byte order is big endian, which means that e.g. proving that 0x01 fits into 3
@@ -34,7 +36,7 @@ pub struct ByteRepresentationConfig {
 // WARNING: it is a soundness issue if the index lookup is >= 31 (i.e. the value can
 // overflow in the field if it has 32 or more bytes).
 impl RlcLookup for ByteRepresentationConfig {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3] {
+    fn lookup<F: Field>(&self) -> [Query<F>; 3] {
         [
             self.value.current(),
             self.index.current(),
@@ -44,13 +46,13 @@ impl RlcLookup for ByteRepresentationConfig {
 }
 
 impl BytesLookup for ByteRepresentationConfig {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 2] {
+    fn lookup<F: Field>(&self) -> [Query<F>; 2] {
         [self.value.current(), self.index.current()]
     }
 }
 
 impl ByteRepresentationConfig {
-    pub fn configure<F: FieldExt>(
+    pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,
         range_check: &impl RangeCheck256Lookup,
@@ -86,7 +88,7 @@ impl ByteRepresentationConfig {
     }
 
     // can this we done with an Iterator<Item: impl ToBigEndianBytes> instead?
-    pub fn assign<F: FieldExt>(
+    pub fn assign<F: Field>(
         &self,
         region: &mut Region<'_, F>,
         u64s: &[u64],

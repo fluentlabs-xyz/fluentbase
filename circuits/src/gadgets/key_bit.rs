@@ -2,13 +2,14 @@ use super::{
     byte_bit::{ByteBitLookup, RangeCheck256Lookup, RangeCheck8Lookup},
     canonical_representation::CanonicalRepresentationLookup,
 };
-use crate::constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn};
-use halo2_proofs::{
-    arithmetic::FieldExt, circuit::Region, halo2curves::bn256::Fr, plonk::ConstraintSystem,
+use crate::{
+    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn},
+    util::Field,
 };
+use halo2_proofs::{circuit::Region, halo2curves::bn256::Fr, plonk::ConstraintSystem};
 
 pub trait KeyBitLookup {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3];
+    fn lookup<F: Field>(&self) -> [Query<F>; 3];
 }
 
 #[derive(Clone)]
@@ -21,13 +22,14 @@ pub struct KeyBitConfig {
     bit: AdviceColumn,
 
     // Witness columns
-    index_div_8: AdviceColumn, // constrained to be between 0 and 255. (actually will be between 0 and 31)
+    index_div_8: AdviceColumn, /* constrained to be between 0 and 255. (actually will be between
+                                * 0 and 31) */
     index_mod_8: AdviceColumn, // between 0 and 7
     byte: AdviceColumn,        // value.to_be_bytes[index_div_8]
 }
 
 impl KeyBitConfig {
-    pub fn configure<F: FieldExt>(
+    pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,
         representation: &impl CanonicalRepresentationLookup,
@@ -45,7 +47,8 @@ impl KeyBitConfig {
         );
         cb.add_lookup(
             "0 <= index_div_8 < 256",
-            // Note that if index_div_8 < 256, then it must actually be less than 32 because of the other range checks.
+            // Note that if index_div_8 < 256, then it must actually be less than 32 because of the
+            // other range checks.
             [index_div_8.current()],
             range_check_256.lookup(),
         );
@@ -111,7 +114,7 @@ impl KeyBitConfig {
 }
 
 impl KeyBitLookup for KeyBitConfig {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3] {
+    fn lookup<F: Field>(&self) -> [Query<F>; 3] {
         [
             self.value.current(),
             self.index.current(),
@@ -122,11 +125,14 @@ impl KeyBitLookup for KeyBitConfig {
 
 #[cfg(test)]
 mod test {
-    use super::super::{
-        byte_bit::ByteBitGadget, canonical_representation::CanonicalRepresentationConfig,
-        rlc_randomness::RlcRandomness,
+    use super::{
+        super::{
+            byte_bit::ByteBitGadget,
+            canonical_representation::CanonicalRepresentationConfig,
+            rlc_randomness::RlcRandomness,
+        },
+        *,
     };
-    use super::*;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
