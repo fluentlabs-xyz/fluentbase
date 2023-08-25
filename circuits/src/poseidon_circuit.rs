@@ -3,10 +3,10 @@ use halo2_proofs::{
     circuit::Layouter,
     plonk::{ConstraintSystem, Error},
 };
-use hash_circuit::hash::{PoseidonHashChip, PoseidonHashConfig, PoseidonHashTable};
+use poseidon_circuit::hash::{PoseidonHashChip, PoseidonHashConfig, PoseidonHashTable};
 
 pub const HASH_BYTES_IN_FIELD: usize = 9;
-pub const HASH_BLOCK_STEP_SIZE: usize = HASH_BYTES_IN_FIELD * 2;
+pub const HASH_BLOCK_STEP_SIZE: usize = 2 * HASH_BYTES_IN_FIELD;
 
 #[derive(Clone)]
 pub struct PoseidonCircuitConfig<F: Field> {
@@ -41,10 +41,11 @@ impl<F: Field> PoseidonCircuitConfig<F> {
             bytecode.len() as u64,
             HASH_BLOCK_STEP_SIZE,
         );
+
         let poseidon_hash_chip = PoseidonHashChip::<'_, F, { HASH_BYTES_IN_FIELD }>::construct(
             self.poseidon_config.clone(),
             &poseidon_hash_table,
-            HASH_BYTES_IN_FIELD * hash_traces.len(),
+            hash_traces.len() + 1,
         );
         poseidon_hash_chip.load(layouter)?;
         Ok(())

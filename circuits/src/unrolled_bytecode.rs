@@ -3,8 +3,8 @@ use crate::{
     util::{unroll_to_hash_input, Field},
 };
 use fluentbase_rwasm::rwasm::{InstructionSet, ReducedModuleReader, ReducedModuleTrace};
-use hash_circuit::HASHABLE_DOMAIN_SPEC;
 use itertools::Itertools;
+use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
@@ -61,8 +61,8 @@ impl<F: Field> UnrolledBytecode<F> {
 mod tests {
     use crate::util::unroll_to_hash_input;
     use halo2_proofs::halo2curves::bn256::Fr;
-    use hash_circuit::{hash::MessageHashable, HASHABLE_DOMAIN_SPEC};
     use itertools::Itertools;
+    use poseidon_circuit::{hash::MessageHashable, HASHABLE_DOMAIN_SPEC};
 
     #[test]
     fn test_code_hash() {

@@ -1,9 +1,11 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
     gadgets::poseidon::PoseidonTable,
+    poseidon_circuit::HASH_BYTES_IN_FIELD,
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
 };
+use ethers_core::types::U256;
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
     rwasm::{BinaryFormatError, ReducedModuleTrace},
@@ -39,6 +41,8 @@ pub struct RwasmCircuitConfig<F: Field> {
     need_more: SelectorColumn,
     illegal_opcode: SelectorColumn,
     code_hash: AdviceColumn,
+    lookup_hash: SelectorColumn,
+    field_input: AdviceColumn,
     // lookup tables
     poseidon_table: PoseidonTable,
     opcode_table: OpcodeTable,
@@ -67,6 +71,8 @@ impl<F: Field> RwasmCircuitConfig<F> {
         let need_more = SelectorColumn(cs.fixed_column());
         let illegal_opcode = SelectorColumn(cs.fixed_column());
         let code_hash = cb.advice_column(cs);
+        let lookup_hash = SelectorColumn(cs.fixed_column());
+        let field_input = cb.advice_column(cs);
 
         let opcode_table = cb.fixed_columns(cs);
 
@@ -130,11 +136,26 @@ impl<F: Field> RwasmCircuitConfig<F> {
         );
 
         // lookup poseidon state
+
         cb.poseidon_lookup(
             "poseidon_lookup(code,aux,code_hash)",
-            [code.current(), aux.current(), code_hash.current()],
+            code_hash.current(),   // code hash
+            field_input.current(), // left
+            field_input.next(),    // right
             &poseidon_table,
         );
+
+        // cb.condition(lookup_hash.current(), |cb| {
+        //     cb.poseidon_lookup_input(
+        //         "poseidon_lookup(code,aux,code_hash)",
+        //         code_hash.current(),
+        //         field_input.current(),
+        //         true,
+        //         &poseidon_table,
+        //     );
+        // });
+        // code.current() * Query::Constant(F::from_u128(0x10000000000000000)) +aux.current(),
+        // cb.condition(side.current(), |cb| {});
 
         cb.build(cs);
 
@@ -150,6 +171,8 @@ impl<F: Field> RwasmCircuitConfig<F> {
             need_more,
             illegal_opcode,
             code_hash,
+            lookup_hash,
+            field_input,
             poseidon_table,
             opcode_table,
             _pd: Default::default(),
@@ -196,6 +219,11 @@ impl<F: Field> RwasmCircuitConfig<F> {
             .assign(region, offset, F::from(trace.aux_size as u64));
         self.aux
             .assign(region, offset, F::from(trace.aux.to_bits()));
+        debug_assert_eq!(HASH_BYTES_IN_FIELD, 9);
+        let mut raw_field: [u8; 64] = [0; 64];
+        U256::from_big_endian(&trace.raw_bytes).to_little_endian(&mut raw_field[0..32]);
+        let field_input = F::from_bytes_wide(&raw_field);
+        self.field_input.assign(region, offset, field_input);
         if let Err(e) = trace.instr {
             match e {
                 BinaryFormatError::ReachedUnreachable => {
@@ -210,6 +238,10 @@ impl<F: Field> RwasmCircuitConfig<F> {
             }
         }
         self.code_hash.assign(region, offset, code_hash);
+        // determine input side for poseidon hash (left or right)
+        if (trace.offset / HASH_BYTES_IN_FIELD) % 2 == 0 {
+            self.lookup_hash.enable(region, offset);
+        }
     }
 
     pub fn assign_bytecode(

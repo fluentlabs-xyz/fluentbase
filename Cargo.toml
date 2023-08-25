@@ -21,6 +21,18 @@ license = "MIT"
 keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
+[patch.crates-io]
+ethers-core = { git = "https://github.com/scroll-tech/ethers-rs.git", branch = "v0.17.0" }
+#ethers-etherscan = { git = "https://github.com/scroll-tech/ethers-rs.git", branch = "v0.17.0" }
+[patch."https://github.com/privacy-scaling-explorations/halo2.git"]
+halo2_proofs = { git = "https://github.com/scroll-tech/halo2.git", branch = "develop" }
+[patch."https://github.com/privacy-scaling-explorations/poseidon.git"]
+poseidon = { git = "https://github.com/scroll-tech/poseidon.git", branch = "scroll-dev-0220" }
+[patch."https://github.com/privacy-scaling-explorations/halo2curves.git"]
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde", default-features = false }
+#[patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
+#maingate = { git = "https://github.com/scroll-tech/halo2wrong", branch = "halo2-ecc-snark-verifier-0323" }
+
 [profile.bench]
 lto = "fat"
 codegen-units = 1
