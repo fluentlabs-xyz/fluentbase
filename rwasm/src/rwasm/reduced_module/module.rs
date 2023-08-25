@@ -131,7 +131,13 @@ impl ReducedModule {
             }
             // function main has 0 offset, init bytecode for entire section
             if *func_offset == 0 {
-                engine.init_func(compiled_func, 0, 0, code_section.instr.clone());
+                engine.init_func(
+                    compiled_func,
+                    0,
+                    0,
+                    code_section.instr.clone(),
+                    code_section.metas.clone().unwrap(),
+                );
             } else {
                 engine.mark_func(compiled_func, 0, 0, *func_offset as usize);
             }

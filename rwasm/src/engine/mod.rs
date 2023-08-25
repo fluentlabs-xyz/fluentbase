@@ -15,6 +15,7 @@ mod traits;
 
 #[cfg(test)]
 mod tests;
+mod tracer;
 
 pub use self::{
     bytecode::DropKeep,
@@ -30,6 +31,7 @@ pub use self::{
     },
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
+    tracer::Tracer,
     traits::{CallParams, CallResults},
 };
 use self::{
@@ -49,7 +51,7 @@ pub(crate) use self::{
 use crate::{
     arena::{ArenaIndex, GuardedEntity},
     common::{Trap, TrapCode, UntypedValue},
-    engine::code_map::InstructionPtr,
+    engine::{bytecode::InstrMeta, code_map::InstructionPtr},
     func::FuncEntity,
     AsContext,
     AsContextMut,
@@ -185,11 +187,12 @@ impl Engine {
         len_locals: usize,
         local_stack_height: usize,
         instrs: I,
+        metas: Vec<InstrMeta>,
     ) where
         I: IntoIterator<Item = Instruction>,
     {
         self.inner
-            .init_func(func, len_locals, local_stack_height, instrs)
+            .init_func(func, len_locals, local_stack_height, instrs, metas)
     }
 
     pub(super) fn mark_func(
@@ -450,13 +453,14 @@ impl EngineInner {
         len_locals: usize,
         local_stack_height: usize,
         instrs: I,
+        metas: Vec<InstrMeta>,
     ) where
         I: IntoIterator<Item = Instruction>,
     {
         self.res
             .write()
             .code_map
-            .init_func(func, len_locals, local_stack_height, instrs)
+            .init_func(func, len_locals, local_stack_height, instrs, metas)
     }
 
     fn mark_func(
@@ -847,7 +851,8 @@ impl<'engine> EngineExecutor<'engine> {
             code.into()
         }
 
-        let (store_inner, mut resource_limiter) = ctx.store.store_inner_and_resource_limiter_ref();
+        let (store_inner, tracer, mut resource_limiter) =
+            ctx.store.store_inner_and_tracer_and_resource_limiter_ref();
         let value_stack = &mut self.stack.values;
         let call_stack = &mut self.stack.frames;
         let code_map = &self.res.code_map;
@@ -861,6 +866,7 @@ impl<'engine> EngineExecutor<'engine> {
             code_map,
             const_pool,
             &mut resource_limiter,
+            tracer,
         )
         .map_err(make_trap)
     }

@@ -1,7 +1,7 @@
 //! Datastructure to efficiently store function bodies and their instructions.
 
 use super::Instruction;
-use crate::arena::ArenaIndex;
+use crate::{arena::ArenaIndex, engine::bytecode::InstrMeta};
 use alloc::vec::Vec;
 
 /// A reference to a compiled function stored in the [`CodeMap`] of an [`Engine`](crate::Engine).
@@ -14,7 +14,8 @@ impl ArenaIndex for CompiledFunc {
     }
 
     fn from_usize(index: usize) -> Self {
-        let index = u32::try_from(index).unwrap_or_else(|_| panic!("out of bounds compiled func index: {index}"));
+        let index = u32::try_from(index)
+            .unwrap_or_else(|_| panic!("out of bounds compiled func index: {index}"));
         CompiledFunc(index)
     }
 }
@@ -145,6 +146,7 @@ pub struct CodeMap {
     /// Also this improves efficiency of deallocating the [`CodeMap`]
     /// and generally improves data locality.
     instrs: Vec<Instruction>,
+    metas: Vec<InstrMeta>,
 }
 
 impl Default for CodeMap {
@@ -156,6 +158,7 @@ impl Default for CodeMap {
             // index value for compiled functions that have yet to be
             // initialized with their actual function bodies.
             instrs: vec![Instruction::Unreachable],
+            metas: vec![InstrMeta::default()],
         }
     }
 }
@@ -179,21 +182,40 @@ impl CodeMap {
     ///
     /// - If `func` is an invalid [`CompiledFunc`] reference for this [`CodeMap`].
     /// - If `func` refers to an already initialized [`CompiledFunc`].
-    pub fn init_func<I>(&mut self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, instrs: I)
-    where
+    pub fn init_func<I>(
+        &mut self,
+        func: CompiledFunc,
+        len_locals: usize,
+        local_stack_height: usize,
+        instrs: I,
+        metas: Vec<InstrMeta>,
+    ) where
         I: IntoIterator<Item = Instruction>,
     {
-        assert!(self.header(func).is_uninit(), "func {func:?} is already initialized");
+        assert!(
+            self.header(func).is_uninit(),
+            "func {func:?} is already initialized"
+        );
         let start = self.instrs.len();
         self.instrs.extend(instrs);
+        self.metas.extend(metas);
         let iref = InstructionsRef::new(start);
         self.headers[func.into_usize()] = FuncHeader::new(iref, len_locals, local_stack_height);
     }
 
-    pub fn mark_func(&mut self, func: CompiledFunc, len_locals: usize, local_stack_height: usize, start: usize) {
+    pub fn mark_func(
+        &mut self,
+        func: CompiledFunc,
+        len_locals: usize,
+        local_stack_height: usize,
+        start: usize,
+    ) {
         // first byte is reserved for unreachable
         let start = start + 1;
-        assert!(self.header(func).is_uninit(), "func {func:?} is already initialized");
+        assert!(
+            self.header(func).is_uninit(),
+            "func {func:?} is already initialized"
+        );
         let iref = InstructionsRef::new(start);
         assert!(
             start < self.instrs.len(),
@@ -207,7 +229,10 @@ impl CodeMap {
     /// Returns an [`InstructionPtr`] to the instruction at [`InstructionsRef`].
     #[inline]
     pub fn instr_ptr(&self, iref: InstructionsRef) -> InstructionPtr {
-        InstructionPtr::new(self.instrs[iref.to_usize()..].as_ptr())
+        InstructionPtr::new(
+            self.instrs[iref.to_usize()..].as_ptr(),
+            self.metas[iref.to_usize()..].as_ptr(),
+        )
     }
 
     /// Returns an [`InstructionPtr`] to the instruction at [`InstructionsRef`].
@@ -216,7 +241,10 @@ impl CodeMap {
         let header = self.header(func_body);
         let start = header.iref.to_usize();
         let end = self.instr_end(func_body);
-        let start_ptr = InstructionPtr::new(self.instrs[start..end].as_ptr());
+        let start_ptr = InstructionPtr::new(
+            self.instrs[start..end].as_ptr(),
+            self.metas[start..end].as_ptr(),
+        );
         let mut end_ptr = start_ptr;
         end_ptr.add(end - start);
         (start_ptr, end_ptr)
@@ -264,8 +292,10 @@ impl CodeMap {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct InstructionPtr {
     /// The pointer to the instruction.
-    ptr: *const Instruction,
-    source: *const Instruction,
+    pub(crate) ptr: *const Instruction,
+    pub(crate) source: *const Instruction,
+    /// The pointer to metas
+    pub(crate) meta: *const InstrMeta,
 }
 
 /// It is safe to send an [`InstructionPtr`] to another thread.
@@ -281,8 +311,12 @@ unsafe impl Send for InstructionPtr {}
 impl InstructionPtr {
     /// Creates a new [`InstructionPtr`] for `instr`.
     #[inline]
-    pub fn new(ptr: *const Instruction) -> Self {
-        Self { ptr, source: ptr }
+    pub fn new(ptr: *const Instruction, meta: *const InstrMeta) -> Self {
+        Self {
+            ptr,
+            source: ptr,
+            meta,
+        }
     }
 
     #[inline(always)]
@@ -305,6 +339,7 @@ impl InstructionPtr {
         //         Wasm validation and `wasmi` codegen to never run out
         //         of valid bounds using this method.
         self.ptr = unsafe { self.ptr.offset(by) };
+        self.meta = unsafe { self.meta.offset(by) };
     }
 
     #[inline(always)]
@@ -313,6 +348,7 @@ impl InstructionPtr {
         //         Wasm validation and `wasmi` codegen to never run out
         //         of valid bounds using this method.
         self.ptr = unsafe { self.ptr.add(delta) };
+        self.meta = unsafe { self.meta.add(delta) };
     }
 
     /// Returns a shared reference to the currently pointed at [`Instruction`].
@@ -328,5 +364,13 @@ impl InstructionPtr {
         //         Wasm validation and `wasmi` codegen to never run out
         //         of valid bounds using this method.
         unsafe { &*self.ptr }
+    }
+
+    #[inline(always)]
+    pub fn meta(&self) -> &InstrMeta {
+        // SAFETY: Within Wasm bytecode execution we are guaranteed by
+        //         Wasm validation and `wasmi` codegen to never run out
+        //         of valid bounds using this method.
+        unsafe { &*self.meta }
     }
 }

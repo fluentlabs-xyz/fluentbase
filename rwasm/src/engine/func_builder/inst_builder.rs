@@ -5,12 +5,13 @@ use super::{
     TranslationError,
 };
 use crate::engine::{
-    bytecode::{BranchOffset, FuncIdx, Instruction},
+    bytecode::{BranchOffset, FuncIdx, InstrMeta, Instruction},
     CompiledFunc,
     DropKeep,
     Engine,
 };
 use alloc::vec::Vec;
+use std::mem::take;
 
 /// A reference to an instruction of the partially
 /// constructed function body of the [`InstructionsBuilder`].
@@ -28,9 +29,9 @@ impl Instr {
     ///
     /// If the `value` exceeds limitations for [`Instr`].
     pub fn from_usize(value: usize) -> Self {
-        let value = value
-            .try_into()
-            .unwrap_or_else(|error| panic!("invalid index {value} for instruction reference: {error}"));
+        let value = value.try_into().unwrap_or_else(|error| {
+            panic!("invalid index {value} for instruction reference: {error}")
+        });
         Self(value)
     }
 
@@ -75,8 +76,11 @@ impl RelativeDepth {
 pub struct InstructionsBuilder {
     /// The instructions of the partially constructed function body.
     insts: Vec<Instruction>,
+    metas: Vec<InstrMeta>,
     /// All labels and their uses.
     labels: LabelRegistry,
+    /// Instruction meta state (pc and opcode number)
+    temp_meta: InstrMeta,
 }
 
 impl InstructionsBuilder {
@@ -132,13 +136,18 @@ impl InstructionsBuilder {
     pub fn push_inst(&mut self, inst: Instruction) -> Instr {
         let idx = self.current_pc();
         self.insts.push(inst);
+        self.metas.push(self.temp_meta);
         idx
     }
 
     /// Pushes an [`Instruction::BrAdjust`] to the [`InstructionsBuilder`].
     ///
     /// Returns an [`Instr`] to refer to the pushed instruction.
-    pub fn push_br_adjust_instr(&mut self, branch_offset: BranchOffset, drop_keep: DropKeep) -> Instr {
+    pub fn push_br_adjust_instr(
+        &mut self,
+        branch_offset: BranchOffset,
+        drop_keep: DropKeep,
+    ) -> Instr {
         let idx = self.push_inst(Instruction::BrAdjust(branch_offset));
         self.push_inst(Instruction::Return(drop_keep));
         idx
@@ -147,7 +156,11 @@ impl InstructionsBuilder {
     /// Pushes an [`Instruction::BrAdjustIfNez`] to the [`InstructionsBuilder`].
     ///
     /// Returns an [`Instr`] to refer to the pushed instruction.
-    pub fn push_br_adjust_nez_instr(&mut self, branch_offset: BranchOffset, drop_keep: DropKeep) -> Instr {
+    pub fn push_br_adjust_nez_instr(
+        &mut self,
+        branch_offset: BranchOffset,
+        drop_keep: DropKeep,
+    ) -> Instr {
         let idx = self.push_inst(Instruction::BrAdjustIfNez(branch_offset));
         self.push_inst(Instruction::Return(drop_keep));
         idx
@@ -162,11 +175,19 @@ impl InstructionsBuilder {
         self.try_resolve_label_for(label, user)
     }
 
+    pub fn register_meta(&mut self, pc: usize, opcode: u16) {
+        self.temp_meta = InstrMeta::new(pc, opcode);
+    }
+
     /// Try resolving the `label` for the given `instr`.
     ///
     /// Returns an uninitialized [`BranchOffset`] if the `label` cannot yet
     /// be resolved and defers resolution to later.
-    pub fn try_resolve_label_for(&mut self, label: LabelRef, instr: Instr) -> Result<BranchOffset, TranslationError> {
+    pub fn try_resolve_label_for(
+        &mut self,
+        label: LabelRef,
+        instr: Instr,
+    ) -> Result<BranchOffset, TranslationError> {
         self.labels.try_resolve_label(label, instr)
     }
 
@@ -186,7 +207,15 @@ impl InstructionsBuilder {
         local_stack_height: usize,
     ) -> Result<(), TranslationError> {
         self.update_branch_offsets()?;
-        engine.init_func(func, len_locals, local_stack_height, self.insts.drain(..));
+        let metas = take(&mut self.metas);
+        assert_eq!(self.insts.len(), metas.len());
+        engine.init_func(
+            func,
+            len_locals,
+            local_stack_height,
+            self.insts.drain(..),
+            metas,
+        );
         Ok(())
     }
 
@@ -210,7 +239,11 @@ impl InstructionsBuilder {
     /// - If the amount of consumed fuel for `instr` overflows.
     ///
     /// [`ConsumeFuel`]: enum.Instruction.html#variant.ConsumeFuel
-    pub fn bump_fuel_consumption(&mut self, instr: Instr, delta: u64) -> Result<(), TranslationError> {
+    pub fn bump_fuel_consumption(
+        &mut self,
+        instr: Instr,
+        delta: u64,
+    ) -> Result<(), TranslationError> {
         self.insts[instr.into_usize()].bump_fuel_consumption(delta)
     }
 }

@@ -25,15 +25,11 @@ impl Sanitizer {
 
     fn inject_opcode(
         &mut self,
-        instruction_set: &mut InstructionSet,
-        instr: &Instruction,
-        pos: usize,
-        stack_height: i32,
+        _instruction_set: &mut InstructionSet,
+        _instr: &Instruction,
+        _pos: usize,
+        _stack_height: i32,
     ) {
-        self.str += format!("{instr:?}: {}\n", stack_height).as_str();
-        instruction_set
-            .instr
-            .insert(pos, Instruction::SanitizerStackCheck(stack_height as i64));
     }
 
     pub fn check_stack_height_call(

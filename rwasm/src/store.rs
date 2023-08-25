@@ -1,5 +1,7 @@
 use crate::{
-    engine::DedupFuncType,
+    arena::{Arena, ArenaIndex, GuardedEntity},
+    common::TrapCode,
+    engine::{DedupFuncType, Tracer},
     externref::{ExternObject, ExternObjectEntity, ExternObjectIdx},
     func::{Trampoline, TrampolineEntity, TrampolineIdx},
     memory::{DataSegment, MemoryError},
@@ -34,8 +36,6 @@ use core::{
     fmt::{self, Debug},
     sync::atomic::{AtomicU32, Ordering},
 };
-use crate::arena::{Arena, GuardedEntity, ArenaIndex};
-use crate::common::TrapCode;
 
 /// A unique store index.
 ///
@@ -118,6 +118,8 @@ pub struct Store<T> {
     /// User provided hook to retrieve a
     /// [`ResourceLimiter`](crate::ResourceLimiter).
     limiter: Option<ResourceLimiterQuery<T>>,
+    /// Tracer
+    pub tracer: Tracer,
 }
 
 /// The inner store that owns all data not associated to the host state.
@@ -357,15 +359,16 @@ impl StoreInner {
         ExternObject::from_inner(self.wrap_stored(object))
     }
 
-    /// Allocates a new uninitialized [`InstanceEntity`] and returns an [`Instance`] reference to it.
+    /// Allocates a new uninitialized [`InstanceEntity`] and returns an [`Instance`] reference to
+    /// it.
     ///
     /// # Note
     ///
-    /// - This will create an uninitialized dummy [`InstanceEntity`] as a place holder
-    ///   for the returned [`Instance`]. Using this uninitialized [`Instance`] will result
-    ///   in a runtime panic.
-    /// - The returned [`Instance`] must later be initialized via the [`StoreInner::initialize_instance`]
-    ///   method. Afterwards the [`Instance`] may be used.
+    /// - This will create an uninitialized dummy [`InstanceEntity`] as a place holder for the
+    ///   returned [`Instance`]. Using this uninitialized [`Instance`] will result in a runtime
+    ///   panic.
+    /// - The returned [`Instance`] must later be initialized via the
+    ///   [`StoreInner::initialize_instance`] method. Afterwards the [`Instance`] may be used.
     pub fn alloc_instance(&mut self) -> Instance {
         let instance = self.instances.alloc(InstanceEntity::uninitialized());
         Instance::from_inner(self.wrap_stored(instance))
@@ -449,7 +452,8 @@ impl StoreInner {
         self.resolve_func_type_with(func_type, FuncType::clone)
     }
 
-    /// Calls `f` on the [`FuncType`] associated to the given [`DedupFuncType`] and returns the result.
+    /// Calls `f` on the [`FuncType`] associated to the given [`DedupFuncType`] and returns the
+    /// result.
     ///
     /// # Panics
     ///
@@ -526,7 +530,8 @@ impl StoreInner {
     /// Returns a triple of:
     ///
     /// - An exclusive reference to the [`TableEntity`] associated to the given [`Table`].
-    /// - A shared reference to the [`ElementSegmentEntity`] associated to the given [`ElementSegment`].
+    /// - A shared reference to the [`ElementSegmentEntity`] associated to the given
+    ///   [`ElementSegment`].
     ///
     /// # Note
     ///
@@ -555,7 +560,8 @@ impl StoreInner {
     ///
     /// - A shared reference to the [`InstanceEntity`] associated to the given [`Instance`].
     /// - An exclusive reference to the [`TableEntity`] associated to the given [`Table`].
-    /// - A shared reference to the [`ElementSegmentEntity`] associated to the given [`ElementSegment`].
+    /// - A shared reference to the [`ElementSegmentEntity`] associated to the given
+    ///   [`ElementSegment`].
     ///
     /// # Note
     ///
@@ -585,7 +591,8 @@ impl StoreInner {
         (instance, mem, data)
     }
 
-    /// Returns a shared reference to the [`ElementSegmentEntity`] associated to the given [`ElementSegment`].
+    /// Returns a shared reference to the [`ElementSegmentEntity`] associated to the given
+    /// [`ElementSegment`].
     ///
     /// # Panics
     ///
@@ -596,7 +603,8 @@ impl StoreInner {
         self.resolve(segment.as_inner(), &self.elems)
     }
 
-    /// Returns an exclusive reference to the [`ElementSegmentEntity`] associated to the given [`ElementSegment`].
+    /// Returns an exclusive reference to the [`ElementSegmentEntity`] associated to the given
+    /// [`ElementSegment`].
     ///
     /// # Panics
     ///
@@ -659,7 +667,8 @@ impl StoreInner {
         (mem, data)
     }
 
-    /// Returns a shared reference to the [`DataSegmentEntity`] associated to the given [`DataSegment`].
+    /// Returns a shared reference to the [`DataSegmentEntity`] associated to the given
+    /// [`DataSegment`].
     ///
     /// # Panics
     ///
@@ -670,7 +679,8 @@ impl StoreInner {
         self.resolve(segment.as_inner(), &self.datas)
     }
 
-    /// Returns an exclusive reference to the [`DataSegmentEntity`] associated to the given [`DataSegment`].
+    /// Returns an exclusive reference to the [`DataSegmentEntity`] associated to the given
+    /// [`DataSegment`].
     ///
     /// # Panics
     ///
@@ -691,7 +701,8 @@ impl StoreInner {
         self.resolve(instance.as_inner(), &self.instances)
     }
 
-    /// Returns a shared reference to the [`ExternObjectEntity`] associated to the given [`ExternObject`].
+    /// Returns a shared reference to the [`ExternObjectEntity`] associated to the given
+    /// [`ExternObject`].
     ///
     /// # Panics
     ///
@@ -729,6 +740,7 @@ impl<T> Store<T> {
             trampolines: Arena::new(),
             data,
             limiter: None,
+            tracer: Tracer::default(),
         }
     }
 
@@ -809,6 +821,16 @@ impl<T> Store<T> {
             None => None,
         });
         (&mut self.inner, resource_limiter)
+    }
+
+    pub(crate) fn store_inner_and_tracer_and_resource_limiter_ref(
+        &mut self,
+    ) -> (&mut StoreInner, &mut Tracer, ResourceLimiterRef) {
+        let resource_limiter = ResourceLimiterRef(match &mut self.limiter {
+            Some(q) => Some(q.0(&mut self.data)),
+            None => None,
+        });
+        (&mut self.inner, &mut self.tracer, resource_limiter)
     }
 
     /// Returns `true` if fuel metering has been enabled.
