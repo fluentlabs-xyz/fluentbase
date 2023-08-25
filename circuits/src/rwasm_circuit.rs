@@ -14,7 +14,6 @@ use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
-use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 

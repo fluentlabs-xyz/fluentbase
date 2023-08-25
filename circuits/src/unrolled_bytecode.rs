@@ -1,11 +1,11 @@
 use crate::{
-    poseidon_circuit::{HASH_BLOCK_STEP_SIZE, HASH_BYTES_IN_FIELD},
+    poseidon_circuit::HASH_BYTES_IN_FIELD,
     util::{unroll_to_hash_input, Field},
 };
 use fluentbase_rwasm::rwasm::{InstructionSet, ReducedModuleReader, ReducedModuleTrace};
 use itertools::Itertools;
 use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
-use std::{iter, marker::PhantomData};
+use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
 pub struct UnrolledBytecode<F: Field> {
