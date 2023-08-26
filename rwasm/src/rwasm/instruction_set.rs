@@ -28,6 +28,8 @@ use alloc::{slice::SliceIndex, vec::Vec};
 pub struct InstructionSet {
     pub instr: Vec<Instruction>,
     pub metas: Option<Vec<InstrMeta>>,
+    // translate state
+    total_locals: Vec<usize>,
 }
 
 impl Into<Vec<u8>> for InstructionSet {
@@ -42,6 +44,11 @@ impl Into<Vec<u8>> for InstructionSet {
 }
 
 macro_rules! impl_opcode {
+    ($name:ident, $opcode:ident, $default:expr) => {
+        pub fn $name(&mut self) {
+            self.push(Instruction::$opcode($default));
+        }
+    };
     ($name:ident, $opcode:ident($into:ident)) => {
         pub fn $name<I: Into<$into>>(&mut self, value: I) {
             self.push(Instruction::$opcode(value.into()));
@@ -64,6 +71,7 @@ impl From<Vec<Instruction>> for InstructionSet {
         Self {
             instr: value,
             metas: None,
+            total_locals: vec![],
         }
     }
 }
@@ -90,6 +98,44 @@ impl InstructionSet {
         };
         assert_eq!(self.instr.len(), metas_len, "instr len and meta mismatched");
         opcode_pos
+    }
+
+    pub fn propagate_locals(&mut self, n: usize) {
+        (0..n).for_each(|_| self.op_i32_const(0));
+        self.total_locals.push(n);
+    }
+
+    pub fn drop_locals(&mut self) {
+        let n = self
+            .total_locals
+            .pop()
+            .unwrap_or_else(|| unreachable!("there is no locals on the stack"));
+        (0..n).for_each(|_| self.op_drop());
+    }
+
+    fn is_return_last(&self) -> bool {
+        self.instr
+            .last()
+            .map(|instr| match instr {
+                Instruction::Return(_) => true,
+                _ => false,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn finalize(&mut self, inject_return: bool) {
+        // 0 means there is no locals, 1 means main locals, 1+ means error
+        if self.total_locals.len() > 1 {
+            unreachable!("missing [drop_locals] call/s somewhere");
+        } else if self.total_locals.len() == 1 {
+            self.drop_locals();
+        }
+        // inject return as a last opcode before unreachable
+        if inject_return && !self.is_return_last() {
+            self.op_return();
+        }
+        // inject unreachable in the end of file to be sure that return is presented
+        self.op_unreachable();
     }
 
     pub fn has_meta(&self) -> bool {
@@ -140,8 +186,8 @@ impl InstructionSet {
     impl_opcode!(op_br_table, BrTable(BranchTableTargets));
     impl_opcode!(op_unreachable, Unreachable);
     impl_opcode!(op_consume_fuel, ConsumeFuel(BlockFuel));
-    impl_opcode!(op_return, Return(DropKeep));
-    impl_opcode!(op_return_if_nez, ReturnIfNez(DropKeep));
+    impl_opcode!(op_return, Return, DropKeep::none());
+    impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
     impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
@@ -329,23 +375,23 @@ impl InstructionSet {
     pub fn extend<I: Into<InstructionSet>>(&mut self, with: I) {
         self.instr.extend(Into::<InstructionSet>::into(with).instr);
     }
-
-    pub fn finalize(&mut self) -> Vec<Instruction> {
-        self.instr.clone()
-    }
 }
 
 #[macro_export]
 macro_rules! instruction_set_internal {
     // Nothing left to do
     ($code:ident, ) => {};
+    ($code:ident, $x:ident [$v:expr] $($rest:tt)*) => {{
+        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x($v.into()));
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
     ($code:ident, $x:ident ($v:expr) $($rest:tt)*) => {{
-        $code.$x($v);
+        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x($v.into()));
         $crate::instruction_set_internal!($code, $($rest)*);
     }};
     // Default opcode without any inputs
     ($code:ident, $x:ident $($rest:tt)*) => {{
-        $code.write_op($crate::evm_types::OpcodeId::$x);
+        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x);
         $crate::instruction_set_internal!($code, $($rest)*);
     }};
     // Function calls
@@ -357,6 +403,37 @@ macro_rules! instruction_set_internal {
 
 #[macro_export]
 macro_rules! instruction_set {
+    ($($args:tt)*) => {{
+        let mut code = $crate::rwasm::InstructionSet::new();
+        $crate::instruction_set_internal!(code, $($args)*);
+        code
+    }};
+}
+
+#[deprecated(note = "use [instruction_set_internal] instead")]
+#[macro_export]
+macro_rules! bytecode_internal {
+    // Nothing left to do
+    ($code:ident, ) => {};
+    ($code:ident, $x:ident ($v:expr) $($rest:tt)*) => {{
+        $code.$x($v);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+    // Default opcode without any inputs
+    ($code:ident, $x:ident $($rest:tt)*) => {{
+        $code.write_op(fluentbase_rwasm::engine::bytecode::Instruction::$x);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+    // Function calls
+    ($code:ident, .$function:ident ($($args:expr),* $(,)?) $($rest:tt)*) => {{
+        $code.$function($($args,)*);
+        $crate::instruction_set_internal!($code, $($rest)*);
+    }};
+}
+
+#[deprecated(note = "use [instruction_set] instead")]
+#[macro_export]
+macro_rules! bytecode {
     ($($args:tt)*) => {{
         let mut code = $crate::rwasm::InstructionSet::new();
         $crate::instruction_set_internal!(code, $($args)*);

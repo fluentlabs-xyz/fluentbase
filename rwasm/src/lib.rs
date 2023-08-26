@@ -79,6 +79,7 @@
     clippy::items_after_statements
 )]
 #![recursion_limit = "750"]
+#![allow(dead_code, unreachable_patterns)]
 
 #[cfg(not(feature = "std"))]
 #[macro_use]

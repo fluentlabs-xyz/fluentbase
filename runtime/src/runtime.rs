@@ -11,6 +11,7 @@ use crate::{
 };
 use fluentbase_rwasm::{
     common::{Trap, ValueType},
+    engine::Tracer,
     rwasm::{ImportFunc, ImportLinker, ReducedModule},
     AsContextMut,
     Caller,
@@ -23,16 +24,41 @@ use fluentbase_rwasm::{
 };
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RuntimeContext {
-    pub(crate) input: Vec<u8>,
-    pub(crate) output: Vec<u8>,
+    pub input: Vec<u8>,
+    pub output: Vec<u8>,
 }
 
 impl RuntimeContext {
     pub(crate) fn return_data(&mut self, value: &[u8]) {
         self.output.resize(value.len(), 0);
         self.output.copy_from_slice(value);
+    }
+
+    pub fn input(&self) -> &Vec<u8> {
+        &self.input
+    }
+
+    pub fn output(&self) -> &Vec<u8> {
+        &self.output
+    }
+}
+
+#[derive(Debug)]
+pub struct ExecutionResult {
+    store: Store<RuntimeContext>,
+}
+
+impl ExecutionResult {
+    pub fn new(store: Store<RuntimeContext>) -> Self {
+        Self { store }
+    }
+
+    pub fn tracer(&self) -> &Tracer {
+        self.store.tracer()
+    }
+    pub fn data(&self) -> &RuntimeContext {
+        self.store.data()
     }
 }
 
@@ -87,7 +113,7 @@ impl Runtime {
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<RuntimeContext, Error> {
+    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, Error> {
         let import_linker = Self::new_linker();
         Self::run_with_linker(rwasm_binary, input_data, &import_linker)
     }
@@ -96,7 +122,7 @@ impl Runtime {
         rwasm_binary: &[u8],
         input_data: &[u8],
         import_linker: &ImportLinker,
-    ) -> Result<RuntimeContext, Error> {
+    ) -> Result<ExecutionResult, Error> {
         let config = Config::default();
         let engine = Engine::new(&config);
 
@@ -129,15 +155,6 @@ impl Runtime {
             .map_err(Into::<Error>::into)?
             .start(&mut res.store)?;
 
-        Ok(res.store.data().clone())
+        Ok(ExecutionResult::new(res.store))
     }
 }
-
-// impl StateHandler<RuntimeState<'_>> for Runtime<'_> {
-//     // sys calls
-//     fn sys_halt(&mut self, caller: &Caller<RuntimeState>, _exit_code: u32) {}
-//     fn sys_write(&mut self, caller: &Caller<RuntimeState>, _offset: u32, _length: u32) {}
-//     fn sys_read(&mut self, caller: &Caller<RuntimeState>, target: u32, offset: u32, length: u32)
-// {}     // evm calls
-//     fn evm_return(&mut self, caller: &Caller<RuntimeState>, _offset: u32, _length: u32) {}
-// }

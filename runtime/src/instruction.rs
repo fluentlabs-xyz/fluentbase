@@ -48,7 +48,7 @@ pub(crate) fn sys_halt(_: Caller<'_, RuntimeContext>, exit_code: u32) -> Result<
 pub(crate) fn sys_read(
     mut caller: Caller<'_, RuntimeContext>,
     target: u32,
-    offset: u32,
+    _offset: u32,
     length: u32,
 ) -> Result<u32, Trap> {
     let memory = exported_memory(&mut caller);

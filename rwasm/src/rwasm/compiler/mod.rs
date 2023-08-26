@@ -107,6 +107,8 @@ impl<'linker> Compiler<'linker> {
                 self.translate_function(i as u32)?;
             }
         }
+        // there is no need to inject because code is already validated
+        self.code_section.finalize(false);
         self.is_translated = true;
         Ok(())
     }
@@ -279,7 +281,7 @@ impl<'linker> Compiler<'linker> {
             WI::BrAdjust(branch_offset) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_br(branch_offset);
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::BrAdjustIfNez(branch_offset) => {
                 let br_if_offset = self.code_section.len();
@@ -291,27 +293,27 @@ impl<'linker> Compiler<'linker> {
                     .unwrap()
                     .update_branch_offset(BranchOffset::from(1 + drop_keep_len as i32));
                 self.code_section.op_br(branch_offset);
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::ReturnCallInternal(func) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 let fn_index = func.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::ReturnCall(func) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_return_call(func);
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::ReturnCallIndirect(sig) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_return_call_indirect(sig);
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::Return(drop_keep) => {
                 drop_keep.translate(&mut self.code_section)?;
-                self.code_section.op_return(DropKeep::none());
+                self.code_section.op_return();
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -322,7 +324,7 @@ impl<'linker> Compiler<'linker> {
                     .get_mut(br_if_offset as usize)
                     .unwrap()
                     .update_branch_offset(BranchOffset::from(1 + drop_keep_len as i32));
-                self.code_section.op_return_if_nez(DropKeep::none());
+                self.code_section.op_return_if_nez();
             }
             WI::CallInternal(func_idx) => {
                 let fn_index = func_idx.into_usize() as u32;

@@ -26,6 +26,7 @@ hex = "0.4"
 thiserror = "1.0"
 log = "0.4"
 fluentbase-rwasm = {path = "../rwasm"}
+fluentbase-runtime = {path = "../runtime"}
 wat = "1.0.69"
 plotters = "0.3"
 wasm-encoder = "0.31.1"

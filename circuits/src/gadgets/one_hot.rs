@@ -3,18 +3,18 @@ use crate::{
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
-use std::{cmp::Eq, collections::BTreeMap, hash::Hash};
+use std::{cmp::Eq, collections::BTreeMap};
 use strum::IntoEnumIterator;
 
 // One hot encoding for an enum with T::COUNT variants with COUNT - 1 binary columns.
 // It's useful to have 1 less column so that the default assigment for the gadget
 // is valid (it will represent the first variant).
 #[derive(Clone)]
-pub struct OneHot<T: Hash + PartialOrd + Ord> {
+pub struct OneHot<T: PartialOrd + Ord> {
     columns: BTreeMap<T, BinaryColumn>,
 }
 
-impl<T: IntoEnumIterator + Hash + Eq + PartialOrd + Ord> OneHot<T> {
+impl<T: IntoEnumIterator + Eq + PartialOrd + Ord> OneHot<T> {
     pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,

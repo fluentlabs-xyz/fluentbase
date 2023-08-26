@@ -31,7 +31,13 @@ pub use self::{
     },
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
-    tracer::Tracer,
+    tracer::{
+        Tracer,
+        TracerFunctionMeta,
+        TracerGlobalVariable,
+        TracerInstrState,
+        TracerMemoryState,
+    },
     traits::{CallParams, CallResults},
 };
 use self::{

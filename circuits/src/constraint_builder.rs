@@ -157,17 +157,17 @@ impl<F: Field> ConstraintBuilder<F> {
         [0; N].map(|_| BinaryColumn::configure::<F>(cs, self))
     }
 
-    pub fn build(self, cs: &mut ConstraintSystem<F>) {
+    pub fn build(&self, cs: &mut ConstraintSystem<F>) {
         assert_eq!(
             self.conditions.len(),
             1,
             "Cannot call build while in a condition"
         );
 
-        for (name, query) in self.constraints {
+        for (name, query) in &self.constraints {
             cs.create_gate(name, |meta| vec![query.run(meta)])
         }
-        for (name, lookup) in self.lookups {
+        for (name, lookup) in &self.lookups {
             cs.lookup_any(name, |meta| {
                 lookup
                     .into_iter()
