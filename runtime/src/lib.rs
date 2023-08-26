@@ -1,3 +1,5 @@
+#![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
+
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 
 mod instruction;
@@ -7,6 +9,12 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 mod types;
+
+pub use instruction::*;
+pub use macros::*;
+pub use platform::*;
+pub use runtime::*;
+pub use types::*;
 
 #[derive(Debug)]
 pub enum Error {

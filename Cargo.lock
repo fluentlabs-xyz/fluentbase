@@ -959,6 +959,7 @@ version = "0.1.0"
 dependencies = [
  "bencher",
  "ethers-core",
+ "fluentbase-runtime",
  "fluentbase-rwasm",
  "halo2_proofs",
  "hex",

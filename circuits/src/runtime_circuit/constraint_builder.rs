@@ -6,17 +6,30 @@ use crate::{
         ConstraintBuilder,
         FixedColumn,
         Query,
+        SelectorColumn,
     },
+    runtime_circuit::execution_state::ExecutionState,
     util::Field,
 };
 use halo2_proofs::plonk::ConstraintSystem;
 
 pub struct OpConstraintBuilder<'cs, F: Field> {
+    q_enable: SelectorColumn,
     base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
 }
 
+#[allow(unused_variables)]
 impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
+    pub fn new(cs: &'cs mut ConstraintSystem<F>) -> Self {
+        let q_enable = SelectorColumn(cs.fixed_column());
+        Self {
+            q_enable,
+            base: ConstraintBuilder::new(q_enable),
+            cs,
+        }
+    }
+
     pub fn query_cell(&mut self) -> AdviceColumn {
         self.base.advice_column(self.cs)
     }
@@ -30,17 +43,24 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn stack_push(&mut self, value: Query<F>) {
-        unreachable!("not implemented yet")
+        // unreachable!("not implemented yet")
     }
     pub fn stack_pop(&mut self, value: Query<F>) {
-        unreachable!("not implemented yet")
+        // unreachable!("not implemented yet")
     }
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        unreachable!("not implemented yet")
+        // unreachable!("not implemented yet")
     }
 
+    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {}
+
+    pub fn rwasm_lookup(&mut self) {}
+
+    pub fn poseidon_lookup(&mut self) {}
+
     pub fn stack_pointer_offset(&self) -> Query<F> {
-        unreachable!("not implemented yet")
+        // unreachable!("not implemented yet")
+        Query::zero()
     }
 
     pub fn require_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {
@@ -48,9 +68,17 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn condition(&mut self, condition: Query<F>, configure: impl FnOnce(&mut Self)) {
-        self.base.enter_condition(BinaryQuery(condition));
+        self.condition2(BinaryQuery(condition), configure);
+    }
+
+    pub fn condition2(&mut self, condition: BinaryQuery<F>, configure: impl FnOnce(&mut Self)) {
+        self.base.enter_condition(condition);
         configure(self);
         self.base.leave_condition();
+    }
+
+    pub fn build(&mut self) {
+        self.base.build(self.cs);
     }
 }
 

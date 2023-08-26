@@ -119,7 +119,7 @@ pub struct Store<T> {
     /// [`ResourceLimiter`](crate::ResourceLimiter).
     limiter: Option<ResourceLimiterQuery<T>>,
     /// Tracer
-    pub tracer: Tracer,
+    tracer: Tracer,
 }
 
 /// The inner store that owns all data not associated to the host state.
@@ -762,6 +762,10 @@ impl<T> Store<T> {
     /// Consumes `self` and returns its user provided data.
     pub fn into_data(self) -> T {
         self.data
+    }
+
+    pub fn tracer(&self) -> &Tracer {
+        &self.tracer
     }
 
     /// Installs a function into the [`Store`] that will be called with the user

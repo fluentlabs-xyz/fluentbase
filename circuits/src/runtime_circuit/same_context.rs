@@ -7,11 +7,11 @@ pub struct SameContextGadget<F: Field> {
 }
 
 impl<F: Field> SameContextGadget<F> {
-    fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
+    fn configure(_cb: &mut OpConstraintBuilder<F>) -> Self {
         todo!()
     }
 
-    fn assign_exec_step(&self, region: &mut Region<'_, F>, offset: usize) -> Result<(), Error> {
+    fn assign_exec_step(&self, _region: &mut Region<'_, F>, _offset: usize) -> Result<(), Error> {
         todo!()
     }
 }

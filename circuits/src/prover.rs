@@ -149,6 +149,7 @@ mod tests {
         let bytecode: Vec<u8> = bytecode.into();
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
+            tracer: Default::default(),
         };
         let degree: u32 = 12;
         let general_params = get_general_params(degree);

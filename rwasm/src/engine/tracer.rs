@@ -7,24 +7,24 @@ use core::fmt::{Debug, Formatter};
 use std::{collections::BTreeMap, mem::take};
 
 #[derive(Debug, Clone)]
-pub struct MemoryState {
+pub struct TracerMemoryState {
     pub offset: u32,
     pub len: u32,
     pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
-pub struct OpCodeState {
+pub struct TracerInstrState {
     pub program_counter: u32,
     pub opcode: Instruction,
-    pub memory_changes: Vec<MemoryState>,
-    pub stack: Vec<u64>,
+    pub memory_changes: Vec<TracerMemoryState>,
+    pub stack: Vec<UntypedValue>,
     pub source_pc: u32,
     pub code: u16,
 }
 
 #[derive(Debug)]
-pub struct FunctionMeta {
+pub struct TracerFunctionMeta {
     pub fn_index: u32,
     pub max_stack_height: u32,
     pub num_locals: u32,
@@ -32,19 +32,19 @@ pub struct FunctionMeta {
 }
 
 #[derive(Debug)]
-pub struct GlobalVariable {
+pub struct TracerGlobalVariable {
     pub index: u32,
     pub value: u64,
 }
 
 #[derive(Default)]
 pub struct Tracer {
-    global_memory: Vec<MemoryState>,
-    logs: Vec<OpCodeState>,
-    memory_changes: Vec<MemoryState>,
-    fns_meta: Vec<FunctionMeta>,
-    global_variables: Vec<GlobalVariable>,
-    extern_names: BTreeMap<u32, String>,
+    pub global_memory: Vec<TracerMemoryState>,
+    pub logs: Vec<TracerInstrState>,
+    pub memory_changes: Vec<TracerMemoryState>,
+    pub fns_meta: Vec<TracerFunctionMeta>,
+    pub global_variables: Vec<TracerGlobalVariable>,
+    pub extern_names: BTreeMap<u32, String>,
 }
 
 impl Debug for Tracer {
@@ -59,7 +59,7 @@ impl Debug for Tracer {
 
 impl Tracer {
     pub fn global_memory(&mut self, offset: u32, len: u32, memory: &[u8]) {
-        self.global_memory.push(MemoryState {
+        self.global_memory.push(TracerMemoryState {
             offset,
             len,
             data: Vec::from(memory),
@@ -89,8 +89,7 @@ impl Tracer {
         meta: &InstrMeta,
     ) {
         let memory_changes = take(&mut self.memory_changes);
-        let stack = stack.iter().map(|v| v.to_bits()).collect();
-        let opcode_state = OpCodeState {
+        let opcode_state = TracerInstrState {
             program_counter,
             opcode,
             memory_changes,
@@ -109,7 +108,7 @@ impl Tracer {
         fn_name: String,
     ) {
         let resolved_name = self.extern_names.get(&fn_index).unwrap_or(&fn_name);
-        self.fns_meta.push(FunctionMeta {
+        self.fns_meta.push(TracerFunctionMeta {
             fn_index,
             max_stack_height: max_stack_height as u32,
             num_locals: num_locals as u32,
@@ -118,14 +117,14 @@ impl Tracer {
     }
 
     pub fn global_variable(&mut self, value: UntypedValue, index: u32) {
-        self.global_variables.push(GlobalVariable {
+        self.global_variables.push(TracerGlobalVariable {
             value: value.to_bits(),
             index,
         })
     }
 
     pub fn memory_change(&mut self, offset: u32, len: u32, memory: &[u8]) {
-        self.memory_changes.push(MemoryState {
+        self.memory_changes.push(TracerMemoryState {
             offset,
             len,
             data: Vec::from(memory),

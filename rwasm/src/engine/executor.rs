@@ -640,6 +640,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         self.value_stack.sync_stack_ptr(self.sp);
     }
 
+    #[inline(always)]
     fn stack_diff(&mut self) -> isize {
         self.sp.offset_from(self.value_stack.base_ptr())
     }
