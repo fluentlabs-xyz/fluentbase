@@ -27,7 +27,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, poseidon_table.clone());
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, poseidon_table.clone());
-        let runtime_circuit_config = RuntimeCircuitConfig::configure(cs);
+        let runtime_circuit_config = RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config);
         Self {
             poseidon_circuit_config,
             rwasm_circuit_config,
