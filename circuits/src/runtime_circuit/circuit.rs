@@ -1,17 +1,17 @@
 use crate::{
-    constraint_builder::{BinaryQuery, ConstraintBuilder, SelectorColumn},
-    gadgets::one_hot::OneHot,
+    constraint_builder::{AdviceColumn, SelectorColumn},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
-        execution_state::ExecutionState,
         opcodes::{
             op_const::ConstGadget,
             op_drop::DropGadget,
             op_local::LocalGadget,
             ExecutionGadget,
+            GadgetError,
             TraceStep,
         },
     },
+    rwasm_circuit::RwasmLookup,
     util::Field,
 };
 use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
@@ -22,36 +22,71 @@ use halo2_proofs::{
 use std::marker::PhantomData;
 
 #[derive(Clone)]
+pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
+    gadget: G,
+    q_enable: SelectorColumn,
+    index: AdviceColumn,
+    code: AdviceColumn,
+    value: AdviceColumn,
+    pd: PhantomData<F>,
+}
+
+impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
+    pub fn configure(cs: &mut ConstraintSystem<F>, rwasm_lookup: &impl RwasmLookup<F>) -> Self {
+        let q_enable = SelectorColumn(cs.fixed_column());
+        let mut cb = OpConstraintBuilder::new(cs, q_enable);
+        let [index, code, value] = cb.query_cells();
+        cb.rwasm_lookup(
+            q_enable.current(),
+            index.current(),
+            code.current(),
+            value.current(),
+            rwasm_lookup,
+        );
+        let gadget_config = G::configure(&mut cb);
+        cb.build();
+        ExecutionGadgetRow {
+            gadget: gadget_config,
+            index,
+            code,
+            value,
+            q_enable,
+            pd: Default::default(),
+        }
+    }
+
+    pub fn assign(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        step: &TraceStep,
+    ) -> Result<(), GadgetError> {
+        self.q_enable.enable(region, offset);
+        // assign rwasm params (index, code, value)
+        self.index
+            .assign(region, offset, F::from(step.curr().source_pc as u64));
+        self.code
+            .assign(region, offset, F::from(step.curr().code as u64));
+        let value = step.curr().opcode.aux_value().unwrap_or_default();
+        self.value.assign(region, offset, F::from(value.to_bits()));
+        // assign opcode gadget
+        self.gadget.assign_exec_step(region, offset, step)
+    }
+}
+
+#[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
-    const_gadget: ConstGadget<F>,
-    drop_gadget: DropGadget<F>,
-    local_gadget: LocalGadget<F>,
-    _pd: PhantomData<F>,
+    const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
+    drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
+    local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
 }
 
 impl<F: Field> RuntimeCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
-        let q_enable = SelectorColumn(cs.fixed_column());
-        let mut cb = ConstraintBuilder::new(q_enable);
-        let one_hot = OneHot::<ExecutionState>::configure::<F>(cs, &mut cb);
-
-        let mut cb = OpConstraintBuilder::new(cs);
-        cb.condition2(
-            one_hot.current_matches(&[ExecutionState::WASM_CONST]),
-            |cb| {},
-        );
-
-        let const_gadget = ConstGadget::configure(&mut cb);
-        let drop_gadget = DropGadget::configure(&mut cb);
-        let local_gadget = LocalGadget::configure(&mut cb);
-
-        cb.build();
-
+    pub fn configure(cs: &mut ConstraintSystem<F>, rwasm_lookup: &impl RwasmLookup<F>) -> Self {
         Self {
-            const_gadget,
-            drop_gadget,
-            local_gadget,
-            _pd: Default::default(),
+            const_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
+            drop_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
+            local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
         }
     }
 
@@ -62,23 +97,16 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         offset: usize,
         step: &TraceStep,
     ) -> Result<(), Error> {
-        macro_rules! assign_exec_step {
-            ($gadget:expr) => {
-                $gadget.assign_exec_step(region, offset, step)
-            };
-        }
         let res = match step.instr() {
             Instruction::I32Const(_) | Instruction::I64Const(_) => {
-                assign_exec_step!(self.const_gadget)
+                self.const_gadget.assign(region, offset, step)
             }
-            Instruction::Drop => {
-                assign_exec_step!(self.drop_gadget)
-            }
+            Instruction::Drop => self.drop_gadget.assign(region, offset, step),
             Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
-                assign_exec_step!(self.local_gadget)
+                self.local_gadget.assign(region, offset, step)
             }
             Instruction::Return(_) => {
-                // just skip
+                // just skip for now
                 Ok(())
             }
             _ => unreachable!("not supported opcode {:?}", step.instr()),

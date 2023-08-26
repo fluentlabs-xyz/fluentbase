@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 
 const N_OPCODE_LOOKUP_TABLE: usize = 3;
-const N_RWASM_LOOKUP_TABLE: usize = 3;
+const N_RWASM_LOOKUP_TABLE: usize = 4;
 
 pub trait RwasmLookup<F: Field> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE];
@@ -53,6 +53,7 @@ pub struct RwasmCircuitConfig<F: Field> {
 impl<F: Field> RwasmLookup<F> for RwasmCircuitConfig<F> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE] {
         [
+            self.q_enable.current().0,
             self.index.current(),
             self.code.current(),
             self.aux.current(),
@@ -144,7 +145,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
             },
         );
 
-        // lookup poseidon state
+        // lookup poseidon state (each even row and last odd)
         cb.condition(lookup_hash.current().and(q_last.current()), |cb| {
             cb.poseidon_lookup(
                 "poseidon_lookup(code_hash,input,0,offset)",
@@ -227,7 +228,13 @@ impl<F: Field> RwasmCircuitConfig<F> {
         trace: &ReducedModuleTrace,
     ) {
         self.q_enable.enable(region, offset);
-        // println!("{:?}", trace);
+        println!(
+            "{:?}: index={}, code={}, aux={}",
+            trace.instr,
+            trace.offset,
+            trace.code,
+            trace.aux.to_bits()
+        );
         self.index
             .assign(region, offset, F::from(trace.offset as u64));
         self.offset.assign(

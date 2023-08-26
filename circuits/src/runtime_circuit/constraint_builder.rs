@@ -9,20 +9,20 @@ use crate::{
         SelectorColumn,
     },
     runtime_circuit::execution_state::ExecutionState,
+    rwasm_circuit::RwasmLookup,
     util::Field,
 };
 use halo2_proofs::plonk::ConstraintSystem;
 
 pub struct OpConstraintBuilder<'cs, F: Field> {
     q_enable: SelectorColumn,
-    base: ConstraintBuilder<F>,
+    pub(crate) base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
 }
 
 #[allow(unused_variables)]
 impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
-    pub fn new(cs: &'cs mut ConstraintSystem<F>) -> Self {
-        let q_enable = SelectorColumn(cs.fixed_column());
+    pub fn new(cs: &'cs mut ConstraintSystem<F>, q_enable: SelectorColumn) -> Self {
         Self {
             q_enable,
             base: ConstraintBuilder::new(q_enable),
@@ -32,6 +32,10 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
 
     pub fn query_cell(&mut self) -> AdviceColumn {
         self.base.advice_column(self.cs)
+    }
+
+    pub fn query_cells<const N: usize>(&mut self) -> [AdviceColumn; N] {
+        self.base.advice_columns(self.cs)
     }
 
     pub fn query_fixed(&mut self) -> FixedColumn {
@@ -54,7 +58,20 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
 
     pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {}
 
-    pub fn rwasm_lookup(&mut self) {}
+    pub fn rwasm_lookup(
+        &mut self,
+        q_enable: BinaryQuery<F>,
+        index: Query<F>,
+        code: Query<F>,
+        value: Query<F>,
+        rwasm_lookup: &impl RwasmLookup<F>,
+    ) {
+        self.base.add_lookup(
+            "rwasm_lookup(offset,code,value)",
+            [q_enable.0, index, code, value],
+            rwasm_lookup.lookup_rwasm_table(),
+        );
+    }
 
     pub fn poseidon_lookup(&mut self) {}
 

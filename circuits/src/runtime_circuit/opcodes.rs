@@ -10,7 +10,7 @@ use fluentbase_rwasm::{
     common::UntypedValue,
     engine::{bytecode::Instruction, TracerInstrState},
 };
-use halo2_proofs::{circuit::Region, plonk, plonk::ConstraintSystem};
+use halo2_proofs::{circuit::Region, plonk};
 
 #[derive(Debug)]
 pub enum GadgetError {
@@ -51,21 +51,10 @@ impl TraceStep {
     }
 }
 
-pub(crate) trait ExecutionGadget<F: Field> {
+pub trait ExecutionGadget<F: Field> {
     const NAME: &'static str;
 
     const EXECUTION_STATE: ExecutionState;
-
-    fn checked_configure(cs: &mut ConstraintSystem<F>) -> Self
-    where
-        Self: Sized,
-    {
-        let mut cb = OpConstraintBuilder::new(cs);
-        cb.execution_state_lookup(Self::EXECUTION_STATE);
-        let res = Self::configure(&mut cb);
-        cb.build();
-        res
-    }
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self;
 
