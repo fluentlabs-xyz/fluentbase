@@ -127,7 +127,7 @@ impl KeyBitLookup for KeyBitConfig {
 mod test {
     use super::{
         super::{
-            byte_bit::ByteBitGadget,
+            byte_bit::ByteBitConfig,
             canonical_representation::CanonicalRepresentationConfig,
             rlc_randomness::RlcRandomness,
         },
@@ -148,7 +148,7 @@ mod test {
         type Config = (
             SelectorColumn,
             KeyBitConfig,
-            ByteBitGadget,
+            ByteBitConfig,
             CanonicalRepresentationConfig,
             RlcRandomness,
         );
@@ -162,7 +162,7 @@ mod test {
             let selector = SelectorColumn(cs.fixed_column());
             let mut cb = ConstraintBuilder::new(selector);
 
-            let byte_bit = ByteBitGadget::configure(cs, &mut cb);
+            let byte_bit = ByteBitConfig::configure(cs, &mut cb);
             let randomness = RlcRandomness::configure(cs);
             let canonical_representation =
                 CanonicalRepresentationConfig::configure(cs, &mut cb, &byte_bit, &randomness);

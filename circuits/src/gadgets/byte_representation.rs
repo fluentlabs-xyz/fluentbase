@@ -1,4 +1,4 @@
-use super::{byte_bit::RangeCheck256Lookup, is_zero::IsZeroGadget, rlc_randomness::RlcRandomness};
+use super::{byte_bit::RangeCheck256Lookup, is_zero::IsZeroConfig, rlc_randomness::RlcRandomness};
 use crate::{
     constraint_builder::{AdviceColumn, AdviceColumnPhase2, ConstraintBuilder, Query},
     util::Field,
@@ -30,7 +30,7 @@ pub struct ByteRepresentationConfig {
 
     // internal columns
     byte: AdviceColumn,
-    index_is_zero: IsZeroGadget,
+    index_is_zero: IsZeroConfig,
 }
 
 // WARNING: it is a soundness issue if the index lookup is >= 31 (i.e. the value can
@@ -60,7 +60,7 @@ impl ByteRepresentationConfig {
     ) -> Self {
         let [value, index, byte] = cb.advice_columns(cs);
         let [rlc] = cb.second_phase_advice_columns(cs);
-        let index_is_zero = IsZeroGadget::configure(cs, cb, index);
+        let index_is_zero = IsZeroConfig::configure(cs, cb, index);
 
         cb.assert_zero(
             "index increases by 1 or resets to 0",
@@ -155,7 +155,7 @@ fn fr_to_big_endian(x: &Fr) -> Vec<u8> {
 
 #[cfg(test)]
 mod test {
-    use super::{super::byte_bit::ByteBitGadget, *};
+    use super::{super::byte_bit::ByteBitConfig, *};
     use crate::constraint_builder::SelectorColumn;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
@@ -174,7 +174,7 @@ mod test {
     impl Circuit<Fr> for TestCircuit {
         type Config = (
             SelectorColumn,
-            ByteBitGadget,
+            ByteBitConfig,
             ByteRepresentationConfig,
             RlcRandomness,
         );
@@ -188,7 +188,7 @@ mod test {
             let selector = SelectorColumn(cs.fixed_column());
             let mut cb = ConstraintBuilder::new(selector);
 
-            let byte_bit = ByteBitGadget::configure(cs, &mut cb);
+            let byte_bit = ByteBitConfig::configure(cs, &mut cb);
             let randomness = RlcRandomness::configure(cs);
             let byte_representation =
                 ByteRepresentationConfig::configure(cs, &mut cb, &byte_bit, &randomness);

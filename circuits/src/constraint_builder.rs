@@ -9,7 +9,7 @@ use crate::util::Field;
 pub use binary_column::BinaryColumn;
 pub use binary_query::BinaryQuery;
 pub use column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, SelectorColumn};
-pub use query::Query;
+pub use query::{Query, ToExpr};
 
 pub struct ConstraintBuilder<F: Field> {
     constraints: Vec<(&'static str, Query<F>)>,

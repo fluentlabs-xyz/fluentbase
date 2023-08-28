@@ -6,12 +6,12 @@ use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::fmt::Debug;
 
 #[derive(Clone, Copy)]
-pub struct IsZeroGadget {
+pub struct IsZeroConfig {
     pub value: AdviceColumn,
     pub inverse_or_zero: AdviceColumn,
 }
 
-impl IsZeroGadget {
+impl IsZeroConfig {
     pub fn current<F: Field>(self) -> BinaryQuery<F> {
         BinaryQuery(Query::one() - self.value.current() * self.inverse_or_zero.current())
     }

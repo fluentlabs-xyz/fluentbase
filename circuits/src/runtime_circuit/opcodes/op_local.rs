@@ -1,8 +1,8 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, FixedColumn},
+    constraint_builder::{AdviceColumn, FixedColumn, ToExpr},
     runtime_circuit::{
-        constraint_builder::{OpConstraintBuilder, ToExpr},
+        constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecutionGadget, GadgetError, TraceStep},
     },

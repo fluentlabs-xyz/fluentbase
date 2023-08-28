@@ -24,7 +24,7 @@ impl<F: Field> ExecutionGadget<F> for ConstGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CONST;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let value = cb.query_cell();
+        let value = cb.query_value();
         cb.stack_push(value.current());
         Self {
             value,

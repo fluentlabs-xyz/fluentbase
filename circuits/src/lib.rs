@@ -11,10 +11,12 @@ extern crate core;
 mod constraint_builder;
 mod fluentbase_circuit;
 mod gadgets;
+mod pi_circuit;
 mod poseidon_circuit;
 mod prover;
 mod runtime_circuit;
 mod rwasm_circuit;
+mod state_circuit;
 #[cfg(test)]
 mod testing;
 mod unrolled_bytecode;

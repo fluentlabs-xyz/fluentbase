@@ -2,9 +2,8 @@ use super::super::constraint_builder::{ConstraintBuilder, FixedColumn, Query};
 use crate::util::Field;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
-// TODO: fix name to configggggggg
 #[derive(Clone)]
-pub struct ByteBitGadget {
+pub struct ByteBitConfig {
     byte: FixedColumn,
     index: FixedColumn,
     bit: FixedColumn,
@@ -22,7 +21,7 @@ pub trait ByteBitLookup {
     fn lookup<F: Field>(&self) -> [Query<F>; 3];
 }
 
-impl ByteBitGadget {
+impl ByteBitConfig {
     pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,
@@ -44,19 +43,19 @@ impl ByteBitGadget {
     }
 }
 
-impl RangeCheck8Lookup for ByteBitGadget {
+impl RangeCheck8Lookup for ByteBitConfig {
     fn lookup<F: Field>(&self) -> [Query<F>; 1] {
         [self.index.current()]
     }
 }
 
-impl RangeCheck256Lookup for ByteBitGadget {
+impl RangeCheck256Lookup for ByteBitConfig {
     fn lookup<F: Field>(&self) -> [Query<F>; 1] {
         [self.byte.current()]
     }
 }
 
-impl ByteBitLookup for ByteBitGadget {
+impl ByteBitLookup for ByteBitConfig {
     fn lookup<F: Field>(&self) -> [Query<F>; 3] {
         [
             self.byte.current(),
