@@ -35,7 +35,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
     pub fn configure(cs: &mut ConstraintSystem<F>, rwasm_lookup: &impl RwasmLookup<F>) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let mut cb = OpConstraintBuilder::new(cs, q_enable);
-        let [index, code, value] = cb.query_cells();
+        let [index, code, value] = cb.query_rwasm_table();
         cb.rwasm_lookup(
             q_enable.current(),
             index.current(),

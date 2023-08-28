@@ -1,15 +1,12 @@
 use super::Query;
-use halo2_proofs::{
-    arithmetic::{Field, FieldExt},
-    plonk::{Expression, VirtualCells},
-};
-// use std::iter::Sum;
+use crate::util::Field;
+use halo2_proofs::plonk::{Expression, VirtualCells};
 
 /// A query whose expression we promise is 0 or 1.
 #[derive(Clone)]
 pub struct BinaryQuery<F: Field>(pub Query<F>);
 
-impl<F: FieldExt> BinaryQuery<F> {
+impl<F: Field> BinaryQuery<F> {
     pub fn zero() -> Self {
         Self(Query::from(0))
     }
@@ -35,16 +32,17 @@ impl<F: FieldExt> BinaryQuery<F> {
     }
 }
 
-impl<F: FieldExt> BinaryQuery<F> {
+impl<F: Field> BinaryQuery<F> {
     pub fn run(self, meta: &mut VirtualCells<'_, F>) -> Expression<F> {
         self.0.run(meta)
     }
 }
 
-impl<F: FieldExt> std::ops::Not for BinaryQuery<F> {
+impl<F: Field> std::ops::Not for BinaryQuery<F> {
     type Output = Self;
 
-    // In general this can cause a ConstraintPoisoned. You need to add a selector column that's all ones to be safe.
+    // In general this can cause a ConstraintPoisoned. You need to add a selector column that's all
+    // ones to be safe.
     fn not(self) -> Self::Output {
         Self(Query::one() - self.0)
     }

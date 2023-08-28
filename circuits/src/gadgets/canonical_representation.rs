@@ -10,12 +10,13 @@ use super::{
     },
     byte_bit::RangeCheck256Lookup,
     byte_representation::RlcLookup,
-    is_zero::IsZeroGadget,
+    is_zero::IsZeroConfig,
     rlc_randomness::RlcRandomness,
 };
+use crate::util::Field;
 use ethers_core::types::U256;
 use halo2_proofs::{
-    arithmetic::{Field, FieldExt},
+    arithmetic::{Field as Field2, FieldExt},
     circuit::{Region, Value},
     halo2curves::bn256::Fr,
     plonk::ConstraintSystem,
@@ -24,7 +25,7 @@ use itertools::Itertools;
 use num_traits::Zero;
 
 pub trait CanonicalRepresentationLookup {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3];
+    fn lookup<F: Field>(&self) -> [Query<F>; 3];
 }
 
 #[derive(Clone)]
@@ -41,7 +42,7 @@ pub struct CanonicalRepresentationConfig {
     // index_is_31: SelectorColumn, // (0..32).repeat().map(|i| i == 31)
     modulus_byte: FixedColumn, // (0..32).repeat().map(|i| Fr::MODULUS.to_be_bytes()[i])
     difference: AdviceColumn,  // modulus_byte - byte
-    difference_is_zero: IsZeroGadget,
+    difference_is_zero: IsZeroConfig,
     differences_are_zero_so_far: BinaryColumn, /* difference[0] ... difference[index - 1] are
                                                 * all 0. */
 }
@@ -58,7 +59,7 @@ impl CanonicalRepresentationConfig {
         let [rlc] = cb.second_phase_advice_columns(cs);
 
         let [differences_are_zero_so_far] = cb.binary_columns(cs);
-        let difference_is_zero = IsZeroGadget::configure(cs, cb, difference);
+        let difference_is_zero = IsZeroConfig::configure(cs, cb, difference);
 
         cb.assert_equal(
             "difference = modulus_byte - byte",
@@ -189,7 +190,7 @@ impl CanonicalRepresentationConfig {
 }
 
 impl CanonicalRepresentationLookup for CanonicalRepresentationConfig {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3] {
+    fn lookup<F: Field>(&self) -> [Query<F>; 3] {
         [
             self.value.current(),
             self.index.current(),
@@ -199,7 +200,7 @@ impl CanonicalRepresentationLookup for CanonicalRepresentationConfig {
 }
 
 impl RlcLookup for CanonicalRepresentationConfig {
-    fn lookup<F: FieldExt>(&self) -> [Query<F>; 3] {
+    fn lookup<F: Field>(&self) -> [Query<F>; 3] {
         [
             self.value.current(),
             self.rlc.current(),
@@ -210,7 +211,7 @@ impl RlcLookup for CanonicalRepresentationConfig {
 
 #[cfg(test)]
 mod test {
-    use super::{super::byte_bit::ByteBitGadget, *};
+    use super::{super::byte_bit::ByteBitConfig, *};
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
@@ -225,7 +226,7 @@ mod test {
     impl Circuit<Fr> for TestCircuit {
         type Config = (
             SelectorColumn,
-            ByteBitGadget,
+            ByteBitConfig,
             RlcRandomness,
             CanonicalRepresentationConfig,
         );
@@ -239,7 +240,7 @@ mod test {
             let selector = SelectorColumn(cs.fixed_column());
             let mut cb = ConstraintBuilder::new(selector);
 
-            let byte_bit = ByteBitGadget::configure(cs, &mut cb);
+            let byte_bit = ByteBitConfig::configure(cs, &mut cb);
             let randomness = RlcRandomness::configure(cs);
             let canonical_representation =
                 CanonicalRepresentationConfig::configure(cs, &mut cb, &byte_bit, &randomness);

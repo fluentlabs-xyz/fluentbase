@@ -18,16 +18,41 @@ pub struct OpConstraintBuilder<'cs, F: Field> {
     q_enable: SelectorColumn,
     pub(crate) base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
+    opcode: AdviceColumn,
+    value: AdviceColumn,
+    index: AdviceColumn,
 }
 
 #[allow(unused_variables)]
 impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     pub fn new(cs: &'cs mut ConstraintSystem<F>, q_enable: SelectorColumn) -> Self {
+        let opcode = AdviceColumn(cs.advice_column());
+        let value = AdviceColumn(cs.advice_column());
+        let index = AdviceColumn(cs.advice_column());
         Self {
             q_enable,
             base: ConstraintBuilder::new(q_enable),
             cs,
+            opcode,
+            value,
+            index,
         }
+    }
+
+    pub fn query_rwasm_table(&self) -> [AdviceColumn; 3] {
+        [self.index, self.opcode, self.value]
+    }
+
+    pub fn query_opcode(&self) -> AdviceColumn {
+        self.opcode
+    }
+
+    pub fn query_value(&self) -> AdviceColumn {
+        self.value
+    }
+
+    pub fn query_index(&self) -> AdviceColumn {
+        self.index
     }
 
     pub fn query_cell(&mut self) -> AdviceColumn {
@@ -56,7 +81,16 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         // unreachable!("not implemented yet")
     }
 
-    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {}
+    pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
+        // unreachable!("not implemented yet")
+    }
+    pub fn global_set(&mut self, index: Query<F>, value: Query<F>) {
+        // unreachable!("not implemented yet")
+    }
+
+    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {
+        // unreachable!("not implemented yet")
+    }
 
     pub fn rwasm_lookup(
         &mut self,
@@ -73,7 +107,9 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         );
     }
 
-    pub fn poseidon_lookup(&mut self) {}
+    pub fn poseidon_lookup(&mut self) {
+        // unreachable!("not implemented yet")
+    }
 
     pub fn stack_pointer_offset(&self) -> Query<F> {
         // unreachable!("not implemented yet")
@@ -96,46 +132,5 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
 
     pub fn build(&mut self) {
         self.base.build(self.cs);
-    }
-}
-
-pub trait ToExpr {
-    fn expr<F: Field>(&self) -> Query<F>;
-}
-
-macro_rules! impl_expr {
-    ($ty:ty) => {
-        impl ToExpr for $ty {
-            fn expr<F: Field>(&self) -> Query<F> {
-                Query::from(*self as u64)
-            }
-        }
-    };
-}
-
-impl_expr!(u64);
-impl_expr!(i64);
-impl_expr!(u32);
-impl_expr!(i32);
-impl_expr!(u16);
-impl_expr!(i16);
-impl_expr!(u8);
-impl_expr!(i8);
-impl_expr!(usize);
-impl_expr!(isize);
-
-impl ToExpr for AdviceColumn {
-    fn expr<F: Field>(&self) -> Query<F> {
-        self.current()
-    }
-}
-impl ToExpr for AdviceColumnPhase2 {
-    fn expr<F: Field>(&self) -> Query<F> {
-        self.current()
-    }
-}
-impl ToExpr for FixedColumn {
-    fn expr<F: Field>(&self) -> Query<F> {
-        self.current()
     }
 }
