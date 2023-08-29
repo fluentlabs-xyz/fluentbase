@@ -2,7 +2,7 @@ use super::{BinaryQuery, Query};
 use crate::util::Field;
 use halo2_proofs::{
     circuit::{Region, Value},
-    plonk::{Advice, Column, Fixed},
+    plonk::{Advice, Column, Fixed, Instance},
 };
 use std::fmt::Debug;
 
@@ -131,5 +131,34 @@ impl AdviceColumnPhase2 {
         region
             .assign_advice(|| "second phase advice", self.0, offset, || value)
             .expect("failed assign_advice");
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct InstanceColumn(pub Column<Instance>);
+
+impl InstanceColumn {
+    pub fn rotation<F: Field>(self, i: i32) -> Query<F> {
+        Query::Instance(self.0, i)
+    }
+
+    pub fn expr<F: Field>(self) -> Query<F> {
+        self.rotation(0)
+    }
+
+    pub fn current<F: Field>(self) -> Query<F> {
+        self.rotation(0)
+    }
+
+    pub fn previous<F: Field>(self) -> Query<F> {
+        self.rotation(-1)
+    }
+
+    pub fn next<F: Field>(self) -> Query<F> {
+        self.rotation(1)
+    }
+
+    pub fn delta<F: Field>(self) -> Query<F> {
+        self.current() - self.previous()
     }
 }
