@@ -1,6 +1,7 @@
 pub(crate) mod op_const;
 pub(crate) mod op_drop;
 pub(crate) mod op_local;
+pub(crate) mod table_ops;
 
 use crate::{
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},

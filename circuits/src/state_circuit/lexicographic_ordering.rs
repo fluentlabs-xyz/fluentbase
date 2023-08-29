@@ -295,7 +295,7 @@ fn rlc_limb_differences<F: Field>(
 #[cfg(test)]
 mod test {
     use super::LimbIndex;
-    use gadgets::binary_number::{from_bits, AsBits};
+    use crate::gadgets::binary_number::{from_bits, AsBits};
     use strum::IntoEnumIterator;
 
     #[test]
