@@ -10,9 +10,10 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
     let circuit = FluentbaseCircuit {
         bytecode: UnrolledBytecode::new(bytecode.as_slice()),
         tracer: Some(execution_result.tracer()),
+        hash_value: Fr::zero(),
     };
     let k = 10;
-    let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
+    let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![Fr::zero()]]).unwrap();
     prover.assert_satisfied();
 }
 

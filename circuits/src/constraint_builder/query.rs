@@ -6,7 +6,7 @@ use crate::{
 use ethers_core::k256::elliptic_curve::PrimeField;
 use halo2_proofs::{
     halo2curves::bn256::Fr,
-    plonk::{Advice, Challenge, Column, Expression, Fixed, VirtualCells},
+    plonk::{Advice, Challenge, Column, Expression, Fixed, Instance, VirtualCells},
     poly::Rotation,
 };
 
@@ -21,6 +21,7 @@ pub enum ColumnType {
 pub enum Query<F: Field> {
     Constant(F),
     Advice(Column<Advice>, i32),
+    Instance(Column<Instance>, i32),
     Fixed(Column<Fixed>, i32),
     Challenge(Challenge),
     Neg(Box<Self>),
@@ -45,6 +46,7 @@ impl<F: Field> Query<F> {
         match self {
             Query::Constant(f) => Expression::Constant(*f),
             Query::Advice(c, r) => meta.query_advice(*c, Rotation(*r)),
+            Query::Instance(c, r) => meta.query_instance(*c, Rotation(*r)),
             Query::Fixed(c, r) => meta.query_fixed(*c, Rotation(*r)),
             Query::Challenge(c) => meta.query_challenge(*c),
             Query::Neg(q) => Expression::Constant(F::zero()) - q.run(meta),

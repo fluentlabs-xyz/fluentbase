@@ -8,7 +8,7 @@ mod query;
 pub use self::{
     binary_column::BinaryColumn,
     binary_query::BinaryQuery,
-    column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, SelectorColumn},
+    column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, InstanceColumn, SelectorColumn},
     query::{Query, ToExpr},
 };
 use crate::util::Field;
@@ -139,6 +139,10 @@ impl<F: Field> ConstraintBuilder<F> {
         AdviceColumnPhase2(cs.advice_column_in(SecondPhase))
     }
 
+    pub fn instance_column(&self, cs: &mut ConstraintSystem<F>) -> InstanceColumn {
+        InstanceColumn(cs.instance_column())
+    }
+
     pub fn fixed_columns<const N: usize>(&self, cs: &mut ConstraintSystem<F>) -> [FixedColumn; N] {
         [0; N].map(|_| FixedColumn(cs.fixed_column()))
     }
@@ -165,7 +169,7 @@ impl<F: Field> ConstraintBuilder<F> {
         assert_eq!(
             self.conditions.len(),
             1,
-            "Cannot call build while in a condition"
+            "can't call build while in a condition"
         );
 
         for (name, query) in &self.constraints {
