@@ -122,6 +122,10 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         // unreachable!("not implemented yet")
     }
 
+    pub fn range_check_1024(&mut self, value: Q<F>) {
+        // unreachable!("not implemented yet")
+    }
+
     pub fn rwasm_lookup(
         &mut self,
         q_enable: BinaryQuery<F>,
