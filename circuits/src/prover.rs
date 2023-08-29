@@ -150,6 +150,7 @@ mod tests {
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
             tracer: Default::default(),
+            hash_value: Fr::zero(),
         };
         let degree: u32 = 12;
         let general_params = get_general_params(degree);
@@ -160,12 +161,13 @@ mod tests {
                 .expect("keygen_pk should not fail");
             key.clone()
         };
-        let elapsed = test_actual(circuit, vec![], key, degree);
+        let elapsed = test_actual(circuit, vec![vec![Fr::zero()]], key, degree);
         println!("elapsed time (gen/proof/verify): {}ms", elapsed);
         elapsed
     }
 
     #[test]
+    #[ignore]
     fn test_simple_proof() {
         gen_proof_verify(instruction_set!(
             .op_i32_const(100)

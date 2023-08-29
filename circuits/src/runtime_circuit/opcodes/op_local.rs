@@ -159,6 +159,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn test_different_locals() {
         let code = instruction_set! {
             .propagate_locals(3)

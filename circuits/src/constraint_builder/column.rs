@@ -1,8 +1,8 @@
 use super::{BinaryQuery, Query};
 use crate::util::Field;
 use halo2_proofs::{
-    circuit::{Region, Value},
-    plonk::{Advice, Column, Fixed, Instance},
+    circuit::{AssignedCell, Region, Value},
+    plonk::{Advice, Any, Column, Fixed, Instance},
 };
 use std::fmt::Debug;
 
@@ -97,7 +97,8 @@ impl AdviceColumn {
         region: &mut Region<'_, F>,
         offset: usize,
         value: T,
-    ) where
+    ) -> AssignedCell<F, F>
+    where
         <T as TryInto<F>>::Error: Debug,
     {
         region
@@ -107,7 +108,7 @@ impl AdviceColumn {
                 offset,
                 || Value::known(value.try_into().unwrap()),
             )
-            .expect("failed assign_advice");
+            .expect("failed assign_advice")
     }
 }
 
@@ -162,3 +163,17 @@ impl InstanceColumn {
         self.current() - self.previous()
     }
 }
+
+macro_rules! into_any_column {
+    ($typ:ty) => {
+        impl Into<Column<Any>> for $typ {
+            fn into(self) -> Column<Any> {
+                Column::from(self.0)
+            }
+        }
+    };
+}
+into_any_column!(AdviceColumn);
+into_any_column!(AdviceColumnPhase2);
+into_any_column!(FixedColumn);
+into_any_column!(InstanceColumn);

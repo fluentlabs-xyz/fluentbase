@@ -1,6 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
-    poseidon_circuit::{PoseidonTable, HASH_BYTES_IN_FIELD},
+    poseidon_circuit::{PoseidonLookup, HASH_BYTES_IN_FIELD},
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
 };
@@ -44,7 +44,6 @@ pub struct RwasmCircuitConfig<F: Field> {
     lookup_hash: SelectorColumn,
     field_input: AdviceColumn,
     // lookup tables
-    poseidon_table: PoseidonTable,
     opcode_table: OpcodeTable,
     _pd: PhantomData<F>,
 }
@@ -61,7 +60,7 @@ impl<F: Field> RwasmLookup<F> for RwasmCircuitConfig<F> {
 }
 
 impl<F: Field> RwasmCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_table: PoseidonTable) -> Self {
+    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_lookup: &impl PoseidonLookup) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let q_first = SelectorColumn(cs.fixed_column());
         let q_last = SelectorColumn(cs.fixed_column());
@@ -152,7 +151,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 field_input.current(), // left
                 Query::zero(),         // right
                 offset.current(),      // offset
-                &poseidon_table,
+                poseidon_lookup,
             );
         });
         cb.condition(lookup_hash.current().and(!q_last.current()), |cb| {
@@ -162,7 +161,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 field_input.current(), // left
                 field_input.next(),    // right
                 offset.current(),      // offset
-                &poseidon_table,
+                poseidon_lookup,
             );
         });
 
@@ -189,7 +188,6 @@ impl<F: Field> RwasmCircuitConfig<F> {
             code_hash,
             lookup_hash,
             field_input,
-            poseidon_table,
             opcode_table,
             _pd: Default::default(),
         }
