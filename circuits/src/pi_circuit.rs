@@ -11,13 +11,13 @@ pub struct PublicInputCircuitConfig<F: Field> {
 }
 
 impl<F: Field> PublicInputCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
+    pub fn configure(_cs: &mut ConstraintSystem<F>) -> Self {
         Self {
             marker: Default::default(),
         }
     }
 
-    pub fn assign_bytecode(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+    pub fn assign_bytecode(&self, _layouter: &mut impl Layouter<F>) -> Result<(), Error> {
         Ok(())
     }
 }

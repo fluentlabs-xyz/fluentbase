@@ -1,7 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
-    gadgets::poseidon::PoseidonTable,
-    poseidon_circuit::HASH_BYTES_IN_FIELD,
+    poseidon_circuit::{PoseidonTable, HASH_BYTES_IN_FIELD},
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
 };

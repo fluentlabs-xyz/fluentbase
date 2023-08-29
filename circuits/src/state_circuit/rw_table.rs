@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, Query},
+    constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query, ToExpr},
     util::Field,
 };
 use halo2_proofs::plonk::ConstraintSystem;
@@ -57,41 +57,88 @@ impl<F: Field> RwTable<F> {
         }
     }
 
+    fn q_first_access(&self) -> BinaryQuery<F> {
+        !BinaryQuery(self.not_first_access.current())
+    }
+
+    fn q_is_write(&self) -> Query<F> {
+        self.is_write.current()
+    }
+
+    fn q_is_read(&self) -> BinaryQuery<F> {
+        !BinaryQuery(self.is_write.current())
+    }
+
+    fn q_is_tag_and_id_unchanged(&self) -> BinaryQuery<F> {
+        BinaryQuery(self.tag.current() - self.tag.previous())
+    }
+
+    fn q_address_change(&self) -> Query<F> {
+        self.address.current() - self.address.previous()
+    }
+
+    pub fn build_general_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+        // tag value in RwTableTag range is enforced in BinaryNumberChip
+        cb.assert_boolean("is_write is boolean", self.is_write.current());
+
+        // 1 if first_different_limb is in the rw counter, 0 otherwise (i.e. any of the
+        // 4 most significant bits are 0)
+        // cb.require_equal(
+        //     "not_first_access when first 16 limbs are same",
+        //     q.not_first_access.clone(),
+        //     q.first_different_limb[0].clone()
+        //         * q.first_different_limb[1].clone()
+        //         * q.first_different_limb[2].clone()
+        //         * q.first_different_limb[3].clone(),
+        // );
+
+        // When at least one of the keys (tag, id, address, field_tag, or storage_key)
+        // in the current row differs from the previous row.
+        cb.condition(self.q_first_access(), |cb| {
+            // cb.assert_zero(
+            //     "first access reads don't change value",
+            //     self.q_is_read() * (self.value.current() - q.initial_value()),
+            // );
+        });
+
+        // When all the keys in the current row and previous row are equal.
+        cb.condition(!self.q_first_access(), |cb| {
+            cb.assert_zero(
+                "non-first access reads don't change value",
+                (1.expr() - self.is_write.current())
+                    * (self.value.current() - self.value_prev.current()),
+            );
+        });
+    }
+
     pub fn build_start_constraints(&self, cb: &mut ConstraintBuilder<F>) {
         // 1.0. Unused keys are 0
-        // cb.assert_equal("address is 0 for Start", self.address.current());
-        // cb.assert_equal("id is 0 for Start", self.id.current());
+        cb.assert_zero("address is 0 for Start", self.address.current());
+        cb.assert_zero("id is 0 for Start", self.id.current());
         // 1.1. rw_counter increases by 1 for every non-first row
-        // cb.require_zero(
+        // cb.assert_zero(
         //     "rw_counter increases by 1 for every non-first row",
         //     q.lexicographic_ordering_selector.clone() * (q.rw_counter_change() - 1.expr()),
         // );
         // 1.2. Start value is 0
-        // cb.assert_equal("Start value is 0", self.value.current());
+        cb.assert_zero("Start value is 0", self.value.current());
         // 1.3. Start initial value is 0
         // 1.4. state_root is unchanged for every non-first row
-        // cb.condition(q.lexicographic_ordering_selector.clone(), |cb| {
-        //     cb.require_equal(
-        //         "state_root is unchanged for Start",
-        //         q.state_root(),
-        //         q.state_root_prev(),
-        //     )
-        // });
-        // cb.assert_equal(
-        //     "value_prev column is 0 for Start",
-        //     self.value_prev.current(),
-        // );
+        cb.assert_zero(
+            "value_prev column is 0 for Start",
+            self.value_prev.current(),
+        );
     }
 
     pub fn build_memory_constraints(&self, cb: &mut ConstraintBuilder<F>) {
         // 2.0. Unused keys are 0
         // 2.1. First access for a set of all keys are 0 if READ
-        // cb.require_zero(
-        //     "first access for a set of all keys are 0 if READ",
-        //     q.first_access() * q.is_read() * q.value(),
-        // );
-        // could do this more efficiently by just asserting address = limb0 + 2^16 *
-        // limb1?
+        cb.condition(self.q_first_access().and(self.q_is_read()), |cb| {
+            cb.assert_zero(
+                "first access for a set of all keys are 0 if READ",
+                self.value.current(),
+            );
+        });
         // 2.2. mem_addr in range
         // for limb in &q.address.limbs[2..] {
         //     cb.require_zero("memory address fits into 2 limbs", limb.clone());
@@ -102,54 +149,35 @@ impl<F: Field> RwTable<F> {
         //     vec![(q.rw_table.value.clone(), q.lookups.u8.clone())],
         // );
         // 2.4. Start initial value is 0
-        // cb.require_zero("initial Memory value is 0", q.initial_value());
         // 2.5. state root does not change
-        // cb.require_equal(
-        //     "state_root is unchanged for Memory",
-        //     q.state_root(),
-        //     q.state_root_prev(),
-        // );
-        // cb.require_equal(
-        //     "value_prev column equals initial_value for Memory",
-        //     q.value_prev_column(),
-        //     q.initial_value(),
-        // );
     }
 
     pub fn build_stack_constraints(&self, cb: &mut ConstraintBuilder<F>) {
         // 3.0. Unused keys are 0
         // 3.1. First access for a set of all keys
-        // cb.require_zero(
-        //     "first access to new stack address is a write",
-        //     q.first_access() * (1.expr() - q.is_write()),
-        // );
+        cb.condition(self.q_first_access(), |cb| {
+            cb.assert_zero(
+                "first access to new stack address is a write",
+                1.expr() - self.is_write.current(),
+            );
+        });
         // 3.2. stack_ptr in range
         // cb.add_lookup(
         //     "stack address fits into 10 bits",
         //     vec![(q.rw_table.address.clone(), q.lookups.u10.clone())],
         // );
         // 3.3. stack_ptr only increases by 0 or 1
-        // cb.condition(q.is_tag_and_id_unchanged.clone(), |cb| {
-        //     cb.require_boolean(
-        //         "if previous row is also Stack with unchanged call id, address change is 0 or 1",
-        //         q.address_change(),
-        //     )
-        // });
+        cb.condition(self.q_is_tag_and_id_unchanged(), |cb| {
+            cb.assert_boolean(
+                "if previous row is also Stack with unchanged call id, address change is 0 or 1",
+                self.address.current() - self.address.previous(),
+            )
+        });
         // 3.4. Stack initial value is 0
         // 3.5 state root does not change
-        // cb.require_equal(
-        //     "state_root is unchanged for Stack",
-        //     q.state_root(),
-        //     q.state_root_prev(),
-        // );
-        // cb.require_equal(
-        //     "value_prev column equals initial_value for Stack",
-        //     q.value_prev_column(),
-        //     q.initial_value(),
-        // );
     }
 
-    pub fn build_global_constraints(&self, cb: &mut ConstraintBuilder<F>) {}
+    pub fn build_global_constraints(&self, _cb: &mut ConstraintBuilder<F>) {}
 
-    pub fn build_table_constraints(&self, cb: &mut ConstraintBuilder<F>) {}
+    pub fn build_table_constraints(&self, _cb: &mut ConstraintBuilder<F>) {}
 }

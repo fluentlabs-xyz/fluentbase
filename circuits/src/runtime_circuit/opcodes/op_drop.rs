@@ -24,7 +24,7 @@ impl<F: Field> ExecutionGadget<F> for DropGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_DROP;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let value = cb.query_cell();
+        let value = cb.query_rwasm_value();
         cb.stack_pop(value.expr());
         Self {
             value,

@@ -2,7 +2,8 @@
     dead_code,
     unreachable_patterns,
     unused_macros,
-    clippy::too_many_arguments
+    clippy::too_many_arguments,
+    clippy::type_complexity
 )]
 #![deny(unsafe_code)]
 

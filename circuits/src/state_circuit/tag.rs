@@ -4,33 +4,22 @@ use crate::{
 };
 use strum_macros::EnumIter;
 
+pub const N_RW_TABLE_TAG_BYTES: usize = 4;
+
 /// Tag to identify the operation type in a RwTable row
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum RwTableTag {
-    /// Start (used for padding)
     Start = 1,
-    /// Stack operation
-    Stack,
-    /// Global operation
-    Global,
-    /// Memory operation
     Memory,
-    /// Account Storage operation
-    AccountStorage,
-    /// Tx Access List Account operation
-    TxAccessListAccount,
-    /// Tx Access List Account Storage operation
-    TxAccessListAccountStorage,
-    /// Tx Refund operation
-    TxRefund,
-    /// Account operation
-    Account,
-    /// Call Context operation
-    CallContext,
-    /// Tx Log operation
-    TxLog,
-    /// Tx Receipt operation
-    TxReceipt,
+    Stack,
+    Global,
+    Table,
+}
+
+impl Into<usize> for RwTableTag {
+    fn into(self) -> usize {
+        self as usize
+    }
 }
 
 impl ToExpr for RwTableTag {
