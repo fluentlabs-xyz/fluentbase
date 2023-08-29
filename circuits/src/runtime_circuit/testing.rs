@@ -15,3 +15,9 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
     let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
     prover.assert_satisfied();
 }
+
+pub(crate) fn test_ok_with_demo_table(mut bytecode: InstructionSet) {
+  todo!()
+}
+
+
