@@ -1,8 +1,8 @@
 use super::{BinaryQuery, Query};
 use crate::util::Field;
 use halo2_proofs::{
-    circuit::{Region, Value},
-    plonk::{Advice, Column, Fixed},
+    circuit::{AssignedCell, Region, Value},
+    plonk::{Advice, Any, Column, Fixed, Instance},
 };
 use std::fmt::Debug;
 
@@ -97,7 +97,8 @@ impl AdviceColumn {
         region: &mut Region<'_, F>,
         offset: usize,
         value: T,
-    ) where
+    ) -> AssignedCell<F, F>
+    where
         <T as TryInto<F>>::Error: Debug,
     {
         region
@@ -107,7 +108,7 @@ impl AdviceColumn {
                 offset,
                 || Value::known(value.try_into().unwrap()),
             )
-            .expect("failed assign_advice");
+            .expect("failed assign_advice")
     }
 }
 
@@ -133,3 +134,46 @@ impl AdviceColumnPhase2 {
             .expect("failed assign_advice");
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct InstanceColumn(pub Column<Instance>);
+
+impl InstanceColumn {
+    pub fn rotation<F: Field>(self, i: i32) -> Query<F> {
+        Query::Instance(self.0, i)
+    }
+
+    pub fn expr<F: Field>(self) -> Query<F> {
+        self.rotation(0)
+    }
+
+    pub fn current<F: Field>(self) -> Query<F> {
+        self.rotation(0)
+    }
+
+    pub fn previous<F: Field>(self) -> Query<F> {
+        self.rotation(-1)
+    }
+
+    pub fn next<F: Field>(self) -> Query<F> {
+        self.rotation(1)
+    }
+
+    pub fn delta<F: Field>(self) -> Query<F> {
+        self.current() - self.previous()
+    }
+}
+
+macro_rules! into_any_column {
+    ($typ:ty) => {
+        impl Into<Column<Any>> for $typ {
+            fn into(self) -> Column<Any> {
+                Column::from(self.0)
+            }
+        }
+    };
+}
+into_any_column!(AdviceColumn);
+into_any_column!(AdviceColumnPhase2);
+into_any_column!(FixedColumn);
+into_any_column!(InstanceColumn);
