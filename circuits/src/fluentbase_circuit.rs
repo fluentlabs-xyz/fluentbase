@@ -1,4 +1,5 @@
 use crate::{
+    pi_circuit::PublicInputCircuitConfig,
     poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
     runtime_circuit::RuntimeCircuitConfig,
     rwasm_circuit::RwasmCircuitConfig,
@@ -17,6 +18,7 @@ pub struct FluentbaseCircuitConfig<F: Field> {
     poseidon_circuit_config: PoseidonCircuitConfig<F>,
     rwasm_circuit_config: RwasmCircuitConfig<F>,
     runtime_circuit_config: RuntimeCircuitConfig<F>,
+    pi_circuit_config: PublicInputCircuitConfig<F>,
 }
 
 impl<F: Field> FluentbaseCircuitConfig<F> {
@@ -25,12 +27,14 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         let poseidon_table = PoseidonTable::configure(cs);
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, poseidon_table.clone());
-        let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, poseidon_table.clone());
+        let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
         let runtime_circuit_config = RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config);
+        let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         Self {
             poseidon_circuit_config,
             rwasm_circuit_config,
             runtime_circuit_config,
+            pi_circuit_config,
         }
     }
 
@@ -39,6 +43,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
+        hash_value: F,
     ) -> Result<(), Error> {
         self.poseidon_circuit_config
             .assign_bytecode(layouter, bytecode)?;
@@ -47,6 +52,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         if let Some(tracer) = tracer {
             self.runtime_circuit_config.assign(layouter, tracer)?;
         }
+        self.pi_circuit_config.expose_public(layouter, hash_value)?;
         Ok(())
     }
 }
@@ -55,6 +61,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
 pub struct FluentbaseCircuit<'tracer, F: Field> {
     pub(crate) bytecode: UnrolledBytecode<F>,
     pub(crate) tracer: Option<&'tracer Tracer>,
+    pub(crate) hash_value: F,
 }
 
 impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
@@ -75,7 +82,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        config.assign(&mut layouter, &self.bytecode, self.tracer)?;
+        config.assign(&mut layouter, &self.bytecode, self.tracer, self.hash_value)?;
         Ok(())
     }
 }
@@ -88,12 +95,14 @@ mod tests {
 
     fn test_ok<I: Into<Vec<u8>>>(bytecode: I) {
         let bytecode: Vec<u8> = bytecode.into();
+        let hash_value = Fr::zero();
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
             tracer: Default::default(),
+            hash_value,
         };
         let k = 10;
-        let prover = MockProver::<Fr>::run(k, &circuit, vec![]).unwrap();
+        let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![hash_value]]).unwrap();
         prover.assert_satisfied();
     }
 
