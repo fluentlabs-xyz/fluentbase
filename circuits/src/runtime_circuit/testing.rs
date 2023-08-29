@@ -16,7 +16,7 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
     prover.assert_satisfied();
 }
 
-pub(crate) fn test_ok_with_demo_table(mut bytecode: InstructionSet) {
+pub(crate) fn test_ok_with_demo_table(mut _bytecode: InstructionSet) {
   todo!()
 }
 
