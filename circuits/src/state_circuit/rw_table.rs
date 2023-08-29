@@ -61,8 +61,8 @@ impl<F: Field> RwTable<F> {
         !BinaryQuery(self.not_first_access.current())
     }
 
-    fn q_is_write(&self) -> Query<F> {
-        self.is_write.current()
+    fn q_is_write(&self) -> BinaryQuery<F> {
+        BinaryQuery(self.is_write.current())
     }
 
     fn q_is_read(&self) -> BinaryQuery<F> {
@@ -70,7 +70,9 @@ impl<F: Field> RwTable<F> {
     }
 
     fn q_is_tag_and_id_unchanged(&self) -> BinaryQuery<F> {
-        BinaryQuery(self.tag.current() - self.tag.previous())
+        let tag_unchanged = !BinaryQuery(self.tag.current() - self.tag.previous());
+        let id_unchanged = !BinaryQuery(self.id.current() - self.id.previous());
+        tag_unchanged.and(id_unchanged)
     }
 
     fn q_address_change(&self) -> Query<F> {
@@ -94,11 +96,11 @@ impl<F: Field> RwTable<F> {
 
         // When at least one of the keys (tag, id, address, field_tag, or storage_key)
         // in the current row differs from the previous row.
-        cb.condition(self.q_first_access(), |cb| {
-            // cb.assert_zero(
-            //     "first access reads don't change value",
-            //     self.q_is_read() * (self.value.current() - q.initial_value()),
-            // );
+        cb.condition(self.q_first_access().and(self.q_is_read()), |cb| {
+            cb.assert_zero(
+                "first access reads don't change value",
+                self.value.current(),
+            );
         });
 
         // When all the keys in the current row and previous row are equal.

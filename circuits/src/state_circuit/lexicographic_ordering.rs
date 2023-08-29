@@ -61,16 +61,9 @@ pub enum LimbIndex {
 
 impl_expr!(LimbIndex);
 
-impl AsBits<3> for LimbIndex {
-    fn as_bits(&self) -> [bool; 3] {
-        let mut bits = [false; 3];
-        let mut x = *self as u8;
-        for i in 0..3 {
-            bits[2 - i] = x % 2 == 1;
-            x /= 2;
-        }
-        assert_eq!(x, 0);
-        bits
+impl Into<usize> for LimbIndex {
+    fn into(self) -> usize {
+        self as usize
     }
 }
 
