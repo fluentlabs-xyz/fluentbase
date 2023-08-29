@@ -3,15 +3,22 @@
 //! equality.
 
 use crate::{
-    constraint_builder::{and, not, AdviceColumn, FixedColumn, Query, ToExpr},
+    constraint_builder::{
+        AdviceColumn,
+        BinaryQuery,
+        ConstraintBuilder,
+        Query,
+        SelectorColumn,
+        ToExpr,
+    },
     util::Field,
 };
 use halo2_proofs::{
-    circuit::{Region, Value},
-    plonk::{Any, Column, ConstraintSystem, Error, Fixed},
+    circuit::Region,
+    plonk::{ConstraintSystem, Error},
     poly::Rotation,
 };
-use std::{collections::BTreeSet, marker::PhantomData};
+use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 
 /// Helper trait that implements functionality to represent a generic type as
@@ -65,7 +72,7 @@ where
         &self,
         value: S,
         rotation: Rotation,
-    ) -> impl FnOnce() -> Query<F> {
+    ) -> impl FnOnce() -> BinaryQuery<F> {
         let bits = self.bits;
         move || Self::value_equals_expr(value, bits.map(|bit| bit.rotation(rotation.0)))
     }
@@ -75,20 +82,19 @@ where
     pub fn value_equals_expr<F: Field, S: AsBits<N>>(
         value: S,
         expressions: [Query<F>; N], // must be binary.
-    ) -> Query<F> {
-        and::expr(
-            value
-                .as_bits()
-                .iter()
-                .zip(&expressions)
-                .map(|(&bit, expression)| {
-                    if bit {
-                        expression.clone()
-                    } else {
-                        not::expr(expression.clone())
-                    }
-                }),
-        )
+    ) -> BinaryQuery<F> {
+        value
+            .as_bits()
+            .iter()
+            .zip(&expressions)
+            .map(|(&bit, expression)| {
+                if bit {
+                    BinaryQuery(expression.clone())
+                } else {
+                    !BinaryQuery(expression.clone())
+                }
+            })
+            .fold(BinaryQuery::one(), |res, expr| res.and(expr))
     }
 
     /// Annotates columns of this gadget embedded within a circuit region.
@@ -100,7 +106,7 @@ where
         self.bits
             .iter()
             .zip(annotations.iter())
-            .for_each(|(col, ann)| region.name_column(|| format!("{}_{}", prefix, ann), *col));
+            .for_each(|(col, ann)| region.name_column(|| format!("{}_{}", prefix, ann), col.0));
     }
 }
 
@@ -131,46 +137,28 @@ where
     /// Configure constraints for the binary number chip.
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
-        selector: FixedColumn,
-        value: Option<Column<Any>>,
+        selector: SelectorColumn,
+        value: Option<Query<F>>,
     ) -> BinaryNumberConfig<T, N> {
+        let mut cb = ConstraintBuilder::new(selector);
         let bits = [0; N].map(|_| AdviceColumn(cs.advice_column()));
         bits.map(|bit| {
-            cs.create_gate("bit column is 0 or 1", |meta| {
-                vec![selector.current() * bit.current() * (1.expr() - bit.current())]
-            })
+            cb.assert_zero(
+                "bit column is 0 or 1",
+                bit.current() * (1.expr() - bit.current()),
+            );
         });
-
         let config = BinaryNumberConfig {
             bits,
             _marker: PhantomData,
         };
-
         if let Some(value) = value {
-            cs.create_gate("binary number value", |meta| {
-                vec![
-                    selector.current()
-                        * (config.value(Rotation::cur())(meta)
-                            - meta.query_any(value, Rotation::cur())),
-                ]
-            });
+            cb.assert_zero(
+                "binary number value",
+                config.value(Rotation::cur())() - value,
+            );
         }
-
-        // Disallow bit patterns (if any) that don't correspond to a variant of T.
-        let valid_values: BTreeSet<usize> = T::iter().map(|t| from_bits(&t.as_bits())).collect();
-        let mut invalid_values = (0..1 << N).filter(|i| !valid_values.contains(i)).peekable();
-        if invalid_values.peek().is_some() {
-            cs.create_gate("binary number value in range", |meta| {
-                let selector = selector.current();
-                invalid_values
-                    .map(|i| {
-                        let value_equals_i = config.value_equals(i, Rotation::cur());
-                        selector.clone() * value_equals_i(meta)
-                    })
-                    .collect::<Vec<_>>()
-            });
-        }
-
+        cb.build(cs);
         config
     }
 

@@ -10,7 +10,7 @@ pub(crate) fn poseidon_domain<F: Field>() -> F {
     F::zero()
 }
 
-pub(crate) fn hash<F: Field>(x: F, y: F) -> F {
+pub(crate) fn poseidon_hash<F: Field>(x: F, y: F) -> F {
     Hashable::hash_with_domain([x, y], poseidon_domain::<F>())
 }
 

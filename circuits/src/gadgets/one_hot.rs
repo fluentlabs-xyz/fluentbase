@@ -20,7 +20,7 @@ impl<T: IntoEnumIterator + Eq + PartialOrd + Ord> OneHot<T> {
         cb: &mut ConstraintBuilder<F>,
     ) -> Self {
         let mut columns = BTreeMap::new();
-        for variant in Self::nonfirst_variants() {
+        for variant in Self::non_first_variants() {
             columns.insert(variant, cb.binary_columns::<1>(cs)[0]);
         }
         let config = Self { columns };
@@ -90,7 +90,7 @@ impl<T: IntoEnumIterator + Eq + PartialOrd + Ord> OneHot<T> {
         )
     }
 
-    fn nonfirst_variants() -> impl Iterator<Item = T> {
+    fn non_first_variants() -> impl Iterator<Item = T> {
         let mut variants = T::iter();
         variants.next();
         variants

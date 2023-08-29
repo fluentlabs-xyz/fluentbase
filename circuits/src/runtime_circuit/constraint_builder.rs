@@ -7,12 +7,18 @@ use crate::{
         FixedColumn,
         Query,
         SelectorColumn,
+        ToExpr,
     },
     runtime_circuit::execution_state::ExecutionState,
     rwasm_circuit::RwasmLookup,
     util::Field,
 };
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::plonk::ConstraintSystem;
+
+pub struct OpStateTransition {
+    stack_pointer: AdviceColumn,
+}
 
 pub struct OpConstraintBuilder<'cs, F: Field> {
     q_enable: SelectorColumn,
@@ -43,15 +49,15 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         [self.index, self.opcode, self.value]
     }
 
-    pub fn query_opcode(&self) -> AdviceColumn {
+    pub fn query_rwasm_code(&self) -> AdviceColumn {
         self.opcode
     }
 
-    pub fn query_value(&self) -> AdviceColumn {
+    pub fn query_rwasm_value(&self) -> AdviceColumn {
         self.value
     }
 
-    pub fn query_index(&self) -> AdviceColumn {
+    pub fn query_rwasm_index(&self) -> AdviceColumn {
         self.index
     }
 
@@ -118,6 +124,10 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
 
     pub fn require_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {
         self.base.assert_zero(name, left - right)
+    }
+
+    pub fn require_opcode(&mut self, instr: Instruction) {
+        self.require_equal("opcode", self.opcode.current(), instr.code_value().expr());
     }
 
     pub fn condition(&mut self, condition: Query<F>, configure: impl FnOnce(&mut Self)) {

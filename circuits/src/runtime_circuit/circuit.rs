@@ -43,6 +43,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             value.current(),
             rwasm_lookup,
         );
+        cb.execution_state_lookup(G::EXECUTION_STATE);
         let gadget_config = G::configure(&mut cb);
         cb.build();
         ExecutionGadgetRow {

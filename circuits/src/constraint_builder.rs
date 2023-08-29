@@ -5,17 +5,17 @@ mod binary_query;
 mod column;
 mod query;
 
+pub use self::{
+    binary_column::BinaryColumn,
+    binary_query::BinaryQuery,
+    column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, SelectorColumn},
+    query::{Query, ToExpr},
+};
 use crate::util::Field;
-pub use binary_column::BinaryColumn;
-pub use binary_query::BinaryQuery;
-pub use column::{AdviceColumn, AdviceColumnPhase2, FixedColumn, SelectorColumn};
-pub use query::{Query, ToExpr};
 
 pub struct ConstraintBuilder<F: Field> {
     constraints: Vec<(&'static str, Query<F>)>,
-    #[allow(clippy::type_complexity)]
     lookups: Vec<(&'static str, Vec<(Query<F>, Query<F>)>)>,
-
     conditions: Vec<BinaryQuery<F>>,
 }
 
@@ -42,6 +42,10 @@ impl<F: Field> ConstraintBuilder<F> {
             .iter()
             .fold(BinaryQuery::one(), |a, b| a.and(b.clone()));
         self.constraints.push((name, condition.condition(query)))
+    }
+
+    pub fn assert_boolean(&mut self, name: &'static str, query: Query<F>) {
+        self.assert_zero(name, query.clone() * (1.expr() - query));
     }
 
     pub fn assert_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {

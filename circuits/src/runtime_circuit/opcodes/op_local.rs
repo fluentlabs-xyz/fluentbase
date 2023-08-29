@@ -32,7 +32,7 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
         let is_set_local = cb.query_fixed();
         let is_tee_local = cb.query_fixed();
 
-        let index = cb.query_cell();
+        let index = cb.query_rwasm_value();
         let value = cb.query_cell();
 
         cb.require_equal(
@@ -42,6 +42,7 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
         );
 
         cb.condition(is_set_local.expr(), |cb| {
+            cb.require_opcode(Instruction::LocalSet(0.into()));
             cb.stack_pop(value.expr());
             cb.stack_lookup(
                 1.expr(),
@@ -51,6 +52,7 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
         });
 
         cb.condition(is_get_local.expr(), |cb| {
+            cb.require_opcode(Instruction::LocalGet(0.into()));
             cb.stack_lookup(
                 0.expr(),
                 cb.stack_pointer_offset() + index.expr(),
@@ -60,6 +62,7 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
         });
 
         cb.condition(is_tee_local.expr(), |cb| {
+            cb.require_opcode(Instruction::LocalTee(0.into()));
             cb.stack_pop(value.expr());
             cb.stack_lookup(
                 1.expr(),

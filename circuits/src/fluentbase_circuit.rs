@@ -1,6 +1,5 @@
 use crate::{
-    gadgets::poseidon::PoseidonTable,
-    poseidon_circuit::PoseidonCircuitConfig,
+    poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
     runtime_circuit::RuntimeCircuitConfig,
     rwasm_circuit::RwasmCircuitConfig,
     unrolled_bytecode::UnrolledBytecode,
