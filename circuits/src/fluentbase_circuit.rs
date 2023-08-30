@@ -43,7 +43,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
-        hash_value: F,
+        bytecode_hash: F,
     ) -> Result<(), Error> {
         self.poseidon_circuit_config
             .assign_bytecode(layouter, bytecode)?;
@@ -52,7 +52,8 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         if let Some(tracer) = tracer {
             self.runtime_circuit_config.assign(layouter, tracer)?;
         }
-        self.pi_circuit_config.expose_public(layouter, hash_value)?;
+        self.pi_circuit_config
+            .expose_public(layouter, bytecode_hash)?;
         Ok(())
     }
 }
@@ -61,7 +62,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
 pub struct FluentbaseCircuit<'tracer, F: Field> {
     pub(crate) bytecode: UnrolledBytecode<F>,
     pub(crate) tracer: Option<&'tracer Tracer>,
-    pub(crate) hash_value: F,
+    pub(crate) input_hash: F,
 }
 
 impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
@@ -82,7 +83,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        config.assign(&mut layouter, &self.bytecode, self.tracer, self.hash_value)?;
+        config.assign(&mut layouter, &self.bytecode, self.tracer, self.input_hash)?;
         Ok(())
     }
 }
@@ -99,7 +100,7 @@ mod tests {
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
             tracer: Default::default(),
-            hash_value,
+            input_hash: hash_value,
         };
         let k = 10;
         let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![hash_value]]).unwrap();
