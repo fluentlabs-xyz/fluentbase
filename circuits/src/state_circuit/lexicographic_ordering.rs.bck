@@ -1,9 +1,8 @@
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
+    constraint_builder::{Query, ToExpr},
     gadgets::binary_number::{AsBits, BinaryNumberChip, BinaryNumberConfig},
     impl_expr,
     state_circuit::{
-        lookups,
         param::{N_LIMBS_ADDRESS, N_LIMBS_ID, N_LIMBS_RW_COUNTER},
         sort_keys::SortKeysConfig,
     },
@@ -11,11 +10,10 @@ use crate::{
 use ethers_core::k256::elliptic_curve::Field;
 use halo2_proofs::{
     circuit::{Region, Value},
-    plonk::{ConstraintSystem, Error, Expression, VirtualCells},
+    plonk::{Advice, Column, ConstraintSystem, Error, Expression, Fixed, VirtualCells},
     poly::Rotation,
 };
 use itertools::Itertools;
-use num_traits::pow;
 use std::iter::once;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -33,7 +31,7 @@ use strum_macros::EnumIter;
 // ...
 // C31 = C30 << 16 + A31 - B21.
 
-// X_cur > X_prev iff one of C0, ..., C31 is non-zdero and fits into 16 bits.
+// X_cur > X_prev iff one of C0, ..., C31 is non-zero and fits into 16 bits.
 // C16, ..., C31 do not necessarily fit into a field element, so to check that
 // Cn fits into 16 bits, we use an RLC to check that Cn-1 = 0 and then do a
 // lookup for An-Bn.
@@ -71,10 +69,10 @@ impl Into<usize> for LimbIndex {
 
 #[derive(Clone, Copy)]
 pub struct Config {
-    pub(crate) selector: SelectorColumn,
+    pub(crate) selector: Column<Fixed>,
     pub first_different_limb: BinaryNumberConfig<LimbIndex, 5>,
-    limb_difference: AdviceColumn,
-    limb_difference_inverse: AdviceColumn,
+    limb_difference: Column<Advice>,
+    limb_difference_inverse: Column<Advice>,
 }
 
 impl Config {
@@ -82,16 +80,12 @@ impl Config {
         meta: &mut ConstraintSystem<F>,
         keys: SortKeysConfig,
         lookup: lookups::Config,
+        powers_of_randomness: [Expression<F>; N_BYTES_WORD - 1],
     ) -> Self {
-        let selector = SelectorColumn(meta.fixed_column());
+        let selector = meta.fixed_column();
         let first_different_limb = BinaryNumberChip::configure(meta, selector, None);
-        let limb_difference = AdviceColumn(meta.advice_column());
-        let limb_difference_inverse = AdviceColumn(meta.advice_column());
-
-        let mut cb = ConstraintBuilder::new(selector);
-
-        let cur = Queries::new(meta, keys, Rotation::cur());
-        let prev = Queries::new(meta, keys, Rotation::prev());
+        let limb_difference = meta.advice_column();
+        let limb_difference_inverse = meta.advice_column();
 
         let config = Config {
             selector,
@@ -101,47 +95,62 @@ impl Config {
         };
 
         lookup.range_check_u16(meta, "limb_difference fits into u16", |meta| {
-            limb_difference.current().run(meta)
+            meta.query_advice(limb_difference, Rotation::cur())
         });
 
-        cb.assert_zero(
-            "limb_difference is not zero",
-            Query::one() - limb_difference.current() * limb_difference_inverse.current(),
+        meta.create_gate("limb_difference is not zero", |meta| {
+            let selector = meta.query_fixed(selector, Rotation::cur());
+            let limb_difference = meta.query_advice(limb_difference, Rotation::cur());
+            let limb_difference_inverse =
+                meta.query_advice(limb_difference_inverse, Rotation::cur());
+            vec![selector * (1.expr() - limb_difference * limb_difference_inverse)]
+        });
+
+        meta.create_gate(
+            "limb differences before first_different_limb are all 0",
+            |meta| {
+                let selector = meta.query_fixed(selector, Rotation::cur());
+                let cur = Queries::new(meta, keys, Rotation::cur());
+                let prev = Queries::new(meta, keys, Rotation::prev());
+
+                let mut constraints = vec![];
+                for (i, rlc_expression) in
+                    LimbIndex::iter().zip(rlc_limb_differences(cur, prev, powers_of_randomness))
+                {
+                    // E.g. if first_different_limb = 5, four limb differences before need to be 0.
+                    // Using RLC, we check that (cur_1 - prev_1) + r(cur_2 - prev_2) + r^2(cur_3 -
+                    // prev_3) + r^3(cur_4 - prev_4) = 0.
+                    constraints.push(
+                        selector.clone()
+                            * first_different_limb.value_equals(i, Rotation::cur())(meta)
+                            * rlc_expression,
+                    )
+                }
+                constraints
+            },
         );
 
-        let base = Query::from(pow(2, 16));
-        for (i, expr) in LimbIndex::iter().zip(rlc_limb_differences(
-            cur,
-            prev,
-            [std::iter::successors(base.clone().into(), |power| {
-                (base.clone() * power.clone()).into()
-            })
-            .take(7)]
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap(),
-        )) {
-            // E.g. if first_different_limb = 5, four limb differences before need to be 0.
-            // Using RLC, we check that (cur_1 - prev_1) + r(cur_2 - prev_2) + r^2(cur_3 -
-            // prev_3) + r^3(cur_4 - prev_4) = 0.
-            // constraints.push(
-            // selector.clone()
-            cb.assert_zero(
-                "limb differences before first_different_limb are all 0",
-                first_different_limb.value_equals(i, Rotation::cur())(meta) * expr,
-            )
-        }
+        meta.create_gate(
+            "limb_difference equals difference of limbs at index",
+            |meta| {
+                let selector = meta.query_fixed(selector, Rotation::cur());
+                let cur = Queries::new(meta, keys, Rotation::cur());
+                let prev = Queries::new(meta, keys, Rotation::prev());
+                let limb_difference = meta.query_advice(limb_difference, Rotation::cur());
 
-        for ((i, cur_limb), prev_limb) in LimbIndex::iter().zip(cur.be_limbs()).zip(prev.be_limbs())
-        {
-            cb.assert_zero(
-                "limb_difference equals difference of limbs at index",
-                first_different_limb.value_equals(i, Rotation::cur())(meta)
-                    * (limb_difference.clone() - cur_limb + prev_limb),
-            );
-        }
-
-        cb.build(meta);
+                let mut constraints = vec![];
+                for ((i, cur_limb), prev_limb) in
+                    LimbIndex::iter().zip(cur.be_limbs()).zip(prev.be_limbs())
+                {
+                    constraints.push(
+                        selector.clone()
+                            * first_different_limb.value_equals(i, Rotation::cur())(meta)
+                            * (limb_difference.clone() - cur_limb + prev_limb),
+                    );
+                }
+                constraints
+            },
+        );
 
         config
     }
@@ -156,7 +165,12 @@ impl Config {
         cur: &Rw,
         prev: &Rw,
     ) -> Result<LimbIndex, Error> {
-        self.selector.enable(region, offset);
+        region.assign_fixed(
+            || "upper_limb_difference",
+            self.selector,
+            offset,
+            || Value::known(F::one()),
+        )?;
 
         let cur_be_limbs = rw_to_be_limbs(cur);
         let prev_be_limbs = rw_to_be_limbs(prev);
@@ -174,13 +188,18 @@ impl Config {
         BinaryNumberChip::construct(self.first_different_limb).assign(region, offset, &index)?;
 
         let limb_difference = F::from(*cur_limb as u64) - F::from(*prev_limb as u64);
-        self.limb_difference
-            .assign(region, offset, Value::known(limb_difference));
-        self.limb_difference_inverse.assign(
-            region,
+        region.assign_advice(
+            || "limb_difference",
+            self.limb_difference,
             offset,
-            Value::known(limb_difference.invert().unwrap()),
-        );
+            || Value::known(limb_difference),
+        )?;
+        region.assign_advice(
+            || "limb_difference_inverse",
+            self.limb_difference_inverse,
+            offset,
+            || Value::known(limb_difference.invert().unwrap()),
+        )?;
 
         Ok(index)
     }
@@ -256,10 +275,10 @@ fn rw_to_be_limbs(row: &Rw) -> Vec<u16> {
 fn rlc_limb_differences<F: Field>(
     cur: Queries<F>,
     prev: Queries<F>,
-    powers_of_randomness: [Queries<F>; 7],
-) -> Vec<Query<F>> {
+    powers_of_randomness: [Expression<F>; 31],
+) -> Vec<Expression<F>> {
     let mut result = vec![];
-    let mut partial_sum = Query::<F>::zero();
+    let mut partial_sum = 0u64.expr();
     let powers_of_randomness = once(1.expr()).chain(powers_of_randomness.into_iter());
     for ((cur_limb, prev_limb), power_of_randomness) in cur
         .be_limbs()
@@ -276,7 +295,7 @@ fn rlc_limb_differences<F: Field>(
 #[cfg(test)]
 mod test {
     use super::LimbIndex;
-    use crate::gadgets::binary_number::{from_bits, AsBits};
+    use gadgets::binary_number::{from_bits, AsBits};
     use strum::IntoEnumIterator;
 
     #[test]
