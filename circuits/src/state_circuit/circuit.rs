@@ -1,13 +1,19 @@
 use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, SelectorColumn},
-    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
+    gadgets::{
+        binary_number::{BinaryNumberChip, BinaryNumberConfig},
+        range_check::RangeCheckLookup,
+    },
     state_circuit::{
-        lookups::Chip,
+        lexicographic_ordering::LexicographicOrderingConfig,
+        mpi_config::MpiConfig,
         rw_table::RwTable,
+        sort_keys::SortKeysConfig,
         tag::{RwTableTag, N_RW_TABLE_TAG_BYTES},
     },
     util::Field,
 };
+use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::Layouter,
     plonk::{ConstraintSystem, Error},
@@ -22,15 +28,16 @@ pub struct StateCircuitConfig<F: Field> {
     selector: SelectorColumn,
     tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BYTES }>,
     rw_table: RwTable<F>,
+    sort_keys: SortKeysConfig<F>,
+    lexicographic_ordering_config: LexicographicOrderingConfig,
     marker: PhantomData<F>,
 }
 
 impl<F: Field> StateCircuitConfig<F> {
-    /// load fixed tables
-    pub(crate) fn load_aux_tables(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
-        Chip::construct(self.lookups).load(layouter)
-    }
-    pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
+    pub fn configure(
+        cs: &mut ConstraintSystem<F>,
+        range_check_lookup: &impl RangeCheckLookup<F>,
+    ) -> Self {
         let selector = SelectorColumn(cs.fixed_column());
         let rw_table = RwTable::configure(cs);
 
@@ -38,7 +45,7 @@ impl<F: Field> StateCircuitConfig<F> {
         let mut cb = ConstraintBuilder::new(selector);
 
         let is_tag = |matches_tag: RwTableTag| -> BinaryQuery<F> {
-            tag.value_equals(matches_tag, Rotation::cur())()
+            tag.value_equals(matches_tag, Rotation::cur())
         };
 
         rw_table.build_general_constraints(&mut cb);
@@ -59,17 +66,30 @@ impl<F: Field> StateCircuitConfig<F> {
             rw_table.build_table_constraints(cb);
         });
 
+        let sort_keys = SortKeysConfig {
+            id: MpiConfig::configure(cs, &mut cb, rw_table.id, range_check_lookup),
+            tag,
+            address: MpiConfig::configure(cs, &mut cb, rw_table.address, range_check_lookup),
+            rw_counter: MpiConfig::configure(cs, &mut cb, rw_table.rw_counter, range_check_lookup),
+        };
+
+        let lexicographic_ordering_config =
+            LexicographicOrderingConfig::configure(cs, &sort_keys, range_check_lookup);
+
         cb.build(cs);
 
         Self {
             selector,
             tag,
             rw_table,
+            sort_keys,
+            lexicographic_ordering_config,
             marker: Default::default(),
         }
     }
 
-    pub fn assign_bytecode(&self, _layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+    pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
+        // tracer.logs;
         Ok(())
     }
 }
