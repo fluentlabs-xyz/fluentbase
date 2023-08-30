@@ -20,5 +20,6 @@ mod rwasm_circuit;
 mod state_circuit;
 #[cfg(test)]
 mod testing;
+mod trace_step;
 mod unrolled_bytecode;
 mod util;
