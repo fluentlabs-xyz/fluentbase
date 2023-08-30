@@ -2,6 +2,7 @@ use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, SelectorColumn},
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     state_circuit::{
+        lookups::Chip,
         rw_table::RwTable,
         tag::{RwTableTag, N_RW_TABLE_TAG_BYTES},
     },
@@ -25,6 +26,10 @@ pub struct StateCircuitConfig<F: Field> {
 }
 
 impl<F: Field> StateCircuitConfig<F> {
+    /// load fixed tables
+    pub(crate) fn load_aux_tables(&self, layouter: &mut impl Layouter<F>) -> Result<(), Error> {
+        Chip::construct(self.lookups).load(layouter)
+    }
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         let selector = SelectorColumn(cs.fixed_column());
         let rw_table = RwTable::configure(cs);

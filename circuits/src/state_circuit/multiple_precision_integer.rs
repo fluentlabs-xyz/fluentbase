@@ -1,11 +1,11 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, Query},
     gadgets::range_check::RangeCheckLookup,
-    state_circuit::param::N_LIMBS_RW_COUNTER,
+    state_circuit::{mpi_config::MpiConfig, param::N_LIMBS_RW_COUNTER},
     util::Field,
 };
 use halo2_proofs::{
-    circuit::{Layouter, Region, Value},
+    circuit::Layouter,
     plonk::{ConstraintSystem, Error},
     poly::Rotation,
 };
@@ -22,15 +22,6 @@ impl ToLimbs<{ N_LIMBS_RW_COUNTER }> for u32 {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct MpiConfig<T, const N: usize>
-where
-    T: ToLimbs<N>,
-{
-    pub(crate) limbs: [AdviceColumn; N],
-    _marker: PhantomData<T>,
-}
-
 #[derive(Clone)]
 pub struct Queries<F: Field, const N: usize> {
     pub limbs: [Query<F>; N],
@@ -43,37 +34,6 @@ impl<F: Field, const N: usize> Queries<F, N> {
             limbs: config.limbs.map(|limb| limb.current()),
             limbs_prev: config.limbs.map(|limb| limb.previous()),
         }
-    }
-}
-
-impl MpiConfig<u32, N_LIMBS_RW_COUNTER> {
-    pub fn assign<F: Field>(
-        &self,
-        region: &mut Region<'_, F>,
-        offset: usize,
-        value: u32,
-    ) -> Result<(), Error> {
-        for (i, &limb) in value.to_limbs().iter().enumerate() {
-            region.assign_advice(
-                || format!("limb[{}] in u32 mpi", i),
-                self.limbs[i],
-                offset,
-                || Value::known(F::from(limb as u64)),
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Annotates columns of this gadget embedded within a circuit region.
-    pub fn annotate_columns_in_region<F: Field>(&self, region: &mut Region<F>, prefix: &str) {
-        let mut annotations = Vec::new();
-        for (i, _) in self.limbs.iter().enumerate() {
-            annotations.push(format!("MPI_limbs_u32_{}", i));
-        }
-        self.limbs
-            .iter()
-            .zip(annotations.iter())
-            .for_each(|(col, ann)| region.name_column(|| format!("{}_{}", prefix, ann), *col));
     }
 }
 
@@ -134,7 +94,7 @@ fn le_bytes_to_limbs(bytes: &[u8]) -> Vec<u16> {
 }
 
 fn value_from_limbs<F: Field>(limbs: &[Query<F>]) -> Query<F> {
-    limbs.iter().rev().fold(0u64.expr(), |result, limb| {
-        limb.clone() + result * (1u64 << 16).expr()
+    limbs.iter().rev().fold(Query::zero(), |result, limb| {
+        limb.clone() + result * Query::from(1u64 << 16)
     })
 }

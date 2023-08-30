@@ -2,6 +2,8 @@
 /// additionally extended it with WASM structures, like global variables and function tables.
 mod circuit;
 // mod lexicographic_ordering;
+// mod lookups;
+// mod mpi_config;
 // mod multiple_precision_integer;
 mod param;
 mod rw_table;
