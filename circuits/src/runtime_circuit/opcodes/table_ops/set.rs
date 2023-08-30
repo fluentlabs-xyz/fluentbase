@@ -44,6 +44,7 @@ impl<F: Field> ExecutionGadget<F> for TableSetGadget<F> {
             table_index,
             elem_index,
             elem_type,
+            value,
             size,
             _pd: Default::default(),
         }
@@ -64,7 +65,7 @@ impl<F: Field> ExecutionGadget<F> for TableSetGadget<F> {
                 ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_bits()));
+        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
         self.elem_type.assign(region, offset, F::from(elem_type.to_bits()));
         self.elem_index.assign(region, offset, F::from(elem_index.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
@@ -74,7 +75,7 @@ impl<F: Field> ExecutionGadget<F> for TableSetGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok;
+    use crate::runtime_circuit::testing::test_ok_with_demo_table;
     use fluentbase_rwasm::instruction_set;
 
     #[test]

@@ -103,7 +103,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     pub fn table_size(&mut self, table_index: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
+    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>, size: Q<F>) {
         // unreachable!("not implemented yet")
     }
     pub fn table_grow(&mut self, table_index: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {

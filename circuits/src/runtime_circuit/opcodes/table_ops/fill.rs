@@ -70,7 +70,7 @@ impl<F: Field> ExecutionGadget<F> for TableFillGadget<F> {
                 ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_bits()));
+        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
         self.start.assign(region, offset, F::from(start.to_bits()));
         self.value_type.assign(region, offset, F::from(value_type.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
@@ -81,7 +81,7 @@ impl<F: Field> ExecutionGadget<F> for TableFillGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok;
+    use crate::runtime_circuit::testing::test_ok_with_demo_table;
     use fluentbase_rwasm::instruction_set;
 
     #[test]

@@ -59,7 +59,7 @@ impl<F: Field> ExecutionGadget<F> for TableGrowGadget<F> {
                 ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_bits()));
+        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
         self.init_val.assign(region, offset, F::from(init_val.to_bits()));
         self.grow_val.assign(region, offset, F::from(grow_val.to_bits()));
         self.res_val.assign(region, offset, F::from(res_val.to_bits()));
@@ -69,7 +69,7 @@ impl<F: Field> ExecutionGadget<F> for TableGrowGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok;
+    use crate::runtime_circuit::testing::test_ok_with_demo_table;
     use fluentbase_rwasm::instruction_set;
 
     #[test]
