@@ -19,6 +19,11 @@ pub enum ExecutionState {
     WASM_STORE,
     WASM_TEST,
     WASM_UNARY,
+    WASM_TABLE_SIZE,
+    WASM_TABLE_FILL,
+    WASM_TABLE_GROW,
+    WASM_TABLE_SET,
+    WASM_TABLE_GET,
 }
 
 impl ExecutionState {
@@ -100,6 +105,11 @@ impl ExecutionState {
                 Instruction::LocalSet(Default::default()),
                 Instruction::LocalTee(Default::default()),
             ],
+            Self::WASM_TABLE_SIZE => vec![Instruction::TableSize(Default::default())],
+            Self::WASM_TABLE_FILL => vec![Instruction::TableFill(Default::default())],
+            Self::WASM_TABLE_GROW => vec![Instruction::TableGrow(Default::default())],
+            Self::WASM_TABLE_SET => vec![Instruction::TableSet(Default::default())],
+            Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
             _ => unreachable!("not supported execution state {:?}", self),
         }
     }

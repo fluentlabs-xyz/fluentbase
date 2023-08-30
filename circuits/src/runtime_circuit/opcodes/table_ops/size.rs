@@ -46,7 +46,7 @@ impl<F: Field> ExecutionGadget<F> for TableSizeGadget<F> {
             Instruction::TableSize(ti) => (ti, trace.curr_nth_stack_value(0)?),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_bits()));
+        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
         self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }
@@ -54,7 +54,7 @@ impl<F: Field> ExecutionGadget<F> for TableSizeGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok;
+    use crate::runtime_circuit::testing::test_ok_with_demo_table;
     use fluentbase_rwasm::instruction_set;
 
     #[test]
