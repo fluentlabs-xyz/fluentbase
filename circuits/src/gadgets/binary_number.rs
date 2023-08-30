@@ -56,13 +56,11 @@ where
     T: AsBits<N>,
 {
     /// Returns the expression value of the bits at the given rotation.
-    pub fn value<F: Field>(&self, rotation: Rotation) -> impl FnOnce() -> Query<F> {
+    pub fn value<F: Field>(&self, rotation: Rotation) -> Query<F> {
         let bits = self.bits;
-        move || {
-            let bits = bits.map(|bit| bit.rotation(rotation.0));
-            bits.iter()
-                .fold(0.expr(), |result, bit| bit.clone() + result * 2.expr())
-        }
+        let bits = bits.map(|bit| bit.rotation(rotation.0));
+        bits.iter()
+            .fold(0.expr(), |result, bit| bit.clone() + result * 2.expr())
     }
 
     /// Returns a function that can evaluate to a binary expression, that
@@ -72,9 +70,9 @@ where
         &self,
         value: S,
         rotation: Rotation,
-    ) -> impl FnOnce() -> BinaryQuery<F> {
+    ) -> BinaryQuery<F> {
         let bits = self.bits;
-        move || Self::value_equals_expr(value, bits.map(|bit| bit.rotation(rotation.0)))
+        Self::value_equals_expr(value, bits.map(|bit| bit.rotation(rotation.0)))
     }
 
     /// Returns a binary expression that evaluates to 1 if expressions are equal
@@ -153,10 +151,7 @@ where
             _marker: PhantomData,
         };
         if let Some(value) = value {
-            cb.assert_zero(
-                "binary number value",
-                config.value(Rotation::cur())() - value,
-            );
+            cb.assert_zero("binary number value", config.value(Rotation::cur()) - value);
         }
         cb.build(cs);
         config

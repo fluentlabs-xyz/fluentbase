@@ -152,7 +152,7 @@ mod tests {
             tracer: Default::default(),
             input_hash: Fr::zero(),
         };
-        let degree: u32 = 12;
+        let degree: u32 = 17;
         let general_params = get_general_params(degree);
         let key = {
             let verifying_key =
