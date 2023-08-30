@@ -17,8 +17,17 @@ mod traits;
 mod tests;
 mod tracer;
 
+use self::{
+    bytecode::Instruction,
+    cache::InstanceCache,
+    code_map::CodeMap,
+    executor::{execute_wasm, WasmOutcome},
+    func_types::FuncTypeRegistry,
+    resumable::ResumableCallBase,
+    stack::{FuncFrame, Stack, ValueStack},
+};
 pub use self::{
-    bytecode::DropKeep,
+    bytecode::{DropKeep, RwOp},
     code_map::CompiledFunc,
     config::{Config, FuelConsumptionMode},
     func_builder::{
@@ -39,15 +48,6 @@ pub use self::{
         TracerMemoryState,
     },
     traits::{CallParams, CallResults},
-};
-use self::{
-    bytecode::Instruction,
-    cache::InstanceCache,
-    code_map::CodeMap,
-    executor::{execute_wasm, WasmOutcome},
-    func_types::FuncTypeRegistry,
-    resumable::ResumableCallBase,
-    stack::{FuncFrame, Stack, ValueStack},
 };
 pub(crate) use self::{
     const_pool::{ConstPool, ConstPoolView, ConstRef},

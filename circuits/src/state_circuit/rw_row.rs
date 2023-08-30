@@ -1,5 +1,8 @@
-use crate::state_circuit::tag::RwTableTag;
-use fluentbase_rwasm::common::UntypedValue;
+use crate::{
+    state_circuit::tag::RwTableTag,
+    trace_step::{GadgetError, TraceStep},
+};
+use fluentbase_rwasm::{common::UntypedValue, RwOp};
 
 #[derive(Clone, Copy, Debug)]
 pub enum RwRow {
@@ -12,7 +15,6 @@ pub enum RwRow {
         call_id: usize,
         stack_pointer: usize,
         value: UntypedValue,
-        local_index: usize,
     },
     /// Global
     Global {
@@ -32,20 +34,65 @@ pub enum RwRow {
     },
 }
 
+pub fn rw_rows_from_trace(
+    res: &mut Vec<RwRow>,
+    trace: &TraceStep,
+    call_id: usize,
+) -> Result<(), GadgetError> {
+    let rw_ops = trace.instr().get_rw_ops();
+    let mut stack_reads = 0;
+    let mut stack_writes = 0;
+    for rw_op in rw_ops.iter() {
+        match rw_op {
+            RwOp::StackWrite => {
+                let addr = trace.next_nth_stack_addr(stack_writes)?;
+                let value = trace.next_nth_stack_value(stack_writes)?;
+                res.push(RwRow::Stack {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    stack_pointer: addr as usize,
+                    value,
+                });
+                stack_writes += 1
+            }
+            RwOp::StackRead => {
+                let addr = trace.curr_nth_stack_addr(stack_reads)?;
+                let value = trace.curr_nth_stack_value(stack_reads)?;
+                res.push(RwRow::Stack {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    stack_pointer: addr as usize,
+                    value,
+                });
+                stack_reads += 1;
+            }
+            RwOp::GlobalWrite(_) => {}
+            RwOp::GlobalRead(_) => {}
+            RwOp::MemoryWrite(_) => {}
+            RwOp::MemoryRead(_) => {}
+            RwOp::TableWrite => {}
+            RwOp::TableRead => {}
+        }
+    }
+    Ok(())
+}
+
 impl RwRow {
-    pub fn stack_value(&self) -> UntypedValue {
+    pub fn value(&self) -> UntypedValue {
         match self {
             Self::Stack { value, .. } => *value,
+            Self::Global { value, .. } => *value,
+            Self::Memory { byte, .. } => UntypedValue::from(*byte),
             _ => unreachable!("{:?}", self),
         }
     }
 
-    pub(crate) fn local_value(&self) -> (UntypedValue, usize) {
+    pub fn stack_value(&self) -> UntypedValue {
         match self {
-            Self::Stack {
-                value, local_index, ..
-            } => (*value, *local_index),
-            _ => unreachable!(),
+            Self::Stack { value, .. } => *value,
+            _ => unreachable!("{:?}", self),
         }
     }
 

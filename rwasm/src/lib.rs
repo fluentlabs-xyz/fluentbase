@@ -127,6 +127,7 @@ pub use self::{
         FuelConsumptionMode,
         ResumableCall,
         ResumableInvocation,
+        RwOp,
         StackLimits,
         TypedResumableCall,
         TypedResumableInvocation,
