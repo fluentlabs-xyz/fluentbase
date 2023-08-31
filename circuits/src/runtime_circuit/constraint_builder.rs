@@ -17,6 +17,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::plonk::ConstraintSystem;
+use std::ops::{Add, Sub};
 
 pub struct OpStateTransition {
     stack_pointer: AdviceColumn,
@@ -26,11 +27,15 @@ pub struct OpConstraintBuilder<'cs, F: Field> {
     q_enable: SelectorColumn,
     pub(crate) base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
+    // rwasm table fields
     opcode: AdviceColumn,
     value: AdviceColumn,
     index: AdviceColumn,
+    // rw fields
+    stack_pointer: Query<F>,
+    rw_counter: Query<F>,
 
-    rwtable_lookups: Vec<[Query<F>; 8]>,
+    rw_lookups: Vec<[Query<F>; 4]>,
 }
 
 #[allow(unused_variables)]
@@ -46,7 +51,9 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
             opcode,
             value,
             index,
-            rwtable_lookups: vec![],
+            stack_pointer: Query::from(MAX_STACK_HEIGHT as u64 - 1),
+            rw_counter: Query::from(0u64),
+            rw_lookups: vec![],
         }
     }
 
@@ -83,49 +90,29 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rwtable_lookup(
-            BinaryQuery::one(),
-            self.index.current() + 1,
-            is_write,
-            RwTableTag::Stack.expr(),
-            Query::zero(),
-            address,
-            value,
-            Query::zero(),
-        );
+        self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value);
     }
+
     pub fn stack_push(&mut self, value: Query<F>) {
-        self.stack_lookup(
-            Query::one(),
-            Query::from(MAX_STACK_HEIGHT as u64) - self.index.current(),
-            value,
-        );
+        self.stack_lookup(Query::one(), self.stack_pointer.clone(), value);
+        self.stack_pointer = self.base.resolve_condition().0 * self.stack_pointer.clone().sub(1);
     }
+
     pub fn stack_pop(&mut self, value: Query<F>) {
-        self.stack_lookup(
-            Query::zero(),
-            Query::from(MAX_STACK_HEIGHT as u64) - self.index.current(),
-            value,
-        );
+        self.stack_pointer = self.base.resolve_condition().0 * self.stack_pointer.clone().add(1);
+        self.stack_lookup(Query::zero(), self.stack_pointer.clone(), value);
     }
+
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rwtable_lookup(
-            BinaryQuery::one(),
-            self.index.current() + 1,
-            is_write,
-            RwTableTag::Global.expr(),
-            Query::zero(),
-            address,
-            value,
-            Query::zero(),
-        );
+        self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value);
     }
 
     pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
-        self.stack_lookup(Query::zero(), self.index.current(), value);
+        self.global_lookup(Query::zero(), index, value);
     }
+
     pub fn global_set(&mut self, index: Query<F>, value: Query<F>) {
-        self.stack_lookup(Query::one(), self.index.current(), value);
+        self.global_lookup(Query::one(), index, value);
     }
 
     pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {
@@ -147,20 +134,23 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         );
     }
 
-    pub fn rwtable_lookup(
+    pub fn rw_lookup(
         &mut self,
-        q_enable: BinaryQuery<F>,
-        rw_counter: Query<F>,
         is_write: Query<F>,
         tag: Query<F>,
-        id: Query<F>,
         address: Query<F>,
         value: Query<F>,
-        value_prev: Query<F>,
     ) {
-        self.rwtable_lookups.push([
-            q_enable.0, rw_counter, is_write, tag, id, address, value, value_prev,
+        self.rw_lookups.push([
+            self.q_enable.current().0,
+            self.rw_counter.clone(),
+            is_write,
+            tag,
+            // Query::zero(),
+            // address,
+            // value,
         ]);
+        self.rw_counter = self.base.resolve_condition().0 * self.rw_counter.clone().add(1);
     }
 
     pub fn poseidon_lookup(&mut self) {
@@ -168,8 +158,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn stack_pointer_offset(&self) -> Query<F> {
-        // unreachable!("not implemented yet")
-        Query::zero()
+        Query::from(MAX_STACK_HEIGHT as u64) - self.stack_pointer.clone() - 1
     }
 
     pub fn require_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {
@@ -191,13 +180,13 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn build(&mut self, lookup: &impl StateLookup<F>) {
-        self.base.build(self.cs);
-        while let Some(state_lookup) = self.rwtable_lookups.pop() {
+        while let Some(state_lookup) = self.rw_lookups.pop() {
             self.base.add_lookup(
                 "rwtable_lookup(q_enable,rw_counter,is_write,tag,id,address,value,value_prev)",
                 state_lookup,
                 lookup.lookup_rwtable(),
             );
         }
+        self.base.build(self.cs);
     }
 }
