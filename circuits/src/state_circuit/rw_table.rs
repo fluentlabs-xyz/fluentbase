@@ -23,7 +23,7 @@ pub struct RwTable<F: Field> {
     pub(crate) value: AdviceColumn,
     pub(crate) value_prev: AdviceColumn,
     pub(crate) not_first_access: AdviceColumn,
-    marker: PhantomData<F>,
+    _marker: PhantomData<F>,
 }
 
 impl<F: Field> RwLookup<F> for RwTable<F> {
@@ -53,7 +53,7 @@ impl<F: Field> RwTable<F> {
             value: AdviceColumn(cs.advice_column()),
             value_prev: AdviceColumn(cs.advice_column()),
             not_first_access: AdviceColumn(cs.advice_column()),
-            marker: Default::default(),
+            _marker: Default::default(),
         }
     }
 

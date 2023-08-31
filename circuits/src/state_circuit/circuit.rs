@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{BinaryQuery, ConstraintBuilder, SelectorColumn},
+    constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
     gadgets::{
         binary_number::{BinaryNumberChip, BinaryNumberConfig},
         range_check::RangeCheckLookup,
@@ -23,7 +23,24 @@ use halo2_proofs::{
 };
 use std::marker::PhantomData;
 
-pub trait StateLookup<F: Field> {}
+pub trait StateLookup<F: Field> {
+    fn lookup_rwtable(&self) -> [Query<F>; 8];
+}
+
+impl<F: Field> StateLookup<F> for StateCircuitConfig<F> {
+    fn lookup_rwtable(&self) -> [Query<F>; 8] {
+        [
+            self.rw_table.q_enable.current(),
+            self.rw_table.rw_counter.current(),
+            self.rw_table.is_write.current(),
+            self.rw_table.tag.current(),
+            self.rw_table.id.current(),
+            self.rw_table.address.current(),
+            self.rw_table.value.current(),
+            self.rw_table.value_prev.current(),
+        ]
+    }
+}
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {

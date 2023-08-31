@@ -6,6 +6,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{ExecutionGadget, GadgetError, TraceStep},
     },
+    state_circuit::StateLookup,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
