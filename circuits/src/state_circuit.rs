@@ -7,6 +7,6 @@ mod param;
 mod rw_row;
 mod rw_table;
 mod sort_keys;
-mod tag;
+pub mod tag;
 
 pub use circuit::{StateCircuitConfig, StateLookup};

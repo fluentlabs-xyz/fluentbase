@@ -11,6 +11,8 @@ use crate::{
     },
     runtime_circuit::execution_state::ExecutionState,
     rwasm_circuit::RwasmLookup,
+    state_circuit::{tag::RwTableTag, StateLookup},
+    trace_step::MAX_STACK_HEIGHT,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -27,6 +29,8 @@ pub struct OpConstraintBuilder<'cs, F: Field> {
     opcode: AdviceColumn,
     value: AdviceColumn,
     index: AdviceColumn,
+
+    state_lookups: Vec<[Query<F>; 8]>,
 }
 
 #[allow(unused_variables)]
@@ -42,6 +46,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
             opcode,
             value,
             index,
+            state_lookups: vec![],
         }
     }
 
@@ -77,21 +82,50 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         self.base.advice_column_phase2(self.cs)
     }
 
+    pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
+        self.state_lookup(
+            BinaryQuery::one(),
+            self.index.current() + 1,
+            is_write,
+            RwTableTag::Stack.expr(),
+            Query::zero(),
+            address,
+            value,
+            Query::zero(),
+        );
+    }
     pub fn stack_push(&mut self, value: Query<F>) {
-        // unreachable!("not implemented yet")
+        self.stack_lookup(
+            Query::one(),
+            Query::from(MAX_STACK_HEIGHT as u64) - self.index.current(),
+            value,
+        );
     }
     pub fn stack_pop(&mut self, value: Query<F>) {
-        // unreachable!("not implemented yet")
+        self.stack_lookup(
+            Query::zero(),
+            Query::from(MAX_STACK_HEIGHT as u64) - self.index.current(),
+            value,
+        );
     }
-    pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        // unreachable!("not implemented yet")
+    pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
+        self.state_lookup(
+            BinaryQuery::one(),
+            self.index.current() + 1,
+            is_write,
+            RwTableTag::Global.expr(),
+            Query::zero(),
+            address,
+            value,
+            Query::zero(),
+        );
     }
 
     pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
-        // unreachable!("not implemented yet")
+        self.stack_lookup(Query::zero(), self.index.current(), value);
     }
     pub fn global_set(&mut self, index: Query<F>, value: Query<F>) {
-        // unreachable!("not implemented yet")
+        self.stack_lookup(Query::one(), self.index.current(), value);
     }
 
     pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {
@@ -111,6 +145,22 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
             [q_enable.0, index, code, value],
             rwasm_lookup.lookup_rwasm_table(),
         );
+    }
+
+    pub fn state_lookup(
+        &mut self,
+        q_enable: BinaryQuery<F>,
+        rw_counter: Query<F>,
+        is_write: Query<F>,
+        tag: Query<F>,
+        id: Query<F>,
+        address: Query<F>,
+        value: Query<F>,
+        value_prev: Query<F>,
+    ) {
+        self.state_lookups.push([
+            q_enable.0, rw_counter, is_write, tag, id, address, value, value_prev,
+        ]);
     }
 
     pub fn poseidon_lookup(&mut self) {
@@ -140,7 +190,14 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         self.base.leave_condition();
     }
 
-    pub fn build(&mut self) {
+    pub fn build(&mut self, lookup: &impl StateLookup<F>) {
         self.base.build(self.cs);
+        while let Some(state_lookup) = self.state_lookups.pop() {
+            self.base.add_lookup(
+                "rwasm_lookup(rw_counter,is_write,tag,id,address,value,value_prev,not_first_access)",
+                state_lookup,
+                lookup.lookup_rwtable(),
+            );
+        }
     }
 }

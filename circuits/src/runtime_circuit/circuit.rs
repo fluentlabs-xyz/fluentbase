@@ -12,6 +12,7 @@ use crate::{
         },
     },
     rwasm_circuit::RwasmLookup,
+    state_circuit::{StateCircuitConfig, StateLookup},
     util::Field,
 };
 use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
@@ -32,7 +33,11 @@ pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
 }
 
 impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
-    pub fn configure(cs: &mut ConstraintSystem<F>, rwasm_lookup: &impl RwasmLookup<F>) -> Self {
+    pub fn configure(
+        cs: &mut ConstraintSystem<F>,
+        rwasm_lookup: &impl RwasmLookup<F>,
+        state_lookup: &impl StateLookup<F>,
+    ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let mut cb = OpConstraintBuilder::new(cs, q_enable);
         let [index, code, value] = cb.query_rwasm_table();
@@ -45,7 +50,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         );
         cb.execution_state_lookup(G::EXECUTION_STATE);
         let gadget_config = G::configure(&mut cb);
-        cb.build();
+        cb.build(state_lookup);
         ExecutionGadgetRow {
             gadget: gadget_config,
             index,
@@ -83,11 +88,15 @@ pub struct RuntimeCircuitConfig<F: Field> {
 }
 
 impl<F: Field> RuntimeCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>, rwasm_lookup: &impl RwasmLookup<F>) -> Self {
+    pub fn configure(
+        cs: &mut ConstraintSystem<F>,
+        rwasm_lookup: &impl RwasmLookup<F>,
+        state_lookup: &impl StateLookup<F>,
+    ) -> Self {
         Self {
-            const_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
-            drop_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
-            local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup),
+            const_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
+            drop_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
+            local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
         }
     }
 
