@@ -1,7 +1,8 @@
 use crate::{
     constraint_builder::{AdviceColumn, SelectorColumn},
+    lookup_table::{RwLookup, RwasmLookup},
     runtime_circuit::{
-        constraint_builder::OpConstraintBuilder,
+        constraint_builder::{OpConstraintBuilder, StateTransition},
         opcodes::{
             op_const::ConstGadget,
             op_drop::DropGadget,
@@ -11,8 +12,6 @@ use crate::{
             TraceStep,
         },
     },
-    rwasm_circuit::RwasmLookup,
-    state_circuit::{StateCircuitConfig, StateLookup},
     util::Field,
 };
 use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
@@ -36,21 +35,16 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
-        state_lookup: &impl StateLookup<F>,
+        state_lookup: &impl RwLookup<F>,
+        state_transition: &mut StateTransition<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
-        let mut cb = OpConstraintBuilder::new(cs, q_enable);
+        let mut cb = OpConstraintBuilder::new(cs, q_enable, state_transition);
         let [index, code, value] = cb.query_rwasm_table();
-        cb.rwasm_lookup(
-            q_enable.current(),
-            index.current(),
-            code.current(),
-            value.current(),
-            rwasm_lookup,
-        );
+        cb.rwasm_lookup(index.current(), code.current(), value.current());
         cb.execution_state_lookup(G::EXECUTION_STATE);
         let gadget_config = G::configure(&mut cb);
-        cb.build(state_lookup);
+        cb.build(rwasm_lookup, state_lookup);
         ExecutionGadgetRow {
             gadget: gadget_config,
             index,
@@ -84,19 +78,38 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
 pub struct RuntimeCircuitConfig<F: Field> {
     const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
-    // local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
+    local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
+    // runtime state gadgets
+    state_transition: StateTransition<F>,
 }
 
 impl<F: Field> RuntimeCircuitConfig<F> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
-        state_lookup: &impl StateLookup<F>,
+        state_lookup: &impl RwLookup<F>,
     ) -> Self {
+        let mut state_transition = StateTransition::configure(cs);
         Self {
-            const_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
-            drop_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
-            // local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
+            const_gadget: ExecutionGadgetRow::configure(
+                cs,
+                rwasm_lookup,
+                state_lookup,
+                &mut state_transition,
+            ),
+            drop_gadget: ExecutionGadgetRow::configure(
+                cs,
+                rwasm_lookup,
+                state_lookup,
+                &mut state_transition,
+            ),
+            local_gadget: ExecutionGadgetRow::configure(
+                cs,
+                rwasm_lookup,
+                state_lookup,
+                &mut state_transition,
+            ),
+            state_transition,
         }
     }
 
@@ -106,21 +119,24 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         region: &mut Region<'_, F>,
         offset: usize,
         step: &TraceStep,
+        rw_counter: usize,
     ) -> Result<(), Error> {
         let res = match step.instr() {
             Instruction::I32Const(_) | Instruction::I64Const(_) => {
                 self.const_gadget.assign(region, offset, step)
             }
             Instruction::Drop => self.drop_gadget.assign(region, offset, step),
-            // Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
-            //     self.local_gadget.assign(region, offset, step)
-            // }
+            Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
+                self.local_gadget.assign(region, offset, step)
+            }
             Instruction::Return(_) => {
                 // just skip for now
                 Ok(())
             }
             _ => unreachable!("not supported opcode {:?}", step.instr()),
         };
+        self.state_transition
+            .assign(region, offset, step.stack_pointer(), rw_counter as u64);
         Ok(())
     }
 
@@ -128,9 +144,11 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         layouter.assign_region(
             || "runtime opcodes",
             |mut region| {
+                let mut rw_counter = 0;
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
                     let step = TraceStep::new(trace, tracer.logs.get(i + 1).cloned());
-                    self.assign_trace_step(&mut region, i, &step)?;
+                    self.assign_trace_step(&mut region, i, &step, rw_counter)?;
+                    rw_counter += step.instr().get_rw_ops().len();
                 }
                 Ok(())
             },

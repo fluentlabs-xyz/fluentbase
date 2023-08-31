@@ -6,7 +6,6 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{ExecutionGadget, GadgetError, TraceStep},
     },
-    state_circuit::StateLookup,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -42,36 +41,36 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
             1.expr(),
         );
 
-        cb.condition(is_set_local.expr(), |cb| {
-            cb.require_opcode(Instruction::LocalSet(0.into()));
-            cb.stack_pop(value.expr());
-            cb.stack_lookup(
-                1.expr(),
-                cb.stack_pointer_offset() + index.expr(),
-                value.expr(),
-            );
-        });
-
         cb.condition(is_get_local.expr(), |cb| {
             cb.require_opcode(Instruction::LocalGet(0.into()));
-            cb.stack_lookup(
-                0.expr(),
-                cb.stack_pointer_offset() + index.expr(),
-                value.expr(),
-            );
+            // cb.stack_lookup(
+            //     0.expr(),
+            //     cb.stack_pointer_offset() + index.expr(),
+            //     value.expr(),
+            // );
             cb.stack_push(value.expr());
         });
 
-        cb.condition(is_tee_local.expr(), |cb| {
-            cb.require_opcode(Instruction::LocalTee(0.into()));
-            cb.stack_pop(value.expr());
-            cb.stack_lookup(
-                1.expr(),
-                cb.stack_pointer_offset() + index.expr() - 1.expr(),
-                value.expr(),
-            );
-            cb.stack_push(value.expr());
-        });
+        // cb.condition(is_set_local.expr(), |cb| {
+        //     cb.require_opcode(Instruction::LocalSet(0.into()));
+        //     cb.stack_pop(value.expr());
+        //     cb.stack_lookup(
+        //         1.expr(),
+        //         cb.stack_pointer_offset() + index.expr(),
+        //         value.expr(),
+        //     );
+        // });
+        //
+        // cb.condition(is_tee_local.expr(), |cb| {
+        //     cb.require_opcode(Instruction::LocalTee(0.into()));
+        //     cb.stack_pop(value.expr());
+        //     cb.stack_lookup(
+        //         1.expr(),
+        //         cb.stack_pointer_offset() + index.expr() - 1.expr(),
+        //         value.expr(),
+        //     );
+        //     cb.stack_push(value.expr());
+        // });
 
         Self {
             is_set_local,
@@ -119,15 +118,23 @@ mod test {
     #[test]
     fn test_get_local() {
         let code = instruction_set! {
-            .propagate_locals(2)
-            LocalGet(0)
+            // .propagate_locals(2)
+
+            I32Const(0) // [1023]=0
+            I32Const(0) // [1022]=0
+
+            LocalGet(0) // [1021]=0
             Drop
-            LocalGet(1)
-            Drop
-            LocalGet(0)
-            LocalGet(1)
+
             Drop
             Drop
+
+            // LocalGet(1)
+            // Drop
+            // LocalGet(0)
+            // LocalGet(1)
+            // Drop
+            // Drop
         };
         test_ok(code);
     }

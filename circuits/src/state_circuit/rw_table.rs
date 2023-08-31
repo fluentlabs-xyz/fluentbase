@@ -1,13 +1,5 @@
 use crate::{
-    constraint_builder::{
-        AdviceColumn,
-        BinaryQuery,
-        ConstraintBuilder,
-        FixedColumn,
-        Query,
-        SelectorColumn,
-        ToExpr,
-    },
+    constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query, ToExpr},
     state_circuit::{lexicographic_ordering::LexicographicOrderingConfig, rw_row::RwRow},
     util::Field,
 };
@@ -86,7 +78,7 @@ impl<F: Field> RwTable<F> {
     pub fn build_general_constraints(
         &self,
         cb: &mut ConstraintBuilder<F>,
-        loc: &LexicographicOrderingConfig,
+        _loc: &LexicographicOrderingConfig,
     ) {
         // tag value in RwTableTag range is enforced in BinaryNumberChip
         cb.assert_boolean("is_write is boolean", self.is_write.current());

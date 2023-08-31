@@ -9,4 +9,4 @@ mod rw_table;
 mod sort_keys;
 pub mod tag;
 
-pub use circuit::{StateCircuitConfig, StateLookup};
+pub use circuit::StateCircuitConfig;
