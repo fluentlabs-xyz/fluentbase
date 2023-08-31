@@ -30,7 +30,7 @@ pub struct OpConstraintBuilder<'cs, F: Field> {
     value: AdviceColumn,
     index: AdviceColumn,
 
-    state_lookups: Vec<[Query<F>; 8]>,
+    rwtable_lookups: Vec<[Query<F>; 8]>,
 }
 
 #[allow(unused_variables)]
@@ -46,7 +46,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
             opcode,
             value,
             index,
-            state_lookups: vec![],
+            rwtable_lookups: vec![],
         }
     }
 
@@ -83,7 +83,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
     }
 
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.state_lookup(
+        self.rwtable_lookup(
             BinaryQuery::one(),
             self.index.current() + 1,
             is_write,
@@ -109,7 +109,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         );
     }
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.state_lookup(
+        self.rwtable_lookup(
             BinaryQuery::one(),
             self.index.current() + 1,
             is_write,
@@ -147,7 +147,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         );
     }
 
-    pub fn state_lookup(
+    pub fn rwtable_lookup(
         &mut self,
         q_enable: BinaryQuery<F>,
         rw_counter: Query<F>,
@@ -158,7 +158,7 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
         value: Query<F>,
         value_prev: Query<F>,
     ) {
-        self.state_lookups.push([
+        self.rwtable_lookups.push([
             q_enable.0, rw_counter, is_write, tag, id, address, value, value_prev,
         ]);
     }
@@ -192,9 +192,9 @@ impl<'cs, F: Field> OpConstraintBuilder<'cs, F> {
 
     pub fn build(&mut self, lookup: &impl StateLookup<F>) {
         self.base.build(self.cs);
-        while let Some(state_lookup) = self.state_lookups.pop() {
+        while let Some(state_lookup) = self.rwtable_lookups.pop() {
             self.base.add_lookup(
-                "rwasm_lookup(rw_counter,is_write,tag,id,address,value,value_prev,not_first_access)",
+                "rwtable_lookup(q_enable,rw_counter,is_write,tag,id,address,value,value_prev)",
                 state_lookup,
                 lookup.lookup_rwtable(),
             );
