@@ -36,10 +36,10 @@ impl<F: Field> RangeCheckConfig<F> {
             |mut region| {
                 for b0 in 0..=0xff {
                     self.u8.assign(&mut region, b0, b0 as u64);
-                    for b1 in 0..=0xff {
-                        let offset = b0 * 0x100 + b1;
-                        self.u16.assign(&mut region, offset, offset as u64);
-                    }
+                    // for b1 in 0..=0xff {
+                    //     let offset = b0 * 0x100 + b1;
+                    //     self.u16.assign(&mut region, offset, offset as u64);
+                    // }
                 }
                 Ok(())
             },

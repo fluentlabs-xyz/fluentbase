@@ -23,28 +23,15 @@ use halo2_proofs::{
 };
 use std::marker::PhantomData;
 
-pub trait StateLookup<F: Field> {
-    fn lookup_rwtable(&self) -> [Query<F>; 8];
-}
+const N_STATE_LOOKUP_TABLE: usize = 4;
 
-impl<F: Field> StateLookup<F> for StateCircuitConfig<F> {
-    fn lookup_rwtable(&self) -> [Query<F>; 8] {
-        [
-            self.rw_table.q_enable.current(),
-            self.rw_table.rw_counter.current(),
-            self.rw_table.is_write.current(),
-            self.rw_table.tag.current(),
-            self.rw_table.id.current(),
-            self.rw_table.address.current(),
-            self.rw_table.value.current(),
-            self.rw_table.value_prev.current(),
-        ]
-    }
+pub trait StateLookup<F: Field> {
+    fn lookup_rwtable(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE];
 }
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
-    selector: SelectorColumn,
+    q_enable: SelectorColumn,
     tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BYTES }>,
     rw_table: RwTable<F>,
     sort_keys: SortKeysConfig<F>,
@@ -57,11 +44,11 @@ impl<F: Field> StateCircuitConfig<F> {
         cs: &mut ConstraintSystem<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
-        let selector = SelectorColumn(cs.fixed_column());
+        let q_enable = SelectorColumn(cs.fixed_column());
         let rw_table = RwTable::configure(cs);
 
-        let tag = BinaryNumberChip::configure(cs, selector, Some(rw_table.tag.current()));
-        let mut cb = ConstraintBuilder::new(selector);
+        let tag = BinaryNumberChip::configure(cs, q_enable, Some(rw_table.tag.current()));
+        let mut cb = ConstraintBuilder::new(q_enable);
 
         let is_tag = |matches_tag: RwTableTag| -> BinaryQuery<F> {
             tag.value_equals(matches_tag, Rotation::cur())
@@ -98,7 +85,7 @@ impl<F: Field> StateCircuitConfig<F> {
         cb.build(cs);
 
         Self {
-            selector,
+            q_enable,
             tag,
             rw_table,
             sort_keys,
@@ -114,7 +101,7 @@ impl<F: Field> StateCircuitConfig<F> {
         rw_row: &RwRow,
         prev_rw_row: Option<&RwRow>,
     ) -> Result<(), Error> {
-        self.selector.enable(region, offset);
+        self.q_enable.enable(region, offset);
         let tag_chip = BinaryNumberChip::construct(self.sort_keys.tag);
         tag_chip.assign(region, offset, &rw_row.tag())?;
         self.sort_keys
@@ -162,6 +149,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
+                    println!("rw_row: {:?}", rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,
@@ -177,5 +165,19 @@ impl<F: Field> StateCircuitConfig<F> {
             },
         )?;
         Ok(())
+    }
+}
+
+impl<F: Field> StateLookup<F> for StateCircuitConfig<F> {
+    fn lookup_rwtable(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE] {
+        [
+            self.q_enable.current().0,
+            self.rw_table.rw_counter.current(),
+            self.rw_table.is_write.current(),
+            self.rw_table.tag.current(),
+            // self.rw_table.id.current(),
+            // self.rw_table.address.current(),
+            // self.rw_table.value.current(),
+        ]
     }
 }

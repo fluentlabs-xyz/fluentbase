@@ -1,3 +1,4 @@
+// mod op_bin;
 pub(crate) mod op_const;
 pub(crate) mod op_drop;
 pub(crate) mod op_local;

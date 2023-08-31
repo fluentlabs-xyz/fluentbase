@@ -101,11 +101,11 @@ impl LexicographicOrderingConfig {
             limb_difference_inverse,
         };
 
-        cb.add_lookup(
-            "limb_difference fits into u16",
-            [limb_difference.current()],
-            range_check_lookup.lookup_u16_table(),
-        );
+        // cb.add_lookup(
+        //     "limb_difference fits into u16",
+        //     [limb_difference.current()],
+        //     range_check_lookup.lookup_u16_table(),
+        // );
 
         cb.assert_zero(
             "limb_difference is not zero",

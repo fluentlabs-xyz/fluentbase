@@ -43,11 +43,11 @@ where
     ) -> Self {
         let limbs = cb.advice_columns(cs);
         for limb in limbs.iter() {
-            cb.add_lookup(
-                "mpi limb fits into u16",
-                [limb.current()],
-                range_check_lookup.lookup_u16_table(),
-            );
+            // cb.add_lookup(
+            //     "mpi limb fits into u16",
+            //     [limb.current()],
+            //     range_check_lookup.lookup_u16_table(),
+            // );
         }
         let q_limbs = limbs.map(|limb| limb.current());
         cb.assert_zero(

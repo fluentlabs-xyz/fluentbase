@@ -84,7 +84,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
 pub struct RuntimeCircuitConfig<F: Field> {
     const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
-    local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
+    // local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
 }
 
 impl<F: Field> RuntimeCircuitConfig<F> {
@@ -96,7 +96,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         Self {
             const_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
             drop_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
-            local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
+            // local_gadget: ExecutionGadgetRow::configure(cs, rwasm_lookup, state_lookup),
         }
     }
 
@@ -112,9 +112,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.const_gadget.assign(region, offset, step)
             }
             Instruction::Drop => self.drop_gadget.assign(region, offset, step),
-            Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
-                self.local_gadget.assign(region, offset, step)
-            }
+            // Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
+            //     self.local_gadget.assign(region, offset, step)
+            // }
             Instruction::Return(_) => {
                 // just skip for now
                 Ok(())

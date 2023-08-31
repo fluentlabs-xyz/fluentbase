@@ -14,9 +14,9 @@ pub use self::{
 use crate::util::Field;
 
 pub struct ConstraintBuilder<F: Field> {
-    constraints: Vec<(&'static str, Query<F>)>,
-    lookups: Vec<(&'static str, Vec<(Query<F>, Query<F>)>)>,
-    conditions: Vec<BinaryQuery<F>>,
+    pub(crate) constraints: Vec<(&'static str, Query<F>)>,
+    pub(crate) lookups: Vec<(&'static str, Vec<(Query<F>, Query<F>)>)>,
+    pub(crate) conditions: Vec<BinaryQuery<F>>,
 }
 
 impl<F: Field> ConstraintBuilder<F> {
@@ -74,17 +74,20 @@ impl<F: Field> ConstraintBuilder<F> {
         self.conditions.pop().unwrap();
     }
 
+    pub fn resolve_condition(&self) -> BinaryQuery<F> {
+        self.conditions
+            .iter()
+            .skip(1) // Save a degree by skipping every row selector
+            .fold(BinaryQuery::one(), |a, b| a.and(b.clone()))
+    }
+
     pub fn add_lookup<const N: usize>(
         &mut self,
         name: &'static str,
         left: [Query<F>; N],
         right: [Query<F>; N],
     ) {
-        let condition = self
-            .conditions
-            .iter()
-            .skip(1) // Save a degree by skipping every row selector
-            .fold(BinaryQuery::one(), |a, b| a.and(b.clone()));
+        let condition = self.resolve_condition();
         let lookup = left
             .into_iter()
             .map(|q| q * condition.clone())
@@ -100,11 +103,7 @@ impl<F: Field> ConstraintBuilder<F> {
         right: [Query<F>; N],
         default: [Query<F>; N],
     ) {
-        let condition = self
-            .conditions
-            .iter()
-            .skip(1) // Save a degree by skipping every row selector
-            .fold(BinaryQuery::one(), |a, b| a.and(b.clone()));
+        let condition = self.resolve_condition();
         let lookup = left
             .into_iter()
             .zip(default.into_iter())
