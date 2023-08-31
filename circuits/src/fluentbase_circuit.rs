@@ -1,8 +1,10 @@
 use crate::{
+    gadgets::range_check::RangeCheckConfig,
     pi_circuit::PublicInputCircuitConfig,
     poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
     runtime_circuit::RuntimeCircuitConfig,
     rwasm_circuit::RwasmCircuitConfig,
+    state_circuit::StateCircuitConfig,
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
 };
@@ -15,26 +17,36 @@ use halo2_proofs::{
 
 #[derive(Clone)]
 pub struct FluentbaseCircuitConfig<F: Field> {
+    // sub-circuits
     poseidon_circuit_config: PoseidonCircuitConfig<F>,
     rwasm_circuit_config: RwasmCircuitConfig<F>,
     runtime_circuit_config: RuntimeCircuitConfig<F>,
     pi_circuit_config: PublicInputCircuitConfig<F>,
+    state_circuit_config: StateCircuitConfig<F>,
+    // tables
+    poseidon_table: PoseidonTable,
+    range_check_table: RangeCheckConfig<F>,
 }
 
 impl<F: Field> FluentbaseCircuitConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         // init shared poseidon table
         let poseidon_table = PoseidonTable::configure(cs);
+        let range_check_table = RangeCheckConfig::configure(cs);
         // init poseidon and rwasm circuits
-        let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, poseidon_table.clone());
+        let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
         let runtime_circuit_config = RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config);
         let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
+        let state_circuit_config = StateCircuitConfig::configure(cs, &range_check_table);
         Self {
             poseidon_circuit_config,
             rwasm_circuit_config,
             runtime_circuit_config,
             pi_circuit_config,
+            state_circuit_config,
+            poseidon_table,
+            range_check_table,
         }
     }
 
@@ -43,16 +55,20 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
-        hash_value: F,
+        input_hash: F,
     ) -> Result<(), Error> {
+        // load lookup tables
+        self.range_check_table.load(layouter)?;
+        // assign bytecode
         self.poseidon_circuit_config
             .assign_bytecode(layouter, bytecode)?;
         self.rwasm_circuit_config.assign(layouter, bytecode)?;
         self.rwasm_circuit_config.load(layouter)?;
         if let Some(tracer) = tracer {
             self.runtime_circuit_config.assign(layouter, tracer)?;
+            self.state_circuit_config.assign(layouter, tracer)?;
         }
-        self.pi_circuit_config.expose_public(layouter, hash_value)?;
+        self.pi_circuit_config.expose_public(layouter, input_hash)?;
         Ok(())
     }
 }
@@ -61,7 +77,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
 pub struct FluentbaseCircuit<'tracer, F: Field> {
     pub(crate) bytecode: UnrolledBytecode<F>,
     pub(crate) tracer: Option<&'tracer Tracer>,
-    pub(crate) hash_value: F,
+    pub(crate) input_hash: F,
 }
 
 impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
@@ -82,7 +98,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        config.assign(&mut layouter, &self.bytecode, self.tracer, self.hash_value)?;
+        config.assign(&mut layouter, &self.bytecode, self.tracer, self.input_hash)?;
         Ok(())
     }
 }
@@ -99,9 +115,9 @@ mod tests {
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
             tracer: Default::default(),
-            hash_value,
+            input_hash: hash_value,
         };
-        let k = 10;
+        let k = 17;
         let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![hash_value]]).unwrap();
         prover.assert_satisfied();
     }

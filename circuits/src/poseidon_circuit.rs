@@ -138,20 +138,16 @@ impl PoseidonLookup for PoseidonTable {
 #[derive(Clone)]
 pub struct PoseidonCircuitConfig<F: Field> {
     poseidon_config: PoseidonHashConfig<F>,
-    poseidon_table: PoseidonTable,
 }
 
 impl<F: Field> PoseidonCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_table: PoseidonTable) -> Self {
+    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_table: &PoseidonTable) -> Self {
         let poseidon_config = PoseidonHashConfig::configure_sub(
             cs,
             poseidon_table.table_columns(),
             HASH_BLOCK_STEP_SIZE,
         );
-        Self {
-            poseidon_config,
-            poseidon_table,
-        }
+        Self { poseidon_config }
     }
 
     pub fn assign_bytecode(

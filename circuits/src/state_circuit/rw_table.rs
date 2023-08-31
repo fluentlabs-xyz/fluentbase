@@ -1,8 +1,9 @@
 use crate::{
     constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query, ToExpr},
+    state_circuit::{lexicographic_ordering::LexicographicOrderingConfig, rw_row::RwRow},
     util::Field,
 };
-use halo2_proofs::plonk::ConstraintSystem;
+use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::marker::PhantomData;
 
 const N_STATE_LOOKUP_TABLE: usize = 8;
@@ -21,8 +22,7 @@ pub struct RwTable<F: Field> {
     pub(crate) address: AdviceColumn,
     pub(crate) value: AdviceColumn,
     pub(crate) value_prev: AdviceColumn,
-    // additional fields
-    not_first_access: AdviceColumn,
+    pub(crate) not_first_access: AdviceColumn,
     marker: PhantomData<F>,
 }
 
@@ -57,6 +57,20 @@ impl<F: Field> RwTable<F> {
         }
     }
 
+    pub fn assign(&self, region: &mut Region<'_, F>, offset: usize, rw_row: &RwRow) {
+        self.rw_counter
+            .assign(region, offset, rw_row.rw_counter() as u64);
+        self.is_write
+            .assign(region, offset, rw_row.is_write() as u64);
+        self.tag.assign(region, offset, rw_row.tag() as u64);
+        self.id
+            .assign(region, offset, rw_row.id().unwrap_or_default() as u64);
+        self.address
+            .assign(region, offset, rw_row.address().unwrap_or_default() as u64);
+        self.value.assign(region, offset, rw_row.value().to_bits());
+        // self.value_prev.assign(region, offset, rw_row.value().to_bits());
+    }
+
     fn q_first_access(&self) -> BinaryQuery<F> {
         !BinaryQuery(self.not_first_access.current())
     }
@@ -69,29 +83,40 @@ impl<F: Field> RwTable<F> {
         !BinaryQuery(self.is_write.current())
     }
 
-    fn q_is_tag_and_id_unchanged(&self) -> BinaryQuery<F> {
-        let tag_unchanged = !BinaryQuery(self.tag.current() - self.tag.previous());
-        let id_unchanged = !BinaryQuery(self.id.current() - self.id.previous());
-        tag_unchanged.and(id_unchanged)
+    fn q_is_tag_and_id_unchanged(&self, loc: &LexicographicOrderingConfig) -> BinaryQuery<F> {
+        let first_different_limb = loc.first_different_limb;
+        let final_bits_sum =
+            first_different_limb.bits[3].current() + first_different_limb.bits[4].current();
+        let query = 4.expr() * first_different_limb.bits[0].current()
+            + first_different_limb.bits[1].current()
+            + first_different_limb.bits[2].current()
+            + final_bits_sum.clone() * (1.expr() - final_bits_sum);
+        BinaryQuery(query)
     }
 
     fn q_address_change(&self) -> Query<F> {
         self.address.current() - self.address.previous()
     }
 
-    pub fn build_general_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+    pub fn build_general_constraints(
+        &self,
+        cb: &mut ConstraintBuilder<F>,
+        loc: &LexicographicOrderingConfig,
+    ) {
         // tag value in RwTableTag range is enforced in BinaryNumberChip
         cb.assert_boolean("is_write is boolean", self.is_write.current());
 
         // 1 if first_different_limb is in the rw counter, 0 otherwise (i.e. any of the
         // 4 most significant bits are 0)
-        // cb.require_equal(
+        // let first_different_limb =
+        //     [0, 1, 2, 3].map(|idx| loc.first_different_limb.bits[idx].current());
+        // cb.assert_equal(
         //     "not_first_access when first 16 limbs are same",
-        //     q.not_first_access.clone(),
-        //     q.first_different_limb[0].clone()
-        //         * q.first_different_limb[1].clone()
-        //         * q.first_different_limb[2].clone()
-        //         * q.first_different_limb[3].clone(),
+        //     self.not_first_access.current(),
+        //     first_different_limb[0].clone()
+        //         * first_different_limb[1].clone()
+        //         * first_different_limb[2].clone()
+        //         * first_different_limb[3].clone(),
         // );
 
         // When at least one of the keys (tag, id, address, field_tag, or storage_key)
@@ -154,7 +179,11 @@ impl<F: Field> RwTable<F> {
         // 2.5. state root does not change
     }
 
-    pub fn build_stack_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+    pub fn build_stack_constraints(
+        &self,
+        cb: &mut ConstraintBuilder<F>,
+        loc: &LexicographicOrderingConfig,
+    ) {
         // 3.0. Unused keys are 0
         // 3.1. First access for a set of all keys
         cb.condition(self.q_first_access(), |cb| {
@@ -169,7 +198,7 @@ impl<F: Field> RwTable<F> {
         //     vec![(q.rw_table.address.clone(), q.lookups.u10.clone())],
         // );
         // 3.3. stack_ptr only increases by 0 or 1
-        cb.condition(self.q_is_tag_and_id_unchanged(), |cb| {
+        cb.condition(self.q_is_tag_and_id_unchanged(loc), |cb| {
             cb.assert_boolean(
                 "if previous row is also Stack with unchanged call id, address change is 0 or 1",
                 self.address.current() - self.address.previous(),
