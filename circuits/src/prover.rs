@@ -150,9 +150,9 @@ mod tests {
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
             tracer: Default::default(),
-            hash_value: Fr::zero(),
+            input_hash: Fr::zero(),
         };
-        let degree: u32 = 12;
+        let degree: u32 = 17;
         let general_params = get_general_params(degree);
         let key = {
             let verifying_key =

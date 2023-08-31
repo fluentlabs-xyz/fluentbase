@@ -2,6 +2,7 @@
 
 mod utils;
 
+mod stack_height;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +24,7 @@ pub use self::utils::{
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
 use crate::common::{UntypedValue, F32};
 use core::fmt::Debug;
+pub use stack_height::RwOp;
 #[cfg(feature = "std")]
 use strum_macros::EnumIter;
 
