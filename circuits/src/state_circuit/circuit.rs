@@ -4,6 +4,7 @@ use crate::{
         binary_number::{BinaryNumberChip, BinaryNumberConfig},
         range_check::RangeCheckLookup,
     },
+    lookup_table::{RwLookup, N_RW_LOOKUP_TABLE},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
@@ -22,12 +23,6 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use std::marker::PhantomData;
-
-const N_STATE_LOOKUP_TABLE: usize = 4;
-
-pub trait StateLookup<F: Field> {
-    fn lookup_rwtable(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE];
-}
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -140,6 +135,9 @@ impl<F: Field> StateCircuitConfig<F> {
                     let step = TraceStep::new(trace, tracer.logs.get(i + 1).cloned());
                     rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();
                 }
+                for rw in rw_rows.iter() {
+                    println!("rw_row: {:?}", rw);
+                }
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -149,7 +147,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
-                    println!("rw_row: {:?}", rw_row);
+                    // println!("rw_row: {:?}", rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,
@@ -168,16 +166,16 @@ impl<F: Field> StateCircuitConfig<F> {
     }
 }
 
-impl<F: Field> StateLookup<F> for StateCircuitConfig<F> {
-    fn lookup_rwtable(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE] {
+impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
+    fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE] {
         [
             self.q_enable.current().0,
             self.rw_table.rw_counter.current(),
             self.rw_table.is_write.current(),
             self.rw_table.tag.current(),
-            // self.rw_table.id.current(),
-            // self.rw_table.address.current(),
-            // self.rw_table.value.current(),
+            self.rw_table.id.current(),
+            self.rw_table.address.current(),
+            self.rw_table.value.current(),
         ]
     }
 }

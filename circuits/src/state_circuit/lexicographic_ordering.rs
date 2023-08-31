@@ -82,7 +82,7 @@ impl LexicographicOrderingConfig {
     pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         keys: &SortKeysConfig<F>,
-        range_check_lookup: &impl RangeCheckLookup<F>,
+        _range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
         let selector = SelectorColumn(cs.fixed_column());
         let first_different_limb = BinaryNumberChip::configure(cs, selector, None);

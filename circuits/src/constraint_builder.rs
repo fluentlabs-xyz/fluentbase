@@ -81,16 +81,30 @@ impl<F: Field> ConstraintBuilder<F> {
             .fold(BinaryQuery::one(), |a, b| a.and(b.clone()))
     }
 
+    pub fn apply_lookup_condition<const N: usize>(
+        &self,
+        mut input: [Query<F>; N],
+    ) -> [Query<F>; N] {
+        // TODO: "we use row selector here, but do we have to? otherwise dev checks looks all rows"
+        let condition = self
+            .conditions
+            .iter()
+            .fold(BinaryQuery::one(), |a, b| a.and(b.clone()));
+        input
+            .iter_mut()
+            .for_each(|q| *q = q.clone() * condition.clone());
+        input
+    }
+
     pub fn add_lookup<const N: usize>(
         &mut self,
         name: &'static str,
         left: [Query<F>; N],
         right: [Query<F>; N],
     ) {
-        let condition = self.resolve_condition();
-        let lookup = left
+        let lookup = self
+            .apply_lookup_condition(left)
             .into_iter()
-            .map(|q| q * condition.clone())
             .zip(right.into_iter())
             .collect();
         self.lookups.push((name, lookup))

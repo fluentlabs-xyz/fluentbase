@@ -12,6 +12,7 @@ extern crate core;
 mod constraint_builder;
 mod fluentbase_circuit;
 mod gadgets;
+mod lookup_table;
 mod pi_circuit;
 mod poseidon_circuit;
 mod prover;

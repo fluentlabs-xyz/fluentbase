@@ -39,10 +39,10 @@ where
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,
         value: AdviceColumn,
-        range_check_lookup: &impl RangeCheckLookup<F>,
+        _range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
         let limbs = cb.advice_columns(cs);
-        for limb in limbs.iter() {
+        for _limb in limbs.iter() {
             // cb.add_lookup(
             //     "mpi limb fits into u16",
             //     [limb.current()],
