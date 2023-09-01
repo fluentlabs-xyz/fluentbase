@@ -6,15 +6,8 @@ use crate::{
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::marker::PhantomData;
 
-const N_STATE_LOOKUP_TABLE: usize = 8;
-
-pub trait RwLookup<F: Field> {
-    fn lookup_rw_table(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE];
-}
-
 #[derive(Clone)]
 pub struct RwTable<F: Field> {
-    pub(crate) q_enable: AdviceColumn,
     pub(crate) rw_counter: AdviceColumn,
     pub(crate) is_write: AdviceColumn,
     pub(crate) tag: AdviceColumn,
@@ -23,28 +16,12 @@ pub struct RwTable<F: Field> {
     pub(crate) value: AdviceColumn,
     pub(crate) value_prev: AdviceColumn,
     pub(crate) not_first_access: AdviceColumn,
-    marker: PhantomData<F>,
-}
-
-impl<F: Field> RwLookup<F> for RwTable<F> {
-    fn lookup_rw_table(&self) -> [Query<F>; N_STATE_LOOKUP_TABLE] {
-        [
-            self.q_enable.current(),
-            self.rw_counter.current(),
-            self.is_write.current(),
-            self.tag.current(),
-            self.id.current(),
-            self.address.current(),
-            self.value.current(),
-            self.value_prev.current(),
-        ]
-    }
+    _marker: PhantomData<F>,
 }
 
 impl<F: Field> RwTable<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
-            q_enable: AdviceColumn(cs.advice_column()),
             rw_counter: AdviceColumn(cs.advice_column()),
             is_write: AdviceColumn(cs.advice_column()),
             tag: AdviceColumn(cs.advice_column()),
@@ -53,7 +30,7 @@ impl<F: Field> RwTable<F> {
             value: AdviceColumn(cs.advice_column()),
             value_prev: AdviceColumn(cs.advice_column()),
             not_first_access: AdviceColumn(cs.advice_column()),
-            marker: Default::default(),
+            _marker: Default::default(),
         }
     }
 
@@ -101,7 +78,7 @@ impl<F: Field> RwTable<F> {
     pub fn build_general_constraints(
         &self,
         cb: &mut ConstraintBuilder<F>,
-        loc: &LexicographicOrderingConfig,
+        _loc: &LexicographicOrderingConfig,
     ) {
         // tag value in RwTableTag range is enforced in BinaryNumberChip
         cb.assert_boolean("is_write is boolean", self.is_write.current());
