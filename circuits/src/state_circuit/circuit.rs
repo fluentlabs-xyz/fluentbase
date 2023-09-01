@@ -1,10 +1,7 @@
 use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
-    gadgets::{
-        binary_number::{BinaryNumberChip, BinaryNumberConfig},
-        range_check::RangeCheckLookup,
-    },
-    lookup_table::{RwLookup, N_RW_LOOKUP_TABLE},
+    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
+    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
