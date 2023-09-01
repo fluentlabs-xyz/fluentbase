@@ -6,6 +6,7 @@ use crate::{
         opcodes::{
             op_bin::BinGadget,
             op_const::ConstGadget,
+            op_conversion::ConversionGadget,
             op_drop::DropGadget,
             op_local::LocalGadget,
             TraceStep,
@@ -24,6 +25,7 @@ use halo2_proofs::{
 pub struct RuntimeCircuitConfig<F: Field> {
     bin_gadget: ExecutionGadgetRow<F, BinGadget<F>>,
     const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
+    conversion_gadget: ExecutionGadgetRow<F, ConversionGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
     local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
     // runtime state gadgets
@@ -53,6 +55,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         Self {
             bin_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
+            conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
             local_gadget: configure_gadget!(),
             responsible_opcode_table,
@@ -73,6 +76,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
             }
+            ExecutionState::WASM_CONVERSION => self
+                .conversion_gadget
+                .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_DROP => self.drop_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_LOCAL => {
                 self.local_gadget.assign(region, offset, step, rw_counter)
