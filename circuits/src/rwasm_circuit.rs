@@ -1,5 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
+    lookup_table::{RwasmLookup, N_RWASM_LOOKUP_TABLE},
     poseidon_circuit::{PoseidonLookup, HASH_BYTES_IN_FIELD},
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
@@ -17,11 +18,6 @@ use std::marker::PhantomData;
 use strum::IntoEnumIterator;
 
 const N_OPCODE_LOOKUP_TABLE: usize = 3;
-const N_RWASM_LOOKUP_TABLE: usize = 4;
-
-pub trait RwasmLookup<F: Field> {
-    fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE];
-}
 
 pub type OpcodeTable = [FixedColumn; N_OPCODE_LOOKUP_TABLE];
 

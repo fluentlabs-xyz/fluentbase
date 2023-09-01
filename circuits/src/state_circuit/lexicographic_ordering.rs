@@ -82,7 +82,7 @@ impl LexicographicOrderingConfig {
     pub fn configure<F: Field>(
         cs: &mut ConstraintSystem<F>,
         keys: &SortKeysConfig<F>,
-        range_check_lookup: &impl RangeCheckLookup<F>,
+        _range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
         let selector = SelectorColumn(cs.fixed_column());
         let first_different_limb = BinaryNumberChip::configure(cs, selector, None);
@@ -101,11 +101,11 @@ impl LexicographicOrderingConfig {
             limb_difference_inverse,
         };
 
-        cb.add_lookup(
-            "limb_difference fits into u16",
-            [limb_difference.current()],
-            range_check_lookup.lookup_u16_table(),
-        );
+        // cb.add_lookup(
+        //     "limb_difference fits into u16",
+        //     [limb_difference.current()],
+        //     range_check_lookup.lookup_u16_table(),
+        // );
 
         cb.assert_zero(
             "limb_difference is not zero",

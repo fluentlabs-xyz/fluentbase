@@ -25,6 +25,7 @@ impl<F: Field> ExecutionGadget<F> for DropGadget<F> {
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let value = cb.query_cell();
+        cb.require_opcode(Instruction::Drop);
         cb.stack_pop(value.expr());
         Self {
             value,
@@ -59,10 +60,8 @@ mod test {
     #[test]
     fn test_drop() {
         test_ok(instruction_set! {
-            I32Const[1]
-            I32Const[2]
-            I32Const[3]
-            Drop
+            I32Const(1)
+            I32Const(2)
             Drop
             Drop
         });

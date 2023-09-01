@@ -36,9 +36,10 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
-        let runtime_circuit_config = RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config);
-        let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         let state_circuit_config = StateCircuitConfig::configure(cs, &range_check_table);
+        let runtime_circuit_config =
+            RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config, &state_circuit_config);
+        let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         Self {
             poseidon_circuit_config,
             rwasm_circuit_config,

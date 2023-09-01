@@ -1,11 +1,12 @@
+// mod op_bin;
 pub(crate) mod op_const;
 pub(crate) mod op_drop;
 pub(crate) mod op_local;
 pub(crate) mod table_ops;
 
-pub use crate::{
+pub use crate::trace_step::{GadgetError, TraceStep};
+use crate::{
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use halo2_proofs::circuit::Region;
