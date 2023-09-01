@@ -54,9 +54,21 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn push_gadget_simple() {
+    fn test_stack_top_offset() {
         test_ok(instruction_set! {
             I32Const(100)
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_stack_depth() {
+        test_ok(instruction_set! {
+            I32Const(100)
+            I32Const(20)
+            I32Const(3)
+            Drop
+            Drop
             Drop
         });
     }

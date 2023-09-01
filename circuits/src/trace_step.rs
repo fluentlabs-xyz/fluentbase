@@ -26,7 +26,7 @@ impl TraceStep {
     }
 
     pub fn stack_pointer(&self) -> u64 {
-        MAX_STACK_HEIGHT as u64 - self.0.stack.len() as u64 - 1
+        MAX_STACK_HEIGHT as u64 - self.0.stack.len() as u64
     }
 
     pub fn curr_nth_stack_value(&self, nth: usize) -> Result<UntypedValue, GadgetError> {
