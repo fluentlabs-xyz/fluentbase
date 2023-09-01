@@ -9,7 +9,7 @@ use crate::{
         SelectorColumn,
         ToExpr,
     },
-    lookup_table::{LookupTable, RwLookup, RwasmLookup},
+    lookup_table::{LookupTable, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::execution_state::ExecutionState,
     state_circuit::tag::RwTableTag,
     trace_step::MAX_STACK_HEIGHT,
@@ -154,8 +154,11 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.global_lookup(Query::one(), index, value);
     }
 
-    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState) {
-        // unreachable!("not implemented yet")
+    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState, opcode: Query<F>) {
+        self.op_lookups.push(LookupTable::ResponsibleOpcode(
+            self.base
+                .apply_lookup_condition([Query::Constant(F::from(execution_state as u64)), opcode]),
+        ));
     }
 
     pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {
@@ -214,7 +217,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.base.leave_condition();
     }
 
-    pub fn build(&mut self, rwasm_lookup: &impl RwasmLookup<F>, rw_lookup: &impl RwLookup<F>) {
+    pub fn build(
+        &mut self,
+        rwasm_lookup: &impl RwasmLookup<F>,
+        rw_lookup: &impl RwLookup<F>,
+        responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
+    ) {
         while let Some(state_lookup) = self.op_lookups.pop() {
             match state_lookup {
                 LookupTable::Rwasm(fields) => {
@@ -229,6 +237,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "rw_lookup(rw_counter,is_write,tag,id,address,value)",
                         fields,
                         rw_lookup.lookup_rw_table(),
+                    );
+                }
+                LookupTable::ResponsibleOpcode(fields) => {
+                    self.base.add_lookup(
+                        "responsible_opcode(execution_state,opcode)",
+                        fields,
+                        responsible_opcode_lookup.lookup_responsible_opcode_table(),
                     );
                 }
             }
