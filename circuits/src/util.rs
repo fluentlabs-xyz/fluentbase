@@ -84,3 +84,16 @@ pub fn unroll_to_hash_input<F: FieldExt, const BYTES_IN_FIELD: usize, const INPU
     inputs.push(last.map(|v| v.unwrap()));
     inputs
 }
+
+#[macro_export]
+macro_rules! only_once {
+    () => {
+        static mut _ONLY_ONCE: bool = false;
+        unsafe {
+            if _ONLY_ONCE {
+                return;
+            }
+            _ONLY_ONCE = true;
+        }
+    };
+}
