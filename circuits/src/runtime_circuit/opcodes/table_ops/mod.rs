@@ -5,3 +5,6 @@ mod fill;
 mod get;
 mod set;
 
+mod init;
+mod copy;
+

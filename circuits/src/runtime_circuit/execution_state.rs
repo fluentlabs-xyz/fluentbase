@@ -23,6 +23,8 @@ pub enum ExecutionState {
     WASM_TABLE_GROW,
     WASM_TABLE_SET,
     WASM_TABLE_GET,
+    WASM_TABLE_COPY,
+    WASM_TABLE_INIT,
 }
 
 impl ExecutionState {
@@ -111,6 +113,8 @@ impl ExecutionState {
             Self::WASM_TABLE_GROW => vec![Instruction::TableGrow(Default::default())],
             Self::WASM_TABLE_SET => vec![Instruction::TableSet(Default::default())],
             Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
+            Self::WASM_TABLE_COPY => vec![Instruction::TableCopy(Default::default())],
+            Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
             _ => unreachable!("not supported execution state {:?}", self),
         }
     }
