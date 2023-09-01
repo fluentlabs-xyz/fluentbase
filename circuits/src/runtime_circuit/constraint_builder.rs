@@ -163,20 +163,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         ));
     }
 
-    pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {
-        self.op_lookups
-            .push(LookupTable::Rwasm(self.base.apply_lookup_condition([
-                Query::one(),
-                index,
-                code,
-                value,
-            ])));
-    }
-
     pub fn table_size(&mut self, table_index: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>, size: Q<F>) {
+    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
     }
     pub fn table_grow(&mut self, table_index: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
@@ -188,15 +178,25 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     pub fn table_set(&mut self, table_index: Q<F>, elem_index: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, elem_index: Q<F>, arg: Q<F>, value: Q<F>) {
+    pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_initt(&mut self, table_index: Q<F>, table_index2: Q<F>, elem_index: Q<F>, arg: Q<F>, value: Q<F>) {
+    pub fn table_init(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
         // unreachable!("not implemented yet")
     }
 
     pub fn range_check_1024(&mut self, value: Q<F>) {
         // unreachable!("not implemented yet")
+    }
+
+    pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {
+        self.op_lookups
+            .push(LookupTable::Rwasm(self.base.apply_lookup_condition([
+                Query::one(),
+                index,
+                code,
+                value,
+            ])));
     }
 
     pub fn rw_lookup(
