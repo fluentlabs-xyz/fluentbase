@@ -182,7 +182,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         //     is_write,
         //     tag
         // );
-        println!("rwc_before: {:?}", self.state_transition.rw_counter_offset);
+        // println!("rwc_before: {:?}", self.state_transition.rw_counter_offset);
         self.op_lookups
             .push(LookupTable::Rw(self.base.apply_lookup_condition([
                 Query::one(),
@@ -195,7 +195,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             ])));
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
-        println!("rwc_after: {:?}", self.state_transition.rw_counter_offset);
+        // println!("rwc_after: {:?}", self.state_transition.rw_counter_offset);
     }
 
     pub fn stack_pointer(&self) -> Query<F> {
@@ -204,6 +204,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn require_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {
         self.base.assert_zero(name, left - right)
+    }
+
+    pub fn require_zero(&mut self, name: &'static str, expr: Query<F>) {
+        self.base.assert_zero(name, expr)
+    }
+
+    pub fn require_zeros(&mut self, name: &'static str, expr: Vec<Query<F>>) {
+        assert!(expr.len() > 0);
+        self.base
+            .assert_zero(name, expr.iter().fold(Query::one(), |r, v| r * v.clone()))
     }
 
     pub fn require_opcode(&mut self, instr: Instruction) {

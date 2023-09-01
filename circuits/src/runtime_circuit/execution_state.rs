@@ -1,4 +1,5 @@
 use fluentbase_rwasm::engine::bytecode::Instruction;
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 #[allow(non_camel_case_types)]
@@ -21,6 +22,24 @@ pub enum ExecutionState {
 }
 
 impl ExecutionState {
+    pub fn from_opcode(instr: Instruction) -> ExecutionState {
+        for state in Self::iter() {
+            // TODO: "yes, I've heard about lazy static, don't understand why its not here"
+            let found = state
+                .responsible_opcodes()
+                .iter()
+                .copied()
+                .find(|v| v.code_value() == instr.code_value());
+            if found.is_some() {
+                return state;
+            }
+        }
+        unreachable!(
+            "there is no execution state for opcode {:?}, it's not possible",
+            instr
+        )
+    }
+
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
             Self::WASM_BIN => vec![
