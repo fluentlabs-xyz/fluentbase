@@ -10,7 +10,6 @@ pub enum ExecutionState {
     WASM_CONST,
     WASM_CONVERSION,
     WASM_DROP,
-    WASM_END,
     WASM_GLOBAL,
     WASM_LOAD,
     WASM_LOCAL,
@@ -52,7 +51,9 @@ impl ExecutionState {
             ],
             Self::WASM_CALL => vec![
                 Instruction::Call(Default::default()),
-                Instruction::CallIndirect(Default::default()),
+                Instruction::CallIndirectUnsafe(Default::default()),
+                Instruction::ReturnCall(Default::default()),
+                Instruction::ReturnCallIndirectUnsafe(Default::default()),
             ],
             Self::WASM_DROP => vec![Instruction::Drop],
             Self::WASM_TEST => vec![Instruction::I32Eqz, Instruction::I64Eqz],
@@ -100,14 +101,7 @@ impl ExecutionState {
                 Instruction::LocalSet(Default::default()),
                 Instruction::LocalTee(Default::default()),
             ],
-            _ => unreachable!("not supported execution state {:?}", self),
-        }
-    }
-
-    pub fn instruction_matches(&self) -> Vec<Instruction> {
-        match self {
-            ExecutionState::WASM_CONST => vec![],
-            _ => unreachable!("not supported state {:?}", self),
+            _ => vec![],
         }
     }
 }

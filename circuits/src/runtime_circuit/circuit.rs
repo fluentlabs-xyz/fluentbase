@@ -1,6 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, SelectorColumn},
-    lookup_table::{RwLookup, RwasmLookup},
+    lookup_table::{ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
         opcodes::{
@@ -11,6 +11,7 @@ use crate::{
             GadgetError,
             TraceStep,
         },
+        responsible_opcode::ResponsibleOpcodeTable,
     },
     util::Field,
 };
@@ -36,15 +37,16 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
+        responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         state_transition: &mut StateTransition<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let mut cb = OpConstraintBuilder::new(cs, q_enable, state_transition);
         let [index, code, value] = cb.query_rwasm_table();
         cb.rwasm_lookup(index.current(), code.current(), value.current());
-        cb.execution_state_lookup(G::EXECUTION_STATE);
+        cb.execution_state_lookup(G::EXECUTION_STATE, code.current());
         let gadget_config = G::configure(&mut cb);
-        cb.build(rwasm_lookup, state_lookup);
+        cb.build(rwasm_lookup, state_lookup, responsible_opcode_lookup);
         ExecutionGadgetRow {
             gadget: gadget_config,
             index,
@@ -80,6 +82,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
     local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
     // runtime state gadgets
+    responsible_opcode_table: ResponsibleOpcodeTable<F>,
     state_transition: StateTransition<F>,
 }
 
@@ -89,26 +92,31 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
     ) -> Self {
+        let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         let mut state_transition = StateTransition::configure(cs);
         Self {
             const_gadget: ExecutionGadgetRow::configure(
                 cs,
                 rwasm_lookup,
                 state_lookup,
+                &responsible_opcode_table,
                 &mut state_transition,
             ),
             drop_gadget: ExecutionGadgetRow::configure(
                 cs,
                 rwasm_lookup,
                 state_lookup,
+                &responsible_opcode_table,
                 &mut state_transition,
             ),
             local_gadget: ExecutionGadgetRow::configure(
                 cs,
                 rwasm_lookup,
                 state_lookup,
+                &responsible_opcode_table,
                 &mut state_transition,
             ),
+            responsible_opcode_table,
             state_transition,
         }
     }
@@ -153,6 +161,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 Ok(())
             },
         )?;
+        self.responsible_opcode_table.load(layouter)?;
         Ok(())
     }
 }
