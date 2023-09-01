@@ -12,7 +12,7 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
         tracer: Some(execution_result.tracer()),
         input_hash: Fr::zero(),
     };
-    let k = 10;
+    let k = 13;
     let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![Fr::zero()]]).unwrap();
     prover.assert_satisfied();
 }

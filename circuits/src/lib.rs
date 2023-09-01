@@ -16,6 +16,7 @@ mod lookup_table;
 mod pi_circuit;
 mod poseidon_circuit;
 mod prover;
+mod range_check;
 mod runtime_circuit;
 mod rwasm_circuit;
 mod state_circuit;

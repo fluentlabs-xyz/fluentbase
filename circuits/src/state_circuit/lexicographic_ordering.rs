@@ -1,10 +1,8 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
-    gadgets::{
-        binary_number::{BinaryNumberChip, BinaryNumberConfig},
-        range_check::RangeCheckLookup,
-    },
+    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     impl_expr,
+    lookup_table::RangeCheckLookup,
     state_circuit::{
         param::{N_LIMBS_ADDRESS, N_LIMBS_ID, N_LIMBS_RW_COUNTER},
         rw_row::RwRow,

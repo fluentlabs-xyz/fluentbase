@@ -1,6 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, Query},
-    gadgets::range_check::RangeCheckLookup,
+    lookup_table::RangeCheckLookup,
     state_circuit::param::N_LIMBS_RW_COUNTER,
     util::Field,
 };

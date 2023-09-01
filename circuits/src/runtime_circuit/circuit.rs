@@ -1,6 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, SelectorColumn},
-    lookup_table::{ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
         opcodes::{
@@ -39,6 +39,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
+        range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let mut state_transition = StateTransition::configure(cs);
@@ -47,7 +48,12 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         cb.rwasm_lookup(index.current(), opcode.current(), value.current());
         cb.execution_state_lookup(G::EXECUTION_STATE, opcode.current());
         let gadget_config = G::configure(&mut cb);
-        cb.build(rwasm_lookup, state_lookup, responsible_opcode_lookup);
+        cb.build(
+            rwasm_lookup,
+            state_lookup,
+            responsible_opcode_lookup,
+            range_check_lookup,
+        );
         ExecutionGadgetRow {
             gadget: gadget_config,
             index,
@@ -96,6 +102,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
+        range_check_lookup: &impl RangeCheckLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         Self {
@@ -104,18 +111,21 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 rwasm_lookup,
                 state_lookup,
                 &responsible_opcode_table,
+                range_check_lookup,
             ),
             drop_gadget: ExecutionGadgetRow::configure(
                 cs,
                 rwasm_lookup,
                 state_lookup,
                 &responsible_opcode_table,
+                range_check_lookup,
             ),
             local_gadget: ExecutionGadgetRow::configure(
                 cs,
                 rwasm_lookup,
                 state_lookup,
                 &responsible_opcode_table,
+                range_check_lookup,
             ),
             responsible_opcode_table,
         }

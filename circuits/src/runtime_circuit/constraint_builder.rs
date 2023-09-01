@@ -9,7 +9,7 @@ use crate::{
         SelectorColumn,
         ToExpr,
     },
-    lookup_table::{LookupTable, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{LookupTable, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::execution_state::ExecutionState,
     state_circuit::tag::RwTableTag,
     trace_step::MAX_STACK_HEIGHT,
@@ -228,6 +228,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         rwasm_lookup: &impl RwasmLookup<F>,
         rw_lookup: &impl RwLookup<F>,
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
+        range_check_lookup: &impl RangeCheckLookup<F>,
     ) {
         while let Some(state_lookup) = self.op_lookups.pop() {
             match state_lookup {
@@ -250,6 +251,27 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "responsible_opcode(execution_state,opcode)",
                         fields,
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
+                    );
+                }
+                LookupTable::RangeCheck8(fields) => {
+                    self.base.add_lookup(
+                        "responsible_opcode(execution_state,opcode)",
+                        fields,
+                        range_check_lookup.lookup_u8_table(),
+                    );
+                }
+                LookupTable::RangeCheck10(fields) => {
+                    self.base.add_lookup(
+                        "responsible_opcode(execution_state,opcode)",
+                        fields,
+                        range_check_lookup.lookup_u10_table(),
+                    );
+                }
+                LookupTable::RangeCheck16(fields) => {
+                    self.base.add_lookup(
+                        "responsible_opcode(execution_state,opcode)",
+                        fields,
+                        range_check_lookup.lookup_u16_table(),
                     );
                 }
             }

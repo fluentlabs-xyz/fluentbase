@@ -5,5 +5,4 @@ pub mod canonical_representation;
 pub mod is_zero;
 pub mod key_bit;
 pub mod one_hot;
-pub mod range_check;
 pub mod rlc_randomness;
