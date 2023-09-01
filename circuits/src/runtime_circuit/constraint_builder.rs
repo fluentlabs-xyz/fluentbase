@@ -12,7 +12,6 @@ use crate::{
     lookup_table::{LookupTable, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::execution_state::ExecutionState,
     state_circuit::tag::RwTableTag,
-    trace_step::MAX_STACK_HEIGHT,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -183,6 +182,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         //     is_write,
         //     tag
         // );
+        println!("rwc_before: {:?}", self.state_transition.rw_counter_offset);
         self.op_lookups
             .push(LookupTable::Rw(self.base.apply_lookup_condition([
                 Query::one(),
@@ -194,11 +194,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 value,
             ])));
         self.state_transition.rw_counter_offset =
-            self.base.resolve_condition().0 * self.state_transition.rw_counter_offset.clone() + 1;
+            self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
+        println!("rwc_after: {:?}", self.state_transition.rw_counter_offset);
     }
 
-    pub fn stack_pointer_offset(&self) -> Query<F> {
-        Query::from(MAX_STACK_HEIGHT as u64) - self.state_transition.stack_pointer() - 1
+    pub fn stack_pointer(&self) -> Query<F> {
+        self.state_transition.stack_pointer()
     }
 
     pub fn require_equal(&mut self, name: &'static str, left: Query<F>, right: Query<F>) {

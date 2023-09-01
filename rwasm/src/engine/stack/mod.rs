@@ -6,24 +6,20 @@ pub use self::{
     values::{ValueStack, ValueStackPtr},
 };
 use crate::{
-    common::UntypedValue,
+    common::{Trap, TrapCode},
     engine::{code_map::CodeMap, func_types::FuncTypeRegistry, FuncParams},
     func::{HostFuncEntity, WasmFuncEntity},
     AsContext,
     Instance,
     StoreContextMut,
 };
-use core::{
-    fmt::{self, Display},
-    mem::size_of,
-};
-use crate::common::{Trap, TrapCode};
+use core::fmt::{self, Display};
 
 /// Default value for initial value stack height in bytes.
 const DEFAULT_MIN_VALUE_STACK_HEIGHT: usize = 1024;
 
 /// Default value for maximum value stack height in bytes.
-const DEFAULT_MAX_VALUE_STACK_HEIGHT: usize = 1024 * DEFAULT_MIN_VALUE_STACK_HEIGHT;
+const DEFAULT_MAX_VALUE_STACK_HEIGHT: usize = 1024;
 
 /// Default value for maximum recursion depth.
 const DEFAULT_MAX_RECURSION_DEPTH: usize = 1024;
@@ -86,9 +82,8 @@ impl StackLimits {
 
 impl Default for StackLimits {
     fn default() -> Self {
-        let register_len = size_of::<UntypedValue>();
-        let initial_value_stack_height = DEFAULT_MIN_VALUE_STACK_HEIGHT / register_len;
-        let maximum_value_stack_height = DEFAULT_MAX_VALUE_STACK_HEIGHT / register_len;
+        let initial_value_stack_height = DEFAULT_MIN_VALUE_STACK_HEIGHT;
+        let maximum_value_stack_height = DEFAULT_MAX_VALUE_STACK_HEIGHT;
         Self {
             initial_value_stack_height,
             maximum_value_stack_height,

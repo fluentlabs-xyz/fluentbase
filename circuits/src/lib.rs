@@ -5,7 +5,6 @@
     clippy::too_many_arguments,
     clippy::type_complexity
 )]
-#![deny(unsafe_code)]
 
 extern crate core;
 

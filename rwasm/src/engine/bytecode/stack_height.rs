@@ -1,8 +1,9 @@
 use crate::engine::bytecode::Instruction;
 
+#[derive(Debug, Copy, Clone)]
 pub enum RwOp {
-    StackWrite,
-    StackRead,
+    StackWrite(u32),
+    StackRead(u32),
     GlobalWrite(u32),
     GlobalRead(u32),
     MemoryWrite(u32),
@@ -30,7 +31,7 @@ impl Instruction {
             | Instruction::I64Load32S(val)
             | Instruction::I64Load32U(val) => {
                 stack_ops.push(RwOp::MemoryRead(val.into_inner()));
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::I32Store(val)
             | Instruction::I64Store(val)
@@ -41,11 +42,11 @@ impl Instruction {
             | Instruction::I64Store8(val)
             | Instruction::I64Store16(val)
             | Instruction::I64Store32(val) => {
-                stack_ops.push(RwOp::StackRead);
+                stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryWrite(val.into_inner()));
             }
 
-            Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite),
+            Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite(0)),
             Instruction::I32LtS
             | Instruction::I32LtU
             | Instruction::I32GtS
@@ -77,9 +78,9 @@ impl Instruction {
             | Instruction::F64Gt
             | Instruction::F64Le
             | Instruction::F64Ge => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::I32Add
             | Instruction::I32Sub
@@ -125,9 +126,9 @@ impl Instruction {
             | Instruction::F64Min
             | Instruction::F64Max
             | Instruction::F64Copysign => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::BrIfEqz(_)
             | Instruction::BrIfNez(_)
@@ -135,33 +136,46 @@ impl Instruction {
             | Instruction::BrTable(_)
             | Instruction::CallIndirect(_)
             | Instruction::Drop => {
-                stack_ops.push(RwOp::StackRead);
+                stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::Select => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::RefFunc(_) => stack_ops.push(RwOp::StackWrite),
-            Instruction::LocalSet(_) | Instruction::LocalGet(_) => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+            Instruction::RefFunc(_) => stack_ops.push(RwOp::StackWrite(0)),
+            Instruction::LocalGet(local_depth) => {
+                stack_ops.push(RwOp::StackRead(local_depth.to_usize() as u32));
+                stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::LocalTee(_) => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
-                stack_ops.push(RwOp::StackWrite);
+            Instruction::LocalSet(local_depth) => {
+                stack_ops.push(RwOp::StackRead(0));
+                // local depth can't be zero otherwise this op is useless
+                if local_depth.to_usize() > 0 {
+                    stack_ops.push(RwOp::StackWrite(local_depth.to_usize() as u32 - 1));
+                } else {
+                    stack_ops.push(RwOp::StackWrite(0));
+                }
+            }
+            Instruction::LocalTee(local_depth) => {
+                stack_ops.push(RwOp::StackRead(0));
+                // local depth can't be zero otherwise this op is useless
+                if local_depth.to_usize() > 0 {
+                    stack_ops.push(RwOp::StackWrite(local_depth.to_usize() as u32 - 1));
+                } else {
+                    stack_ops.push(RwOp::StackWrite(0));
+                }
             }
             Instruction::GlobalGet(val) => {
                 stack_ops.push(RwOp::GlobalRead(val.to_u32()));
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::GlobalSet(val) => {
-                stack_ops.push(RwOp::StackRead);
+                stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::GlobalWrite(val.to_u32()));
             }
-            Instruction::MemorySize => stack_ops.push(RwOp::StackWrite),
+            Instruction::MemorySize => stack_ops.push(RwOp::StackWrite(0)),
             // Instruction::MemoryInit(_) | Instruction::MemoryFill | Instruction::MemoryCopy => {
             //     stack_ops.push(RwOps::StackRead);
             //     stack_ops.push(RwOps::StackRead);
@@ -184,7 +198,9 @@ impl Instruction {
             //     stack_ops.push(RwOps::StackRead);
             //     stack_ops.push(RwOps::StackRead);
             // }
-            Instruction::I32Const(_) | Instruction::I64Const(_) => stack_ops.push(RwOp::StackWrite),
+            Instruction::I32Const(_) | Instruction::I64Const(_) => {
+                stack_ops.push(RwOp::StackWrite(0))
+            }
             _ => {}
         }
         stack_ops

@@ -2,6 +2,7 @@ use crate::{
     constraint_builder::{Query, ToExpr},
     util::Field,
 };
+use std::{fmt, fmt::Formatter};
 use strum_macros::EnumIter;
 
 pub const N_RW_TABLE_TAG_BYTES: usize = 4;
@@ -14,6 +15,18 @@ pub enum RwTableTag {
     Stack,
     Global,
     Table,
+}
+
+impl fmt::Display for RwTableTag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RwTableTag::Start => write!(f, "Start"),
+            RwTableTag::Memory => write!(f, "Memory"),
+            RwTableTag::Stack => write!(f, "Stack"),
+            RwTableTag::Global => write!(f, "Global"),
+            RwTableTag::Table => write!(f, "Table"),
+        }
+    }
 }
 
 impl Into<usize> for RwTableTag {
