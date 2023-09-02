@@ -29,7 +29,7 @@ impl SelectorColumn {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct FixedColumn(pub Column<Fixed>);
 
 impl FixedColumn {

@@ -186,7 +186,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
-                    println!("rw_row {}: {:?}", offset, rw_row);
+                    // println!("rw_row {}: {:?}", offset, rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,

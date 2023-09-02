@@ -185,7 +185,11 @@ impl<F: Field> RwTable<F> {
         // 3.5 state root does not change
     }
 
-    pub fn build_global_constraints(&self, _cb: &mut ConstraintBuilder<F>) {}
+    pub fn build_global_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+        cb.condition(self.q_first_access().and(self.q_is_read()), |cb| {
+            cb.assert_zero("global first access is always zero", self.value.current());
+        });
+    }
 
     pub fn build_table_constraints(&self, _cb: &mut ConstraintBuilder<F>) {}
 }

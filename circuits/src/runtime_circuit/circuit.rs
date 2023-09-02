@@ -8,6 +8,7 @@ use crate::{
             op_const::ConstGadget,
             op_conversion::ConversionGadget,
             op_drop::DropGadget,
+            op_global::GlobalGadget,
             op_local::LocalGadget,
             TraceStep,
         },
@@ -27,6 +28,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
     conversion_gadget: ExecutionGadgetRow<F, ConversionGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
+    global_gadget: ExecutionGadgetRow<F, GlobalGadget<F>>,
     local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
@@ -57,6 +59,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             const_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
+            global_gadget: configure_gadget!(),
             local_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
@@ -80,6 +83,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .conversion_gadget
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_DROP => self.drop_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_GLOBAL => {
+                self.global_gadget.assign(region, offset, step, rw_counter)
+            }
             ExecutionState::WASM_LOCAL => {
                 self.local_gadget.assign(region, offset, step, rw_counter)
             }
