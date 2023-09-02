@@ -13,8 +13,8 @@ pub enum ExecutionState {
     WASM_DROP,       // DONE
     WASM_GLOBAL,     // DONE
     WASM_LOAD,
-    WASM_LOCAL, // DONE
-    WASM_REL,
+    WASM_LOCAL,  // DONE
+    WASM_REL,    // DONE
     WASM_SELECT, // DONE
     WASM_STORE,
     WASM_TEST,
