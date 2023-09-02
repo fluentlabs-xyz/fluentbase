@@ -68,8 +68,26 @@ pub fn rw_rows_from_trace(
                 });
                 stack_reads += 1;
             }
-            // RwOp::GlobalWrite(_) => {}
-            // RwOp::GlobalRead(_) => {}
+            RwOp::GlobalWrite(global_index) => {
+                let value = trace.curr_nth_stack_value(0)?;
+                res.push(RwRow::Global {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    global_index: *global_index as usize,
+                    value,
+                });
+            }
+            RwOp::GlobalRead(global_index) => {
+                let value = trace.next_nth_stack_value(0)?;
+                res.push(RwRow::Global {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    global_index: *global_index as usize,
+                    value,
+                });
+            }
             // RwOp::MemoryWrite(_) => {}
             // RwOp::MemoryRead(_) => {}
             // RwOp::TableWrite => {}

@@ -11,7 +11,6 @@ use crate::{
 use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner},
-    halo2curves::bn256::Fr,
     plonk::{Circuit, ConstraintSystem, Error},
 };
 
@@ -112,7 +111,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
 mod tests {
     use super::*;
     use fluentbase_rwasm::instruction_set;
-    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr};
 
     fn test_ok<I: Into<Vec<u8>>>(bytecode: I) {
         let bytecode: Vec<u8> = bytecode.into();

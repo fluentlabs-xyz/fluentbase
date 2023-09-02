@@ -1,10 +1,14 @@
+#[cfg(test)]
+use crate::util::poseidon_hash;
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query},
     unrolled_bytecode::UnrolledBytecode,
-    util::{poseidon_hash, Field},
+    util::Field,
 };
+#[cfg(test)]
+use halo2_proofs::circuit::Region;
 use halo2_proofs::{
-    circuit::{Layouter, Region},
+    circuit::Layouter,
     plonk::{Advice, Column, ConstraintSystem, Error, Fixed},
 };
 use poseidon_circuit::{
