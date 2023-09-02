@@ -9,7 +9,15 @@ use crate::{
         SelectorColumn,
         ToExpr,
     },
-    lookup_table::{LookupTable, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    fixed_table::FixedTableTag,
+    lookup_table::{
+        FixedLookup,
+        LookupTable,
+        RangeCheckLookup,
+        ResponsibleOpcodeLookup,
+        RwLookup,
+        RwasmLookup,
+    },
     runtime_circuit::execution_state::ExecutionState,
     state_circuit::tag::RwTableTag,
     util::Field,
@@ -169,6 +177,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             ])));
     }
 
+    pub fn fixed_lookup(&mut self, tag: FixedTableTag, table: [Query<F>; 3]) {
+        self.op_lookups
+            .push(LookupTable::Fixed(self.base.apply_lookup_condition([
+                tag.expr(),
+                table[0].clone(),
+                table[1].clone(),
+                table[2].clone(),
+            ])))
+    }
+
     pub fn rw_lookup(
         &mut self,
         is_write: Query<F>,
@@ -240,6 +258,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         rw_lookup: &impl RwLookup<F>,
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
+        fixed_lookup: &impl FixedLookup<F>,
     ) {
         while let Some(state_lookup) = self.op_lookups.pop() {
             match state_lookup {
@@ -283,6 +302,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "responsible_opcode(execution_state,opcode)",
                         fields,
                         range_check_lookup.lookup_u16_table(),
+                    );
+                }
+                LookupTable::Fixed(fields) => {
+                    self.base.add_lookup(
+                        "fixed(tag,table)",
+                        fields,
+                        fixed_lookup.lookup_fixed_table(),
                     );
                 }
             }

@@ -28,6 +28,12 @@ pub trait ResponsibleOpcodeLookup<F: Field> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE];
 }
 
+pub const N_FIXED_LOOKUP_TABLE: usize = 4;
+
+pub trait FixedLookup<F: Field> {
+    fn lookup_fixed_table(&self) -> [Query<F>; N_FIXED_LOOKUP_TABLE];
+}
+
 pub enum LookupTable<F: Field> {
     Rwasm([Query<F>; N_RWASM_LOOKUP_TABLE]),
     Rw([Query<F>; N_RW_LOOKUP_TABLE]),
@@ -35,4 +41,5 @@ pub enum LookupTable<F: Field> {
     RangeCheck8([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck10([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck16([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
+    Fixed([Query<F>; N_FIXED_LOOKUP_TABLE]),
 }

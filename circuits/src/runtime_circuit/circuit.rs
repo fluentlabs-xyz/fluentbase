@@ -1,5 +1,5 @@
 use crate::{
-    lookup_table::{RangeCheckLookup, RwLookup, RwasmLookup},
+    lookup_table::{FixedLookup, RangeCheckLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         execution_gadget::ExecutionGadgetRow,
         execution_state::ExecutionState,
@@ -43,6 +43,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
+        fixed_lookup: &impl FixedLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
@@ -53,6 +54,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                     state_lookup,
                     &responsible_opcode_table,
                     range_check_lookup,
+                    fixed_lookup,
                 )
             };
         }
