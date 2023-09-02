@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct GlobalGadget<F: Field> {
+pub(crate) struct OpGlobalGadget<F: Field> {
     is_get_global: FixedColumn,
     is_set_global: FixedColumn,
     index: AdviceColumn,
@@ -21,7 +21,7 @@ pub(crate) struct GlobalGadget<F: Field> {
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for GlobalGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpGlobalGadget<F> {
     const NAME: &'static str = "WASM_GLOBAL";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_GLOBAL;

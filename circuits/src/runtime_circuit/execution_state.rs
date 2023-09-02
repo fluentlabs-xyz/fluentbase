@@ -5,17 +5,17 @@ use strum_macros::EnumIter;
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum ExecutionState {
-    WASM_BIN,
+    WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
-    WASM_CONST,
-    WASM_CONVERSION,
-    WASM_DROP,
-    WASM_GLOBAL,
+    WASM_CONST,      // DONE
+    WASM_CONVERSION, // DONE
+    WASM_DROP,       // DONE
+    WASM_GLOBAL,     // DONE
     WASM_LOAD,
-    WASM_LOCAL,
+    WASM_LOCAL, // DONE
     WASM_REL,
-    WASM_SELECT,
+    WASM_SELECT, // DONE
     WASM_STORE,
     WASM_TEST,
     WASM_UNARY,
@@ -120,6 +120,7 @@ impl ExecutionState {
                 Instruction::LocalSet(Default::default()),
                 Instruction::LocalTee(Default::default()),
             ],
+            Self::WASM_SELECT => vec![Instruction::Select],
             _ => vec![],
         }
     }

@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct ConversionGadget<F> {
+pub(crate) struct OpConversionGadget<F> {
     value: AdviceColumn,
     value_limbs: [AdviceColumn; 8],
     res: AdviceColumn,
@@ -24,7 +24,7 @@ pub(crate) struct ConversionGadget<F> {
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for ConversionGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpConversionGadget<F> {
     const NAME: &'static str = "WASM_CONVERSION";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CONVERSION;
