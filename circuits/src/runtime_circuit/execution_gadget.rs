@@ -1,6 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, SelectorColumn},
-    lookup_table::{RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{FixedLookup, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
         opcodes::{ExecutionGadget, GadgetError, TraceStep},
@@ -28,6 +28,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         state_lookup: &impl RwLookup<F>,
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
+        fixed_lookup: &impl FixedLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         let mut state_transition = StateTransition::configure(cs);
@@ -41,6 +42,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             state_lookup,
             responsible_opcode_lookup,
             range_check_lookup,
+            fixed_lookup,
         );
         ExecutionGadgetRow {
             gadget: gadget_config,

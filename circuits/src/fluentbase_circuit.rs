@@ -1,4 +1,5 @@
 use crate::{
+    fixed_table::FixedTable,
     pi_circuit::PublicInputCircuitConfig,
     poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
     range_check::RangeCheckConfig,
@@ -25,6 +26,7 @@ pub struct FluentbaseCircuitConfig<F: Field> {
     // tables
     poseidon_table: PoseidonTable,
     range_check_table: RangeCheckConfig<F>,
+    fixed_table: FixedTable<F>,
 }
 
 impl<F: Field> FluentbaseCircuitConfig<F> {
@@ -32,6 +34,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         // init shared poseidon table
         let poseidon_table = PoseidonTable::configure(cs);
         let range_check_table = RangeCheckConfig::configure(cs);
+        let fixed_table = FixedTable::configure(cs);
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
@@ -41,6 +44,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             &rwasm_circuit_config,
             &state_circuit_config,
             &range_check_table,
+            &fixed_table,
         );
         let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         Self {
@@ -51,6 +55,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             state_circuit_config,
             poseidon_table,
             range_check_table,
+            fixed_table,
         }
     }
 
@@ -63,6 +68,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
+        self.fixed_table.load(layouter)?;
         // assign bytecode
         self.poseidon_circuit_config
             .assign_bytecode(layouter, bytecode)?;

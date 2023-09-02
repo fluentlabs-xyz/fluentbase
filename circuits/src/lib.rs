@@ -9,6 +9,7 @@
 extern crate core;
 
 mod constraint_builder;
+mod fixed_table;
 mod fluentbase_circuit;
 mod gadgets;
 mod lookup_table;
