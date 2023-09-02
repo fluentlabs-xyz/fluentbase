@@ -4,12 +4,13 @@ use crate::{
         execution_gadget::ExecutionGadgetRow,
         execution_state::ExecutionState,
         opcodes::{
-            op_bin::BinGadget,
-            op_const::ConstGadget,
-            op_conversion::ConversionGadget,
-            op_drop::DropGadget,
-            op_global::GlobalGadget,
-            op_local::LocalGadget,
+            op_bin::OpBinGadget,
+            op_const::OpConstGadget,
+            op_conversion::OpConversionGadget,
+            op_drop::OpDropGadget,
+            op_global::OpGlobalGadget,
+            op_local::OpLocalGadget,
+            op_select::OpSelectGadget,
             TraceStep,
         },
         responsible_opcode::ResponsibleOpcodeTable,
@@ -24,12 +25,13 @@ use halo2_proofs::{
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
-    bin_gadget: ExecutionGadgetRow<F, BinGadget<F>>,
-    const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
-    conversion_gadget: ExecutionGadgetRow<F, ConversionGadget<F>>,
-    drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
-    global_gadget: ExecutionGadgetRow<F, GlobalGadget<F>>,
-    local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
+    bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
+    const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
+    conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
+    drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
+    global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
+    local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
+    select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -61,6 +63,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             drop_gadget: configure_gadget!(),
             global_gadget: configure_gadget!(),
             local_gadget: configure_gadget!(),
+            select_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }
@@ -88,6 +91,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             }
             ExecutionState::WASM_LOCAL => {
                 self.local_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_SELECT => {
+                self.select_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_BREAK => {
                 // do nothing for WASM_BREAK for now

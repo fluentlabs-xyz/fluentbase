@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub(crate) struct LocalGadget<F: Field> {
+pub(crate) struct OpLocalGadget<F: Field> {
     is_get_local: FixedColumn,
     is_set_local: FixedColumn,
     is_tee_local: FixedColumn,
@@ -22,7 +22,7 @@ pub(crate) struct LocalGadget<F: Field> {
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
     const NAME: &'static str = "WASM_LOCAL";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_LOCAL;

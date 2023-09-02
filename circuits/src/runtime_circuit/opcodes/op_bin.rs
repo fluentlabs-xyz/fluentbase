@@ -12,7 +12,7 @@ use halo2_proofs::circuit::Region;
 use std::{marker::PhantomData, ops::Neg};
 
 #[derive(Clone, Debug)]
-pub(crate) struct BinGadget<F: Field> {
+pub(crate) struct OpBinGadget<F: Field> {
     lhs: AdviceColumn,
     lhs_neg: AdviceColumn,
     rhs: AdviceColumn,
@@ -38,7 +38,7 @@ pub(crate) struct BinGadget<F: Field> {
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for BinGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpBinGadget<F> {
     const NAME: &'static str = "WASM_BIN";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_BIN;

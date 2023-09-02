@@ -13,12 +13,12 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct DropGadget<F> {
+pub(crate) struct OpDropGadget<F> {
     value: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for DropGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpDropGadget<F> {
     const NAME: &'static str = "WASM_DROP";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_DROP;
