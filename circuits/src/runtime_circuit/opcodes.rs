@@ -7,6 +7,7 @@ pub(crate) mod op_global;
 pub(crate) mod op_local;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
+pub(crate) mod op_unary;
 
 pub use crate::trace_step::{GadgetError, TraceStep};
 use crate::{

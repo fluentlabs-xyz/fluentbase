@@ -255,6 +255,16 @@ impl Instruction {
                 stack_ops.push(RwOp::StackWrite(0));
             }
 
+            Instruction::I32Ctz
+            | Instruction::I64Ctz
+            | Instruction::I32Clz
+            | Instruction::I64Clz
+            | Instruction::I32Popcnt
+            | Instruction::I64Popcnt => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+
             _ => unreachable!("not supported rws for opcode: {:?}", self),
         }
         stack_ops

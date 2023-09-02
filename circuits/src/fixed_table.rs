@@ -63,9 +63,9 @@ impl FixedTableTag {
             Self::Range256 => {
                 Box::new((0..256).map(move |value| [tag, F::from(value), F::zero(), F::zero()]))
             }
-            Self::Range256x2 => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::zero()])
-            })),
+            // Self::Range256x2 => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::zero()])
+            // })),
             Self::Range512 => {
                 Box::new((0..512).map(move |value| [tag, F::from(value), F::zero(), F::zero()]))
             }
@@ -80,15 +80,15 @@ impl FixedTableTag {
                     F::zero(),
                 ]
             })),
-            Self::BitwiseAnd => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs & rhs)])
-            })),
-            Self::BitwiseOr => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs | rhs)])
-            })),
-            Self::BitwiseXor => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs ^ rhs)])
-            })),
+            // Self::BitwiseAnd => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs & rhs)])
+            // })),
+            // Self::BitwiseOr => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs | rhs)])
+            // })),
+            // Self::BitwiseXor => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| [tag, F::from(lhs), F::from(rhs), F::from(lhs ^ rhs)])
+            // })),
             Self::Pow2 => Box::new((0..256).map(move |value| {
                 let (pow_lo, pow_hi) = if value < 128 {
                     (F::from_u128(1_u128 << value), F::from(0))
@@ -97,96 +97,97 @@ impl FixedTableTag {
                 };
                 [tag, F::from(value), pow_lo, pow_hi]
             })),
-            Self::PopCnt => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| {
-                    [
-                        tag,
-                        F::from(lhs),
-                        F::from(rhs),
-                        F::from(bitintr::Popcnt::popcnt(lhs | rhs << 8)),
-                    ]
-                })
-            })),
-            Self::OpRel => Box::new((0..256).flat_map(move |lhs| {
-                // OpRel encoding: Neq: 0, Eq: 1, Gt: 2, Ge: 3, Lt: 4, Le: 5
-                // Code part will be constructed from verified bits, so rhs is correct to check by
-                // fix table.
-                (0..(256 * 6)).map(move |rhs_and_code| {
-                    let rhs = rhs_and_code & 0xff;
-                    let code = rhs_and_code >> 8;
-                    let out = match code {
-                        0 => lhs != rhs,
-                        1 => lhs == rhs,
-                        2 => lhs > rhs,
-                        3 => lhs >= rhs,
-                        4 => lhs < rhs,
-                        5 => lhs <= rhs,
-                        _ => unreachable!(),
-                    };
-                    [
-                        tag,
-                        F::from(lhs),
-                        F::from(rhs_and_code),
-                        F::from(out as u64),
-                    ]
-                })
-            })),
-            Self::Clz => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| {
-                    [
-                        tag,
-                        F::from(lhs),
-                        F::from(rhs),
-                        F::from(bitintr::Lzcnt::lzcnt((lhs | rhs << 8) as u16) as u64),
-                    ]
-                })
-            })),
+            // Self::PopCnt => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| {
+            //         [
+            //             tag,
+            //             F::from(lhs),
+            //             F::from(rhs),
+            //             F::from(bitintr::Popcnt::popcnt(lhs | rhs << 8)),
+            //         ]
+            //     })
+            // })),
+            // Self::OpRel => Box::new((0..256).flat_map(move |lhs| {
+            //     // OpRel encoding: Neq: 0, Eq: 1, Gt: 2, Ge: 3, Lt: 4, Le: 5
+            //     // Code part will be constructed from verified bits, so rhs is correct to check
+            // by     // fix table.
+            //     (0..(256 * 6)).map(move |rhs_and_code| {
+            //         let rhs = rhs_and_code & 0xff;
+            //         let code = rhs_and_code >> 8;
+            //         let out = match code {
+            //             0 => lhs != rhs,
+            //             1 => lhs == rhs,
+            //             2 => lhs > rhs,
+            //             3 => lhs >= rhs,
+            //             4 => lhs < rhs,
+            //             5 => lhs <= rhs,
+            //             _ => unreachable!(),
+            //         };
+            //         [
+            //             tag,
+            //             F::from(lhs),
+            //             F::from(rhs_and_code),
+            //             F::from(out as u64),
+            //         ]
+            //     })
+            // })),
+            // Self::Clz => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| {
+            //         [
+            //             tag,
+            //             F::from(lhs),
+            //             F::from(rhs),
+            //             F::from(bitintr::Lzcnt::lzcnt((lhs | rhs << 8) as u16) as u64),
+            //         ]
+            //     })
+            // })),
             // Lhs argument is what to count, about leading zeros.
             // Rhs is source to get one bit at position of last one bit from lhs.
             // Result is this filtered bit.
-            Self::ClzFilter => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| {
-                    let lzcnt = bitintr::Lzcnt::lzcnt(lhs as u8) as u64;
-                    let pos = 7 - lzcnt.min(7);
-                    let bit = 1 << pos;
-                    let filtred = (rhs & bit) >> pos;
-                    [tag, F::from(lhs), F::from(rhs), F::from(filtred)]
-                })
-            })),
-            Self::Ctz => Box::new((0..256).flat_map(move |lhs| {
-                (0..256).map(move |rhs| {
-                    [
-                        tag,
-                        F::from(lhs),
-                        F::from(rhs),
-                        F::from(bitintr::Tzcnt::tzcnt((lhs | rhs << 8) as u16) as u64),
-                    ]
-                })
-            })),
-            Self::CzOut => Box::new((0..289).flat_map(move |lhs| {
-                // Logic is to accumulate when it equal to 16, otherwize summ and return.
-                // If arguments is all zero, than result is zero.
-                (0..289).map(move |rhs| {
-                    [
-                        tag,
-                        F::from(lhs),
-                        F::from(rhs),
-                        F::from({
-                            let list = [lhs % 17, lhs / 17, rhs % 17, rhs / 17];
-                            let mut out = 0;
-                            for i in 0..4 {
-                                if list[i] == 16 {
-                                    out += 16;
-                                } else {
-                                    out += list[i];
-                                    break;
-                                }
-                            }
-                            out
-                        }),
-                    ]
-                })
-            })),
+            // Self::ClzFilter => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| {
+            //         let lzcnt = bitintr::Lzcnt::lzcnt(lhs as u8) as u64;
+            //         let pos = 7 - lzcnt.min(7);
+            //         let bit = 1 << pos;
+            //         let filtred = (rhs & bit) >> pos;
+            //         [tag, F::from(lhs), F::from(rhs), F::from(filtred)]
+            //     })
+            // })),
+            // Self::Ctz => Box::new((0..256).flat_map(move |lhs| {
+            //     (0..256).map(move |rhs| {
+            //         [
+            //             tag,
+            //             F::from(lhs),
+            //             F::from(rhs),
+            //             F::from(bitintr::Tzcnt::tzcnt((lhs | rhs << 8) as u16) as u64),
+            //         ]
+            //     })
+            // })),
+            // Self::CzOut => Box::new((0..289).flat_map(move |lhs| {
+            //     // Logic is to accumulate when it equal to 16, otherwize summ and return.
+            //     // If arguments is all zero, than result is zero.
+            //     (0..289).map(move |rhs| {
+            //         [
+            //             tag,
+            //             F::from(lhs),
+            //             F::from(rhs),
+            //             F::from({
+            //                 let list = [lhs % 17, lhs / 17, rhs % 17, rhs / 17];
+            //                 let mut out = 0;
+            //                 for i in 0..4 {
+            //                     if list[i] == 16 {
+            //                         out += 16;
+            //                     } else {
+            //                         out += list[i];
+            //                         break;
+            //                     }
+            //                 }
+            //                 out
+            //             }),
+            //         ]
+            //     })
+            // })),
+            _ => Box::new((0..1).map(move |_| [tag, F::zero(), F::zero(), F::zero()])),
         }
     }
 }
