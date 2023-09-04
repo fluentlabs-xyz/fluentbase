@@ -219,7 +219,11 @@ impl<'engine> ModuleBuilder<'engine> {
         Ok(())
     }
 
-    pub fn push_function_import(&mut self, name: ImportName, func_type_idx: FuncTypeIdx) -> Result<(), ModuleError> {
+    pub fn push_function_import(
+        &mut self,
+        name: ImportName,
+        func_type_idx: FuncTypeIdx,
+    ) -> Result<(), ModuleError> {
         self.imports.funcs.push(name);
         let func_type = self.func_types[func_type_idx.into_u32() as usize];
         self.funcs.push(func_type);
@@ -303,8 +307,13 @@ impl<'engine> ModuleBuilder<'engine> {
         Ok(())
     }
 
-    pub fn push_default_memory(&mut self, initial: u32, maximum: Option<u32>) -> Result<(), ModuleError> {
-        self.memories.push(MemoryType::new(initial, maximum).unwrap());
+    pub fn push_default_memory(
+        &mut self,
+        initial: u32,
+        maximum: Option<u32>,
+    ) -> Result<(), ModuleError> {
+        self.memories
+            .push(MemoryType::new(initial, maximum).unwrap());
         Ok(())
     }
 
@@ -335,11 +344,19 @@ impl<'engine> ModuleBuilder<'engine> {
         Ok(())
     }
 
-    pub fn push_empty_i64_globals(&mut self, num_globals: usize) -> Result<(), ModuleError> {
+    pub fn push_empty_globals(&mut self, num_globals: usize) -> Result<(), ModuleError> {
         let global_decl = GlobalType::new(ValueType::I64, Mutability::Var);
         (0..num_globals).for_each(|_| {
             self.globals.push(global_decl);
             self.globals_init.push(ConstExpr::zero());
+        });
+        Ok(())
+    }
+
+    pub fn push_empty_tables(&mut self, num_tables: usize) -> Result<(), ModuleError> {
+        let global_decl = TableType::new(ValueType::FuncRef, 1024, None);
+        (0..num_tables).for_each(|_| {
+            self.tables.push(global_decl);
         });
         Ok(())
     }

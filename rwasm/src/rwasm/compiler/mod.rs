@@ -52,19 +52,19 @@ pub struct Compiler<'linker> {
 }
 
 impl<'linker> Compiler<'linker> {
-    pub fn new(wasm_binary: &Vec<u8>) -> Result<Self, CompilerError> {
+    pub fn new(wasm_binary: &[u8]) -> Result<Self, CompilerError> {
         Self::new_with_linker(wasm_binary, None)
     }
 
     pub fn new_with_linker(
-        wasm_binary: &Vec<u8>,
+        wasm_binary: &[u8],
         import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
         config.consume_fuel(false);
         let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice())
-            .map_err(|e| CompilerError::ModuleError(e))?;
+        let module =
+            Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
         Ok(Compiler {
             engine,
             module,
