@@ -173,7 +173,7 @@ where
 }
 
 /// Helper function to get a decimal representation given the bits.
-pub fn from_bits(bits: &[bool]) -> usize {
+pub fn from_bits_be(bits: &[bool]) -> usize {
     bits.iter()
         .fold(0, |result, &bit| bit as usize + 2 * result)
 }
