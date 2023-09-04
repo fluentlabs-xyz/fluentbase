@@ -244,14 +244,14 @@ fn calc_limb_differences<F: Field>(
 #[cfg(test)]
 mod test {
     use super::LimbIndex;
-    use crate::gadgets::binary_number::{from_bits, AsBits};
+    use crate::gadgets::binary_number::{from_bits_be, AsBits};
     use strum::IntoEnumIterator;
 
     #[test]
     fn enough_bits_for_limb_index() {
         for index in LimbIndex::iter() {
             assert_eq!(
-                from_bits(&<LimbIndex as AsBits<14>>::as_bits(&index)) as u32,
+                from_bits_be(&<LimbIndex as AsBits<14>>::as_bits(&index)) as u32,
                 index as u32
             );
         }
