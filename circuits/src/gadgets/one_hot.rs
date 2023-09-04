@@ -49,13 +49,13 @@ impl<T: IntoEnumIterator + Eq + PartialOrd + Ord> OneHot<T> {
         self.matches(values, 1)
     }
 
-    fn matches<F: Field>(&self, values: &[T], r: i32) -> BinaryQuery<F> {
+    fn matches<F: Field>(&self, values: &[T], rot: i32) -> BinaryQuery<F> {
         let query = values
             .iter()
             .map(|v| {
                 self.columns
                     .get(v)
-                    .map_or_else(|| !self.sum(r), |c| c.rotation(r))
+                    .map_or_else(|| !self.sum(rot), |c| c.rotation(rot))
             })
             .fold(Query::zero(), |a, b| a + b);
         // This cast is ok (if the values are distinct) because at most one column is set.
