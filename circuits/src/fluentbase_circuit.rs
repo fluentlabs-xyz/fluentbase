@@ -64,8 +64,8 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
-        input: &Vec<u8>,
-        output: &Vec<u8>,
+        _input: &Vec<u8>,
+        _output: &Vec<u8>,
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;

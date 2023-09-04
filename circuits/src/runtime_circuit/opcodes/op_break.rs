@@ -37,7 +37,7 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
         let value = cb.query_cell();
         let value_inv = cb.query_cell();
 
-        cb.one_of_selectors([
+        cb.require_at_least_one_selector([
             is_br.current(),
             is_br_if_eqz.current(),
             is_br_if_nez.current(),
@@ -46,7 +46,7 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
         ]);
 
         cb.if_rwasm_opcode(is_br.current(), Instruction::Br(Default::default()), |cb| {
-            cb.set_next_program_counter(cb.query_rwasm_value().current())
+            cb.next_pc_jump(cb.query_rwasm_value())
         });
         cb.if_rwasm_opcode(
             is_br_if_eqz.current(),
@@ -54,9 +54,7 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
             |cb| {
                 cb.stack_pop(value.current());
                 let is_zero = 1.expr() - value.current() * value_inv.current();
-                cb.condition(is_zero, |cb| {
-                    cb.set_next_program_counter(cb.query_rwasm_value().current())
-                });
+                cb.condition(is_zero, |cb| cb.next_pc_jump(cb.query_rwasm_value()));
             },
         );
         cb.if_rwasm_opcode(
@@ -65,15 +63,13 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
             |cb| {
                 cb.stack_pop(value.current());
                 let is_not_zero = value.current() * value_inv.current();
-                cb.condition(is_not_zero, |cb| {
-                    cb.set_next_program_counter(cb.query_rwasm_value().current())
-                });
+                cb.condition(is_not_zero, |cb| cb.next_pc_jump(cb.query_rwasm_value()));
             },
         );
         cb.if_rwasm_opcode(
             is_br_adjust.current(),
             Instruction::BrAdjust(Default::default()),
-            |cb| cb.set_next_program_counter(cb.query_rwasm_value().current()),
+            |cb| cb.next_pc_jump(cb.query_rwasm_value()),
         );
         cb.if_rwasm_opcode(
             is_br_adjust_if_nez.current(),
@@ -81,9 +77,7 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
             |cb| {
                 cb.stack_pop(value.current());
                 let is_not_zero = value.current() * value_inv.current();
-                cb.condition(is_not_zero, |cb| {
-                    cb.set_next_program_counter(cb.query_rwasm_value().current())
-                });
+                cb.condition(is_not_zero, |cb| cb.next_pc_jump(cb.query_rwasm_value()));
             },
         );
 
