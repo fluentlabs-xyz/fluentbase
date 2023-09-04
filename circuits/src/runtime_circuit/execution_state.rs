@@ -17,7 +17,7 @@ pub enum ExecutionState {
     WASM_REL,    // DONE
     WASM_SELECT, // DONE
     WASM_STORE,
-    WASM_TEST,
+    WASM_TEST,  // DONE
     WASM_UNARY, // DONE
 }
 
