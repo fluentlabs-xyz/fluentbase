@@ -20,6 +20,7 @@ pub(crate) struct OpTableFillGadget<F: Field> {
     value: AdviceColumn,
     range: AdviceColumn,
     size: AdviceColumn,
+    out: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
@@ -35,6 +36,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         let value = cb.query_rwasm_value();
         let range = cb.query_rwasm_value();
         let size = cb.query_rwasm_value();
+        let out = cb.query_rwasm_value();
         cb.table_size(table_index.expr(), size.expr());
         cb.table_fill(table_index.expr(), start.expr(), value.expr(), range.expr());
         cb.stack_pop(start.current());
@@ -50,6 +52,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
             value,
             range,
             size,
+            out,
             _pd: Default::default(),
         }
     }
@@ -60,13 +63,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, start, value_type, value, range) = match trace.instr() {
+        let (table_index, start, value_type, value, range, out) = match trace.instr() {
             Instruction::TableFill(ti) =>
                 ( ti,
                   trace.curr_nth_stack_value(0)?,
                   trace.curr_nth_stack_value(1)?,
                   trace.curr_nth_stack_value(2)?,
                   trace.curr_nth_stack_value(3)?,
+                  trace.next_nth_stack_value(0)?,
                 ),
             _ => bail_illegal_opcode!(trace),
         };
@@ -75,6 +79,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         self.value_type.assign(region, offset, F::from(value_type.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
         self.range.assign(region, offset, F::from(range.to_bits()));
+        self.out.assign(region, offset, F::from(out.to_bits()));
         Ok(())
     }
 }
