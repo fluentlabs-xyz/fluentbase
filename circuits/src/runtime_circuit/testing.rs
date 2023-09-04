@@ -10,7 +10,8 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
     let circuit = FluentbaseCircuit {
         bytecode: UnrolledBytecode::new(bytecode.as_slice()),
         tracer: Some(execution_result.tracer()),
-        input_hash: Fr::zero(),
+        input: vec![],
+        output: vec![],
     };
     let k = 14;
     let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![Fr::zero()]]).unwrap();
