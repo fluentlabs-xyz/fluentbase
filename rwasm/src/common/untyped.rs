@@ -22,7 +22,7 @@ use paste::paste;
 /// An untyped value.
 ///
 /// Provides a dense and simple interface to all functional Wasm operations.
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct UntypedValue {
     /// This inner value is required to have enough bits to represent

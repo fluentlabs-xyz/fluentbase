@@ -14,7 +14,6 @@ use std::marker::PhantomData;
 pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     gadget: G,
     q_enable: SelectorColumn,
-    index: AdviceColumn,
     code: AdviceColumn,
     value: AdviceColumn,
     state_transition: StateTransition<F>,
@@ -34,7 +33,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         let mut state_transition = StateTransition::configure(cs);
         let mut cb = OpConstraintBuilder::new(cs, q_enable, &mut state_transition);
         let [index, opcode, value] = cb.query_rwasm_table();
-        cb.rwasm_lookup(index.current(), opcode.current(), value.current());
+        // cb.rwasm_lookup(index.current(), opcode.current(), value.current());
         cb.execution_state_lookup(G::EXECUTION_STATE, opcode.current());
         let gadget_config = G::configure(&mut cb);
         cb.build(
@@ -46,7 +45,6 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         );
         ExecutionGadgetRow {
             gadget: gadget_config,
-            index,
             code: opcode,
             value,
             q_enable,
@@ -64,8 +62,8 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
     ) -> Result<(), GadgetError> {
         self.q_enable.enable(region, offset);
         // assign rwasm params (index, code, value)
-        self.index
-            .assign(region, offset, F::from(step.curr().source_pc as u64));
+        // self.index
+        //     .assign(region, offset, F::from(step.curr().source_pc as u64));
         self.code
             .assign(region, offset, F::from(step.curr().code as u64));
         let value = step.curr().opcode.aux_value().unwrap_or_default();

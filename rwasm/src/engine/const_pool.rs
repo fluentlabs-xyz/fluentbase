@@ -5,7 +5,7 @@ use alloc::{
     vec::Vec,
 };
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
 pub struct ConstRef(u32);
 
 impl TryFrom<usize> for ConstRef {
@@ -14,7 +14,9 @@ impl TryFrom<usize> for ConstRef {
     fn try_from(index: usize) -> Result<Self, Self::Error> {
         match u32::try_from(index) {
             Ok(index) => Ok(Self(index)),
-            Err(_) => Err(TranslationError::new(TranslationErrorInner::ConstRefOutOfBounds)),
+            Err(_) => Err(TranslationError::new(
+                TranslationErrorInner::ConstRefOutOfBounds,
+            )),
         }
     }
 }
@@ -34,14 +36,13 @@ impl ConstRef {
 
 /// A pool of deduplicated reusable constant values.
 ///
-/// - Those constant values are identified by their associated [`ConstRef`].
-///   This type exists so that the `wasmi` bytecode can extract large constant
-///   values to this pool instead of storing their values inline.
-/// - All constant values are also deduplicated so that no duplicates
-///   are stored in a single [`ConstPool`]. This also means that deciding if two
-///   [`ConstRef`] values refer to the equal constant values can be efficiently
-///   done by comparing the [`ConstRef`] indices without resolving to their
-///   underlying constant values.
+/// - Those constant values are identified by their associated [`ConstRef`]. This type exists so
+///   that the `wasmi` bytecode can extract large constant values to this pool instead of storing
+///   their values inline.
+/// - All constant values are also deduplicated so that no duplicates are stored in a single
+///   [`ConstPool`]. This also means that deciding if two [`ConstRef`] values refer to the equal
+///   constant values can be efficiently done by comparing the [`ConstRef`] indices without
+///   resolving to their underlying constant values.
 #[derive(Debug, Default)]
 pub struct ConstPool {
     /// Mapping from constant [`UntypedValue`] values to [`ConstRef`] indices.
