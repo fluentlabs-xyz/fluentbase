@@ -230,8 +230,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn require_zeros(&mut self, name: &'static str, expr: Vec<Query<F>>) {
         assert!(expr.len() > 0);
-        self.base
-            .assert_zero(name, expr.iter().fold(Query::one(), |r, v| r * v.clone()))
+        expr.iter().for_each(|v| self.require_zero(name, v.clone()));
     }
 
     pub fn require_opcode(&mut self, instr: Instruction) {
