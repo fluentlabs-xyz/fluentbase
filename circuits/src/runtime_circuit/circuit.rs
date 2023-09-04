@@ -11,6 +11,7 @@ use crate::{
             op_global::OpGlobalGadget,
             op_local::OpLocalGadget,
             op_select::OpSelectGadget,
+            op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
             TraceStep,
         },
@@ -34,6 +35,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
     select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
+    test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -69,6 +71,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             local_gadget: configure_gadget!(),
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
+            test_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }
@@ -107,10 +110,8 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 // do nothing for WASM_BREAK for now
                 Ok(())
             }
-            ExecutionState::WASM_BREAK => {
-                // do nothing for WASM_BREAK for now
-                Ok(())
-            }
+            ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_BREAK => Ok(()),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"

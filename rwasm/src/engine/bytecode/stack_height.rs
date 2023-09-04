@@ -168,7 +168,7 @@ impl Instruction {
             }
             Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite(0)),
 
-            Instruction::I32Eqz | Instruction::I32Eq | Instruction::I32Ne => {
+            Instruction::I32Eqz | Instruction::I64Eqz => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));
             }
@@ -180,9 +180,8 @@ impl Instruction {
             | Instruction::I32LeU
             | Instruction::I32GeS
             | Instruction::I32GeU
-            | Instruction::I64Eqz
-            | Instruction::I64Eq
-            | Instruction::I64Ne
+            | Instruction::I32Eq
+            | Instruction::I32Ne
             | Instruction::I64LtS
             | Instruction::I64LtU
             | Instruction::I64GtS
@@ -192,11 +191,11 @@ impl Instruction {
             | Instruction::I64GeS
             | Instruction::I64GeU
             | Instruction::F32Eq
-            | Instruction::F32Ne
             | Instruction::F32Lt
             | Instruction::F32Gt
             | Instruction::F32Le
             | Instruction::F32Ge
+            | Instruction::F32Ne
             | Instruction::F64Eq
             | Instruction::F64Ne
             | Instruction::F64Lt
