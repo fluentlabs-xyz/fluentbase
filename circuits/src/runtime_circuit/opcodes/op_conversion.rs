@@ -1,5 +1,6 @@
 use crate::{
     constraint_builder::{AdviceColumn, ToExpr},
+    fixed_table::FixedTableTag,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -50,6 +51,12 @@ impl<F: Field> ExecutionGadget<F> for OpConversionGadget<F> {
 
         cb.stack_pop(value.expr());
         cb.stack_push(res.expr());
+
+        // Looks like using two fixed lookups is better now, than using one 16 bit lookup.
+        for i in 0..4 {
+            cb.fixed_lookup(FixedTableTag::Range256, [value_limbs[i * 2].expr(), 0.expr(), 0.expr()]);
+            cb.fixed_lookup(FixedTableTag::Range256, [value_limbs[i * 2 + 1].expr(), 0.expr(), 0.expr()]);
+        }
 
         // for i in 0..4 {
         //     cb.add_lookup(
