@@ -108,7 +108,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             }
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_BREAK => Ok(()),
-            _ => unreachable!("not supported gadget {:?}"),
+            _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"
         res.unwrap();
