@@ -13,13 +13,13 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct TableSizeGadget<F: Field> {
+pub(crate) struct OpTableSizeGadget<F: Field> {
     table_index: AdviceColumn,
     value: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for TableSizeGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
     const NAME: &'static str = "WASM_TABLE_SIZE";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SIZE;
@@ -43,7 +43,7 @@ impl<F: Field> ExecutionGadget<F> for TableSizeGadget<F> {
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
         let (table_index, value) = match trace.instr() {
-            Instruction::TableSize(ti) => (ti, trace.curr_nth_stack_value(0)?),
+            Instruction::TableSize(ti) => (ti, trace.next_nth_stack_value(0)?),
             _ => bail_illegal_opcode!(trace),
         };
         self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
@@ -54,12 +54,12 @@ impl<F: Field> ExecutionGadget<F> for TableSizeGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok_with_demo_table;
+    use crate::runtime_circuit::testing::test_ok;
     use fluentbase_rwasm::instruction_set;
 
     #[test]
     fn table_size() {
-        test_ok_with_demo_table(instruction_set! {
+        test_ok(instruction_set! {
             TableSize(0)
             Drop
         });

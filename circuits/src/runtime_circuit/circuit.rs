@@ -12,6 +12,15 @@ use crate::{
             op_local::OpLocalGadget,
             op_select::OpSelectGadget,
             op_unary::OpUnaryGadget,
+            table_ops::{
+              copy::OpTableCopyGadget,
+              fill::OpTableFillGadget,
+              get::OpTableGetGadget,
+              grow::OpTableGrowGadget,
+              init::OpTableInitGadget,
+              set::OpTableSetGadget,
+              size::OpTableSizeGadget,
+            },
             TraceStep,
         },
         responsible_opcode::ResponsibleOpcodeTable,
@@ -34,6 +43,13 @@ pub struct RuntimeCircuitConfig<F: Field> {
     local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
     select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
+    table_copy_gadget: ExecutionGadgetRow<F, OpTableCopyGadget<F>>,
+    table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
+    table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
+    table_grow_gadget: ExecutionGadgetRow<F, OpTableGrowGadget<F>>,
+    table_init_gadget: ExecutionGadgetRow<F, OpTableInitGadget<F>>,
+    table_set_gadget: ExecutionGadgetRow<F, OpTableSetGadget<F>>,
+    table_size_gadget: ExecutionGadgetRow<F, OpTableSizeGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -69,6 +85,13 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             local_gadget: configure_gadget!(),
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
+            table_copy_gadget: configure_gadget!(),
+            table_fill_gadget: configure_gadget!(),
+            table_get_gadget: configure_gadget!(),
+            table_grow_gadget: configure_gadget!(),
+            table_init_gadget: configure_gadget!(),
+            table_set_gadget: configure_gadget!(),
+            table_size_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }
@@ -100,9 +123,19 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_SELECT => {
                 self.select_gadget.assign(region, offset, step, rw_counter)
             }
+
             ExecutionState::WASM_UNARY => {
                 self.unary_gadget.assign(region, offset, step, rw_counter)
             }
+
+            ExecutionState::WASM_TABLE_COPY => { self.table_copy_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_FILL => { self.table_fill_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_GET => { self.table_get_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_GROW => { self.table_grow_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_INIT => { self.table_init_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_SET => { self.table_set_gadget.assign(region, offset, step, rw_counter) }
+            ExecutionState::WASM_TABLE_SIZE => { self.table_size_gadget.assign(region, offset, step, rw_counter) }
+
             ExecutionState::WASM_BREAK => {
                 // do nothing for WASM_BREAK for now
                 Ok(())

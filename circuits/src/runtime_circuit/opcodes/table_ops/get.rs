@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct TableGetGadget<F: Field> {
+pub(crate) struct OpTableGetGadget<F: Field> {
     table_index: AdviceColumn,
     elem_index: AdviceColumn,
     value: AdviceColumn,
@@ -21,7 +21,7 @@ pub(crate) struct TableGetGadget<F: Field> {
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for TableGetGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
     const NAME: &'static str = "WASM_TABLE_GET";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GET;
@@ -70,12 +70,12 @@ impl<F: Field> ExecutionGadget<F> for TableGetGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime_circuit::testing::test_ok_with_demo_table;
+    use crate::runtime_circuit::testing::test_ok;
     use fluentbase_rwasm::instruction_set;
 
     #[test]
     fn table_get() {
-        test_ok_with_demo_table(instruction_set! {
+        test_ok(instruction_set! {
             I32Const(0)
             I32Const(0)
             RefFunc(0)
