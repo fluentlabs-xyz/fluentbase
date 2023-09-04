@@ -103,6 +103,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_UNARY => {
                 self.unary_gadget.assign(region, offset, step, rw_counter)
             }
+            ExecutionState::WASM_CALL => {
+                // do nothing for WASM_BREAK for now
+                Ok(())
+            }
             ExecutionState::WASM_BREAK => {
                 // do nothing for WASM_BREAK for now
                 Ok(())

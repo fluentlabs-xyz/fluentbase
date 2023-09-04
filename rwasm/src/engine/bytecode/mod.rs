@@ -37,7 +37,7 @@ use strum_macros::EnumIter;
 ///
 /// For example the `BrTable` instruction is unrolled into separate instructions
 /// each representing either the `BrTable` head or one of its branching targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "std", derive(EnumIter))]
 pub enum Instruction {
     LocalGet(LocalDepth),
