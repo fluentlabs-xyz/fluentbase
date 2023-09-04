@@ -14,7 +14,8 @@ use std::marker::PhantomData;
 pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     gadget: G,
     q_enable: SelectorColumn,
-    code: AdviceColumn,
+    pc: AdviceColumn,
+    opcode: AdviceColumn,
     value: AdviceColumn,
     state_transition: StateTransition<F>,
     pd: PhantomData<F>,
@@ -30,11 +31,15 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         fixed_lookup: &impl FixedLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
+        // we store register states in state transition gadget
         let mut state_transition = StateTransition::configure(cs);
         let mut cb = OpConstraintBuilder::new(cs, q_enable, &mut state_transition);
-        let [index, opcode, value] = cb.query_rwasm_table();
-        // cb.rwasm_lookup(index.current(), opcode.current(), value.current());
-        cb.execution_state_lookup(G::EXECUTION_STATE, opcode.current());
+        // extract rwasm table with opcode and value fields (for lookup)
+        let [pc, opcode, value] = cb.rwasm_table();
+        // make sure opcode and value fields are correct and set properly
+        cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
+        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_code());
+        // configure gadget and build gates
         let gadget_config = G::configure(&mut cb);
         cb.build(
             rwasm_lookup,
@@ -45,7 +50,8 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         );
         ExecutionGadgetRow {
             gadget: gadget_config,
-            code: opcode,
+            pc,
+            opcode,
             value,
             q_enable,
             state_transition,
@@ -61,11 +67,11 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         rw_counter: usize,
     ) -> Result<(), GadgetError> {
         self.q_enable.enable(region, offset);
-        // assign rwasm params (index, code, value)
-        // self.index
-        //     .assign(region, offset, F::from(step.curr().source_pc as u64));
-        self.code
-            .assign(region, offset, F::from(step.curr().code as u64));
+        // assign rwasm params (code, value)
+        let pc = step.curr().source_pc as u64;
+        self.pc.assign(region, offset, F::from(pc));
+        let opcode = step.curr().code as u64;
+        self.opcode.assign(region, offset, F::from(opcode));
         let value = step.curr().opcode.aux_value().unwrap_or_default();
         self.value.assign(region, offset, F::from(value.to_bits()));
         // assign state transition

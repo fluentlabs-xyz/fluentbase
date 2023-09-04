@@ -46,7 +46,3 @@ rand_chacha = "0.3.0"
 plotters = "0.3"
 bencher = "0.1"
 subtle = "2"
-
-[profile.test]
-opt-level = 3
-debug-assertions = true

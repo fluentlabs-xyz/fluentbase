@@ -1,6 +1,5 @@
 use crate::{
     constraint_builder::{AdviceColumn, ToExpr},
-    gadgets::binary_number::AsBits,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -11,7 +10,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
-use std::{marker::PhantomData, ops::Neg};
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTestGadget<F> {

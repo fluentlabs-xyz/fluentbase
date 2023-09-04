@@ -19,6 +19,13 @@ pub(crate) mod op_select;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
 
+#[macro_export]
+macro_rules! bail_illegal_opcode {
+    ($trace:expr) => {
+        unreachable!("illegal opcode place {:?}", $trace)
+    };
+}
+
 pub trait ExecutionGadget<F: Field> {
     const NAME: &'static str;
 
@@ -32,11 +39,4 @@ pub trait ExecutionGadget<F: Field> {
         offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError>;
-}
-
-#[macro_export]
-macro_rules! bail_illegal_opcode {
-    ($trace:expr) => {
-        unreachable!("illegal opcode place {:?}", $trace)
-    };
 }
