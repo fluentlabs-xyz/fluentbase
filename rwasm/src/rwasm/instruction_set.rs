@@ -163,6 +163,23 @@ impl InstructionSet {
             .unwrap_or_default()
     }
 
+    pub fn count_tables(&self) -> u32 {
+        self.instr
+            .iter()
+            .filter_map(|opcode| match opcode {
+                Instruction::TableSize(index)
+                | Instruction::TableGrow(index)
+                | Instruction::TableFill(index)
+                | Instruction::TableGet(index)
+                | Instruction::TableSet(index)
+                | Instruction::TableCopy(index) => Some(index.to_u32()),
+                _ => None,
+            })
+            .max()
+            .map(|v| v + 1)
+            .unwrap_or_default()
+    }
+
     pub fn instr(&self) -> &Vec<Instruction> {
         &self.instr
     }
