@@ -221,13 +221,13 @@ impl<F: Field> RwasmCircuitConfig<F> {
         trace: &ReducedModuleTrace,
     ) {
         self.q_enable.enable(region, offset);
-        println!(
-            "{:?}: index={}, code={}, aux={}",
-            trace.instr,
-            trace.offset,
-            trace.code,
-            trace.aux.to_bits()
-        );
+        // println!(
+        //     "{:?}: index={}, code={}, aux={}",
+        //     trace.instr,
+        //     trace.offset,
+        //     trace.code,
+        //     trace.aux.to_bits()
+        // );
         self.index
             .assign(region, offset, F::from(trace.offset as u64));
         self.offset.assign(

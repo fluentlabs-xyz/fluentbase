@@ -8,13 +8,11 @@ use crate::{
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
-use halo2_proofs::{
-    circuit::{Region, Value},
-    plonk::Error,
-};
+use halo2_proofs::circuit::Region;
+use std::{marker::PhantomData, ops::Neg};
 
 #[derive(Clone, Debug)]
-pub(crate) struct WasmBinGadget<F: Field> {
+pub(crate) struct OpBinGadget<F: Field> {
     lhs: AdviceColumn,
     lhs_neg: AdviceColumn,
     rhs: AdviceColumn,
@@ -37,9 +35,10 @@ pub(crate) struct WasmBinGadget<F: Field> {
     aux3: AdviceColumn,
     aux3_neg: AdviceColumn,
     is_64bits: AdviceColumn,
+    pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpBinGadget<F> {
     const NAME: &'static str = "WASM_BIN";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_BIN;
@@ -79,7 +78,7 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
         // let rhs_flag_helper_diff = cb.alloc_common_range_value();
         // let d_flag_helper_diff = cb.alloc_common_range_value();
 
-        let is_64bits = cb.alloc_bit_value();
+        let is_64bits = cb.query_cell();
 
         cb.stack_pop(rhs.expr());
         cb.stack_pop(lhs.expr());
@@ -258,6 +257,7 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
             aux3,
             aux3_neg,
             is_64bits,
+            pd: Default::default(),
         }
     }
 
@@ -271,12 +271,9 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
         let lhs = trace.curr_nth_stack_value(1)?;
         let res = trace.next_nth_stack_value(0)?;
 
-        self.lhs
-            .assign(region, offset, Value::known(lhs.to_scalar().unwrap()))?;
-        self.rhs
-            .assign(region, offset, Value::known(rhs.to_scalar().unwrap()))?;
-        self.res
-            .assign(region, offset, Value::known(res.to_scalar().unwrap()))?;
+        self.lhs.assign(region, offset, lhs.to_bits());
+        self.rhs.assign(region, offset, rhs.to_bits());
+        self.res.assign(region, offset, res.to_bits());
 
         let selector = match trace.instr() {
             Instruction::I32Add | Instruction::I64Add => &self.is_add,
@@ -288,7 +285,7 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
             Instruction::I32RemS | Instruction::I64RemS => &self.is_rem_s,
             _ => unreachable!("not supported opcode: {:?}", trace.instr()),
         };
-        selector.assign(region, offset, Value::known(F::one()))?;
+        selector.assign(region, offset, F::one());
 
         let aux1;
         let mut aux2 = 0u64;
@@ -303,7 +300,7 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
                 aux1 = overflow as u64
             }
             Instruction::I64Add => {
-                let (_, overflow) = lhs.overflowing_add(rhs);
+                let (_, overflow) = lhs.as_u64().overflowing_add(rhs.as_u64());
                 aux1 = overflow as u64
             }
             Instruction::I32Sub => {
@@ -311,7 +308,7 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
                 aux1 = overflow as u64
             }
             Instruction::I64Sub => {
-                let (_, overflow) = lhs.overflowing_sub(rhs);
+                let (_, overflow) = lhs.as_u64().overflowing_sub(rhs.as_u64());
                 aux1 = overflow as u64
             }
             Instruction::I32Mul => {
@@ -353,25 +350,16 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
             }
             _ => unreachable!("not supported opcode: {:?}", trace.instr()),
         };
-        self.aux1
-            .assign(region, offset, Value::known(F::from(aux1)))?;
-        self.aux2
-            .assign(region, offset, Value::known(F::from(aux2)))?;
-        self.aux3
-            .assign(region, offset, Value::known(F::from(aux3)))?;
-        self.div_rem_s_is_lhs_pos.assign(
-            region,
-            offset,
-            Value::known(F::from(div_rem_s_is_lhs_pos)),
-        )?;
-        self.div_rem_s_is_rhs_pos.assign(
-            region,
-            offset,
-            Value::known(F::from(div_rem_s_is_rhs_pos)),
-        )?;
+        self.aux1.assign(region, offset, F::from(aux1));
+        self.aux2.assign(region, offset, F::from(aux2));
+        self.aux3.assign(region, offset, F::from(aux3));
+        self.div_rem_s_is_lhs_pos
+            .assign(region, offset, F::from(div_rem_s_is_lhs_pos));
+        self.div_rem_s_is_rhs_pos
+            .assign(region, offset, F::from(div_rem_s_is_rhs_pos));
 
         let is_64bit = matches!(
-            opcode,
+            trace.instr(),
             Instruction::I64Add
                 | Instruction::I64Sub
                 | Instruction::I64Mul
@@ -381,43 +369,37 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
                 | Instruction::I64RemU
         );
         self.is_64bits
-            .assign(region, offset, Value::known(F::from(is_64bit as u64)))?;
+            .assign(region, offset, F::from(is_64bit as u64));
 
-        let mut rhs_neg = 0u64;
-        let mut lhs_neg = 0u64;
-        let mut res_neg = 0u64;
-        let mut aux1_neg = 0u64;
-        let mut aux2_neg = 0u64;
-        let mut aux3_neg = 0u64;
+        let rhs_neg: u64;
+        let lhs_neg: u64;
+        let res_neg: u64;
+        let aux1_neg: u64;
+        let aux2_neg: u64;
+        let aux3_neg: u64;
 
         if is_64bit {
-            rhs_neg = (rhs.0[0] as i64).neg() as u64;
-            lhs_neg = (lhs.0[0] as i64).neg() as u64;
-            res_neg = (res.0[0] as i64).neg() as u64;
+            rhs_neg = (rhs.as_u64() as i64).neg() as u64;
+            lhs_neg = (lhs.as_u64() as i64).neg() as u64;
+            res_neg = (res.as_u64() as i64).neg() as u64;
             aux1_neg = (aux1 as i64).neg() as u64;
             aux2_neg = (aux2 as i64).neg() as u64;
             aux3_neg = (aux3 as i64).neg() as u64;
         } else {
-            rhs_neg = ((rhs.0[0] as i32).neg() as u32) as u64;
-            lhs_neg = ((lhs.0[0] as i32).neg() as u32) as u64;
-            res_neg = ((res.0[0] as i32).neg() as u32) as u64;
+            rhs_neg = ((rhs.as_u32() as i32).neg() as u32) as u64;
+            lhs_neg = ((lhs.as_u32() as i32).neg() as u32) as u64;
+            res_neg = ((res.as_u32() as i32).neg() as u32) as u64;
             aux1_neg = ((aux1 as i32).neg() as u32) as u64;
             aux2_neg = ((aux2 as i32).neg() as u32) as u64;
             aux3_neg = ((aux3 as i32).neg() as u32) as u64;
         }
 
-        self.rhs_neg
-            .assign(region, offset, Value::known(F::from(rhs_neg)))?;
-        self.lhs_neg
-            .assign(region, offset, Value::known(F::from(lhs_neg)))?;
-        self.res_neg
-            .assign(region, offset, Value::known(F::from(res_neg)))?;
-        self.aux1_neg
-            .assign(region, offset, Value::known(F::from(aux1_neg)))?;
-        self.aux2_neg
-            .assign(region, offset, Value::known(F::from(aux2_neg)))?;
-        self.aux3_neg
-            .assign(region, offset, Value::known(F::from(aux3_neg)))?;
+        self.rhs_neg.assign(region, offset, F::from(rhs_neg));
+        self.lhs_neg.assign(region, offset, F::from(lhs_neg));
+        self.res_neg.assign(region, offset, F::from(res_neg));
+        self.aux1_neg.assign(region, offset, F::from(aux1_neg));
+        self.aux2_neg.assign(region, offset, F::from(aux2_neg));
+        self.aux3_neg.assign(region, offset, F::from(aux3_neg));
 
         Ok(())
     }
@@ -425,20 +407,12 @@ impl<F: Field> ExecutionGadget<F> for WasmBinGadget<F> {
 
 #[cfg(test)]
 mod test {
-    use crate::test_util::CircuitTestBuilder;
-    use eth_types::{bytecode, Bytecode};
-    use mock::TestContext;
-
-    fn run_test(bytecode: Bytecode) {
-        CircuitTestBuilder::new_from_test_ctx(
-            TestContext::<2, 1>::simple_ctx_with_bytecode(bytecode).unwrap(),
-        )
-        .run()
-    }
+    use crate::runtime_circuit::testing::test_ok;
+    use fluentbase_rwasm::instruction_set;
 
     #[test]
     fn test_i32_add() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[1]
             I32Const[1]
             I32Add
@@ -448,9 +422,9 @@ mod test {
 
     #[test]
     fn test_i32_add_overflow() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[1]
-            I32Const[4294967295]
+            I32Const[4294967295u32 as i32]
             I32Add
             Drop
         });
@@ -458,7 +432,7 @@ mod test {
 
     #[test]
     fn test_i64_add() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[1]
             I64Const[1]
             I64Add
@@ -468,9 +442,9 @@ mod test {
 
     #[test]
     fn test_i64_add_overflow() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[1]
-            I64Const[18446744073709551615]
+            I64Const[18446744073709551615u64 as i64]
             I64Add
             Drop
         });
@@ -478,7 +452,7 @@ mod test {
 
     #[test]
     fn test_i32_mul() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[3]
             I32Const[4]
             I32Mul
@@ -488,9 +462,9 @@ mod test {
 
     #[test]
     fn test_i32_mul_overflow() {
-        run_test(bytecode! {
-            I32Const[4294967295]
-            I32Const[4294967295]
+        test_ok(instruction_set! {
+            I32Const[4294967295u32 as i32]
+            I32Const[4294967295u32 as i32]
             I32Mul
             Drop
         });
@@ -498,14 +472,14 @@ mod test {
 
     #[test]
     fn test_i32_div_u() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[4]
             I32Const[3]
             I32DivU
             Drop
         });
-        run_test(bytecode! {
-            I32Const[0x80000000]
+        test_ok(instruction_set! {
+            I32Const[0x80000000u32 as i32]
             I32Const[1]
             I32DivU
             Drop
@@ -514,7 +488,7 @@ mod test {
 
     #[test]
     fn test_i64_mul() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[3]
             I64Const[4]
             I64Mul
@@ -524,9 +498,9 @@ mod test {
 
     #[test]
     fn test_i64_mul_overflow() {
-        run_test(bytecode! {
-            I64Const[18446744073709551615]
-            I64Const[18446744073709551615]
+        test_ok(instruction_set! {
+            I64Const[18446744073709551615u64 as i64]
+            I64Const[18446744073709551615u64 as i64]
             I64Mul
             Drop
         });
@@ -534,7 +508,7 @@ mod test {
 
     #[test]
     fn test_i32_64_rem() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[4]
             I64Const[3]
             I64RemU
@@ -548,7 +522,7 @@ mod test {
 
     macro_rules! div_rem_s_pat {
         ($A:ident, $B:ident) => {
-            run_test(bytecode! {
+            test_ok(instruction_set! {
                 $A[-4] $A[-3] $B Drop
                 $A[-4] $A[ 3] $B Drop
                 $A[ 4] $A[-3] $B Drop
@@ -577,7 +551,7 @@ mod test {
     // `s_pp` means signed where lhs is positive and rhs is positive.
     #[test]
     fn test_i32_64_rem_s_pp() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[4]
             I64Const[3]
             I64RemS
@@ -592,7 +566,7 @@ mod test {
     // `s_pp` means signed where lhs is positive and rhs is positive.
     #[test]
     fn test_i32_64_div_s_pp() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I64Const[4]
             I64Const[3]
             I64DivS
@@ -607,7 +581,7 @@ mod test {
     // `s_pp` means signed where lhs is positive and rhs is positive.
     #[test]
     fn test_i32_32_rem_s_pp() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[4]
             I32Const[3]
             I32RemS
@@ -622,7 +596,7 @@ mod test {
     // `s_pp` means signed where lhs is positive and rhs is positive.
     #[test]
     fn test_i32_32_div_s_pp() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[4]
             I32Const[3]
             I32DivS
@@ -636,7 +610,7 @@ mod test {
 
     #[test]
     fn test_different_cases() {
-        run_test(bytecode! {
+        test_ok(instruction_set! {
             I32Const[100]
             I32Const[20]
             I32Add

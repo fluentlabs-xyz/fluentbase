@@ -1,20 +1,21 @@
 use fluentbase_rwasm::engine::bytecode::Instruction;
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum ExecutionState {
-    WASM_BIN,
+    WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
-    WASM_CONST,
-    WASM_CONVERSION,
-    WASM_DROP,
-    WASM_GLOBAL,
+    WASM_CONST,      // DONE
+    WASM_CONVERSION, // DONE
+    WASM_DROP,       // DONE
+    WASM_GLOBAL,     // DONE
     WASM_LOAD,
-    WASM_LOCAL,
-    WASM_REL,
-    WASM_SELECT,
+    WASM_LOCAL,  // DONE
+    WASM_REL,    // DONE
+    WASM_SELECT, // DONE
     WASM_STORE,
     WASM_TEST,
     WASM_UNARY,
@@ -28,6 +29,24 @@ pub enum ExecutionState {
 }
 
 impl ExecutionState {
+    pub fn from_opcode(instr: Instruction) -> ExecutionState {
+        for state in Self::iter() {
+            // TODO: "yes, I've heard about lazy static, don't understand why its not here"
+            let found = state
+                .responsible_opcodes()
+                .iter()
+                .copied()
+                .find(|v| v.code_value() == instr.code_value());
+            if found.is_some() {
+                return state;
+            }
+        }
+        unreachable!(
+            "there is no execution state for opcode {:?}, it's not possible",
+            instr
+        )
+    }
+
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
             Self::WASM_BIN => vec![
@@ -108,6 +127,7 @@ impl ExecutionState {
                 Instruction::LocalSet(Default::default()),
                 Instruction::LocalTee(Default::default()),
             ],
+            Self::WASM_SELECT => vec![Instruction::Select],
             Self::WASM_TABLE_SIZE => vec![Instruction::TableSize(Default::default())],
             Self::WASM_TABLE_FILL => vec![Instruction::TableFill(Default::default())],
             Self::WASM_TABLE_GROW => vec![Instruction::TableGrow(Default::default())],
@@ -115,13 +135,6 @@ impl ExecutionState {
             Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
             Self::WASM_TABLE_COPY => vec![Instruction::TableCopy(Default::default())],
             Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
-            _ => unreachable!("not supported execution state {:?}", self),
-        }
-    }
-
-    pub fn instruction_matches(&self) -> Vec<Instruction> {
-        match self {
-            ExecutionState::WASM_CONST => vec![],
             _ => vec![],
         }
     }

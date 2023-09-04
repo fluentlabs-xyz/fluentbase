@@ -1,7 +1,8 @@
 use crate::{
-    gadgets::range_check::RangeCheckConfig,
+    fixed_table::FixedTable,
     pi_circuit::PublicInputCircuitConfig,
     poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
+    range_check::RangeCheckConfig,
     runtime_circuit::RuntimeCircuitConfig,
     rwasm_circuit::RwasmCircuitConfig,
     state_circuit::StateCircuitConfig,
@@ -11,7 +12,6 @@ use crate::{
 use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner},
-    halo2curves::bn256::Fr,
     plonk::{Circuit, ConstraintSystem, Error},
 };
 
@@ -26,6 +26,7 @@ pub struct FluentbaseCircuitConfig<F: Field> {
     // tables
     poseidon_table: PoseidonTable,
     range_check_table: RangeCheckConfig<F>,
+    fixed_table: FixedTable<F>,
 }
 
 impl<F: Field> FluentbaseCircuitConfig<F> {
@@ -33,12 +34,18 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         // init shared poseidon table
         let poseidon_table = PoseidonTable::configure(cs);
         let range_check_table = RangeCheckConfig::configure(cs);
+        let fixed_table = FixedTable::configure(cs);
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
         let state_circuit_config = StateCircuitConfig::configure(cs, &range_check_table);
-        let runtime_circuit_config =
-            RuntimeCircuitConfig::configure(cs, &rwasm_circuit_config, &state_circuit_config);
+        let runtime_circuit_config = RuntimeCircuitConfig::configure(
+            cs,
+            &rwasm_circuit_config,
+            &state_circuit_config,
+            &range_check_table,
+            &fixed_table,
+        );
         let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         Self {
             poseidon_circuit_config,
@@ -48,6 +55,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             state_circuit_config,
             poseidon_table,
             range_check_table,
+            fixed_table,
         }
     }
 
@@ -56,10 +64,12 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
-        input_hash: F,
+        input: &Vec<u8>,
+        output: &Vec<u8>,
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
+        self.fixed_table.load(layouter)?;
         // assign bytecode
         self.poseidon_circuit_config
             .assign_bytecode(layouter, bytecode)?;
@@ -69,7 +79,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             self.runtime_circuit_config.assign(layouter, tracer)?;
             self.state_circuit_config.assign(layouter, tracer)?;
         }
-        self.pi_circuit_config.expose_public(layouter, input_hash)?;
+        // self.pi_circuit_config.expose_public(layouter, input, output)?;
         Ok(())
     }
 }
@@ -78,7 +88,8 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
 pub struct FluentbaseCircuit<'tracer, F: Field> {
     pub(crate) bytecode: UnrolledBytecode<F>,
     pub(crate) tracer: Option<&'tracer Tracer>,
-    pub(crate) input_hash: F,
+    pub(crate) input: Vec<u8>,
+    pub(crate) output: Vec<u8>,
 }
 
 impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
@@ -99,7 +110,13 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        config.assign(&mut layouter, &self.bytecode, self.tracer, self.input_hash)?;
+        config.assign(
+            &mut layouter,
+            &self.bytecode,
+            self.tracer,
+            &self.input,
+            &self.output,
+        )?;
         Ok(())
     }
 }
@@ -108,15 +125,16 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
 mod tests {
     use super::*;
     use fluentbase_rwasm::instruction_set;
-    use halo2_proofs::dev::MockProver;
+    use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr};
 
     fn test_ok<I: Into<Vec<u8>>>(bytecode: I) {
         let bytecode: Vec<u8> = bytecode.into();
         let hash_value = Fr::zero();
         let circuit = FluentbaseCircuit {
             bytecode: UnrolledBytecode::new(bytecode.as_slice()),
-            tracer: Default::default(),
-            input_hash: hash_value,
+            tracer: None,
+            input: vec![],
+            output: vec![],
         };
         let k = 17;
         let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![hash_value]]).unwrap();
