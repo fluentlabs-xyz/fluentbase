@@ -55,7 +55,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
                 ( ti,
                   trace.curr_nth_stack_value(0)?,
                   trace.curr_nth_stack_value(1)?,
-                  trace.curr_nth_stack_value(2)?,
+                  trace.next_nth_stack_value(0)?,
                 ),
             _ => bail_illegal_opcode!(trace),
         };
