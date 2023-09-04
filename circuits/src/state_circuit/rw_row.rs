@@ -44,9 +44,9 @@ pub fn rw_rows_from_trace(
     let mut stack_writes = 0;
     for rw_op in rw_ops.iter() {
         match rw_op {
-            RwOp::StackWrite => {
-                let addr = trace.next_nth_stack_addr(stack_writes)?;
-                let value = trace.next_nth_stack_value(stack_writes)?;
+            RwOp::StackWrite(local_depth) => {
+                let addr = trace.next_nth_stack_addr(stack_writes + *local_depth as usize)?;
+                let value = trace.next_nth_stack_value(stack_writes + *local_depth as usize)?;
                 res.push(RwRow::Stack {
                     rw_counter: res.len(),
                     is_write: true,
@@ -56,9 +56,9 @@ pub fn rw_rows_from_trace(
                 });
                 stack_writes += 1
             }
-            RwOp::StackRead => {
-                let addr = trace.curr_nth_stack_addr(stack_reads)?;
-                let value = trace.curr_nth_stack_value(stack_reads)?;
+            RwOp::StackRead(local_depth) => {
+                let addr = trace.curr_nth_stack_addr(stack_reads + *local_depth as usize)?;
+                let value = trace.curr_nth_stack_value(stack_reads + *local_depth as usize)?;
                 res.push(RwRow::Stack {
                     rw_counter: res.len(),
                     is_write: false,
@@ -68,12 +68,31 @@ pub fn rw_rows_from_trace(
                 });
                 stack_reads += 1;
             }
-            RwOp::GlobalWrite(_) => {}
-            RwOp::GlobalRead(_) => {}
-            RwOp::MemoryWrite(_) => {}
-            RwOp::MemoryRead(_) => {}
-            RwOp::TableWrite => {}
-            RwOp::TableRead => {}
+            RwOp::GlobalWrite(global_index) => {
+                let value = trace.curr_nth_stack_value(0)?;
+                res.push(RwRow::Global {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    global_index: *global_index as usize,
+                    value,
+                });
+            }
+            RwOp::GlobalRead(global_index) => {
+                let value = trace.next_nth_stack_value(0)?;
+                res.push(RwRow::Global {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    global_index: *global_index as usize,
+                    value,
+                });
+            }
+            // RwOp::MemoryWrite(_) => {}
+            // RwOp::MemoryRead(_) => {}
+            // RwOp::TableWrite => {}
+            // RwOp::TableRead => {}
+            _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
     }
     Ok(())

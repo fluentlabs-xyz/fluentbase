@@ -31,6 +31,9 @@ wat = "1.0.69"
 plotters = "0.3"
 wasm-encoder = "0.31.1"
 rand_xorshift = "0.3.0"
+cli-table = "0.4.7"
+bitintr = "0.3.0"
+seq-macro = "0.3.5"
 
 [features]
 default = ["dev-graph", "std"]

@@ -1,8 +1,9 @@
 use crate::engine::bytecode::Instruction;
 
+#[derive(Debug, Copy, Clone)]
 pub enum RwOp {
-    StackWrite,
-    StackRead,
+    StackWrite(u32),
+    StackRead(u32),
     GlobalWrite(u32),
     GlobalRead(u32),
     MemoryWrite(u32),
@@ -15,6 +16,66 @@ impl Instruction {
     pub fn get_rw_ops(&self) -> Vec<RwOp> {
         let mut stack_ops = Vec::new();
         match *self {
+            Instruction::LocalGet(local_depth) => {
+                stack_ops.push(RwOp::StackRead(local_depth.to_usize() as u32));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::LocalSet(local_depth) => {
+                stack_ops.push(RwOp::StackRead(0));
+                // local depth can't be zero otherwise this op is useless
+                if local_depth.to_usize() > 0 {
+                    stack_ops.push(RwOp::StackWrite(local_depth.to_usize() as u32 - 1));
+                } else {
+                    stack_ops.push(RwOp::StackWrite(0));
+                }
+            }
+            Instruction::LocalTee(local_depth) => {
+                stack_ops.push(RwOp::StackRead(0));
+                // local depth can't be zero otherwise this op is useless
+                if local_depth.to_usize() > 0 {
+                    stack_ops.push(RwOp::StackWrite(local_depth.to_usize() as u32 - 1));
+                } else {
+                    stack_ops.push(RwOp::StackWrite(0));
+                }
+            }
+            Instruction::Br(_) => {}
+            Instruction::BrIfEqz(_) | Instruction::BrIfNez(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::BrAdjust(_) => {}
+            Instruction::BrAdjustIfNez(_) | Instruction::BrTable(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::Unreachable | Instruction::ConsumeFuel(_) | Instruction::Return(_) => {}
+            Instruction::ReturnIfNez(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::ReturnCallInternal(_) | Instruction::ReturnCall(_) => {}
+            Instruction::ReturnCallIndirect(_) | Instruction::ReturnCallIndirectUnsafe(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::CallInternal(_) => {}
+            Instruction::Call(_) => {}
+            Instruction::CallIndirect(_) | Instruction::CallIndirectUnsafe(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::Drop => {
+                stack_ops.push(RwOp::StackRead(0));
+            }
+            Instruction::Select => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::GlobalGet(val) => {
+                stack_ops.push(RwOp::GlobalRead(val.to_u32()));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::GlobalSet(val) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::GlobalWrite(val.to_u32()));
+            }
             Instruction::I32Load(val)
             | Instruction::I64Load(val)
             | Instruction::F32Load(val)
@@ -30,7 +91,7 @@ impl Instruction {
             | Instruction::I64Load32S(val)
             | Instruction::I64Load32U(val) => {
                 stack_ops.push(RwOp::MemoryRead(val.into_inner()));
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::I32Store(val)
             | Instruction::I64Store(val)
@@ -41,11 +102,31 @@ impl Instruction {
             | Instruction::I64Store8(val)
             | Instruction::I64Store16(val)
             | Instruction::I64Store32(val) => {
-                stack_ops.push(RwOp::StackRead);
+                stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryWrite(val.into_inner()));
             }
+            Instruction::MemorySize => stack_ops.push(RwOp::StackWrite(0)),
+            Instruction::MemoryGrow | Instruction::MemoryFill | Instruction::MemoryCopy => {}
+            Instruction::MemoryInit(_) => {}
+            Instruction::DataDrop(_) => {}
+            Instruction::TableSize(_) => {}
+            Instruction::TableGrow(_) => {}
+            Instruction::TableFill(_) => {}
+            Instruction::TableGet(_) => {}
+            Instruction::TableSet(_) => {}
+            Instruction::TableCopy(_) => {}
+            Instruction::TableInit(_) => {}
+            Instruction::ElemDrop(_) => {}
+            Instruction::RefFunc(_) => {}
+            Instruction::I32Const(_) | Instruction::I64Const(_) => {
+                stack_ops.push(RwOp::StackWrite(0))
+            }
+            Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite(0)),
 
-            Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite),
+            Instruction::I32Eqz | Instruction::I32Eq | Instruction::I32Ne => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
             Instruction::I32LtS
             | Instruction::I32LtU
             | Instruction::I32GtS
@@ -77,10 +158,16 @@ impl Instruction {
             | Instruction::F64Gt
             | Instruction::F64Le
             | Instruction::F64Ge => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
+
+            Instruction::I32Clz | Instruction::I32Ctz | Instruction::I32Popcnt => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+
             Instruction::I32Add
             | Instruction::I32Sub
             | Instruction::I32Mul
@@ -125,67 +212,60 @@ impl Instruction {
             | Instruction::F64Min
             | Instruction::F64Max
             | Instruction::F64Copysign => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::BrIfEqz(_)
-            | Instruction::BrIfNez(_)
-            | Instruction::BrAdjustIfNez(_)
-            | Instruction::BrTable(_)
-            | Instruction::CallIndirect(_)
-            | Instruction::Drop => {
-                stack_ops.push(RwOp::StackRead);
+
+            Instruction::I32WrapI64
+            | Instruction::I32TruncF32S
+            | Instruction::I32TruncF32U
+            | Instruction::I32TruncF64S
+            | Instruction::I32TruncF64U
+            | Instruction::I64ExtendI32S
+            | Instruction::I64ExtendI32U
+            | Instruction::I64TruncF32S
+            | Instruction::I64TruncF32U
+            | Instruction::I64TruncF64S
+            | Instruction::I64TruncF64U
+            | Instruction::F32ConvertI32S
+            | Instruction::F32ConvertI32U
+            | Instruction::F32ConvertI64S
+            | Instruction::F32ConvertI64U
+            | Instruction::F32DemoteF64
+            | Instruction::F64ConvertI32S
+            | Instruction::F64ConvertI32U
+            | Instruction::F64ConvertI64S
+            | Instruction::F64ConvertI64U
+            | Instruction::F64PromoteF32
+            | Instruction::I32Extend8S
+            | Instruction::I32Extend16S
+            | Instruction::I64Extend8S
+            | Instruction::I64Extend16S
+            | Instruction::I64Extend32S
+            | Instruction::I32TruncSatF32S
+            | Instruction::I32TruncSatF32U
+            | Instruction::I32TruncSatF64S
+            | Instruction::I32TruncSatF64U
+            | Instruction::I64TruncSatF32S
+            | Instruction::I64TruncSatF32U
+            | Instruction::I64TruncSatF64S
+            | Instruction::I64TruncSatF64U => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::Select => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
+
+            Instruction::I32Ctz
+            | Instruction::I64Ctz
+            | Instruction::I32Clz
+            | Instruction::I64Clz
+            | Instruction::I32Popcnt
+            | Instruction::I64Popcnt => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::RefFunc(_) => stack_ops.push(RwOp::StackWrite),
-            Instruction::LocalSet(_) | Instruction::LocalGet(_) => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
-            }
-            Instruction::LocalTee(_) => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::StackWrite);
-                stack_ops.push(RwOp::StackWrite);
-            }
-            Instruction::GlobalGet(val) => {
-                stack_ops.push(RwOp::GlobalRead(val.to_u32()));
-                stack_ops.push(RwOp::StackWrite);
-            }
-            Instruction::GlobalSet(val) => {
-                stack_ops.push(RwOp::StackRead);
-                stack_ops.push(RwOp::GlobalWrite(val.to_u32()));
-            }
-            Instruction::MemorySize => stack_ops.push(RwOp::StackWrite),
-            // Instruction::MemoryInit(_) | Instruction::MemoryFill | Instruction::MemoryCopy => {
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            //     unreachable!("more memory ops?")
-            // }
-            // Instruction::TableSize(_) => stack_ops.push(RwOps::StackWrite),
-            // Instruction::TableGrow(_) => stack_ops.push(RwOps::StackRead),
-            // Instruction::TableCopy(_) | Instruction::TableFill(_) => {
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            // }
-            // Instruction::TableSet(_) => {
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            // }
-            // Instruction::TableInit(_) => {
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            //     stack_ops.push(RwOps::StackRead);
-            // }
-            Instruction::I32Const(_) | Instruction::I64Const(_) => stack_ops.push(RwOp::StackWrite),
-            _ => {}
+
+            _ => unreachable!("not supported rws for opcode: {:?}", self),
         }
         stack_ops
     }

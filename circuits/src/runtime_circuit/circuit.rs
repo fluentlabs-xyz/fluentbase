@@ -1,123 +1,75 @@
 use crate::{
-    constraint_builder::{AdviceColumn, SelectorColumn},
-    lookup_table::{ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{FixedLookup, RangeCheckLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
-        constraint_builder::{OpConstraintBuilder, StateTransition},
+        execution_gadget::ExecutionGadgetRow,
+        execution_state::ExecutionState,
         opcodes::{
-            op_const::ConstGadget,
-            op_drop::DropGadget,
-            op_local::LocalGadget,
-            ExecutionGadget,
-            GadgetError,
+            op_bin::OpBinGadget,
+            op_const::OpConstGadget,
+            op_conversion::OpConversionGadget,
+            op_drop::OpDropGadget,
+            op_global::OpGlobalGadget,
+            op_local::OpLocalGadget,
+            op_select::OpSelectGadget,
+            op_unary::OpUnaryGadget,
             TraceStep,
         },
         responsible_opcode::ResponsibleOpcodeTable,
     },
     util::Field,
 };
-use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
+use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
-use std::marker::PhantomData;
-
-#[derive(Clone)]
-pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
-    gadget: G,
-    q_enable: SelectorColumn,
-    index: AdviceColumn,
-    code: AdviceColumn,
-    value: AdviceColumn,
-    pd: PhantomData<F>,
-}
-
-impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
-    pub fn configure(
-        cs: &mut ConstraintSystem<F>,
-        rwasm_lookup: &impl RwasmLookup<F>,
-        state_lookup: &impl RwLookup<F>,
-        responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
-        state_transition: &mut StateTransition<F>,
-    ) -> Self {
-        let q_enable = SelectorColumn(cs.fixed_column());
-        let mut cb = OpConstraintBuilder::new(cs, q_enable, state_transition);
-        let [index, code, value] = cb.query_rwasm_table();
-        cb.rwasm_lookup(index.current(), code.current(), value.current());
-        cb.execution_state_lookup(G::EXECUTION_STATE, code.current());
-        let gadget_config = G::configure(&mut cb);
-        cb.build(rwasm_lookup, state_lookup, responsible_opcode_lookup);
-        ExecutionGadgetRow {
-            gadget: gadget_config,
-            index,
-            code,
-            value,
-            q_enable,
-            pd: Default::default(),
-        }
-    }
-
-    pub fn assign(
-        &self,
-        region: &mut Region<'_, F>,
-        offset: usize,
-        step: &TraceStep,
-    ) -> Result<(), GadgetError> {
-        self.q_enable.enable(region, offset);
-        // assign rwasm params (index, code, value)
-        self.index
-            .assign(region, offset, F::from(step.curr().source_pc as u64));
-        self.code
-            .assign(region, offset, F::from(step.curr().code as u64));
-        let value = step.curr().opcode.aux_value().unwrap_or_default();
-        self.value.assign(region, offset, F::from(value.to_bits()));
-        // assign opcode gadget
-        self.gadget.assign_exec_step(region, offset, step)
-    }
-}
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
-    const_gadget: ExecutionGadgetRow<F, ConstGadget<F>>,
-    drop_gadget: ExecutionGadgetRow<F, DropGadget<F>>,
-    local_gadget: ExecutionGadgetRow<F, LocalGadget<F>>,
+    bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
+    const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
+    conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
+    drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
+    global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
+    local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
+    select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
+    unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
-    state_transition: StateTransition<F>,
 }
 
 impl<F: Field> RuntimeCircuitConfig<F> {
+    #[allow(unused_variables)]
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
         state_lookup: &impl RwLookup<F>,
+        range_check_lookup: &impl RangeCheckLookup<F>,
+        fixed_lookup: &impl FixedLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
-        let mut state_transition = StateTransition::configure(cs);
+        macro_rules! configure_gadget {
+            () => {
+                ExecutionGadgetRow::configure(
+                    cs,
+                    rwasm_lookup,
+                    state_lookup,
+                    &responsible_opcode_table,
+                    range_check_lookup,
+                    fixed_lookup,
+                )
+            };
+        }
         Self {
-            const_gadget: ExecutionGadgetRow::configure(
-                cs,
-                rwasm_lookup,
-                state_lookup,
-                &responsible_opcode_table,
-                &mut state_transition,
-            ),
-            drop_gadget: ExecutionGadgetRow::configure(
-                cs,
-                rwasm_lookup,
-                state_lookup,
-                &responsible_opcode_table,
-                &mut state_transition,
-            ),
-            local_gadget: ExecutionGadgetRow::configure(
-                cs,
-                rwasm_lookup,
-                state_lookup,
-                &responsible_opcode_table,
-                &mut state_transition,
-            ),
+            bin_gadget: configure_gadget!(),
+            const_gadget: configure_gadget!(),
+            conversion_gadget: configure_gadget!(),
+            drop_gadget: configure_gadget!(),
+            global_gadget: configure_gadget!(),
+            local_gadget: configure_gadget!(),
+            select_gadget: configure_gadget!(),
+            unary_gadget: configure_gadget!(),
             responsible_opcode_table,
-            state_transition,
         }
     }
 
@@ -129,22 +81,36 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         step: &TraceStep,
         rw_counter: usize,
     ) -> Result<(), Error> {
-        let res = match step.instr() {
-            Instruction::I32Const(_) | Instruction::I64Const(_) => {
-                self.const_gadget.assign(region, offset, step)
+        let execution_state = ExecutionState::from_opcode(*step.instr());
+        let res = match execution_state {
+            ExecutionState::WASM_BIN => self.bin_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_CONST => {
+                self.const_gadget.assign(region, offset, step, rw_counter)
             }
-            Instruction::Drop => self.drop_gadget.assign(region, offset, step),
-            Instruction::LocalGet(_) | Instruction::LocalSet(_) | Instruction::LocalTee(_) => {
-                self.local_gadget.assign(region, offset, step)
+            ExecutionState::WASM_CONVERSION => self
+                .conversion_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_DROP => self.drop_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_GLOBAL => {
+                self.global_gadget.assign(region, offset, step, rw_counter)
             }
-            Instruction::Return(_) => {
-                // just skip for now
+            ExecutionState::WASM_LOCAL => {
+                self.local_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_SELECT => {
+                self.select_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_UNARY => {
+                self.unary_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_BREAK => {
+                // do nothing for WASM_BREAK for now
                 Ok(())
             }
-            _ => unreachable!("not supported opcode {:?}", step.instr()),
+            _ => unreachable!("not supported gadget {:?}", execution_state),
         };
-        self.state_transition
-            .assign(region, offset, step.stack_pointer(), rw_counter as u64);
+        // TODO: "do normal error handling here"
+        res.unwrap();
         Ok(())
     }
 

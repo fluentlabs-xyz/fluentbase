@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub(crate) struct LocalGadget<F: Field> {
+pub(crate) struct OpLocalGadget<F: Field> {
     is_get_local: FixedColumn,
     is_set_local: FixedColumn,
     is_tee_local: FixedColumn,
@@ -22,7 +22,7 @@ pub(crate) struct LocalGadget<F: Field> {
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
     const NAME: &'static str = "WASM_LOCAL";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_LOCAL;
@@ -42,35 +42,30 @@ impl<F: Field> ExecutionGadget<F> for LocalGadget<F> {
         );
 
         cb.condition(is_get_local.expr(), |cb| {
-            cb.require_opcode(Instruction::LocalGet(0.into()));
-            // cb.stack_lookup(
-            //     0.expr(),
-            //     cb.stack_pointer_offset() + index.expr(),
-            //     value.expr(),
-            // );
+            cb.require_opcode(Instruction::LocalGet(Default::default()));
+            cb.stack_lookup(0.expr(), cb.stack_pointer() + index.expr(), value.expr());
             cb.stack_push(value.expr());
         });
 
-        // cb.condition(is_set_local.expr(), |cb| {
-        //     cb.require_opcode(Instruction::LocalSet(0.into()));
-        //     cb.stack_pop(value.expr());
-        //     cb.stack_lookup(
-        //         1.expr(),
-        //         cb.stack_pointer_offset() + index.expr(),
-        //         value.expr(),
-        //     );
-        // });
-        //
-        // cb.condition(is_tee_local.expr(), |cb| {
-        //     cb.require_opcode(Instruction::LocalTee(0.into()));
-        //     cb.stack_pop(value.expr());
-        //     cb.stack_lookup(
-        //         1.expr(),
-        //         cb.stack_pointer_offset() + index.expr() - 1.expr(),
-        //         value.expr(),
-        //     );
-        //     cb.stack_push(value.expr());
-        // });
+        cb.condition(is_set_local.expr(), |cb| {
+            cb.require_opcode(Instruction::LocalSet(Default::default()));
+            cb.stack_pop(value.expr());
+            cb.stack_lookup(
+                1.expr(),
+                cb.stack_pointer() + index.expr() - 1.expr(),
+                value.expr(),
+            );
+        });
+
+        cb.condition(is_tee_local.expr(), |cb| {
+            cb.require_opcode(Instruction::LocalTee(Default::default()));
+            cb.stack_lookup(0.expr(), cb.stack_pointer(), value.expr());
+            cb.stack_lookup(
+                1.expr(),
+                cb.stack_pointer() + index.expr() - 1.expr(),
+                value.expr(),
+            );
+        });
 
         Self {
             is_set_local,
@@ -118,23 +113,15 @@ mod test {
     #[test]
     fn test_get_local() {
         let code = instruction_set! {
-            // .propagate_locals(2)
-
-            I32Const(0) // [1023]=0
-            I32Const(0) // [1022]=0
-
-            LocalGet(0) // [1021]=0
+            .propagate_locals(2)
+            LocalGet(0)
             Drop
-
+            LocalGet(1)
+            Drop
+            LocalGet(0)
+            LocalGet(1)
             Drop
             Drop
-
-            // LocalGet(1)
-            // Drop
-            // LocalGet(0)
-            // LocalGet(1)
-            // Drop
-            // Drop
         };
         test_ok(code);
     }
@@ -143,13 +130,23 @@ mod test {
     fn test_set_local() {
         let code = instruction_set! {
             .propagate_locals(2)
+            // 1023: 0  <--+
+            // 1022: 0     |
+            // 1021: 100 --+
             I32Const(100)
-            LocalSet(0)
+            LocalSet(2) // [1023] = 100
+            // 1023: 100
+            // 1022: 0  <--+
+            // 1021: 20 ---+
             I32Const(20)
             LocalSet(1)
-            I32Const(100)
-            I32Const(20)
-            LocalSet(0)
+            // 1023: 100 <---+
+            // 1022: 20 <-+  |
+            // 1021: 101 -|--+
+            // 1020: 21 --+
+            I32Const(101)
+            LocalSet(2)
+            I32Const(21)
             LocalSet(1)
         };
         test_ok(code);
@@ -158,9 +155,15 @@ mod test {
     #[test]
     fn test_tee_local() {
         let code = instruction_set! {
-            .propagate_locals(1)
-            I32Const(123)
-            LocalTee(0)
+            .propagate_locals(3)
+            I32Const(100)
+            LocalTee(3)
+            I32Const(20)
+            LocalTee(2)
+            I32Const(3)
+            LocalTee(2)
+            Drop
+            Drop
             Drop
         };
         test_ok(code);

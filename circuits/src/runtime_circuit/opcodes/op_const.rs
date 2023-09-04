@@ -13,12 +13,12 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct ConstGadget<F: Field> {
+pub(crate) struct OpConstGadget<F: Field> {
     value: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for ConstGadget<F> {
+impl<F: Field> ExecutionGadget<F> for OpConstGadget<F> {
     const NAME: &'static str = "WASM_CONST";
 
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CONST;
@@ -54,9 +54,21 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn push_gadget_simple() {
+    fn test_stack_top_offset() {
         test_ok(instruction_set! {
             I32Const(100)
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_stack_depth() {
+        test_ok(instruction_set! {
+            I32Const(100)
+            I32Const(20)
+            I32Const(3)
+            Drop
+            Drop
             Drop
         });
     }

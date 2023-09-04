@@ -1,8 +1,14 @@
 // mod op_bin;
+pub(crate) mod op_bin;
 pub(crate) mod op_const;
+pub(crate) mod op_conversion;
 pub(crate) mod op_drop;
+pub(crate) mod op_global;
 pub(crate) mod op_local;
 pub(crate) mod table_ops;
+pub(crate) mod op_rel;
+pub(crate) mod op_select;
+pub(crate) mod op_unary;
 
 pub use crate::trace_step::{GadgetError, TraceStep};
 use crate::{

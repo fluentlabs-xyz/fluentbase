@@ -23,8 +23,9 @@ pub use self::utils::{
 };
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
 use crate::common::{UntypedValue, F32};
-use core::fmt::Debug;
+use core::fmt::{Debug, Formatter};
 pub use stack_height::RwOp;
+use std::fmt;
 #[cfg(feature = "std")]
 use strum_macros::EnumIter;
 
@@ -349,6 +350,14 @@ pub enum Instruction {
     I64TruncSatF32U,
     I64TruncSatF64S,
     I64TruncSatF64U,
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let name = format!("{:?}", self);
+        let name: Vec<_> = name.split('(').collect();
+        write!(f, "{}", name[0])
+    }
 }
 
 impl Instruction {

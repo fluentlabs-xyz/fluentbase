@@ -1,10 +1,8 @@
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
-    gadgets::{
-        binary_number::{BinaryNumberChip, BinaryNumberConfig},
-        range_check::RangeCheckLookup,
-    },
+    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     impl_expr,
+    lookup_table::RangeCheckLookup,
     state_circuit::{
         param::{N_LIMBS_ADDRESS, N_LIMBS_ID, N_LIMBS_RW_COUNTER},
         rw_row::RwRow,
@@ -246,14 +244,14 @@ fn calc_limb_differences<F: Field>(
 #[cfg(test)]
 mod test {
     use super::LimbIndex;
-    use crate::gadgets::binary_number::{from_bits, AsBits};
+    use crate::gadgets::binary_number::{from_bits_be, AsBits};
     use strum::IntoEnumIterator;
 
     #[test]
     fn enough_bits_for_limb_index() {
         for index in LimbIndex::iter() {
             assert_eq!(
-                from_bits(&<LimbIndex as AsBits<14>>::as_bits(&index)) as u32,
+                from_bits_be(&<LimbIndex as AsBits<14>>::as_bits(&index)) as u32,
                 index as u32
             );
         }

@@ -1,10 +1,8 @@
 use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
-    gadgets::{
-        binary_number::{BinaryNumberChip, BinaryNumberConfig},
-        range_check::RangeCheckLookup,
-    },
-    lookup_table::{RwLookup, N_RW_LOOKUP_TABLE},
+    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
+    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
+    only_once,
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
@@ -16,12 +14,14 @@ use crate::{
     trace_step::TraceStep,
     util::Field,
 };
-use fluentbase_rwasm::engine::Tracer;
+use cli_table::format::Justify;
+use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
     poly::Rotation,
 };
+use itertools::Itertools;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -126,18 +126,57 @@ impl<F: Field> StateCircuitConfig<F> {
         Ok(())
     }
 
+    pub fn print_rw_rows_table(&self, opcodes: Vec<(u32, Instruction)>, rw_rows: &Vec<RwRow>) {
+        only_once!();
+        use cli_table::{print_stdout, Cell, Style, Table};
+        let table = rw_rows
+            .iter()
+            .map(|row| {
+                vec![
+                    opcodes[row.rw_counter()].0.cell().justify(Justify::Center),
+                    opcodes[row.rw_counter()].1.cell().justify(Justify::Center),
+                    row.rw_counter().cell().justify(Justify::Center),
+                    row.is_write().cell().justify(Justify::Center),
+                    row.tag().cell().justify(Justify::Center),
+                    row.id().unwrap_or_default().cell().justify(Justify::Center),
+                    row.address()
+                        .unwrap_or_default()
+                        .cell()
+                        .justify(Justify::Center),
+                    row.value().to_bits().cell().justify(Justify::Center),
+                ]
+            })
+            .collect_vec()
+            .table()
+            .title(vec![
+                "pc".cell().bold(true),
+                "opcode".cell().bold(true),
+                "rw_counter".cell().bold(true),
+                "is_write".cell().bold(true),
+                "tag".cell().bold(true),
+                "id".cell().bold(true),
+                "address".cell().bold(true),
+                "value".cell().bold(true),
+            ])
+            .bold(true);
+        print_stdout(table).unwrap();
+    }
+
     pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
         layouter.assign_region(
             || "runtime opcodes",
             |mut region| {
                 let mut rw_rows = Vec::new();
+                let mut opcodes_by_rwc = Vec::new();
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    let step = TraceStep::new(trace, tracer.logs.get(i + 1).cloned());
+                    let step = TraceStep::new(trace.clone(), tracer.logs.get(i + 1).cloned());
+                    let rw_rows_len = rw_rows.len();
                     rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();
+                    (0..(rw_rows.len() - rw_rows_len)).for_each(|_| {
+                        opcodes_by_rwc.push((trace.source_pc, trace.opcode.clone()));
+                    });
                 }
-                for rw in rw_rows.iter() {
-                    println!("rw_row: {:?}", rw);
-                }
+                self.print_rw_rows_table(opcodes_by_rwc, &rw_rows);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -147,7 +186,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
-                    // println!("rw_row: {:?}", rw_row);
+                    // println!("rw_row {}: {:?}", offset, rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,

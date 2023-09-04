@@ -51,7 +51,7 @@ fn test_greeting() {
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
     let output =
         Runtime::run_with_linker(rwasm_binary.as_slice(), &[100, 20, 3], &import_linker).unwrap();
-    assert_eq!(output.output, vec![0, 0, 0, 123]);
+    assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
 fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
@@ -86,5 +86,5 @@ fn test_translator() {
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
     let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
-    println!("{:?}", result.output);
+    println!("{:?}", result.data().output().clone());
 }
