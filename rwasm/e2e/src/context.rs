@@ -164,7 +164,7 @@ impl TestContext<'_> {
                 error
             )
         });
-        let mut compiler = Compiler::new(&wasm).map_err(|e| match e {
+        let mut compiler = Compiler::new(wasm.as_slice()).map_err(|e| match e {
             CompilerError::ModuleError(e) => TestError::Wasmi(e),
             _ => TestError::Compiler(e),
         })?;

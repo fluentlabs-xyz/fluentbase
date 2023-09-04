@@ -142,15 +142,23 @@ fn test_actual<C: Circuit<Fr>>(
 mod tests {
     use super::*;
     use crate::{fluentbase_circuit::FluentbaseCircuit, unrolled_bytecode::UnrolledBytecode};
-    use fluentbase_rwasm::{instruction_set, rwasm::InstructionSet};
+    use fluentbase_runtime::Runtime;
+    use fluentbase_rwasm::{
+        instruction_set,
+        rwasm::{Compiler, ImportLinker, InstructionSet},
+    };
     use halo2_proofs::plonk::{keygen_pk, keygen_vk};
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
-        let bytecode: Vec<u8> = bytecode.into();
+        let rwasm_binary: Vec<u8> = bytecode.into();
+        let import_linker = Runtime::new_linker();
+        let result =
+            Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
         let circuit = FluentbaseCircuit {
-            bytecode: UnrolledBytecode::new(bytecode.as_slice()),
-            tracer: Default::default(),
-            input_hash: Fr::zero(),
+            bytecode: UnrolledBytecode::new(rwasm_binary.as_slice()),
+            tracer: Some(result.tracer()),
+            input: vec![],
+            output: vec![],
         };
         let degree: u32 = 17;
         let general_params = get_general_params(degree);
@@ -177,6 +185,22 @@ mod tests {
             .op_i32_add()
             .op_drop()
         ));
+    }
+
+    fn wasm2rwasm(wasm_binary: &[u8], import_linker: &ImportLinker) -> Vec<u8> {
+        Compiler::new_with_linker(&wasm_binary.to_vec(), Some(import_linker))
+            .unwrap()
+            .finalize()
+            .unwrap()
+    }
+
+    #[test]
+    #[ignore]
+    fn test_greeting() {
+        let wasm_binary = include_bytes!("../../runtime/examples/bin/greeting.wasm");
+        let import_linker = Runtime::new_linker();
+        let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+        gen_proof_verify(rwasm_binary);
     }
 
     #[test]

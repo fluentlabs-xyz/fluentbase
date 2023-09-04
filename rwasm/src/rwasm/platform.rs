@@ -112,16 +112,26 @@ pub struct ImportLinker {
 
 impl ImportLinker {
     pub fn insert_function(&mut self, import_func: ImportFunc) {
-        assert!(!self.func_by_index.contains_key(&import_func.index), "already persist");
+        assert!(
+            !self.func_by_index.contains_key(&import_func.index),
+            "already persist"
+        );
         assert!(
             !self.func_by_name.contains_key(&import_func.import_name()),
             "already persist"
         );
-        self.func_by_index.insert(import_func.index, import_func.clone());
-        self.func_by_name.insert(import_func.import_name(), import_func.index);
+        self.func_by_index
+            .insert(import_func.index, import_func.clone());
+        self.func_by_name
+            .insert(import_func.import_name(), import_func.index);
     }
 
-    pub fn attach_linker<D>(&mut self, linker: &mut Linker<D>, store: &mut Store<D>) -> Result<(), LinkerError>
+    #[deprecated(note = "will be removed soon")]
+    pub fn attach_linker<D>(
+        &mut self,
+        linker: &mut Linker<D>,
+        store: &mut Store<D>,
+    ) -> Result<(), LinkerError>
     where
         D: ImportHandler,
     {
