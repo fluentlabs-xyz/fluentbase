@@ -1,10 +1,10 @@
 
-mod size;
-mod grow;
-mod fill;
-mod get;
-mod set;
+pub (crate) mod size;
+pub (crate) mod grow;
+pub (crate) mod fill;
+pub (crate) mod get;
+pub (crate) mod set;
 
-mod init;
-mod copy;
+pub (crate) mod init;
+pub (crate) mod copy;
 
