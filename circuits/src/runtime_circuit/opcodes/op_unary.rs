@@ -161,7 +161,7 @@ impl<F: Field> ExecutionGadget<F> for OpUnaryGadget<F> {
         self.operand.assign(region, offset, operand.to_bits());
         self.result.assign(region, offset, result.to_bits());
 
-        let (selector, bits, max) = match opcode {
+        let (selector, bits, _max) = match opcode {
             Instruction::I32Ctz => (&self.is_ctz, 32, 1u128 << 32),
             Instruction::I64Ctz => (&self.is_ctz, 64, 1u128 << 64),
             Instruction::I32Clz => (&self.is_clz, 32, 1u128 << 32),
