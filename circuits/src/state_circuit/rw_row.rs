@@ -30,7 +30,9 @@ pub enum RwRow {
         is_write: bool,
         call_id: usize,
         memory_address: u64,
-        byte: u8,
+        length: u32,
+        value: u64,
+        signed: bool,
     },
 }
 
@@ -42,11 +44,11 @@ pub fn rw_rows_from_trace(
     let rw_ops = trace.instr().get_rw_ops();
     let mut stack_reads = 0;
     let mut stack_writes = 0;
-    for rw_op in rw_ops.iter() {
+    for rw_op in rw_ops {
         match rw_op {
             RwOp::StackWrite(local_depth) => {
-                let addr = trace.next_nth_stack_addr(stack_writes + *local_depth as usize)?;
-                let value = trace.next_nth_stack_value(stack_writes + *local_depth as usize)?;
+                let addr = trace.next_nth_stack_addr(stack_writes + local_depth as usize)?;
+                let value = trace.next_nth_stack_value(stack_writes + local_depth as usize)?;
                 res.push(RwRow::Stack {
                     rw_counter: res.len(),
                     is_write: true,
@@ -57,8 +59,8 @@ pub fn rw_rows_from_trace(
                 stack_writes += 1
             }
             RwOp::StackRead(local_depth) => {
-                let addr = trace.curr_nth_stack_addr(stack_reads + *local_depth as usize)?;
-                let value = trace.curr_nth_stack_value(stack_reads + *local_depth as usize)?;
+                let addr = trace.curr_nth_stack_addr(stack_reads + local_depth as usize)?;
+                let value = trace.curr_nth_stack_value(stack_reads + local_depth as usize)?;
                 res.push(RwRow::Stack {
                     rw_counter: res.len(),
                     is_write: false,
@@ -74,7 +76,7 @@ pub fn rw_rows_from_trace(
                     rw_counter: res.len(),
                     is_write: true,
                     call_id,
-                    global_index: *global_index as usize,
+                    global_index: global_index as usize,
                     value,
                 });
             }
@@ -84,12 +86,40 @@ pub fn rw_rows_from_trace(
                     rw_counter: res.len(),
                     is_write: false,
                     call_id,
-                    global_index: *global_index as usize,
+                    global_index: global_index as usize,
                     value,
                 });
             }
-            // RwOp::MemoryWrite(_) => {}
-            // RwOp::MemoryRead(_) => {}
+            RwOp::MemoryWrite { offset, length, .. } => {
+                let value = trace.curr_nth_stack_value(0)?;
+                let addr = trace.curr_nth_stack_value(1)?;
+                res.push(RwRow::Memory {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    memory_address: addr.as_u64() + offset as u64,
+                    length,
+                    value: value.to_bits(),
+                    signed: false,
+                });
+            }
+            RwOp::MemoryRead {
+                offset,
+                length,
+                signed,
+            } => {
+                let value = trace.curr_nth_stack_value(0)?;
+                let addr = trace.curr_nth_stack_value(1)?;
+                res.push(RwRow::Memory {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    memory_address: addr.as_u64() + offset as u64,
+                    length,
+                    value: value.to_bits(),
+                    signed,
+                });
+            }
             // RwOp::TableWrite => {}
             // RwOp::TableRead => {}
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
@@ -103,7 +133,7 @@ impl RwRow {
         match self {
             Self::Stack { value, .. } => *value,
             Self::Global { value, .. } => *value,
-            Self::Memory { byte, .. } => UntypedValue::from(*byte),
+            Self::Memory { value: byte, .. } => UntypedValue::from(*byte),
             _ => unreachable!("{:?}", self),
         }
     }
@@ -126,9 +156,9 @@ impl RwRow {
         }
     }
 
-    pub fn memory_value(&self) -> u8 {
+    pub fn memory_value(&self) -> u64 {
         match self {
-            Self::Memory { byte, .. } => *byte,
+            Self::Memory { value: byte, .. } => *byte,
             _ => unreachable!("{:?}", self),
         }
     }

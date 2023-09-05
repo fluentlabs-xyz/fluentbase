@@ -5,7 +5,7 @@ use crate::{arena::ArenaIndex, engine::bytecode::InstrMeta};
 use alloc::vec::Vec;
 
 /// A reference to a compiled function stored in the [`CodeMap`] of an [`Engine`](crate::Engine).
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 pub struct CompiledFunc(u32);
 
 impl ArenaIndex for CompiledFunc {

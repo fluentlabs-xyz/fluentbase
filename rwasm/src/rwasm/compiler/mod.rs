@@ -251,6 +251,12 @@ impl<'linker> Compiler<'linker> {
             .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
         let beginning_offset = self.code_section.len();
+        // ....
+        // let func_type = self.module.funcs[*fn_index as usize + import_len];
+        // let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+        // let num_inputs = func_type.params();
+        // let num_outputs = func_type.results();
+
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
         (0..len_locals).for_each(|_| {

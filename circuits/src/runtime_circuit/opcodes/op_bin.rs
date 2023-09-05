@@ -327,9 +327,9 @@ impl<F: Field> ExecutionGadget<F> for OpBinGadget<F> {
                 aux3 = (rhs.as_u32() - lhs.as_u32() % rhs.as_u32() - 1) as u64;
             }
             Instruction::I64DivU | Instruction::I64RemU => {
-                aux1 = (lhs.as_u64() / rhs.as_u64()) as u64;
-                aux2 = (lhs.as_u64() % rhs.as_u64()) as u64;
-                aux3 = (rhs.as_u64() - lhs.as_u64() % rhs.as_u64() - 1) as u64;
+                aux1 = lhs.as_u64() / rhs.as_u64();
+                aux2 = lhs.as_u64() % rhs.as_u64();
+                aux3 = rhs.as_u64() - lhs.as_u64() % rhs.as_u64() - 1;
             }
             Instruction::I32DivS | Instruction::I32RemS => {
                 // TODO: check and correct to fix possible problems with conversion.

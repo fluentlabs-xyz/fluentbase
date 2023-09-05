@@ -24,13 +24,15 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
+use std::ops::Not;
 
 #[derive(Clone)]
 pub struct StateTransition<F: Field> {
-    stack_pointer: AdviceColumn,
-    stack_pointer_offset: Query<F>,
-    rw_counter: AdviceColumn,
-    rw_counter_offset: Query<F>,
+    pub(crate) stack_pointer: AdviceColumn,
+    pub(crate) stack_pointer_offset: Query<F>,
+    pub(crate) rw_counter: AdviceColumn,
+    pub(crate) rw_counter_offset: Query<F>,
+    pub(crate) program_counter: Query<F>,
 }
 
 impl<F: Field> StateTransition<F> {
@@ -42,7 +44,13 @@ impl<F: Field> StateTransition<F> {
             stack_pointer_offset: Query::zero(),
             rw_counter,
             rw_counter_offset: Query::zero(),
+            program_counter: Query::zero(),
         }
+    }
+
+    pub fn reset_offsets(&mut self) {
+        self.stack_pointer_offset = Query::zero();
+        self.rw_counter_offset = Query::zero();
     }
 
     pub fn assign(
@@ -70,12 +78,13 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     pub(crate) base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
     // rwasm table fields
+    pc: AdviceColumn,
     opcode: AdviceColumn,
     value: AdviceColumn,
-    index: AdviceColumn,
     // rw fields
     state_transition: &'st mut StateTransition<F>,
     op_lookups: Vec<LookupTable<F>>,
+    next_program_counter: Option<Query<F>>,
 }
 
 use Query as Q;
@@ -87,35 +96,53 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         q_enable: SelectorColumn,
         state_transition: &'st mut StateTransition<F>,
     ) -> Self {
+        let pc = AdviceColumn(cs.advice_column());
         let opcode = AdviceColumn(cs.advice_column());
         let value = AdviceColumn(cs.advice_column());
-        let index = AdviceColumn(cs.advice_column());
         Self {
             q_enable,
             base: ConstraintBuilder::new(q_enable),
             cs,
+            pc,
             opcode,
             value,
-            index,
             state_transition,
             op_lookups: vec![],
+            next_program_counter: None,
         }
     }
 
-    pub fn query_rwasm_table(&self) -> [AdviceColumn; 3] {
-        [self.index, self.opcode, self.value]
+    pub fn rwasm_table(&self) -> [AdviceColumn; 3] {
+        [self.pc.clone(), self.opcode.clone(), self.value.clone()]
     }
 
-    pub fn query_rwasm_code(&self) -> AdviceColumn {
-        self.opcode
+    pub fn query_rwasm_code(&self) -> Query<F> {
+        self.opcode.current()
     }
 
-    pub fn query_rwasm_value(&self) -> AdviceColumn {
-        self.value
+    pub fn query_rwasm_value(&self) -> Query<F> {
+        self.value.current()
     }
 
-    pub fn query_rwasm_index(&self) -> AdviceColumn {
-        self.index
+    pub fn query_rwasm_pc(&self) -> Query<F> {
+        self.state_transition.program_counter.clone()
+    }
+
+    pub fn require_at_least_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
+        let sum: Query<F> = selectors.iter().fold(0.expr(), |r, q| r + q.clone());
+        self.require_zero("only one selector must be enabled", sum - 1.expr());
+    }
+
+    pub fn if_rwasm_opcode(
+        &mut self,
+        selector: Query<F>,
+        instr: Instruction,
+        configure: impl FnOnce(&mut Self),
+    ) {
+        self.condition(selector, |cb| {
+            cb.require_opcode(instr);
+            configure(cb);
+        });
     }
 
     pub fn query_cell(&mut self) -> AdviceColumn {
@@ -132,6 +159,19 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_cell_phase2(&mut self) -> AdviceColumnPhase2 {
         self.base.advice_column_phase2(self.cs)
+    }
+
+    pub fn next_pc_delta(&mut self, delta: Query<F>) {
+        let condition = self.base.resolve_condition();
+        self.state_transition.program_counter =
+            self.state_transition.program_counter.clone() + condition.0 * delta;
+    }
+
+    pub fn next_pc_jump(&mut self, value: Query<F>) {
+        let condition = self.base.resolve_condition();
+        self.state_transition.program_counter = condition.clone().not().0
+            * self.state_transition.program_counter.clone()
+            + condition.0 * value;
     }
 
     pub fn stack_push(&mut self, value: Query<F>) {
@@ -222,13 +262,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         address: Query<F>,
         value: Query<F>,
     ) {
-        // println!(
-        //     "rw_lookup: rw_counter={:?}, is_write={:?}, tag={:?}",
-        //     self.state_transition.rw_counter(),
-        //     is_write,
-        //     tag
-        // );
-        // println!("rwc_before: {:?}", self.state_transition.rw_counter_offset);
         self.op_lookups
             .push(LookupTable::Rw(self.base.apply_lookup_condition([
                 Query::one(),
@@ -241,7 +274,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             ])));
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
-        // println!("rwc_after: {:?}", self.state_transition.rw_counter_offset);
     }
 
     pub fn stack_pointer(&self) -> Query<F> {
