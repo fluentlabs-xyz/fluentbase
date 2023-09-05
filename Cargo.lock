@@ -1041,6 +1041,10 @@ name = "fluentbase-core"
 version = "0.1.0"
 
 [[package]]
+name = "fluentbase-modules"
+version = "0.1.0"
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [

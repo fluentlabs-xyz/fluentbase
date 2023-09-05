@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, Query},
+    constraint_builder::{FixedColumn, Query},
     lookup_table::{ResponsibleOpcodeLookup, N_RESPONSIBLE_OPCODE_LOOKUP_TABLE},
     runtime_circuit::execution_state::ExecutionState,
     util::Field,
@@ -13,16 +13,18 @@ use strum::IntoEnumIterator;
 
 #[derive(Clone)]
 pub struct ResponsibleOpcodeTable<F: Field> {
-    execution_state: AdviceColumn,
-    opcode: AdviceColumn,
+    execution_state: FixedColumn,
+    opcode: FixedColumn,
+    affects_pc: FixedColumn,
     marker: PhantomData<F>,
 }
 
 impl<F: Field> ResponsibleOpcodeTable<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
-            execution_state: AdviceColumn(cs.advice_column()),
-            opcode: AdviceColumn(cs.advice_column()),
+            execution_state: FixedColumn(cs.fixed_column()),
+            opcode: FixedColumn(cs.fixed_column()),
+            affects_pc: FixedColumn(cs.fixed_column()),
             marker: Default::default(),
         }
     }
@@ -36,9 +38,11 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
                     let responsible_opcodes = state.responsible_opcodes();
                     for opcode in responsible_opcodes {
                         self.execution_state
-                            .assign(&mut region, offset, state as u64);
+                            .assign(&mut region, offset, state.to_u64());
                         self.opcode
                             .assign(&mut region, offset, opcode.code_value() as u64);
+                        self.affects_pc
+                            .assign(&mut region, offset, opcode.affects_pc() as u64);
                         offset += 1;
                     }
                 }
@@ -51,6 +55,10 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
 
 impl<F: Field> ResponsibleOpcodeLookup<F> for ResponsibleOpcodeTable<F> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE] {
-        [self.execution_state.current(), self.opcode.current()]
+        [
+            self.execution_state.current(),
+            self.opcode.current(),
+            self.affects_pc.current(),
+        ]
     }
 }
