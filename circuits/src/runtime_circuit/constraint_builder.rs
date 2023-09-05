@@ -200,10 +200,18 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value);
     }
 
-    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState, opcode: Query<F>) {
+    pub fn execution_state_lookup(
+        &mut self,
+        execution_state: ExecutionState,
+        opcode: Query<F>,
+        affects_pc: Query<F>,
+    ) {
         self.op_lookups.push(LookupTable::ResponsibleOpcode(
-            self.base
-                .apply_lookup_condition([Query::Constant(F::from(execution_state as u64)), opcode]),
+            self.base.apply_lookup_condition([
+                Query::Constant(F::from(execution_state.to_u64())),
+                opcode,
+                affects_pc,
+            ]),
         ));
     }
 
