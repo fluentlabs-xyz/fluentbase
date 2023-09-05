@@ -38,7 +38,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         let [pc, opcode, value] = cb.rwasm_table();
         // make sure opcode and value fields are correct and set properly
         cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
-        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_code());
+        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_opcode());
         // configure gadget and build gates
         let gadget_config = G::configure(&mut cb);
         cb.build(
