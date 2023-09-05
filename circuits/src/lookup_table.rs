@@ -22,7 +22,7 @@ pub trait RwLookup<F: Field> {
     fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE];
 }
 
-pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 2;
+pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 3;
 
 pub trait ResponsibleOpcodeLookup<F: Field> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE];

@@ -8,6 +8,7 @@ pub enum ExecutionState {
     WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
+    WASM_CALL_HOST(u16),
     WASM_CONST,      // DONE
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
@@ -22,6 +23,26 @@ pub enum ExecutionState {
 }
 
 impl ExecutionState {
+    pub fn to_u64(&self) -> u64 {
+        match self {
+            ExecutionState::WASM_BIN => 1,
+            ExecutionState::WASM_BREAK => 2,
+            ExecutionState::WASM_CALL => 3,
+            ExecutionState::WASM_CALL_HOST(id) => 0x040000u64 + *id as u64,
+            ExecutionState::WASM_CONST => 5,
+            ExecutionState::WASM_CONVERSION => 6,
+            ExecutionState::WASM_DROP => 7,
+            ExecutionState::WASM_GLOBAL => 8,
+            ExecutionState::WASM_LOAD => 9,
+            ExecutionState::WASM_LOCAL => 10,
+            ExecutionState::WASM_REL => 11,
+            ExecutionState::WASM_SELECT => 12,
+            ExecutionState::WASM_STORE => 13,
+            ExecutionState::WASM_TEST => 14,
+            ExecutionState::WASM_UNARY => 15,
+        }
+    }
+
     pub fn from_opcode(instr: Instruction) -> ExecutionState {
         for state in Self::iter() {
             // TODO: "yes, I've heard about lazy static, don't understand why its not here"

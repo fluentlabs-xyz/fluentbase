@@ -2,6 +2,7 @@
 members = [
     "circuits",
     "core",
+    "modules",
     "runtime",
     "runtime/examples",
     "rwasm",
