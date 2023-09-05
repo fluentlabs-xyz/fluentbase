@@ -1,11 +1,11 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::ExecutionGadget,
     },
+    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -14,28 +14,24 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpConstGadget<F: Field> {
-    value: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
 impl<F: Field> ExecutionGadget<F> for OpConstGadget<F> {
     const NAME: &'static str = "WASM_CONST";
-
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CONST;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let value = cb.query_rwasm_value();
-        cb.stack_push(value.current());
+        cb.stack_push(cb.query_rwasm_value());
         Self {
-            value,
             _pd: Default::default(),
         }
     }
 
     fn assign_exec_step(
         &self,
-        region: &mut Region<'_, F>,
-        offset: usize,
+        _region: &mut Region<'_, F>,
+        _offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
         let value = match trace.instr() {
@@ -43,7 +39,6 @@ impl<F: Field> ExecutionGadget<F> for OpConstGadget<F> {
             _ => bail_illegal_opcode!(trace),
         };
         debug_assert_eq!(trace.next_nth_stack_value(0)?, *value);
-        self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }
 }

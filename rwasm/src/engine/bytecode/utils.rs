@@ -2,7 +2,7 @@ use crate::engine::{func_builder::TranslationErrorInner, Instr, TranslationError
 use core::fmt::{self, Display};
 
 /// A function index.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct FuncIdx(u32);
 
@@ -20,7 +20,7 @@ impl FuncIdx {
 }
 
 /// A table index.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct TableIdx(u32);
 
@@ -38,7 +38,7 @@ impl TableIdx {
 }
 
 /// An index of a unique function signature.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct SignatureIdx(u32);
 
@@ -62,7 +62,7 @@ impl SignatureIdx {
 /// The depth refers to the relative position of a local
 /// variable on the value stack with respect to the height
 /// of the value stack at the time of access.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct LocalDepth(u32);
 
@@ -86,7 +86,7 @@ impl LocalDepth {
 /// Refers to a global variable of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct GlobalIdx(u32);
 
@@ -110,7 +110,7 @@ impl GlobalIdx {
 /// Refers to a data segment of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct DataSegmentIdx(u32);
 
@@ -134,7 +134,7 @@ impl DataSegmentIdx {
 /// Refers to a data segment of a [`Store`].
 ///
 /// [`Store`]: [`crate::Store`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct ElementSegmentIdx(u32);
 
@@ -154,7 +154,7 @@ impl ElementSegmentIdx {
 /// The number of branches of an [`Instruction::BrTable`].
 ///
 /// [`Instruction::BrTable`]: [`super::Instruction::BrTable`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct BranchTableTargets(u32);
 
@@ -187,7 +187,7 @@ impl BranchTableTargets {
 /// The accumulated fuel to execute a block via [`Instruction::ConsumeFuel`].
 ///
 /// [`Instruction::ConsumeFuel`]: [`super::Instruction::ConsumeFuel`]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct BlockFuel(u32);
 
@@ -239,7 +239,7 @@ impl BlockFuel {
 /// # Note
 ///
 /// Used to calculate the effective address of a linear memory access.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct AddressOffset(u32);
 
@@ -260,7 +260,7 @@ impl AddressOffset {
 ///
 /// This defines how much the instruction pointer is offset
 /// upon taking the respective branch.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 pub struct BranchOffset(i32);
 
 impl From<i32> for BranchOffset {
@@ -319,7 +319,7 @@ impl BranchOffset {
 }
 
 /// Defines how many stack values are going to be dropped and kept after branching.
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
 pub struct DropKeep {
     drop: u16,
     keep: u16,

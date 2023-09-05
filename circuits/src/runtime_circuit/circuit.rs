@@ -11,6 +11,7 @@ use crate::{
             op_global::OpGlobalGadget,
             op_local::OpLocalGadget,
             op_select::OpSelectGadget,
+            op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
             table_ops::{
               copy::OpTableCopyGadget,
@@ -43,6 +44,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
     select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
+    test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
     table_copy_gadget: ExecutionGadgetRow<F, OpTableCopyGadget<F>>,
     table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
     table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
@@ -85,6 +87,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             local_gadget: configure_gadget!(),
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
+            test_gadget: configure_gadget!(),
             table_copy_gadget: configure_gadget!(),
             table_fill_gadget: configure_gadget!(),
             table_get_gadget: configure_gadget!(),
@@ -136,10 +139,12 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_TABLE_SET => { self.table_set_gadget.assign(region, offset, step, rw_counter) }
             ExecutionState::WASM_TABLE_SIZE => { self.table_size_gadget.assign(region, offset, step, rw_counter) }
 
-            ExecutionState::WASM_BREAK => {
+            ExecutionState::WASM_CALL => {
                 // do nothing for WASM_BREAK for now
                 Ok(())
             }
+            ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_BREAK => Ok(()),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"

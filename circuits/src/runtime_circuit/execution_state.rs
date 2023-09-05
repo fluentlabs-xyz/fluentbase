@@ -17,8 +17,8 @@ pub enum ExecutionState {
     WASM_REL,    // DONE
     WASM_SELECT, // DONE
     WASM_STORE,
-    WASM_TEST,
-    WASM_UNARY,
+    WASM_TEST,  // DONE
+    WASM_UNARY, // DONE
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -66,20 +66,25 @@ impl ExecutionState {
                 Instruction::I64RemU,
             ],
             Self::WASM_BREAK => vec![
-                Instruction::Return(Default::default()),
                 Instruction::Br(Default::default()),
                 Instruction::BrIfEqz(Default::default()),
-                Instruction::BrTable(Default::default()),
+                Instruction::BrIfNez(Default::default()),
+                Instruction::BrAdjust(Default::default()),
+                Instruction::BrAdjustIfNez(Default::default()),
+            ],
+            Self::WASM_CALL => vec![
+                Instruction::Return(Default::default()),
+                Instruction::ReturnIfNez(Default::default()),
+                Instruction::ReturnCallInternal(Default::default()),
+                Instruction::ReturnCall(Default::default()),
+                Instruction::ReturnCallIndirectUnsafe(Default::default()),
+                Instruction::CallInternal(Default::default()),
+                Instruction::Call(Default::default()),
+                Instruction::CallIndirectUnsafe(Default::default()),
             ],
             Self::WASM_CONST => vec![
                 Instruction::I32Const(Default::default()),
                 Instruction::I64Const(Default::default()),
-            ],
-            Self::WASM_CALL => vec![
-                Instruction::Call(Default::default()),
-                Instruction::CallIndirectUnsafe(Default::default()),
-                Instruction::ReturnCall(Default::default()),
-                Instruction::ReturnCallIndirectUnsafe(Default::default()),
             ],
             Self::WASM_DROP => vec![Instruction::Drop],
             Self::WASM_TEST => vec![Instruction::I32Eqz, Instruction::I64Eqz],
@@ -137,5 +142,38 @@ impl ExecutionState {
             Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
             _ => vec![],
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::runtime_circuit::execution_state::ExecutionState;
+    use fluentbase_rwasm::engine::bytecode::Instruction;
+    use std::collections::HashMap;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn calc_opcode_coverage() {
+        let mut used_opcodes: HashMap<Instruction, usize> =
+            Instruction::iter().map(|instr| (instr, 0usize)).collect();
+        let mut total_used = 0usize;
+        for state in ExecutionState::iter() {
+            for opcode in state.responsible_opcodes() {
+                let used_opcode = used_opcodes.get_mut(&opcode).unwrap();
+                if *used_opcode == 1 {
+                    panic!(
+                        "opcode ({:?}) is used more than 1 time, its not allowed",
+                        opcode
+                    )
+                }
+                *used_opcode += 1;
+                total_used += 1;
+            }
+        }
+        let coverage = 100 * total_used / used_opcodes.len();
+        println!(
+            "opcode coverage (based on execution state) is: {}%",
+            coverage
+        )
     }
 }

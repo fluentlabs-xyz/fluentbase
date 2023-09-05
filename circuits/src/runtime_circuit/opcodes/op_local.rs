@@ -17,7 +17,6 @@ pub(crate) struct OpLocalGadget<F: Field> {
     is_get_local: FixedColumn,
     is_set_local: FixedColumn,
     is_tee_local: FixedColumn,
-    index: AdviceColumn,
     value: AdviceColumn,
     _pd: PhantomData<F>,
 }
@@ -43,7 +42,7 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
 
         cb.condition(is_get_local.expr(), |cb| {
             cb.require_opcode(Instruction::LocalGet(Default::default()));
-            cb.stack_lookup(0.expr(), cb.stack_pointer() + index.expr(), value.expr());
+            cb.stack_lookup(0.expr(), cb.stack_pointer() + index.clone(), value.expr());
             cb.stack_push(value.expr());
         });
 
@@ -52,7 +51,7 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
             cb.stack_pop(value.expr());
             cb.stack_lookup(
                 1.expr(),
-                cb.stack_pointer() + index.expr() - 1.expr(),
+                cb.stack_pointer() + index.clone() - 1.expr(),
                 value.expr(),
             );
         });
@@ -62,7 +61,7 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
             cb.stack_lookup(0.expr(), cb.stack_pointer(), value.expr());
             cb.stack_lookup(
                 1.expr(),
-                cb.stack_pointer() + index.expr() - 1.expr(),
+                cb.stack_pointer() + index.clone() - 1.expr(),
                 value.expr(),
             );
         });
@@ -71,7 +70,6 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
             is_set_local,
             is_get_local,
             is_tee_local,
-            index,
             value,
             _pd: Default::default(),
         }
@@ -83,23 +81,16 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
         offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
-        let (selector, index, value) = match trace.instr() {
+        let (selector, value) = match trace.instr() {
             Instruction::LocalGet(index) => (
                 &self.is_get_local,
-                index,
                 trace.curr_nth_stack_value(index.to_usize())?,
             ),
-            Instruction::LocalSet(index) => {
-                (&self.is_set_local, index, trace.curr_nth_stack_value(0)?)
-            }
-            Instruction::LocalTee(index) => {
-                (&self.is_tee_local, index, trace.curr_nth_stack_value(0)?)
-            }
+            Instruction::LocalSet(_) => (&self.is_set_local, trace.curr_nth_stack_value(0)?),
+            Instruction::LocalTee(_) => (&self.is_tee_local, trace.curr_nth_stack_value(0)?),
             _ => bail_illegal_opcode!(trace),
         };
         selector.assign(region, offset, F::one());
-        self.index
-            .assign(region, offset, F::from(index.to_usize() as u64));
         self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }
