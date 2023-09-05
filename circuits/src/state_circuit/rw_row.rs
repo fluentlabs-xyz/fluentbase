@@ -30,8 +30,8 @@ pub enum RwRow {
         is_write: bool,
         call_id: usize,
         memory_address: u64,
+        value: u8,
         length: u32,
-        value: u64,
         signed: bool,
     },
 }
@@ -93,14 +93,17 @@ pub fn rw_rows_from_trace(
             RwOp::MemoryWrite { offset, length, .. } => {
                 let value = trace.curr_nth_stack_value(0)?;
                 let addr = trace.curr_nth_stack_value(1)?;
-                res.push(RwRow::Memory {
-                    rw_counter: res.len(),
-                    is_write: true,
-                    call_id,
-                    memory_address: addr.as_u64() + offset as u64,
-                    length,
-                    value: value.to_bits(),
-                    signed: false,
+                let value_le_bytes = value.to_bits().to_le_bytes();
+                (0..length).for_each(|i| {
+                    res.push(RwRow::Memory {
+                        rw_counter: res.len(),
+                        is_write: true,
+                        call_id,
+                        memory_address: addr.as_u64() + offset as u64 + i as u64,
+                        value: value_le_bytes[i as usize],
+                        length,
+                        signed: false,
+                    });
                 });
             }
             RwOp::MemoryRead {
@@ -110,14 +113,17 @@ pub fn rw_rows_from_trace(
             } => {
                 let value = trace.curr_nth_stack_value(0)?;
                 let addr = trace.curr_nth_stack_value(1)?;
-                res.push(RwRow::Memory {
-                    rw_counter: res.len(),
-                    is_write: false,
-                    call_id,
-                    memory_address: addr.as_u64() + offset as u64,
-                    length,
-                    value: value.to_bits(),
-                    signed,
+                let value_le_bytes = value.to_bits().to_le_bytes();
+                (0..length).for_each(|i| {
+                    res.push(RwRow::Memory {
+                        rw_counter: res.len(),
+                        is_write: false,
+                        call_id,
+                        memory_address: addr.as_u64() + offset as u64 + i as u64,
+                        value: value_le_bytes[i as usize],
+                        length,
+                        signed,
+                    });
                 });
             }
             // RwOp::TableWrite => {}
@@ -156,7 +162,7 @@ impl RwRow {
         }
     }
 
-    pub fn memory_value(&self) -> u64 {
+    pub fn memory_value(&self) -> u8 {
         match self {
             Self::Memory { value: byte, .. } => *byte,
             _ => unreachable!("{:?}", self),

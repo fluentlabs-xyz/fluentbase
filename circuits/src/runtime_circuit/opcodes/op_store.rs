@@ -1,4 +1,5 @@
 use crate::{
+    constraint_builder::ToExpr,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -53,6 +54,67 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_STORE;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
+        let is_i32_store = cb.query_fixed();
+
+        let value = cb.query_cell();
+        let address = cb.query_cell();
+        let offset = cb.query_cell();
+
+        cb.stack_pop(value.current());
+        cb.stack_pop(address.current());
+
+        // Instruction::I32Store(Default::default()),
+        // Instruction::I32Store8(Default::default()),
+        // Instruction::I32Store16(Default::default()),
+        // Instruction::I64Store(Default::default()),
+        // Instruction::I64Store8(Default::default()),
+        // Instruction::I64Store16(Default::default()),
+        // Instruction::I64Store32(Default::default()),
+        // Instruction::F32Store(Default::default()),
+        // Instruction::F64Store(Default::default()),
+
+        cb.require_at_least_one_selector([is_i32_store.current()]);
+
+        cb.if_rwasm_opcode(
+            is_i32_store.current(),
+            Instruction::I32Store(Default::default()),
+            |cb| {
+                (0..4).for_each(|i| {
+                    cb.mem_write(
+                        address.current() + offset.current() + i.expr(),
+                        value.current(),
+                    );
+                });
+            },
+        );
+
+        // todo: "and so on"
+
+        // store
+        // value=read_stack
+        // addr=read_stack
+        // mem[addr+offset] = value
+
+        // i32.store{len=4}
+        // i32.store16{len=2}
+        // i32.store8{len=1}
+
+        // mem[0x00] = 1;
+        // let val = mem[0x00]
+
+        // mem[0x00] = 0x7bff;
+        // mem[0x01] == 0x7b;
+
+        // i32.store8 <0x7b>
+
+        // i32.store(0) <0x00> <0x00007bff>
+        // 00: 0xff
+        // 01: 0x7b
+        // 02: 0x00
+        // 03: 0x00
+
+        // i32.load8S(0) <0x01>
+
         // let opcode_store_offset = cb.alloc_common_range_value();
         //
         // let store_start_block_index = cb.alloc_common_range_value();
@@ -304,7 +366,9 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
         match trace.instr() {
-            Instruction::I32Store(address_offset) => {}
+            Instruction::I32Store(address_offset) => {
+                // enable selector
+            }
             Instruction::I32Store8(address_offset) => {}
             Instruction::I32Store16(address_offset) => {}
             Instruction::I64Store(address_offset) => {}
