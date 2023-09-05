@@ -9,6 +9,7 @@ pub enum ExecutionState {
     WASM_BREAK,
     WASM_CALL,
     WASM_CONST,      // DONE
+    WASM_REFFUNC,
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
     WASM_GLOBAL,     // DONE
@@ -86,6 +87,7 @@ impl ExecutionState {
                 Instruction::I32Const(Default::default()),
                 Instruction::I64Const(Default::default()),
             ],
+            Self::WASM_REFFUNC => vec![Instruction::RefFunc(Default::default())],
             Self::WASM_DROP => vec![Instruction::Drop],
             Self::WASM_TEST => vec![Instruction::I32Eqz, Instruction::I64Eqz],
             Self::WASM_REL => vec![

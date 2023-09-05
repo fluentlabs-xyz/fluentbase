@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -27,10 +27,11 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GROW;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_rwasm_value();
-        let init_val = cb.query_rwasm_value();
-        let grow_val = cb.query_rwasm_value();
-        let res_val = cb.query_rwasm_value();
+        let table_index = cb.query_cell();
+        let init_val = cb.query_cell();
+        let grow_val = cb.query_cell();
+        let res_val = cb.query_cell();
+        cb.require_opcode(Instruction::TableGrow(Default::default()));
         cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
         cb.stack_pop(init_val.current());
         cb.stack_pop(grow_val.current());

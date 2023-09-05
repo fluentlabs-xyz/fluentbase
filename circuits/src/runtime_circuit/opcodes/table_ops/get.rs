@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -27,11 +27,11 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_rwasm_value();
-        let elem_index = cb.query_rwasm_value();
-        let elem_type = cb.query_rwasm_value();
-        let value = cb.query_rwasm_value();
-        let size = cb.query_rwasm_value();
+        let table_index = cb.query_cell();
+        let elem_index = cb.query_cell();
+        let value = cb.query_cell();
+        let size = cb.query_cell();
+        cb.require_opcode(Instruction::TableGet(Default::default()));
         cb.table_size(table_index.expr(), size.expr());
         cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_pop(elem_index.current());
@@ -54,7 +54,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
         let (table_index, elem_index, value) = match trace.instr() {
-            Instruction::TableFill(ti) =>
+            Instruction::TableGet(ti) =>
                 ( ti,
                   trace.curr_nth_stack_value(0)?,
                   trace.next_nth_stack_value(0)?,

@@ -154,15 +154,46 @@ impl Instruction {
             Instruction::MemoryGrow | Instruction::MemoryFill | Instruction::MemoryCopy => {}
             Instruction::MemoryInit(_) => {}
             Instruction::DataDrop(_) => {}
-            Instruction::TableSize(_) => {}
-            Instruction::TableGrow(_) => {}
-            Instruction::TableFill(_) => {}
-            Instruction::TableGet(_) => {}
-            Instruction::TableSet(_) => {}
-            Instruction::TableCopy(_) => {}
-            Instruction::TableInit(_) => {}
+
+            Instruction::TableSize(_) => {
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableGrow(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableFill(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableGet(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableSet(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableCopy(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::TableInit(_) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+
             Instruction::ElemDrop(_) => {}
-            Instruction::RefFunc(_) => {}
+            Instruction::RefFunc(_) => {
+                stack_ops.push(RwOp::StackWrite(0));
+            }
             Instruction::I32Const(_) | Instruction::I64Const(_) => {
                 stack_ops.push(RwOp::StackWrite(0))
             }
