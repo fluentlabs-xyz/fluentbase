@@ -126,6 +126,17 @@ impl ExecutionState {
                 Instruction::LocalTee(Default::default()),
             ],
             Self::WASM_SELECT => vec![Instruction::Select],
+            Self::WASM_STORE => vec![
+                Instruction::I32Store(Default::default()),
+                Instruction::I32Store8(Default::default()),
+                Instruction::I32Store16(Default::default()),
+                Instruction::I64Store(Default::default()),
+                Instruction::I64Store8(Default::default()),
+                Instruction::I64Store16(Default::default()),
+                Instruction::I64Store32(Default::default()),
+                Instruction::F32Store(Default::default()),
+                Instruction::F64Store(Default::default()),
+            ],
             _ => vec![],
         }
     }

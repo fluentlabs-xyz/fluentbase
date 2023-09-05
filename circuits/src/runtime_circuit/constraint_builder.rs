@@ -114,7 +114,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         [self.pc.clone(), self.opcode.clone(), self.value.clone()]
     }
 
-    pub fn query_rwasm_code(&self) -> Query<F> {
+    pub fn query_rwasm_opcode(&self) -> Query<F> {
         self.opcode.current()
     }
 
@@ -194,6 +194,18 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn global_set(&mut self, index: Query<F>, value: Query<F>) {
         self.global_lookup(Query::one(), index, value);
+    }
+
+    pub fn mem_write(&mut self, address: Query<F>, value: Query<F>) {
+        self.memory_lookup(Query::one(), address, value);
+    }
+
+    pub fn mem_read(&mut self, address: Query<F>, value: Query<F>) {
+        self.memory_lookup(Query::zero(), address, value);
+    }
+
+    pub fn memory_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
+        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value);
     }
 
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
