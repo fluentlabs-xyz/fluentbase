@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, SelectorColumn},
+    constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
     lookup_table::{FixedLookup, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
@@ -8,7 +8,6 @@ use crate::{
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
-use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
@@ -18,7 +17,7 @@ pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     opcode: AdviceColumn,
     value: AdviceColumn,
     state_transition: StateTransition<F>,
-    pd: PhantomData<F>,
+    affects_pc: FixedColumn,
 }
 
 impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
@@ -36,9 +35,17 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         let mut cb = OpConstraintBuilder::new(cs, q_enable, &mut state_transition);
         // extract rwasm table with opcode and value fields (for lookup)
         let [pc, opcode, value] = cb.rwasm_table();
+        let affects_pc = cb.query_fixed();
         // make sure opcode and value fields are correct and set properly
         cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
-        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_opcode());
+        cb.execution_state_lookup(
+            G::EXECUTION_STATE,
+            cb.query_rwasm_opcode(),
+            affects_pc.current(),
+        );
+        cb.condition(affects_pc.current(), |_cb| {
+            // TODO: "check pc transition here"
+        });
         // configure gadget and build gates
         let gadget_config = G::configure(&mut cb);
         cb.build(
@@ -55,7 +62,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             value,
             q_enable,
             state_transition,
-            pd: Default::default(),
+            affects_pc,
         }
     }
 
@@ -77,6 +84,8 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         // assign state transition
         self.state_transition
             .assign(region, offset, step.stack_pointer(), rw_counter as u64);
+        self.affects_pc
+            .assign(region, offset, step.instr().affects_pc() as u64);
         // assign opcode gadget
         self.gadget.assign_exec_step(region, offset, step)
     }

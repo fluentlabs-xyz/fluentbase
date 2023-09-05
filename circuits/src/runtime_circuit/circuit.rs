@@ -5,6 +5,8 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
+            op_break::OpBreakGadget,
+            op_call::OpCallGadget,
             op_const::OpConstGadget,
             op_conversion::OpConversionGadget,
             op_drop::OpDropGadget,
@@ -29,6 +31,8 @@ use halo2_proofs::{
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
     bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
+    break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
+    call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
     const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
     conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
@@ -66,6 +70,8 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         }
         Self {
             bin_gadget: configure_gadget!(),
+            break_gadget: configure_gadget!(),
+            call_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
@@ -90,6 +96,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         let execution_state = ExecutionState::from_opcode(*step.instr());
         let res = match execution_state {
             ExecutionState::WASM_BIN => self.bin_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_BREAK => {
+                self.break_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_CALL => self.call_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
             }
@@ -109,15 +119,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_UNARY => {
                 self.unary_gadget.assign(region, offset, step, rw_counter)
             }
-            ExecutionState::WASM_CALL => {
-                // do nothing for WASM_BREAK for now
-                Ok(())
-            }
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_STORE => {
                 self.store_gadget.assign(region, offset, step, rw_counter)
             }
-            ExecutionState::WASM_BREAK => Ok(()),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"
