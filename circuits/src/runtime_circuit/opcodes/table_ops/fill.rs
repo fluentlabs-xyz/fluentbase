@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -30,18 +30,20 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_FILL;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_rwasm_value();
-        let start = cb.query_rwasm_value();
-        let value_type = cb.query_rwasm_value();
-        let value = cb.query_rwasm_value();
-        let range = cb.query_rwasm_value();
-        let size = cb.query_rwasm_value();
-        let out = cb.query_rwasm_value();
+        let table_index = cb.query_cell();
+        let start = cb.query_cell();
+        let value_type = cb.query_cell();
+        let value = cb.query_cell();
+        let range = cb.query_cell();
+        let size = cb.query_cell();
+        let out = cb.query_cell();
+        cb.require_opcode(Instruction::TableFill(Default::default()));
         cb.table_size(table_index.expr(), size.expr());
         cb.table_fill(table_index.expr(), start.expr(), value.expr(), range.expr());
         cb.stack_pop(start.current());
         cb.stack_pop(value.current());
         cb.stack_pop(range.current());
+        cb.stack_push(out.current());
         cb.range_check_1024(value.expr());
         cb.range_check_1024(range.expr());
         cb.range_check_1024(size.expr() - (value.expr() + range.expr()));

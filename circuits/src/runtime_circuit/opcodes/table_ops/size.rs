@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -25,8 +25,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SIZE;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_rwasm_value();
-        let value = cb.query_rwasm_value();
+        let table_index = cb.query_cell();
+        let value = cb.query_cell();
+        cb.require_opcode(Instruction::TableSize(Default::default()));
         cb.table_size(table_index.expr(), value.expr());
         cb.stack_push(value.current());
         Self {

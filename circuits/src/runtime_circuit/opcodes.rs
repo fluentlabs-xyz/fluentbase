@@ -9,6 +9,7 @@ use halo2_proofs::circuit::Region;
 pub(crate) mod op_bin;
 pub(crate) mod op_break;
 pub(crate) mod op_const;
+pub(crate) mod op_reffunc;
 pub(crate) mod op_conversion;
 pub(crate) mod op_drop;
 pub(crate) mod op_global;

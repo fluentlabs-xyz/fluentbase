@@ -6,6 +6,7 @@ use crate::{
         opcodes::{
             op_bin::OpBinGadget,
             op_const::OpConstGadget,
+            op_reffunc::OpRefFuncGadget,
             op_conversion::OpConversionGadget,
             op_drop::OpDropGadget,
             op_global::OpGlobalGadget,
@@ -38,6 +39,7 @@ use halo2_proofs::{
 pub struct RuntimeCircuitConfig<F: Field> {
     bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
     const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
+    reffunc_gadget: ExecutionGadgetRow<F, OpRefFuncGadget<F>>,
     conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
     global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
@@ -81,6 +83,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         Self {
             bin_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
+            reffunc_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
             global_gadget: configure_gadget!(),
@@ -112,6 +115,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_BIN => self.bin_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_REFFUNC => {
+                self.reffunc_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_CONVERSION => self
                 .conversion_gadget

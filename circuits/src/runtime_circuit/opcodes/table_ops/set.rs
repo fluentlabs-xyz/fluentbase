@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -19,6 +19,7 @@ pub(crate) struct OpTableSetGadget<F: Field> {
     elem_type: AdviceColumn,
     value: AdviceColumn,
     size: AdviceColumn,
+    out: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
@@ -28,16 +29,19 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_rwasm_value();
-        let elem_index = cb.query_rwasm_value();
-        let elem_type = cb.query_rwasm_value();
-        let value = cb.query_rwasm_value();
-        let size = cb.query_rwasm_value();
+        let table_index = cb.query_cell();
+        let elem_index = cb.query_cell();
+        let elem_type = cb.query_cell();
+        let value = cb.query_cell();
+        let size = cb.query_cell();
+        let out = cb.query_cell();
+        cb.require_opcode(Instruction::TableSet(Default::default()));
         cb.table_size(table_index.expr(), size.expr());
         cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_pop(elem_type.current());
         cb.stack_pop(elem_index.current());
         cb.stack_pop(value.current());
+        cb.stack_push(out.current());
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr() - elem_index.expr());
         Self {
@@ -46,6 +50,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
             elem_type,
             value,
             size,
+            out,
             _pd: Default::default(),
         }
     }
@@ -56,11 +61,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, elem_type, elem_index, value) = match trace.instr() {
-            Instruction::TableFill(ti) =>
+        let (table_index, elem_type, elem_index, value, out) = match trace.instr() {
+            Instruction::TableSet(ti) =>
                 ( ti,
                   trace.curr_nth_stack_value(0)?,
                   trace.curr_nth_stack_value(1)?,
+                  trace.curr_nth_stack_value(2)?,
                   trace.next_nth_stack_value(0)?,
                 ),
             _ => bail_illegal_opcode!(trace),
@@ -69,6 +75,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         self.elem_type.assign(region, offset, F::from(elem_type.to_bits()));
         self.elem_index.assign(region, offset, F::from(elem_index.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
+        self.out.assign(region, offset, F::from(out.to_bits()));
         Ok(())
     }
 }

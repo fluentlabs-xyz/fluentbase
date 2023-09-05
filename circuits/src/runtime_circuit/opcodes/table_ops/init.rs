@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -30,13 +30,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableInitGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_INIT;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index_src = cb.query_rwasm_value();
-        let table_index_dst = cb.query_rwasm_value();
-        let start = cb.query_rwasm_value();
-        let range = cb.query_rwasm_value();
-        let size_src = cb.query_rwasm_value();
-        let size_dst = cb.query_rwasm_value();
-        let out = cb.query_rwasm_value();
+        let table_index_src = cb.query_cell();
+        let table_index_dst = cb.query_cell();
+        let start = cb.query_cell();
+        let range = cb.query_cell();
+        let size_src = cb.query_cell();
+        let size_dst = cb.query_cell();
+        let out = cb.query_cell();
+        cb.require_opcode(Instruction::TableInit(Default::default()));
         cb.table_size(table_index_src.expr(), size_src.expr());
         cb.table_size(table_index_dst.expr(), size_dst.expr());
         cb.table_init(table_index_src.expr(), table_index_dst.expr(), start.expr(), range.expr());
