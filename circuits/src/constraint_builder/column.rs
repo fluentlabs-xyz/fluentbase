@@ -6,7 +6,7 @@ use halo2_proofs::{
 };
 use std::fmt::Debug;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SelectorColumn(pub Column<Fixed>);
 
 impl SelectorColumn {

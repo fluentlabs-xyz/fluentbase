@@ -568,6 +568,28 @@ impl Instruction {
         let size = self.write_binary(&mut binary_writer).unwrap();
         (sink[0], size - 1)
     }
+
+    pub fn affects_pc(&self) -> bool {
+        match self {
+            Instruction::Br(_)
+            | Instruction::BrIfEqz(_)
+            | Instruction::BrIfNez(_)
+            | Instruction::BrAdjust(_)
+            | Instruction::BrAdjustIfNez(_)
+            | Instruction::BrTable(_)
+            | Instruction::Return(_)
+            | Instruction::ReturnIfNez(_)
+            | Instruction::ReturnCallInternal(_)
+            | Instruction::ReturnCall(_)
+            | Instruction::ReturnCallIndirect(_)
+            | Instruction::ReturnCallIndirectUnsafe(_)
+            | Instruction::CallInternal(_)
+            | Instruction::Call(_)
+            | Instruction::CallIndirect(_)
+            | Instruction::CallIndirectUnsafe(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]

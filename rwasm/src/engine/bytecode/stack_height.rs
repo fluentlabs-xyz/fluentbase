@@ -115,6 +115,7 @@ impl Instruction {
                     Instruction::I64Load32U(_) => (4, false),
                     _ => unreachable!(),
                 };
+                stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryRead {
                     offset: val.into_inner(),
                     length,
@@ -143,6 +144,7 @@ impl Instruction {
                     Instruction::I64Store32(_) => 4,
                     _ => unreachable!(),
                 };
+                stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryWrite {
                     offset: val.into_inner(),

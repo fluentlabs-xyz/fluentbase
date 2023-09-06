@@ -37,7 +37,7 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
         let value = cb.query_cell();
         let value_inv = cb.query_cell();
 
-        cb.require_at_least_one_selector([
+        cb.require_exactly_one_selector([
             is_br.current(),
             is_br_if_eqz.current(),
             is_br_if_nez.current(),

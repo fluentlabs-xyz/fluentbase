@@ -3,11 +3,14 @@ use crate::{
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},
     util::Field,
 };
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
+use std::unreachable;
 
 // mod op_bin;
 pub(crate) mod op_bin;
 pub(crate) mod op_break;
+pub(crate) mod op_call;
 pub(crate) mod op_const;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_conversion;
@@ -18,6 +21,7 @@ pub(crate) mod op_local;
 pub(crate) mod table_ops;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
+pub(crate) mod op_store;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
 

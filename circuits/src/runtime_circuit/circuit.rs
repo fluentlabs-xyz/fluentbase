@@ -5,13 +5,17 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
+            op_break::OpBreakGadget,
+            op_call::OpCallGadget,
             op_const::OpConstGadget,
             op_reffunc::OpRefFuncGadget,
             op_conversion::OpConversionGadget,
             op_drop::OpDropGadget,
             op_global::OpGlobalGadget,
+            op_load::OpLoadGadget,
             op_local::OpLocalGadget,
             op_select::OpSelectGadget,
+            op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
             table_ops::{
@@ -38,6 +42,8 @@ use halo2_proofs::{
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
     bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
+    break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
+    call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
     const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
     reffunc_gadget: ExecutionGadgetRow<F, OpRefFuncGadget<F>>,
     conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
@@ -47,6 +53,8 @@ pub struct RuntimeCircuitConfig<F: Field> {
     select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
     test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
+    store_gadget: ExecutionGadgetRow<F, OpStoreGadget<F>>,
+    load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
     table_copy_gadget: ExecutionGadgetRow<F, OpTableCopyGadget<F>>,
     table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
     table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
@@ -82,6 +90,8 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         }
         Self {
             bin_gadget: configure_gadget!(),
+            break_gadget: configure_gadget!(),
+            call_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
             reffunc_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
@@ -91,6 +101,8 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
+            store_gadget: configure_gadget!(),
+            load_gadget: configure_gadget!(),
             table_copy_gadget: configure_gadget!(),
             table_fill_gadget: configure_gadget!(),
             table_get_gadget: configure_gadget!(),
@@ -113,6 +125,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         let execution_state = ExecutionState::from_opcode(*step.instr());
         let res = match execution_state {
             ExecutionState::WASM_BIN => self.bin_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_BREAK => {
+                self.break_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_CALL => self.call_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
             }
@@ -145,12 +161,11 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_TABLE_SET => { self.table_set_gadget.assign(region, offset, step, rw_counter) }
             ExecutionState::WASM_TABLE_SIZE => { self.table_size_gadget.assign(region, offset, step, rw_counter) }
 
-            ExecutionState::WASM_CALL => {
-                // do nothing for WASM_BREAK for now
-                Ok(())
-            }
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
-            ExecutionState::WASM_BREAK => Ok(()),
+            ExecutionState::WASM_STORE => {
+                self.store_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"

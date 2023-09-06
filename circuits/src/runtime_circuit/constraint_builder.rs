@@ -116,7 +116,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         [self.pc.clone(), self.opcode.clone(), self.value.clone()]
     }
 
-    pub fn query_rwasm_code(&self) -> Query<F> {
+    pub fn query_rwasm_opcode(&self) -> Query<F> {
         self.opcode.current()
     }
 
@@ -128,9 +128,9 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.state_transition.program_counter.clone()
     }
 
-    pub fn require_at_least_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
+    pub fn require_exactly_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
         let sum: Query<F> = selectors.iter().fold(0.expr(), |r, q| r + q.clone());
-        self.require_zero("only one selector must be enabled", sum - 1.expr());
+        self.require_zero("exactly one selector must be enabled", sum - 1.expr());
     }
 
     pub fn if_rwasm_opcode(
@@ -151,6 +151,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_cells<const N: usize>(&mut self) -> [AdviceColumn; N] {
         self.base.advice_columns(self.cs)
+    }
+
+    pub fn query_selector(&mut self) -> SelectorColumn {
+        SelectorColumn(self.base.fixed_column(self.cs).0)
     }
 
     pub fn query_fixed(&mut self) -> FixedColumn {
@@ -198,14 +202,34 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.global_lookup(Query::one(), index, value);
     }
 
+    pub fn mem_write(&mut self, address: Query<F>, value: Query<F>) {
+        self.memory_lookup(Query::one(), address, value);
+    }
+
+    pub fn mem_read(&mut self, address: Query<F>, value: Query<F>) {
+        self.memory_lookup(Query::zero(), address, value);
+    }
+
+    pub fn memory_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
+        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value);
+    }
+
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
         self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value);
     }
 
-    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState, opcode: Query<F>) {
+    pub fn execution_state_lookup(
+        &mut self,
+        execution_state: ExecutionState,
+        opcode: Query<F>,
+        affects_pc: Query<F>,
+    ) {
         self.op_lookups.push(LookupTable::ResponsibleOpcode(
-            self.base
-                .apply_lookup_condition([Query::Constant(F::from(execution_state as u64)), opcode]),
+            self.base.apply_lookup_condition([
+                Query::Constant(F::from(execution_state.to_u64())),
+                opcode,
+                affects_pc,
+            ]),
         ));
     }
 
@@ -331,59 +355,60 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
     ) {
-        while let Some(state_lookup) = self.op_lookups.pop() {
+        for state_lookup in self.op_lookups.iter() {
             match state_lookup {
                 LookupTable::Rwasm(fields) => {
                     self.base.add_lookup(
                         "rwasm_lookup(offset,code,value)",
-                        fields,
+                        fields.clone(),
                         rwasm_lookup.lookup_rwasm_table(),
                     );
                 }
                 LookupTable::Rw(fields) => {
                     self.base.add_lookup(
                         "rw_lookup(rw_counter,is_write,tag,id,address,value)",
-                        fields,
+                        fields.clone(),
                         rw_lookup.lookup_rw_table(),
                     );
                 }
                 LookupTable::ResponsibleOpcode(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
                     );
                 }
                 LookupTable::RangeCheck8(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u8_table(),
                     );
                 }
                 LookupTable::RangeCheck10(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u10_table(),
                     );
                 }
                 LookupTable::RangeCheck16(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u16_table(),
                     );
                 }
                 LookupTable::Fixed(fields) => {
                     self.base.add_lookup(
                         "fixed(tag,table)",
-                        fields,
+                        fields.clone(),
                         fixed_lookup.lookup_fixed_table(),
                     );
                 }
             }
         }
+        self.op_lookups.clear();
         self.base.build(self.cs);
     }
 }
