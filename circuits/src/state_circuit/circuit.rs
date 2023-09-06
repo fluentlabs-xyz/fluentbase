@@ -164,7 +164,7 @@ impl<F: Field> StateCircuitConfig<F> {
 
     pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
         layouter.assign_region(
-            || "runtime opcodes",
+            || "state runtime opcodes",
             |mut region| {
                 let mut rw_rows = Vec::new();
                 let mut opcodes_by_rwc = Vec::new();

@@ -8,6 +8,7 @@ pub enum ExecutionState {
     WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
+    WASM_CALL_HOST(u16),
     WASM_CONST,      // DONE
     WASM_REFFUNC,
     WASM_CONVERSION, // DONE
@@ -17,9 +18,9 @@ pub enum ExecutionState {
     WASM_LOCAL,  // DONE
     WASM_REL,    // DONE
     WASM_SELECT, // DONE
-    WASM_STORE,
-    WASM_TEST,  // DONE
-    WASM_UNARY, // DONE
+    WASM_STORE,  // DONE
+    WASM_TEST,   // DONE
+    WASM_UNARY,  // DONE
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -30,6 +31,34 @@ pub enum ExecutionState {
 }
 
 impl ExecutionState {
+    pub fn to_u64(&self) -> u64 {
+        match self {
+            ExecutionState::WASM_BIN => 1,
+            ExecutionState::WASM_BREAK => 2,
+            ExecutionState::WASM_CALL => 3,
+            ExecutionState::WASM_CALL_HOST(id) => 0x040000u64 + *id as u64,
+            ExecutionState::WASM_CONST => 5,
+            ExecutionState::WASM_CONVERSION => 6,
+            ExecutionState::WASM_DROP => 7,
+            ExecutionState::WASM_GLOBAL => 8,
+            ExecutionState::WASM_LOAD => 9,
+            ExecutionState::WASM_LOCAL => 10,
+            ExecutionState::WASM_REL => 11,
+            ExecutionState::WASM_SELECT => 12,
+            ExecutionState::WASM_STORE => 13,
+            ExecutionState::WASM_TEST => 14,
+            ExecutionState::WASM_UNARY => 15,
+            ExecutionState::WASM_REFFUNC => 16,
+            ExecutionState::WASM_TABLE_COPY => 17,
+            ExecutionState::WASM_TABLE_FILL => 18,
+            ExecutionState::WASM_TABLE_GET => 19,
+            ExecutionState::WASM_TABLE_GROW => 20,
+            ExecutionState::WASM_TABLE_INIT => 21,
+            ExecutionState::WASM_TABLE_SET => 22,
+            ExecutionState::WASM_TABLE_SIZE => 23,
+        }
+    }
+
     pub fn from_opcode(instr: Instruction) -> ExecutionState {
         for state in Self::iter() {
             // TODO: "yes, I've heard about lazy static, don't understand why its not here"
@@ -142,6 +171,33 @@ impl ExecutionState {
             Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
             Self::WASM_TABLE_COPY => vec![Instruction::TableCopy(Default::default())],
             Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
+            Self::WASM_STORE => vec![
+                Instruction::I32Store(Default::default()),
+                Instruction::I32Store8(Default::default()),
+                Instruction::I32Store16(Default::default()),
+                Instruction::I64Store(Default::default()),
+                Instruction::I64Store8(Default::default()),
+                Instruction::I64Store16(Default::default()),
+                Instruction::I64Store32(Default::default()),
+                Instruction::F32Store(Default::default()),
+                Instruction::F64Store(Default::default()),
+            ],
+            Self::WASM_LOAD => vec![
+                Instruction::I32Load(Default::default()),
+                Instruction::I32Load8U(Default::default()),
+                Instruction::I32Load8S(Default::default()),
+                Instruction::I32Load16U(Default::default()),
+                Instruction::I32Load16S(Default::default()),
+                Instruction::I64Load(Default::default()),
+                Instruction::I64Load8U(Default::default()),
+                Instruction::I64Load8S(Default::default()),
+                Instruction::I64Load16U(Default::default()),
+                Instruction::I64Load16S(Default::default()),
+                Instruction::I64Load32U(Default::default()),
+                Instruction::I64Load32S(Default::default()),
+                Instruction::F32Load(Default::default()),
+                Instruction::F64Load(Default::default()),
+            ],
             _ => vec![],
         }
     }
