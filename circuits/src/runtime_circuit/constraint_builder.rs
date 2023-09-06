@@ -209,14 +209,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         ));
     }
 
-    pub fn table_size(&mut self, table_index: Q<F>, value: Q<F>) {
-        // unreachable!("not implemented yet")
+    pub fn table_size(&mut self, table_idx: Q<F>, value: Q<F>) {
+        self.table_size_lookup(0.expr(), table_idx, value);
     }
     pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_grow(&mut self, table_index: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
-        // unreachable!("not implemented yet")
+    pub fn table_grow(&mut self, table_idx: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
+        self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
+        self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
+        self.table_fill(table_idx, res, grow, init);
     }
     pub fn table_get(&mut self, table_index: Q<F>, elem_index: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
@@ -229,6 +231,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
     pub fn table_init(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
         // unreachable!("not implemented yet")
+    }
+
+    pub fn table_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+        // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
+        self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024 + elem_idx + 1.expr(), value);
+    }
+
+    pub fn table_size_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, value: Q<F>) {
+        // address = b*x, where x is 1024. So this is reserved element to store size.
+        self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024, value);
     }
 
     pub fn range_check_1024(&mut self, value: Q<F>) {

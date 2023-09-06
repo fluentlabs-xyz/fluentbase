@@ -159,6 +159,8 @@ impl Instruction {
                 stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::TableGrow(_) => {
+                stack_ops.push(RwOp::TableRead);
+                stack_ops.push(RwOp::TableWrite);
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));

@@ -77,7 +77,7 @@ mod test {
     fn table_grow() {
         test_ok(instruction_set! {
             RefFunc(0)
-            I32Const(0)
+            I32Const(2)
             TableGrow(0)
             Drop
         });

@@ -34,6 +34,12 @@ pub enum RwRow {
         value: u64,
         signed: bool,
     },
+    /// Table
+    Table {
+        rw_counter: usize,
+        is_write: bool,
+        call_id: usize,
+    },
 }
 
 pub fn rw_rows_from_trace(
@@ -120,8 +126,20 @@ pub fn rw_rows_from_trace(
                     signed,
                 });
             }
-            // RwOp::TableWrite => {}
-            // RwOp::TableRead => {}
+            RwOp::TableWrite => {
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                });
+            }
+            RwOp::TableRead => {
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                });
+            }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
     }
@@ -134,6 +152,7 @@ impl RwRow {
             Self::Stack { value, .. } => *value,
             Self::Global { value, .. } => *value,
             Self::Memory { value: byte, .. } => UntypedValue::from(*byte),
+            Self::Table { .. } => UntypedValue::from(0), // FIXME
             _ => unreachable!("{:?}", self),
         }
     }
@@ -169,6 +188,7 @@ impl RwRow {
             | Self::Memory { rw_counter, .. }
             | Self::Stack { rw_counter, .. }
             | Self::Global { rw_counter, .. } => *rw_counter,
+            | Self::Table { rw_counter, .. } => *rw_counter,
             _ => 0,
         }
     }
@@ -179,6 +199,7 @@ impl RwRow {
             Self::Memory { is_write, .. }
             | Self::Stack { is_write, .. }
             | Self::Global { is_write, .. } => *is_write,
+            | Self::Table { is_write, .. } => *is_write,
             _ => false,
         }
     }
@@ -189,6 +210,7 @@ impl RwRow {
             Self::Memory { .. } => RwTableTag::Memory,
             Self::Stack { .. } => RwTableTag::Stack,
             Self::Global { .. } => RwTableTag::Global,
+            Self::Table { .. } => RwTableTag::Table,
         }
     }
 
@@ -196,6 +218,7 @@ impl RwRow {
         match self {
             Self::Stack { call_id, .. }
             | Self::Global { call_id, .. }
+            | Self::Table { call_id, .. }
             | Self::Memory { call_id, .. } => Some(*call_id),
             Self::Start { .. } => None,
         }
@@ -206,6 +229,7 @@ impl RwRow {
             Self::Memory { memory_address, .. } => Some(*memory_address as u32),
             Self::Stack { stack_pointer, .. } => Some(*stack_pointer as u32),
             Self::Global { global_index, .. } => Some(*global_index as u32),
+            Self::Table { .. } => None,
             Self::Start { .. } => None,
         }
     }
