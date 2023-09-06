@@ -2,7 +2,8 @@ use crate::{
     state_circuit::tag::RwTableTag,
     trace_step::{GadgetError, TraceStep},
 };
-use fluentbase_rwasm::{common::UntypedValue, RwOp};
+use fluentbase_runtime::SysFuncIdx;
+use fluentbase_rwasm::{common::UntypedValue, engine::bytecode::Instruction, RwOp};
 
 #[derive(Clone, Copy, Debug)]
 pub enum RwRow {
@@ -41,7 +42,14 @@ pub fn rw_rows_from_trace(
     trace: &TraceStep,
     call_id: usize,
 ) -> Result<(), GadgetError> {
-    let rw_ops = trace.instr().get_rw_ops();
+    let mut rw_ops = trace.instr().get_rw_ops();
+    match trace.instr() {
+        Instruction::Call(fn_idx) => {
+            let sys_func = SysFuncIdx::from(*fn_idx);
+            rw_ops.extend(sys_func.get_rw_rows());
+        }
+        _ => {}
+    }
     let mut stack_reads = 0;
     let mut stack_writes = 0;
     for rw_op in rw_ops {

@@ -1,6 +1,13 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
-    lookup_table::{FixedLookup, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{
+        FixedLookup,
+        PublicInputLookup,
+        RangeCheckLookup,
+        ResponsibleOpcodeLookup,
+        RwLookup,
+        RwasmLookup,
+    },
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
         opcodes::{ExecutionGadget, GadgetError, TraceStep},
@@ -28,6 +35,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
+        public_input_lookup: &impl PublicInputLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         // we store register states in state transition gadget
@@ -54,6 +62,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             responsible_opcode_lookup,
             range_check_lookup,
             fixed_lookup,
+            public_input_lookup,
         );
         ExecutionGadgetRow {
             gadget: gadget_config,

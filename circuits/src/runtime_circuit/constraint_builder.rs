@@ -13,6 +13,7 @@ use crate::{
     lookup_table::{
         FixedLookup,
         LookupTable,
+        PublicInputLookup,
         RangeCheckLookup,
         ResponsibleOpcodeLookup,
         RwLookup,
@@ -272,6 +273,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
 
+    pub fn exit_code_lookup(&mut self, exit_code: Query<F>) {
+        self.op_lookups.push(LookupTable::ExitCode(
+            self.base.apply_lookup_condition([Query::one(), exit_code]),
+        ))
+    }
+
     pub fn stack_pointer(&self) -> Query<F> {
         self.state_transition.stack_pointer()
     }
@@ -314,6 +321,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
+        public_input_lookup: &impl PublicInputLookup<F>,
     ) {
         for state_lookup in self.op_lookups.iter() {
             match state_lookup {
@@ -364,6 +372,27 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "fixed(tag,table)",
                         fields.clone(),
                         fixed_lookup.lookup_fixed_table(),
+                    );
+                }
+                LookupTable::PublicInput(fields) => {
+                    self.base.add_lookup(
+                        "fixed(tag,table)",
+                        fields.clone(),
+                        public_input_lookup.lookup_input_byte(),
+                    );
+                }
+                LookupTable::PublicOutput(fields) => {
+                    self.base.add_lookup(
+                        "fixed(tag,table)",
+                        fields.clone(),
+                        public_input_lookup.lookup_output_byte(),
+                    );
+                }
+                LookupTable::ExitCode(fields) => {
+                    self.base.add_lookup(
+                        "fixed(tag,table)",
+                        fields.clone(),
+                        public_input_lookup.lookup_exit_code(),
                     );
                 }
             }

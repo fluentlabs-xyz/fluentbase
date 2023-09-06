@@ -272,7 +272,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     self.visit_return_call_internal(compiled_func)?
                 }
                 Instr::ReturnCall(func) => {
-                    forward_call!(self.visit_return_call(func))
+                    forward_call!(self.visit_return_call(func.into()))
                 }
                 Instr::ReturnCallIndirect(func_type) => {
                     forward_call!(self.visit_return_call_indirect(func_type))
@@ -281,7 +281,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     forward_call!(self.visit_return_call_indirect_unsafe(func_type))
                 }
                 Instr::CallInternal(compiled_func) => self.visit_call_internal(compiled_func)?,
-                Instr::Call(func) => forward_call!(self.visit_call(func)),
+                Instr::Call(func) => forward_call!(self.visit_call(func.into())),
                 Instr::CallIndirect(func_type) => {
                     forward_call!(self.visit_call_indirect(func_type))
                 }

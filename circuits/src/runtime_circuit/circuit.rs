@@ -1,5 +1,5 @@
 use crate::{
-    lookup_table::{FixedLookup, RangeCheckLookup, RwLookup, RwasmLookup},
+    lookup_table::{FixedLookup, PublicInputLookup, RangeCheckLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         execution_gadget::ExecutionGadgetRow,
         execution_state::ExecutionState,
@@ -19,10 +19,13 @@ use crate::{
             op_unary::OpUnaryGadget,
             TraceStep,
         },
+        platform::sys_halt::SysHaltGadget,
         responsible_opcode::ResponsibleOpcodeTable,
     },
+    trace_step::GadgetError,
     util::Field,
 };
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::{Layouter, Region},
@@ -31,6 +34,7 @@ use halo2_proofs::{
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
+    // wasm opcodes
     bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
     break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
     call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
@@ -44,6 +48,8 @@ pub struct RuntimeCircuitConfig<F: Field> {
     test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
     store_gadget: ExecutionGadgetRow<F, OpStoreGadget<F>>,
     load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
+    // system calls TODO: "lets design an extension library for this"
+    sys_halt_gadget: ExecutionGadgetRow<F, SysHaltGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -56,6 +62,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         state_lookup: &impl RwLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
+        public_input_lookup: &impl PublicInputLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
@@ -67,10 +74,12 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                     &responsible_opcode_table,
                     range_check_lookup,
                     fixed_lookup,
+                    public_input_lookup,
                 )
             };
         }
         Self {
+            // wasm opcodes
             bin_gadget: configure_gadget!(),
             break_gadget: configure_gadget!(),
             call_gadget: configure_gadget!(),
@@ -84,8 +93,27 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             test_gadget: configure_gadget!(),
             store_gadget: configure_gadget!(),
             load_gadget: configure_gadget!(),
+            // system calls
+            sys_halt_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
+    }
+
+    fn assign_sys_call(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        step: &TraceStep,
+        rw_counter: usize,
+        system_call: SysFuncIdx,
+    ) -> Result<(), GadgetError> {
+        match system_call {
+            SysFuncIdx::IMPORT_SYS_HALT => self
+                .sys_halt_gadget
+                .assign(region, offset, step, rw_counter)?,
+            _ => unreachable!("not supported sys call: {:?}", system_call),
+        }
+        Ok(())
     }
 
     #[allow(unused_variables)]
@@ -103,6 +131,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.break_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_CALL => self.call_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_CALL_HOST(system_call) => {
+                self.assign_sys_call(region, offset, step, rw_counter, system_call)
+            }
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
             }

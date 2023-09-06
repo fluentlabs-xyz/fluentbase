@@ -41,7 +41,8 @@ fn exported_memory_vec(
     return Default::default();
 }
 
-pub(crate) fn sys_halt(_: Caller<'_, RuntimeContext>, exit_code: u32) -> Result<(), Trap> {
+pub(crate) fn sys_halt(mut caller: Caller<'_, RuntimeContext>, exit_code: u32) -> Result<(), Trap> {
+    caller.data_mut().exit_code = exit_code as i32;
     Err(Trap::i32_exit(exit_code as i32))
 }
 
@@ -63,7 +64,8 @@ pub(crate) fn sys_read(
     Ok(length)
 }
 
-pub(crate) fn evm_stop(_: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+    caller.data_mut().exit_code = EXIT_CODE_EVM_STOP;
     Err(Trap::i32_exit(EXIT_CODE_EVM_STOP))
 }
 
