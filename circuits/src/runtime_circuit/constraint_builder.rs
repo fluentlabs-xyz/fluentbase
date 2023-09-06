@@ -315,59 +315,60 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
     ) {
-        while let Some(state_lookup) = self.op_lookups.pop() {
+        for state_lookup in self.op_lookups.iter() {
             match state_lookup {
                 LookupTable::Rwasm(fields) => {
                     self.base.add_lookup(
                         "rwasm_lookup(offset,code,value)",
-                        fields,
+                        fields.clone(),
                         rwasm_lookup.lookup_rwasm_table(),
                     );
                 }
                 LookupTable::Rw(fields) => {
                     self.base.add_lookup(
                         "rw_lookup(rw_counter,is_write,tag,id,address,value)",
-                        fields,
+                        fields.clone(),
                         rw_lookup.lookup_rw_table(),
                     );
                 }
                 LookupTable::ResponsibleOpcode(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
                     );
                 }
                 LookupTable::RangeCheck8(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u8_table(),
                     );
                 }
                 LookupTable::RangeCheck10(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u10_table(),
                     );
                 }
                 LookupTable::RangeCheck16(fields) => {
                     self.base.add_lookup(
                         "responsible_opcode(execution_state,opcode)",
-                        fields,
+                        fields.clone(),
                         range_check_lookup.lookup_u16_table(),
                     );
                 }
                 LookupTable::Fixed(fields) => {
                     self.base.add_lookup(
                         "fixed(tag,table)",
-                        fields,
+                        fields.clone(),
                         fixed_lookup.lookup_fixed_table(),
                     );
                 }
             }
         }
+        self.op_lookups.clear();
         self.base.build(self.cs);
     }
 }
