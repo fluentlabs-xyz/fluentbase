@@ -17,9 +17,9 @@ pub enum ExecutionState {
     WASM_LOCAL,  // DONE
     WASM_REL,    // DONE
     WASM_SELECT, // DONE
-    WASM_STORE,
-    WASM_TEST,  // DONE
-    WASM_UNARY, // DONE
+    WASM_STORE,  // IN PROGRESS
+    WASM_TEST,   // DONE
+    WASM_UNARY,  // DONE
 }
 
 impl ExecutionState {

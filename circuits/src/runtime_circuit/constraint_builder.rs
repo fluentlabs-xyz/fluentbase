@@ -126,9 +126,9 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.state_transition.program_counter.clone()
     }
 
-    pub fn require_at_least_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
+    pub fn require_exactly_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
         let sum: Query<F> = selectors.iter().fold(0.expr(), |r, q| r + q.clone());
-        self.require_zero("only one selector must be enabled", sum - 1.expr());
+        self.require_zero("exactly one selector must be enabled", sum - 1.expr());
     }
 
     pub fn if_rwasm_opcode(
@@ -149,6 +149,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_cells<const N: usize>(&mut self) -> [AdviceColumn; N] {
         self.base.advice_columns(self.cs)
+    }
+
+    pub fn query_selector(&mut self) -> SelectorColumn {
+        SelectorColumn(self.base.fixed_column(self.cs).0)
     }
 
     pub fn query_fixed(&mut self) -> FixedColumn {
