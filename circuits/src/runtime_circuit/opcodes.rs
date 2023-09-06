@@ -3,7 +3,9 @@ use crate::{
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},
     util::Field,
 };
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
+use std::unreachable;
 
 // mod op_bin;
 pub(crate) mod op_bin;
