@@ -11,6 +11,7 @@ use crate::{
             op_conversion::OpConversionGadget,
             op_drop::OpDropGadget,
             op_global::OpGlobalGadget,
+            op_load::OpLoadGadget,
             op_local::OpLocalGadget,
             op_select::OpSelectGadget,
             op_store::OpStoreGadget,
@@ -42,6 +43,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
     test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
     store_gadget: ExecutionGadgetRow<F, OpStoreGadget<F>>,
+    load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -81,6 +83,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
             store_gadget: configure_gadget!(),
+            load_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }
@@ -123,6 +126,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_STORE => {
                 self.store_gadget.assign(region, offset, step, rw_counter)
             }
+            ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"
