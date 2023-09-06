@@ -26,9 +26,8 @@ pub(crate) struct OpStoreGadget<F> {
     is_f64_store: SelectorColumn,
 
     value: AdviceColumn,
+    value_limbs: [AdviceColumn; 8],
     address: AdviceColumn,
-    byte_value: AdviceColumn,
-    // byte_address: AdviceColumn,
     address_base_offset: AdviceColumn,
 
     _marker: PhantomData<F>,
@@ -51,9 +50,8 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let is_f64_store = cb.query_selector();
 
         let value = cb.query_cell();
+        let value_limbs = cb.query_cells();
         let address = cb.query_cell();
-        let byte_value = cb.query_cell();
-        // let byte_address = cb.query_cell();
         let address_base_offset = cb.query_cell();
 
         cb.stack_pop(value.current());
@@ -74,18 +72,18 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             .map(|v| v.current().0),
         );
 
-        // cb.if_rwasm_opcode(
-        //     is_i32_store.current().0,
-        //     Instruction::I32Store(Default::default()),
-        //     |cb| {
-        //         (0..4).for_each(|i| {
-        //             cb.mem_write(
-        //                 address_base_offset.current() + address.current() + i.expr(),
-        //                 byte_value.current(),
-        //             );
-        //         });
-        //     },
-        // );
+        cb.if_rwasm_opcode(
+            is_i32_store.current().0,
+            Instruction::I32Store(Default::default()),
+            |cb| {
+                (0..4).for_each(|i| {
+                    cb.mem_write(
+                        address_base_offset.current() + address.current() + i.expr(),
+                        value_limbs[i].current(),
+                    );
+                });
+            },
+        );
 
         Self {
             is_i32_store,
@@ -99,8 +97,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             is_f64_store,
             value,
             address,
-            byte_value,
-            // byte_address,
+            value_limbs,
             address_base_offset,
             _marker: Default::default(),
         }
@@ -116,50 +113,44 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let address = trace.curr_nth_stack_value(1)?.to_bits();
         let value_le_bytes = value.to_le_bytes();
 
-        macro_rules! assigns {
-            ($selector:ident, $instr_bytes_size:expr, $address_base_offset:ident) => {
-                let address_base_offset = $address_base_offset.into_inner().to_u64().unwrap();
-                (0..$instr_bytes_size).for_each(|i| {
-                    let offset = offset + i;
-                    self.$selector.enable(region, offset);
-
-                    self.address_base_offset
-                        .assign(region, offset, address_base_offset);
-                    self.address.assign(region, offset, address);
-                    self.value.assign(region, offset, value);
-                    self.byte_value
-                        .assign(region, offset, value_le_bytes[i] as u64);
-                });
-            };
-        }
+        let mut assign = |selector: &SelectorColumn, length: usize, address_base_offset: u32| {
+            selector.enable(region, offset);
+            self.value.assign(region, offset, value);
+            (0..length).for_each(|i| {
+                self.value_limbs[i].assign(region, offset, value_le_bytes[i] as u64);
+            });
+            self.address.assign(region, offset, address);
+            self.address_base_offset
+                .assign(region, offset, address_base_offset as u64);
+        };
 
         match trace.instr() {
             Instruction::I32Store(address_base_offset) => {
-                assigns!(is_i32_store, 4, address_base_offset);
+                assign(&self.is_i32_store, 4, address_base_offset.into_inner());
             }
             Instruction::I32Store8(address_base_offset) => {
-                assigns!(is_i32_store8, 1, address_base_offset);
+                assign(&self.is_i32_store8, 1, address_base_offset.into_inner());
             }
             Instruction::I32Store16(address_base_offset) => {
-                assigns!(is_i32_store16, 2, address_base_offset);
+                assign(&self.is_i32_store16, 2, address_base_offset.into_inner());
             }
             Instruction::I64Store(address_base_offset) => {
-                assigns!(is_i64_store, 8, address_base_offset);
+                assign(&self.is_i64_store, 8, address_base_offset.into_inner());
             }
             Instruction::I64Store8(address_base_offset) => {
-                assigns!(is_i64_store8, 1, address_base_offset);
+                assign(&self.is_i64_store8, 1, address_base_offset.into_inner());
             }
             Instruction::I64Store16(address_base_offset) => {
-                assigns!(is_i64_store16, 2, address_base_offset);
+                assign(&self.is_i64_store16, 2, address_base_offset.into_inner());
             }
             Instruction::I64Store32(address_base_offset) => {
-                assigns!(is_i64_store32, 4, address_base_offset);
+                assign(&self.is_i64_store32, 4, address_base_offset.into_inner());
             }
             Instruction::F32Store(address_base_offset) => {
-                assigns!(is_f32_store, 4, address_base_offset);
+                assign(&self.is_f32_store, 4, address_base_offset.into_inner());
             }
             Instruction::F64Store(address_base_offset) => {
-                assigns!(is_f64_store, 8, address_base_offset);
+                assign(&self.is_f64_store, 8, address_base_offset.into_inner());
             }
             _ => unreachable!("illegal opcode place {:?}", trace.instr()),
         };
