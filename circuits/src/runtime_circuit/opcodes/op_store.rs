@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, SelectorColumn, ToExpr},
+    constraint_builder::{AdviceColumn, Query, SelectorColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -8,7 +8,7 @@ use crate::{
     trace_step::{GadgetError, TraceStep},
     util::Field,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
+use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
 use halo2_proofs::circuit::Region;
 use num_traits::ToPrimitive;
 use std::marker::PhantomData;
@@ -33,6 +33,22 @@ pub(crate) struct OpStoreGadget<F> {
     _marker: PhantomData<F>,
 }
 
+impl<F: Field> OpStoreGadget<F> {
+    pub fn instr_res_byte_len(instr: &Instruction) -> usize {
+        match instr {
+            Instruction::I32Store(_) => 4,
+            Instruction::I32Store8(_) => 1,
+            Instruction::I32Store16(_) => 2,
+            Instruction::I64Store(_) => 8,
+            Instruction::I64Store8(_) => 1,
+            Instruction::I64Store16(_) => 2,
+            Instruction::I64Store32(_) => 4,
+            Instruction::F32Store(_) => 4,
+            Instruction::F64Store(_) => 8,
+            _ => unreachable!("unsupported opcode {:?}", instr),
+        }
+    }
+}
 impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
     const NAME: &'static str = "WASM_STORE";
 
@@ -72,18 +88,31 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             .map(|v| v.current().0),
         );
 
-        cb.if_rwasm_opcode(
-            is_i32_store.current().0,
-            Instruction::I32Store(Default::default()),
-            |cb| {
-                (0..4).for_each(|i| {
+        let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
+            cb.if_rwasm_opcode(selector, *instr, |cb| {
+                (0..Self::instr_res_byte_len(instr)).for_each(|i| {
                     cb.mem_write(
                         address_base_offset.current() + address.current() + i.expr(),
                         value_limbs[i].current(),
                     );
                 });
-            },
-        );
+            })
+        };
+
+        [
+            (is_i32_store, Instruction::I32Store(Default::default())),
+            (is_i32_store8, Instruction::I32Store8(Default::default())),
+            (is_i32_store16, Instruction::I32Store16(Default::default())),
+            (is_i64_store, Instruction::I64Store(Default::default())),
+            (is_i64_store8, Instruction::I64Store8(Default::default())),
+            (is_i64_store16, Instruction::I64Store16(Default::default())),
+            (is_i64_store32, Instruction::I64Store32(Default::default())),
+            (is_f32_store, Instruction::F32Store(Default::default())),
+            (is_f64_store, Instruction::F64Store(Default::default())),
+        ]
+        .map(|v| (v.0.current().0, v.1))
+        .iter()
+        .for_each(|v| constrain_instr(v.clone().0, &v.1));
 
         Self {
             is_i32_store,
@@ -113,46 +142,48 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let address = trace.curr_nth_stack_value(1)?.to_bits();
         let value_le_bytes = value.to_le_bytes();
 
-        let mut assign = |selector: &SelectorColumn, length: usize, address_base_offset: u32| {
+        let instr = trace.instr();
+
+        let mut assign = |selector: &SelectorColumn, address_offset: &AddressOffset| {
             selector.enable(region, offset);
             self.value.assign(region, offset, value);
-            (0..length).for_each(|i| {
+            (0..Self::instr_res_byte_len(instr)).for_each(|i| {
                 self.value_limbs[i].assign(region, offset, value_le_bytes[i] as u64);
             });
             self.address.assign(region, offset, address);
             self.address_base_offset
-                .assign(region, offset, address_base_offset as u64);
+                .assign(region, offset, address_offset.into_inner() as u64);
         };
 
-        match trace.instr() {
-            Instruction::I32Store(address_base_offset) => {
-                assign(&self.is_i32_store, 4, address_base_offset.into_inner());
+        match instr {
+            Instruction::I32Store(address_offset) => {
+                assign(&self.is_i32_store, address_offset);
             }
-            Instruction::I32Store8(address_base_offset) => {
-                assign(&self.is_i32_store8, 1, address_base_offset.into_inner());
+            Instruction::I32Store8(address_offset) => {
+                assign(&self.is_i32_store8, address_offset);
             }
-            Instruction::I32Store16(address_base_offset) => {
-                assign(&self.is_i32_store16, 2, address_base_offset.into_inner());
+            Instruction::I32Store16(address_offset) => {
+                assign(&self.is_i32_store16, address_offset);
             }
-            Instruction::I64Store(address_base_offset) => {
-                assign(&self.is_i64_store, 8, address_base_offset.into_inner());
+            Instruction::I64Store(address_offset) => {
+                assign(&self.is_i64_store, address_offset);
             }
-            Instruction::I64Store8(address_base_offset) => {
-                assign(&self.is_i64_store8, 1, address_base_offset.into_inner());
+            Instruction::I64Store8(address_offset) => {
+                assign(&self.is_i64_store8, address_offset);
             }
-            Instruction::I64Store16(address_base_offset) => {
-                assign(&self.is_i64_store16, 2, address_base_offset.into_inner());
+            Instruction::I64Store16(address_offset) => {
+                assign(&self.is_i64_store16, address_offset);
             }
-            Instruction::I64Store32(address_base_offset) => {
-                assign(&self.is_i64_store32, 4, address_base_offset.into_inner());
+            Instruction::I64Store32(address_offset) => {
+                assign(&self.is_i64_store32, address_offset);
             }
-            Instruction::F32Store(address_base_offset) => {
-                assign(&self.is_f32_store, 4, address_base_offset.into_inner());
+            Instruction::F32Store(address_offset) => {
+                assign(&self.is_f32_store, address_offset);
             }
-            Instruction::F64Store(address_base_offset) => {
-                assign(&self.is_f64_store, 8, address_base_offset.into_inner());
+            Instruction::F64Store(address_offset) => {
+                assign(&self.is_f64_store, address_offset);
             }
-            _ => unreachable!("illegal opcode place {:?}", trace.instr()),
+            _ => unreachable!("illegal opcode place {:?}", instr),
         };
 
         Ok(())
@@ -169,7 +200,7 @@ mod test {
         test_ok(instruction_set! {
             I32Const[1] // address
             I32Const[800] // value
-            I32Store[0 /*address_base_offset*/]
+            I32Store[1 /*address_offset*/]
         });
     }
 
