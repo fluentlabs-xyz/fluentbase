@@ -4,7 +4,6 @@ use crate::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
-        platform::PlatformGadget,
     },
     trace_step::{GadgetError, TraceStep},
     util::Field,

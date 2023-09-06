@@ -4,6 +4,5 @@ pub(crate) mod sys_halt;
 
 pub use crate::trace_step::{GadgetError, TraceStep};
 use crate::util::Field;
-use fluentbase_rwasm::RwOp;
 
 pub trait PlatformGadget<F: Field> {}

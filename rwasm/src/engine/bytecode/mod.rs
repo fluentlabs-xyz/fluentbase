@@ -17,7 +17,6 @@ pub use self::utils::{
     ElementSegmentIdx,
     FuncIdx,
     GlobalIdx,
-    HostFuncIdx,
     LocalDepth,
     SignatureIdx,
     TableIdx,
@@ -113,7 +112,7 @@ pub enum Instruction {
     /// encodes the [`DropKeep`] parameter. Note that the [`Instruction::Return`]
     /// only acts as a storage for the parameter of the [`Instruction::ReturnCall`]
     /// and will never be executed by itself.
-    ReturnCall(HostFuncIdx),
+    ReturnCall(FuncIdx),
     /// Tail calling a function indirectly.
     ///
     /// # Encoding
@@ -140,7 +139,7 @@ pub enum Instruction {
     /// (or compiled) to the engine this instruction should mainly be used for calling
     /// imported functions. However, it is a general form that can technically be used
     /// for both.
-    Call(HostFuncIdx),
+    Call(FuncIdx),
     /// Calling a function indirectly.
     ///
     /// # Encoding
@@ -422,18 +421,22 @@ impl Instruction {
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
-pub struct InstrMeta(usize, u16);
+pub struct InstrMeta(usize, u16, pub(crate) usize);
 
 impl InstrMeta {
-    pub fn new(pos: usize, code: u16) -> Self {
-        Self(pos, code)
+    pub fn new(pos: usize, code: u16, index: usize) -> Self {
+        Self(pos, code, index)
     }
 
-    pub fn pos(&self) -> usize {
+    pub fn offset(&self) -> usize {
         self.0
     }
 
-    pub fn code(&self) -> u16 {
+    pub fn opcode(&self) -> u16 {
         self.1
+    }
+
+    pub fn index(&self) -> usize {
+        self.2
     }
 }

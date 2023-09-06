@@ -24,47 +24,6 @@ impl FuncIdx {
     }
 }
 
-/// A function index.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, Hash, PartialOrd, Ord)]
-pub struct HostFuncIdx(u32, u16);
-
-impl From<u16> for HostFuncIdx {
-    fn from(index: u16) -> Self {
-        Self(index as u32, index)
-    }
-}
-impl From<u32> for HostFuncIdx {
-    fn from(index: u32) -> Self {
-        Self(index, index as u16)
-    }
-}
-
-impl From<FuncIdx> for HostFuncIdx {
-    fn from(value: FuncIdx) -> Self {
-        HostFuncIdx::from(value.to_u32())
-    }
-}
-impl Into<FuncIdx> for HostFuncIdx {
-    fn into(self) -> FuncIdx {
-        FuncIdx::from(self.0)
-    }
-}
-
-impl HostFuncIdx {
-    pub fn update_internal_index(&mut self, new_index: u32) {
-        self.0 = new_index
-    }
-
-    /// Returns the index value as `u32`.
-    pub fn to_u32(self) -> u32 {
-        self.0
-    }
-
-    pub fn to_system_index(self) -> u16 {
-        self.1
-    }
-}
-
 /// A table index.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]

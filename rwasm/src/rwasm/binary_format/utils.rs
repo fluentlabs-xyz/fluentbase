@@ -10,7 +10,6 @@ use crate::{
             ElementSegmentIdx,
             FuncIdx,
             GlobalIdx,
-            HostFuncIdx,
             LocalDepth,
             SignatureIdx,
             TableIdx,
@@ -59,7 +58,6 @@ macro_rules! impl_default_idx {
 }
 
 impl_default_idx!(FuncIdx, to_u32, u32);
-impl_default_idx!(HostFuncIdx, to_u32, u32);
 impl_default_idx!(TableIdx, to_u32, u32);
 impl_default_idx!(SignatureIdx, to_u32, u32);
 impl_default_idx!(LocalDepth, to_usize, u32);
