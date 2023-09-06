@@ -34,6 +34,14 @@ pub trait FixedLookup<F: Field> {
     fn lookup_fixed_table(&self) -> [Query<F>; N_FIXED_LOOKUP_TABLE];
 }
 
+pub const N_PUBLIC_INPUT_LOOKUP_TABLE: usize = 2;
+
+pub trait PublicInputLookup<F: Field> {
+    fn lookup_input_byte(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE];
+    fn lookup_output_byte(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE];
+    fn lookup_exit_code(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE];
+}
+
 pub enum LookupTable<F: Field> {
     Rwasm([Query<F>; N_RWASM_LOOKUP_TABLE]),
     Rw([Query<F>; N_RW_LOOKUP_TABLE]),
@@ -42,4 +50,7 @@ pub enum LookupTable<F: Field> {
     RangeCheck10([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck16([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     Fixed([Query<F>; N_FIXED_LOOKUP_TABLE]),
+    PublicInput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
+    PublicOutput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
+    ExitCode([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
 }

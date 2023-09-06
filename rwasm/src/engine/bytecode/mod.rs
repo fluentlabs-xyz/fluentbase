@@ -17,6 +17,7 @@ pub use self::utils::{
     ElementSegmentIdx,
     FuncIdx,
     GlobalIdx,
+    HostFuncIdx,
     LocalDepth,
     SignatureIdx,
     TableIdx,
@@ -112,7 +113,7 @@ pub enum Instruction {
     /// encodes the [`DropKeep`] parameter. Note that the [`Instruction::Return`]
     /// only acts as a storage for the parameter of the [`Instruction::ReturnCall`]
     /// and will never be executed by itself.
-    ReturnCall(FuncIdx),
+    ReturnCall(HostFuncIdx),
     /// Tail calling a function indirectly.
     ///
     /// # Encoding
@@ -139,7 +140,7 @@ pub enum Instruction {
     /// (or compiled) to the engine this instruction should mainly be used for calling
     /// imported functions. However, it is a general form that can technically be used
     /// for both.
-    Call(FuncIdx),
+    Call(HostFuncIdx),
     /// Calling a function indirectly.
     ///
     /// # Encoding

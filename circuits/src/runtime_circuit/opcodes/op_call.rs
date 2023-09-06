@@ -58,14 +58,14 @@ impl<F: Field> ExecutionGadget<F> for OpCallGadget<F> {
 #[cfg(test)]
 mod test {
     use crate::runtime_circuit::testing::test_ok;
-    use fluentbase_runtime::IMPORT_SYS_HALT;
+    use fluentbase_runtime::SysFuncIdx;
     use fluentbase_rwasm::instruction_set;
 
     #[test]
     fn test_exit() {
         test_ok(instruction_set! {
             I32Const(7)
-            Call(IMPORT_SYS_HALT)
+            Call(SysFuncIdx::IMPORT_SYS_HALT)
         });
     }
 }

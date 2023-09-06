@@ -1,48 +1,94 @@
+use fluentbase_rwasm::{engine::bytecode::HostFuncIdx, RwOp};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
+
+#[allow(non_camel_case_types)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
+pub enum SysFuncIdx {
+    #[default]
+    IMPORT_UNKNOWN = 0x0000,
+    // SYS host functions (starts with 0xAA00)
+    IMPORT_SYS_HALT = 0xAA01,  // _sys_halt(i32)
+    IMPORT_SYS_WRITE = 0xAA02, // _sys_write(...)
+    IMPORT_SYS_READ = 0xAA03,  // _sys_read(...)
+    // EVM-compatible host functions (starts with 0xEE00)
+    IMPORT_EVM_STOP = 0xEE01,
+    IMPORT_EVM_RETURN = 0xEE02,
+}
+
+impl From<HostFuncIdx> for SysFuncIdx {
+    fn from(value: HostFuncIdx) -> Self {
+        for item in Self::iter() {
+            if value.to_system_index() == item as u16 {
+                return item;
+            }
+        }
+        Self::IMPORT_UNKNOWN
+    }
+}
+
+impl Into<HostFuncIdx> for SysFuncIdx {
+    fn into(self) -> HostFuncIdx {
+        HostFuncIdx::from(self as u16)
+    }
+}
+
+impl SysFuncIdx {
+    pub fn get_rw_rows(&self) -> Vec<RwOp> {
+        match self {
+            SysFuncIdx::IMPORT_SYS_HALT => {
+                vec![RwOp::StackRead(0)]
+            }
+            _ => vec![],
+        }
+    }
+}
+
 // SYS host functions (starts with 0xAA00)
-pub const IMPORT_SYS_HALT: u32 = 0xAA01;
-pub const IMPORT_SYS_WRITE: u32 = 0xAA02;
-pub const IMPORT_SYS_READ: u32 = 0xAA03;
+// pub const IMPORT_SYS_HALT: u16 = 0xAA01;
+// pub const IMPORT_SYS_WRITE: u16 = 0xAA02;
+// pub const IMPORT_SYS_READ: u16 = 0xAA03;
 
 // EVM-compatible host functions (starts with 0xEE00)
-pub const IMPORT_EVM_STOP: u32 = 0xEE01;
-pub const IMPORT_EVM_RETURN: u32 = 0xEE02;
-// pub const IMPORT_EVM_KECCAK256: u32 = 0xEE03;
-// pub const IMPORT_EVM_ADDRESS: u32 = 0xEE04;
-// pub const IMPORT_EVM_BALANCE: u32 = 0xEE05;
-// pub const IMPORT_EVM_ORIGIN: u32 = 0xEE06;
-// pub const IMPORT_EVM_CALLER: u32 = 0xEE07;
-// pub const IMPORT_EVM_CALLVALUE: u32 = 0xEE08;
-// pub const IMPORT_EVM_CALLDATALOAD: u32 = 0xEE09;
-// pub const IMPORT_EVM_CALLDATASIZE: u32 = 0xEE0A;
-// pub const IMPORT_EVM_CALLDATACOPY: u32 = 0xEE0B;
-// pub const IMPORT_EVM_CODESIZE: u32 = 0xEE0C;
-// pub const IMPORT_EVM_CODECOPY: u32 = 0xEE0D;
-// pub const IMPORT_EVM_GASPRICE: u32 = 0xEE0E;
-// pub const IMPORT_EVM_EXTCODESIZE: u32 = 0xEE0F;
-// pub const IMPORT_EVM_EXTCODECOPY: u32 = 0xEE10;
-// pub const IMPORT_EVM_EXTCODEHASH: u32 = 0xEE11;
-// pub const IMPORT_EVM_RETURNDATASIZE: u32 = 0xEE12;
-// pub const IMPORT_EVM_RETURNDATACOPY: u32 = 0xEE13;
-// pub const IMPORT_EVM_BLOCKHASH: u32 = 0xEE14;
-// pub const IMPORT_EVM_COINBASE: u32 = 0xEE15;
-// pub const IMPORT_EVM_TIMESTAMP: u32 = 0xEE16;
-// pub const IMPORT_EVM_NUMBER: u32 = 0xEE17;
-// pub const IMPORT_EVM_DIFFICULTY: u32 = 0xEE18;
-// pub const IMPORT_EVM_GASLIMIT: u32 = 0xEE19;
-// pub const IMPORT_EVM_CHAINID: u32 = 0xEE1A;
-// pub const IMPORT_EVM_BASEFEE: u32 = 0xEE1B;
-// pub const IMPORT_EVM_SLOAD: u32 = 0xEE1C;
-// pub const IMPORT_EVM_SSTORE: u32 = 0xEE1D;
-// pub const IMPORT_EVM_LOG0: u32 = 0xEE1E;
-// pub const IMPORT_EVM_LOG1: u32 = 0xEE1F;
-// pub const IMPORT_EVM_LOG2: u32 = 0xEE20;
-// pub const IMPORT_EVM_LOG3: u32 = 0xEE21;
-// pub const IMPORT_EVM_LOG4: u32 = 0xEE22;
-// pub const IMPORT_EVM_CREATE: u32 = 0xEE23;
-// pub const IMPORT_EVM_CALL: u32 = 0xEE24;
-// pub const IMPORT_EVM_CALLCODE: u32 = 0xEE25;
-// pub const IMPORT_EVM_DELEGATECALL: u32 = 0xEE26;
-// pub const IMPORT_EVM_CREATE2: u32 = 0xEE27;
-// pub const IMPORT_EVM_STATICCALL: u32 = 0xEE28;
-// pub const IMPORT_EVM_REVERT: u32 = 0xEE29;
-// pub const IMPORT_EVM_SELFDESTRUCT: u32 = 0xEE2A;
+// pub const IMPORT_EVM_STOP: u16 = 0xEE01;
+// pub const IMPORT_EVM_RETURN: u16 = 0xEE02;
+// pub const IMPORT_EVM_KECCAK256: u16 = 0xEE03;
+// pub const IMPORT_EVM_ADDRESS: u16 = 0xEE04;
+// pub const IMPORT_EVM_BALANCE: u16 = 0xEE05;
+// pub const IMPORT_EVM_ORIGIN: u16 = 0xEE06;
+// pub const IMPORT_EVM_CALLER: u16 = 0xEE07;
+// pub const IMPORT_EVM_CALLVALUE: u16 = 0xEE08;
+// pub const IMPORT_EVM_CALLDATALOAD: u16 = 0xEE09;
+// pub const IMPORT_EVM_CALLDATASIZE: u16 = 0xEE0A;
+// pub const IMPORT_EVM_CALLDATACOPY: u16 = 0xEE0B;
+// pub const IMPORT_EVM_CODESIZE: u16 = 0xEE0C;
+// pub const IMPORT_EVM_CODECOPY: u16 = 0xEE0D;
+// pub const IMPORT_EVM_GASPRICE: u16 = 0xEE0E;
+// pub const IMPORT_EVM_EXTCODESIZE: u16 = 0xEE0F;
+// pub const IMPORT_EVM_EXTCODECOPY: u16 = 0xEE10;
+// pub const IMPORT_EVM_EXTCODEHASH: u16 = 0xEE11;
+// pub const IMPORT_EVM_RETURNDATASIZE: u16 = 0xEE12;
+// pub const IMPORT_EVM_RETURNDATACOPY: u16 = 0xEE13;
+// pub const IMPORT_EVM_BLOCKHASH: u16 = 0xEE14;
+// pub const IMPORT_EVM_COINBASE: u16 = 0xEE15;
+// pub const IMPORT_EVM_TIMESTAMP: u16 = 0xEE16;
+// pub const IMPORT_EVM_NUMBER: u16 = 0xEE17;
+// pub const IMPORT_EVM_DIFFICULTY: u16 = 0xEE18;
+// pub const IMPORT_EVM_GASLIMIT: u16 = 0xEE19;
+// pub const IMPORT_EVM_CHAINID: u16 = 0xEE1A;
+// pub const IMPORT_EVM_BASEFEE: u16 = 0xEE1B;
+// pub const IMPORT_EVM_SLOAD: u16 = 0xEE1C;
+// pub const IMPORT_EVM_SSTORE: u16 = 0xEE1D;
+// pub const IMPORT_EVM_LOG0: u16 = 0xEE1E;
+// pub const IMPORT_EVM_LOG1: u16 = 0xEE1F;
+// pub const IMPORT_EVM_LOG2: u16 = 0xEE20;
+// pub const IMPORT_EVM_LOG3: u16 = 0xEE21;
+// pub const IMPORT_EVM_LOG4: u16 = 0xEE22;
+// pub const IMPORT_EVM_CREATE: u16 = 0xEE23;
+// pub const IMPORT_EVM_CALL: u16 = 0xEE24;
+// pub const IMPORT_EVM_CALLCODE: u16 = 0xEE25;
+// pub const IMPORT_EVM_DELEGATECALL: u16 = 0xEE26;
+// pub const IMPORT_EVM_CREATE2: u16 = 0xEE27;
+// pub const IMPORT_EVM_STATICCALL: u16 = 0xEE28;
+// pub const IMPORT_EVM_REVERT: u16 = 0xEE29;
+// pub const IMPORT_EVM_SELFDESTRUCT: u16 = 0xEE2A;

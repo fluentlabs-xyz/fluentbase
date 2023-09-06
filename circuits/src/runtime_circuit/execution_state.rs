@@ -1,3 +1,4 @@
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -8,7 +9,7 @@ pub enum ExecutionState {
     WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
-    WASM_CALL_HOST(u16),
+    WASM_CALL_HOST(SysFuncIdx),
     WASM_CONST,      // DONE
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
@@ -44,6 +45,12 @@ impl ExecutionState {
     }
 
     pub fn from_opcode(instr: Instruction) -> ExecutionState {
+        match instr {
+            Instruction::Call(func_idx) => {
+                return ExecutionState::WASM_CALL_HOST(SysFuncIdx::from(func_idx));
+            }
+            _ => {}
+        }
         for state in Self::iter() {
             // TODO: "yes, I've heard about lazy static, don't understand why its not here"
             let found = state
@@ -90,11 +97,13 @@ impl ExecutionState {
                 Instruction::Return(Default::default()),
                 Instruction::ReturnIfNez(Default::default()),
                 Instruction::ReturnCallInternal(Default::default()),
-                Instruction::ReturnCall(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
-                Instruction::Call(Default::default()),
                 Instruction::CallIndirectUnsafe(Default::default()),
+            ],
+            Self::WASM_CALL_HOST(SysFuncIdx::IMPORT_UNKNOWN) => vec![
+                Instruction::ReturnCall(Default::default()),
+                Instruction::Call(Default::default()),
             ],
             Self::WASM_CONST => vec![
                 Instruction::I32Const(Default::default()),

@@ -9,6 +9,7 @@ use crate::{
     unrolled_bytecode::UnrolledBytecode,
     util::Field,
 };
+use fluentbase_runtime::ExecutionResult;
 use fluentbase_rwasm::engine::Tracer;
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner},
@@ -39,14 +40,15 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
         let rwasm_circuit_config = RwasmCircuitConfig::configure(cs, &poseidon_table);
         let state_circuit_config = StateCircuitConfig::configure(cs, &range_check_table);
+        let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         let runtime_circuit_config = RuntimeCircuitConfig::configure(
             cs,
             &rwasm_circuit_config,
             &state_circuit_config,
             &range_check_table,
             &fixed_table,
+            &pi_circuit_config,
         );
-        let pi_circuit_config = PublicInputCircuitConfig::configure(cs, &poseidon_table);
         Self {
             poseidon_circuit_config,
             rwasm_circuit_config,
@@ -64,8 +66,9 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledBytecode<F>,
         tracer: Option<&Tracer>,
-        _input: &Vec<u8>,
-        _output: &Vec<u8>,
+        input: &Vec<u8>,
+        output: &Vec<u8>,
+        exit_code: i32,
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
@@ -79,7 +82,8 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             self.runtime_circuit_config.assign(layouter, tracer)?;
             self.state_circuit_config.assign(layouter, tracer)?;
         }
-        // self.pi_circuit_config.expose_public(layouter, input, output)?;
+        self.pi_circuit_config
+            .expose_public(layouter, input, output, exit_code)?;
         Ok(())
     }
 }
@@ -90,6 +94,19 @@ pub struct FluentbaseCircuit<'tracer, F: Field> {
     pub(crate) tracer: Option<&'tracer Tracer>,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
+    pub(crate) exit_code: i32,
+}
+
+impl<'tracer, F: Field> FluentbaseCircuit<'tracer, F> {
+    pub fn from_execution_result(execution_result: &'tracer ExecutionResult) -> Self {
+        Self {
+            bytecode: UnrolledBytecode::new(execution_result.bytecode().as_slice()),
+            tracer: Some(execution_result.tracer()),
+            input: execution_result.data().input().clone(),
+            output: execution_result.data().output().clone(),
+            exit_code: execution_result.data().exit_code(),
+        }
+    }
 }
 
 impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
@@ -116,6 +133,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
             self.tracer,
             &self.input,
             &self.output,
+            self.exit_code,
         )?;
         Ok(())
     }
@@ -135,6 +153,7 @@ mod tests {
             tracer: None,
             input: vec![],
             output: vec![],
+            exit_code: 0,
         };
         let k = 17;
         let prover = MockProver::<Fr>::run(k, &circuit, vec![vec![hash_value]]).unwrap();

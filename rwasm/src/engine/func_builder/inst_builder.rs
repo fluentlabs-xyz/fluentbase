@@ -262,8 +262,8 @@ impl Instruction {
 
     pub fn update_call_index(&mut self, new_index: u32) {
         match self {
-            Instruction::ReturnCall(func) => *func = FuncIdx::from(new_index),
-            Instruction::Call(func) => *func = FuncIdx::from(new_index),
+            Instruction::ReturnCall(func) => func.update_internal_index(new_index),
+            Instruction::Call(func) => func.update_internal_index(new_index),
             Instruction::ReturnCallInternal(func) => *func = CompiledFunc::from(new_index),
             Instruction::CallInternal(func) => *func = CompiledFunc::from(new_index),
             Instruction::RefFunc(func) => *func = FuncIdx::from(new_index),
