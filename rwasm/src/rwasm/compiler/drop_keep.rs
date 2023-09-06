@@ -39,6 +39,22 @@ impl Translator for DropKeep {
     }
 }
 
+pub trait TransalorWithReturnParam {
+    fn translate_with_return_param(&self, result: &mut InstructionSet) -> Result<(), CompilerError>;
+}
+
+impl TransalorWithReturnParam for DropKeep {
+    fn translate_with_return_param(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
+        self.code_section.op_local_get((self.drop() + self.keep()) as u32);
+        let drop_keep_opcodes = translate_drop_keep(
+            DropKeep::new(drop_keep.drop() as usize + 1, drop_keep.keep() as usize + 1)
+                .map_err(|_| CompilerError::DropKeepOutOfBounds)?
+        )?;
+        result.instr.extend(&drop_keep_opcodes);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
