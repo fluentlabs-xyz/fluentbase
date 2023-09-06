@@ -11,7 +11,10 @@ use crate::{
 use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
 use halo2_proofs::circuit::Region;
 use num_traits::ToPrimitive;
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    ops::{Add, Mul},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpStoreGadget<F> {
@@ -87,6 +90,12 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             ]
             .map(|v| v.current().0),
         );
+
+        let value_limbs_sum = value_limbs
+            .iter()
+            .rev()
+            .fold(Query::zero(), |a, v| a * Query::from(0x100) + v.current());
+        cb.require_zero("value=sum(value_limbs)", value.current() - value_limbs_sum);
 
         let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
             cb.if_rwasm_opcode(selector, *instr, |cb| {
