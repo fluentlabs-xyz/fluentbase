@@ -20,6 +20,7 @@ use crate::{
 use alloc::{collections::BTreeMap, vec::Vec};
 use byteorder::{BigEndian, ByteOrder};
 use core::ops::Deref;
+use crate::rwasm::compiler::drop_keep::TransalorWithReturnParam;
 
 mod drop_keep;
 mod sanitizer;
@@ -34,6 +35,7 @@ pub enum CompilerError {
     BinaryFormat(BinaryFormatError),
     NotSupportedImport,
     UnknownImport(ImportName),
+    DropKeepOutOfBounds,
 }
 
 pub trait Translator {
@@ -238,6 +240,19 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
+    fn swap_with_depth(&mut self, depth: u32) {
+        self.code_section.op_local_get(depth);
+        self.code_section.op_local_get(1);
+        self.code_section.op_local_set(depth + 2);
+        self.code_section.op_local_set(1);
+    }
+
+    fn swap(&mut self, param_num: u32) {
+        for i in param_num..0 {
+            self.swap_with_depth(i);
+        }
+    }
+
     fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
@@ -245,17 +260,20 @@ impl<'linker> Compiler<'linker> {
             return Ok(());
         }
         let fn_index = fn_index - import_len as u32;
+
+        let func_type = self.module.funcs[fn_index as usize + import_len];
+        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+        let num_inputs = func_type.params();
+        // let num_outputs = func_type.results();
+
+        self.swap(num_inputs.len() as u32);
+
         let func_body = self
             .module
             .compiled_funcs
             .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
         let beginning_offset = self.code_section.len();
-        // ....
-        // let func_type = self.module.funcs[*fn_index as usize + import_len];
-        // let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-        // let num_inputs = func_type.params();
-        // let num_outputs = func_type.results();
 
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
@@ -302,29 +320,29 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return();
             }
             WI::ReturnCallInternal(func) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
                 let fn_index = func.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return();
             }
             WI::ReturnCall(func) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
                 self.code_section.op_return_call(func);
                 self.code_section.op_return();
             }
             WI::ReturnCallIndirect(sig) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
                 self.code_section.op_return_call_indirect(sig);
                 self.code_section.op_return();
             }
             WI::Return(drop_keep) => {
-                drop_keep.translate(&mut self.code_section)?;
+                drop_keep.translate_with_return_param(&mut self.code_section)?;
                 self.code_section.op_return();
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
-                drop_keep.translate(&mut self.code_section)?;
+                drop_keep.translate_with_return_param(&mut self.code_section)?;
                 let drop_keep_len = self.code_section.len() - br_if_offset - 1;
                 self.code_section
                     .get_mut(br_if_offset as usize)
