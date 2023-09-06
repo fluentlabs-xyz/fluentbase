@@ -1,4 +1,4 @@
-use fluentbase_rwasm::{engine::bytecode::HostFuncIdx, RwOp};
+use fluentbase_rwasm::{engine::bytecode::FuncIdx, RwOp};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -16,10 +16,10 @@ pub enum SysFuncIdx {
     IMPORT_EVM_RETURN = 0xEE02,
 }
 
-impl From<HostFuncIdx> for SysFuncIdx {
-    fn from(value: HostFuncIdx) -> Self {
+impl From<FuncIdx> for SysFuncIdx {
+    fn from(value: FuncIdx) -> Self {
         for item in Self::iter() {
-            if value.to_system_index() == item as u16 {
+            if value.to_u32() == item as u32 {
                 return item;
             }
         }
@@ -27,9 +27,9 @@ impl From<HostFuncIdx> for SysFuncIdx {
     }
 }
 
-impl Into<HostFuncIdx> for SysFuncIdx {
-    fn into(self) -> HostFuncIdx {
-        HostFuncIdx::from(self as u16)
+impl Into<FuncIdx> for SysFuncIdx {
+    fn into(self) -> FuncIdx {
+        FuncIdx::from(self as u16)
     }
 }
 

@@ -10,11 +10,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
 use halo2_proofs::circuit::Region;
-use num_traits::ToPrimitive;
-use std::{
-    marker::PhantomData,
-    ops::{Add, Mul},
-};
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpStoreGadget<F> {

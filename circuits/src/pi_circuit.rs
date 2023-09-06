@@ -29,8 +29,8 @@ impl<F: Field> PublicInputCircuitConfig<F> {
         let output = cb.advice_column(cs);
         let exit_code = cb.advice_column(cs);
         cs.enable_equality(instance);
-        cs.enable_equality(input);
-        cs.enable_equality(output);
+        // cs.enable_equality(input);
+        // cs.enable_equality(output);
         cs.enable_equality(exit_code);
         cb.build(cs);
         Self {
@@ -48,17 +48,22 @@ impl<F: Field> PublicInputCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         _input: &Vec<u8>,
         _output: &Vec<u8>,
-        exit_code: i32,
+        _exit_code: i32,
     ) -> Result<(), Error> {
-        let assigned_exit_code = layouter.assign_region(
-            || "",
+        layouter.assign_region(
+            || "exit code instance",
             |mut region| {
                 self.q_enable.enable(&mut region, 0);
-                let assigned_cell = self.exit_code.assign(&mut region, 0, exit_code as u64);
-                Ok(assigned_cell)
+                region.assign_advice_from_instance(
+                    || "exit code instance",
+                    self.instance.0,
+                    0,
+                    self.exit_code.0,
+                    0,
+                )?;
+                Ok(())
             },
         )?;
-        layouter.constrain_instance(assigned_exit_code.cell(), self.instance.0, 0)?;
         Ok(())
     }
 }

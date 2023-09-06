@@ -376,21 +376,21 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 }
                 LookupTable::PublicInput(fields) => {
                     self.base.add_lookup(
-                        "fixed(tag,table)",
+                        "public_input(index,value)",
                         fields.clone(),
                         public_input_lookup.lookup_input_byte(),
                     );
                 }
                 LookupTable::PublicOutput(fields) => {
                     self.base.add_lookup(
-                        "fixed(tag,table)",
+                        "public_output(index,value)",
                         fields.clone(),
                         public_input_lookup.lookup_output_byte(),
                     );
                 }
                 LookupTable::ExitCode(fields) => {
                     self.base.add_lookup(
-                        "fixed(tag,table)",
+                        "exit_code(value)",
                         fields.clone(),
                         public_input_lookup.lookup_exit_code(),
                     );

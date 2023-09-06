@@ -139,7 +139,7 @@ impl Runtime {
         rwasm_binary: &[u8],
         input_data: &[u8],
         import_linker: &ImportLinker,
-        catch_error: bool,
+        catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
         let config = Config::default();
         let engine = Engine::new(&config);
@@ -170,9 +170,16 @@ impl Runtime {
             .map_err(Into::<Error>::into)?
             .start(&mut res.store);
 
+        // we need to fix logs, because we lost information about instr meta during conversion
+        let tracer = res.store.tracer_mut();
+        for log in tracer.logs.iter_mut() {
+            let instr = reduced_module.bytecode().get(log.index).unwrap();
+            log.opcode = *instr;
+        }
+
         let mut execution_result = ExecutionResult::new(res.store, rwasm_binary.to_vec());
 
-        if !catch_error {
+        if !catch_trap {
             result?;
             return Ok(execution_result);
         }
