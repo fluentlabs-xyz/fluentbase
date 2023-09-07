@@ -1,6 +1,14 @@
 use crate::engine::bytecode::Instruction;
 
 #[derive(Debug, Copy, Clone)]
+pub enum RwTableOp {
+    ElemRead(u32, u32),
+    ElemWrite(u32, u32),
+    SizeRead(u32),
+    SizeWrite(u32),
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum RwOp {
     StackWrite(u32),
     StackRead(u32),
@@ -16,8 +24,16 @@ pub enum RwOp {
         length: u32,
         signed: bool,
     },
-    TableWrite,
-    TableRead,
+    TableSizeWrite(u32),
+    TableSizeRead(u32),
+    TableElemWrite {
+        table: u32,
+        elem: u32,
+    },
+    TableElemRead {
+        table: u32,
+        elem: u32,
+    },
 }
 
 impl Instruction {
@@ -142,14 +158,15 @@ impl Instruction {
             Instruction::MemoryInit(_) => {}
             Instruction::DataDrop(_) => {}
 
-            Instruction::TableSize(_) => {
+            Instruction::TableSize(table_idx) => {
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::TableGrow(_) => {
-                stack_ops.push(RwOp::TableRead);
-                stack_ops.push(RwOp::TableWrite);
+            Instruction::TableGrow(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
+                stack_ops.push(RwOp::TableSizeWrite(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::TableFill(_) => {
