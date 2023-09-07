@@ -15,14 +15,20 @@ use crate::{
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
+use fluentbase_rwasm::{
+    common::UntypedValue,
+    engine::{
+        bytecode::{Instruction, TableIdx},
+        Tracer,
+    },
+};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
     poly::Rotation,
 };
 use itertools::Itertools;
-use std::marker::PhantomData;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -169,6 +175,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 let mut rw_rows = Vec::new();
                 let mut opcodes_by_rwc = Vec::new();
                 let mut global_memory = Vec::new();
+                let mut global_table = BTreeMap::<u32, UntypedValue>::new();
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
                     for memory_change in trace.memory_changes.iter() {
                         let max_offset = (memory_change.offset + memory_change.len) as usize;
@@ -178,10 +185,22 @@ impl<F: Field> StateCircuitConfig<F> {
                         global_memory[(memory_change.offset as usize)..max_offset]
                             .copy_from_slice(memory_change.data.as_slice());
                     }
+                    for table_change in trace.table_changes.iter() {
+                        let elem_addr = table_change.table_idx * 1024 + table_change.elem_idx + 1;
+                        global_table.insert(elem_addr, table_change.func_ref);
+                        let size_addr = table_change.table_idx * 1024;
+                        global_table.insert(size_addr, UntypedValue::from(0));
+                        let table_size = global_table
+                            .keys()
+                            .filter(|key| (*key / 1024) == table_change.table_idx)
+                            .count();
+                        global_table.insert(size_addr, UntypedValue::from(table_size - 1));
+                    }
                     let step = TraceStep::new(
                         trace.clone(),
                         tracer.logs.get(i + 1).cloned(),
                         global_memory.clone(),
+                        global_table.clone(),
                     );
                     let rw_rows_len = rw_rows.len();
                     rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();

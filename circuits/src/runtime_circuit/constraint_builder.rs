@@ -235,7 +235,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn table_size(&mut self, table_idx: Q<F>, value: Q<F>) {
-        self.table_size_lookup(0.expr(), table_idx, value);
+        self.table_size_lookup(0.expr(), table_idx * 1024, value);
     }
     pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
         // unreachable!("not implemented yet")
@@ -258,9 +258,20 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         // unreachable!("not implemented yet")
     }
 
-    pub fn table_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+    pub fn table_elem_lookup(
+        &mut self,
+        is_write: Q<F>,
+        table_idx: Q<F>,
+        elem_idx: Q<F>,
+        value: Q<F>,
+    ) {
         // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
-        self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024 + elem_idx + 1.expr(), value);
+        self.rw_lookup(
+            is_write,
+            RwTableTag::Table.expr(),
+            table_idx * 1024 + elem_idx + 1.expr(),
+            value,
+        );
     }
 
     pub fn table_size_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, value: Q<F>) {

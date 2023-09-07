@@ -1,5 +1,6 @@
 use crate::{
     bail_illegal_opcode,
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -14,6 +15,7 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpRefFuncGadget<F: Field> {
+    value: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
@@ -22,23 +24,26 @@ impl<F: Field> ExecutionGadget<F> for OpRefFuncGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_REFFUNC;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        cb.stack_push(cb.query_rwasm_value());
+        let value = cb.query_cell();
+        cb.stack_push(value.current());
         Self {
+            value,
             _pd: Default::default(),
         }
     }
 
     fn assign_exec_step(
         &self,
-        _region: &mut Region<'_, F>,
-        _offset: usize,
+        region: &mut Region<'_, F>,
+        offset: usize,
         trace: &TraceStep,
     ) -> Result<(), GadgetError> {
-        let value = match trace.instr() {
+        match trace.instr() {
             Instruction::RefFunc(val) => val,
             _ => bail_illegal_opcode!(trace),
         };
-        debug_assert_eq!(trace.next_nth_stack_value(0)?.to_bits(), value.to_u32() as u64);
+        let value = trace.next_nth_stack_value(0)?;
+        self.value.assign(region, offset, value.to_bits());
         Ok(())
     }
 }
@@ -68,4 +73,3 @@ mod test {
         });
     }
 }
-
