@@ -251,6 +251,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instr::LocalTee(local_depth) => self.visit_local_tee(local_depth),
                 Instr::Br(offset) => self.visit_br(offset),
+                Instr::BrIndirect => self.visit_br_indirect(),
                 Instr::BrIfEqz(offset) => self.visit_br_if_eqz(offset),
                 Instr::BrIfNez(offset) => self.visit_br_if_nez(offset),
                 Instr::BrAdjust(offset) => self.visit_br_adjust(offset),
@@ -1049,6 +1050,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         self.sp.drop_keep(drop_keep);
         let callee = self.cache.get_func(self.ctx, func_index);
         self.call_func(2, &callee, CallKind::Tail, func_index.to_u32())
+    }
+
+    #[inline(always)]
+    fn visit_br_indirect(
+        &mut self,
+    ) {
+        let offset = BranchOffset::from(self.sp.pop_as::<i32>());
+        self.branch_to(offset);
     }
 
     #[inline(always)]

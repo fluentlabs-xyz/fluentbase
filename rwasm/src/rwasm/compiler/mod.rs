@@ -337,7 +337,7 @@ impl<'linker> Compiler<'linker> {
             }
             WI::Return(drop_keep) => {
                 drop_keep.translate_with_return_param(&mut self.code_section)?;
-                self.code_section.op_return();
+                self.code_section.op_br_indirect();
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -351,6 +351,10 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return_if_nez();
             }
             WI::CallInternal(func_idx) => {
+
+                let target = self.code_section.len() + 3;
+                self.code_section.op_i32_const(target);
+
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
             }
@@ -397,9 +401,8 @@ impl<'linker> Compiler<'linker> {
         let bytecode = &mut self.code_section;
 
         if let Some(mut sanitizer) = self.sanitizer.clone() {
-            let import_len = self.module.imports.len_funcs;
-            let bytecode2 = bytecode.instr.clone();
-            let mut iter = bytecode2.iter().enumerate();
+            let mut bytecode2 = bytecode.instr.clone();
+            let mut iter = bytecode2.iter_mut().enumerate();
             let mut j = 0;
             while let Some((i, instr)) = iter.next() {
                 // let is_fn = self.function_mapping.iter().filter(|(_, v)| **v == i as u32).last();
@@ -412,9 +415,8 @@ impl<'linker> Compiler<'linker> {
                 let pos = i + j;
                 match instr {
                     Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
-                        let func_type = self.module.funcs[func.to_u32() as usize + import_len];
-                        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                        sanitizer.check_stack_height_call(&instr, &func_type, bytecode, pos);
+                        *instr = Instruction::Br(BranchOffset::from(self.function_mapping[&func.to_u32()] as i32));
+
                         iter.next();
                         j += 1;
                     }
