@@ -2,6 +2,7 @@
 
 mod utils;
 
+mod instr_meta;
 mod stack_height;
 #[cfg(test)]
 mod tests;
@@ -421,18 +422,22 @@ impl Instruction {
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
-pub struct InstrMeta(usize, u16);
+pub struct InstrMeta(usize, u16, pub(crate) usize);
 
 impl InstrMeta {
-    pub fn new(pos: usize, code: u16) -> Self {
-        Self(pos, code)
+    pub fn new(pos: usize, code: u16, index: usize) -> Self {
+        Self(pos, code, index)
     }
 
-    pub fn pos(&self) -> usize {
+    pub fn offset(&self) -> usize {
         self.0
     }
 
-    pub fn code(&self) -> u16 {
+    pub fn opcode(&self) -> u16 {
         self.1
+    }
+
+    pub fn index(&self) -> usize {
+        self.2
     }
 }

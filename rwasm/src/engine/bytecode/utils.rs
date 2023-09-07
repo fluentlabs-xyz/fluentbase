@@ -6,6 +6,11 @@ use core::fmt::{self, Display};
 #[repr(transparent)]
 pub struct FuncIdx(u32);
 
+impl From<u16> for FuncIdx {
+    fn from(index: u16) -> Self {
+        Self(index as u32)
+    }
+}
 impl From<u32> for FuncIdx {
     fn from(index: u32) -> Self {
         Self(index)

@@ -10,11 +10,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
 use halo2_proofs::circuit::Region;
-use num_traits::ToPrimitive;
-use std::{
-    marker::PhantomData,
-    ops::{Add, Mul},
-};
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpStoreGadget<F> {
@@ -36,22 +32,6 @@ pub(crate) struct OpStoreGadget<F> {
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> OpStoreGadget<F> {
-    pub fn instr_res_byte_len(instr: &Instruction) -> usize {
-        match instr {
-            Instruction::I32Store(_) => 4,
-            Instruction::I32Store8(_) => 1,
-            Instruction::I32Store16(_) => 2,
-            Instruction::I64Store(_) => 8,
-            Instruction::I64Store8(_) => 1,
-            Instruction::I64Store16(_) => 2,
-            Instruction::I64Store32(_) => 4,
-            Instruction::F32Store(_) => 4,
-            Instruction::F64Store(_) => 8,
-            _ => unreachable!("unsupported opcode {:?}", instr),
-        }
-    }
-}
 impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
     const NAME: &'static str = "WASM_STORE";
 
@@ -99,7 +79,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
 
         let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
             cb.if_rwasm_opcode(selector, *instr, |cb| {
-                (0..Self::instr_res_byte_len(instr)).for_each(|i| {
+                (0..Instruction::store_instr_meta(instr)).for_each(|i| {
                     cb.mem_write(
                         address_base_offset.current() + address.current() + i.expr(),
                         value_limbs[i].current(),
@@ -121,7 +101,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         ]
         .map(|v| (v.0.current().0, v.1))
         .iter()
-        .for_each(|v| constrain_instr(v.clone().0, &v.1));
+        .for_each(|v| constrain_instr(v.0.clone(), &v.1));
 
         Self {
             is_i32_store,
@@ -156,7 +136,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let mut assign = |selector: &SelectorColumn, address_offset: &AddressOffset| {
             selector.enable(region, offset);
             self.value.assign(region, offset, value);
-            (0..Self::instr_res_byte_len(instr)).for_each(|i| {
+            (0..Instruction::store_instr_meta(instr)).for_each(|i| {
                 self.value_limbs[i].assign(region, offset, value_le_bytes[i] as u64);
             });
             self.address.assign(region, offset, address);
@@ -203,6 +183,17 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
 mod test {
     use crate::runtime_circuit::testing::test_ok;
     use fluentbase_rwasm::instruction_set;
+
+    #[test]
+    fn test_i32_store_with_const_after() {
+        test_ok(instruction_set! {
+            I32Const[0]
+            I32Const[800]
+            I32Store[0]
+            I32Const(0)
+            Drop
+        });
+    }
 
     #[test]
     fn test_i32_store() {

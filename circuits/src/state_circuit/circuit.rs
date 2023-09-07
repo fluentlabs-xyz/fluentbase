@@ -168,8 +168,21 @@ impl<F: Field> StateCircuitConfig<F> {
             |mut region| {
                 let mut rw_rows = Vec::new();
                 let mut opcodes_by_rwc = Vec::new();
+                let mut global_memory = Vec::new();
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    let step = TraceStep::new(trace.clone(), tracer.logs.get(i + 1).cloned());
+                    for memory_change in trace.memory_changes.iter() {
+                        let max_offset = (memory_change.offset + memory_change.len) as usize;
+                        if max_offset > global_memory.len() {
+                            global_memory.resize(max_offset, 0)
+                        }
+                        global_memory[(memory_change.offset as usize)..max_offset]
+                            .copy_from_slice(memory_change.data.as_slice());
+                    }
+                    let step = TraceStep::new(
+                        trace.clone(),
+                        tracer.logs.get(i + 1).cloned(),
+                        global_memory.clone(),
+                    );
                     let rw_rows_len = rw_rows.len();
                     rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();
                     (0..(rw_rows.len() - rw_rows_len)).for_each(|_| {

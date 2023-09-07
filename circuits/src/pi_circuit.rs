@@ -1,5 +1,6 @@
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, InstanceColumn, SelectorColumn},
+    constraint_builder::{AdviceColumn, ConstraintBuilder, InstanceColumn, Query, SelectorColumn},
+    lookup_table::{PublicInputLookup, N_PUBLIC_INPUT_LOOKUP_TABLE},
     poseidon_circuit::PoseidonLookup,
     util::Field,
 };
@@ -12,26 +13,32 @@ use std::marker::PhantomData;
 #[derive(Clone)]
 pub struct PublicInputCircuitConfig<F: Field> {
     q_enable: SelectorColumn,
-    input: AdviceColumn,
     instance: InstanceColumn,
+    input: AdviceColumn,
+    output: AdviceColumn,
+    exit_code: AdviceColumn,
     marker: PhantomData<F>,
 }
 
 impl<F: Field> PublicInputCircuitConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>, _poseidon_lookup: &impl PoseidonLookup) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
-        let mut cb = ConstraintBuilder::new(q_enable);
-        let input = cb.advice_column(cs);
+        let cb = ConstraintBuilder::new(q_enable);
         let instance = cb.instance_column(cs);
-        cs.enable_equality(input);
+        let input = cb.advice_column(cs);
+        let output = cb.advice_column(cs);
+        let exit_code = cb.advice_column(cs);
         cs.enable_equality(instance);
-        cb.assert_equal("input == instance", input.current(), instance.current());
-        cb.assert_zero("input is zero", input.current());
+        // cs.enable_equality(input);
+        // cs.enable_equality(output);
+        cs.enable_equality(exit_code);
         cb.build(cs);
         Self {
             q_enable,
             input,
             instance,
+            output,
+            exit_code,
             marker: Default::default(),
         }
     }
@@ -39,17 +46,38 @@ impl<F: Field> PublicInputCircuitConfig<F> {
     pub fn expose_public(
         &self,
         layouter: &mut impl Layouter<F>,
-        hash_value: F,
+        _input: &Vec<u8>,
+        _output: &Vec<u8>,
+        _exit_code: i32,
     ) -> Result<(), Error> {
-        let assigned_cell = layouter.assign_region(
-            || "",
+        layouter.assign_region(
+            || "exit code instance",
             |mut region| {
                 self.q_enable.enable(&mut region, 0);
-                let assigned_cell = self.input.assign(&mut region, 0, hash_value);
-                Ok(assigned_cell)
+                region.assign_advice_from_instance(
+                    || "exit code instance",
+                    self.instance.0,
+                    0,
+                    self.exit_code.0,
+                    0,
+                )?;
+                Ok(())
             },
         )?;
-        layouter.constrain_instance(assigned_cell.cell(), self.instance.0, 0)?;
         Ok(())
+    }
+}
+
+impl<F: Field> PublicInputLookup<F> for PublicInputCircuitConfig<F> {
+    fn lookup_input_byte(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE] {
+        todo!()
+    }
+
+    fn lookup_output_byte(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE] {
+        todo!()
+    }
+
+    fn lookup_exit_code(&self) -> [Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE] {
+        [self.q_enable.current().0, self.exit_code.current()]
     }
 }

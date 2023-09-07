@@ -8,17 +8,22 @@ use halo2_proofs::plonk;
 pub enum GadgetError {
     MissingNext,
     OutOfStack,
+    OutOfMemory,
     Plonk(plonk::Error),
 }
 
 pub const MAX_STACK_HEIGHT: usize = 1024;
 
 #[derive(Debug)]
-pub struct TraceStep(TracerInstrState, Option<TracerInstrState>);
+pub struct TraceStep(TracerInstrState, Option<TracerInstrState>, Vec<u8>);
 
 impl TraceStep {
-    pub fn new(cur: TracerInstrState, next: Option<TracerInstrState>) -> Self {
-        Self(cur, next)
+    pub fn new(
+        cur: TracerInstrState,
+        next: Option<TracerInstrState>,
+        global_memory: Vec<u8>,
+    ) -> Self {
+        Self(cur, next, global_memory)
     }
 
     pub fn instr(&self) -> &Instruction {
@@ -49,6 +54,22 @@ impl TraceStep {
             .clone()
             .map(|trace| (MAX_STACK_HEIGHT - trace.stack.len() + nth) as u32)
             .ok_or(GadgetError::MissingNext)
+    }
+
+    pub fn read_buffer<'a>(
+        &self,
+        offset: u64,
+        dst: *mut u8,
+        length: u32,
+    ) -> Result<(), GadgetError> {
+        let (sum, overflow) = offset.overflowing_add(length as u64);
+        if overflow || sum > self.2.len() as u64 {
+            return Err(GadgetError::OutOfMemory);
+        }
+        unsafe {
+            std::ptr::copy(self.2.as_ptr().add(offset as usize), dst, length as usize);
+        }
+        Ok(())
     }
 
     pub fn curr(&self) -> &TracerInstrState {

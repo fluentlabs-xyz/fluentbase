@@ -768,6 +768,10 @@ impl<T> Store<T> {
         &self.tracer
     }
 
+    pub fn tracer_mut(&mut self) -> &mut Tracer {
+        &mut self.tracer
+    }
+
     /// Installs a function into the [`Store`] that will be called with the user
     /// data type `T` to retrieve a [`ResourceLimiter`] any time a limited,
     /// growable resource such as a linear memory or table is grown.

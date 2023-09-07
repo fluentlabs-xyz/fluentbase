@@ -1,3 +1,4 @@
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -8,7 +9,7 @@ pub enum ExecutionState {
     WASM_BIN, // DONE
     WASM_BREAK,
     WASM_CALL,
-    WASM_CALL_HOST(u16),
+    WASM_CALL_HOST(SysFuncIdx),
     WASM_CONST,      // DONE
     WASM_REFFUNC,
     WASM_CONVERSION, // DONE
@@ -60,6 +61,12 @@ impl ExecutionState {
     }
 
     pub fn from_opcode(instr: Instruction) -> ExecutionState {
+        match instr {
+            Instruction::Call(func_idx) => {
+                return ExecutionState::WASM_CALL_HOST(SysFuncIdx::from(func_idx));
+            }
+            _ => {}
+        }
         for state in Self::iter() {
             // TODO: "yes, I've heard about lazy static, don't understand why its not here"
             let found = state
@@ -106,11 +113,13 @@ impl ExecutionState {
                 Instruction::Return(Default::default()),
                 Instruction::ReturnIfNez(Default::default()),
                 Instruction::ReturnCallInternal(Default::default()),
-                Instruction::ReturnCall(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
-                Instruction::Call(Default::default()),
                 Instruction::CallIndirectUnsafe(Default::default()),
+            ],
+            Self::WASM_CALL_HOST(SysFuncIdx::IMPORT_UNKNOWN) => vec![
+                Instruction::ReturnCall(Default::default()),
+                Instruction::Call(Default::default()),
             ],
             Self::WASM_CONST => vec![
                 Instruction::I32Const(Default::default()),
@@ -184,19 +193,19 @@ impl ExecutionState {
             ],
             Self::WASM_LOAD => vec![
                 Instruction::I32Load(Default::default()),
-                Instruction::I32Load8U(Default::default()),
-                Instruction::I32Load8S(Default::default()),
-                Instruction::I32Load16U(Default::default()),
-                Instruction::I32Load16S(Default::default()),
                 Instruction::I64Load(Default::default()),
-                Instruction::I64Load8U(Default::default()),
-                Instruction::I64Load8S(Default::default()),
-                Instruction::I64Load16U(Default::default()),
-                Instruction::I64Load16S(Default::default()),
-                Instruction::I64Load32U(Default::default()),
-                Instruction::I64Load32S(Default::default()),
                 Instruction::F32Load(Default::default()),
                 Instruction::F64Load(Default::default()),
+                Instruction::I32Load8S(Default::default()),
+                Instruction::I32Load8U(Default::default()),
+                Instruction::I32Load16S(Default::default()),
+                Instruction::I32Load16U(Default::default()),
+                Instruction::I64Load8S(Default::default()),
+                Instruction::I64Load8U(Default::default()),
+                Instruction::I64Load16S(Default::default()),
+                Instruction::I64Load16U(Default::default()),
+                Instruction::I64Load32S(Default::default()),
+                Instruction::I64Load32U(Default::default()),
             ],
             _ => vec![],
         }
