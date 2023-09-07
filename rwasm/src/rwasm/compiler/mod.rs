@@ -307,10 +307,11 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return();
             }
-            WI::ReturnCall(func) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_return_call(func);
-                self.code_section.op_return();
+            WI::ReturnCall(_func) => {
+                unreachable!("wait, should it call translate host call?");
+                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                // self.code_section.op_return_call(func);
+                // self.code_section.op_return();
             }
             WI::ReturnCallIndirect(sig) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;

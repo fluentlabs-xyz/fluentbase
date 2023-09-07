@@ -142,6 +142,13 @@ impl InstructionSet {
         self.metas.is_some()
     }
 
+    pub fn get<I>(&self, index: I) -> Option<&Instruction>
+    where
+        I: SliceIndex<[Instruction], Output = Instruction>,
+    {
+        self.instr.get(index)
+    }
+
     pub fn get_mut<I>(&mut self, index: I) -> Option<&mut Instruction>
     where
         I: SliceIndex<[Instruction], Output = Instruction>,

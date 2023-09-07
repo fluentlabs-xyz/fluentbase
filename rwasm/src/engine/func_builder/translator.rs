@@ -1236,7 +1236,7 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     builder
                         .alloc
                         .inst_builder
-                        .push_inst(Instruction::ReturnCall(func));
+                        .push_inst(Instruction::ReturnCall(func.into()));
                 }
             }
             builder
@@ -1300,7 +1300,7 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
                     builder
                         .alloc
                         .inst_builder
-                        .push_inst(Instruction::Call(func_idx));
+                        .push_inst(Instruction::Call(func_idx.into()));
                 }
             }
             Ok(())

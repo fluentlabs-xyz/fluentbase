@@ -1,28 +1,62 @@
 use crate::{
-    runtime_circuit::{constraint_builder::OpConstraintBuilder, platform::PlatformGadget},
+    constraint_builder::AdviceColumn,
+    runtime_circuit::{
+        constraint_builder::OpConstraintBuilder,
+        execution_state::ExecutionState,
+        opcodes::ExecutionGadget,
+    },
     trace_step::{GadgetError, TraceStep},
     util::Field,
 };
-use fluentbase_runtime::IMPORT_SYS_HALT;
+use fluentbase_runtime::SysFuncIdx;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct SysHaltGadget<F: Field> {
+    exit_code: AdviceColumn,
     pd: PhantomData<F>,
 }
 
-impl<F: Field> PlatformGadget<F, { IMPORT_SYS_HALT }> for SysHaltGadget<F> {
-    fn configure(_cb: &mut OpConstraintBuilder<F>) -> Self {
-        todo!()
+impl<F: Field> ExecutionGadget<F> for SysHaltGadget<F> {
+    const NAME: &'static str = "WASM_CALL_HOST(_sys_halt)";
+
+    const EXECUTION_STATE: ExecutionState =
+        ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_HALT);
+
+    fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
+        let exit_code = cb.query_cell();
+        cb.stack_pop(exit_code.current());
+        cb.exit_code_lookup(exit_code.current());
+        Self {
+            exit_code,
+            pd: Default::default(),
+        }
     }
 
     fn assign_exec_step(
         &self,
-        _region: &mut Region<'_, F>,
-        _offset: usize,
-        _trace: &TraceStep,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        trace: &TraceStep,
     ) -> Result<(), GadgetError> {
-        todo!()
+        let exit_code = trace.curr_nth_stack_value(0)?;
+        self.exit_code.assign(region, offset, exit_code.as_u64());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::runtime_circuit::testing::test_ok;
+    use fluentbase_runtime::SysFuncIdx;
+    use fluentbase_rwasm::instruction_set;
+
+    #[test]
+    fn test_exit() {
+        test_ok(instruction_set! {
+            I32Const(7)
+            Call(SysFuncIdx::IMPORT_SYS_HALT)
+        });
     }
 }

@@ -141,7 +141,7 @@ fn test_actual<C: Circuit<Fr>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{fluentbase_circuit::FluentbaseCircuit, unrolled_bytecode::UnrolledBytecode};
+    use crate::fluentbase_circuit::FluentbaseCircuit;
     use fluentbase_runtime::Runtime;
     use fluentbase_rwasm::{
         instruction_set,
@@ -153,13 +153,8 @@ mod tests {
         let rwasm_binary: Vec<u8> = bytecode.into();
         let import_linker = Runtime::new_linker();
         let result =
-            Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
-        let circuit = FluentbaseCircuit {
-            bytecode: UnrolledBytecode::new(rwasm_binary.as_slice()),
-            tracer: Some(result.tracer()),
-            input: vec![],
-            output: vec![],
-        };
+            Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, true).unwrap();
+        let circuit = FluentbaseCircuit::from_execution_result(&result);
         let degree: u32 = 17;
         let general_params = get_general_params(degree);
         let key = {
