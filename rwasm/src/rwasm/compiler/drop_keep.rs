@@ -45,9 +45,9 @@ pub trait TransalorWithReturnParam {
 
 impl TransalorWithReturnParam for DropKeep {
     fn translate_with_return_param(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
-        self.code_section.op_local_get((self.drop() + self.keep()) as u32);
+        result.op_local_get((self.drop() + self.keep()) as u32);
         let drop_keep_opcodes = translate_drop_keep(
-            DropKeep::new(drop_keep.drop() as usize + 1, drop_keep.keep() as usize + 1)
+            DropKeep::new(self.drop() as usize + 1, self.keep() as usize + 1)
                 .map_err(|_| CompilerError::DropKeepOutOfBounds)?
         )?;
         result.instr.extend(&drop_keep_opcodes);
