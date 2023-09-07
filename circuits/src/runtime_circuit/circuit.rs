@@ -186,7 +186,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                         global_memory.clone(),
                     );
                     self.assign_trace_step(&mut region, i, &step, rw_counter)?;
-                    rw_counter += step.instr().get_rw_ops().len();
+                    rw_counter += step.instr().get_rw_count();
                 }
                 Ok(())
             },

@@ -101,7 +101,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         ]
         .map(|v| (v.0.current().0, v.1))
         .iter()
-        .for_each(|v| constrain_instr(v.clone().0, &v.1));
+        .for_each(|v| constrain_instr(v.0.clone(), &v.1));
 
         Self {
             is_i32_store,
@@ -183,6 +183,17 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
 mod test {
     use crate::runtime_circuit::testing::test_ok;
     use fluentbase_rwasm::instruction_set;
+
+    #[test]
+    fn test_i32_store_with_const_after() {
+        test_ok(instruction_set! {
+            I32Const[0]
+            I32Const[800]
+            I32Store[0]
+            I32Const(0)
+            Drop
+        });
+    }
 
     #[test]
     fn test_i32_store() {

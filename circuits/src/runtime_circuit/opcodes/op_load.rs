@@ -63,8 +63,12 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
         let address = cb.query_cell();
         let address_base_offset = cb.query_cell();
 
-        cb.stack_pop(address.current());
-        cb.stack_push(value.current());
+        // cb.stack_pop(address.current());
+        // (0..4).for_each(|i| {
+        //     cb.mem_read()
+        // });
+        // .. memory reads?
+        // cb.stack_push(value.current());
 
         Self {
             is_i32_load,
@@ -114,7 +118,7 @@ mod test {
             I32Const[800]
             I32Store[0]
 
-            I32Const[9]
+            I32Const[0]
             I32Load[0]
             Drop
         });

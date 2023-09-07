@@ -21,6 +21,18 @@ pub enum RwOp {
 }
 
 impl Instruction {
+    pub fn get_rw_count(&self) -> usize {
+        let mut rw_count = 0;
+        for rw_op in self.get_rw_ops() {
+            match rw_op {
+                RwOp::MemoryWrite { length, .. } => rw_count += length as usize,
+                RwOp::MemoryRead { length, .. } => rw_count += length as usize,
+                _ => rw_count += 1,
+            }
+        }
+        rw_count
+    }
+
     pub fn get_rw_ops(&self) -> Vec<RwOp> {
         let mut stack_ops = Vec::new();
         match *self {
