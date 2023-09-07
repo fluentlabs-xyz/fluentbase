@@ -119,9 +119,13 @@ pub fn rw_rows_from_trace(
                 length,
                 signed,
             } => {
-                let value = trace.curr_nth_stack_value(0)?;
-                let addr = trace.curr_nth_stack_value(1)?;
-                let value_le_bytes = value.to_bits().to_le_bytes();
+                let addr = trace.curr_nth_stack_value(0)?;
+                let mut value_le_bytes = vec![0; length as usize];
+                trace.read_buffer(
+                    addr.as_u64() + offset as u64,
+                    value_le_bytes.as_mut_ptr(),
+                    length,
+                )?;
                 (0..length).for_each(|i| {
                     res.push(RwRow::Memory {
                         rw_counter: res.len(),

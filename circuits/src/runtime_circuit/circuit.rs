@@ -170,8 +170,21 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             || "runtime opcodes",
             |mut region| {
                 let mut rw_counter = 0;
+                let mut global_memory = Vec::new();
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    let step = TraceStep::new(trace, tracer.logs.get(i + 1).cloned());
+                    for memory_change in trace.memory_changes.iter() {
+                        let max_offset = (memory_change.offset + memory_change.len) as usize;
+                        if max_offset > global_memory.len() {
+                            global_memory.resize(max_offset, 0)
+                        }
+                        global_memory[(memory_change.offset as usize)..max_offset]
+                            .copy_from_slice(memory_change.data.as_slice());
+                    }
+                    let step = TraceStep::new(
+                        trace,
+                        tracer.logs.get(i + 1).cloned(),
+                        global_memory.clone(),
+                    );
                     self.assign_trace_step(&mut region, i, &step, rw_counter)?;
                     rw_counter += step.instr().get_rw_ops().len();
                 }
