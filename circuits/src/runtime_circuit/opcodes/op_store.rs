@@ -32,22 +32,6 @@ pub(crate) struct OpStoreGadget<F> {
     _marker: PhantomData<F>,
 }
 
-impl<F: Field> OpStoreGadget<F> {
-    pub fn instr_res_byte_len(instr: &Instruction) -> usize {
-        match instr {
-            Instruction::I32Store(_) => 4,
-            Instruction::I32Store8(_) => 1,
-            Instruction::I32Store16(_) => 2,
-            Instruction::I64Store(_) => 8,
-            Instruction::I64Store8(_) => 1,
-            Instruction::I64Store16(_) => 2,
-            Instruction::I64Store32(_) => 4,
-            Instruction::F32Store(_) => 4,
-            Instruction::F64Store(_) => 8,
-            _ => unreachable!("unsupported opcode {:?}", instr),
-        }
-    }
-}
 impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
     const NAME: &'static str = "WASM_STORE";
 
@@ -95,7 +79,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
 
         let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
             cb.if_rwasm_opcode(selector, *instr, |cb| {
-                (0..Self::instr_res_byte_len(instr)).for_each(|i| {
+                (0..Instruction::store_instr_meta(instr)).for_each(|i| {
                     cb.mem_write(
                         address_base_offset.current() + address.current() + i.expr(),
                         value_limbs[i].current(),
@@ -152,7 +136,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let mut assign = |selector: &SelectorColumn, address_offset: &AddressOffset| {
             selector.enable(region, offset);
             self.value.assign(region, offset, value);
-            (0..Self::instr_res_byte_len(instr)).for_each(|i| {
+            (0..Instruction::store_instr_meta(instr)).for_each(|i| {
                 self.value_limbs[i].assign(region, offset, value_le_bytes[i] as u64);
             });
             self.address.assign(region, offset, address);

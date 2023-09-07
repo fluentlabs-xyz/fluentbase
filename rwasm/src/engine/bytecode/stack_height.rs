@@ -98,27 +98,11 @@ impl Instruction {
             | Instruction::I64Load16U(val)
             | Instruction::I64Load32S(val)
             | Instruction::I64Load32U(val) => {
-                let (length, signed) = match self {
-                    Instruction::I32Load(_) => (4, false),
-                    Instruction::I64Load(_) => (8, false),
-                    Instruction::F32Load(_) => (4, false),
-                    Instruction::F64Load(_) => (8, false),
-                    Instruction::I32Load8S(_) => (1, true),
-                    Instruction::I32Load8U(_) => (1, false),
-                    Instruction::I32Load16S(_) => (2, true),
-                    Instruction::I32Load16U(_) => (2, false),
-                    Instruction::I64Load8S(_) => (1, true),
-                    Instruction::I64Load8U(_) => (1, false),
-                    Instruction::I64Load16S(_) => (2, true),
-                    Instruction::I64Load16U(_) => (2, false),
-                    Instruction::I64Load32S(_) => (4, true),
-                    Instruction::I64Load32U(_) => (4, false),
-                    _ => unreachable!(),
-                };
+                let (length, signed) = Self::load_instr_meta(self);
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryRead {
                     offset: val.into_inner(),
-                    length,
+                    length: length as u32,
                     signed,
                 });
                 stack_ops.push(RwOp::StackWrite(0));
@@ -132,23 +116,12 @@ impl Instruction {
             | Instruction::I64Store8(val)
             | Instruction::I64Store16(val)
             | Instruction::I64Store32(val) => {
-                let length = match *self {
-                    Instruction::I32Store(_) => 4,
-                    Instruction::I64Store(_) => 8,
-                    Instruction::F32Store(_) => 4,
-                    Instruction::F64Store(_) => 8,
-                    Instruction::I32Store8(_) => 1,
-                    Instruction::I32Store16(_) => 2,
-                    Instruction::I64Store8(_) => 1,
-                    Instruction::I64Store16(_) => 2,
-                    Instruction::I64Store32(_) => 4,
-                    _ => unreachable!(),
-                };
+                let length = Self::store_instr_meta(self);
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryWrite {
                     offset: val.into_inner(),
-                    length,
+                    length: length as u32,
                     signed: false,
                 });
             }
