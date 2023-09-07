@@ -2,6 +2,7 @@
 
 mod utils;
 
+mod instr_meta;
 mod stack_height;
 #[cfg(test)]
 mod tests;
