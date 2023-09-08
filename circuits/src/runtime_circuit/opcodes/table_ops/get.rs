@@ -32,8 +32,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         let value = cb.query_cell();
         let size = cb.query_cell();
         cb.require_opcode(Instruction::TableGet(Default::default()));
-        cb.table_size(table_index.expr(), size.expr());
-        cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
+        //cb.table_size(table_index.expr(), size.expr());
+        //cb.table_get(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_pop(elem_index.current());
         cb.stack_push(value.current());
         cb.range_check_1024(elem_index.expr());

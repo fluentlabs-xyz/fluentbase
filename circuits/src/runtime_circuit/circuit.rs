@@ -23,7 +23,6 @@ use crate::{
                 fill::OpTableFillGadget,
                 get::OpTableGetGadget,
                 grow::OpTableGrowGadget,
-                init::OpTableInitGadget,
                 set::OpTableSetGadget,
                 size::OpTableSizeGadget,
             },
@@ -64,7 +63,6 @@ pub struct RuntimeCircuitConfig<F: Field> {
     table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
     table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
     table_grow_gadget: ExecutionGadgetRow<F, OpTableGrowGadget<F>>,
-    table_init_gadget: ExecutionGadgetRow<F, OpTableInitGadget<F>>,
     table_set_gadget: ExecutionGadgetRow<F, OpTableSetGadget<F>>,
     table_size_gadget: ExecutionGadgetRow<F, OpTableSizeGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
@@ -117,7 +115,6 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             table_fill_gadget: configure_gadget!(),
             table_get_gadget: configure_gadget!(),
             table_grow_gadget: configure_gadget!(),
-            table_init_gadget: configure_gadget!(),
             table_set_gadget: configure_gadget!(),
             table_size_gadget: configure_gadget!(),
             // system calls
@@ -196,9 +193,6 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_TABLE_GROW => self
                 .table_grow_gadget
-                .assign(region, offset, step, rw_counter),
-            ExecutionState::WASM_TABLE_INIT => self
-                .table_init_gadget
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_TABLE_SET => self
                 .table_set_gadget

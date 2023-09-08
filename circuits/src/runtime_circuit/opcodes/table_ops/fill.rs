@@ -38,9 +38,10 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         let size = cb.query_cell();
         let out = cb.query_cell();
         cb.require_opcode(Instruction::TableFill(Default::default()));
-        cb.table_size(table_index.expr(), size.expr());
-        cb.table_fill(table_index.expr(), start.expr(), value.expr(), range.expr());
+        //cb.table_size(table_index.expr(), size.expr());
+        //cb.table_fill(table_index.expr(), start.expr(), value.expr(), range.expr());
         cb.stack_pop(start.current());
+        cb.stack_pop(value_type.current());
         cb.stack_pop(value.current());
         cb.stack_pop(range.current());
         cb.stack_push(out.current());

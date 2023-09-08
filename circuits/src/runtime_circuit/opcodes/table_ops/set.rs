@@ -36,8 +36,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         let size = cb.query_cell();
         let out = cb.query_cell();
         cb.require_opcode(Instruction::TableSet(Default::default()));
-        cb.table_size(table_index.expr(), size.expr());
-        cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
+        //cb.table_size(table_index.expr(), size.expr());
+        //cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_pop(elem_type.current());
         cb.stack_pop(elem_index.current());
         cb.stack_pop(value.current());
