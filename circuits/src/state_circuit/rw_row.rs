@@ -122,7 +122,7 @@ pub fn rw_rows_from_trace(
                 let addr = trace.curr_nth_stack_value(0)?;
                 let mut value_le_bytes = vec![0; length as usize];
                 let mem_addr = offset as u64 + addr.as_u64();
-                trace.read_buffer(mem_addr, value_le_bytes.as_mut_ptr(), length)?;
+                trace.read_memory(mem_addr, value_le_bytes.as_mut_ptr(), length)?;
                 (0..length).for_each(|i| {
                     res.push(RwRow::Memory {
                         rw_counter: res.len(),

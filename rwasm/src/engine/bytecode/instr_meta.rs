@@ -1,10 +1,11 @@
 use crate::engine::bytecode::Instruction;
 
-type ResByteLength = usize;
-type ResIsSigned = bool;
+type ByteLength = usize;
+type IsSigned = bool;
 
 impl Instruction {
-    pub fn store_instr_meta(instr: &Instruction) -> ResByteLength {
+    pub const BYTE_LEN_MAX: usize = 8;
+    pub fn store_instr_meta(instr: &Instruction) -> ByteLength {
         match instr {
             Instruction::I32Store(_) => 4,
             Instruction::I32Store8(_) => 1,
@@ -19,7 +20,7 @@ impl Instruction {
         }
     }
 
-    pub fn load_instr_meta(instr: &Instruction) -> (ResByteLength, ResIsSigned) {
+    pub fn load_instr_meta(instr: &Instruction) -> (ByteLength, IsSigned) {
         match instr {
             Instruction::I32Load(_) => (4, false),
             Instruction::I64Load(_) => (8, false),

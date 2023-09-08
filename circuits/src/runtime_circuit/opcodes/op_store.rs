@@ -25,7 +25,7 @@ pub(crate) struct OpStoreGadget<F> {
     is_f64_store: SelectorColumn,
 
     value: AdviceColumn,
-    value_limbs: [AdviceColumn; 8],
+    value_as_bytes: [AdviceColumn; Instruction::BYTE_LEN_MAX],
     address: AdviceColumn,
     address_base_offset: AdviceColumn,
 
@@ -49,7 +49,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let is_f64_store = cb.query_selector();
 
         let value = cb.query_cell();
-        let value_limbs = cb.query_cells();
+        let value_as_bytes = cb.query_cells();
         let address = cb.query_cell();
         let address_base_offset = cb.query_cell();
 
@@ -71,18 +71,21 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             .map(|v| v.current().0),
         );
 
-        let value_limbs_sum = value_limbs
+        let value_as_bytes_sum = value_as_bytes
             .iter()
             .rev()
             .fold(Query::zero(), |a, v| a * Query::from(0x100) + v.current());
-        cb.require_zero("value=sum(value_limbs)", value.current() - value_limbs_sum);
+        cb.require_zero(
+            "value=recover_from_bytes(value_as_bytes)",
+            value.current() - value_as_bytes_sum,
+        );
 
         let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
             cb.if_rwasm_opcode(selector, *instr, |cb| {
                 (0..Instruction::store_instr_meta(instr)).for_each(|i| {
                     cb.mem_write(
                         address_base_offset.current() + address.current() + i.expr(),
-                        value_limbs[i].current(),
+                        value_as_bytes[i].current(),
                     );
                 });
             })
@@ -115,7 +118,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             is_f64_store,
             value,
             address,
-            value_limbs,
+            value_as_bytes,
             address_base_offset,
             _marker: Default::default(),
         }
@@ -137,7 +140,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             selector.enable(region, offset);
             self.value.assign(region, offset, value);
             (0..Instruction::store_instr_meta(instr)).for_each(|i| {
-                self.value_limbs[i].assign(region, offset, value_le_bytes[i] as u64);
+                self.value_as_bytes[i].assign(region, offset, value_le_bytes[i] as u64);
             });
             self.address.assign(region, offset, address);
             self.address_base_offset
@@ -172,7 +175,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             Instruction::F64Store(address_offset) => {
                 assign(&self.is_f64_store, address_offset);
             }
-            _ => unreachable!("illegal opcode place {:?}", instr),
+            _ => unreachable!("illegal opcode assign {:?}", instr),
         };
 
         Ok(())
@@ -183,13 +186,15 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
 mod test {
     use crate::runtime_circuit::testing::test_ok;
     use fluentbase_rwasm::instruction_set;
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_i32_store_with_const_after() {
         test_ok(instruction_set! {
-            I32Const[0]
+            I32Const[thread_rng().gen_range(0..100)]
             I32Const[800]
-            I32Store[0]
+            I32Store[thread_rng().gen_range(0..100)]
+
             I32Const(0)
             Drop
         });
@@ -198,81 +203,81 @@ mod test {
     #[test]
     fn test_i32_store() {
         test_ok(instruction_set! {
-            I32Const[1] // address
-            I32Const[800] // value
-            I32Store[1 /*address_offset*/]
+            I32Const[thread_rng().gen_range(0..100)]
+            I32Const[800]
+            I32Store[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i32_store8() {
         test_ok(instruction_set! {
-            I32Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I32Const[2]
-            I32Store8[0]
+            I32Store8[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i32_store16() {
         test_ok(instruction_set! {
-            I32Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I32Const[2]
-            I32Store16[0]
+            I32Store16[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i64_store() {
         test_ok(instruction_set! {
-            I64Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I64Const[2]
-            I64Store[0]
+            I64Store[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i64_store8() {
         test_ok(instruction_set! {
-            I64Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I64Const[2]
-            I64Store8[0]
+            I64Store8[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i64_store16() {
         test_ok(instruction_set! {
-            I64Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I64Const[2]
-            I64Store16[0]
+            I64Store16[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_i64_store32() {
         test_ok(instruction_set! {
-            I64Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I64Const[2]
-            I64Store32[0]
+            I64Store32[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_f32_store() {
         test_ok(instruction_set! {
-            I32Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I32Const[2]
-            F32Store[0]
+            F32Store[thread_rng().gen_range(0..100)]
         });
     }
 
     #[test]
     fn test_f64_store() {
         test_ok(instruction_set! {
-            I32Const[1]
+            I32Const[thread_rng().gen_range(0..100)]
             I32Const[2]
-            F64Store[0]
+            F64Store[thread_rng().gen_range(0..100)]
         });
     }
 }
