@@ -164,6 +164,28 @@ pub fn rw_rows_from_trace(
                     value: (table_size as u32 + grow.as_u32()) as u64,
                 });
             }
+            RwOp::TableElemWrite(table_idx) => {
+                let elem_index = trace.curr_nth_stack_value(1)?;
+                let value = trace.curr_nth_stack_value(2)?;
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+                    value: value.as_u32() as u64,
+                });
+            }
+            RwOp::TableElemRead(table_idx) => {
+                let elem_index = trace.curr_nth_stack_value(0)?;
+                let value = trace.next_nth_stack_value(0)?;
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+                    value: value.as_u32() as u64,
+                });
+            }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
     }

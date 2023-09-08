@@ -95,6 +95,10 @@ mod test {
     #[test]
     fn table_fill() {
         test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
             I32Const(0)
             I32Const(0)
             RefFunc(0)
