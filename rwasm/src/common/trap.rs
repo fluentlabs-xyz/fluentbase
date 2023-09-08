@@ -43,6 +43,7 @@ impl TrapReason {
     ///
     /// Otherwise returns `None`.
     pub fn i32_exit_status(&self) -> Option<i32> {
+        println!("DEBUG {:#?}", self);
         if let Self::I32Exit(status) = self {
             return Some(*status);
         }

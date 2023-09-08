@@ -154,12 +154,14 @@ pub fn rw_rows_from_trace(
                 });
             }
             RwOp::TableSizeWrite(table_idx) => {
+                let table_size = trace.read_table_size(table_idx);
+                let grow = trace.curr_nth_stack_value(1)?;
                 res.push(RwRow::Table {
                     rw_counter: res.len(),
-                    is_write: false,
+                    is_write: true,
                     call_id,
-                    address: 0,
-                    value: 0,
+                    address: (table_idx * 1024) as u64,
+                    value: (table_size as u32 + grow.as_u32()) as u64,
                 });
             }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
