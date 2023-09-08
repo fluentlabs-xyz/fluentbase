@@ -63,7 +63,7 @@ impl TraceStep {
             .ok_or(GadgetError::MissingNext)
     }
 
-    pub fn read_buffer<'a>(
+    pub fn read_memory<'a>(
         &self,
         offset: u64,
         dst: *mut u8,
