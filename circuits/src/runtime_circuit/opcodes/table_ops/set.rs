@@ -36,11 +36,11 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         let size = cb.query_cell();
         let out = cb.query_cell();
         cb.require_opcode(Instruction::TableSet(Default::default()));
-        //cb.table_size(table_index.expr(), size.expr());
-        //cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_pop(elem_type.current());
         cb.stack_pop(elem_index.current());
         cb.stack_pop(value.current());
+        //cb.table_size(table_index.expr(), size.expr());
+        cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         cb.stack_push(out.current());
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr() - elem_index.expr());
@@ -88,6 +88,10 @@ mod test {
     #[test]
     fn table_set() {
         test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
             I32Const(0)
             I32Const(0)
             RefFunc(0)

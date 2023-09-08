@@ -32,9 +32,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         let value = cb.query_cell();
         let size = cb.query_cell();
         cb.require_opcode(Instruction::TableGet(Default::default()));
+        cb.stack_pop(elem_index.current());
         //cb.table_size(table_index.expr(), size.expr());
         //cb.table_get(table_index.expr(), elem_index.expr(), value.expr());
-        cb.stack_pop(elem_index.current());
         cb.stack_push(value.current());
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr() - elem_index.expr());
@@ -76,6 +76,10 @@ mod test {
     #[test]
     fn table_get() {
         test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
             I32Const(0)
             I32Const(0)
             RefFunc(0)

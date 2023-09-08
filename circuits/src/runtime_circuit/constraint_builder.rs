@@ -245,11 +245,11 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
         self.table_fill(table_idx, res, grow, init);
     }
-    pub fn table_get(&mut self, table_index: Q<F>, elem_index: Q<F>, value: Q<F>) {
-        // unreachable!("not implemented yet")
+    pub fn table_get(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+        self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
     }
-    pub fn table_set(&mut self, table_index: Q<F>, elem_index: Q<F>, value: Q<F>) {
-        // unreachable!("not implemented yet")
+    pub fn table_set(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+        self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
     }
     pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
         // unreachable!("not implemented yet")
