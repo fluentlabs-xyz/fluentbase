@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
+    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn},
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     impl_expr,
     lookup_table::RangeCheckLookup,

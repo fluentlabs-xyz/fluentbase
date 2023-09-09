@@ -1,11 +1,24 @@
+use crate::impl_expr;
+use std::{fmt, fmt::Formatter};
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Copy, EnumIter)]
 pub enum CopyTableTag {
-    // copy from input to memory
+    // copy from input to memory (_sys_read)
     Input = 1,
-    // copy from memory to output
+    // copy from memory to output (_sys_write)
     Output,
+}
+
+impl_expr!(CopyTableTag);
+
+impl fmt::Display for CopyTableTag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CopyTableTag::Input => write!(f, "Input"),
+            CopyTableTag::Output => write!(f, "Output"),
+        }
+    }
 }
 
 impl Into<usize> for CopyTableTag {

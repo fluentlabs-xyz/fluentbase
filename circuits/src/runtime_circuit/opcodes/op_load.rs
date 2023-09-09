@@ -166,7 +166,7 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
             let byte_len = Instruction::load_instr_meta(instr).0 as usize;
             let mut value_le_bytes = vec![0; byte_len];
             let mem_address_base = address_offset.into_inner() as u64 + address;
-            trace.read_memory(
+            trace.curr_read_memory(
                 mem_address_base,
                 value_le_bytes.as_mut_ptr(),
                 byte_len as u32,

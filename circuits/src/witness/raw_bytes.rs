@@ -1,6 +1,4 @@
 use crate::util::{unroll_to_hash_input, Field};
-use itertools::Itertools;
-use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 
 #[derive(Clone, Default, Debug)]
 pub struct UnrolledRawBytes<F: Field, const N: usize> {
@@ -12,13 +10,13 @@ pub struct UnrolledRawBytes<F: Field, const N: usize> {
 impl<F: Field, const N: usize> UnrolledRawBytes<F, N> {
     pub fn new(input: &Vec<u8>) -> Self {
         let words = unroll_to_hash_input::<F, N, 2>(input.iter().copied());
-        let hash = F::hash_msg(
-            words.iter().flatten().copied().collect_vec().as_slice(),
-            Some(input.len() as u128 * HASHABLE_DOMAIN_SPEC),
-        );
+        // let hash = F::hash_msg(
+        //     words.iter().flatten().copied().collect_vec().as_slice(),
+        //     Some(input.len() as u128 * HASHABLE_DOMAIN_SPEC),
+        // );
         Self {
             length: input.len(),
-            hash,
+            hash: F::zero(),
             words,
         }
     }

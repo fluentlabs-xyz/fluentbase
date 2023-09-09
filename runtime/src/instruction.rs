@@ -51,16 +51,16 @@ pub(crate) fn sys_read(
     target: u32,
     offset: u32,
     length: u32,
-) -> Result<u32, Trap> {
-    let memory = exported_memory(&mut caller);
+) -> Result<(), Trap> {
     let input = caller.data().input().clone();
     if offset + length > input.len() as u32 {
         return Err(ExitCode::MemoryOutOfBounds.into());
     }
-    let memory = memory.data_mut(caller.as_context_mut());
-    memory[(target as usize)..((target + length) as usize)]
-        .clone_from_slice(&input.as_slice()[(offset as usize)..]);
-    Ok(length)
+    caller.write_memory(
+        target as usize,
+        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
+    );
+    Ok(())
 }
 
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {

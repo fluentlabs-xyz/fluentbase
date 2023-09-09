@@ -38,7 +38,7 @@ impl RwBuilder {
         let mut stack_reads = 0;
         let mut stack_writes = 0;
         for rw_op in rw_ops {
-            let rw_counter = step.rw_counter + step.rw_rows.len();
+            let rw_counter = step.next_rw_counter();
             let call_id = self.call_id;
             match rw_op {
                 RwOp::StackWrite(local_depth) => {
@@ -109,7 +109,7 @@ impl RwBuilder {
                     let addr = step.curr_nth_stack_value(0)?;
                     let mut value_le_bytes = vec![0; length as usize];
                     let mem_addr = offset as u64 + addr.as_u64();
-                    step.read_memory(mem_addr, value_le_bytes.as_mut_ptr(), length)?;
+                    step.curr_read_memory(mem_addr, value_le_bytes.as_mut_ptr(), length)?;
                     (0..length).for_each(|i| {
                         step.rw_rows.push(RwRow::Memory {
                             rw_counter,
@@ -182,28 +182,45 @@ impl RwBuilder {
             }
             SysFuncIdx::IMPORT_SYS_WRITE => {}
             SysFuncIdx::IMPORT_SYS_READ => {
-                // basic RW ops for the call
+                // read 3 input params from the stack
                 self.build_rw_ops(
                     step,
-                    vec![
-                        RwOp::StackRead(0),
-                        RwOp::StackRead(0),
-                        RwOp::StackRead(0),
-                        RwOp::StackWrite(0),
-                    ],
+                    vec![RwOp::StackRead(0), RwOp::StackRead(0), RwOp::StackRead(0)],
                 )?;
-                // get stack values
                 let length = step.curr_nth_stack_value(0)?;
                 let offset = step.curr_nth_stack_value(1)?;
                 let target = step.curr_nth_stack_value(2)?;
-                let mut data = vec![0; length.as_u64() as usize];
-                step.read_memory(target.as_u64(), data.as_mut_ptr(), length.as_u32())?;
+                debug_assert_eq!(
+                    step.next_trace.clone().unwrap().memory_changes[0].offset,
+                    target.as_u32()
+                );
+                debug_assert_eq!(
+                    step.next_trace.clone().unwrap().memory_changes[0].len,
+                    length.as_u32()
+                );
+                let data = step.next_trace.clone().unwrap().memory_changes[0]
+                    .data
+                    .clone();
+                let copy_rw_counter = step.next_rw_counter();
+                // write result to the memory
+                data.iter().enumerate().for_each(|(i, value)| {
+                    step.rw_rows.push(RwRow::Memory {
+                        rw_counter: step.next_rw_counter(),
+                        is_write: true,
+                        call_id: self.call_id,
+                        memory_address: target.as_u64() + i as u64,
+                        value: *value,
+                        length: length.as_u32(),
+                        signed: false,
+                    });
+                });
+                // create copy row
                 step.copy_rows.push(CopyRow {
                     tag: CopyTableTag::Input,
                     from_address: offset.as_u32(),
                     to_address: target.as_u32(),
                     length: length.as_u32(),
-                    rw_counter: step.rw_rows.len(),
+                    rw_counter: copy_rw_counter,
                     data,
                 });
             }
