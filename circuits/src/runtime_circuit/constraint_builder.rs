@@ -10,6 +10,7 @@ use crate::{
         ToExpr,
     },
     fixed_table::FixedTableTag,
+    gadgets::is_zero::IsZeroConfig,
     lookup_table::{
         FixedLookup,
         LookupTable,
@@ -20,7 +21,7 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::execution_state::ExecutionState,
-    state_circuit::tag::RwTableTag,
+    state_circuit::RwTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -160,6 +161,14 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.base.fixed_column(self.cs)
     }
 
+    pub fn is_zero(&mut self, value: Query<F>) -> IsZeroConfig<F> {
+        IsZeroConfig::configure(self.cs, &mut self.base, value)
+    }
+
+    pub fn query_fixed_n<const N: usize>(&mut self) -> [FixedColumn; N] {
+        [0; N].map(|_| self.base.fixed_column(self.cs))
+    }
+
     pub fn query_cell_phase2(&mut self) -> AdviceColumnPhase2 {
         self.base.advice_column_phase2(self.cs)
     }
@@ -271,6 +280,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             ])));
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
+    }
+
+    pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
+        self.op_lookups.push(LookupTable::PublicInput(
+            self.base
+                .apply_lookup_condition([Query::one(), index, value]),
+        ))
     }
 
     pub fn exit_code_lookup(&mut self, exit_code: Query<F>) {

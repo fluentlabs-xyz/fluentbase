@@ -6,8 +6,8 @@ use crate::{
     runtime_circuit::RuntimeCircuitConfig,
     rwasm_circuit::RwasmCircuitConfig,
     state_circuit::StateCircuitConfig,
-    unrolled_bytecode::UnrolledBytecode,
     util::Field,
+    witness::UnrolledInstructionSet,
 };
 use fluentbase_runtime::ExecutionResult;
 use fluentbase_rwasm::engine::Tracer;
@@ -64,7 +64,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
     pub fn assign(
         &self,
         layouter: &mut impl Layouter<F>,
-        bytecode: &UnrolledBytecode<F>,
+        bytecode: &UnrolledInstructionSet<F>,
         tracer: Option<&Tracer>,
         input: &Vec<u8>,
         output: &Vec<u8>,
@@ -82,15 +82,14 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             self.runtime_circuit_config.assign(layouter, tracer)?;
             self.state_circuit_config.assign(layouter, tracer)?;
         }
-        self.pi_circuit_config
-            .expose_public(layouter, input, output, exit_code)?;
+        self.pi_circuit_config.expose_public(layouter)?;
         Ok(())
     }
 }
 
 #[derive(Default, Debug)]
 pub struct FluentbaseCircuit<'tracer, F: Field> {
-    pub(crate) bytecode: UnrolledBytecode<F>,
+    pub(crate) bytecode: UnrolledInstructionSet<F>,
     pub(crate) tracer: Option<&'tracer Tracer>,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
@@ -100,7 +99,7 @@ pub struct FluentbaseCircuit<'tracer, F: Field> {
 impl<'tracer, F: Field> FluentbaseCircuit<'tracer, F> {
     pub fn from_execution_result(execution_result: &'tracer ExecutionResult) -> Self {
         Self {
-            bytecode: UnrolledBytecode::new(execution_result.bytecode().as_slice()),
+            bytecode: UnrolledInstructionSet::new(execution_result.bytecode().as_slice()),
             tracer: Some(execution_result.tracer()),
             input: execution_result.data().input().clone(),
             output: execution_result.data().output().clone(),
@@ -149,7 +148,7 @@ mod tests {
         let bytecode: Vec<u8> = bytecode.into();
         let hash_value = Fr::zero();
         let circuit = FluentbaseCircuit {
-            bytecode: UnrolledBytecode::new(bytecode.as_slice()),
+            bytecode: UnrolledInstructionSet::new(bytecode.as_slice()),
             tracer: None,
             input: vec![],
             output: vec![],

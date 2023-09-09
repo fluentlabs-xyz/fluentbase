@@ -9,6 +9,7 @@
 extern crate core;
 
 mod constraint_builder;
+mod copy_circuit;
 mod fixed_table;
 mod fluentbase_circuit;
 mod gadgets;
@@ -23,5 +24,6 @@ mod state_circuit;
 #[cfg(test)]
 mod testing;
 mod trace_step;
-mod unrolled_bytecode;
+mod types;
 mod util;
+mod witness;
