@@ -10,7 +10,7 @@ use crate::{
     },
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -79,7 +79,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        step: &TraceStep,
+        step: &ExecStep,
         rw_counter: usize,
     ) -> Result<(), GadgetError> {
         self.q_enable.enable(region, offset);

@@ -35,7 +35,6 @@ use crate::{
     Table,
 };
 use core::cmp::{self};
-use num_traits::ToPrimitive;
 
 /// The outcome of a Wasm execution.
 ///

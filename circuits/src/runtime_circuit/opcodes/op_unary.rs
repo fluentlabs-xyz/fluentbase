@@ -1,12 +1,12 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, ToExpr},
+    exec_step::{ExecStep, GadgetError},
     fixed_table::FixedTableTag,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -151,7 +151,7 @@ impl<F: Field> ExecutionGadget<F> for OpUnaryGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let opcode = trace.instr();
 

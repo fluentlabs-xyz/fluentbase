@@ -1,12 +1,12 @@
 use crate::{
     bail_illegal_opcode,
     constraint_builder::AdviceColumn,
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -36,7 +36,7 @@ impl<F: Field> ExecutionGadget<F> for OpRefFuncGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         match trace.instr() {
             Instruction::RefFunc(val) => val,

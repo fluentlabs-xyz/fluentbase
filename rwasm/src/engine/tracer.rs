@@ -1,6 +1,6 @@
 use crate::{
     common::UntypedValue,
-    engine::bytecode::{InstrMeta, Instruction, TableIdx},
+    engine::bytecode::{InstrMeta, Instruction},
     Extern,
 };
 use core::fmt::{Debug, Formatter};

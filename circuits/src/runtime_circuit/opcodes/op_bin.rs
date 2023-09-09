@@ -1,10 +1,10 @@
 use crate::{
     constraint_builder::{AdviceColumn, Query, ToExpr},
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         execution_state::ExecutionState,
         opcodes::{ExecutionGadget, OpConstraintBuilder},
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -265,7 +265,7 @@ impl<F: Field> ExecutionGadget<F> for OpBinGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let rhs = trace.curr_nth_stack_value(0)?;
         let lhs = trace.curr_nth_stack_value(1)?;

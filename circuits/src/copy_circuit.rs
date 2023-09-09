@@ -2,28 +2,14 @@ use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     lookup_table::{PublicInputLookup, RwLookup},
-    state_circuit::RwTableTag,
+    rw_builder::{
+        copy_row::{CopyTableTag, N_COPY_TABLE_TAG_BITS},
+        rw_row::RwTableTag,
+    },
     util::Field,
 };
 use halo2_proofs::{circuit::Layouter, plonk::ConstraintSystem, poly::Rotation};
 use std::marker::PhantomData;
-use strum_macros::EnumIter;
-
-#[derive(Debug, Clone, Copy, EnumIter)]
-pub enum CopyTableTag {
-    // copy from input to memory
-    Input = 1,
-    // copy from memory to output
-    Output,
-}
-
-impl Into<usize> for CopyTableTag {
-    fn into(self) -> usize {
-        self as usize
-    }
-}
-
-const N_COPY_TABLE_TAG_BITS: usize = 2;
 
 #[derive(Clone)]
 pub struct CopyCircuitConfig<F: Field> {
@@ -36,8 +22,8 @@ pub struct CopyCircuitConfig<F: Field> {
     // memory ref rw counter
     rw_counter: AdviceColumn,
     // src & dst addresses
-    src_address: AdviceColumn,
-    dst_address: AdviceColumn,
+    from_address: AdviceColumn,
+    to_address: AdviceColumn,
     // copy value
     value: AdviceColumn,
     pd: PhantomData<F>,
@@ -91,7 +77,7 @@ impl<F: Field> CopyCircuitConfig<F> {
         );
         cb.condition(
             tag_bits.value_equals(CopyTableTag::Output, Rotation::cur()),
-            |cb| {
+            |_cb| {
                 // lookup rw
 
                 // lookup pi
@@ -106,12 +92,12 @@ impl<F: Field> CopyCircuitConfig<F> {
             tag_bits,
             length,
             rw_counter,
-            src_address,
-            dst_address,
+            from_address: src_address,
+            to_address: dst_address,
             value,
             pd: Default::default(),
         }
     }
 
-    fn assign(&self, layouter: &mut impl Layouter<F>) {}
+    fn assign(&self, _layouter: &mut impl Layouter<F>) {}
 }

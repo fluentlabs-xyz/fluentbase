@@ -1,4 +1,5 @@
 use crate::{
+    exec_step::{ExecSteps, GadgetError},
     lookup_table::{FixedLookup, PublicInputLookup, RangeCheckLookup, RwLookup, RwasmLookup},
     runtime_circuit::{
         execution_gadget::ExecutionGadgetRow,
@@ -26,21 +27,18 @@ use crate::{
                 set::OpTableSetGadget,
                 size::OpTableSizeGadget,
             },
-            TraceStep,
+            ExecStep,
         },
         platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget},
         responsible_opcode::ResponsibleOpcodeTable,
     },
-    trace_step::GadgetError,
     util::Field,
 };
 use fluentbase_runtime::SysFuncIdx;
-use fluentbase_rwasm::{common::UntypedValue, engine::Tracer};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
-use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
@@ -129,7 +127,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        step: &TraceStep,
+        step: &ExecStep,
         rw_counter: usize,
         system_call: SysFuncIdx,
     ) -> Result<(), GadgetError> {
@@ -147,7 +145,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        step: &TraceStep,
+        step: &ExecStep,
         rw_counter: usize,
     ) -> Result<(), Error> {
         let execution_state = ExecutionState::from_opcode(*step.instr());
@@ -215,41 +213,16 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
+    pub fn assign(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        exec_steps: &ExecSteps,
+    ) -> Result<(), Error> {
         layouter.assign_region(
             || "runtime opcodes",
             |mut region| {
-                let mut rw_counter = 0;
-                let mut global_memory = Vec::new();
-                let mut global_table = BTreeMap::<u32, UntypedValue>::new();
-                for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    for memory_change in trace.memory_changes.iter() {
-                        let max_offset = (memory_change.offset + memory_change.len) as usize;
-                        if max_offset > global_memory.len() {
-                            global_memory.resize(max_offset, 0)
-                        }
-                        global_memory[(memory_change.offset as usize)..max_offset]
-                            .copy_from_slice(memory_change.data.as_slice());
-                    }
-                    for table_change in trace.table_changes.iter() {
-                        let elem_addr = table_change.table_idx * 1024 + table_change.elem_idx + 1;
-                        global_table.insert(elem_addr, table_change.func_ref);
-                        let size_addr = table_change.table_idx * 1024;
-                        global_table.insert(size_addr, UntypedValue::from(0));
-                        let table_size = global_table
-                            .keys()
-                            .filter(|key| (*key / 1024) == table_change.table_idx)
-                            .count();
-                        global_table.insert(size_addr, UntypedValue::from(table_size - 1));
-                    }
-                    let step = TraceStep::new(
-                        trace.clone(),
-                        tracer.logs.get(i + 1).cloned(),
-                        global_memory.clone(),
-                        global_table.clone(),
-                    );
-                    self.assign_trace_step(&mut region, i, &step, rw_counter)?;
-                    rw_counter += step.instr().get_rw_count();
+                for (i, trace) in exec_steps.0.iter().enumerate() {
+                    self.assign_trace_step(&mut region, i, trace, trace.rw_counter)?;
                 }
                 Ok(())
             },

@@ -156,7 +156,7 @@ impl Instruction {
                 stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::TableGrow(table_idx) => {
+            Instruction::TableGrow(_table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 //stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
@@ -170,7 +170,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::TableGet(table_idx) => {
+            Instruction::TableGet(_table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 //stack_ops.push(RwOp::TableElemRead(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));

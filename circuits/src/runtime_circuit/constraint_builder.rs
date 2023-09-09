@@ -21,7 +21,6 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::execution_state::ExecutionState,
-    state_circuit::RwTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -89,6 +88,7 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     next_program_counter: Option<Query<F>>,
 }
 
+use crate::rw_builder::rw_row::RwTableTag;
 use Query as Q;
 
 #[allow(unused_variables)]
