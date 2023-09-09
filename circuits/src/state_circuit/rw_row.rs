@@ -35,6 +35,14 @@ pub enum RwRow {
         length: u32,
         signed: bool,
     },
+    /// Table
+    Table {
+        rw_counter: usize,
+        is_write: bool,
+        call_id: usize,
+        address: u64,
+        value: u64,
+    },
 }
 
 pub fn rw_rows_from_trace(
@@ -135,8 +143,49 @@ pub fn rw_rows_from_trace(
                     });
                 });
             }
-            // RwOp::TableWrite => {}
-            // RwOp::TableRead => {}
+            RwOp::TableSizeRead(table_idx) => {
+                let table_size = trace.read_table_size(table_idx);
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    address: (table_idx * 1024) as u64,
+                    value: table_size as u64,
+                });
+            }
+            RwOp::TableSizeWrite(table_idx) => {
+                let table_size = trace.read_table_size(table_idx);
+                let grow = trace.curr_nth_stack_value(1)?;
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    address: (table_idx * 1024) as u64,
+                    value: (table_size as u32 + grow.as_u32()) as u64,
+                });
+            }
+            RwOp::TableElemWrite(table_idx) => {
+                let elem_index = trace.curr_nth_stack_value(1)?;
+                let value = trace.curr_nth_stack_value(2)?;
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: true,
+                    call_id,
+                    address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+                    value: value.as_u32() as u64,
+                });
+            }
+            RwOp::TableElemRead(table_idx) => {
+                let elem_index = trace.curr_nth_stack_value(0)?;
+                let value = trace.next_nth_stack_value(0)?;
+                res.push(RwRow::Table {
+                    rw_counter: res.len(),
+                    is_write: false,
+                    call_id,
+                    address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+                    value: value.as_u32() as u64,
+                });
+            }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
     }
@@ -149,6 +198,7 @@ impl RwRow {
             Self::Stack { value, .. } => *value,
             Self::Global { value, .. } => *value,
             Self::Memory { value: byte, .. } => UntypedValue::from(*byte),
+            Self::Table { value, .. } => UntypedValue::from(*value),
             _ => unreachable!("{:?}", self),
         }
     }
@@ -184,6 +234,7 @@ impl RwRow {
             | Self::Memory { rw_counter, .. }
             | Self::Stack { rw_counter, .. }
             | Self::Global { rw_counter, .. } => *rw_counter,
+            Self::Table { rw_counter, .. } => *rw_counter,
             _ => 0,
         }
     }
@@ -194,6 +245,7 @@ impl RwRow {
             Self::Memory { is_write, .. }
             | Self::Stack { is_write, .. }
             | Self::Global { is_write, .. } => *is_write,
+            Self::Table { is_write, .. } => *is_write,
             _ => false,
         }
     }
@@ -204,6 +256,7 @@ impl RwRow {
             Self::Memory { .. } => RwTableTag::Memory,
             Self::Stack { .. } => RwTableTag::Stack,
             Self::Global { .. } => RwTableTag::Global,
+            Self::Table { .. } => RwTableTag::Table,
         }
     }
 
@@ -211,16 +264,22 @@ impl RwRow {
         match self {
             Self::Stack { call_id, .. }
             | Self::Global { call_id, .. }
+            | Self::Table { call_id, .. }
             | Self::Memory { call_id, .. } => Some(*call_id),
             Self::Start { .. } => None,
         }
     }
+
+    // MAX_TABLE_SIZE=1024
+    // address = table_idx * MAX_TABLE_SIZE + elem_idx + 1;
+    // value =
 
     pub fn address(&self) -> Option<u32> {
         match self {
             Self::Memory { memory_address, .. } => Some(*memory_address as u32),
             Self::Stack { stack_pointer, .. } => Some(*stack_pointer as u32),
             Self::Global { global_index, .. } => Some(*global_index as u32),
+            Self::Table { address, .. } => Some(*address as u32),
             Self::Start { .. } => None,
         }
     }
