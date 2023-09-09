@@ -1,10 +1,10 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, ToExpr},
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -40,7 +40,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         cb.require_opcode(Instruction::TableCopy(Default::default()));
         cb.table_size(table_index_src.expr(), size_src.expr());
         cb.table_size(table_index_dst.expr(), size_dst.expr());
-        cb.table_init(table_index_src.expr(), table_index_dst.expr(), start.expr(), range.expr());
+        cb.table_init(
+            table_index_src.expr(),
+            table_index_dst.expr(),
+            start.expr(),
+            range.expr(),
+        );
         cb.stack_pop(start.current());
         cb.stack_pop(range.current());
         cb.stack_push(out.current());
@@ -66,18 +71,19 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let (table_index_dst, start, range, out) = match trace.instr() {
-            Instruction::TableCopy(ti) =>
-                ( ti,
-                  trace.curr_nth_stack_value(0)?,
-                  trace.curr_nth_stack_value(1)?,
-                  trace.next_nth_stack_value(0)?,
-                ),
+            Instruction::TableCopy(ti) => (
+                ti,
+                trace.curr_nth_stack_value(0)?,
+                trace.curr_nth_stack_value(1)?,
+                trace.next_nth_stack_value(0)?,
+            ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index_dst.assign(region, offset, F::from(table_index_dst.to_u32() as u64));
+        self.table_index_dst
+            .assign(region, offset, F::from(table_index_dst.to_u32() as u64));
         self.start.assign(region, offset, F::from(start.to_bits()));
         self.range.assign(region, offset, F::from(range.to_bits()));
         self.out.assign(region, offset, F::from(out.to_bits()));

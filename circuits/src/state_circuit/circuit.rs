@@ -1,34 +1,26 @@
 use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
+    exec_step::ExecSteps,
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
     only_once,
+    rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
-        rw_row::{rw_rows_from_trace, RwRow},
         rw_table::RwTable,
         sort_keys::SortKeysConfig,
-        tag::{RwTableTag, N_RW_TABLE_TAG_BITS},
     },
-    trace_step::TraceStep,
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::{
-    common::UntypedValue,
-    engine::{
-        bytecode::{Instruction, TableIdx},
-        Tracer,
-    },
-};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
     poly::Rotation,
 };
 use itertools::Itertools;
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -132,15 +124,15 @@ impl<F: Field> StateCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn print_rw_rows_table(&self, opcodes: Vec<(u32, Instruction)>, rw_rows: &Vec<RwRow>) {
+    pub fn print_rw_rows_table(&self, rw_rows: &Vec<RwRow>) {
         only_once!();
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
             .map(|row| {
                 vec![
-                    opcodes[row.rw_counter()].0.cell().justify(Justify::Center),
-                    opcodes[row.rw_counter()].1.cell().justify(Justify::Center),
+                    // opcodes[row.rw_counter()].0.cell().justify(Justify::Center),
+                    // opcodes[row.rw_counter()].1.cell().justify(Justify::Center),
                     row.rw_counter().cell().justify(Justify::Center),
                     row.is_write().cell().justify(Justify::Center),
                     row.tag().cell().justify(Justify::Center),
@@ -155,8 +147,8 @@ impl<F: Field> StateCircuitConfig<F> {
             .collect_vec()
             .table()
             .title(vec![
-                "pc".cell().bold(true),
-                "opcode".cell().bold(true),
+                // "pc".cell().bold(true),
+                // "opcode".cell().bold(true),
                 "rw_counter".cell().bold(true),
                 "is_write".cell().bold(true),
                 "tag".cell().bold(true),
@@ -168,47 +160,16 @@ impl<F: Field> StateCircuitConfig<F> {
         print_stdout(table).unwrap();
     }
 
-    pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
+    pub fn assign(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        exec_steps: &ExecSteps,
+    ) -> Result<(), Error> {
         layouter.assign_region(
             || "state runtime opcodes",
             |mut region| {
-                let mut rw_rows = Vec::new();
-                let mut opcodes_by_rwc = Vec::new();
-                let mut global_memory = Vec::new();
-                let mut global_table = BTreeMap::<u32, UntypedValue>::new();
-                for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    for memory_change in trace.memory_changes.iter() {
-                        let max_offset = (memory_change.offset + memory_change.len) as usize;
-                        if max_offset > global_memory.len() {
-                            global_memory.resize(max_offset, 0)
-                        }
-                        global_memory[(memory_change.offset as usize)..max_offset]
-                            .copy_from_slice(memory_change.data.as_slice());
-                    }
-                    for table_change in trace.table_changes.iter() {
-                        let elem_addr = table_change.table_idx * 1024 + table_change.elem_idx + 1;
-                        global_table.insert(elem_addr, table_change.func_ref);
-                        let size_addr = table_change.table_idx * 1024;
-                        global_table.insert(size_addr, UntypedValue::from(0));
-                        let table_size = global_table
-                            .keys()
-                            .filter(|key| (*key / 1024) == table_change.table_idx)
-                            .count();
-                        global_table.insert(size_addr, UntypedValue::from(table_size - 1));
-                    }
-                    let step = TraceStep::new(
-                        trace.clone(),
-                        tracer.logs.get(i + 1).cloned(),
-                        global_memory.clone(),
-                        global_table.clone(),
-                    );
-                    let rw_rows_len = rw_rows.len();
-                    rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();
-                    (0..(rw_rows.len() - rw_rows_len)).for_each(|_| {
-                        opcodes_by_rwc.push((trace.source_pc, trace.opcode.clone()));
-                    });
-                }
-                self.print_rw_rows_table(opcodes_by_rwc, &rw_rows);
+                let mut rw_rows = exec_steps.get_rw_rows();
+                self.print_rw_rows_table(&rw_rows);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -218,7 +179,6 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
-                    // println!("rw_row {}: {:?}", offset, rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,

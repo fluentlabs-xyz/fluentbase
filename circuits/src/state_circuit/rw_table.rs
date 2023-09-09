@@ -1,6 +1,7 @@
 use crate::{
     constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query, ToExpr},
-    state_circuit::{lexicographic_ordering::LexicographicOrderingConfig, rw_row::RwRow},
+    rw_builder::rw_row::RwRow,
+    state_circuit::lexicographic_ordering::LexicographicOrderingConfig,
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};

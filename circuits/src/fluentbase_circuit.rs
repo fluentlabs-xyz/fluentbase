@@ -1,4 +1,5 @@
 use crate::{
+    exec_step::ExecSteps,
     fixed_table::FixedTable,
     pi_circuit::PublicInputCircuitConfig,
     poseidon_circuit::{PoseidonCircuitConfig, PoseidonTable},
@@ -66,9 +67,6 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         layouter: &mut impl Layouter<F>,
         bytecode: &UnrolledInstructionSet<F>,
         tracer: Option<&Tracer>,
-        input: &Vec<u8>,
-        output: &Vec<u8>,
-        exit_code: i32,
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
@@ -79,8 +77,10 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         self.rwasm_circuit_config.assign(layouter, bytecode)?;
         self.rwasm_circuit_config.load(layouter)?;
         if let Some(tracer) = tracer {
-            self.runtime_circuit_config.assign(layouter, tracer)?;
-            self.state_circuit_config.assign(layouter, tracer)?;
+            // TODO: "normal error conversion here"
+            let exec_steps = ExecSteps::from_tracer(tracer).unwrap();
+            self.runtime_circuit_config.assign(layouter, &exec_steps)?;
+            self.state_circuit_config.assign(layouter, &exec_steps)?;
         }
         self.pi_circuit_config.expose_public(layouter)?;
         Ok(())
@@ -126,14 +126,7 @@ impl<'tracer, F: Field> Circuit<F> for FluentbaseCircuit<'tracer, F> {
         config: Self::Config,
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
-        config.assign(
-            &mut layouter,
-            &self.bytecode,
-            self.tracer,
-            &self.input,
-            &self.output,
-            self.exit_code,
-        )?;
+        config.assign(&mut layouter, &self.bytecode, self.tracer)?;
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, ToExpr},
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -41,13 +41,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let (table_index, value) = match trace.instr() {
             Instruction::TableSize(ti) => (ti, trace.next_nth_stack_value(0)?),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
+        self.table_index
+            .assign(region, offset, F::from(table_index.to_u32() as u64));
         self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }

@@ -1,10 +1,10 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, ToExpr},
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -49,21 +49,25 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let (table_index, init_val, grow_val, res_val) = match trace.instr() {
-            Instruction::TableGrow(ti) =>
-                ( ti,
-                  trace.curr_nth_stack_value(0)?,
-                  trace.curr_nth_stack_value(1)?,
-                  trace.next_nth_stack_value(0)?,
-                ),
+            Instruction::TableGrow(ti) => (
+                ti,
+                trace.curr_nth_stack_value(0)?,
+                trace.curr_nth_stack_value(1)?,
+                trace.next_nth_stack_value(0)?,
+            ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
-        self.init_val.assign(region, offset, F::from(init_val.to_bits()));
-        self.grow_val.assign(region, offset, F::from(grow_val.to_bits()));
-        self.res_val.assign(region, offset, F::from(res_val.to_bits()));
+        self.table_index
+            .assign(region, offset, F::from(table_index.to_u32() as u64));
+        self.init_val
+            .assign(region, offset, F::from(init_val.to_bits()));
+        self.grow_val
+            .assign(region, offset, F::from(grow_val.to_bits()));
+        self.res_val
+            .assign(region, offset, F::from(res_val.to_bits()));
         Ok(())
     }
 }

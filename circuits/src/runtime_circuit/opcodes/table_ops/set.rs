@@ -1,10 +1,10 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, ToExpr},
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -59,21 +59,24 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let (table_index, elem_type, elem_index, value, out) = match trace.instr() {
-            Instruction::TableSet(ti) =>
-                ( ti,
-                  trace.curr_nth_stack_value(0)?,
-                  trace.curr_nth_stack_value(1)?,
-                  trace.curr_nth_stack_value(2)?,
-                  trace.next_nth_stack_value(0)?,
-                ),
+            Instruction::TableSet(ti) => (
+                ti,
+                trace.curr_nth_stack_value(0)?,
+                trace.curr_nth_stack_value(1)?,
+                trace.curr_nth_stack_value(2)?,
+                trace.next_nth_stack_value(0)?,
+            ),
             _ => bail_illegal_opcode!(trace),
         };
-        self.table_index.assign(region, offset, F::from(table_index.to_u32() as u64));
-        self.elem_type.assign(region, offset, F::from(elem_type.to_bits()));
-        self.elem_index.assign(region, offset, F::from(elem_index.to_bits()));
+        self.table_index
+            .assign(region, offset, F::from(table_index.to_u32() as u64));
+        self.elem_type
+            .assign(region, offset, F::from(elem_type.to_bits()));
+        self.elem_index
+            .assign(region, offset, F::from(elem_index.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
         self.out.assign(region, offset, F::from(out.to_bits()));
         Ok(())

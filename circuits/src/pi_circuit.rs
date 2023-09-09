@@ -25,9 +25,9 @@ pub struct PublicInputCircuitConfig<F: Field> {
 }
 
 impl<F: Field> PublicInputCircuitConfig<F> {
-    pub fn configure(cs: &mut ConstraintSystem<F>, poseidon_lookup: &impl PoseidonLookup) -> Self {
+    pub fn configure(cs: &mut ConstraintSystem<F>, _poseidon_lookup: &impl PoseidonLookup) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
-        let mut cb = ConstraintBuilder::new(q_enable);
+        let cb = ConstraintBuilder::new(q_enable);
 
         let instance = cb.instance_column(cs);
         let input = cb.advice_column(cs);
@@ -37,8 +37,8 @@ impl<F: Field> PublicInputCircuitConfig<F> {
         let private_output = cb.advice_column(cs);
         let exit_code = cb.advice_column(cs);
 
-        let input_offset = cb.fixed_column(cs);
-        let output_offset = cb.fixed_column(cs);
+        // let input_offset = cb.fixed_column(cs);
+        // let output_offset = cb.fixed_column(cs);
 
         cs.enable_equality(instance);
         cs.enable_equality(exit_code);

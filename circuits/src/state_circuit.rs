@@ -4,9 +4,7 @@ mod circuit;
 mod lexicographic_ordering;
 mod mpi_config;
 mod param;
-mod rw_row;
 mod rw_table;
 mod sort_keys;
-mod tag;
 
-pub use self::{circuit::StateCircuitConfig, tag::RwTableTag};
+pub use self::circuit::StateCircuitConfig;

@@ -1,11 +1,11 @@
 use crate::{
     constraint_builder::AdviceColumn,
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_runtime::SysFuncIdx;
@@ -59,7 +59,7 @@ impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         row_offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let length = trace.curr_nth_stack_value(0)?;
         let offset = trace.curr_nth_stack_value(1)?;
