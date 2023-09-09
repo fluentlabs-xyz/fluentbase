@@ -11,6 +11,7 @@ pub enum ExecutionState {
     WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
     WASM_CONST,      // DONE
+    WASM_REFFUNC,
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
     WASM_GLOBAL,     // DONE
@@ -21,6 +22,13 @@ pub enum ExecutionState {
     WASM_STORE,  // DONE
     WASM_TEST,   // DONE
     WASM_UNARY,  // DONE
+    WASM_TABLE_SIZE,
+    WASM_TABLE_FILL,
+    WASM_TABLE_GROW,
+    WASM_TABLE_SET,
+    WASM_TABLE_GET,
+    WASM_TABLE_COPY,
+    WASM_TABLE_INIT,
 }
 
 impl ExecutionState {
@@ -41,6 +49,14 @@ impl ExecutionState {
             ExecutionState::WASM_STORE => 13,
             ExecutionState::WASM_TEST => 14,
             ExecutionState::WASM_UNARY => 15,
+            ExecutionState::WASM_REFFUNC => 16,
+            ExecutionState::WASM_TABLE_COPY => 17,
+            ExecutionState::WASM_TABLE_FILL => 18,
+            ExecutionState::WASM_TABLE_GET => 19,
+            ExecutionState::WASM_TABLE_GROW => 20,
+            ExecutionState::WASM_TABLE_INIT => 21,
+            ExecutionState::WASM_TABLE_SET => 22,
+            ExecutionState::WASM_TABLE_SIZE => 23,
         }
     }
 
@@ -109,6 +125,7 @@ impl ExecutionState {
                 Instruction::I32Const(Default::default()),
                 Instruction::I64Const(Default::default()),
             ],
+            Self::WASM_REFFUNC => vec![Instruction::RefFunc(Default::default())],
             Self::WASM_DROP => vec![Instruction::Drop],
             Self::WASM_TEST => vec![Instruction::I32Eqz, Instruction::I64Eqz],
             Self::WASM_REL => vec![
@@ -156,6 +173,13 @@ impl ExecutionState {
                 Instruction::LocalTee(Default::default()),
             ],
             Self::WASM_SELECT => vec![Instruction::Select],
+            Self::WASM_TABLE_SIZE => vec![Instruction::TableSize(Default::default())],
+            Self::WASM_TABLE_FILL => vec![Instruction::TableFill(Default::default())],
+            Self::WASM_TABLE_GROW => vec![Instruction::TableGrow(Default::default())],
+            Self::WASM_TABLE_SET => vec![Instruction::TableSet(Default::default())],
+            Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
+            Self::WASM_TABLE_COPY => vec![Instruction::TableCopy(Default::default())],
+            Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
             Self::WASM_STORE => vec![
                 Instruction::I32Store(Default::default()),
                 Instruction::I32Store8(Default::default()),

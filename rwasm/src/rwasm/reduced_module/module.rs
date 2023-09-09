@@ -162,6 +162,7 @@ impl ReducedModule {
         let num_globals = self.bytecode().count_globals();
         builder.push_empty_globals(num_globals as usize).unwrap();
         let num_tables = self.bytecode().count_tables();
+        println!("DEBUG num_tables {}", num_tables);
         builder.push_empty_tables(num_tables as usize).unwrap();
         // finalize module
         builder

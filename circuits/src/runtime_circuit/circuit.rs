@@ -13,10 +13,19 @@ use crate::{
             op_global::OpGlobalGadget,
             op_load::OpLoadGadget,
             op_local::OpLocalGadget,
+            op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
             op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
+            table_ops::{
+                copy::OpTableCopyGadget,
+                fill::OpTableFillGadget,
+                get::OpTableGetGadget,
+                grow::OpTableGrowGadget,
+                set::OpTableSetGadget,
+                size::OpTableSizeGadget,
+            },
             TraceStep,
         },
         platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget},
@@ -26,11 +35,12 @@ use crate::{
     util::Field,
 };
 use fluentbase_runtime::SysFuncIdx;
-use fluentbase_rwasm::engine::Tracer;
+use fluentbase_rwasm::{common::UntypedValue, engine::Tracer};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
+use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
@@ -39,6 +49,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
     call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
     const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
+    reffunc_gadget: ExecutionGadgetRow<F, OpRefFuncGadget<F>>,
     conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
     drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
     global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
@@ -48,6 +59,12 @@ pub struct RuntimeCircuitConfig<F: Field> {
     test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
     store_gadget: ExecutionGadgetRow<F, OpStoreGadget<F>>,
     load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
+    table_copy_gadget: ExecutionGadgetRow<F, OpTableCopyGadget<F>>,
+    table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
+    table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
+    table_grow_gadget: ExecutionGadgetRow<F, OpTableGrowGadget<F>>,
+    table_set_gadget: ExecutionGadgetRow<F, OpTableSetGadget<F>>,
+    table_size_gadget: ExecutionGadgetRow<F, OpTableSizeGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionGadgetRow<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionGadgetRow<F, SysReadGadget<F>>,
@@ -85,6 +102,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             break_gadget: configure_gadget!(),
             call_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
+            reffunc_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
             global_gadget: configure_gadget!(),
@@ -94,6 +112,12 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             test_gadget: configure_gadget!(),
             store_gadget: configure_gadget!(),
             load_gadget: configure_gadget!(),
+            table_copy_gadget: configure_gadget!(),
+            table_fill_gadget: configure_gadget!(),
+            table_get_gadget: configure_gadget!(),
+            table_grow_gadget: configure_gadget!(),
+            table_set_gadget: configure_gadget!(),
+            table_size_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -139,6 +163,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
             }
+            ExecutionState::WASM_REFFUNC => {
+                self.reffunc_gadget.assign(region, offset, step, rw_counter)
+            }
             ExecutionState::WASM_CONVERSION => self
                 .conversion_gadget
                 .assign(region, offset, step, rw_counter),
@@ -152,9 +179,30 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_SELECT => {
                 self.select_gadget.assign(region, offset, step, rw_counter)
             }
+
             ExecutionState::WASM_UNARY => {
                 self.unary_gadget.assign(region, offset, step, rw_counter)
             }
+
+            ExecutionState::WASM_TABLE_COPY => self
+                .table_copy_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_FILL => self
+                .table_fill_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_GET => self
+                .table_get_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_GROW => self
+                .table_grow_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_SET => self
+                .table_set_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_SIZE => self
+                .table_size_gadget
+                .assign(region, offset, step, rw_counter),
+
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_STORE => {
                 self.store_gadget.assign(region, offset, step, rw_counter)
@@ -173,6 +221,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             |mut region| {
                 let mut rw_counter = 0;
                 let mut global_memory = Vec::new();
+                let mut global_table = BTreeMap::<u32, UntypedValue>::new();
                 for (i, trace) in tracer.logs.iter().cloned().enumerate() {
                     for memory_change in trace.memory_changes.iter() {
                         let max_offset = (memory_change.offset + memory_change.len) as usize;
@@ -182,10 +231,22 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                         global_memory[(memory_change.offset as usize)..max_offset]
                             .copy_from_slice(memory_change.data.as_slice());
                     }
+                    for table_change in trace.table_changes.iter() {
+                        let elem_addr = table_change.table_idx * 1024 + table_change.elem_idx + 1;
+                        global_table.insert(elem_addr, table_change.func_ref);
+                        let size_addr = table_change.table_idx * 1024;
+                        global_table.insert(size_addr, UntypedValue::from(0));
+                        let table_size = global_table
+                            .keys()
+                            .filter(|key| (*key / 1024) == table_change.table_idx)
+                            .count();
+                        global_table.insert(size_addr, UntypedValue::from(table_size - 1));
+                    }
                     let step = TraceStep::new(
-                        trace,
+                        trace.clone(),
                         tracer.logs.get(i + 1).cloned(),
                         global_memory.clone(),
+                        global_table.clone(),
                     );
                     self.assign_trace_step(&mut region, i, &step, rw_counter)?;
                     rw_counter += step.instr().get_rw_count();

@@ -354,7 +354,7 @@ impl<'engine> ModuleBuilder<'engine> {
     }
 
     pub fn push_empty_tables(&mut self, num_tables: usize) -> Result<(), ModuleError> {
-        let global_decl = TableType::new(ValueType::FuncRef, 1024, None);
+        let global_decl = TableType::new(ValueType::FuncRef, 0, Some(1024));
         (0..num_tables).for_each(|_| {
             self.tables.push(global_decl);
         });

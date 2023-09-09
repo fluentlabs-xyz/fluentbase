@@ -3,6 +3,7 @@ use fluentbase_rwasm::{
     engine::{bytecode::Instruction, TracerInstrState},
 };
 use halo2_proofs::plonk;
+use std::collections::BTreeMap;
 
 #[derive(Debug)]
 pub enum GadgetError {
@@ -15,15 +16,21 @@ pub enum GadgetError {
 pub const MAX_STACK_HEIGHT: usize = 1024;
 
 #[derive(Debug)]
-pub struct TraceStep(TracerInstrState, Option<TracerInstrState>, Vec<u8>);
+pub struct TraceStep(
+    TracerInstrState,
+    Option<TracerInstrState>,
+    Vec<u8>,
+    BTreeMap<u32, UntypedValue>,
+);
 
 impl TraceStep {
     pub fn new(
         cur: TracerInstrState,
         next: Option<TracerInstrState>,
         global_memory: Vec<u8>,
+        global_table: BTreeMap<u32, UntypedValue>,
     ) -> Self {
-        Self(cur, next, global_memory)
+        Self(cur, next, global_memory, global_table)
     }
 
     pub fn instr(&self) -> &Instruction {
@@ -70,6 +77,17 @@ impl TraceStep {
             std::ptr::copy(self.2.as_ptr().add(offset as usize), dst, length as usize);
         }
         Ok(())
+    }
+
+    pub fn read_table_size(&self, table_idx: u32) -> usize {
+        let size_addr = table_idx * 1024;
+        let size = self.3.get(&size_addr).copied().unwrap_or_default();
+        size.to_bits() as usize
+    }
+
+    pub fn read_table_elem(&self, table_idx: u32, elem_idx: u32) -> Option<UntypedValue> {
+        let elem_addr = table_idx * 1024 + elem_idx + 1;
+        self.3.get(&elem_addr).copied()
     }
 
     pub fn curr(&self) -> &TracerInstrState {
