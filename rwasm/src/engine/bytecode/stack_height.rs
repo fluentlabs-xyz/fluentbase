@@ -24,10 +24,10 @@ pub enum RwOp {
         length: u32,
         signed: bool,
     },
-    TableSizeWrite(u32),
     TableSizeRead(u32),
-    TableElemWrite(u32),
+    TableSizeWrite(u32),
     TableElemRead(u32),
+    TableElemWrite(u32),
 }
 
 impl Instruction {
