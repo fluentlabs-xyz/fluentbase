@@ -2,8 +2,8 @@ use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query, SelectorColumn},
     lookup_table::{RwasmLookup, N_RWASM_LOOKUP_TABLE},
     poseidon_circuit::{PoseidonLookup, HASH_BYTES_IN_FIELD},
-    unrolled_bytecode::UnrolledBytecode,
     util::Field,
+    witness::UnrolledInstructionSet,
 };
 use ethers_core::types::U256;
 use fluentbase_rwasm::{
@@ -221,13 +221,6 @@ impl<F: Field> RwasmCircuitConfig<F> {
         trace: &ReducedModuleTrace,
     ) {
         self.q_enable.enable(region, offset);
-        // println!(
-        //     "{:?}: index={}, code={}, aux={}",
-        //     trace.instr,
-        //     trace.offset,
-        //     trace.code,
-        //     trace.aux.to_bits()
-        // );
         self.index
             .assign(region, offset, F::from(trace.offset as u64));
         self.offset.assign(
@@ -276,7 +269,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         &self,
         region: &mut Region<'_, F>,
         mut offset: usize,
-        bytecode: &UnrolledBytecode<F>,
+        bytecode: &UnrolledInstructionSet<F>,
     ) -> usize {
         self.q_first.enable(region, offset);
         let mut last_row_offset = offset;
@@ -293,7 +286,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
     pub fn assign(
         &self,
         layouter: &mut impl Layouter<F>,
-        bytecode: &UnrolledBytecode<F>,
+        bytecode: &UnrolledInstructionSet<F>,
     ) -> Result<(), Error> {
         layouter.assign_region(
             || "bytecode",

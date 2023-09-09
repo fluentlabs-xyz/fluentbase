@@ -10,7 +10,7 @@ pub(crate) fn test_ok(mut bytecode: InstructionSet) {
     let exit_code = execution_result.data().exit_code();
     let circuit = FluentbaseCircuit::from_execution_result(&execution_result);
     let k = 14;
-    let prover =
-        MockProver::<Fr>::run(k, &circuit, vec![vec![Fr::from(exit_code as u64)]]).unwrap();
+    let instance = vec![Fr::from(0), Fr::from(0), Fr::from(exit_code as u64)];
+    let prover = MockProver::<Fr>::run(k, &circuit, vec![instance]).unwrap();
     prover.assert_satisfied();
 }

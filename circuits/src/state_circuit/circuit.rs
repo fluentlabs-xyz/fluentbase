@@ -9,7 +9,7 @@ use crate::{
         rw_row::{rw_rows_from_trace, RwRow},
         rw_table::RwTable,
         sort_keys::SortKeysConfig,
-        tag::{RwTableTag, N_RW_TABLE_TAG_BYTES},
+        tag::{RwTableTag, N_RW_TABLE_TAG_BITS},
     },
     trace_step::TraceStep,
     util::Field,
@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
     q_enable: SelectorColumn,
-    tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BYTES }>,
+    tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BITS }>,
     rw_table: RwTable<F>,
     sort_keys: SortKeysConfig<F>,
     lexicographic_ordering_config: LexicographicOrderingConfig,

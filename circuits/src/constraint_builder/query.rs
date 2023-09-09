@@ -108,6 +108,10 @@ impl<F: Field, T: Into<Query<F>>> std::ops::Mul<T> for Query<F> {
 
 pub trait ToExpr {
     fn expr<F: Field>(&self) -> Query<F>;
+
+    fn query<F: Field>(&self) -> Query<F> {
+        self.expr()
+    }
 }
 
 #[macro_export]

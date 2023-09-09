@@ -19,7 +19,7 @@ use crate::{
             op_unary::OpUnaryGadget,
             TraceStep,
         },
-        platform::sys_halt::SysHaltGadget,
+        platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget},
         responsible_opcode::ResponsibleOpcodeTable,
     },
     trace_step::GadgetError,
@@ -50,6 +50,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionGadgetRow<F, SysHaltGadget<F>>,
+    sys_read_gadget: ExecutionGadgetRow<F, SysReadGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -95,6 +96,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             load_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
+            sys_read_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }

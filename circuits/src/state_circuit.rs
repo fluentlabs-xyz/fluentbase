@@ -7,6 +7,6 @@ mod param;
 mod rw_row;
 mod rw_table;
 mod sort_keys;
-pub mod tag;
+mod tag;
 
-pub use circuit::StateCircuitConfig;
+pub use self::{circuit::StateCircuitConfig, tag::RwTableTag};
