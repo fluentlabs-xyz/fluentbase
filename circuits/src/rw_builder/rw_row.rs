@@ -8,7 +8,6 @@ use strum_macros::EnumIter;
 
 pub const N_RW_TABLE_TAG_BITS: usize = 4;
 
-/// Tag to identify the operation type in a RwTable row
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum RwTableTag {
     Start = 1,
