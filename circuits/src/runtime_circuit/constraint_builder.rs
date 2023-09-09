@@ -88,7 +88,10 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     next_program_counter: Option<Query<F>>,
 }
 
-use crate::rw_builder::rw_row::RwTableTag;
+use crate::{
+    lookup_table::CopyLookup,
+    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableTag},
+};
 use Query as Q;
 
 #[allow(unused_variables)]
@@ -312,6 +315,25 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             ])))
     }
 
+    pub fn copy_lookup(
+        &mut self,
+        tag: CopyTableTag,
+        from_address: Query<F>,
+        to_address: Query<F>,
+        length: Query<F>,
+    ) {
+        self.op_lookups
+            .push(LookupTable::Copy(self.base.apply_lookup_condition([
+                Query::one(),
+                Query::one(),
+                tag.expr(),
+                from_address,
+                to_address,
+                length,
+                self.state_transition.rw_counter(),
+            ])))
+    }
+
     pub fn rw_lookup(
         &mut self,
         is_write: Query<F>,
@@ -389,6 +411,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
+        copy_lookup: &impl CopyLookup<F>,
     ) {
         for state_lookup in self.op_lookups.iter() {
             match state_lookup {
@@ -460,6 +483,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "exit_code(value)",
                         fields.clone(),
                         public_input_lookup.lookup_exit_code(),
+                    );
+                }
+                LookupTable::Copy(fields) => {
+                    self.base.add_lookup(
+                        "copy(tag,from_address,to_address,length,rw_counter)",
+                        fields.clone(),
+                        copy_lookup.lookup_copy_table(),
                     );
                 }
             }

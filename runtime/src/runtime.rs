@@ -110,7 +110,7 @@ impl Runtime {
             "_sys_read".to_string(),
             SysFuncIdx::IMPORT_SYS_READ as u16,
             &[ValueType::I32; 3],
-            &[ValueType::I32; 1],
+            &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -159,7 +159,7 @@ impl Runtime {
         };
 
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
-        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> u32);
+        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
@@ -186,7 +186,13 @@ impl Runtime {
 
         if let Err(ref err) = result {
             let exit_code = match err {
-                fluentbase_rwasm::Error::Trap(trap) => trap.i32_exit_status().unwrap(),
+                fluentbase_rwasm::Error::Trap(trap) => {
+                    if trap.i32_exit_status().is_none() {
+                        result?;
+                        return Ok(execution_result);
+                    }
+                    trap.i32_exit_status().unwrap()
+                }
                 _ => {
                     result?;
                     return Ok(execution_result);

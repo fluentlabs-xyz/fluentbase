@@ -14,6 +14,7 @@ use crate::{
     util::Field,
 };
 use cli_table::format::Justify;
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -124,15 +125,15 @@ impl<F: Field> StateCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn print_rw_rows_table(&self, rw_rows: &Vec<RwRow>) {
+    pub fn print_rw_rows_table(&self, rw_rows: &Vec<RwRow>, rw_meta: Vec<(Instruction, u32)>) {
         only_once!();
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
             .map(|row| {
                 vec![
-                    // opcodes[row.rw_counter()].0.cell().justify(Justify::Center),
-                    // opcodes[row.rw_counter()].1.cell().justify(Justify::Center),
+                    rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
+                    rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
                     row.rw_counter().cell().justify(Justify::Center),
                     row.is_write().cell().justify(Justify::Center),
                     row.tag().cell().justify(Justify::Center),
@@ -147,8 +148,8 @@ impl<F: Field> StateCircuitConfig<F> {
             .collect_vec()
             .table()
             .title(vec![
-                // "pc".cell().bold(true),
-                // "opcode".cell().bold(true),
+                "pc".cell().bold(true),
+                "opcode".cell().bold(true),
                 "rw_counter".cell().bold(true),
                 "is_write".cell().bold(true),
                 "tag".cell().bold(true),
@@ -168,8 +169,8 @@ impl<F: Field> StateCircuitConfig<F> {
         layouter.assign_region(
             || "state runtime opcodes",
             |mut region| {
-                let mut rw_rows = exec_steps.get_rw_rows();
-                self.print_rw_rows_table(&rw_rows);
+                let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,

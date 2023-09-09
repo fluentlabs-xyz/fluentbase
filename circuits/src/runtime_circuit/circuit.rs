@@ -1,6 +1,13 @@
 use crate::{
     exec_step::{ExecSteps, GadgetError},
-    lookup_table::{FixedLookup, PublicInputLookup, RangeCheckLookup, RwLookup, RwasmLookup},
+    lookup_table::{
+        CopyLookup,
+        FixedLookup,
+        PublicInputLookup,
+        RangeCheckLookup,
+        RwLookup,
+        RwasmLookup,
+    },
     runtime_circuit::{
         execution_gadget::ExecutionGadgetRow,
         execution_state::ExecutionState,
@@ -79,6 +86,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
+        copy_lookup: &impl CopyLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
@@ -91,6 +99,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                     range_check_lookup,
                     fixed_lookup,
                     public_input_lookup,
+                    copy_lookup,
                 )
             };
         }
@@ -134,6 +143,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         match system_call {
             SysFuncIdx::IMPORT_SYS_HALT => self
                 .sys_halt_gadget
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::IMPORT_SYS_READ => self
+                .sys_read_gadget
                 .assign(region, offset, step, rw_counter)?,
             _ => unreachable!("not supported sys call: {:?}", system_call),
         }

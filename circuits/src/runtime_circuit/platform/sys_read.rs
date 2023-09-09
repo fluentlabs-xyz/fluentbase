@@ -6,6 +6,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
+    rw_builder::copy_row::CopyTableTag,
     util::Field,
 };
 use fluentbase_runtime::SysFuncIdx;
@@ -19,7 +20,6 @@ pub struct SysReadGadget<F: Field> {
     target: AdviceColumn,
     offset: AdviceColumn,
     length: AdviceColumn,
-    result: AdviceColumn,
     pd: PhantomData<F>,
 }
 
@@ -32,25 +32,24 @@ impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
         let target = cb.query_cell();
         let offset = cb.query_cell();
         let length = cb.query_cell();
-        let result = cb.query_cell();
 
-        // let degree = cb.query_fixed();
-        // let degree_inv = (0..MAX_INPUT_DEGREE - 1)
-        //     .map(|d| cb.is_zero(degree.current() - d.expr()))
-        //     .collect();
+        // pop 3 inputs from the stack
+        cb.stack_pop(length.current());
+        cb.stack_pop(offset.current());
+        cb.stack_pop(target.current());
 
-        // make sure length is pow2
-        // debug_assert_eq!(MAX_INPUT_DEGREE, 10);
-        // cb.fixed_lookup(
-        //     FixedTableTag::Pow2UpTo10,
-        //     [degree.current(), length.current(), Query::zero()],
-        // );
+        // lookup copy table
+        cb.copy_lookup(
+            CopyTableTag::Input,
+            offset.current(),
+            target.current(),
+            length.current(),
+        );
 
         Self {
             target,
             offset,
             length,
-            result,
             pd: Default::default(),
         }
     }
@@ -67,8 +66,85 @@ impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
         self.length.assign(region, row_offset, length.as_u64());
         self.offset.assign(region, row_offset, offset.as_u64());
         self.target.assign(region, row_offset, target.as_u64());
-        let result = trace.next_nth_stack_value(0)?;
-        self.result.assign(region, row_offset, result.as_u64());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::runtime_circuit::testing::test_ok_with_input;
+    use fluentbase_runtime::SysFuncIdx;
+    use fluentbase_rwasm::instruction_set;
+
+    #[test]
+    fn test_read_part() {
+        let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let bytecode = instruction_set! {
+            I32Const(0) // target
+            I32Const(0) // offset
+            I32Const(3) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+        };
+        test_ok_with_input(bytecode, input);
+    }
+
+    #[test]
+    fn test_read_in_one_row() {
+        let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let bytecode = instruction_set! {
+            I32Const(0) // target
+            I32Const(0) // offset
+            I32Const(3) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+            I32Const(3) // target
+            I32Const(3) // offset
+            I32Const(3) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+            I32Const(6) // target
+            I32Const(6) // offset
+            I32Const(3) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+            I32Const(9) // target
+            I32Const(9) // offset
+            I32Const(1) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+        };
+        test_ok_with_input(bytecode, input);
+    }
+
+    #[test]
+    fn test_read_fully() {
+        let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let bytecode = instruction_set! {
+            I32Const(0) // target
+            I32Const(0) // offset
+            I32Const(10) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+        };
+        test_ok_with_input(bytecode, input);
+    }
+
+    #[test]
+    fn test_read_one_byte() {
+        let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let bytecode = instruction_set! {
+            I32Const(0) // target
+            I32Const(0) // offset
+            I32Const(1) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+        };
+        test_ok_with_input(bytecode, input);
+    }
+
+    #[test]
+    fn test_read_with_offset() {
+        let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let bytecode = instruction_set! {
+            I32Const(0) // target
+            I32Const(3) // offset
+            I32Const(1) // length
+            Call(SysFuncIdx::IMPORT_SYS_READ)
+        };
+        test_ok_with_input(bytecode, input);
     }
 }

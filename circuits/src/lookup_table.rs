@@ -43,6 +43,12 @@ pub trait PublicInputLookup<F: Field> {
     fn lookup_exit_code(&self) -> [Query<F>; N_EXIT_CODE_LOOKUP_TABLE];
 }
 
+pub const N_COPY_LOOKUP_TABLE: usize = 7;
+
+pub trait CopyLookup<F: Field> {
+    fn lookup_copy_table(&self) -> [Query<F>; N_COPY_LOOKUP_TABLE];
+}
+
 pub enum LookupTable<F: Field> {
     Rwasm([Query<F>; N_RWASM_LOOKUP_TABLE]),
     Rw([Query<F>; N_RW_LOOKUP_TABLE]),
@@ -54,4 +60,5 @@ pub enum LookupTable<F: Field> {
     PublicInput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
     PublicOutput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
     ExitCode([Query<F>; N_EXIT_CODE_LOOKUP_TABLE]),
+    Copy([Query<F>; N_COPY_LOOKUP_TABLE]),
 }

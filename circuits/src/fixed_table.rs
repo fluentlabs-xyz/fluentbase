@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{FixedColumn, Query, ToExpr},
+    constraint_builder::{FixedColumn, Query},
     impl_expr,
     lookup_table::{FixedLookup, N_FIXED_LOOKUP_TABLE},
     util::Field,

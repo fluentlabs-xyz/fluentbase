@@ -33,6 +33,10 @@ impl ExecStep {
         &self.trace.opcode
     }
 
+    pub fn next_rw_counter(&self) -> usize {
+        self.rw_counter + self.rw_rows.len()
+    }
+
     pub fn stack_pointer(&self) -> u64 {
         MAX_STACK_HEIGHT as u64 - self.trace.stack.len() as u64
     }
@@ -59,7 +63,7 @@ impl ExecStep {
             .ok_or(GadgetError::MissingNext)
     }
 
-    pub fn read_memory<'a>(
+    pub fn curr_read_memory<'a>(
         &self,
         offset: u64,
         dst: *mut u8,
@@ -151,11 +155,22 @@ impl ExecSteps {
         Ok(res)
     }
 
-    pub fn get_rw_rows(&self) -> Vec<RwRow> {
+    pub fn get_copy_rows(&self) -> Vec<CopyRow> {
         let mut res = Vec::new();
-        for step in self.0.iter() {
-            res.extend(&step.rw_rows);
+        for copy_rows in self.0.iter().map(|v| v.copy_rows.clone()) {
+            res.extend(copy_rows);
         }
         res
+    }
+
+    pub fn get_rw_rows(&self) -> (Vec<RwRow>, Vec<(Instruction, u32)>) {
+        let mut rw_rows = Vec::new();
+        let mut meta = Vec::new();
+        for step in self.0.iter() {
+            rw_rows.extend(&step.rw_rows);
+            (0..step.rw_rows.len())
+                .for_each(|_| meta.push((step.instr().clone(), step.trace.source_pc)));
+        }
+        (rw_rows, meta)
     }
 }
