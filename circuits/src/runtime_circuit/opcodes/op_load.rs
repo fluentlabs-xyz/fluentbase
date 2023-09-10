@@ -1,12 +1,11 @@
 use crate::{
     constraint_builder::{AdviceColumn, Query, SelectorColumn, ToExpr},
-    gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
@@ -105,7 +104,6 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
                     value_msbs_bytes[ms_b_index].0.current()
                         * (Query::one() - value_msbs_bytes[ms_b_index].0.current()),
                 );
-                // TODO check value_msbs_bytes[ms_b_index].1 is in [0..2^7-1]
                 cb.range_check7(value_msbs_bytes[ms_b_index].1.current());
                 let mut value_reconstructed = Query::zero();
                 for i in 0..instr_byte_len {
@@ -179,7 +177,7 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let address = trace.curr_nth_stack_value(0)?.to_bits();
         let value_loaded = trace.next_nth_stack_value(0)?.to_bits();
@@ -195,7 +193,7 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
             let commit_byte_len = instr_meta.1 as usize;
             let mut value_le_bytes = vec![0; commit_byte_len];
             let mem_address_base = address_offset.into_inner() as u64 + address;
-            trace.read_memory(
+            trace.curr_read_memory(
                 mem_address_base,
                 value_le_bytes.as_mut_ptr(),
                 commit_byte_len as u32,

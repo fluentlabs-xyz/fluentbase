@@ -1364,6 +1364,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .resolve_table_mut(&table)
             .set_untyped(index, value)
             .map_err(|_| TrapCode::TableOutOfBounds)?;
+        self.tracer.table_change(table_index.to_u32(), index, value);
         self.try_next_instr()
     }
 

@@ -108,14 +108,18 @@ impl<F: Field, T: Into<Query<F>>> std::ops::Mul<T> for Query<F> {
 
 pub trait ToExpr {
     fn expr<F: Field>(&self) -> Query<F>;
+
+    fn query<F: Field>(&self) -> Query<F> {
+        self.expr()
+    }
 }
 
 #[macro_export]
 macro_rules! impl_expr {
     ($ty:ty) => {
-        impl ToExpr for $ty {
-            fn expr<F: Field>(&self) -> Query<F> {
-                Query::from(*self as u64)
+        impl $crate::constraint_builder::ToExpr for $ty {
+            fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
+                $crate::constraint_builder::Query::from(*self as u64)
             }
         }
     };

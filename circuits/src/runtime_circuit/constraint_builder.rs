@@ -10,6 +10,7 @@ use crate::{
         ToExpr,
     },
     fixed_table::FixedTableTag,
+    gadgets::is_zero::IsZeroConfig,
     lookup_table::{
         FixedLookup,
         LookupTable,
@@ -20,7 +21,6 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::execution_state::ExecutionState,
-    state_circuit::tag::RwTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -87,6 +87,12 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     op_lookups: Vec<LookupTable<F>>,
     next_program_counter: Option<Query<F>>,
 }
+
+use crate::{
+    lookup_table::CopyLookup,
+    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableTag},
+};
+use Query as Q;
 
 #[allow(unused_variables)]
 impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
@@ -158,6 +164,14 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_fixed(&mut self) -> FixedColumn {
         self.base.fixed_column(self.cs)
+    }
+
+    pub fn is_zero(&mut self, value: Query<F>) -> IsZeroConfig<F> {
+        IsZeroConfig::configure(self.cs, &mut self.base, value)
+    }
+
+    pub fn query_fixed_n<const N: usize>(&mut self) -> [FixedColumn; N] {
+        [0; N].map(|_| self.base.fixed_column(self.cs))
     }
 
     pub fn query_cell_phase2(&mut self) -> AdviceColumnPhase2 {
@@ -232,6 +246,55 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         ));
     }
 
+    pub fn table_size(&mut self, table_idx: Q<F>, value: Q<F>) {
+        self.table_size_lookup(0.expr(), table_idx * 1024, value);
+    }
+    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
+        // unreachable!("not implemented yet")
+    }
+    pub fn table_grow(&mut self, table_idx: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
+        self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
+        self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
+        self.table_fill(table_idx, res, grow, init);
+    }
+    pub fn table_get(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+        self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
+    }
+    pub fn table_set(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+        self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
+    }
+    pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+        // unreachable!("not implemented yet")
+    }
+    pub fn table_init(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+        // unreachable!("not implemented yet")
+    }
+
+    pub fn table_elem_lookup(
+        &mut self,
+        is_write: Q<F>,
+        table_idx: Q<F>,
+        elem_idx: Q<F>,
+        value: Q<F>,
+    ) {
+        // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
+        self.rw_lookup(
+            is_write,
+            RwTableTag::Table.expr(),
+            table_idx * 1024 + elem_idx + 1.expr(),
+            value,
+        );
+    }
+
+    pub fn table_size_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, value: Q<F>) {
+        // address = b*x, where x is 1024. So this is reserved element to store size.
+        self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024, value);
+    }
+
+    pub fn range_check_1024(&mut self, value: Q<F>) {
+        // unreachable!("not implemented yet")
+    }
+
     pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {
         self.op_lookups
             .push(LookupTable::Rwasm(self.base.apply_lookup_condition([
@@ -249,6 +312,25 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 table[0].clone(),
                 table[1].clone(),
                 table[2].clone(),
+            ])))
+    }
+
+    pub fn copy_lookup(
+        &mut self,
+        tag: CopyTableTag,
+        from_address: Query<F>,
+        to_address: Query<F>,
+        length: Query<F>,
+    ) {
+        self.op_lookups
+            .push(LookupTable::Copy(self.base.apply_lookup_condition([
+                Query::one(),
+                Query::one(),
+                tag.expr(),
+                from_address,
+                to_address,
+                length,
+                self.state_transition.rw_counter(),
             ])))
     }
 
@@ -275,6 +357,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn range_check7(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck7([val]));
+    }
+    pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
+        self.op_lookups.push(LookupTable::PublicInput(
+            self.base
+                .apply_lookup_condition([Query::one(), index, value]),
+        ))
     }
 
     pub fn exit_code_lookup(&mut self, exit_code: Query<F>) {
@@ -326,6 +414,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
+        copy_lookup: &impl CopyLookup<F>,
     ) {
         for state_lookup in self.op_lookups.iter() {
             match state_lookup {
@@ -404,6 +493,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "exit_code(value)",
                         fields.clone(),
                         public_input_lookup.lookup_exit_code(),
+                    );
+                }
+                LookupTable::Copy(fields) => {
+                    self.base.add_lookup(
+                        "copy(tag,from_address,to_address,length,rw_counter)",
+                        fields.clone(),
+                        copy_lookup.lookup_copy_table(),
                     );
                 }
             }

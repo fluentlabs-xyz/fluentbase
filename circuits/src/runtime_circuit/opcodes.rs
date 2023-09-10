@@ -1,4 +1,4 @@
-pub use crate::trace_step::{GadgetError, TraceStep};
+pub use crate::exec_step::{ExecStep, GadgetError};
 use crate::{
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},
     util::Field,
@@ -15,11 +15,13 @@ pub(crate) mod op_drop;
 pub(crate) mod op_global;
 pub(crate) mod op_load;
 pub(crate) mod op_local;
+pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
 pub(crate) mod op_store;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
+pub(crate) mod table_ops;
 
 #[macro_export]
 macro_rules! bail_illegal_opcode {
@@ -39,6 +41,6 @@ pub trait ExecutionGadget<F: Field> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError>;
 }

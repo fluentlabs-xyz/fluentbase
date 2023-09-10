@@ -1,4 +1,4 @@
-use crate::{runtime::RuntimeContext, types::EXIT_CODE_EVM_STOP};
+use crate::{runtime::RuntimeContext, ExitCode};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
@@ -49,24 +49,23 @@ pub(crate) fn sys_halt(mut caller: Caller<'_, RuntimeContext>, exit_code: u32) -
 pub(crate) fn sys_read(
     mut caller: Caller<'_, RuntimeContext>,
     target: u32,
-    _offset: u32,
+    offset: u32,
     length: u32,
-) -> Result<u32, Trap> {
-    let memory = exported_memory(&mut caller);
-    let input = caller.data().input.clone();
-    let memory = memory.data_mut(caller.as_context_mut());
-    let length = if length > input.len() as u32 {
-        input.len() as u32
-    } else {
-        length
-    };
-    memory[(target as usize)..((target + length) as usize)].clone_from_slice(input.as_slice());
-    Ok(length)
+) -> Result<(), Trap> {
+    let input = caller.data().input().clone();
+    if offset + length > input.len() as u32 {
+        return Err(ExitCode::MemoryOutOfBounds.into());
+    }
+    caller.write_memory(
+        target as usize,
+        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
+    );
+    Ok(())
 }
 
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    caller.data_mut().exit_code = EXIT_CODE_EVM_STOP;
-    Err(Trap::i32_exit(EXIT_CODE_EVM_STOP))
+    caller.data_mut().exit_code = ExitCode::Stop as i32;
+    Err(ExitCode::Stop.into())
 }
 
 pub(crate) fn evm_return(
