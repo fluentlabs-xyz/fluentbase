@@ -16,6 +16,14 @@ impl From<u32> for FuncIdx {
         Self(index)
     }
 }
+impl From<i32> for FuncIdx {
+    fn from(index: i32) -> Self {
+        if index < 0 {
+            unreachable!("Only positive side allowed to create `FuncIdx` from i32");
+        }
+        Self(index as u32)
+    }
+}
 
 impl FuncIdx {
     /// Returns the index value as `u32`.

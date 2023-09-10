@@ -8,16 +8,16 @@ use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 use std::marker::PhantomData;
 
 #[derive(Clone, Default, Debug)]
-pub struct UnrolledBytecode<F: Field> {
+pub struct UnrolledInstructionSet<F: Field> {
     original_bytecode: Vec<u8>,
     read_traces: Vec<ReducedModuleTrace>,
     instruction_set: InstructionSet,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> UnrolledBytecode<F> {
-    pub fn new(bytecode: &[u8]) -> Self {
-        let mut module_reader = ReducedModuleReader::new(bytecode);
+impl<F: Field> UnrolledInstructionSet<F> {
+    pub fn new(rwasm_bytecode: &[u8]) -> Self {
+        let mut module_reader = ReducedModuleReader::new(rwasm_bytecode);
         let mut traces: Vec<ReducedModuleTrace> = Vec::new();
         loop {
             let trace = match module_reader.trace_opcode() {
@@ -27,7 +27,7 @@ impl<F: Field> UnrolledBytecode<F> {
             traces.push(trace);
         }
         Self {
-            original_bytecode: bytecode.to_vec(),
+            original_bytecode: rwasm_bytecode.to_vec(),
             read_traces: traces,
             instruction_set: module_reader.instruction_set,
             _pd: Default::default(),

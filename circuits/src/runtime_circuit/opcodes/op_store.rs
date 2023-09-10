@@ -1,11 +1,11 @@
 use crate::{
     constraint_builder::{AdviceColumn, Query, SelectorColumn, ToExpr},
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::{AddressOffset, Instruction};
@@ -132,7 +132,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let value = trace.curr_nth_stack_value(0)?.to_bits();
         let address = trace.curr_nth_stack_value(1)?.to_bits();
