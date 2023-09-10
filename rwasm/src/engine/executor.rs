@@ -518,10 +518,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         store_wrap(memory, address, offset.into_inner(), value)?;
         self.ip.offset(0);
         let address = u32::from(address);
+        let base_address = offset.into_inner() + address;
         self.tracer.memory_change(
-            address,
+            base_address,
             len,
-            &memory[address as usize..(address + len) as usize],
+            &memory[base_address as usize..(base_address + len) as usize],
         );
         self.try_next_instr()
     }

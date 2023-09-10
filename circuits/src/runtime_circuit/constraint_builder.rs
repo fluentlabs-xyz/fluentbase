@@ -273,6 +273,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
 
+    pub fn range_check7(&mut self, val: Query<F>) {
+        self.op_lookups.push(LookupTable::RangeCheck7([val]));
+    }
+
     pub fn exit_code_lookup(&mut self, exit_code: Query<F>) {
         self.op_lookups.push(LookupTable::ExitCode(
             self.base.apply_lookup_condition([Query::one(), exit_code]),
@@ -344,6 +348,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "responsible_opcode(execution_state,opcode)",
                         fields.clone(),
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
+                    );
+                }
+                LookupTable::RangeCheck7(fields) => {
+                    self.base.add_lookup(
+                        "range_check7",
+                        fields.clone(),
+                        range_check_lookup.lookup_u7_table(),
                     );
                 }
                 LookupTable::RangeCheck8(fields) => {

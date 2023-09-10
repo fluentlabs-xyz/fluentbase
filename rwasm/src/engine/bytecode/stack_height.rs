@@ -110,11 +110,11 @@ impl Instruction {
             | Instruction::I64Load16U(val)
             | Instruction::I64Load32S(val)
             | Instruction::I64Load32U(val) => {
-                let (length, signed) = Self::load_instr_meta(self);
+                let (_, commit_byte_len, signed) = Self::load_instr_meta(self);
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::MemoryRead {
                     offset: val.into_inner(),
-                    length: length as u32,
+                    length: commit_byte_len as u32,
                     signed,
                 });
                 stack_ops.push(RwOp::StackWrite(0));
