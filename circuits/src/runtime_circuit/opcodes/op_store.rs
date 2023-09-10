@@ -55,6 +55,10 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         let address = cb.query_cell();
         let address_base_offset = cb.query_cell();
 
+        value_as_bytes.iter().for_each(|v| {
+            cb.range_check8(v.current());
+        });
+
         cb.stack_pop(value.current());
         cb.stack_pop(address.current());
 

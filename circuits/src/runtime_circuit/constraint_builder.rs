@@ -354,9 +354,11 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
-
     pub fn range_check7(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck7([val]));
+    }
+    pub fn range_check8(&mut self, val: Query<F>) {
+        self.op_lookups.push(LookupTable::RangeCheck8([val]));
     }
     pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
         self.op_lookups.push(LookupTable::PublicInput(
@@ -381,6 +383,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn require_zero(&mut self, name: &'static str, expr: Query<F>) {
         self.base.assert_zero(name, expr)
+    }
+
+    pub fn require_boolean(&mut self, name: &'static str, expr: Query<F>) {
+        self.base.assert_boolean(name, expr)
     }
 
     pub fn require_zeros(&mut self, name: &'static str, expr: Vec<Query<F>>) {

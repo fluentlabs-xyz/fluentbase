@@ -66,6 +66,10 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
         let address = cb.query_cell();
         let address_base_offset = cb.query_cell();
 
+        value_as_bytes.iter().for_each(|v| {
+            cb.range_check8(v.current());
+        });
+
         cb.require_exactly_one_selector(
             [
                 is_i32_load,
@@ -99,8 +103,8 @@ impl<F: Field> ExecutionGadget<F> for OpLoadGadget<F> {
                         + value_msbs_bytes[ms_b_index].1.current(),
                     value_as_bytes[commit_byte_len - 1].current(),
                 );
-                cb.require_zero(
-                    "",
+                cb.require_boolean(
+                    "msb of msB must be bool",
                     value_msbs_bytes[ms_b_index].0.current()
                         * (Query::one() - value_msbs_bytes[ms_b_index].0.current()),
                 );
