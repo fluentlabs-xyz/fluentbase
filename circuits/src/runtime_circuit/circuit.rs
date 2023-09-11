@@ -1,6 +1,7 @@
 use crate::{
     exec_step::{ExecSteps, GadgetError},
     lookup_table::{
+        BitwiseCheckLookup,
         CopyLookup,
         FixedLookup,
         PublicInputLookup,
@@ -13,6 +14,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
+            op_bitwise::OpBitwiseGadget,
             op_break::OpBreakGadget,
             op_call::OpCallGadget,
             op_const::OpConstGadget,
@@ -70,6 +72,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     table_grow_gadget: ExecutionGadgetRow<F, OpTableGrowGadget<F>>,
     table_set_gadget: ExecutionGadgetRow<F, OpTableSetGadget<F>>,
     table_size_gadget: ExecutionGadgetRow<F, OpTableSizeGadget<F>>,
+    bitwise_gadget: ExecutionGadgetRow<F, OpBitwiseGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionGadgetRow<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionGadgetRow<F, SysReadGadget<F>>,
@@ -87,6 +90,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
         copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
@@ -100,6 +104,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                     fixed_lookup,
                     public_input_lookup,
                     copy_lookup,
+                    bitwise_check_lookup,
                 )
             };
         }
@@ -125,6 +130,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             table_grow_gadget: configure_gadget!(),
             table_set_gadget: configure_gadget!(),
             table_size_gadget: configure_gadget!(),
+            bitwise_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -212,6 +218,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_TABLE_SIZE => self
                 .table_size_gadget
                 .assign(region, offset, step, rw_counter),
+
+            ExecutionState::WASM_BITWISE => {
+                self.bitwise_gadget.assign(region, offset, step, rw_counter)
+            }
 
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_STORE => {

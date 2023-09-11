@@ -10,18 +10,18 @@ pub enum ExecutionState {
     WASM_BREAK,
     WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
-    WASM_CONST,      // DONE
+    WASM_CONST, // DONE
     WASM_REFFUNC,
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
     WASM_GLOBAL,     // DONE
-    WASM_LOAD,
-    WASM_LOCAL,  // DONE
-    WASM_REL,    // DONE
-    WASM_SELECT, // DONE
-    WASM_STORE,  // DONE
-    WASM_TEST,   // DONE
-    WASM_UNARY,  // DONE
+    WASM_LOAD,       // DONE
+    WASM_LOCAL,      // DONE
+    WASM_REL,        // DONE
+    WASM_SELECT,     // DONE
+    WASM_STORE,      // DONE
+    WASM_TEST,       // DONE
+    WASM_UNARY,      // DONE
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -29,6 +29,7 @@ pub enum ExecutionState {
     WASM_TABLE_GET,
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
+    WASM_BITWISE, // PROGRESS
 }
 
 impl ExecutionState {
@@ -57,6 +58,7 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_INIT => 21,
             ExecutionState::WASM_TABLE_SET => 22,
             ExecutionState::WASM_TABLE_SIZE => 23,
+            ExecutionState::WASM_BITWISE => 24,
         }
     }
 
@@ -206,6 +208,14 @@ impl ExecutionState {
                 Instruction::I64Load16U(Default::default()),
                 Instruction::I64Load32S(Default::default()),
                 Instruction::I64Load32U(Default::default()),
+            ],
+            Self::WASM_BITWISE => vec![
+                Instruction::I32And,
+                Instruction::I64And,
+                Instruction::I32Or,
+                Instruction::I64Or,
+                Instruction::I32Xor,
+                Instruction::I64Xor,
             ],
             _ => vec![],
         }
