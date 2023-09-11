@@ -78,6 +78,7 @@ pub enum RwRow {
         call_id: usize,
         address: u64,
         value: u64,
+        prev_value: u64, // Equal to zero in case of read operation.
     },
 }
 
@@ -89,6 +90,13 @@ impl RwRow {
             Self::Memory { value: byte, .. } => UntypedValue::from(*byte),
             Self::Table { value, .. } => UntypedValue::from(*value),
             _ => unreachable!("{:?}", self),
+        }
+    }
+
+    pub fn prev_value(&self) -> Option<UntypedValue> {
+        match self {
+            Self::Table { prev_value, .. } => Some(UntypedValue::from(*prev_value)),
+            _ => None,
         }
     }
 

@@ -120,6 +120,7 @@ pub fn build_table_size_read_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64,
         value: table_size as u64,
+        prev_value: 0,
     });
     Ok(())
 }
@@ -136,6 +137,7 @@ pub fn build_table_size_write_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64,
         value: (table_size as u32 + grow.as_u32()) as u64,
+        prev_value: table_size as u64,
     });
     Ok(())
 }
@@ -152,6 +154,7 @@ pub fn build_table_elem_read_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
         value: value.as_u32() as u64,
+        prev_value: 0,
     });
     Ok(())
 }
@@ -162,12 +165,16 @@ pub fn build_table_elem_write_rw_ops(
 ) -> Result<(), GadgetError> {
     let elem_index = step.curr_nth_stack_value(1)?;
     let value = step.curr_nth_stack_value(2)?;
+    // Now `prev_value` only used in table size write operation.
+    // let prev_value = step.read_table_elem(table_idx, elem_index.as_u32()).unwrap();
     step.rw_rows.push(RwRow::Table {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
         address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
         value: value.as_u32() as u64,
+        prev_value: 0,
+        // prev_value: prev_value.as_u32() as u64,
     });
     Ok(())
 }
