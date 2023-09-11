@@ -154,7 +154,7 @@ impl<F: Field> PublicInputLookup<F> for PublicInputCircuitConfig<F> {
         [
             self.q_enable.current().0,
             self.index.current(),
-            self.output.current(),
+            self.private_output.current(),
         ]
     }
 

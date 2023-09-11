@@ -63,6 +63,17 @@ pub(crate) fn sys_read(
     Ok(())
 }
 
+pub(crate) fn sys_write(
+    mut caller: Caller<'_, RuntimeContext>,
+    offset: u32,
+    length: u32,
+) -> Result<(), Trap> {
+    // TODO: "add out of memory check"
+    let memory = exported_memory_vec(&mut caller, offset as usize, length as usize);
+    caller.data_mut().return_data(memory.as_slice());
+    Ok(())
+}
+
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     caller.data_mut().exit_code = ExitCode::Stop as i32;
     Err(ExitCode::Stop.into())
