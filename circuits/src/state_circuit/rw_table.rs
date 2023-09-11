@@ -46,7 +46,9 @@ impl<F: Field> RwTable<F> {
         self.address
             .assign(region, offset, rw_row.address().unwrap_or_default() as u64);
         self.value.assign(region, offset, rw_row.value().to_bits());
-        // self.value_prev.assign(region, offset, rw_row.value().to_bits());
+        rw_row.prev_value().map(|prev_value| {
+            self.value_prev.assign(region, offset, prev_value.to_bits());
+        });
     }
 
     fn q_first_access(&self) -> BinaryQuery<F> {
