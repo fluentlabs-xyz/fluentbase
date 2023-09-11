@@ -290,8 +290,8 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.rw_lookup_with_prev(is_write, RwTableTag::Table.expr(), table_idx * 1024, value, prev_value);
     }
 
-    pub fn range_check_1024(&mut self, value: Q<F>) {
-        // unreachable!("not implemented yet")
+    pub fn range_check_1024(&mut self, val: Q<F>) {
+        self.op_lookups.push(LookupTable::RangeCheck10([val]));
     }
 
     pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {
