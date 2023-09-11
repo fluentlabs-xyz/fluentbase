@@ -11,6 +11,14 @@ pub trait RangeCheckLookup<F: Field> {
     fn lookup_u16_table(&self) -> [Query<F>; N_RANGE_CHECK_LOOKUP_TABLE];
 }
 
+pub const N_BITWISE_CHECK_LOOKUP_TABLE: usize = 3;
+
+pub trait BitwiseCheckLookup<F: Field> {
+    fn lookup_and(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+    fn lookup_or(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+    fn lookup_xor(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+}
+
 pub const N_RWASM_LOOKUP_TABLE: usize = 4;
 
 pub trait RwasmLookup<F: Field> {
@@ -58,6 +66,9 @@ pub enum LookupTable<F: Field> {
     RangeCheck8([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck10([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck16([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
+    BitwiseAnd([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
+    BitwiseOr([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
+    BitwiseXor([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
     Fixed([Query<F>; N_FIXED_LOOKUP_TABLE]),
     PublicInput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
     PublicOutput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),

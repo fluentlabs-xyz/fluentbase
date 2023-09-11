@@ -7,6 +7,7 @@ use halo2_proofs::circuit::Region;
 
 // mod op_bin;
 pub(crate) mod op_bin;
+pub(crate) mod op_bitwise;
 pub(crate) mod op_break;
 pub(crate) mod op_call;
 pub(crate) mod op_const;

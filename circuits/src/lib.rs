@@ -8,6 +8,7 @@
 
 extern crate core;
 
+mod bitwise_check;
 mod constraint_builder;
 mod copy_circuit;
 mod exec_step;

@@ -9,7 +9,7 @@ pub(crate) fn test_ok_with_input(mut bytecode: InstructionSet, input: Vec<u8>) {
     let execution_result = Runtime::run(bytecode.as_slice(), input.as_slice()).unwrap();
     let exit_code = execution_result.data().exit_code();
     let circuit = FluentbaseCircuit::from_execution_result(&execution_result);
-    let k = 14;
+    let k = 17;
     let instance = vec![Fr::from(exit_code as u64), Fr::from(0), Fr::from(0)];
     let prover = MockProver::<Fr>::run(k, &circuit, vec![instance]).unwrap();
     prover.assert_satisfied();
