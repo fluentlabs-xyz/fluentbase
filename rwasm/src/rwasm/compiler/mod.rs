@@ -2,7 +2,7 @@ use crate::{
     arena::ArenaIndex,
     common::{UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, BranchOffset, Instruction},
+        bytecode::{BranchOffset, Instruction},
         code_map::InstructionPtr,
         DropKeep,
     },
@@ -18,7 +18,6 @@ use crate::{
     Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
-use byteorder::{BigEndian, ByteOrder};
 use core::ops::Deref;
 
 mod drop_keep;
@@ -149,34 +148,8 @@ impl<'linker> Compiler<'linker> {
                     return Err(CompilerError::NotSupported("passive mode is not supported"));
                 }
             };
-            let mut offset = offset.to_bits() as u32;
-            for chunk in bytes.chunks(8) {
-                let (opcode, value) = match chunk.len() {
-                    8 => (
-                        Instruction::I64Store(AddressOffset::from(0)),
-                        BigEndian::read_u64(chunk),
-                    ),
-                    4 => (
-                        Instruction::I64Store32(AddressOffset::from(0)),
-                        BigEndian::read_u32(chunk) as u64,
-                    ),
-                    2 => (
-                        Instruction::I32Store16(AddressOffset::from(0)),
-                        BigEndian::read_u16(chunk) as u64,
-                    ),
-                    1 => (
-                        Instruction::I32Store8(AddressOffset::from(0)),
-                        chunk[0] as u64,
-                    ),
-                    _ => {
-                        unreachable!("not possible chunk len: {}", chunk.len())
-                    }
-                };
-                self.code_section.op_i32_const(offset);
-                self.code_section.op_i64_const(value);
-                self.code_section.push(opcode);
-                offset += chunk.len() as u32;
-            }
+            let offset = offset.to_bits() as u32;
+            self.code_section.add_memory(offset, bytes);
         }
         Ok(())
     }

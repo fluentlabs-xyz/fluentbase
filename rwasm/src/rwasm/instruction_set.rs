@@ -23,6 +23,7 @@ use crate::{
     rwasm::{BinaryFormat, BinaryFormatWriter},
 };
 use alloc::{slice::SliceIndex, vec::Vec};
+use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct InstructionSet {
@@ -98,6 +99,32 @@ impl InstructionSet {
         };
         assert_eq!(self.instr.len(), metas_len, "instr len and meta mismatched");
         opcode_pos
+    }
+
+    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) {
+        [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
+            let mut it = bytes.chunks_exact(chunk_size);
+            while let Some(chunk) = it.next() {
+                let value = match chunk_size {
+                    8 => LittleEndian::read_u64(chunk),
+                    4 => LittleEndian::read_u32(chunk) as u64,
+                    2 => LittleEndian::read_u16(chunk) as u64,
+                    1 => chunk[0] as u64,
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                };
+                self.op_i32_const(offset);
+                self.op_i64_const(value);
+                match chunk_size {
+                    8 => self.op_i64_store(0u32),
+                    4 => self.op_i32_store(0u32),
+                    2 => self.op_i32_store16(0u32),
+                    1 => self.op_i64_store8(0u32),
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                }
+                offset += chunk_size as u32;
+            }
+            bytes = it.remainder();
+        });
     }
 
     pub fn propagate_locals(&mut self, n: usize) {

@@ -355,13 +355,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
 
-    pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
-        self.op_lookups.push(LookupTable::PublicInput(
-            self.base
-                .apply_lookup_condition([Query::one(), index, value]),
-        ))
-    }
-
     pub fn exit_code_lookup(&mut self, exit_code: Query<F>) {
         self.op_lookups.push(LookupTable::ExitCode(
             self.base.apply_lookup_condition([Query::one(), exit_code]),
