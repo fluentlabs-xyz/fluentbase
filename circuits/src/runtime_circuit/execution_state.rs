@@ -192,14 +192,14 @@ impl ExecutionState {
                 Instruction::I64Store8(Default::default()),
                 Instruction::I64Store16(Default::default()),
                 Instruction::I64Store32(Default::default()),
-                Instruction::F32Store(Default::default()),
-                Instruction::F64Store(Default::default()),
+                // Instruction::F32Store(Default::default()),
+                // Instruction::F64Store(Default::default()),
             ],
             Self::WASM_LOAD => vec![
                 Instruction::I32Load(Default::default()),
                 Instruction::I64Load(Default::default()),
-                Instruction::F32Load(Default::default()),
-                Instruction::F64Load(Default::default()),
+                // Instruction::F32Load(Default::default()),
+                // Instruction::F64Load(Default::default()),
                 Instruction::I32Load8S(Default::default()),
                 Instruction::I32Load8U(Default::default()),
                 Instruction::I32Load16S(Default::default()),
@@ -242,18 +242,32 @@ mod test {
 
     #[test]
     fn calc_opcode_coverage() {
-        let mut used_opcodes: HashMap<Instruction, usize> =
-            Instruction::iter().map(|instr| (instr, 0usize)).collect();
+        let mut used_opcodes: HashMap<Instruction, usize> = Instruction::iter()
+            .filter(|instr| {
+                let opcode_str = format!("{:?}", instr);
+                if opcode_str.contains("F32") || opcode_str.contains("F64") {
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|instr| (instr, 0usize))
+            .collect();
         let mut total_used = 0usize;
         for state in ExecutionState::iter() {
             for opcode in state.responsible_opcodes() {
-                let used_opcode = used_opcodes.get_mut(&opcode).unwrap();
+                let used_opcode = used_opcodes.get_mut(&opcode);
+                if used_opcode.is_none() {
+                    panic!("opcode is filtered: {:?}", opcode)
+                }
+                let used_opcode = used_opcode.unwrap();
                 if *used_opcode == 1 {
                     panic!(
                         "opcode ({:?}) is used more than 1 time, its not allowed",
                         opcode
                     )
                 }
+                let opcode_str = format!("{:?}", opcode);
                 *used_opcode += 1;
                 total_used += 1;
             }
@@ -262,6 +276,12 @@ mod test {
         println!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
-        )
+        );
+        println!("\n not implemented opcodes:");
+        for (opcode, used) in used_opcodes.iter() {
+            if *used == 0 {
+                println!("- {:?}", opcode)
+            }
+        }
     }
 }
