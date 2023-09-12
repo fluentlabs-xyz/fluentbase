@@ -16,11 +16,9 @@ pub struct PublicInputCircuitConfig<F: Field> {
     q_enable: SelectorColumn,
     instance: InstanceColumn,
     index: AdviceColumn,
-    input: AdviceColumn,
-    private_input: AdviceColumn,
-    output: AdviceColumn,
-    private_output: AdviceColumn,
     exit_code: AdviceColumn,
+    input: AdviceColumn,
+    output: AdviceColumn,
     marker: PhantomData<F>,
 }
 
@@ -30,40 +28,24 @@ impl<F: Field> PublicInputCircuitConfig<F> {
         let cb = ConstraintBuilder::new(q_enable);
 
         let instance = cb.instance_column(cs);
-        let input = cb.advice_column(cs);
         let index = cb.advice_column(cs);
-        let private_input = cb.advice_column(cs);
-        let output = cb.advice_column(cs);
-        let private_output = cb.advice_column(cs);
+        let input = cb.advice_column(cs);
         let exit_code = cb.advice_column(cs);
-
-        // let input_offset = cb.fixed_column(cs);
-        // let output_offset = cb.fixed_column(cs);
+        let output = cb.advice_column(cs);
 
         cs.enable_equality(instance);
         cs.enable_equality(exit_code);
         cs.enable_equality(input);
         cs.enable_equality(output);
 
-        // cb.poseidon_lookup(
-        //     "poseidon lookup public input",
-        //     input.current(),
-        //     private_input.current(),
-        //     private_input.next(),
-        //     input_offset.current(),
-        //     poseidon_lookup,
-        // );
-
         cb.build(cs);
         Self {
             q_enable,
-            input,
-            index,
-            private_input,
             instance,
-            output,
-            private_output,
+            index,
             exit_code,
+            input,
+            output,
             marker: Default::default(),
         }
     }
@@ -73,18 +55,13 @@ impl<F: Field> PublicInputCircuitConfig<F> {
         region: &mut Region<'_, F>,
         public_input: &UnrolledPublicInput<F>,
     ) -> Result<(), Error> {
-        for (i, word) in public_input.input().words().iter().enumerate() {
-            self.private_input.assign(region, 2 * i, word[0]);
-            self.private_input.assign(region, 2 * i + 1, word[1]);
+        for (i, byte) in public_input.input().iter().enumerate() {
+            self.input.assign(region, i, *byte as u64);
         }
-        for (i, word) in public_input.output().words().iter().enumerate() {
-            self.private_output.assign(region, 2 * i, word[0]);
-            self.private_output.assign(region, 2 * i + 1, word[1]);
+        for (i, byte) in public_input.output().iter().enumerate() {
+            self.output.assign(region, i, *byte as u64);
         }
-        let max_rows = public_input
-            .input()
-            .length()
-            .max(public_input.output().length());
+        let max_rows = public_input.input().len().max(public_input.output().len());
         (0..max_rows).for_each(|offset| {
             self.q_enable.enable(region, offset);
         });
@@ -146,7 +123,7 @@ impl<F: Field> PublicInputLookup<F> for PublicInputCircuitConfig<F> {
         [
             self.q_enable.current().0,
             self.index.current(),
-            self.private_input.current(),
+            self.input.current(),
         ]
     }
 
@@ -154,7 +131,7 @@ impl<F: Field> PublicInputLookup<F> for PublicInputCircuitConfig<F> {
         [
             self.q_enable.current().0,
             self.index.current(),
-            self.private_output.current(),
+            self.output.current(),
         ]
     }
 
