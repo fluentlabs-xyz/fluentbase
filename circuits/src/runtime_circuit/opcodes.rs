@@ -17,6 +17,7 @@ pub(crate) mod op_extend;
 pub(crate) mod op_global;
 pub(crate) mod op_load;
 pub(crate) mod op_local;
+pub(crate) mod op_memory;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;

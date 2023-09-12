@@ -5,9 +5,11 @@ use strum_macros::EnumIter;
 #[derive(Debug, Clone, Copy, EnumIter)]
 pub enum CopyTableTag {
     // copy from input to memory (_sys_read)
-    Input = 1,
+    ReadInput = 1,
     // copy from memory to output (_sys_write)
-    Output,
+    WriteOutput,
+    // copy from memory to memory
+    CopyMemory,
 }
 
 impl_expr!(CopyTableTag);
@@ -15,8 +17,9 @@ impl_expr!(CopyTableTag);
 impl fmt::Display for CopyTableTag {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            CopyTableTag::Input => write!(f, "Input"),
-            CopyTableTag::Output => write!(f, "Output"),
+            CopyTableTag::ReadInput => write!(f, "ReadInput"),
+            CopyTableTag::WriteOutput => write!(f, "WriteOutput"),
+            CopyTableTag::CopyMemory => write!(f, "CopyMemory"),
         }
     }
 }
@@ -27,7 +30,7 @@ impl Into<usize> for CopyTableTag {
     }
 }
 
-pub const N_COPY_TABLE_TAG_BITS: usize = 2;
+pub const N_COPY_TABLE_TAG_BITS: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct CopyRow {

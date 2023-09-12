@@ -97,7 +97,7 @@ impl<F: Field> CopyCircuitConfig<F> {
         });
 
         cb.condition(
-            tag_bits.value_equals(CopyTableTag::Input, Rotation::cur()),
+            tag_bits.value_equals(CopyTableTag::ReadInput, Rotation::cur()),
             |cb| {
                 // lookup pi (we copy from public input)
                 cb.add_lookup(
@@ -126,7 +126,7 @@ impl<F: Field> CopyCircuitConfig<F> {
             },
         );
         cb.condition(
-            tag_bits.value_equals(CopyTableTag::Output, Rotation::cur()),
+            tag_bits.value_equals(CopyTableTag::WriteOutput, Rotation::cur()),
             |cb| {
                 // lookup rw (we copy from memory)
                 cb.add_lookup(
@@ -151,6 +151,39 @@ impl<F: Field> CopyCircuitConfig<F> {
                         value.current(),
                     ],
                     pi_lookup.lookup_output_byte(),
+                );
+            },
+        );
+        cb.condition(
+            tag_bits.value_equals(CopyTableTag::CopyMemory, Rotation::cur()),
+            |cb| {
+                // lookup rw (we copy from memory)
+                cb.add_lookup(
+                    "rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + length.current() - index.current(),
+                        0.expr(), // is_write
+                        RwTableTag::Memory.expr(),
+                        Query::zero(), // id
+                        from_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+                // lookup rw (we copy into memory)
+                cb.add_lookup(
+                    "rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + 2.expr() * length.current() - index.current(),
+                        1.expr(), // is_write
+                        RwTableTag::Memory.expr(),
+                        Query::zero(),                                             // id
+                        to_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
                 );
             },
         );
