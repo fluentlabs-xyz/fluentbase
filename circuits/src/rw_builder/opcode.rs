@@ -1,13 +1,16 @@
 use crate::{
     exec_step::{ExecStep, GadgetError},
-    rw_builder::rw_row::RwRow,
+    rw_builder::{
+        copy_row::{CopyRow, CopyTableTag},
+        rw_row::RwRow,
+    },
 };
-use fluentbase_rwasm::RwOp;
+use fluentbase_rwasm::{common::UntypedValue, RwOp};
 
 pub fn build_stack_write_rw_ops(
     step: &mut ExecStep,
     local_depth: usize,
-) -> Result<(), GadgetError> {
+) -> Result<UntypedValue, GadgetError> {
     let addr = step.next_nth_stack_addr(local_depth)?;
     let value = step.next_nth_stack_value(local_depth)?;
     step.rw_rows.push(RwRow::Stack {
@@ -17,10 +20,13 @@ pub fn build_stack_write_rw_ops(
         stack_pointer: addr as usize,
         value,
     });
-    Ok(())
+    Ok(value)
 }
 
-pub fn build_stack_read_rw_ops(step: &mut ExecStep, local_depth: usize) -> Result<(), GadgetError> {
+pub fn build_stack_read_rw_ops(
+    step: &mut ExecStep,
+    local_depth: usize,
+) -> Result<UntypedValue, GadgetError> {
     let addr = step.curr_nth_stack_addr(local_depth)?;
     let value = step.curr_nth_stack_value(local_depth)?;
     step.rw_rows.push(RwRow::Stack {
@@ -30,7 +36,7 @@ pub fn build_stack_read_rw_ops(step: &mut ExecStep, local_depth: usize) -> Resul
         stack_pointer: addr as usize,
         value,
     });
-    Ok(())
+    Ok(value)
 }
 
 pub fn build_global_write_rw_ops(
@@ -168,6 +174,51 @@ pub fn build_table_elem_write_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
         value: value.as_u32() as u64,
+    });
+    Ok(())
+}
+
+pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let len = build_stack_read_rw_ops(step, 0)?;
+    let source = build_stack_read_rw_ops(step, 1)?;
+    let dest = build_stack_read_rw_ops(step, 2)?;
+    // read copied data
+    let mut data = vec![0; len.as_u32() as usize];
+    step.curr_read_memory(source.as_u64(), data.as_mut_ptr(), len.as_u32())?;
+    let copy_rw_counter = step.next_rw_counter();
+    // read result to the memory
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: false,
+            call_id: step.call_id,
+            memory_address: source.as_u64() + i as u64,
+            value: *value,
+            length: len.as_u32(),
+            signed: false,
+        });
+    });
+    // write result to the memory
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            memory_address: dest.as_u64() + i as u64,
+            value: *value,
+            length: len.as_u32(),
+            signed: false,
+        });
+    });
+    // create copy row
+    step.copy_rows.push(CopyRow {
+        tag: CopyTableTag::CopyMemory,
+        from_address: source.as_u32(),
+        to_address: dest.as_u32(),
+        length: len.as_u32(),
+        rw_counter: copy_rw_counter,
+        data,
     });
     Ok(())
 }

@@ -47,7 +47,7 @@ pub fn build_sys_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
     });
     // create copy row
     step.copy_rows.push(CopyRow {
-        tag: CopyTableTag::Input,
+        tag: CopyTableTag::ReadInput,
         from_address: offset.as_u32(),
         to_address: target.as_u32(),
         length: length.as_u32(),
@@ -66,7 +66,7 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
     let mut data = vec![0; length.as_u32() as usize];
     step.curr_read_memory(target.as_u64(), data.as_mut_ptr(), length.as_u32())?;
     let copy_rw_counter = step.next_rw_counter();
-    // write result to the memory
+    // read result to the memory
     data.iter().enumerate().for_each(|(i, value)| {
         step.rw_rows.push(RwRow::Memory {
             rw_counter: step.next_rw_counter(),
@@ -80,7 +80,7 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
     });
     // create copy row
     step.copy_rows.push(CopyRow {
-        tag: CopyTableTag::Output,
+        tag: CopyTableTag::WriteOutput,
         from_address: target.as_u32(),
         to_address: step.output_len,
         length: length.as_u32(),

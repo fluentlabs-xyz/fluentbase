@@ -31,6 +31,7 @@ pub enum ExecutionState {
     WASM_TABLE_INIT,
     WASM_BITWISE, // DONE
     WASM_EXTEND,  // DONE
+    WASM_MEMORY,
 }
 
 impl ExecutionState {
@@ -61,6 +62,7 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_SIZE => 23,
             ExecutionState::WASM_BITWISE => 24,
             ExecutionState::WASM_EXTEND => 25,
+            ExecutionState::WASM_MEMORY => 26,
         }
     }
 
@@ -164,8 +166,8 @@ impl ExecutionState {
             ],
             Self::WASM_CONVERSION => vec![
                 Instruction::I32WrapI64,
-                Instruction::I64ExtendI32U,
-                Instruction::I64ExtendI32S,
+                // Instruction::I64ExtendI32U,
+                // Instruction::I64ExtendI32S,
             ],
             Self::WASM_GLOBAL => vec![
                 Instruction::GlobalGet(Default::default()),
@@ -227,6 +229,12 @@ impl ExecutionState {
                 Instruction::I64Extend32S,
                 Instruction::I64ExtendI32S,
                 Instruction::I64ExtendI32U,
+            ],
+            Self::WASM_MEMORY => vec![
+                Instruction::MemorySize,
+                Instruction::MemoryGrow,
+                Instruction::MemoryFill,
+                Instruction::MemoryCopy,
             ],
             _ => vec![],
         }

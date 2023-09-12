@@ -40,7 +40,7 @@ impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
 
         // lookup copy table
         cb.copy_lookup(
-            CopyTableTag::Input,
+            CopyTableTag::ReadInput,
             offset.current(),
             target.current(),
             length.current(),
