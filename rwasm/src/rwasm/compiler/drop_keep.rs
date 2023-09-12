@@ -21,7 +21,9 @@ pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> Result<Vec<Instruction
         (0..(drop - keep)).for_each(|_| result.push(Instruction::Drop));
     } else {
         (0..keep).for_each(|i| {
-            result.push(Instruction::LocalGet(LocalDepth::from(keep as u32 - i as u32 - 1)));
+            result.push(Instruction::LocalGet(LocalDepth::from(
+                keep as u32 - i as u32 - 1,
+            )));
             result.push(Instruction::LocalSet(LocalDepth::from(
                 keep as u32 + drop as u32 - i as u32,
             )));
@@ -39,20 +41,17 @@ impl Translator for DropKeep {
     }
 }
 
-pub trait TransalorWithReturnParam {
-    fn translate_with_return_param(&self, result: &mut InstructionSet) -> Result<(), CompilerError>;
-}
+pub struct DropKeepWithReturnParam(pub DropKeep);
 
-impl TransalorWithReturnParam for DropKeep {
-    fn translate_with_return_param(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
-        if self.eq(&Default::default()) {
+impl Translator for DropKeepWithReturnParam {
+    fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError> {
+        if self.0.drop() == 0 && self.0.keep() == 0 {
             return Ok(());
         }
-
-        result.op_local_get((self.drop() + self.keep()) as u32);
+        result.op_local_get((self.0.drop() + self.0.keep()) as u32);
         let drop_keep_opcodes = translate_drop_keep(
-            DropKeep::new(self.drop() as usize + 1, self.keep() as usize + 1)
-                .map_err(|_| CompilerError::DropKeepOutOfBounds)?
+            DropKeep::new(self.0.drop() as usize + 1, self.0.keep() as usize + 1)
+                .map_err(|_| CompilerError::DropKeepOutOfBounds)?,
         )?;
         result.instr.extend(&drop_keep_opcodes);
         Ok(())
