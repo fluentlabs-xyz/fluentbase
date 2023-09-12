@@ -37,7 +37,7 @@ impl<F: Field> ExecutionGadget<F> for SysWriteGadget<F> {
 
         // lookup copy table
         cb.copy_lookup(
-            CopyTableTag::Output,
+            CopyTableTag::WriteOutput,
             target.current(),
             offset.current(), // cumulative output offset
             length.current(),
