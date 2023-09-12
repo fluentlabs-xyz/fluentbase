@@ -164,8 +164,8 @@ impl ExecutionState {
             ],
             Self::WASM_CONVERSION => vec![
                 Instruction::I32WrapI64,
-                Instruction::I64ExtendI32U,
-                Instruction::I64ExtendI32S,
+                // Instruction::I64ExtendI32U,
+                // Instruction::I64ExtendI32S,
             ],
             Self::WASM_GLOBAL => vec![
                 Instruction::GlobalGet(Default::default()),
