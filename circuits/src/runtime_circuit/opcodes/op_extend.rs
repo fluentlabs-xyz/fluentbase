@@ -132,7 +132,7 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                     if i < ibs {
                         cb.condition(sel.clone().0, |cb| {
                             cb.require_equal(
-                                "p_bytes[0..sbi]+p_signs[i]*0b10000000=r_bytes[0..sbi]",
+                                "p_bytes[0..ibs)+p_signs[i]*0b10000000=r_bytes[0..ibs)",
                                 p_bytes[i].current()
                                     + p_signs[i].current() * Query::from(0b10000000),
                                 r_bytes[i].current(),
@@ -141,14 +141,14 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                     } else if i < obs {
                         cb.condition(sel.clone().0, |cb| {
                             cb.require_equal(
-                                "p_signs(sbi)*0b11111111=r_bytes(sbi..rbs)",
+                                "p_signs[ibs-1)*0b11111111=r_bytes[ibs..rbs)",
                                 p_signs[ibs - 1].current() * Query::from(0b11111111),
                                 r_bytes[i].current(),
                             );
                         });
                     } else {
                         cb.condition(sel.clone().0, |cb| {
-                            cb.require_zero("r_bytes(rbs..LIMBS_COUNT)=0", r_bytes[i].current());
+                            cb.require_zero("r_bytes[obs..LIMBS_COUNT)=0", r_bytes[i].current());
                         });
                     }
                 });
