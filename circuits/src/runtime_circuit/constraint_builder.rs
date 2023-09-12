@@ -376,6 +376,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.op_lookups
             .push(LookupTable::BitwiseXor([lhs, rhs, res]));
     }
+
     pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
         self.op_lookups.push(LookupTable::PublicInput(
             self.base

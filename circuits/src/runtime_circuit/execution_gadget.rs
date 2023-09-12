@@ -19,7 +19,7 @@ use crate::{
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
 #[derive(Clone)]
-pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
+pub struct ExecutionContextGadget<F: Field, G: ExecutionGadget<F>> {
     gadget: G,
     q_enable: SelectorColumn,
     pc: AdviceColumn,
@@ -29,7 +29,7 @@ pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     affects_pc: FixedColumn,
 }
 
-impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
+impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
@@ -70,7 +70,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             copy_lookup,
             bitwise_check_lookup,
         );
-        ExecutionGadgetRow {
+        ExecutionContextGadget {
             gadget: gadget_config,
             pc,
             opcode,
