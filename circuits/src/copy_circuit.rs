@@ -72,7 +72,25 @@ impl<F: Field> CopyCircuitConfig<F> {
                 "if (!q_last) index=index-1",
                 index.current(),
                 index.next() + 1.expr(),
-            )
+            );
+            cb.assert_equal(
+                "if (!q_last) rw_counter=rw_counter",
+                rw_counter.current(),
+                rw_counter.next(),
+            );
+            cb.assert_equal(
+                "if (!q_last) length=length",
+                length.current(),
+                length.next(),
+            );
+        });
+        cb.condition(q_first.current().and(q_last.current()), |cb| {
+            cb.assert_equal(
+                "if (q_first && q_last) length==1",
+                length.current(),
+                1.expr(),
+            );
+            cb.assert_equal("if (q_first && q_last) index==1", index.current(), 1.expr());
         });
         cb.condition(q_last.current(), |cb| {
             cb.assert_equal("if (q_last) index==1", index.current(), 1.expr());
@@ -86,7 +104,7 @@ impl<F: Field> CopyCircuitConfig<F> {
                     "public input table lookup",
                     [
                         Query::one(), // selector
-                        from_address.current(),
+                        from_address.current() + length.current() - index.current(),
                         value.current(),
                     ],
                     pi_lookup.lookup_input_byte(),
@@ -96,11 +114,11 @@ impl<F: Field> CopyCircuitConfig<F> {
                     "rw table lookup",
                     [
                         Query::one(), // selector
-                        rw_counter.current(),
+                        rw_counter.current() + length.current() - index.current(),
                         1.expr(), // is_write
                         RwTableTag::Memory.expr(),
-                        Query::zero(),        // id
-                        to_address.current(), // address
+                        Query::zero(),                                             // id
+                        to_address.current() + length.current() - index.current(), // address
                         value.current(),
                     ],
                     rw_lookup.lookup_rw_table(),
@@ -109,10 +127,31 @@ impl<F: Field> CopyCircuitConfig<F> {
         );
         cb.condition(
             tag_bits.value_equals(CopyTableTag::Output, Rotation::cur()),
-            |_cb| {
-                // lookup rw
-
-                // lookup pi
+            |cb| {
+                // lookup rw (we copy from memory)
+                cb.add_lookup(
+                    "rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + length.current() - index.current(),
+                        0.expr(), // is_write
+                        RwTableTag::Memory.expr(),
+                        Query::zero(), // id
+                        from_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+                // lookup pi (we copy into output)
+                cb.add_lookup(
+                    "public output table lookup",
+                    [
+                        Query::one(), // selector
+                        to_address.current() + length.current() - index.current(),
+                        value.current(),
+                    ],
+                    pi_lookup.lookup_output_byte(),
+                );
             },
         );
 
@@ -178,14 +217,14 @@ impl<F: Field> CopyCircuitConfig<F> {
                 let tag_bits = BinaryNumberChip::construct(self.tag_bits);
                 tag_bits.assign(region, offset, &copy_row.tag)?;
                 self.from_address
-                    .assign(region, offset, (copy_row.from_address + i as u32) as u64);
+                    .assign(region, offset, copy_row.from_address as u64);
                 self.to_address
-                    .assign(region, offset, (copy_row.to_address + i as u32) as u64);
+                    .assign(region, offset, copy_row.to_address as u64);
                 self.length.assign(region, offset, copy_row.length as u64);
                 self.index
                     .assign(region, offset, (copy_row.length - i as u32) as u64);
                 self.rw_counter
-                    .assign(region, offset, (copy_row.rw_counter + i) as u64);
+                    .assign(region, offset, copy_row.rw_counter as u64);
                 self.value.assign(region, offset, *value as u64);
                 last_offset = offset;
                 offset += 1;

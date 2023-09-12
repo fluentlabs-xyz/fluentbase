@@ -10,7 +10,7 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::{
-        execution_gadget::ExecutionGadgetRow,
+        execution_gadget::ExecutionContextGadget,
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
@@ -38,7 +38,7 @@ use crate::{
             },
             ExecStep,
         },
-        platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget},
+        platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget, sys_write::SysWriteGadget},
         responsible_opcode::ResponsibleOpcodeTable,
     },
     util::Field,
@@ -52,30 +52,31 @@ use halo2_proofs::{
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
     // wasm opcodes
-    bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
-    break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
-    call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
-    const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
-    reffunc_gadget: ExecutionGadgetRow<F, OpRefFuncGadget<F>>,
-    conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
-    drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
-    global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
-    local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
-    select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
-    unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
-    test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
-    store_gadget: ExecutionGadgetRow<F, OpStoreGadget<F>>,
-    load_gadget: ExecutionGadgetRow<F, OpLoadGadget<F>>,
-    table_copy_gadget: ExecutionGadgetRow<F, OpTableCopyGadget<F>>,
-    table_fill_gadget: ExecutionGadgetRow<F, OpTableFillGadget<F>>,
-    table_get_gadget: ExecutionGadgetRow<F, OpTableGetGadget<F>>,
-    table_grow_gadget: ExecutionGadgetRow<F, OpTableGrowGadget<F>>,
-    table_set_gadget: ExecutionGadgetRow<F, OpTableSetGadget<F>>,
-    table_size_gadget: ExecutionGadgetRow<F, OpTableSizeGadget<F>>,
-    bitwise_gadget: ExecutionGadgetRow<F, OpBitwiseGadget<F>>,
+    bin_gadget: ExecutionContextGadget<F, OpBinGadget<F>>,
+    break_gadget: ExecutionContextGadget<F, OpBreakGadget<F>>,
+    call_gadget: ExecutionContextGadget<F, OpCallGadget<F>>,
+    const_gadget: ExecutionContextGadget<F, OpConstGadget<F>>,
+    reffunc_gadget: ExecutionContextGadget<F, OpRefFuncGadget<F>>,
+    conversion_gadget: ExecutionContextGadget<F, OpConversionGadget<F>>,
+    drop_gadget: ExecutionContextGadget<F, OpDropGadget<F>>,
+    global_gadget: ExecutionContextGadget<F, OpGlobalGadget<F>>,
+    local_gadget: ExecutionContextGadget<F, OpLocalGadget<F>>,
+    select_gadget: ExecutionContextGadget<F, OpSelectGadget<F>>,
+    unary_gadget: ExecutionContextGadget<F, OpUnaryGadget<F>>,
+    test_gadget: ExecutionContextGadget<F, OpTestGadget<F>>,
+    store_gadget: ExecutionContextGadget<F, OpStoreGadget<F>>,
+    load_gadget: ExecutionContextGadget<F, OpLoadGadget<F>>,
+    table_copy_gadget: ExecutionContextGadget<F, OpTableCopyGadget<F>>,
+    table_fill_gadget: ExecutionContextGadget<F, OpTableFillGadget<F>>,
+    table_get_gadget: ExecutionContextGadget<F, OpTableGetGadget<F>>,
+    table_grow_gadget: ExecutionContextGadget<F, OpTableGrowGadget<F>>,
+    table_set_gadget: ExecutionContextGadget<F, OpTableSetGadget<F>>,
+    table_size_gadget: ExecutionContextGadget<F, OpTableSizeGadget<F>>,
+    bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
-    sys_halt_gadget: ExecutionGadgetRow<F, SysHaltGadget<F>>,
-    sys_read_gadget: ExecutionGadgetRow<F, SysReadGadget<F>>,
+    sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
+    sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
+    sys_write_gadget: ExecutionContextGadget<F, SysWriteGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -95,7 +96,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
             () => {
-                ExecutionGadgetRow::configure(
+                ExecutionContextGadget::configure(
                     cs,
                     rwasm_lookup,
                     state_lookup,
@@ -134,6 +135,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
+            sys_write_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
     }
@@ -152,6 +154,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .assign(region, offset, step, rw_counter)?,
             SysFuncIdx::IMPORT_SYS_READ => self
                 .sys_read_gadget
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::IMPORT_SYS_WRITE => self
+                .sys_write_gadget
                 .assign(region, offset, step, rw_counter)?,
             _ => unreachable!("not supported sys call: {:?}", system_call),
         }
