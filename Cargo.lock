@@ -1058,7 +1058,6 @@ dependencies = [
 name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
- "fluentbase-rwasm",
  "fluentbase-sdk",
 ]
 

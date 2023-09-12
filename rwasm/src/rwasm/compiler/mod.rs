@@ -9,7 +9,7 @@ use crate::{
     module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-        compiler::drop_keep::TransalorWithReturnParam,
+        compiler::drop_keep::DropKeepWithReturnParam,
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -73,7 +73,7 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate(&mut self) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, fn_idx: Option<u32>) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
@@ -87,44 +87,30 @@ impl<'linker> Compiler<'linker> {
             self.translate_table(i as u32)?;
         }
         self.translate_memory()?;
-        // find main entrypoint (it must starts with `main` keyword)
-        let main_index = self
-            .module
-            .exports
-            .get("main")
-            .ok_or(CompilerError::MissingEntrypoint)?
-            .into_func_idx()
-            .ok_or(CompilerError::MissingEntrypoint)?;
-        // translate main entrypoint
-        self.translate_function(main_index, true)?;
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            if i != main_index as usize {
-                self.translate_function(i as u32, false)?;
+
+        if let Some(fn_idx) = fn_idx {
+            self.translate_function(fn_idx, true)?;
+        } else {
+            // find main entrypoint (it must starts with `main` keyword)
+            let main_index = self
+                .module
+                .exports
+                .get("main")
+                .ok_or(CompilerError::MissingEntrypoint)?
+                .into_func_idx()
+                .ok_or(CompilerError::MissingEntrypoint)?;
+            // translate main entrypoint
+            self.translate_function(main_index, true)?;
+            // translate rest functions
+            let total_fns = self.module.funcs.len();
+            for i in 0..total_fns {
+                if i != main_index as usize {
+                    self.translate_function(i as u32, false)?;
+                }
             }
         }
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
-        self.is_translated = true;
-        Ok(())
-    }
-
-    pub fn translate_wo_entrypoint(&mut self) -> Result<(), CompilerError> {
-        if self.is_translated {
-            unreachable!("already translated");
-        }
-        // translate memory and global first
-        let total_globals = self.module.globals.len();
-        for i in 0..total_globals {
-            self.translate_global(i as u32)?;
-        }
-        self.translate_memory()?;
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            self.translate_function(i as u32, false)?;
-        }
         self.is_translated = true;
         Ok(())
     }
@@ -284,8 +270,8 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn extract_drop_keep(instr_ptr: &mut InstructionPtr) -> DropKeep {
-        instr_ptr.add(1);
+    fn extract_drop_keep(instr_ptr: &mut InstructionPtr, ptr_offset: usize) -> DropKeep {
+        instr_ptr.add(ptr_offset);
         let next_instr = instr_ptr.get();
         match next_instr {
             Instruction::Return(drop_keep) => *drop_keep,
@@ -310,14 +296,14 @@ impl<'linker> Compiler<'linker> {
         use Instruction as WI;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr, 1).translate(&mut self.code_section)?;
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
             WI::BrAdjustIfNez(branch_offset) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr, 1).translate(&mut self.code_section)?;
                 let drop_keep_len = self.code_section.len() - br_if_offset - 1;
                 self.code_section
                     .get_mut(br_if_offset as usize)
@@ -326,29 +312,36 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
-            WI::ReturnCallInternal(func) => {
-                Self::extract_drop_keep(instr_ptr)
-                    .translate_with_return_param(&mut self.code_section)?;
+            WI::ReturnCallInternal(_) => {
+                DropKeepWithReturnParam(Self::extract_drop_keep(instr_ptr, 1))
+                    .translate(&mut self.code_section)?;
                 self.code_section.op_br_indirect();
             }
             WI::ReturnCall(_func) => {
-                unreachable!("wait, should it call translate host call?");
                 // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                // self.code_section.op_return_call(func);
+                // self.code_section.op_call(func);
                 // self.code_section.op_return();
+                unreachable!("wait, should it call translate host call?");
+            }
+            WI::CallIndirect(_) => {
+                let table_idx = Self::extract_table(instr_ptr);
+                Self::extract_drop_keep(instr_ptr, 2).translate(&mut self.code_section)?;
+                self.code_section.op_table_get(table_idx);
+                self.code_section.op_br_indirect();
             }
             WI::ReturnCallIndirect(_) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                let table_idx = Self::extract_table(instr_ptr);
-                self.code_section.op_return_call_indirect(table_idx);
-                self.code_section.op_return();
+                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                // let table_idx = Self::extract_table(instr_ptr);
+                // self.code_section.op_return_call_indirect(table_idx);
+                // self.code_section.op_return();
+                unreachable!("check this")
             }
             WI::Return(drop_keep) => {
                 if is_main {
                     drop_keep.translate(&mut self.code_section)?;
                     self.code_section.op_return();
                 } else {
-                    drop_keep.translate_with_return_param(&mut self.code_section)?;
+                    DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
                     self.code_section.op_br_indirect();
                 }
             }
@@ -366,7 +359,6 @@ impl<'linker> Compiler<'linker> {
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2;
                 self.code_section.op_i32_const(target);
-
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
             }
@@ -411,7 +403,7 @@ impl<'linker> Compiler<'linker> {
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate()?;
+            self.translate(None)?;
         }
         let bytecode = &mut self.code_section;
 

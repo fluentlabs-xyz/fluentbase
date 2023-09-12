@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { path = "../../sdk", default-features = false }
-fluentbase-rwasm = { path = "../../rwasm", default-features = false }
+#fluentbase-rwasm = { path = "../../rwasm", default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
