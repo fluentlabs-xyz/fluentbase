@@ -2,14 +2,13 @@ use crate::{
     arena::ArenaIndex,
     common::{UntypedValue, ValueType},
     engine::{
-        bytecode::{BranchOffset, Instruction},
+        bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },
     module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-        compiler::sanitizer::Sanitizer,
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -21,7 +20,6 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
 
 mod drop_keep;
-mod sanitizer;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -47,7 +45,6 @@ pub struct Compiler<'linker> {
     function_mapping: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
     is_translated: bool,
-    sanitizer: Option<Sanitizer>,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -71,7 +68,6 @@ impl<'linker> Compiler<'linker> {
             function_mapping: BTreeMap::new(),
             import_linker,
             is_translated: false,
-            sanitizer: None, //Some(Sanitizer::new()),
         })
     }
 
@@ -160,8 +156,12 @@ impl<'linker> Compiler<'linker> {
         assert!(global_index < globals.len() as u32);
         let global_inits = &self.module.globals_init;
         assert!(global_index < global_inits.len() as u32);
-        self.code_section
-            .op_i64_const(self.translate_const_expr(&global_inits[global_index as usize])?);
+        let global_expr = &global_inits[global_index as usize];
+        if let Some(value) = global_expr.eval_const() {
+            self.code_section.op_i64_const(value);
+        } else if let Some(value) = global_expr.funcref() {
+            self.code_section.op_ref_func(value.into_u32());
+        }
         self.code_section.op_global_set(global_index);
         Ok(())
     }
@@ -181,8 +181,27 @@ impl<'linker> Compiler<'linker> {
                 "only funcref type is supported for tables",
             ));
         }
-        self.code_section
-            .op_i64_const(table.maximum().unwrap_or_default());
+        let mut table_init_size = 0;
+        for e in self.module.element_segments.iter() {
+            let aes = match &e.kind {
+                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "passive or declared mode for element segments is not supported",
+                    ))
+                }
+                ElementSegmentKind::Active(aes) => aes,
+            };
+            if aes.table_index().into_u32() != table_index {
+                continue;
+            }
+            if e.ty != ValueType::FuncRef {
+                return Err(CompilerError::NotSupported(
+                    "only funcref type is supported for element segments",
+                ));
+            }
+            table_init_size += e.items.items().len();
+        }
+        self.code_section.op_i64_const(table_init_size);
         self.code_section.op_table_grow(table_index);
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
@@ -203,8 +222,11 @@ impl<'linker> Compiler<'linker> {
             }
             let table_idx = self.translate_const_expr(aes.offset())?;
             for item in e.items.items().iter() {
-                let res = self.translate_const_expr(item)?;
-                self.code_section.op_i64_const(res);
+                if let Some(value) = item.eval_const() {
+                    self.code_section.op_i64_const(value);
+                } else if let Some(value) = item.funcref() {
+                    self.code_section.op_ref_func(value.into_u32());
+                }
                 self.code_section.op_table_set(table_idx.to_bits() as u32);
             }
         }
@@ -254,6 +276,15 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
+    fn extract_table(instr_ptr: &mut InstructionPtr) -> TableIdx {
+        instr_ptr.add(1);
+        let next_instr = instr_ptr.get();
+        match next_instr {
+            Instruction::TableGet(table_idx) => *table_idx,
+            _ => unreachable!("incorrect instr after break adjust ({:?})", *next_instr),
+        }
+    }
+
     fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
@@ -286,9 +317,10 @@ impl<'linker> Compiler<'linker> {
                 // self.code_section.op_return_call(func);
                 // self.code_section.op_return();
             }
-            WI::ReturnCallIndirect(sig) => {
+            WI::ReturnCallIndirect(_) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_return_call_indirect(sig);
+                let table_idx = Self::extract_table(instr_ptr);
+                self.code_section.op_return_call_indirect(table_idx);
                 self.code_section.op_return();
             }
             WI::Return(drop_keep) => {
@@ -309,6 +341,10 @@ impl<'linker> Compiler<'linker> {
             WI::CallInternal(func_idx) => {
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
+            }
+            WI::CallIndirect(_) => {
+                let table_idx = Self::extract_table(instr_ptr);
+                self.code_section.op_call_indirect(table_idx);
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
@@ -349,53 +385,7 @@ impl<'linker> Compiler<'linker> {
         if !self.is_translated {
             self.translate()?;
         }
-
         let bytecode = &mut self.code_section;
-
-        if let Some(mut sanitizer) = self.sanitizer.clone() {
-            let import_len = self.module.imports.len_funcs;
-            let bytecode2 = bytecode.instr.clone();
-            let mut iter = bytecode2.iter().enumerate();
-            let mut j = 0;
-            while let Some((i, instr)) = iter.next() {
-                // let is_fn = self.function_mapping.iter().filter(|(_, v)| **v == i as u32).last();
-                // if let Some((fn_index, _)) = is_fn {
-                //     let func_type = self.module.funcs[*fn_index as usize + import_len];
-                //     let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                //     sanitizer.register_internal_fn(&func_type, bytecode, i);
-                //     iter.next();
-                // }
-                let pos = i + j;
-                match instr {
-                    Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
-                        let func_type = self.module.funcs[func.to_u32() as usize + import_len];
-                        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                        sanitizer.check_stack_height_call(&instr, &func_type, bytecode, pos);
-                        iter.next();
-                        j += 1;
-                    }
-                    Instruction::Call(func) | Instruction::ReturnCall(func) => {
-                        // we can safely unwrap because we already know that import exists
-                        let import_func = self
-                            .import_linker
-                            .unwrap()
-                            .resolve_by_index(func.to_u32())
-                            .unwrap();
-                        let func_type = import_func.func_type();
-                        sanitizer.check_stack_height_call(&instr, func_type, bytecode, pos);
-                        iter.next();
-                        j += 1;
-                    }
-                    _ => {
-                        if sanitizer.check_stack_height(&instr, bytecode, pos) {
-                            j += 1;
-                        }
-                    }
-                }
-            }
-            // let (stack_height, max_height) = sanitizer.stack_height();
-            // assert!(stack_height == 0 && max_height < 1024);
-        }
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;
