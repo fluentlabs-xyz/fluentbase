@@ -1,4 +1,5 @@
 use crate::{
+    bitwise_check::BitwiseCheckConfig,
     copy_circuit::CopyCircuitConfig,
     exec_step::ExecSteps,
     fixed_table::FixedTable,
@@ -30,6 +31,7 @@ pub struct FluentbaseCircuitConfig<F: Field> {
     // tables
     poseidon_table: PoseidonTable,
     range_check_table: RangeCheckConfig<F>,
+    bitwise_check_table: BitwiseCheckConfig<F>,
     fixed_table: FixedTable<F>,
 }
 
@@ -38,6 +40,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
         // init shared poseidon table
         let poseidon_table = PoseidonTable::configure(cs);
         let range_check_table = RangeCheckConfig::configure(cs);
+        let bitwise_check_table = BitwiseCheckConfig::configure(cs);
         let fixed_table = FixedTable::configure(cs);
         // init poseidon and rwasm circuits
         let poseidon_circuit_config = PoseidonCircuitConfig::configure(cs, &poseidon_table);
@@ -54,6 +57,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             &fixed_table,
             &pi_circuit_config,
             &copy_circuit_config,
+            &bitwise_check_table,
         );
         Self {
             poseidon_circuit_config,
@@ -64,6 +68,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
             copy_circuit_config,
             poseidon_table,
             range_check_table,
+            bitwise_check_table,
             fixed_table,
         }
     }
@@ -77,6 +82,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
+        self.bitwise_check_table.load(layouter)?;
         self.fixed_table.load(layouter)?;
         // assign bytecode
         self.poseidon_circuit_config

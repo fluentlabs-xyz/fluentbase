@@ -1,6 +1,7 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
     lookup_table::{
+        BitwiseCheckLookup,
         CopyLookup,
         FixedLookup,
         PublicInputLookup,
@@ -38,6 +39,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
         copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         // we store register states in state transition gadget
@@ -66,6 +68,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
             fixed_lookup,
             public_input_lookup,
             copy_lookup,
+            bitwise_check_lookup,
         );
         ExecutionContextGadget {
             gadget: gadget_config,
