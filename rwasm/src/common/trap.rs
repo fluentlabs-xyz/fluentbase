@@ -18,7 +18,10 @@ pub struct Trap {
 
 #[test]
 fn trap_size() {
-    assert_eq!(core::mem::size_of::<Trap>(), core::mem::size_of::<*const ()>());
+    assert_eq!(
+        core::mem::size_of::<Trap>(),
+        core::mem::size_of::<*const ()>()
+    );
 }
 
 /// The reason of a [`Trap`].
@@ -301,7 +304,8 @@ impl TrapCode {
             Self::UnreachableCodeReached => "wasm `unreachable` instruction executed",
             Self::MemoryOutOfBounds => "out of bounds memory access",
             Self::TableOutOfBounds => "undefined element: out of bounds table access",
-            Self::IndirectCallToNull => "uninitialized element 2", // TODO: fixme, remove the trailing " 2" again
+            Self::IndirectCallToNull => "uninitialized element 2", /* TODO: fixme, remove the
+                                                                     * trailing " 2" again */
             Self::IntegerDivisionByZero => "integer divide by zero",
             Self::IntegerOverflow => "integer overflow",
             Self::BadConversionToInteger => "invalid conversion to integer",

@@ -176,7 +176,7 @@ impl InstructionsBuilder {
     }
 
     pub fn register_meta(&mut self, pc: usize, opcode: u16) {
-        self.temp_meta = InstrMeta::new(pc, opcode);
+        self.temp_meta = InstrMeta::new(pc, opcode, self.metas.len());
     }
 
     /// Try resolving the `label` for the given `instr`.

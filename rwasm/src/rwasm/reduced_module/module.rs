@@ -79,7 +79,10 @@ impl ReducedModule {
                 Instruction::Call(func) => func.to_u32(),
                 _ => continue,
             };
-            let func_index = import_mapping.len() as u32;
+            let func_index = import_mapping
+                .get(&host_index)
+                .copied()
+                .unwrap_or(import_mapping.len() as u32);
             instr.update_call_index(func_index);
             let import_func = import_linker
                 .resolve_by_index(host_index)

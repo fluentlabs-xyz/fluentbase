@@ -1,16 +1,25 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
-    lookup_table::{FixedLookup, RangeCheckLookup, ResponsibleOpcodeLookup, RwLookup, RwasmLookup},
+    lookup_table::{
+        BitwiseCheckLookup,
+        CopyLookup,
+        FixedLookup,
+        PublicInputLookup,
+        RangeCheckLookup,
+        ResponsibleOpcodeLookup,
+        RwLookup,
+        RwasmLookup,
+    },
     runtime_circuit::{
         constraint_builder::{OpConstraintBuilder, StateTransition},
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
 #[derive(Clone)]
-pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
+pub struct ExecutionContextGadget<F: Field, G: ExecutionGadget<F>> {
     gadget: G,
     q_enable: SelectorColumn,
     pc: AdviceColumn,
@@ -20,7 +29,7 @@ pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     affects_pc: FixedColumn,
 }
 
-impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
+impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
@@ -28,6 +37,9 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         responsible_opcode_lookup: &impl ResponsibleOpcodeLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
+        public_input_lookup: &impl PublicInputLookup<F>,
+        copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         // we store register states in state transition gadget
@@ -40,7 +52,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
         cb.execution_state_lookup(
             G::EXECUTION_STATE,
-            cb.query_rwasm_code(),
+            cb.query_rwasm_opcode(),
             affects_pc.current(),
         );
         cb.condition(affects_pc.current(), |_cb| {
@@ -54,8 +66,11 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             responsible_opcode_lookup,
             range_check_lookup,
             fixed_lookup,
+            public_input_lookup,
+            copy_lookup,
+            bitwise_check_lookup,
         );
-        ExecutionGadgetRow {
+        ExecutionContextGadget {
             gadget: gadget_config,
             pc,
             opcode,
@@ -70,7 +85,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        step: &TraceStep,
+        step: &ExecStep,
         rw_counter: usize,
     ) -> Result<(), GadgetError> {
         self.q_enable.enable(region, offset);

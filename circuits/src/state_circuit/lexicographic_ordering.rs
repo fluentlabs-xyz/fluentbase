@@ -1,11 +1,11 @@
 use crate::{
-    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn, ToExpr},
+    constraint_builder::{AdviceColumn, ConstraintBuilder, Query, SelectorColumn},
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     impl_expr,
     lookup_table::RangeCheckLookup,
+    rw_builder::rw_row::RwRow,
     state_circuit::{
         param::{N_LIMBS_ADDRESS, N_LIMBS_ID, N_LIMBS_RW_COUNTER},
-        rw_row::RwRow,
         sort_keys::SortKeysConfig,
     },
     util::Field,

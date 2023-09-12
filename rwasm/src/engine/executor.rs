@@ -273,7 +273,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     self.visit_return_call_internal(compiled_func)?
                 }
                 Instr::ReturnCall(func) => {
-                    forward_call!(self.visit_return_call(func))
+                    forward_call!(self.visit_return_call(func.into()))
                 }
                 Instr::ReturnCallIndirect(func_type) => {
                     forward_call!(self.visit_return_call_indirect(func_type))
@@ -282,7 +282,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     forward_call!(self.visit_return_call_indirect_unsafe(func_type))
                 }
                 Instr::CallInternal(compiled_func) => self.visit_call_internal(compiled_func)?,
-                Instr::Call(func) => forward_call!(self.visit_call(func)),
+                Instr::Call(func) => forward_call!(self.visit_call(func.into())),
                 Instr::CallIndirect(func_type) => {
                     forward_call!(self.visit_call_indirect(func_type))
                 }
@@ -519,10 +519,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         store_wrap(memory, address, offset.into_inner(), value)?;
         self.ip.offset(0);
         let address = u32::from(address);
+        let base_address = offset.into_inner() + address;
         self.tracer.memory_change(
-            address,
+            base_address,
             len,
-            &memory[address as usize..(address + len) as usize],
+            &memory[base_address as usize..(base_address + len) as usize],
         );
         self.try_next_instr()
     }
@@ -1254,7 +1255,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     .and_then(|memory| memory.get(..n))
                     .ok_or(TrapCode::MemoryOutOfBounds)?;
                 data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
-                this.tracer.memory_change(dst_offset as u32, n as u32, data);
+                this.tracer.memory_change(
+                    dst_offset as u32,
+                    n as u32,
+                    &data[dst_offset..(dst_offset + n)],
+                );
                 Ok(())
             },
         )?;
@@ -1375,6 +1380,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .resolve_table_mut(&table)
             .set_untyped(index, value)
             .map_err(|_| TrapCode::TableOutOfBounds)?;
+        self.tracer.table_change(table_index.to_u32(), index, value);
         self.try_next_instr()
     }
 

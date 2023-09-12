@@ -5,27 +5,19 @@ use crate::{
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::fmt::Debug;
 
-#[derive(Clone, Copy)]
-pub struct IsZeroConfig {
-    pub value: AdviceColumn,
+#[derive(Clone)]
+pub struct IsZeroConfig<F: Field> {
+    pub value: Query<F>,
     pub inverse_or_zero: AdviceColumn,
 }
 
-impl IsZeroConfig {
-    pub fn current<F: Field>(self) -> BinaryQuery<F> {
-        BinaryQuery(Query::one() - self.value.current() * self.inverse_or_zero.current())
+impl<F: Field> IsZeroConfig<F> {
+    pub fn current(self) -> BinaryQuery<F> {
+        BinaryQuery(Query::one() - self.value * self.inverse_or_zero.current())
     }
 
-    pub fn previous<F: Field>(self) -> BinaryQuery<F> {
-        BinaryQuery(Query::one() - self.value.previous() * self.inverse_or_zero.previous())
-    }
-
-    pub fn assign<F: Field, T: Copy + TryInto<F>>(
-        &self,
-        region: &mut Region<'_, F>,
-        offset: usize,
-        value: T,
-    ) where
+    pub fn assign<T: Copy + TryInto<F>>(&self, region: &mut Region<'_, F>, offset: usize, value: T)
+    where
         <T as TryInto<F>>::Error: Debug,
     {
         self.inverse_or_zero.assign(
@@ -35,28 +27,15 @@ impl IsZeroConfig {
         );
     }
 
-    // TODO: get rid of assign method in favor of it.
-    pub fn assign_value_and_inverse<F: Field, T: Copy + TryInto<F>>(
-        &self,
-        region: &mut Region<'_, F>,
-        offset: usize,
-        value: T,
-    ) where
-        <T as TryInto<F>>::Error: Debug,
-    {
-        self.value.assign(region, offset, value);
-        self.assign(region, offset, value);
-    }
-
-    pub fn configure<F: Field>(
+    pub fn configure(
         cs: &mut ConstraintSystem<F>,
         cb: &mut ConstraintBuilder<F>,
-        value: AdviceColumn, // TODO: make this a query once Query is clonable/copyable.....
+        value: Query<F>,
     ) -> Self {
         let inverse_or_zero = AdviceColumn(cs.advice_column());
         cb.assert_zero(
             "value is 0 or inverse_or_zero is inverse of value",
-            value.current() * (Query::one() - value.current() * inverse_or_zero.current()),
+            value.clone() * (Query::one() - value.clone() * inverse_or_zero.current()),
         );
         Self {
             value,

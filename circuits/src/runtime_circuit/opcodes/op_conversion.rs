@@ -1,12 +1,12 @@
 use crate::{
     constraint_builder::{AdviceColumn, ToExpr},
+    exec_step::{ExecStep, GadgetError},
     fixed_table::FixedTableTag,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -54,8 +54,14 @@ impl<F: Field> ExecutionGadget<F> for OpConversionGadget<F> {
 
         // Looks like using two fixed lookups is better now, than using one 16 bit lookup.
         for i in 0..4 {
-            cb.fixed_lookup(FixedTableTag::Range256, [value_limbs[i * 2].expr(), 0.expr(), 0.expr()]);
-            cb.fixed_lookup(FixedTableTag::Range256, [value_limbs[i * 2 + 1].expr(), 0.expr(), 0.expr()]);
+            cb.fixed_lookup(
+                FixedTableTag::Range256,
+                [value_limbs[i * 2].expr(), 0.expr(), 0.expr()],
+            );
+            cb.fixed_lookup(
+                FixedTableTag::Range256,
+                [value_limbs[i * 2 + 1].expr(), 0.expr(), 0.expr()],
+            );
         }
 
         // for i in 0..4 {
@@ -137,7 +143,7 @@ impl<F: Field> ExecutionGadget<F> for OpConversionGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let opcode = trace.instr();
 

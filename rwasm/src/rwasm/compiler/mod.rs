@@ -2,14 +2,14 @@ use crate::{
     arena::ArenaIndex,
     common::{UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, BranchOffset, Instruction},
+        bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },
     module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-        compiler::sanitizer::Sanitizer,
+        compiler::drop_keep::TransalorWithReturnParam,
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -18,12 +18,9 @@ use crate::{
     Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
-use byteorder::{BigEndian, ByteOrder};
 use core::ops::Deref;
-use crate::rwasm::compiler::drop_keep::TransalorWithReturnParam;
 
 mod drop_keep;
-mod sanitizer;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -50,7 +47,6 @@ pub struct Compiler<'linker> {
     function_mapping: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
     is_translated: bool,
-    sanitizer: Option<Sanitizer>,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -74,7 +70,6 @@ impl<'linker> Compiler<'linker> {
             function_mapping: BTreeMap::new(),
             import_linker,
             is_translated: false,
-            sanitizer: None, //Some(Sanitizer::new()),
         })
     }
 
@@ -151,34 +146,8 @@ impl<'linker> Compiler<'linker> {
                     return Err(CompilerError::NotSupported("passive mode is not supported"));
                 }
             };
-            let mut offset = offset.to_bits() as u32;
-            for chunk in bytes.chunks(8) {
-                let (opcode, value) = match chunk.len() {
-                    8 => (
-                        Instruction::I64Store(AddressOffset::from(0)),
-                        BigEndian::read_u64(chunk),
-                    ),
-                    4 => (
-                        Instruction::I64Store32(AddressOffset::from(0)),
-                        BigEndian::read_u32(chunk) as u64,
-                    ),
-                    2 => (
-                        Instruction::I32Store16(AddressOffset::from(0)),
-                        BigEndian::read_u16(chunk) as u64,
-                    ),
-                    1 => (
-                        Instruction::I32Store8(AddressOffset::from(0)),
-                        chunk[0] as u64,
-                    ),
-                    _ => {
-                        unreachable!("not possible chunk len: {}", chunk.len())
-                    }
-                };
-                self.code_section.op_i32_const(offset);
-                self.code_section.op_i64_const(value);
-                self.code_section.push(opcode);
-                offset += chunk.len() as u32;
-            }
+            let offset = offset.to_bits() as u32;
+            self.code_section.add_memory(offset, bytes);
         }
         Ok(())
     }
@@ -189,8 +158,12 @@ impl<'linker> Compiler<'linker> {
         assert!(global_index < globals.len() as u32);
         let global_inits = &self.module.globals_init;
         assert!(global_index < global_inits.len() as u32);
-        self.code_section
-            .op_i64_const(self.translate_const_expr(&global_inits[global_index as usize])?);
+        let global_expr = &global_inits[global_index as usize];
+        if let Some(value) = global_expr.eval_const() {
+            self.code_section.op_i64_const(value);
+        } else if let Some(value) = global_expr.funcref() {
+            self.code_section.op_ref_func(value.into_u32());
+        }
         self.code_section.op_global_set(global_index);
         Ok(())
     }
@@ -210,8 +183,27 @@ impl<'linker> Compiler<'linker> {
                 "only funcref type is supported for tables",
             ));
         }
-        self.code_section
-            .op_i64_const(table.maximum().unwrap_or_default());
+        let mut table_init_size = 0;
+        for e in self.module.element_segments.iter() {
+            let aes = match &e.kind {
+                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "passive or declared mode for element segments is not supported",
+                    ))
+                }
+                ElementSegmentKind::Active(aes) => aes,
+            };
+            if aes.table_index().into_u32() != table_index {
+                continue;
+            }
+            if e.ty != ValueType::FuncRef {
+                return Err(CompilerError::NotSupported(
+                    "only funcref type is supported for element segments",
+                ));
+            }
+            table_init_size += e.items.items().len();
+        }
+        self.code_section.op_i64_const(table_init_size);
         self.code_section.op_table_grow(table_index);
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
@@ -232,8 +224,11 @@ impl<'linker> Compiler<'linker> {
             }
             let table_idx = self.translate_const_expr(aes.offset())?;
             for item in e.items.items().iter() {
-                let res = self.translate_const_expr(item)?;
-                self.code_section.op_i64_const(res);
+                if let Some(value) = item.eval_const() {
+                    self.code_section.op_i64_const(value);
+                } else if let Some(value) = item.funcref() {
+                    self.code_section.op_ref_func(value.into_u32());
+                }
                 self.code_section.op_table_set(table_idx.to_bits() as u32);
             }
         }
@@ -298,7 +293,20 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr, is_main: bool) -> Result<(), CompilerError> {
+    fn extract_table(instr_ptr: &mut InstructionPtr) -> TableIdx {
+        instr_ptr.add(1);
+        let next_instr = instr_ptr.get();
+        match next_instr {
+            Instruction::TableGet(table_idx) => *table_idx,
+            _ => unreachable!("incorrect instr after break adjust ({:?})", *next_instr),
+        }
+    }
+
+    fn translate_opcode(
+        &mut self,
+        instr_ptr: &mut InstructionPtr,
+        is_main: bool,
+    ) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
@@ -319,16 +327,20 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return();
             }
             WI::ReturnCallInternal(func) => {
-                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr)
+                    .translate_with_return_param(&mut self.code_section)?;
                 self.code_section.op_br_indirect();
             }
-            WI::ReturnCall(func) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_return_call(func);
-                self.code_section.op_return();
+            WI::ReturnCall(_func) => {
+                unreachable!("wait, should it call translate host call?");
+                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                // self.code_section.op_return_call(func);
+                // self.code_section.op_return();
             }
-            WI::ReturnCallIndirect(sig) => {
+            WI::ReturnCallIndirect(_) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                let table_idx = Self::extract_table(instr_ptr);
+                self.code_section.op_return_call_indirect(table_idx);
                 self.code_section.op_return();
             }
             WI::Return(drop_keep) => {
@@ -352,12 +364,15 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return_if_nez();
             }
             WI::CallInternal(func_idx) => {
-
                 let target = self.code_section.len() + 2;
                 self.code_section.op_i32_const(target);
 
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
+            }
+            WI::CallIndirect(_) => {
+                let table_idx = Self::extract_table(instr_ptr);
+                self.code_section.op_call_indirect(table_idx);
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
@@ -398,19 +413,18 @@ impl<'linker> Compiler<'linker> {
         if !self.is_translated {
             self.translate()?;
         }
-
         let bytecode = &mut self.code_section;
 
-        for i in 0..bytecode.len() as usize{
+        for i in 0..bytecode.len() as usize {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
-                    bytecode.instr[i] = Instruction::Br(BranchOffset::from(self.function_mapping[&func.to_u32()] as i32 - i as i32));
+                    bytecode.instr[i] = Instruction::Br(BranchOffset::from(
+                        self.function_mapping[&func.to_u32()] as i32 - i as i32,
+                    ));
                 }
-                _ => {
-                }
+                _ => {}
             }
         }
-
 
         // let (stack_height, max_height) = sanitizer.stack_height();
         // assert!(stack_height == 0 && max_height < 1024);

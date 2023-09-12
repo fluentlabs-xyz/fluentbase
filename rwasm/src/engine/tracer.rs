@@ -14,13 +14,22 @@ pub struct TracerMemoryState {
 }
 
 #[derive(Debug, Clone)]
+pub struct TraceTableState {
+    pub table_idx: u32,
+    pub elem_idx: u32,
+    pub func_ref: UntypedValue,
+}
+
+#[derive(Debug, Clone)]
 pub struct TracerInstrState {
     pub program_counter: u32,
     pub opcode: Instruction,
     pub memory_changes: Vec<TracerMemoryState>,
+    pub table_changes: Vec<TraceTableState>,
     pub stack: Vec<UntypedValue>,
     pub source_pc: u32,
     pub code: u16,
+    pub index: usize,
 }
 
 #[derive(Debug)]
@@ -42,6 +51,7 @@ pub struct Tracer {
     pub global_memory: Vec<TracerMemoryState>,
     pub logs: Vec<TracerInstrState>,
     pub memory_changes: Vec<TracerMemoryState>,
+    pub table_changes: Vec<TraceTableState>,
     pub fns_meta: Vec<TracerFunctionMeta>,
     pub global_variables: Vec<TracerGlobalVariable>,
     pub extern_names: BTreeMap<u32, String>,
@@ -89,13 +99,16 @@ impl Tracer {
         meta: &InstrMeta,
     ) {
         let memory_changes = take(&mut self.memory_changes);
+        let table_changes = take(&mut self.table_changes);
         let opcode_state = TracerInstrState {
             program_counter,
             opcode,
             memory_changes,
+            table_changes,
             stack,
-            source_pc: meta.pos() as u32,
-            code: meta.code(),
+            source_pc: meta.offset() as u32,
+            code: meta.opcode(),
+            index: meta.index(),
         };
         self.logs.push(opcode_state.clone());
     }
@@ -128,6 +141,14 @@ impl Tracer {
             offset,
             len,
             data: Vec::from(memory),
+        });
+    }
+
+    pub fn table_change(&mut self, table_idx: u32, elem_idx: u32, func_ref: UntypedValue) {
+        self.table_changes.push(TraceTableState {
+            table_idx,
+            elem_idx,
+            func_ref,
         });
     }
 }

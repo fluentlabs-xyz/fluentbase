@@ -2,8 +2,8 @@
 use crate::util::poseidon_hash;
 use crate::{
     constraint_builder::{AdviceColumn, ConstraintBuilder, FixedColumn, Query},
-    unrolled_bytecode::UnrolledBytecode,
     util::Field,
+    witness::UnrolledInstructionSet,
 };
 #[cfg(test)]
 use halo2_proofs::circuit::Region;
@@ -157,7 +157,7 @@ impl<F: Field> PoseidonCircuitConfig<F> {
     pub fn assign_bytecode(
         &self,
         layouter: &mut impl Layouter<F>,
-        bytecode: &UnrolledBytecode<F>,
+        bytecode: &UnrolledInstructionSet<F>,
     ) -> Result<(), Error> {
         let mut poseidon_hash_table = PoseidonHashTable::default();
         let hash_traces = bytecode.hash_traces();

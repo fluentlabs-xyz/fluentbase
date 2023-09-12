@@ -11,6 +11,7 @@ use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct RangeCheckConfig<F: Field> {
+    u7: FixedColumn,
     u8: FixedColumn,
     u10: FixedColumn,
     u16: FixedColumn,
@@ -20,6 +21,7 @@ pub struct RangeCheckConfig<F: Field> {
 impl<F: Field> RangeCheckConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
+            u7: FixedColumn(cs.fixed_column()),
             u8: FixedColumn(cs.fixed_column()),
             u10: FixedColumn(cs.fixed_column()),
             u16: FixedColumn(cs.fixed_column()),
@@ -32,6 +34,7 @@ impl<F: Field> RangeCheckConfig<F> {
             || "range check table",
             |mut region| {
                 let ranges = [
+                    (&self.u7, 0..=0x0080),
                     (&self.u8, 0..=0x00ff),
                     (&self.u10, 0..=0x03ff),
                     // (&self.u16, 0..=0xffff),
@@ -48,6 +51,9 @@ impl<F: Field> RangeCheckConfig<F> {
 }
 
 impl<F: Field> RangeCheckLookup<F> for RangeCheckConfig<F> {
+    fn lookup_u7_table(&self) -> [Query<F>; N_RANGE_CHECK_LOOKUP_TABLE] {
+        [self.u7.current()]
+    }
     fn lookup_u8_table(&self) -> [Query<F>; N_RANGE_CHECK_LOOKUP_TABLE] {
         [self.u8.current()]
     }

@@ -1,27 +1,50 @@
 use crate::{
-    lookup_table::{FixedLookup, RangeCheckLookup, RwLookup, RwasmLookup},
+    exec_step::{ExecSteps, GadgetError},
+    lookup_table::{
+        BitwiseCheckLookup,
+        CopyLookup,
+        FixedLookup,
+        PublicInputLookup,
+        RangeCheckLookup,
+        RwLookup,
+        RwasmLookup,
+    },
     runtime_circuit::{
-        execution_gadget::ExecutionGadgetRow,
+        execution_gadget::ExecutionContextGadget,
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
+            op_bitwise::OpBitwiseGadget,
             op_break::OpBreakGadget,
             op_call::OpCallGadget,
             op_const::OpConstGadget,
             op_conversion::OpConversionGadget,
             op_drop::OpDropGadget,
+            op_extend::OpExtendGadget,
             op_global::OpGlobalGadget,
+            op_load::OpLoadGadget,
             op_local::OpLocalGadget,
+            op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
+            op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
-            TraceStep,
+            table_ops::{
+                copy::OpTableCopyGadget,
+                fill::OpTableFillGadget,
+                get::OpTableGetGadget,
+                grow::OpTableGrowGadget,
+                set::OpTableSetGadget,
+                size::OpTableSizeGadget,
+            },
+            ExecStep,
         },
+        platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget, sys_write::SysWriteGadget},
         responsible_opcode::ResponsibleOpcodeTable,
     },
     util::Field,
 };
-use fluentbase_rwasm::engine::Tracer;
+use fluentbase_runtime::SysFuncIdx;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -29,17 +52,33 @@ use halo2_proofs::{
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
-    bin_gadget: ExecutionGadgetRow<F, OpBinGadget<F>>,
-    break_gadget: ExecutionGadgetRow<F, OpBreakGadget<F>>,
-    call_gadget: ExecutionGadgetRow<F, OpCallGadget<F>>,
-    const_gadget: ExecutionGadgetRow<F, OpConstGadget<F>>,
-    conversion_gadget: ExecutionGadgetRow<F, OpConversionGadget<F>>,
-    drop_gadget: ExecutionGadgetRow<F, OpDropGadget<F>>,
-    global_gadget: ExecutionGadgetRow<F, OpGlobalGadget<F>>,
-    local_gadget: ExecutionGadgetRow<F, OpLocalGadget<F>>,
-    select_gadget: ExecutionGadgetRow<F, OpSelectGadget<F>>,
-    unary_gadget: ExecutionGadgetRow<F, OpUnaryGadget<F>>,
-    test_gadget: ExecutionGadgetRow<F, OpTestGadget<F>>,
+    // wasm opcodes
+    bin_gadget: ExecutionContextGadget<F, OpBinGadget<F>>,
+    break_gadget: ExecutionContextGadget<F, OpBreakGadget<F>>,
+    call_gadget: ExecutionContextGadget<F, OpCallGadget<F>>,
+    const_gadget: ExecutionContextGadget<F, OpConstGadget<F>>,
+    reffunc_gadget: ExecutionContextGadget<F, OpRefFuncGadget<F>>,
+    conversion_gadget: ExecutionContextGadget<F, OpConversionGadget<F>>,
+    drop_gadget: ExecutionContextGadget<F, OpDropGadget<F>>,
+    global_gadget: ExecutionContextGadget<F, OpGlobalGadget<F>>,
+    local_gadget: ExecutionContextGadget<F, OpLocalGadget<F>>,
+    select_gadget: ExecutionContextGadget<F, OpSelectGadget<F>>,
+    unary_gadget: ExecutionContextGadget<F, OpUnaryGadget<F>>,
+    test_gadget: ExecutionContextGadget<F, OpTestGadget<F>>,
+    store_gadget: ExecutionContextGadget<F, OpStoreGadget<F>>,
+    load_gadget: ExecutionContextGadget<F, OpLoadGadget<F>>,
+    table_copy_gadget: ExecutionContextGadget<F, OpTableCopyGadget<F>>,
+    table_fill_gadget: ExecutionContextGadget<F, OpTableFillGadget<F>>,
+    table_get_gadget: ExecutionContextGadget<F, OpTableGetGadget<F>>,
+    table_grow_gadget: ExecutionContextGadget<F, OpTableGrowGadget<F>>,
+    table_set_gadget: ExecutionContextGadget<F, OpTableSetGadget<F>>,
+    table_size_gadget: ExecutionContextGadget<F, OpTableSizeGadget<F>>,
+    bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
+    extend_gadget: ExecutionContextGadget<F, OpExtendGadget<F>>,
+    // system calls TODO: "lets design an extension library for this"
+    sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
+    sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
+    sys_write_gadget: ExecutionContextGadget<F, SysWriteGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -52,25 +91,33 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         state_lookup: &impl RwLookup<F>,
         range_check_lookup: &impl RangeCheckLookup<F>,
         fixed_lookup: &impl FixedLookup<F>,
+        public_input_lookup: &impl PublicInputLookup<F>,
+        copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
         macro_rules! configure_gadget {
             () => {
-                ExecutionGadgetRow::configure(
+                ExecutionContextGadget::configure(
                     cs,
                     rwasm_lookup,
                     state_lookup,
                     &responsible_opcode_table,
                     range_check_lookup,
                     fixed_lookup,
+                    public_input_lookup,
+                    copy_lookup,
+                    bitwise_check_lookup,
                 )
             };
         }
         Self {
+            // wasm opcodes
             bin_gadget: configure_gadget!(),
             break_gadget: configure_gadget!(),
             call_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
+            reffunc_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
             global_gadget: configure_gadget!(),
@@ -78,8 +125,45 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
+            store_gadget: configure_gadget!(),
+            load_gadget: configure_gadget!(),
+            table_copy_gadget: configure_gadget!(),
+            table_fill_gadget: configure_gadget!(),
+            table_get_gadget: configure_gadget!(),
+            table_grow_gadget: configure_gadget!(),
+            table_set_gadget: configure_gadget!(),
+            table_size_gadget: configure_gadget!(),
+            bitwise_gadget: configure_gadget!(),
+            extend_gadget: configure_gadget!(),
+            // system calls
+            sys_halt_gadget: configure_gadget!(),
+            sys_read_gadget: configure_gadget!(),
+            sys_write_gadget: configure_gadget!(),
             responsible_opcode_table,
         }
+    }
+
+    fn assign_sys_call(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        step: &ExecStep,
+        rw_counter: usize,
+        system_call: SysFuncIdx,
+    ) -> Result<(), GadgetError> {
+        match system_call {
+            SysFuncIdx::IMPORT_SYS_HALT => self
+                .sys_halt_gadget
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::IMPORT_SYS_READ => self
+                .sys_read_gadget
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::IMPORT_SYS_WRITE => self
+                .sys_write_gadget
+                .assign(region, offset, step, rw_counter)?,
+            _ => unreachable!("not supported sys call: {:?}", system_call),
+        }
+        Ok(())
     }
 
     #[allow(unused_variables)]
@@ -87,7 +171,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        step: &TraceStep,
+        step: &ExecStep,
         rw_counter: usize,
     ) -> Result<(), Error> {
         let execution_state = ExecutionState::from_opcode(*step.instr());
@@ -97,8 +181,14 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.break_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_CALL => self.call_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_CALL_HOST(system_call) => {
+                self.assign_sys_call(region, offset, step, rw_counter, system_call)
+            }
             ExecutionState::WASM_CONST => {
                 self.const_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_REFFUNC => {
+                self.reffunc_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_CONVERSION => self
                 .conversion_gadget
@@ -113,10 +203,43 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_SELECT => {
                 self.select_gadget.assign(region, offset, step, rw_counter)
             }
+
             ExecutionState::WASM_UNARY => {
                 self.unary_gadget.assign(region, offset, step, rw_counter)
             }
+
+            ExecutionState::WASM_TABLE_COPY => self
+                .table_copy_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_FILL => self
+                .table_fill_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_GET => self
+                .table_get_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_GROW => self
+                .table_grow_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_SET => self
+                .table_set_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_TABLE_SIZE => self
+                .table_size_gadget
+                .assign(region, offset, step, rw_counter),
+
+            ExecutionState::WASM_BITWISE => {
+                self.bitwise_gadget.assign(region, offset, step, rw_counter)
+            }
+
+            ExecutionState::WASM_EXTEND => {
+                self.extend_gadget.assign(region, offset, step, rw_counter)
+            }
+
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_STORE => {
+                self.store_gadget.assign(region, offset, step, rw_counter)
+            }
+            ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"
@@ -124,15 +247,16 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
+    pub fn assign(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        exec_steps: &ExecSteps,
+    ) -> Result<(), Error> {
         layouter.assign_region(
             || "runtime opcodes",
             |mut region| {
-                let mut rw_counter = 0;
-                for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    let step = TraceStep::new(trace, tracer.logs.get(i + 1).cloned());
-                    self.assign_trace_step(&mut region, i, &step, rw_counter)?;
-                    rw_counter += step.instr().get_rw_ops().len();
+                for (i, trace) in exec_steps.0.iter().enumerate() {
+                    self.assign_trace_step(&mut region, i, trace, trace.rw_counter)?;
                 }
                 Ok(())
             },
