@@ -127,23 +127,30 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                 _ => unreachable!("configure: unsupported extend opcode {:?}", instr),
             };
             cb.if_rwasm_opcode(sel.0.clone(), *instr, |cb| {
+                let (sbi, rbs) = instr_meta(instr);
                 (0..LIMBS_COUNT).for_each(|i| {
-                    let sbi = sign_byte_index(instr);
-                    (0..=sbi).for_each(|i| {
-                        cb.require_equal(
-                            "p_bytes[0..=sbi]+p_signs[i]*0b10000000=r_bytes[0..=sbi]",
-                            (p_bytes[i].current() + p_signs[i].current() * Query::from(0b10000000))
-                                * sel.clone(),
-                            r_bytes[i].current() * sel.clone(),
-                        );
-                    });
-                    (sbi + 1..LIMBS_COUNT).for_each(|i| {
-                        cb.require_equal(
-                            "p_signs(sbi..LIMBS_COUNT)*0b11111111=r_bytes(sbi..LIMBS_COUNT)",
-                            p_signs[sbi].current() * Query::from(0b11111111) * sel.clone(),
-                            r_bytes[i].current() * sel.clone(),
-                        );
-                    });
+                    if i <= sbi {
+                        cb.condition(sel.clone().0, |cb| {
+                            cb.require_equal(
+                                "p_bytes[0..sbi]+p_signs[i]*0b10000000=r_bytes[0..sbi]",
+                                p_bytes[i].current()
+                                    + p_signs[i].current() * Query::from(0b10000000),
+                                r_bytes[i].current(),
+                            );
+                        });
+                    } else if i < rbs {
+                        cb.condition(sel.clone().0, |cb| {
+                            cb.require_equal(
+                                "p_signs(sbi)*0b11111111=r_bytes(sbi..rbs)",
+                                p_signs[sbi].current() * Query::from(0b11111111),
+                                r_bytes[i].current(),
+                            );
+                        });
+                    } else {
+                        cb.condition(sel.clone().0, |cb| {
+                            cb.require_zero("r_bytes(rbs..LIMBS_COUNT)=0", r_bytes[i].current());
+                        });
+                    }
                 });
             })
         };
@@ -320,11 +327,17 @@ mod test {
     }
 }
 
-fn sign_byte_index(opcode: &Instruction) -> usize {
+type SignByteIndex = usize;
+type ResultBytesSize = usize;
+fn instr_meta(opcode: &Instruction) -> (SignByteIndex, ResultBytesSize) {
     match opcode {
-        Instruction::I32Extend8S | Instruction::I64Extend8S => 0,
-        Instruction::I32Extend16S | Instruction::I64Extend16S => 1,
-        Instruction::I64Extend32S | Instruction::I64ExtendI32S | Instruction::I64ExtendI32U => 4,
+        Instruction::I32Extend8S => (0, 4),
+        Instruction::I64Extend8S => (0, 8),
+        Instruction::I32Extend16S => (1, 4),
+        Instruction::I64Extend16S => (1, 8),
+        Instruction::I64Extend32S | Instruction::I64ExtendI32S | Instruction::I64ExtendI32U => {
+            (4, 8)
+        }
         _ => unreachable!("sign_byte_index: unsupported extend opcode {:?}", opcode),
     }
 }
