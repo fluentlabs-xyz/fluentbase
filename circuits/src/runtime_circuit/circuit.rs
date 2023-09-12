@@ -72,7 +72,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     table_grow_gadget: ExecutionContextGadget<F, OpTableGrowGadget<F>>,
     table_set_gadget: ExecutionContextGadget<F, OpTableSetGadget<F>>,
     table_size_gadget: ExecutionContextGadget<F, OpTableSizeGadget<F>>,
-    bitwise_gadget: ExecutionGadgetRow<F, OpBitwiseGadget<F>>,
+    bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
