@@ -101,12 +101,12 @@ impl<'linker> Compiler<'linker> {
             .into_func_idx()
             .ok_or(CompilerError::MissingEntrypoint)?;
         // translate main entrypoint
-        self.translate_function(main_index)?;
+        self.translate_function(main_index, true)?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
             if i != main_index as usize {
-                self.translate_function(i as u32)?;
+                self.translate_function(i as u32, false)?;
             }
         }
         // there is no need to inject because code is already validated
@@ -128,7 +128,7 @@ impl<'linker> Compiler<'linker> {
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
-            self.translate_function(i as u32)?;
+            self.translate_function(i as u32, false)?;
         }
         self.is_translated = true;
         Ok(())
@@ -248,12 +248,12 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn swap(&mut self, param_num: u32) {
-        for i in param_num..0 {
+        for i in (0..param_num).rev() {
             self.swap_with_depth(i);
         }
     }
 
-    fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+    fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
         if fn_index < import_len as u32 {
@@ -264,7 +264,7 @@ impl<'linker> Compiler<'linker> {
         let func_type = self.module.funcs[fn_index as usize + import_len];
         let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
         let num_inputs = func_type.params();
-        // let num_outputs = func_type.results();
+        let beginning_offset = self.code_section.len();
 
         self.swap(num_inputs.len() as u32);
 
@@ -273,7 +273,6 @@ impl<'linker> Compiler<'linker> {
             .compiled_funcs
             .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
-        let beginning_offset = self.code_section.len();
 
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
@@ -283,7 +282,7 @@ impl<'linker> Compiler<'linker> {
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr)?;
+            self.translate_opcode(&mut instr_ptr, is_main)?;
         }
         // remember function offset in the mapping
         self.function_mapping.insert(fn_index, beginning_offset);
@@ -299,7 +298,7 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr) -> Result<(), CompilerError> {
+    fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr, is_main: bool) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
@@ -321,28 +320,30 @@ impl<'linker> Compiler<'linker> {
             }
             WI::ReturnCallInternal(func) => {
                 Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
-                let fn_index = func.into_usize() as u32;
-                self.code_section.op_return_call_internal(fn_index);
-                self.code_section.op_return();
+                self.code_section.op_br_indirect();
             }
             WI::ReturnCall(func) => {
-                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
+                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_return_call(func);
                 self.code_section.op_return();
             }
             WI::ReturnCallIndirect(sig) => {
-                Self::extract_drop_keep(instr_ptr).translate_with_return_param(&mut self.code_section)?;
-                self.code_section.op_return_call_indirect(sig);
+                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_return();
             }
             WI::Return(drop_keep) => {
-                drop_keep.translate_with_return_param(&mut self.code_section)?;
-                self.code_section.op_br_indirect();
+                if is_main {
+                    drop_keep.translate(&mut self.code_section)?;
+                    self.code_section.op_return();
+                } else {
+                    drop_keep.translate_with_return_param(&mut self.code_section)?;
+                    self.code_section.op_br_indirect();
+                }
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
-                drop_keep.translate_with_return_param(&mut self.code_section)?;
+                drop_keep.translate(&mut self.code_section)?;
                 let drop_keep_len = self.code_section.len() - br_if_offset - 1;
                 self.code_section
                     .get_mut(br_if_offset as usize)
@@ -352,7 +353,7 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
 
-                let target = self.code_section.len() + 3;
+                let target = self.code_section.len() + 2;
                 self.code_section.op_i32_const(target);
 
                 let fn_index = func_idx.into_usize() as u32;
@@ -400,48 +401,19 @@ impl<'linker> Compiler<'linker> {
 
         let bytecode = &mut self.code_section;
 
-        if let Some(mut sanitizer) = self.sanitizer.clone() {
-            let mut bytecode2 = bytecode.instr.clone();
-            let mut iter = bytecode2.iter_mut().enumerate();
-            let mut j = 0;
-            while let Some((i, instr)) = iter.next() {
-                // let is_fn = self.function_mapping.iter().filter(|(_, v)| **v == i as u32).last();
-                // if let Some((fn_index, _)) = is_fn {
-                //     let func_type = self.module.funcs[*fn_index as usize + import_len];
-                //     let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                //     sanitizer.register_internal_fn(&func_type, bytecode, i);
-                //     iter.next();
-                // }
-                let pos = i + j;
-                match instr {
-                    Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
-                        *instr = Instruction::Br(BranchOffset::from(self.function_mapping[&func.to_u32()] as i32));
-
-                        iter.next();
-                        j += 1;
-                    }
-                    Instruction::Call(func) | Instruction::ReturnCall(func) => {
-                        // we can safely unwrap because we already know that import exists
-                        let import_func = self
-                            .import_linker
-                            .unwrap()
-                            .resolve_by_index(func.to_u32())
-                            .unwrap();
-                        let func_type = import_func.func_type();
-                        sanitizer.check_stack_height_call(&instr, func_type, bytecode, pos);
-                        iter.next();
-                        j += 1;
-                    }
-                    _ => {
-                        if sanitizer.check_stack_height(&instr, bytecode, pos) {
-                            j += 1;
-                        }
-                    }
+        for i in 0..bytecode.len() as usize{
+            match bytecode.instr[i] {
+                Instruction::CallInternal(func) => {
+                    bytecode.instr[i] = Instruction::Br(BranchOffset::from(self.function_mapping[&func.to_u32()] as i32 - i as i32));
+                }
+                _ => {
                 }
             }
-            // let (stack_height, max_height) = sanitizer.stack_height();
-            // assert!(stack_height == 0 && max_height < 1024);
         }
+
+
+        // let (stack_height, max_height) = sanitizer.stack_height();
+        // assert!(stack_height == 0 && max_height < 1024);
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;

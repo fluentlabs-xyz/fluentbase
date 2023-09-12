@@ -1056,8 +1056,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     fn visit_br_indirect(
         &mut self,
     ) {
-        let offset = BranchOffset::from(self.sp.pop_as::<i32>());
-        self.branch_to(offset);
+        let target = self.sp.pop_as::<i32>();
+        let offset = target - self.ip.pc() as i32;
+
+        self.branch_to(offset.into());
+
     }
 
     #[inline(always)]
