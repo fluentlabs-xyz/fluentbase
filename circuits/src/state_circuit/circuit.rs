@@ -208,6 +208,7 @@ impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
             self.rw_table.id.current(),
             self.rw_table.address.current(),
             self.rw_table.value.current(),
+            self.rw_table.value_prev.current(),
         ]
     }
 }

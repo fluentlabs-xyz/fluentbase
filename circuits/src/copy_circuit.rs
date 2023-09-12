@@ -102,6 +102,7 @@ impl<F: Field> CopyCircuitConfig<F> {
                         Query::zero(),        // id
                         to_address.current(), // address
                         value.current(),
+                        Query::zero(), // prev value
                     ],
                     rw_lookup.lookup_rw_table(),
                 );

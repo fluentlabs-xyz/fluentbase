@@ -17,7 +17,7 @@ pub trait RwasmLookup<F: Field> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE];
 }
 
-pub const N_RW_LOOKUP_TABLE: usize = 7;
+pub const N_RW_LOOKUP_TABLE: usize = 8;
 
 pub trait RwLookup<F: Field> {
     fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE];
