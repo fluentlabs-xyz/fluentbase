@@ -30,6 +30,7 @@ pub enum ExecutionState {
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
     WASM_BITWISE, // DONE
+    WASM_EXTEND,  // IN PROGRESS
 }
 
 impl ExecutionState {
@@ -59,6 +60,7 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_SET => 22,
             ExecutionState::WASM_TABLE_SIZE => 23,
             ExecutionState::WASM_BITWISE => 24,
+            ExecutionState::WASM_EXTEND => 25,
         }
     }
 
@@ -216,6 +218,15 @@ impl ExecutionState {
                 Instruction::I64Or,
                 Instruction::I32Xor,
                 Instruction::I64Xor,
+            ],
+            Self::WASM_EXTEND => vec![
+                Instruction::I32Extend8S,
+                Instruction::I32Extend16S,
+                Instruction::I64Extend8S,
+                Instruction::I64Extend16S,
+                Instruction::I64Extend32S,
+                Instruction::I64ExtendI32S,
+                Instruction::I64ExtendI32U,
             ],
             _ => vec![],
         }

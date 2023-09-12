@@ -13,6 +13,7 @@ pub(crate) mod op_call;
 pub(crate) mod op_const;
 pub(crate) mod op_conversion;
 pub(crate) mod op_drop;
+pub(crate) mod op_extend;
 pub(crate) mod op_global;
 pub(crate) mod op_load;
 pub(crate) mod op_local;
