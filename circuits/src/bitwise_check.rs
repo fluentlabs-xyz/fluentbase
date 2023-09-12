@@ -12,18 +12,20 @@ use std::marker::PhantomData;
 
 #[derive(Clone)]
 pub struct BitwiseCheckConfig<F: Field> {
-    and: [FixedColumn; N_BITWISE_CHECK_LOOKUP_TABLE],
-    or: [FixedColumn; N_BITWISE_CHECK_LOOKUP_TABLE],
-    xor: [FixedColumn; N_BITWISE_CHECK_LOOKUP_TABLE],
+    inputs: [FixedColumn; 2],
+    and: [FixedColumn; 1],
+    or: [FixedColumn; 1],
+    xor: [FixedColumn; 1],
     _marker: PhantomData<F>,
 }
 
 impl<F: Field> BitwiseCheckConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
-            and: [0; N_BITWISE_CHECK_LOOKUP_TABLE].map(|v| FixedColumn(cs.fixed_column())),
-            or: [0; N_BITWISE_CHECK_LOOKUP_TABLE].map(|v| FixedColumn(cs.fixed_column())),
-            xor: [0; N_BITWISE_CHECK_LOOKUP_TABLE].map(|v| FixedColumn(cs.fixed_column())),
+            inputs: [0; 2].map(|v| FixedColumn(cs.fixed_column())),
+            and: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
+            or: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
+            xor: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
             _marker: Default::default(),
         }
     }
@@ -44,17 +46,14 @@ impl<F: Field> BitwiseCheckConfig<F> {
                             offset, lhs, rhs, and, or, xor
                         );
 
-                        self.and[0].assign(&mut region, offset, lhs);
-                        self.and[1].assign(&mut region, offset, rhs);
-                        self.and[2].assign(&mut region, offset, and);
+                        self.inputs[0].assign(&mut region, offset, lhs);
+                        self.inputs[1].assign(&mut region, offset, rhs);
 
-                        self.or[0].assign(&mut region, offset, lhs);
-                        self.or[1].assign(&mut region, offset, rhs);
-                        self.or[2].assign(&mut region, offset, or);
+                        self.and[0].assign(&mut region, offset, and);
 
-                        self.xor[0].assign(&mut region, offset, lhs);
-                        self.xor[1].assign(&mut region, offset, rhs);
-                        self.xor[2].assign(&mut region, offset, xor);
+                        self.or[0].assign(&mut region, offset, or);
+
+                        self.xor[0].assign(&mut region, offset, xor);
 
                         offset += 1;
                     })
@@ -68,14 +67,14 @@ impl<F: Field> BitwiseCheckConfig<F> {
 
 impl<F: Field> BitwiseCheckLookup<F> for BitwiseCheckConfig<F> {
     fn lookup_and(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.and[0], self.and[1], self.and[2]].map(|v| v.current())
+        [self.inputs[0], self.inputs[1], self.and[0]].map(|v| v.current())
     }
 
     fn lookup_or(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.or[0], self.or[1], self.or[2]].map(|v| v.current())
+        [self.inputs[0], self.inputs[1], self.or[0]].map(|v| v.current())
     }
 
     fn lookup_xor(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.xor[0], self.xor[1], self.xor[2]].map(|v| v.current())
+        [self.inputs[0], self.inputs[1], self.xor[0]].map(|v| v.current())
     }
 }
