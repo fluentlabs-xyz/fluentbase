@@ -13,9 +13,9 @@ use std::marker::PhantomData;
 #[derive(Clone)]
 pub struct BitwiseCheckConfig<F: Field> {
     inputs: [FixedColumn; 2],
-    and: [FixedColumn; 1],
-    or: [FixedColumn; 1],
-    xor: [FixedColumn; 1],
+    and: FixedColumn,
+    or: FixedColumn,
+    xor: FixedColumn,
     _marker: PhantomData<F>,
 }
 
@@ -23,9 +23,9 @@ impl<F: Field> BitwiseCheckConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
             inputs: [0; 2].map(|v| FixedColumn(cs.fixed_column())),
-            and: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
-            or: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
-            xor: [0; 1].map(|v| FixedColumn(cs.fixed_column())),
+            and: FixedColumn(cs.fixed_column()),
+            or: FixedColumn(cs.fixed_column()),
+            xor: FixedColumn(cs.fixed_column()),
             _marker: Default::default(),
         }
     }
@@ -49,11 +49,11 @@ impl<F: Field> BitwiseCheckConfig<F> {
                         self.inputs[0].assign(&mut region, offset, lhs);
                         self.inputs[1].assign(&mut region, offset, rhs);
 
-                        self.and[0].assign(&mut region, offset, and);
+                        self.and.assign(&mut region, offset, and);
 
-                        self.or[0].assign(&mut region, offset, or);
+                        self.or.assign(&mut region, offset, or);
 
-                        self.xor[0].assign(&mut region, offset, xor);
+                        self.xor.assign(&mut region, offset, xor);
 
                         offset += 1;
                     })
@@ -67,14 +67,14 @@ impl<F: Field> BitwiseCheckConfig<F> {
 
 impl<F: Field> BitwiseCheckLookup<F> for BitwiseCheckConfig<F> {
     fn lookup_and(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.inputs[0], self.inputs[1], self.and[0]].map(|v| v.current())
+        [self.inputs[0], self.inputs[1], self.and].map(|v| v.current())
     }
 
     fn lookup_or(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.inputs[0], self.inputs[1], self.or[0]].map(|v| v.current())
+        [self.inputs[0], self.inputs[1], self.or].map(|v| v.current())
     }
 
     fn lookup_xor(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE] {
-        [self.inputs[0], self.inputs[1], self.xor[0]].map(|v| v.current())
+        [self.inputs[0], self.inputs[0], self.xor].map(|v| v.current())
     }
 }
