@@ -1243,7 +1243,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                     .and_then(|memory| memory.get(..n))
                     .ok_or(TrapCode::MemoryOutOfBounds)?;
                 data.copy_within(src_offset..src_offset.wrapping_add(n), dst_offset);
-                this.tracer.memory_change(dst_offset as u32, n as u32, data);
+                this.tracer.memory_change(
+                    dst_offset as u32,
+                    n as u32,
+                    &data[dst_offset..(dst_offset + n)],
+                );
                 Ok(())
             },
         )?;
