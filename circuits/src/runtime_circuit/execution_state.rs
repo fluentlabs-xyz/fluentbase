@@ -30,7 +30,7 @@ pub enum ExecutionState {
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
     WASM_BITWISE, // DONE
-    WASM_EXTEND,  // IN PROGRESS
+    WASM_EXTEND,  // DONE
 }
 
 impl ExecutionState {
