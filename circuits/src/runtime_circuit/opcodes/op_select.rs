@@ -1,11 +1,11 @@
 use crate::{
     constraint_builder::{AdviceColumn, ToExpr},
+    exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
     },
-    trace_step::{GadgetError, TraceStep},
     util::Field,
 };
 use halo2_proofs::circuit::Region;
@@ -65,7 +65,7 @@ impl<F: Field> ExecutionGadget<F> for OpSelectGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let val1 = trace.curr_nth_stack_value(2)?;
         let val2 = trace.curr_nth_stack_value(1)?;

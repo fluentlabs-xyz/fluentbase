@@ -4,7 +4,7 @@ use crate::{
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
-        opcodes::{ExecutionGadget, GadgetError, TraceStep},
+        opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     util::Field,
 };
@@ -79,7 +79,7 @@ impl<F: Field> ExecutionGadget<F> for OpLocalGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &TraceStep,
+        trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let (selector, value) = match trace.instr() {
             Instruction::LocalGet(index) => (

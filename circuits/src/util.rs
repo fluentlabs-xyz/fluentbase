@@ -29,16 +29,16 @@ impl Bit for Fr {
 }
 
 pub fn unroll_to_hash_input<F: FieldExt, const BYTES_IN_FIELD: usize, const INPUT_LEN: usize>(
-    code: impl ExactSizeIterator<Item = u8>,
+    input: impl ExactSizeIterator<Item = u8>,
 ) -> Vec<[F; INPUT_LEN]> {
-    let fl_cnt = code.len() / BYTES_IN_FIELD;
-    let fl_cnt = if code.len() % BYTES_IN_FIELD != 0 {
+    let fl_cnt = input.len() / BYTES_IN_FIELD;
+    let fl_cnt = if input.len() % BYTES_IN_FIELD != 0 {
         fl_cnt + 1
     } else {
         fl_cnt
     };
 
-    let (msgs, _) = code
+    let (msgs, _) = input
         .chain(std::iter::repeat(0))
         .take(fl_cnt * BYTES_IN_FIELD)
         .fold((Vec::new(), Vec::new()), |(mut msgs, mut cache), bt| {

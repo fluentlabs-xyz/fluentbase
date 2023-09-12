@@ -83,12 +83,16 @@ impl ImportFunc {
     pub fn new_env<'a>(
         module_name: String,
         fn_name: String,
-        index: u32,
+        index: u16,
         input: &'a [ValueType],
         output: &'a [ValueType],
     ) -> Self {
         let func_type = FuncType::new_with_refs(input, output);
-        Self::new(ImportFuncName(module_name, fn_name), index, func_type)
+        Self::new(
+            ImportFuncName(module_name, fn_name),
+            index as u32,
+            func_type,
+        )
     }
 
     pub fn import_name(&self) -> ImportName {

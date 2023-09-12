@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{FixedColumn, Query, ToExpr},
+    constraint_builder::{FixedColumn, Query},
     impl_expr,
     lookup_table::{FixedLookup, N_FIXED_LOOKUP_TABLE},
     util::Field,
@@ -30,6 +30,7 @@ pub enum FixedTableTag {
     BitwiseOr,
     BitwiseXor,
     Pow2,
+    Pow2UpTo10,
     OpRel,
     PopCnt,
     Clz,
@@ -96,6 +97,14 @@ impl FixedTableTag {
                     (F::from(0), F::from_u128(1 << (value - 128)))
                 };
                 [tag, F::from(value), pow_lo, pow_hi]
+            })),
+            Self::Pow2UpTo10 => Box::new((0..=10).map(move |value| {
+                [
+                    tag,
+                    F::from(value),
+                    F::from_u128(1_u128 << value),
+                    F::zero(),
+                ]
             })),
             // Self::PopCnt => Box::new((0..256).flat_map(move |lhs| {
             //     (0..256).map(move |rhs| {

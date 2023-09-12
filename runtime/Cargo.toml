@@ -11,4 +11,6 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
+strum = "0.25.0"
+strum_macros = "0.25.2"
 wat = "1.0.69"

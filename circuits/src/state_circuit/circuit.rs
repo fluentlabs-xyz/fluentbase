@@ -1,21 +1,20 @@
 use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
+    exec_step::ExecSteps,
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
     only_once,
+    rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
-        rw_row::{rw_rows_from_trace, RwRow},
         rw_table::RwTable,
         sort_keys::SortKeysConfig,
-        tag::{RwTableTag, N_RW_TABLE_TAG_BYTES},
     },
-    trace_step::TraceStep,
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::engine::{bytecode::Instruction, Tracer};
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -27,7 +26,7 @@ use std::marker::PhantomData;
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
     q_enable: SelectorColumn,
-    tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BYTES }>,
+    tag: BinaryNumberConfig<RwTableTag, { N_RW_TABLE_TAG_BITS }>,
     rw_table: RwTable<F>,
     sort_keys: SortKeysConfig<F>,
     lexicographic_ordering_config: LexicographicOrderingConfig,
@@ -126,15 +125,15 @@ impl<F: Field> StateCircuitConfig<F> {
         Ok(())
     }
 
-    pub fn print_rw_rows_table(&self, opcodes: Vec<(u32, Instruction)>, rw_rows: &Vec<RwRow>) {
+    pub fn print_rw_rows_table(&self, rw_rows: &Vec<RwRow>, rw_meta: Vec<(Instruction, u32)>) {
         only_once!();
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
             .map(|row| {
                 vec![
-                    opcodes[row.rw_counter()].0.cell().justify(Justify::Center),
-                    opcodes[row.rw_counter()].1.cell().justify(Justify::Center),
+                    rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
+                    rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
                     row.rw_counter().cell().justify(Justify::Center),
                     row.is_write().cell().justify(Justify::Center),
                     row.tag().cell().justify(Justify::Center),
@@ -162,21 +161,16 @@ impl<F: Field> StateCircuitConfig<F> {
         print_stdout(table).unwrap();
     }
 
-    pub fn assign(&self, layouter: &mut impl Layouter<F>, tracer: &Tracer) -> Result<(), Error> {
+    pub fn assign(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        exec_steps: &ExecSteps,
+    ) -> Result<(), Error> {
         layouter.assign_region(
-            || "runtime opcodes",
+            || "state runtime opcodes",
             |mut region| {
-                let mut rw_rows = Vec::new();
-                let mut opcodes_by_rwc = Vec::new();
-                for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-                    let step = TraceStep::new(trace.clone(), tracer.logs.get(i + 1).cloned());
-                    let rw_rows_len = rw_rows.len();
-                    rw_rows_from_trace(&mut rw_rows, &step, 0).unwrap();
-                    (0..(rw_rows.len() - rw_rows_len)).for_each(|_| {
-                        opcodes_by_rwc.push((trace.source_pc, trace.opcode.clone()));
-                    });
-                }
-                self.print_rw_rows_table(opcodes_by_rwc, &rw_rows);
+                let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -186,7 +180,6 @@ impl<F: Field> StateCircuitConfig<F> {
                     )
                 });
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
-                    // println!("rw_row {}: {:?}", offset, rw_row);
                     if offset > 0 {
                         self.assign_with_region(
                             &mut region,

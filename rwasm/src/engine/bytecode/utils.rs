@@ -6,9 +6,22 @@ use core::fmt::{self, Display};
 #[repr(transparent)]
 pub struct FuncIdx(u32);
 
+impl From<u16> for FuncIdx {
+    fn from(index: u16) -> Self {
+        Self(index as u32)
+    }
+}
 impl From<u32> for FuncIdx {
     fn from(index: u32) -> Self {
         Self(index)
+    }
+}
+impl From<i32> for FuncIdx {
+    fn from(index: i32) -> Self {
+        if index < 0 {
+            unreachable!("Only positive side allowed to create `FuncIdx` from i32");
+        }
+        Self(index as u32)
     }
 }
 

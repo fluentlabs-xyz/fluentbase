@@ -49,8 +49,13 @@ fn test_greeting() {
     let wasm_binary = include_bytes!("../examples/bin/greeting.wasm");
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let output =
-        Runtime::run_with_linker(rwasm_binary.as_slice(), &[100, 20, 3], &import_linker).unwrap();
+    let output = Runtime::run_with_linker(
+        rwasm_binary.as_slice(),
+        &[100, 20, 3],
+        &import_linker,
+        false,
+    )
+    .unwrap();
     assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
@@ -75,7 +80,7 @@ fn test_panic() {
     let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker);
+    let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false);
     assert_trap_i32_exit(result, Trap::i32_exit(1));
 }
 
@@ -85,6 +90,7 @@ fn test_translator() {
     let wasm_binary = include_bytes!("../examples/bin/translator.wasm");
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let result = Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker).unwrap();
+    let result =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
     println!("{:?}", result.data().output().clone());
 }
