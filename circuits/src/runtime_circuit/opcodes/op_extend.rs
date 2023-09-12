@@ -127,9 +127,9 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                 _ => unreachable!("configure: unsupported extend opcode {:?}", instr),
             };
             cb.if_rwasm_opcode(sel.0.clone(), *instr, |cb| {
-                let (sbi, rbs) = instr_meta(instr);
+                let (ibs, obs) = instr_meta(instr);
                 (0..LIMBS_COUNT).for_each(|i| {
-                    if i <= sbi {
+                    if i < ibs {
                         cb.condition(sel.clone().0, |cb| {
                             cb.require_equal(
                                 "p_bytes[0..sbi]+p_signs[i]*0b10000000=r_bytes[0..sbi]",
@@ -138,11 +138,11 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                                 r_bytes[i].current(),
                             );
                         });
-                    } else if i < rbs {
+                    } else if i < obs {
                         cb.condition(sel.clone().0, |cb| {
                             cb.require_equal(
                                 "p_signs(sbi)*0b11111111=r_bytes(sbi..rbs)",
-                                p_signs[sbi].current() * Query::from(0b11111111),
+                                p_signs[ibs - 1].current() * Query::from(0b11111111),
                                 r_bytes[i].current(),
                             );
                         });
@@ -327,14 +327,14 @@ mod test {
     }
 }
 
-type SignByteIndex = usize;
-type ResultBytesSize = usize;
-fn instr_meta(opcode: &Instruction) -> (SignByteIndex, ResultBytesSize) {
+type InputByteSize = usize;
+type OutputBytesSize = usize;
+fn instr_meta(opcode: &Instruction) -> (InputByteSize, OutputBytesSize) {
     match opcode {
-        Instruction::I32Extend8S => (0, 4),
-        Instruction::I64Extend8S => (0, 8),
-        Instruction::I32Extend16S => (1, 4),
-        Instruction::I64Extend16S => (1, 8),
+        Instruction::I32Extend8S => (1, 4),
+        Instruction::I64Extend8S => (1, 8),
+        Instruction::I32Extend16S => (2, 4),
+        Instruction::I64Extend16S => (2, 8),
         Instruction::I64Extend32S | Instruction::I64ExtendI32S | Instruction::I64ExtendI32U => {
             (4, 8)
         }
