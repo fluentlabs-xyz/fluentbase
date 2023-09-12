@@ -82,7 +82,7 @@ impl<F: Field> FluentbaseCircuitConfig<F> {
     ) -> Result<(), Error> {
         // load lookup tables
         self.range_check_table.load(layouter)?;
-        self.bitwise_check_table.load(layouter)?;
+        // self.bitwise_check_table.load(layouter)?;
         self.fixed_table.load(layouter)?;
         // assign bytecode
         self.poseidon_circuit_config
