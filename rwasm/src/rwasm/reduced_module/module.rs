@@ -149,7 +149,7 @@ impl ReducedModule {
         }
         // allocate default memory
         builder
-            .push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))
+            .push_default_memory(0, Some(MAX_MEMORY_PAGES))
             .unwrap();
         builder
             .push_export("memory".to_string().into_boxed_str(), MemoryIdx::from(0))

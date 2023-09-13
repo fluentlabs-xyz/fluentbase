@@ -138,7 +138,9 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
                     } else if i < obs {
                         cb.require_equal(
                             "p_signs[ibs-1)*0b11111111=r_bytes[ibs..rbs)",
-                            p_signs[ibs - 1].current() * Query::from(0b11111111),
+                            p_signs[ibs - 1].current()
+                                * Query::from(0b11111111)
+                                * (Query::one() - is_i64extend_i32u.current()),
                             r_bytes[i].current(),
                         );
                     } else {
@@ -214,112 +216,6 @@ impl<F: Field> ExecutionGadget<F> for OpExtendGadget<F> {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::runtime_circuit::testing::test_ok;
-    use fluentbase_rwasm::instruction_set;
-    use log::debug;
-    use rand::{thread_rng, Rng};
-
-    fn gen_params<const N: usize, const MAX_POSITIVE_VAL: i64>() -> [i64; N] {
-        let params =
-            [0; N].map(|i| thread_rng().gen_range(0..=MAX_POSITIVE_VAL * 2) - MAX_POSITIVE_VAL);
-        debug!("params {:?}", params);
-        params
-    }
-
-    // Instruction::I32Extend8S
-    #[test]
-    fn test_i32extend8s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(9 + 3 * 256); // 3*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I32Extend8S
-
-            Drop
-        });
-    }
-
-    // Instruction::I64Extend8S
-    #[test]
-    fn test_i64extend8s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(9 + 3 * 256); // 3*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I64Extend8S
-
-            Drop
-        });
-    }
-
-    // Instruction::I32Extend16S
-    #[test]
-    fn test_i32extend16s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(150 + 3 * 256 * 256); // 3*256*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I32Extend16S
-
-            Drop
-        });
-    }
-
-    // Instruction::I64Extend16S
-    #[test]
-    fn test_i64extend16s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(150 + 3 * 256 * 256); // 3*256*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I64Extend16S
-
-            Drop
-        });
-    }
-
-    // Instruction::I64Extend32S
-    #[test]
-    fn test_i64extend32s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(150 + 3 * 256 * 256 * 256); // 3*256*256*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I64Extend32S
-
-            Drop
-        });
-    }
-
-    // Instruction::I64ExtendI32S
-    #[test]
-    fn test_i64extend_i32s() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(150 + 3 * 256 * 256 * 256); // 3*256*256*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I64ExtendI32S
-
-            Drop
-        });
-    }
-
-    // Instruction::I64ExtendI32U
-    #[test]
-    fn test_i64extend_i32u() {
-        let [p] = gen_params::<1, 127>();
-        let p = -(150 + 3 * 256 * 256 * 256); // 3*256*256*256 must be dropped
-        test_ok(instruction_set! {
-            I64Const[p]
-            I64ExtendI32U
-
-            Drop
-        });
-    }
-}
-
 type InputByteSize = usize;
 type OutputBytesSize = usize;
 fn instr_meta(opcode: &Instruction) -> (InputByteSize, OutputBytesSize) {
@@ -332,5 +228,104 @@ fn instr_meta(opcode: &Instruction) -> (InputByteSize, OutputBytesSize) {
             (4, 8)
         }
         _ => unreachable!("sign_byte_index: unsupported extend opcode {:?}", opcode),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::runtime_circuit::testing::test_ok;
+    use fluentbase_rwasm::instruction_set;
+    use log::debug;
+    use rand::{thread_rng, Rng};
+
+    fn gen_params<const N: usize, const MAX_POSITIVE_VAL: i64>() -> [i64; N] {
+        let params = [0; N]
+            .map(|i| thread_rng().gen_range(0..=MAX_POSITIVE_VAL * 2 + 1) - MAX_POSITIVE_VAL - 1);
+        debug!("params {:?}", params);
+        params
+    }
+
+    // Instruction::I32Extend8S
+    #[test]
+    fn test_i32extend8s() {
+        let [p] = gen_params::<1, 0b1111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I32Extend8S
+
+            Drop
+        });
+    }
+
+    // Instruction::I64Extend8S
+    #[test]
+    fn test_i64extend8s() {
+        let [p] = gen_params::<1, 0b1111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I64Extend8S
+
+            Drop
+        });
+    }
+
+    // Instruction::I32Extend16S
+    #[test]
+    fn test_i32extend16s() {
+        let [p] = gen_params::<1, 0b111111111111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I32Extend16S
+
+            Drop
+        });
+    }
+
+    // Instruction::I64Extend16S
+    #[test]
+    fn test_i64extend16s() {
+        let [p] = gen_params::<1, 0b111111111111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I64Extend16S
+
+            Drop
+        });
+    }
+
+    // Instruction::I64Extend32S
+    #[test]
+    fn test_i64extend32s() {
+        let [p] = gen_params::<1, 0b1111111111111111111111111111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I64Extend32S
+
+            Drop
+        });
+    }
+
+    // Instruction::I64ExtendI32S
+    #[test]
+    fn test_i64extend_i32s() {
+        let [p] = gen_params::<1, 0b1111111111111111111111111111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I64ExtendI32S
+
+            Drop
+        });
+    }
+
+    // Instruction::I64ExtendI32U
+    #[test]
+    fn test_i64extend_i32u() {
+        let [p] = gen_params::<1, 0b1111111111111111111111111111111>();
+        test_ok(instruction_set! {
+            I64Const[p]
+            I64ExtendI32U
+
+            Drop
+        });
     }
 }

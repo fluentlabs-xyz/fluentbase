@@ -6,7 +6,6 @@ use fluentbase_rwasm::{
     Config,
     ExternRef,
     FuncRef,
-    Instance,
     Store,
     Value,
 };
