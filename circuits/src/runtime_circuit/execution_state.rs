@@ -32,6 +32,7 @@ pub enum ExecutionState {
     WASM_BITWISE, // DONE
     WASM_EXTEND,  // DONE
     WASM_MEMORY,
+    WASM_SHIFT,
 }
 
 impl ExecutionState {
@@ -63,6 +64,7 @@ impl ExecutionState {
             ExecutionState::WASM_BITWISE => 24,
             ExecutionState::WASM_EXTEND => 25,
             ExecutionState::WASM_MEMORY => 26,
+            ExecutionState::WASM_SHIFT => 27,
         }
     }
 
@@ -235,6 +237,14 @@ impl ExecutionState {
                 Instruction::MemoryGrow,
                 Instruction::MemoryFill,
                 Instruction::MemoryCopy,
+            ],
+            Self::WASM_SHIFT => vec![
+                Instruction::I32Shl,
+                Instruction::I64Shl,
+                Instruction::I32ShrS,
+                Instruction::I32ShrU,
+                Instruction::I64ShrS,
+                Instruction::I64ShrU,
             ],
             _ => vec![],
         }
