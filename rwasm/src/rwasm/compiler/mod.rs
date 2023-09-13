@@ -165,10 +165,12 @@ impl<'linker> Compiler<'linker> {
         if default_pages > MAX_MEMORY_PAGES {
             return Err(CompilerError::MemoryUsageTooBig);
         }
-        self.code_section.op_i32_const(default_pages);
-        self.code_section.op_memory_grow();
-        // we just drop error code because we know that init memory size is always less than max
-        self.code_section.op_drop();
+        if default_pages > 0 {
+            self.code_section.op_i32_const(default_pages);
+            self.code_section.op_memory_grow();
+            // we just drop error code because we know that init memory size is always less than max
+            self.code_section.op_drop();
+        }
         for memory in self.module.data_segments.iter() {
             let (offset, bytes) = Self::read_memory_segment(memory)?;
             self.code_section.add_memory(offset.to_bits() as u32, bytes);

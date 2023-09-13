@@ -2,7 +2,7 @@ use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
     common::{ValueType, F32, F64},
-    rwasm::{Compiler, CompilerError, DefaultImportHandler, ImportLinker, ReducedModule},
+    rwasm::{Compiler, DefaultImportHandler, ImportLinker, ReducedModule},
     Config,
     Engine,
     Extern,
@@ -169,9 +169,7 @@ impl TestContext<'_> {
         let mut config = Config::default();
         config.consume_fuel(false);
         let engine = Engine::new(&config);
-        let module2 = Module::new(&engine, wasm_binary.as_slice())
-            .map_err(|e| CompilerError::ModuleError(e))
-            .unwrap();
+        let module2 = Module::new(&engine, wasm_binary.as_slice())?;
         for elem in module2.exports() {
             let instance = self.compile_and_instantiate_method(&wasm_binary, elem.name())?;
             self.binaries
@@ -189,9 +187,7 @@ impl TestContext<'_> {
         let mut config = Config::default();
         config.consume_fuel(false);
         let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice())
-            .map_err(|e| CompilerError::ModuleError(e))
-            .unwrap();
+        let module = Module::new(&engine, wasm_binary.as_slice())?;
         let elem = module
             .exports()
             .find(|export| export.name() == fn_name)
@@ -304,7 +300,7 @@ impl TestContext<'_> {
     /// - If function invokation returned an error.
     pub fn invoke(
         &mut self,
-        module_name: Option<&str>,
+        _module_name: Option<&str>,
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
@@ -314,9 +310,6 @@ impl TestContext<'_> {
             .get_export(&self.store, "main")
             .and_then(Extern::into_func)
             .unwrap();
-        if func_name.eq("64_good5") && args.len() > 0 && args[0].i32().unwrap() == 65504 {
-            println!("stop")
-        }
         println!("testing {} with args {:?}", func_name, args);
         let len_results = func.ty(&self.store).results().len();
         self.results.clear();
