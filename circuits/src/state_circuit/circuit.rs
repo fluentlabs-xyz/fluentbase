@@ -14,7 +14,7 @@ use crate::{
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::engine::bytecode::Instruction;
+use fluentbase_rwasm::{common::UntypedValue, engine::bytecode::Instruction};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -130,7 +130,14 @@ impl<F: Field> StateCircuitConfig<F> {
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
-            .map(|row| {
+            .copied()
+            .enumerate()
+            .map(|(i, row)| {
+                let prev_value = if i > 0 {
+                    rw_rows.get(i - 1).unwrap().value()
+                } else {
+                    UntypedValue::default()
+                };
                 vec![
                     rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
                     rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
@@ -143,6 +150,7 @@ impl<F: Field> StateCircuitConfig<F> {
                         .cell()
                         .justify(Justify::Center),
                     row.value().to_bits().cell().justify(Justify::Center),
+                    prev_value.to_bits().cell().justify(Justify::Center),
                 ]
             })
             .collect_vec()
@@ -156,6 +164,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 "id".cell().bold(true),
                 "address".cell().bold(true),
                 "value".cell().bold(true),
+                "value_prev".cell().bold(true),
             ])
             .bold(true);
         print_stdout(table).unwrap();
