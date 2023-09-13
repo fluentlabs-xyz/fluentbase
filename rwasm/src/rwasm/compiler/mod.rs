@@ -270,7 +270,9 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        self.swap(num_inputs.len() as u32);
+        if !is_main {
+            self.swap(num_inputs.len() as u32);
+        }
 
         let func_body = self
             .module
