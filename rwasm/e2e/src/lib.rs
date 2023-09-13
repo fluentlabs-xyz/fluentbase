@@ -90,8 +90,8 @@ define_spec_tests! {
     let config = make_config();
     let runner = run::run_wasm_spec_test;
 
-    fn wasm_address("address");
-    // fn wasm_align("align");
+    // fn wasm_address("address");
+    fn wasm_align("align");
     // fn wasm_binary_leb128("binary-leb128");
     // fn wasm_binary("binary");
     // fn wasm_block("block");
