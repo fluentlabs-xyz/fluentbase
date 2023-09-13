@@ -110,6 +110,7 @@ impl Tracer {
             code: meta.opcode(),
             index: meta.index(),
         };
+        println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());
     }
 
