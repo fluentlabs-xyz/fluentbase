@@ -6,12 +6,13 @@ use crate::{
         code_map::InstructionPtr,
         DropKeep,
     },
-    module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
+    module::{ConstExpr, DataSegment, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         compiler::drop_keep::DropKeepWithReturnParam,
         instruction_set::InstructionSet,
         ImportLinker,
+        MAX_MEMORY_PAGES,
     },
     Config,
     Engine,
@@ -32,6 +33,7 @@ pub enum CompilerError {
     BinaryFormat(BinaryFormatError),
     NotSupportedImport,
     UnknownImport(ImportName),
+    MemoryUsageTooBig,
     DropKeepOutOfBounds,
 }
 
@@ -115,25 +117,46 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
+    fn read_memory_segment<'a>(
+        memory: &DataSegment,
+    ) -> Result<(UntypedValue, &[u8]), CompilerError> {
+        match memory.kind() {
+            DataSegmentKind::Active(seg) => {
+                let data_offset = seg
+                    .offset()
+                    .eval_const()
+                    .ok_or(CompilerError::NotSupported("can't eval offset"))?;
+                if seg.memory_index().into_u32() != 0 {
+                    return Err(CompilerError::NotSupported("not zero index"));
+                }
+                Ok((data_offset, memory.bytes()))
+            }
+            DataSegmentKind::Passive => {
+                Err(CompilerError::NotSupported("passive mode is not supported"))
+            }
+        }
+    }
+
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
+        let mut init_memory = 0;
         for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = match memory.kind() {
-                DataSegmentKind::Active(seg) => {
-                    let data_offset = seg
-                        .offset()
-                        .eval_const()
-                        .ok_or(CompilerError::NotSupported("can't eval offset"))?;
-                    if seg.memory_index().into_u32() != 0 {
-                        return Err(CompilerError::NotSupported("not zero index"));
-                    }
-                    (data_offset, memory.bytes())
-                }
-                DataSegmentKind::Passive => {
-                    return Err(CompilerError::NotSupported("passive mode is not supported"));
-                }
-            };
-            let offset = offset.to_bits() as u32;
-            self.code_section.add_memory(offset, bytes);
+            let (offset, bytes) = Self::read_memory_segment(memory)?;
+            init_memory += offset.to_bits() as u32 + bytes.len() as u32;
+        }
+        const PAGE_SIZE: u32 = 65536;
+        let default_pages = (init_memory + PAGE_SIZE - 1) / PAGE_SIZE;
+        if default_pages > MAX_MEMORY_PAGES {
+            return Err(CompilerError::MemoryUsageTooBig);
+        }
+        if default_pages > 0 {
+            self.code_section.op_i32_const(default_pages);
+            self.code_section.op_memory_grow();
+            // we just drop error code because we know that init memory size is always less than max
+            self.code_section.op_drop();
+        }
+        for memory in self.module.data_segments.iter() {
+            let (offset, bytes) = Self::read_memory_segment(memory)?;
+            self.code_section.add_memory(offset.to_bits() as u32, bytes);
         }
         Ok(())
     }
