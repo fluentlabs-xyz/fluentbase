@@ -45,6 +45,9 @@ lto = true
 opt-level = 'z'
 #strip = true
 
+[profile.dev]
+crate-type = "dylib"
+
 #[profile.release]
 #opt-level = 1
 #debug = false

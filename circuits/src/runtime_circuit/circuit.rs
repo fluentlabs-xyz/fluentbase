@@ -14,6 +14,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
+            op_bin_shift::OpShiftGadget,
             op_bitwise::OpBitwiseGadget,
             op_break::OpBreakGadget,
             op_call::OpCallGadget,
@@ -75,6 +76,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     table_size_gadget: ExecutionContextGadget<F, OpTableSizeGadget<F>>,
     bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     extend_gadget: ExecutionContextGadget<F, OpExtendGadget<F>>,
+    shift_gadget: ExecutionContextGadget<F, OpShiftGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
@@ -135,6 +137,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             table_size_gadget: configure_gadget!(),
             bitwise_gadget: configure_gadget!(),
             extend_gadget: configure_gadget!(),
+            shift_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -233,6 +236,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
 
             ExecutionState::WASM_EXTEND => {
                 self.extend_gadget.assign(region, offset, step, rw_counter)
+            }
+
+            ExecutionState::WASM_SHIFT => {
+                self.shift_gadget.assign(region, offset, step, rw_counter)
             }
 
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
