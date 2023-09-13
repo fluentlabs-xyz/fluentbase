@@ -2,7 +2,7 @@ use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
     exec_step::ExecSteps,
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
-    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
+    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE, N_RW_PREV_LOOKUP_TABLE},
     only_once,
     rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
@@ -217,6 +217,19 @@ impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
             self.rw_table.id.current(),
             self.rw_table.address.current(),
             self.rw_table.value.current(),
+        ]
+    }
+
+    fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE] {
+        [
+            self.q_enable.current().0,
+            self.rw_table.rw_counter.current(),
+            self.rw_table.is_write.current(),
+            self.rw_table.tag.current(),
+            self.rw_table.id.current(),
+            self.rw_table.address.current(),
+            self.rw_table.value.current(),
+            self.rw_table.value_prev.current(),
         ]
     }
 }
