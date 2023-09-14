@@ -34,8 +34,7 @@ impl RuntimeContext {
     }
 
     pub(crate) fn return_data(&mut self, value: &[u8]) {
-        self.output.resize(value.len(), 0);
-        self.output.copy_from_slice(value);
+        self.output.extend(value);
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -102,7 +101,7 @@ impl Runtime {
             "env".to_string(),
             "_sys_write".to_string(),
             SysFuncIdx::IMPORT_SYS_WRITE as u16,
-            &[ValueType::I32; 3],
+            &[ValueType::I32; 2],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
@@ -160,6 +159,7 @@ impl Runtime {
 
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
+        forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());

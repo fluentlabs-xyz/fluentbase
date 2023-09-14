@@ -159,7 +159,7 @@ impl Instruction {
             Instruction::TableGrow(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
-                //stack_ops.push(RwOp::TableSizeWrite(table_idx.to_u32()));
+                stack_ops.push(RwOp::TableSizeWrite(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::TableFill(_) => {

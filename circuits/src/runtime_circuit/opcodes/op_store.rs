@@ -77,8 +77,8 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             .map(|v| v.current().0),
         );
 
-        let mut constrain_instr = |selector: Query<F>, instr: &Instruction| {
-            cb.if_rwasm_opcode(selector, *instr, |cb| {
+        let mut constrain_instr = |sel: Query<F>, instr: &Instruction| {
+            cb.if_rwasm_opcode(sel, *instr, |cb| {
                 let instr_byte_len = Instruction::store_instr_meta(instr);
                 let mut value_reconstructed = Query::zero();
                 for i in 0..instr_byte_len {
