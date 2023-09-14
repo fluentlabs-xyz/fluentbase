@@ -17,6 +17,7 @@ use std::marker::PhantomData;
 pub struct OpMemoryGadget<F: Field> {
     is_memory_copy: FixedColumn,
     is_memory_fill: FixedColumn,
+    is_memory_grow: FixedColumn,
     dest: AdviceColumn,
     source: AdviceColumn,
     len: AdviceColumn,
@@ -30,6 +31,7 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let is_memory_copy = cb.query_fixed();
         let is_memory_fill = cb.query_fixed();
+        let is_memory_grow = cb.query_fixed();
 
         let dest = cb.query_cell();
         let source = cb.query_cell();
@@ -39,7 +41,11 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
         cb.stack_pop(source.current());
         cb.stack_pop(dest.current());
 
-        cb.require_exactly_one_selector([is_memory_copy.current(), is_memory_fill.current()]);
+        cb.require_exactly_one_selector([
+            is_memory_copy.current(),
+            is_memory_fill.current(),
+            is_memory_grow.current(),
+        ]);
 
         cb.if_rwasm_opcode(is_memory_copy.current(), Instruction::MemoryCopy, |cb| {
             cb.copy_lookup(
@@ -53,6 +59,7 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
         Self {
             is_memory_copy,
             is_memory_fill,
+            is_memory_grow,
             dest,
             source,
             len,
@@ -69,18 +76,21 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
         match trace.instr() {
             Instruction::MemoryCopy => {
                 self.is_memory_copy.assign(region, offset, 1u64);
+                let len = trace.curr_nth_stack_value(0)?;
+                let source = trace.curr_nth_stack_value(1)?;
+                let dest = trace.curr_nth_stack_value(2)?;
+                self.len.assign(region, offset, len.as_u64());
+                self.source.assign(region, offset, source.as_u64());
+                self.dest.assign(region, offset, dest.as_u64());
             }
             Instruction::MemoryFill => {
                 self.is_memory_fill.assign(region, offset, 1u64);
             }
+            Instruction::MemoryGrow => {
+                self.is_memory_grow.assign(region, offset, 1u64);
+            }
             _ => unreachable!("illegal opcode place {:?}", trace.instr()),
         }
-        let len = trace.curr_nth_stack_value(0)?;
-        let source = trace.curr_nth_stack_value(1)?;
-        let dest = trace.curr_nth_stack_value(2)?;
-        self.len.assign(region, offset, len.as_u64());
-        self.source.assign(region, offset, source.as_u64());
-        self.dest.assign(region, offset, dest.as_u64());
         Ok(())
     }
 }

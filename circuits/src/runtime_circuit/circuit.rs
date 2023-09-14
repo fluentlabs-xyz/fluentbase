@@ -25,6 +25,7 @@ use crate::{
             op_global::OpGlobalGadget,
             op_load::OpLoadGadget,
             op_local::OpLocalGadget,
+            op_memory::OpMemoryGadget,
             op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
             op_store::OpStoreGadget,
@@ -77,6 +78,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     extend_gadget: ExecutionContextGadget<F, OpExtendGadget<F>>,
     shift_gadget: ExecutionContextGadget<F, OpShiftGadget<F>>,
+    memory_gadget: ExecutionContextGadget<F, OpMemoryGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
@@ -138,6 +140,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             bitwise_gadget: configure_gadget!(),
             extend_gadget: configure_gadget!(),
             shift_gadget: configure_gadget!(),
+            memory_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -229,17 +232,19 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_TABLE_SIZE => self
                 .table_size_gadget
                 .assign(region, offset, step, rw_counter),
-
             ExecutionState::WASM_BITWISE => {
                 self.bitwise_gadget.assign(region, offset, step, rw_counter)
             }
-
             ExecutionState::WASM_EXTEND => {
                 self.extend_gadget.assign(region, offset, step, rw_counter)
             }
 
             ExecutionState::WASM_SHIFT => {
                 self.shift_gadget.assign(region, offset, step, rw_counter)
+            }
+
+            ExecutionState::WASM_MEMORY => {
+                self.memory_gadget.assign(region, offset, step, rw_counter)
             }
 
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
