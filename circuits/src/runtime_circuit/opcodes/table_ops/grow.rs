@@ -32,9 +32,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         let grow_val = cb.query_cell();
         let res_val = cb.query_cell();
         cb.require_opcode(Instruction::TableGrow(Default::default()));
-        cb.stack_pop(init_val.current());
         cb.stack_pop(grow_val.current());
-        //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
+        cb.stack_pop(init_val.current());
+        cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
         cb.stack_push(res_val.current());
         Self {
             table_index,
@@ -54,8 +54,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         let (table_index, init_val, grow_val, res_val) = match trace.instr() {
             Instruction::TableGrow(ti) => (
                 ti,
-                trace.curr_nth_stack_value(0)?,
                 trace.curr_nth_stack_value(1)?,
+                trace.curr_nth_stack_value(0)?,
                 trace.next_nth_stack_value(0)?,
             ),
             _ => bail_illegal_opcode!(trace),
@@ -86,4 +86,21 @@ mod test {
             Drop
         });
     }
+
+/*
+    #[test]
+    fn table_grow_two_times() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+        });
+    }
+*/
+
 }

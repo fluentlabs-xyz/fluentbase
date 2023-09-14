@@ -95,7 +95,7 @@ impl RwRow {
 
     pub fn prev_value(&self) -> Option<UntypedValue> {
         match self {
-            Self::Table { prev_value, .. } => Some(UntypedValue::from(*prev_value)),
+            //Self::Table { prev_value, .. } => Some(UntypedValue::from(*prev_value)),
             _ => None,
         }
     }

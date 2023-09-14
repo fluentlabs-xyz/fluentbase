@@ -136,14 +136,16 @@ pub fn build_table_size_write_rw_ops(
     table_idx: u32,
 ) -> Result<(), GadgetError> {
     let table_size = step.read_table_size(table_idx);
-    let grow = step.curr_nth_stack_value(1)?;
+    let grow = step.curr_nth_stack_value(0)?;
+    println!("DEBUG grow {:#?}", grow);
     step.rw_rows.push(RwRow::Table {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
         address: (table_idx * 1024) as u64,
         value: (table_size as u32 + grow.as_u32()) as u64,
-        prev_value: table_size as u64,
+        //prev_value: table_size as u64,
+        prev_value: 0,
     });
     Ok(())
 }
