@@ -1,5 +1,6 @@
 use super::{bytecode::BranchOffset, const_pool::ConstRef, CompiledFunc, ConstPoolView};
 use crate::{
+    arena::ArenaIndex,
     common::{Pages, TrapCode, UntypedValue},
     engine::{
         bytecode::{
@@ -858,14 +859,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         kind: CallKind,
     ) -> Result<CallOutcome, TrapCode> {
         let table = self.cache.get_table(self.ctx, table);
-        let func = if let Some(func_type) = func_type {
-            let funcref = self
-                .ctx
-                .resolve_table(&table)
-                .get_untyped(func_index)
-                .map(FuncRef::from)
-                .ok_or(TrapCode::TableOutOfBounds)?;
-            let func = funcref.func().ok_or(TrapCode::IndirectCallToNull)?;
+        let funcref = self
+            .ctx
+            .resolve_table(&table)
+            .get_untyped(func_index)
+            .map(FuncRef::from)
+            .ok_or(TrapCode::TableOutOfBounds)?;
+        let func = funcref.func().ok_or(TrapCode::IndirectCallToNull)?;
+        if let Some(func_type) = func_type {
             let actual_signature = self.ctx.resolve_func(func).ty_dedup();
             let expected_signature = self
                 .ctx
@@ -877,11 +878,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             if actual_signature != expected_signature {
                 return Err(TrapCode::BadSignature).map_err(Into::into);
             }
-            *func
-        } else {
-            self.cache.get_func(self.ctx, FuncIdx::from(func_index))
-        };
-        self.call_func(skip, &func, kind, func_index)
+        }
+        let func_index = self.ctx.unwrap_stored(func.as_inner());
+        self.call_func(skip, &func, kind, func_index.into_usize() as u32)
     }
 }
 
