@@ -19,7 +19,7 @@ use crate::{
         ConstRef,
         DropKeep,
     },
-    rwasm::{BinaryFormat, BinaryFormatWriter},
+    rwasm::{BinaryFormat, BinaryFormatWriter, N_BYTES_PER_MEMORY_PAGE, N_MAX_MEMORY_PAGES},
 };
 use alloc::{slice::SliceIndex, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
@@ -30,7 +30,8 @@ pub struct InstructionSet {
     pub metas: Option<Vec<InstrMeta>>,
     // translate state
     total_locals: Vec<usize>,
-    init_memory: u32,
+    init_memory_size: u32,
+    init_memory_pages: u32,
 }
 
 impl Into<Vec<u8>> for InstructionSet {
@@ -73,7 +74,8 @@ impl From<Vec<Instruction>> for InstructionSet {
             instr: value,
             metas: None,
             total_locals: vec![],
-            init_memory: 0,
+            init_memory_size: 0,
+            init_memory_pages: 0,
         }
     }
 }
@@ -102,13 +104,20 @@ impl InstructionSet {
         opcode_pos
     }
 
-    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) {
-        if bytes.len() > 0 {
-            self.op_i32_const(1);
+    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
+        // make sure we have enough allocated memory
+        let new_size = self.init_memory_size + bytes.len() as u32;
+        let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
+        if total_pages > N_MAX_MEMORY_PAGES {
+            return false;
+        } else if total_pages > self.init_memory_pages {
+            self.op_i32_const(total_pages - self.init_memory_pages);
             self.op_memory_grow();
             self.op_drop();
-            self.init_memory += bytes.len() as u32;
         }
+        self.init_memory_size += bytes.len() as u32;
+        self.init_memory_pages = total_pages;
+        // translate input bytes
         [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
             let mut it = bytes.chunks_exact(chunk_size);
             while let Some(chunk) = it.next() {
@@ -132,6 +141,7 @@ impl InstructionSet {
             }
             bytes = it.remainder();
         });
+        return true;
     }
 
     pub fn propagate_locals(&mut self, n: usize) {

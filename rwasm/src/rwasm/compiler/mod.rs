@@ -12,7 +12,6 @@ use crate::{
         compiler::drop_keep::DropKeepWithReturnParam,
         instruction_set::InstructionSet,
         ImportLinker,
-        MAX_MEMORY_PAGES,
     },
     Config,
     Engine,
@@ -20,7 +19,6 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
-use std::collections::HashSet;
 
 mod drop_keep;
 
@@ -47,9 +45,10 @@ pub struct Compiler<'linker> {
     module: Module,
     // translation state
     pub(crate) code_section: InstructionSet,
-    function_mapping: BTreeMap<u32, u32>,
+    // mapping from function index to its position inside code section
+    function_beginning: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
-    function_dependencies: HashSet<u32>,
+    // for automatic translation
     is_translated: bool,
 }
 
@@ -71,9 +70,8 @@ impl<'linker> Compiler<'linker> {
             engine,
             module,
             code_section: InstructionSet::new(),
-            function_mapping: BTreeMap::new(),
+            function_beginning: BTreeMap::new(),
             import_linker,
-            function_dependencies: HashSet::new(),
             is_translated: false,
         })
     }
@@ -120,9 +118,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn read_memory_segment<'a>(
-        memory: &DataSegment,
-    ) -> Result<(UntypedValue, &[u8]), CompilerError> {
+    fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
         match memory.kind() {
             DataSegmentKind::Active(seg) => {
                 let data_offset = seg
@@ -141,16 +137,6 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
-        let mut init_memory = 0;
-        for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = Self::read_memory_segment(memory)?;
-            init_memory += offset.to_bits() as u32 + bytes.len() as u32;
-        }
-        const PAGE_SIZE: u32 = 65536;
-        let default_pages = (init_memory + PAGE_SIZE - 1) / PAGE_SIZE;
-        if default_pages > MAX_MEMORY_PAGES {
-            return Err(CompilerError::MemoryUsageTooBig);
-        }
         for memory in self.module.data_segments.iter() {
             let (offset, bytes) = Self::read_memory_segment(memory)?;
             self.code_section.add_memory(offset.to_bits() as u32, bytes);
@@ -287,11 +273,13 @@ impl<'linker> Compiler<'linker> {
         });
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
+        let mut offset = 0;
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr, is_main)?;
+            self.translate_opcode(&mut instr_ptr, is_main, offset)?;
+            offset += 1;
         }
         // remember function offset in the mapping
-        self.function_mapping.insert(fn_index, beginning_offset);
+        self.function_beginning.insert(fn_index, beginning_offset);
         Ok(())
     }
 
@@ -317,6 +305,7 @@ impl<'linker> Compiler<'linker> {
         &mut self,
         instr_ptr: &mut InstructionPtr,
         is_main: bool,
+        _offset: usize,
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
@@ -325,6 +314,9 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
+            // WI::BrIfNez(branch_offset) => {
+            //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
+            // }
             WI::BrAdjustIfNez(branch_offset) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
@@ -342,7 +334,6 @@ impl<'linker> Compiler<'linker> {
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return();
-                self.function_dependencies.insert(func_idx.to_u32());
             }
             WI::ReturnCall(_func) => {
                 // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
@@ -382,7 +373,6 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
-                self.function_dependencies.insert(func_idx.to_u32());
             }
             WI::CallIndirect(_) => {
                 let table_idx = Self::extract_table(instr_ptr);
@@ -433,7 +423,7 @@ impl<'linker> Compiler<'linker> {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
-                        self.function_mapping[&func.to_u32()] as i32 - i as i32,
+                        self.function_beginning[&func.to_u32()] as i32 - i as i32,
                     ));
                 }
                 _ => {}
@@ -462,7 +452,7 @@ impl<'linker> Compiler<'linker> {
             match code {
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
                     let func_offset = self
-                        .function_mapping
+                        .function_beginning
                         .get(&func.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
@@ -471,7 +461,7 @@ impl<'linker> Compiler<'linker> {
                 }
                 Instruction::RefFunc(func_idx) => {
                     let func_offset = self
-                        .function_mapping
+                        .function_beginning
                         .get(&func_idx.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
