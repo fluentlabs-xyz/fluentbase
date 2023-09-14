@@ -304,6 +304,9 @@ impl TestContext<'_> {
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
+        if func_name == "as-block-first" {
+            println!("{}", func_name)
+        }
         let wasm_binary = self.binaries.get(&func_name.to_string()).unwrap().clone();
         let instance = self.compile_and_instantiate_method(&wasm_binary, func_name)?;
         let func = instance
