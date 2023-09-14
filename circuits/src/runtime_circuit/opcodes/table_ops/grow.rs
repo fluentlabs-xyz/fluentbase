@@ -87,9 +87,8 @@ mod test {
         });
     }
 
-/*
     #[test]
-    fn table_grow_two_times() {
+    fn table_two_times_grow() {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(2)
@@ -101,6 +100,5 @@ mod test {
             Drop
         });
     }
-*/
 
 }

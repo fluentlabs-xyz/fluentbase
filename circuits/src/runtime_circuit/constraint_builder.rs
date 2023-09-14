@@ -367,7 +367,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         prev_value: Query<F>,
     ) {
         self.op_lookups
-            .push(LookupTable::Rw(self.base.apply_lookup_condition([
+            .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
                 Query::one(),
                 self.state_transition.rw_counter(),
                 is_write,
@@ -375,6 +375,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 Query::zero(),
                 address,
                 value,
+                prev_value,
             ])));
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
@@ -477,6 +478,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "rw_lookup(rw_counter,is_write,tag,id,address,value)",
                         fields.clone(),
                         rw_lookup.lookup_rw_table(),
+                    );
+                }
+                LookupTable::RwPrev(fields) => {
+                    self.base.add_lookup(
+                        "rw_lookup_with_prev(rw_counter,is_write,tag,id,address,value)",
+                        fields.clone(),
+                        rw_lookup.lookup_rw_prev_table(),
                     );
                 }
                 LookupTable::ResponsibleOpcode(fields) => {
