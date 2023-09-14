@@ -30,6 +30,7 @@ pub struct InstructionSet {
     pub metas: Option<Vec<InstrMeta>>,
     // translate state
     total_locals: Vec<usize>,
+    init_memory: u32,
 }
 
 impl Into<Vec<u8>> for InstructionSet {
@@ -72,6 +73,7 @@ impl From<Vec<Instruction>> for InstructionSet {
             instr: value,
             metas: None,
             total_locals: vec![],
+            init_memory: 0,
         }
     }
 }
@@ -101,6 +103,12 @@ impl InstructionSet {
     }
 
     pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) {
+        if bytes.len() > 0 {
+            self.op_i32_const(1);
+            self.op_memory_grow();
+            self.op_drop();
+            self.init_memory += bytes.len() as u32;
+        }
         [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
             let mut it = bytes.chunks_exact(chunk_size);
             while let Some(chunk) = it.next() {
