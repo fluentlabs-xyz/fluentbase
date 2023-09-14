@@ -308,7 +308,7 @@ impl StoreInner {
     /// # Panics
     ///
     /// If the [`Stored<Idx>`] does not originate from this [`Store`].
-    fn unwrap_stored<Idx>(&self, stored: &Stored<Idx>) -> Idx
+    pub(crate) fn unwrap_stored<Idx>(&self, stored: &Stored<Idx>) -> Idx
     where
         Idx: ArenaIndex + Debug,
     {
