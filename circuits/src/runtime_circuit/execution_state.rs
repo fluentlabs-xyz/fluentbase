@@ -10,18 +10,18 @@ pub enum ExecutionState {
     WASM_BREAK,
     WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
-    WASM_CONST,      // DONE
+    WASM_CONST, // DONE
     WASM_REFFUNC,
     WASM_CONVERSION, // DONE
     WASM_DROP,       // DONE
     WASM_GLOBAL,     // DONE
-    WASM_LOAD,
-    WASM_LOCAL,  // DONE
-    WASM_REL,    // DONE
-    WASM_SELECT, // DONE
-    WASM_STORE,  // DONE
-    WASM_TEST,   // DONE
-    WASM_UNARY,  // DONE
+    WASM_LOAD,       // DONE
+    WASM_LOCAL,      // DONE
+    WASM_REL,        // DONE
+    WASM_SELECT,     // DONE
+    WASM_STORE,      // DONE
+    WASM_TEST,       // DONE
+    WASM_UNARY,      // DONE
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -29,6 +29,9 @@ pub enum ExecutionState {
     WASM_TABLE_GET,
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
+    WASM_BITWISE, // DONE
+    WASM_EXTEND,  // DONE
+    WASM_MEMORY,
 }
 
 impl ExecutionState {
@@ -57,6 +60,9 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_INIT => 21,
             ExecutionState::WASM_TABLE_SET => 22,
             ExecutionState::WASM_TABLE_SIZE => 23,
+            ExecutionState::WASM_BITWISE => 24,
+            ExecutionState::WASM_EXTEND => 25,
+            ExecutionState::WASM_MEMORY => 26,
         }
     }
 
@@ -160,8 +166,8 @@ impl ExecutionState {
             ],
             Self::WASM_CONVERSION => vec![
                 Instruction::I32WrapI64,
-                Instruction::I64ExtendI32U,
-                Instruction::I64ExtendI32S,
+                // Instruction::I64ExtendI32U,
+                // Instruction::I64ExtendI32S,
             ],
             Self::WASM_GLOBAL => vec![
                 Instruction::GlobalGet(Default::default()),
@@ -188,14 +194,14 @@ impl ExecutionState {
                 Instruction::I64Store8(Default::default()),
                 Instruction::I64Store16(Default::default()),
                 Instruction::I64Store32(Default::default()),
-                Instruction::F32Store(Default::default()),
-                Instruction::F64Store(Default::default()),
+                // Instruction::F32Store(Default::default()),
+                // Instruction::F64Store(Default::default()),
             ],
             Self::WASM_LOAD => vec![
                 Instruction::I32Load(Default::default()),
                 Instruction::I64Load(Default::default()),
-                Instruction::F32Load(Default::default()),
-                Instruction::F64Load(Default::default()),
+                // Instruction::F32Load(Default::default()),
+                // Instruction::F64Load(Default::default()),
                 Instruction::I32Load8S(Default::default()),
                 Instruction::I32Load8U(Default::default()),
                 Instruction::I32Load16S(Default::default()),
@@ -206,6 +212,29 @@ impl ExecutionState {
                 Instruction::I64Load16U(Default::default()),
                 Instruction::I64Load32S(Default::default()),
                 Instruction::I64Load32U(Default::default()),
+            ],
+            Self::WASM_BITWISE => vec![
+                Instruction::I32And,
+                Instruction::I64And,
+                Instruction::I32Or,
+                Instruction::I64Or,
+                Instruction::I32Xor,
+                Instruction::I64Xor,
+            ],
+            Self::WASM_EXTEND => vec![
+                Instruction::I32Extend8S,
+                Instruction::I32Extend16S,
+                Instruction::I64Extend8S,
+                Instruction::I64Extend16S,
+                Instruction::I64Extend32S,
+                Instruction::I64ExtendI32S,
+                Instruction::I64ExtendI32U,
+            ],
+            Self::WASM_MEMORY => vec![
+                Instruction::MemorySize,
+                Instruction::MemoryGrow,
+                Instruction::MemoryFill,
+                Instruction::MemoryCopy,
             ],
             _ => vec![],
         }
@@ -221,18 +250,32 @@ mod test {
 
     #[test]
     fn calc_opcode_coverage() {
-        let mut used_opcodes: HashMap<Instruction, usize> =
-            Instruction::iter().map(|instr| (instr, 0usize)).collect();
+        let mut used_opcodes: HashMap<Instruction, usize> = Instruction::iter()
+            .filter(|instr| {
+                let opcode_str = format!("{:?}", instr);
+                if opcode_str.contains("F32") || opcode_str.contains("F64") {
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|instr| (instr, 0usize))
+            .collect();
         let mut total_used = 0usize;
         for state in ExecutionState::iter() {
             for opcode in state.responsible_opcodes() {
-                let used_opcode = used_opcodes.get_mut(&opcode).unwrap();
+                let used_opcode = used_opcodes.get_mut(&opcode);
+                if used_opcode.is_none() {
+                    panic!("opcode is filtered: {:?}", opcode)
+                }
+                let used_opcode = used_opcode.unwrap();
                 if *used_opcode == 1 {
                     panic!(
                         "opcode ({:?}) is used more than 1 time, its not allowed",
                         opcode
                     )
                 }
+                let opcode_str = format!("{:?}", opcode);
                 *used_opcode += 1;
                 total_used += 1;
             }
@@ -241,6 +284,12 @@ mod test {
         println!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
-        )
+        );
+        println!("\n not implemented opcodes:");
+        for (opcode, used) in used_opcodes.iter() {
+            if *used == 0 {
+                println!("- {:?}", opcode)
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 use crate::{
     constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
     lookup_table::{
+        BitwiseCheckLookup,
         CopyLookup,
         FixedLookup,
         PublicInputLookup,
@@ -18,7 +19,7 @@ use crate::{
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
 #[derive(Clone)]
-pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
+pub struct ExecutionContextGadget<F: Field, G: ExecutionGadget<F>> {
     gadget: G,
     q_enable: SelectorColumn,
     pc: AdviceColumn,
@@ -28,7 +29,7 @@ pub struct ExecutionGadgetRow<F: Field, G: ExecutionGadget<F>> {
     affects_pc: FixedColumn,
 }
 
-impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
+impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
     pub fn configure(
         cs: &mut ConstraintSystem<F>,
         rwasm_lookup: &impl RwasmLookup<F>,
@@ -38,6 +39,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
         copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let q_enable = SelectorColumn(cs.fixed_column());
         // we store register states in state transition gadget
@@ -66,8 +68,9 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionGadgetRow<F, G> {
             fixed_lookup,
             public_input_lookup,
             copy_lookup,
+            bitwise_check_lookup,
         );
-        ExecutionGadgetRow {
+        ExecutionContextGadget {
             gadget: gadget_config,
             pc,
             opcode,

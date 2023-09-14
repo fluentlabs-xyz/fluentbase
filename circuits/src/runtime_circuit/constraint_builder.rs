@@ -89,7 +89,7 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
 }
 
 use crate::{
-    lookup_table::CopyLookup,
+    lookup_table::{BitwiseCheckLookup, CopyLookup},
     rw_builder::{copy_row::CopyTableTag, rw_row::RwTableTag},
 };
 use Query as Q;
@@ -160,6 +160,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_selector(&mut self) -> SelectorColumn {
         SelectorColumn(self.base.fixed_column(self.cs).0)
+    }
+
+    pub fn query_selectors<const N: usize>(&mut self) -> [SelectorColumn; N] {
+        [0; N].map(|v| SelectorColumn(self.base.fixed_column(self.cs).0))
     }
 
     pub fn query_fixed(&mut self) -> FixedColumn {
@@ -340,7 +344,18 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         address: Query<F>,
         value: Query<F>,
     ) {
-        self.rw_lookup_with_prev(is_write, tag, address, value, Query::<F>::zero());
+        self.op_lookups
+            .push(LookupTable::Rw(self.base.apply_lookup_condition([
+                Query::one(),
+                self.state_transition.rw_counter(),
+                is_write,
+                tag,
+                Query::zero(),
+                address,
+                value,
+            ])));
+        self.state_transition.rw_counter_offset =
+            self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
 
     pub fn rw_lookup_with_prev(
@@ -357,7 +372,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 self.state_transition.rw_counter(),
                 is_write,
                 tag,
-                prev_value,
+                Query::zero(),
                 address,
                 value,
             ])));
@@ -372,6 +387,19 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     pub fn range_check8(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck8([val]));
     }
+    pub fn bitwise_and(&mut self, lhs: Query<F>, rhs: Query<F>, res: Query<F>) {
+        self.op_lookups
+            .push(LookupTable::BitwiseAnd([lhs, rhs, res]));
+    }
+    pub fn bitwise_or(&mut self, lhs: Query<F>, rhs: Query<F>, res: Query<F>) {
+        self.op_lookups
+            .push(LookupTable::BitwiseOr([lhs, rhs, res]));
+    }
+    pub fn bitwise_xor(&mut self, lhs: Query<F>, rhs: Query<F>, res: Query<F>) {
+        self.op_lookups
+            .push(LookupTable::BitwiseXor([lhs, rhs, res]));
+    }
+
     pub fn public_input_lookup(&mut self, index: Query<F>, value: Query<F>) {
         self.op_lookups.push(LookupTable::PublicInput(
             self.base
@@ -433,6 +461,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         fixed_lookup: &impl FixedLookup<F>,
         public_input_lookup: &impl PublicInputLookup<F>,
         copy_lookup: &impl CopyLookup<F>,
+        bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) {
         for state_lookup in self.op_lookups.iter() {
             match state_lookup {
@@ -483,6 +512,27 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "responsible_opcode(execution_state,opcode)",
                         fields.clone(),
                         range_check_lookup.lookup_u16_table(),
+                    );
+                }
+                LookupTable::BitwiseAnd(fields) => {
+                    self.base.add_lookup(
+                        "bitwise_and(lhs,rhs,res)",
+                        fields.clone(),
+                        bitwise_check_lookup.lookup_and(),
+                    );
+                }
+                LookupTable::BitwiseOr(fields) => {
+                    self.base.add_lookup(
+                        "bitwise_or(lhs,rhs,res)",
+                        fields.clone(),
+                        bitwise_check_lookup.lookup_or(),
+                    );
+                }
+                LookupTable::BitwiseXor(fields) => {
+                    self.base.add_lookup(
+                        "bitwise_xor(lhs,rhs,res)",
+                        fields.clone(),
+                        bitwise_check_lookup.lookup_xor(),
                     );
                 }
                 LookupTable::Fixed(fields) => {

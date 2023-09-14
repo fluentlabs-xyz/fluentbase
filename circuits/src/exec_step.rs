@@ -25,6 +25,7 @@ pub struct ExecStep {
     pub(crate) global_table: BTreeMap<u32, UntypedValue>,
     pub(crate) rw_rows: Vec<RwRow>,
     pub(crate) copy_rows: Vec<CopyRow>,
+    pub(crate) output_len: u32,
     pub(crate) call_id: usize,
     pub(crate) rw_counter: usize,
 }
@@ -145,6 +146,7 @@ impl ExecSteps {
                 global_table: global_table.clone(),
                 rw_rows: vec![],
                 copy_rows: vec![],
+                output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
                 call_id: 0,
                 rw_counter,
             };
