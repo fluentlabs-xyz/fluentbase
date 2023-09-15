@@ -14,7 +14,6 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{
             op_bin::OpBinGadget,
-            op_bin_shift::OpShiftGadget,
             op_bitwise::OpBitwiseGadget,
             op_break::OpBreakGadget,
             op_call::OpCallGadget,
@@ -28,6 +27,7 @@ use crate::{
             op_memory::OpMemoryGadget,
             op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
+            op_shift_rot::OpShiftGadget,
             op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,

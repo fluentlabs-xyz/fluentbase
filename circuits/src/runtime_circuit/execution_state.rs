@@ -240,11 +240,15 @@ impl ExecutionState {
             ],
             Self::WASM_SHIFT => vec![
                 Instruction::I32Shl,
-                Instruction::I64Shl,
                 Instruction::I32ShrS,
                 Instruction::I32ShrU,
+                Instruction::I64Shl,
                 Instruction::I64ShrS,
                 Instruction::I64ShrU,
+                Instruction::I32Rotl,
+                Instruction::I32Rotr,
+                Instruction::I64Rotl,
+                Instruction::I64Rotr,
             ],
             _ => vec![],
         }
