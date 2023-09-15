@@ -6,7 +6,12 @@ pub mod rw_row;
 use crate::{
     exec_step::{ExecStep, GadgetError},
     rw_builder::{
-        opcode::{build_generic_rw_ops, build_memory_copy_rw_ops, build_memory_fill_rw_ops},
+        opcode::{
+            build_consume_fuel_rw_ops,
+            build_generic_rw_ops,
+            build_memory_copy_rw_ops,
+            build_memory_fill_rw_ops,
+        },
         platform::build_platform_rw_ops,
     },
 };
@@ -25,6 +30,9 @@ impl RwBuilder {
         match step.instr() {
             Instruction::Call(fn_idx) => {
                 build_platform_rw_ops(step, SysFuncIdx::from(*fn_idx))?;
+            }
+            Instruction::ConsumeFuel(_) => {
+                build_consume_fuel_rw_ops(step)?;
             }
             Instruction::MemoryCopy => {
                 build_memory_copy_rw_ops(step)?;

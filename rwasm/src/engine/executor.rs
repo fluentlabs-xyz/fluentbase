@@ -245,12 +245,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 .resolve_memory(self.cache.default_memory(self.ctx))
                 .current_pages()
                 .into();
+            let consumed_fuel = self.ctx.fuel().fuel_consumed();
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
                 instr,
                 self.value_stack.dump_stack(self.sp),
                 &meta,
                 memory_size,
+                consumed_fuel,
             );
 
             match instr {

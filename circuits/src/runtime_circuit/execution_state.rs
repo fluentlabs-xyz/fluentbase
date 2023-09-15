@@ -37,6 +37,7 @@ pub enum ExecutionState {
     WASM_MEMORY_FILL,
     WASM_MEMORY_INIT,
     WASM_UNREACHABLE,
+    WASM_CONSUME_FUEL,
 }
 
 impl ExecutionState {
@@ -73,6 +74,7 @@ impl ExecutionState {
             ExecutionState::WASM_MEMORY_FILL => 29,
             ExecutionState::WASM_MEMORY_INIT => 30,
             ExecutionState::WASM_UNREACHABLE => 31,
+            ExecutionState::WASM_CONSUME_FUEL => 32,
         }
     }
 
@@ -103,6 +105,7 @@ impl ExecutionState {
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
             Self::WASM_UNREACHABLE => vec![Instruction::Unreachable],
+            Self::WASM_CONSUME_FUEL => vec![Instruction::ConsumeFuel(Default::default())],
             Self::WASM_BIN => vec![
                 Instruction::I32Add,
                 Instruction::I64Add,

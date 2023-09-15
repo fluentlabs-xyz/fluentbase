@@ -11,6 +11,7 @@ pub(crate) mod op_bitwise;
 pub(crate) mod op_break;
 pub(crate) mod op_call;
 pub(crate) mod op_const;
+pub(crate) mod op_consume_fuel;
 pub(crate) mod op_conversion;
 pub(crate) mod op_drop;
 pub(crate) mod op_extend;
