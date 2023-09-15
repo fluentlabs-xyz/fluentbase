@@ -31,13 +31,13 @@ pub enum ExecutionState {
     WASM_TABLE_INIT,
     WASM_BITWISE,
     WASM_EXTEND,
-    WASM_SHIFT,
     WASM_MEMORY_COPY,
     WASM_MEMORY_GROW,
     WASM_MEMORY_SIZE,
     WASM_MEMORY_FILL,
     WASM_MEMORY_INIT,
     WASM_UNREACHABLE,
+    WASM_SHIFT,
 }
 
 impl ExecutionState {
@@ -245,11 +245,15 @@ impl ExecutionState {
             ],
             Self::WASM_SHIFT => vec![
                 Instruction::I32Shl,
-                Instruction::I64Shl,
                 Instruction::I32ShrS,
                 Instruction::I32ShrU,
+                Instruction::I64Shl,
                 Instruction::I64ShrS,
                 Instruction::I64ShrU,
+                Instruction::I32Rotl,
+                Instruction::I32Rotr,
+                Instruction::I64Rotl,
+                Instruction::I64Rotr,
             ],
             Self::WASM_MEMORY_COPY => vec![Instruction::MemoryCopy],
             Self::WASM_MEMORY_GROW => vec![Instruction::MemoryGrow],
