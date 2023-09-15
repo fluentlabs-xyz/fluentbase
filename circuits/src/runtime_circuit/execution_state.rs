@@ -272,7 +272,6 @@ impl ExecutionState {
 mod test {
     use crate::runtime_circuit::execution_state::ExecutionState;
     use fluentbase_rwasm::engine::bytecode::Instruction;
-    use log::debug;
     use std::collections::HashMap;
     use strum::IntoEnumIterator;
 
@@ -309,14 +308,14 @@ mod test {
             }
         }
         let coverage = 100 * total_used / used_opcodes.len();
-        debug!(
+        println!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
         );
-        debug!("\n not implemented opcodes:");
+        println!("\n not implemented opcodes:");
         for (opcode, used) in used_opcodes.iter() {
             if *used == 0 {
-                debug!("- {:?}", opcode)
+                println!("- {:?}", opcode)
             }
         }
     }
