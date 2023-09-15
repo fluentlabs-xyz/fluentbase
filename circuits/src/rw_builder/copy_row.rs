@@ -10,6 +10,8 @@ pub enum CopyTableTag {
     WriteOutput,
     // copy from memory to memory
     CopyMemory,
+    // fill memory
+    FillMemory,
 }
 
 impl_expr!(CopyTableTag);
@@ -20,6 +22,7 @@ impl fmt::Display for CopyTableTag {
             CopyTableTag::ReadInput => write!(f, "ReadInput"),
             CopyTableTag::WriteOutput => write!(f, "WriteOutput"),
             CopyTableTag::CopyMemory => write!(f, "CopyMemory"),
+            CopyTableTag::FillMemory => write!(f, "FillMemory"),
         }
     }
 }

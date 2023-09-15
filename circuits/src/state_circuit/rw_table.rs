@@ -15,7 +15,6 @@ pub struct RwTable<F: Field> {
     pub(crate) id: AdviceColumn,
     pub(crate) address: AdviceColumn,
     pub(crate) value: AdviceColumn,
-    pub(crate) value_prev: AdviceColumn,
     pub(crate) not_first_access: AdviceColumn,
     _marker: PhantomData<F>,
 }
@@ -29,7 +28,6 @@ impl<F: Field> RwTable<F> {
             id: AdviceColumn(cs.advice_column()),
             address: AdviceColumn(cs.advice_column()),
             value: AdviceColumn(cs.advice_column()),
-            value_prev: AdviceColumn(cs.advice_column()),
             not_first_access: AdviceColumn(cs.advice_column()),
             _marker: Default::default(),
         }
@@ -46,7 +44,6 @@ impl<F: Field> RwTable<F> {
         self.address
             .assign(region, offset, rw_row.address().unwrap_or_default() as u64);
         self.value.assign(region, offset, rw_row.value().to_bits());
-        // self.value_prev.assign(region, offset, rw_row.value().to_bits());
     }
 
     fn q_first_access(&self) -> BinaryQuery<F> {
@@ -111,7 +108,7 @@ impl<F: Field> RwTable<F> {
             cb.assert_zero(
                 "non-first access reads don't change value",
                 (1.expr() - self.is_write.current())
-                    * (self.value.current() - self.value_prev.current()),
+                    * (self.value.current() - self.value.previous()),
             );
         });
     }
@@ -129,10 +126,6 @@ impl<F: Field> RwTable<F> {
         cb.assert_zero("Start value is 0", self.value.current());
         // 1.3. Start initial value is 0
         // 1.4. state_root is unchanged for every non-first row
-        cb.assert_zero(
-            "value_prev column is 0 for Start",
-            self.value_prev.current(),
-        );
     }
 
     pub fn build_memory_constraints(&self, cb: &mut ConstraintBuilder<F>) {

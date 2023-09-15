@@ -24,13 +24,18 @@ use crate::{
             op_global::OpGlobalGadget,
             op_load::OpLoadGadget,
             op_local::OpLocalGadget,
-            op_memory::OpMemoryGadget,
+            op_memory_copy::OpMemoryCopyGadget,
+            op_memory_fill::OpMemoryFillGadget,
+            op_memory_grow::OpMemoryGrowGadget,
+            op_memory_init::OpMemoryInitGadget,
+            op_memory_size::OpMemorySizeGadget,
             op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
-            op_shift_rot::OpShiftGadget,
+            op_shift::OpShiftGadget,
             op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
+            op_unreachable::OpUnreachableGadget,
             table_ops::{
                 copy::OpTableCopyGadget,
                 fill::OpTableFillGadget,
@@ -55,6 +60,7 @@ use halo2_proofs::{
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
     // wasm opcodes
+    unreachable_gadget: ExecutionContextGadget<F, OpUnreachableGadget<F>>,
     bin_gadget: ExecutionContextGadget<F, OpBinGadget<F>>,
     break_gadget: ExecutionContextGadget<F, OpBreakGadget<F>>,
     call_gadget: ExecutionContextGadget<F, OpCallGadget<F>>,
@@ -78,7 +84,11 @@ pub struct RuntimeCircuitConfig<F: Field> {
     bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     extend_gadget: ExecutionContextGadget<F, OpExtendGadget<F>>,
     shift_gadget: ExecutionContextGadget<F, OpShiftGadget<F>>,
-    memory_gadget: ExecutionContextGadget<F, OpMemoryGadget<F>>,
+    memory_copy_gadget: ExecutionContextGadget<F, OpMemoryCopyGadget<F>>,
+    memory_grow_gadget: ExecutionContextGadget<F, OpMemoryGrowGadget<F>>,
+    memory_size_gadget: ExecutionContextGadget<F, OpMemorySizeGadget<F>>,
+    memory_fill_gadget: ExecutionContextGadget<F, OpMemoryFillGadget<F>>,
+    memory_init_gadget: ExecutionContextGadget<F, OpMemoryInitGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
@@ -100,6 +110,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
+
         macro_rules! configure_gadget {
             () => {
                 ExecutionContextGadget::configure(
@@ -115,8 +126,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 )
             };
         }
+
         Self {
             // wasm opcodes
+            unreachable_gadget: configure_gadget!(),
             bin_gadget: configure_gadget!(),
             break_gadget: configure_gadget!(),
             call_gadget: configure_gadget!(),
@@ -140,11 +153,16 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             bitwise_gadget: configure_gadget!(),
             extend_gadget: configure_gadget!(),
             shift_gadget: configure_gadget!(),
-            memory_gadget: configure_gadget!(),
+            memory_copy_gadget: configure_gadget!(),
+            memory_grow_gadget: configure_gadget!(),
+            memory_size_gadget: configure_gadget!(),
+            memory_fill_gadget: configure_gadget!(),
+            memory_init_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
             sys_write_gadget: configure_gadget!(),
+            // other
             responsible_opcode_table,
         }
     }
@@ -243,15 +261,29 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.shift_gadget.assign(region, offset, step, rw_counter)
             }
 
-            ExecutionState::WASM_MEMORY => {
-                self.memory_gadget.assign(region, offset, step, rw_counter)
-            }
-
+            ExecutionState::WASM_MEMORY_COPY => self
+                .memory_copy_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_MEMORY_GROW => self
+                .memory_grow_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_MEMORY_SIZE => self
+                .memory_size_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_MEMORY_FILL => self
+                .memory_fill_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_MEMORY_INIT => self
+                .memory_init_gadget
+                .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_STORE => {
                 self.store_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_UNREACHABLE => self
+                .unreachable_gadget
+                .assign(region, offset, step, rw_counter),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"

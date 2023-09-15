@@ -239,7 +239,11 @@ mod test {
 
     fn gen_params<const N: usize, const MAX_POSITIVE_VAL: i64>() -> [i64; N] {
         let params = [0; N]
+<<<<<<< HEAD
             .map(|_i| thread_rng().gen_range(0..=MAX_POSITIVE_VAL * 2 + 1) - MAX_POSITIVE_VAL - 1);
+=======
+            .map(|_| thread_rng().gen_range(0..=MAX_POSITIVE_VAL * 2 + 1) - MAX_POSITIVE_VAL - 1);
+>>>>>>> 88afb75d6e552bc993fbc8048d4e7d4c5f2a0d10
         debug!("params {:?}", params);
         params
     }
