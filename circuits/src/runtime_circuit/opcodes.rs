@@ -26,6 +26,7 @@ pub(crate) mod op_memory_size;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
+pub(crate) mod op_shift;
 pub(crate) mod op_store;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;

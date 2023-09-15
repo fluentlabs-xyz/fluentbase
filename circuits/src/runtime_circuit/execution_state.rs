@@ -38,6 +38,7 @@ pub enum ExecutionState {
     WASM_MEMORY_INIT,
     WASM_UNREACHABLE,
     WASM_CONSUME_FUEL,
+    WASM_SHIFT,
 }
 
 impl ExecutionState {
@@ -75,6 +76,7 @@ impl ExecutionState {
             ExecutionState::WASM_MEMORY_INIT => 30,
             ExecutionState::WASM_UNREACHABLE => 31,
             ExecutionState::WASM_CONSUME_FUEL => 32,
+            ExecutionState::WASM_SHIFT => 33,
         }
     }
 
@@ -244,6 +246,18 @@ impl ExecutionState {
                 Instruction::I64ExtendI32S,
                 Instruction::I64ExtendI32U,
             ],
+            Self::WASM_SHIFT => vec![
+                Instruction::I32Shl,
+                Instruction::I32ShrS,
+                Instruction::I32ShrU,
+                Instruction::I64Shl,
+                Instruction::I64ShrS,
+                Instruction::I64ShrU,
+                Instruction::I32Rotl,
+                Instruction::I32Rotr,
+                Instruction::I64Rotl,
+                Instruction::I64Rotr,
+            ],
             Self::WASM_MEMORY_COPY => vec![Instruction::MemoryCopy],
             Self::WASM_MEMORY_GROW => vec![Instruction::MemoryGrow],
             Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
@@ -258,6 +272,7 @@ impl ExecutionState {
 mod test {
     use crate::runtime_circuit::execution_state::ExecutionState;
     use fluentbase_rwasm::engine::bytecode::Instruction;
+    use log::debug;
     use std::collections::HashMap;
     use strum::IntoEnumIterator;
 
@@ -294,14 +309,14 @@ mod test {
             }
         }
         let coverage = 100 * total_used / used_opcodes.len();
-        println!(
+        debug!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
         );
-        println!("\n not implemented opcodes:");
+        debug!("\n not implemented opcodes:");
         for (opcode, used) in used_opcodes.iter() {
             if *used == 0 {
-                println!("- {:?}", opcode)
+                debug!("- {:?}", opcode)
             }
         }
     }
