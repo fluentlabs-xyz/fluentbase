@@ -22,13 +22,13 @@ pub(crate) fn translate_drop_keep(drop_keep: DropKeep) -> Result<Vec<Instruction
     } else {
         (0..keep).for_each(|i| {
             result.push(Instruction::LocalGet(LocalDepth::from(
-                keep as u32 - i as u32 - 1,
+                keep as u32 - i as u32,
             )));
             result.push(Instruction::LocalSet(LocalDepth::from(
                 keep as u32 + drop as u32 - i as u32,
             )));
         });
-        (0..(keep - drop)).for_each(|_| result.push(Instruction::Drop));
+        (0..drop).for_each(|_| result.push(Instruction::Drop));
     }
     Ok(result)
 }
@@ -41,6 +41,7 @@ impl Translator for DropKeep {
     }
 }
 
+#[derive(Debug)]
 pub struct DropKeepWithReturnParam(pub DropKeep);
 
 impl Translator for DropKeepWithReturnParam {
@@ -48,7 +49,7 @@ impl Translator for DropKeepWithReturnParam {
         if self.0.drop() == 0 && self.0.keep() == 0 {
             return Ok(());
         }
-        result.op_local_get((self.0.drop() + self.0.keep()) as u32);
+        result.op_local_get((self.0.drop() + self.0.keep() + 1) as u32);
         let drop_keep_opcodes = translate_drop_keep(
             DropKeep::new(self.0.drop() as usize + 1, self.0.keep() as usize + 1)
                 .map_err(|_| CompilerError::DropKeepOutOfBounds)?,
@@ -94,7 +95,7 @@ mod tests {
                     }
                     Instruction::LocalGet(index) => {
                         let len = stack.len();
-                        let item = *stack.get(len - 1 - index.to_usize()).unwrap();
+                        let item = *stack.get(len - index.to_usize()).unwrap();
                         stack.push(item);
                     }
                     Instruction::Drop => {

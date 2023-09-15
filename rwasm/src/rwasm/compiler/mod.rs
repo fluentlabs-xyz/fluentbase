@@ -231,15 +231,15 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn swap_with_depth(&mut self, depth: u32) {
-        self.code_section.op_local_get(depth);
-        self.code_section.op_local_get(1);
+        self.code_section.op_local_get(depth + 1);
+        self.code_section.op_local_get(2);
         self.code_section.op_local_set(depth + 2);
         self.code_section.op_local_set(1);
     }
 
     fn swap(&mut self, param_num: u32) {
         for i in (0..param_num).rev() {
-            self.swap_with_depth(i);
+            self.swap_with_depth(i + 1);
         }
     }
 
