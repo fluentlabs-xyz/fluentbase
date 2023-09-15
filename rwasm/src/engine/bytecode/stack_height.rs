@@ -24,6 +24,8 @@ pub enum RwOp {
         length: u32,
         signed: bool,
     },
+    MemorySizeWrite,
+    MemorySizeRead,
     TableSizeRead(u32),
     TableSizeWrite(u32),
     TableElemRead(u32),
@@ -147,8 +149,18 @@ impl Instruction {
                     signed: false,
                 });
             }
-            Instruction::MemorySize => stack_ops.push(RwOp::StackWrite(0)),
-            Instruction::MemoryGrow | Instruction::MemoryFill | Instruction::MemoryCopy => {}
+            Instruction::MemorySize => {
+                stack_ops.push(RwOp::MemorySizeRead);
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::MemoryGrow => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+                stack_ops.push(RwOp::MemorySizeWrite);
+            }
+            Instruction::MemoryFill | Instruction::MemoryCopy => {
+                unreachable!("not implemented here")
+            }
             Instruction::MemoryInit(_) => {}
             Instruction::DataDrop(_) => {}
 
