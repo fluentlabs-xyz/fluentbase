@@ -153,6 +153,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         });
     }
 
+    pub fn assert_unreachable(&mut self, name: &'static str) {
+        self.base.assert_unreachable(name)
+    }
+
     pub fn query_cell(&mut self) -> AdviceColumn {
         self.base.advice_column(self.cs)
     }

@@ -20,6 +20,7 @@ pub(crate) mod op_local;
 pub(crate) mod op_memory_copy;
 pub(crate) mod op_memory_fill;
 pub(crate) mod op_memory_grow;
+pub(crate) mod op_memory_init;
 pub(crate) mod op_memory_size;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;

@@ -35,6 +35,7 @@ pub enum ExecutionState {
     WASM_MEMORY_GROW,
     WASM_MEMORY_SIZE,
     WASM_MEMORY_FILL,
+    WASM_MEMORY_INIT,
 }
 
 impl ExecutionState {
@@ -69,6 +70,7 @@ impl ExecutionState {
             ExecutionState::WASM_MEMORY_GROW => 27,
             ExecutionState::WASM_MEMORY_SIZE => 28,
             ExecutionState::WASM_MEMORY_FILL => 29,
+            ExecutionState::WASM_MEMORY_INIT => 30,
         }
     }
 
@@ -240,6 +242,7 @@ impl ExecutionState {
             Self::WASM_MEMORY_GROW => vec![Instruction::MemoryGrow],
             Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
             Self::WASM_MEMORY_FILL => vec![Instruction::MemoryFill],
+            Self::WASM_MEMORY_INIT => vec![Instruction::MemoryInit(Default::default())],
             _ => vec![],
         }
     }
