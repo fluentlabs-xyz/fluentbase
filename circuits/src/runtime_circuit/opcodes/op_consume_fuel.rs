@@ -43,11 +43,11 @@ impl<F: Field> ExecutionGadget<F> for OpConsumeFuel<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &ExecStep,
+        step: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let consumed_fuel = trace.curr().consumed_fuel;
+        let consumed_fuel = step.curr().consumed_fuel;
         self.consumed_fuel.assign(region, offset, consumed_fuel);
-        let value = trace.instr().aux_value().unwrap_or_default();
+        let value = step.instr().aux_value().unwrap_or_default();
         self.value.assign(region, offset, value.as_u64());
         Ok(())
     }
@@ -61,9 +61,10 @@ mod test {
     #[test]
     fn test() {
         test_ok(instruction_set! {
-            // ConsumeFuel(0)
+            ConsumeFuel(0)
             ConsumeFuel(1)
             ConsumeFuel(2)
+            ConsumeFuel(3)
         });
     }
 }
