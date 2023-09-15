@@ -2,7 +2,7 @@ use crate::{
     exec_step::{ExecStep, GadgetError},
     rw_builder::{
         copy_row::{CopyRow, CopyTableTag},
-        rw_row::RwRow,
+        rw_row::{RwRow, RwTableContextTag},
     },
 };
 use fluentbase_rwasm::{common::UntypedValue, RwOp};
@@ -111,6 +111,28 @@ pub fn build_memory_read_rw_ops(
             length,
             signed,
         });
+    });
+    Ok(())
+}
+
+pub fn build_memory_size_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: true,
+        call_id: step.call_id,
+        tag: RwTableContextTag::MemorySize,
+        value: step.next().map(|t| t.memory_size).unwrap_or_default() as u64,
+    });
+    Ok(())
+}
+
+pub fn build_memory_size_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: false,
+        call_id: step.call_id,
+        tag: RwTableContextTag::MemorySize,
+        value: step.curr().memory_size as u64,
     });
     Ok(())
 }
@@ -251,6 +273,12 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
                 signed,
             } => {
                 build_memory_read_rw_ops(step, offset, length, signed)?;
+            }
+            RwOp::MemorySizeWrite => {
+                build_memory_size_write_rw_ops(step)?;
+            }
+            RwOp::MemorySizeRead => {
+                build_memory_size_read_rw_ops(step)?;
             }
             RwOp::TableSizeRead(table_idx) => {
                 build_table_size_read_rw_ops(step, table_idx)?;

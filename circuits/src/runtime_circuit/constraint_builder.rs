@@ -90,7 +90,10 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
 
 use crate::{
     lookup_table::{BitwiseCheckLookup, CopyLookup},
-    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableTag},
+    rw_builder::{
+        copy_row::CopyTableTag,
+        rw_row::{RwTableContextTag, RwTableTag},
+    },
 };
 use Query as Q;
 
@@ -209,6 +212,10 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
         self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value);
+    }
+
+    pub fn context_lookup(&mut self, tag: RwTableContextTag, is_write: Query<F>, value: Query<F>) {
+        self.rw_lookup(is_write, RwTableTag::Context.expr(), tag.expr(), value);
     }
 
     pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
