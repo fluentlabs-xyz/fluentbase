@@ -26,9 +26,11 @@ pub trait RwasmLookup<F: Field> {
 }
 
 pub const N_RW_LOOKUP_TABLE: usize = 7;
+pub const N_RW_PREV_LOOKUP_TABLE: usize = 8;
 
 pub trait RwLookup<F: Field> {
     fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE];
+    fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE];
 }
 
 pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 3;

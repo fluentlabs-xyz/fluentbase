@@ -29,6 +29,7 @@ pub struct TracerInstrState {
     pub stack: Vec<UntypedValue>,
     pub source_pc: u32,
     pub code: u16,
+    pub memory_size: u32,
     pub index: usize,
 }
 
@@ -97,6 +98,7 @@ impl Tracer {
         opcode: Instruction,
         stack: Vec<UntypedValue>,
         meta: &InstrMeta,
+        memory_size: u32,
     ) {
         let memory_changes = take(&mut self.memory_changes);
         let table_changes = take(&mut self.table_changes);
@@ -108,8 +110,10 @@ impl Tracer {
             stack,
             source_pc: meta.offset() as u32,
             code: meta.opcode(),
+            memory_size,
             index: meta.index(),
         };
+        // println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());
     }
 

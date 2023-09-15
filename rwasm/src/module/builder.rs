@@ -402,6 +402,10 @@ impl<'engine> ModuleBuilder<'engine> {
         self.start = Some(start);
     }
 
+    pub fn remove_start(&mut self) {
+        self.start = None;
+    }
+
     /// Pushes the given table elements to the [`Module`] under construction.
     ///
     /// # Errors
