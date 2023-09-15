@@ -28,6 +28,7 @@ pub(crate) mod op_select;
 pub(crate) mod op_store;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
+pub(crate) mod op_unreachable;
 pub(crate) mod table_ops;
 
 #[macro_export]
