@@ -34,6 +34,7 @@ use crate::{
             op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
+            op_unreachable::OpUnreachableGadget,
             table_ops::{
                 copy::OpTableCopyGadget,
                 fill::OpTableFillGadget,
@@ -58,6 +59,7 @@ use halo2_proofs::{
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
     // wasm opcodes
+    unreachable_gadget: ExecutionContextGadget<F, OpUnreachableGadget<F>>,
     bin_gadget: ExecutionContextGadget<F, OpBinGadget<F>>,
     break_gadget: ExecutionContextGadget<F, OpBreakGadget<F>>,
     call_gadget: ExecutionContextGadget<F, OpCallGadget<F>>,
@@ -125,6 +127,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
 
         Self {
             // wasm opcodes
+            unreachable_gadget: configure_gadget!(),
             bin_gadget: configure_gadget!(),
             break_gadget: configure_gadget!(),
             call_gadget: configure_gadget!(),
@@ -270,6 +273,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.store_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_UNREACHABLE => self
+                .unreachable_gadget
+                .assign(region, offset, step, rw_counter),
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"
