@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, Query, SelectorColumn, ToExpr},
+    constraint_builder::{AdviceColumn, Query, SelectorColumn},
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -10,7 +10,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
-use std::{marker::PhantomData, ops::Add};
+use std::marker::PhantomData;
 
 pub const LIMBS_COUNT: usize = 8;
 
@@ -199,7 +199,7 @@ mod test {
     const MAX: i64 = 10000;
 
     fn gen_params<const N: usize>() -> [i64; N] {
-        let params = [0; N].map(|i| thread_rng().gen_range(0..=MAX * 2) - MAX);
+        let params = [0; N].map(|_i| thread_rng().gen_range(0..=MAX * 2) - MAX);
         debug!("params {:?}", params);
         params
     }

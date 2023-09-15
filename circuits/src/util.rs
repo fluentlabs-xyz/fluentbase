@@ -1,3 +1,4 @@
+use env_logger::Env;
 use ethers_core::types::U256;
 use halo2_proofs::{arithmetic::FieldExt, halo2curves::bn256::Fr};
 use poseidon_circuit::hash::{Hashable, MessageHashable};
@@ -96,4 +97,10 @@ macro_rules! only_once {
             _ONLY_ONCE = true;
         }
     };
+}
+
+#[cfg(test)]
+#[ctor::ctor]
+fn log_init() {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 }

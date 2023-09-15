@@ -1,9 +1,10 @@
 use super::{BinaryQuery, Query};
-use crate::util::Field;
+use crate::{constraint_builder::query::bn_to_field, util::Field};
 use halo2_proofs::{
     circuit::{AssignedCell, Region, Value},
     plonk::{Advice, Any, Column, Fixed, Instance},
 };
+use num_bigint::BigUint;
 use std::fmt::Debug;
 
 #[derive(Clone, Copy, Debug)]
@@ -23,8 +24,17 @@ impl SelectorColumn {
     }
 
     pub fn enable<F: Field>(&self, region: &mut Region<'_, F>, offset: usize) {
+        self.assign(region, offset, true);
+    }
+
+    pub fn assign<F: Field>(&self, region: &mut Region<'_, F>, offset: usize, v: bool) {
         region
-            .assign_fixed(|| "selector", self.0, offset, || Value::known(F::one()))
+            .assign_fixed(
+                || "selector",
+                self.0,
+                offset,
+                || Value::known(F::from(v as u64)),
+            )
             .expect("failed enable selector");
     }
 }
@@ -107,6 +117,22 @@ impl AdviceColumn {
                 self.0,
                 offset,
                 || Value::known(value.try_into().unwrap()),
+            )
+            .expect("failed assign_advice")
+    }
+
+    pub fn assign_bn<F: Field>(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        value: &BigUint,
+    ) -> AssignedCell<F, F> {
+        region
+            .assign_advice(
+                || "advice",
+                self.0,
+                offset,
+                || Value::known(bn_to_field(value)),
             )
             .expect("failed assign_advice")
     }

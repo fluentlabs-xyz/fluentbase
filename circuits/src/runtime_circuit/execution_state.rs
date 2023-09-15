@@ -6,22 +6,22 @@ use strum_macros::EnumIter;
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum ExecutionState {
-    WASM_BIN, // DONE
+    WASM_BIN,
     WASM_BREAK,
     WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
-    WASM_CONST, // DONE
+    WASM_CONST,
     WASM_REFFUNC,
-    WASM_CONVERSION, // DONE
-    WASM_DROP,       // DONE
-    WASM_GLOBAL,     // DONE
-    WASM_LOAD,       // DONE
-    WASM_LOCAL,      // DONE
-    WASM_REL,        // DONE
-    WASM_SELECT,     // DONE
-    WASM_STORE,      // DONE
-    WASM_TEST,       // DONE
-    WASM_UNARY,      // DONE
+    WASM_CONVERSION,
+    WASM_DROP,
+    WASM_GLOBAL,
+    WASM_LOAD,
+    WASM_LOCAL,
+    WASM_REL,
+    WASM_SELECT,
+    WASM_STORE,
+    WASM_TEST,
+    WASM_UNARY,
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -29,9 +29,15 @@ pub enum ExecutionState {
     WASM_TABLE_GET,
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
-    WASM_BITWISE, // DONE
-    WASM_EXTEND,  // DONE
-    WASM_MEMORY,
+    WASM_BITWISE,
+    WASM_EXTEND,
+    WASM_MEMORY_COPY,
+    WASM_MEMORY_GROW,
+    WASM_MEMORY_SIZE,
+    WASM_MEMORY_FILL,
+    WASM_MEMORY_INIT,
+    WASM_UNREACHABLE,
+    WASM_SHIFT,
 }
 
 impl ExecutionState {
@@ -62,7 +68,13 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_SIZE => 23,
             ExecutionState::WASM_BITWISE => 24,
             ExecutionState::WASM_EXTEND => 25,
-            ExecutionState::WASM_MEMORY => 26,
+            ExecutionState::WASM_MEMORY_COPY => 26,
+            ExecutionState::WASM_MEMORY_GROW => 27,
+            ExecutionState::WASM_MEMORY_SIZE => 28,
+            ExecutionState::WASM_MEMORY_FILL => 29,
+            ExecutionState::WASM_MEMORY_INIT => 30,
+            ExecutionState::WASM_UNREACHABLE => 31,
+            ExecutionState::WASM_SHIFT => 32,
         }
     }
 
@@ -92,6 +104,7 @@ impl ExecutionState {
 
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
+            Self::WASM_UNREACHABLE => vec![Instruction::Unreachable],
             Self::WASM_BIN => vec![
                 Instruction::I32Add,
                 Instruction::I64Add,
@@ -230,12 +243,23 @@ impl ExecutionState {
                 Instruction::I64ExtendI32S,
                 Instruction::I64ExtendI32U,
             ],
-            Self::WASM_MEMORY => vec![
-                Instruction::MemorySize,
-                Instruction::MemoryGrow,
-                Instruction::MemoryFill,
-                Instruction::MemoryCopy,
+            Self::WASM_SHIFT => vec![
+                Instruction::I32Shl,
+                Instruction::I32ShrS,
+                Instruction::I32ShrU,
+                Instruction::I64Shl,
+                Instruction::I64ShrS,
+                Instruction::I64ShrU,
+                Instruction::I32Rotl,
+                Instruction::I32Rotr,
+                Instruction::I64Rotl,
+                Instruction::I64Rotr,
             ],
+            Self::WASM_MEMORY_COPY => vec![Instruction::MemoryCopy],
+            Self::WASM_MEMORY_GROW => vec![Instruction::MemoryGrow],
+            Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
+            Self::WASM_MEMORY_FILL => vec![Instruction::MemoryFill],
+            Self::WASM_MEMORY_INIT => vec![Instruction::MemoryInit(Default::default())],
             _ => vec![],
         }
     }
@@ -245,6 +269,7 @@ impl ExecutionState {
 mod test {
     use crate::runtime_circuit::execution_state::ExecutionState;
     use fluentbase_rwasm::engine::bytecode::Instruction;
+    use log::debug;
     use std::collections::HashMap;
     use strum::IntoEnumIterator;
 
@@ -275,20 +300,20 @@ mod test {
                         opcode
                     )
                 }
-                let opcode_str = format!("{:?}", opcode);
+                let _opcode_str = format!("{:?}", opcode);
                 *used_opcode += 1;
                 total_used += 1;
             }
         }
         let coverage = 100 * total_used / used_opcodes.len();
-        println!(
+        debug!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
         );
-        println!("\n not implemented opcodes:");
+        debug!("\n not implemented opcodes:");
         for (opcode, used) in used_opcodes.iter() {
             if *used == 0 {
-                println!("- {:?}", opcode)
+                debug!("- {:?}", opcode)
             }
         }
     }
