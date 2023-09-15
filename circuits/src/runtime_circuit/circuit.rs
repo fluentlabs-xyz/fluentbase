@@ -32,6 +32,7 @@ use crate::{
             op_memory_size::OpMemorySizeGadget,
             op_reffunc::OpRefFuncGadget,
             op_select::OpSelectGadget,
+            op_shift::OpShiftGadget,
             op_store::OpStoreGadget,
             op_test::OpTestGadget,
             op_unary::OpUnaryGadget,
@@ -84,6 +85,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     table_size_gadget: ExecutionContextGadget<F, OpTableSizeGadget<F>>,
     bitwise_gadget: ExecutionContextGadget<F, OpBitwiseGadget<F>>,
     extend_gadget: ExecutionContextGadget<F, OpExtendGadget<F>>,
+    shift_gadget: ExecutionContextGadget<F, OpShiftGadget<F>>,
     memory_copy_gadget: ExecutionContextGadget<F, OpMemoryCopyGadget<F>>,
     memory_grow_gadget: ExecutionContextGadget<F, OpMemoryGrowGadget<F>>,
     memory_size_gadget: ExecutionContextGadget<F, OpMemorySizeGadget<F>>,
@@ -153,6 +155,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             table_size_gadget: configure_gadget!(),
             bitwise_gadget: configure_gadget!(),
             extend_gadget: configure_gadget!(),
+            shift_gadget: configure_gadget!(),
             memory_copy_gadget: configure_gadget!(),
             memory_grow_gadget: configure_gadget!(),
             memory_size_gadget: configure_gadget!(),
@@ -262,6 +265,11 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_EXTEND => {
                 self.extend_gadget.assign(region, offset, step, rw_counter)
             }
+
+            ExecutionState::WASM_SHIFT => {
+                self.shift_gadget.assign(region, offset, step, rw_counter)
+            }
+
             ExecutionState::WASM_MEMORY_COPY => self
                 .memory_copy_gadget
                 .assign(region, offset, step, rw_counter),

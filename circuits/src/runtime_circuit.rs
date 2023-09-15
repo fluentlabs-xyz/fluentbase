@@ -7,5 +7,6 @@ mod platform;
 mod responsible_opcode;
 #[cfg(test)]
 mod testing;
+mod utils;
 
 pub use circuit::RuntimeCircuitConfig;

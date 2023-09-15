@@ -199,7 +199,7 @@ mod test {
     const MAX: i64 = 10000;
 
     fn gen_params<const N: usize>() -> [i64; N] {
-        let params = [0; N].map(|_| thread_rng().gen_range(0..=MAX * 2) - MAX);
+        let params = [0; N].map(|_i| thread_rng().gen_range(0..=MAX * 2) - MAX);
         debug!("params {:?}", params);
         params
     }

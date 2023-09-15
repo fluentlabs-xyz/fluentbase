@@ -11,6 +11,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
+use log::debug;
 use std::marker::PhantomData;
 
 const REM_SHIFT: usize = 3usize;
@@ -422,10 +423,10 @@ impl<F: Field> ExecutionGadget<F> for WasmRelGadget<F> {
             }
             if enable {
                 assigns! { [neq_terms[idx], F::from(neq_out)] }
-                println!("DEBUG {idx} {lhs_limb} {rhs_limb} {neq_out} {out}");
+                debug!("DEBUG {idx} {lhs_limb} {rhs_limb} {neq_out} {out}");
             } else if idx == 0 {
                 assigns! { [neq_terms[idx], F::from(0)] }
-                println!("DEBUG {idx} {out}");
+                debug!("DEBUG {idx} {out}");
             }
         }
 
