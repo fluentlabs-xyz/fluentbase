@@ -4,9 +4,7 @@ use crate::{
     runtime_circuit::constraint_builder::OpConstraintBuilder,
     util::Field,
 };
-use halo2_proofs::{circuit::Region, plonk::Expression};
-use itertools::Itertools;
-use num_bigint::BigUint;
+use halo2_proofs::circuit::Region;
 use serde::Serialize;
 use std::marker::PhantomData;
 

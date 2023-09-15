@@ -7,7 +7,6 @@ use halo2_proofs::circuit::Region;
 
 // mod op_bin;
 pub(crate) mod op_bin;
-pub(crate) mod op_bin_shift;
 pub(crate) mod op_bitwise;
 pub(crate) mod op_break;
 pub(crate) mod op_call;
@@ -22,6 +21,7 @@ pub(crate) mod op_memory;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
+pub(crate) mod op_shift_rot;
 // pub(crate) mod op_shift;
 pub(crate) mod op_store;
 pub(crate) mod op_test;
