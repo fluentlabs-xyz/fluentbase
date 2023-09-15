@@ -103,15 +103,15 @@ fn test_actual<C: Circuit<Fr>>(
     }
 
     let general_params = get_general_params(degree);
-    // println!("general params: {:?}", general_params);
+    // debug!("general params: {:?}", general_params);
     let verifier_params: ParamsVerifierKZG<Bn256> = general_params.verifier_params().clone();
-    // println!("verifier params: {:?}", verifier_params);
+    // debug!("verifier params: {:?}", verifier_params);
 
     let transcript = Blake2bWrite::<_, G1Affine, Challenge255<_>>::init(vec![]);
 
     // change instace to slice
     let instance: Vec<&[Fr]> = instance.iter().map(|v| v.as_slice()).collect();
-    // println!("instance: {:?}", instance);
+    // debug!("instance: {:?}", instance);
 
     let start = Instant::now();
     let proof = test_gen_proof(
@@ -123,7 +123,7 @@ fn test_actual<C: Circuit<Fr>>(
         &instance,
     );
     let elapsed = start.elapsed();
-    // println!("proof: {:?}", proof);
+    // debug!("proof: {:?}", proof);
 
     let verifying_key = proving_key.get_vk();
     test_verify(
@@ -133,7 +133,7 @@ fn test_actual<C: Circuit<Fr>>(
         &proof,
         &instance,
     );
-    // println!("proof verified");
+    // debug!("proof verified");
 
     elapsed.as_millis() as u64
 }
@@ -148,6 +148,7 @@ mod tests {
         rwasm::{Compiler, ImportLinker, InstructionSet},
     };
     use halo2_proofs::plonk::{keygen_pk, keygen_vk};
+    use log::debug;
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
         let rwasm_binary: Vec<u8> = bytecode.into();
@@ -165,7 +166,7 @@ mod tests {
             key.clone()
         };
         let elapsed = test_actual(circuit, vec![vec![Fr::zero()]], key, degree);
-        println!("elapsed time (gen/proof/verify): {}ms", elapsed);
+        debug!("elapsed time (gen/proof/verify): {}ms", elapsed);
         elapsed
     }
 
@@ -204,9 +205,9 @@ mod tests {
         for iters in [100, 1000] {
             let mut bytecode = InstructionSet::new();
             (0..iters).for_each(|i| bytecode.op_i32_const(i));
-            println!("proving {} iters", iters);
+            debug!("proving {} iters", iters);
             let elapsed_time_ms = gen_proof_verify(bytecode);
-            println!("est. ms per iter {}", elapsed_time_ms / iters as u64);
+            debug!("est. ms per iter {}", elapsed_time_ms / iters as u64);
         }
     }
 }

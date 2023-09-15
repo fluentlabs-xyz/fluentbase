@@ -17,13 +17,19 @@ pub(crate) mod op_extend;
 pub(crate) mod op_global;
 pub(crate) mod op_load;
 pub(crate) mod op_local;
-pub(crate) mod op_memory;
+pub(crate) mod op_memory_copy;
+pub(crate) mod op_memory_fill;
+pub(crate) mod op_memory_grow;
+pub(crate) mod op_memory_init;
+pub(crate) mod op_memory_size;
 pub(crate) mod op_reffunc;
 pub(crate) mod op_rel;
 pub(crate) mod op_select;
+pub(crate) mod op_shift;
 pub(crate) mod op_store;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
+pub(crate) mod op_unreachable;
 pub(crate) mod table_ops;
 
 #[macro_export]
