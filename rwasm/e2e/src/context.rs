@@ -2,7 +2,7 @@ use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
     common::{ValueType, F32, F64},
-    rwasm::{Compiler, CompilerError, DefaultImportHandler, ImportLinker, ReducedModule},
+    rwasm::{Compiler, DefaultImportHandler, ImportLinker, ReducedModule},
     Config,
     Engine,
     Extern,
@@ -45,6 +45,8 @@ pub struct TestContext<'a> {
     ///
     /// Useful for printing better debug messages in case of failure.
     descriptor: &'a TestDescriptor,
+
+    binaries: HashMap<String, Vec<u8>>,
 }
 
 impl<'a> TestContext<'a> {
@@ -112,6 +114,7 @@ impl<'a> TestContext<'a> {
             profile: TestProfile::default(),
             results: Vec::new(),
             descriptor,
+            binaries: HashMap::new(),
         }
     }
 }
@@ -155,7 +158,63 @@ impl TestContext<'_> {
     pub fn compile_and_instantiate(
         &mut self,
         mut module: wast::core::Module,
+    ) -> Result<(), TestError> {
+        let wasm_binary = module.encode().unwrap_or_else(|error| {
+            panic!(
+                "encountered unexpected failure to encode `.wast` module into `.wasm`:{}: {}",
+                self.test_path(),
+                error
+            )
+        });
+        let mut config = Config::default();
+        config.consume_fuel(false);
+        let engine = Engine::new(&config);
+        let module2 = Module::new(&engine, wasm_binary.as_slice())?;
+        for elem in module2.exports() {
+            let instance = self.compile_and_instantiate_method(&wasm_binary, elem.name())?;
+            self.binaries
+                .insert(elem.name().to_string(), wasm_binary.clone());
+            self.instances.insert(elem.name().to_string(), instance);
+        }
+        Ok(())
+    }
+
+    pub fn compile_and_instantiate_method(
+        &mut self,
+        wasm_binary: &Vec<u8>,
+        fn_name: &str,
     ) -> Result<Instance, TestError> {
+        let mut config = Config::default();
+        config.consume_fuel(false);
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm_binary.as_slice())?;
+        let elem = module
+            .exports()
+            .find(|export| export.name() == fn_name)
+            .unwrap();
+        let import_linker = ImportLinker::default();
+        let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
+        compiler
+            .translate(Some(elem.index().into_func_idx().unwrap()))
+            .unwrap();
+        let rwasm_binary = compiler.finalize().unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let func_type = elem.ty().func().unwrap();
+        let mut module_builder =
+            reduced_module.to_module_builder(self.engine(), &import_linker, func_type.clone());
+        module_builder.remove_start();
+        let module = module_builder.finish();
+        let instance = self
+            .linker
+            .instantiate(&mut self.store, &module)?
+            .start(&mut self.store)?;
+        Ok(instance)
+    }
+
+    pub fn compile_and_instantiate_(
+        &mut self,
+        mut module: wast::core::Module,
+    ) -> Result<(), TestError> {
         let module_name = module.id.map(|id| id.name());
         let wasm = module.encode().unwrap_or_else(|error| {
             panic!(
@@ -164,45 +223,7 @@ impl TestContext<'_> {
                 error
             )
         });
-        let mut compiler = Compiler::new(wasm.as_slice()).map_err(|e| match e {
-            CompilerError::ModuleError(e) => TestError::Wasmi(e),
-            _ => TestError::Compiler(e),
-        })?;
-        let mut import_linker = ImportLinker::default();
-        compiler.translate_wo_entrypoint().unwrap();
-        let binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
-        let mut module_builder =
-            reduced_module.to_module_builder(self.engine(), &mut import_linker);
-
-        {
-            let original_module = Module::new(self.engine(), wasm.as_slice())?;
-            for (i, export_type) in original_module.exports().enumerate() {
-                // let module_name = "env".to_string();
-                let fn_name = export_type.name().to_owned();
-                // let func_type = match export_type.ty() {
-                //     ExternType::Func(func_type) => func_type,
-                //     _ => break,
-                // };
-                let func_idx = original_module
-                    .get_export_func_index(export_type.name())
-                    .unwrap();
-                module_builder
-                    .push_export(fn_name.into_boxed_str(), func_idx)
-                    .unwrap();
-                // let import_func = ImportFunc::new_env(
-                //     module_name,
-                //     fn_name,
-                //     0x1000 + i as u32,
-                //     func_type.params(),
-                //     func_type.results(),
-                // );
-                // import_linker.insert_function(import_func)
-            }
-        }
-
-        let module = module_builder.finish();
-
+        let module = Module::new(self.engine(), &wasm[..])?;
         let instance_pre = self.linker.instantiate(&mut self.store, &module)?;
         let instance = instance_pre.start(&mut self.store)?;
         self.modules.push(module);
@@ -214,7 +235,7 @@ impl TestContext<'_> {
             }
         }
         self.last_instance = Some(instance);
-        Ok(instance)
+        Ok(())
     }
 
     /// Loads the Wasm module instance with the given name.
@@ -279,18 +300,20 @@ impl TestContext<'_> {
     /// - If function invokation returned an error.
     pub fn invoke(
         &mut self,
-        module_name: Option<&str>,
+        _module_name: Option<&str>,
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
-        let instance = self.instance_by_name_or_last(module_name)?;
+        if func_name == "as-block-first" {
+            println!("{}", func_name)
+        }
+        let wasm_binary = self.binaries.get(&func_name.to_string()).unwrap().clone();
+        let instance = self.compile_and_instantiate_method(&wasm_binary, func_name)?;
         let func = instance
-            .get_export(&self.store, func_name)
+            .get_export(&self.store, "main")
             .and_then(Extern::into_func)
-            .ok_or_else(|| TestError::FuncNotFound {
-                module_name: module_name.map(|name| name.to_string()),
-                func_name: func_name.to_string(),
-            })?;
+            .unwrap();
+        println!("testing {} with args {:?}", func_name, args);
         let len_results = func.ty(&self.store).results().len();
         self.results.clear();
         self.results.resize(len_results, Value::I32(0));

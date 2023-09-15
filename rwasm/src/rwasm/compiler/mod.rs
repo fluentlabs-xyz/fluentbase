@@ -6,7 +6,7 @@ use crate::{
         code_map::InstructionPtr,
         DropKeep,
     },
-    module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
+    module::{ConstExpr, DataSegment, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         instruction_set::InstructionSet,
@@ -31,6 +31,7 @@ pub enum CompilerError {
     BinaryFormat(BinaryFormatError),
     NotSupportedImport,
     UnknownImport(ImportName),
+    MemoryUsageTooBig,
 }
 
 pub trait Translator {
@@ -42,8 +43,10 @@ pub struct Compiler<'linker> {
     module: Module,
     // translation state
     pub(crate) code_section: InstructionSet,
-    function_mapping: BTreeMap<u32, u32>,
+    // mapping from function index to its position inside code section
+    function_beginning: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
+    // for automatic translation
     is_translated: bool,
 }
 
@@ -65,13 +68,13 @@ impl<'linker> Compiler<'linker> {
             engine,
             module,
             code_section: InstructionSet::new(),
-            function_mapping: BTreeMap::new(),
+            function_beginning: BTreeMap::new(),
             import_linker,
             is_translated: false,
         })
     }
 
-    pub fn translate(&mut self) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, main_index: Option<u32>) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
@@ -86,13 +89,16 @@ impl<'linker> Compiler<'linker> {
         }
         self.translate_memory()?;
         // find main entrypoint (it must starts with `main` keyword)
-        let main_index = self
-            .module
-            .exports
-            .get("main")
-            .ok_or(CompilerError::MissingEntrypoint)?
-            .into_func_idx()
-            .ok_or(CompilerError::MissingEntrypoint)?;
+        let main_index = if main_index.is_none() {
+            self.module
+                .exports
+                .get("main")
+                .ok_or(CompilerError::MissingEntrypoint)?
+                .into_func_idx()
+                .ok_or(CompilerError::MissingEntrypoint)?
+        } else {
+            main_index.unwrap()
+        };
         // translate main entrypoint
         self.translate_function(main_index)?;
         // translate rest functions
@@ -108,44 +114,28 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    pub fn translate_wo_entrypoint(&mut self) -> Result<(), CompilerError> {
-        if self.is_translated {
-            unreachable!("already translated");
+    fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
+        match memory.kind() {
+            DataSegmentKind::Active(seg) => {
+                let data_offset = seg
+                    .offset()
+                    .eval_const()
+                    .ok_or(CompilerError::NotSupported("can't eval offset"))?;
+                if seg.memory_index().into_u32() != 0 {
+                    return Err(CompilerError::NotSupported("not zero index"));
+                }
+                Ok((data_offset, memory.bytes()))
+            }
+            DataSegmentKind::Passive => {
+                Err(CompilerError::NotSupported("passive mode is not supported"))
+            }
         }
-        // translate memory and global first
-        let total_globals = self.module.globals.len();
-        for i in 0..total_globals {
-            self.translate_global(i as u32)?;
-        }
-        self.translate_memory()?;
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            self.translate_function(i as u32)?;
-        }
-        self.is_translated = true;
-        Ok(())
     }
 
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
         for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = match memory.kind() {
-                DataSegmentKind::Active(seg) => {
-                    let data_offset = seg
-                        .offset()
-                        .eval_const()
-                        .ok_or(CompilerError::NotSupported("can't eval offset"))?;
-                    if seg.memory_index().into_u32() != 0 {
-                        return Err(CompilerError::NotSupported("not zero index"));
-                    }
-                    (data_offset, memory.bytes())
-                }
-                DataSegmentKind::Passive => {
-                    return Err(CompilerError::NotSupported("passive mode is not supported"));
-                }
-            };
-            let offset = offset.to_bits() as u32;
-            self.code_section.add_memory(offset, bytes);
+            let (offset, bytes) = Self::read_memory_segment(memory)?;
+            self.code_section.add_memory(offset.to_bits() as u32, bytes);
         }
         Ok(())
     }
@@ -201,8 +191,10 @@ impl<'linker> Compiler<'linker> {
             }
             table_init_size += e.items.items().len();
         }
+        self.code_section.op_ref_func(0);
         self.code_section.op_i64_const(table_init_size);
         self.code_section.op_table_grow(table_index);
+        self.code_section.op_drop();
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
                 ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
@@ -221,7 +213,8 @@ impl<'linker> Compiler<'linker> {
                 ));
             }
             let table_idx = self.translate_const_expr(aes.offset())?;
-            for item in e.items.items().iter() {
+            for (index, item) in e.items.items().iter().enumerate() {
+                self.code_section.op_i32_const(index as u32);
                 if let Some(value) = item.eval_const() {
                     self.code_section.op_i64_const(value);
                 } else if let Some(value) = item.funcref() {
@@ -259,11 +252,13 @@ impl<'linker> Compiler<'linker> {
         });
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
+        let mut offset = 0;
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr)?;
+            self.translate_opcode(&mut instr_ptr, offset)?;
+            offset += 1;
         }
         // remember function offset in the mapping
-        self.function_mapping.insert(fn_index, beginning_offset);
+        self.function_beginning.insert(fn_index, beginning_offset);
         Ok(())
     }
 
@@ -285,7 +280,11 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr) -> Result<(), CompilerError> {
+    fn translate_opcode(
+        &mut self,
+        instr_ptr: &mut InstructionPtr,
+        _offset: usize,
+    ) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
@@ -293,6 +292,9 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
+            // WI::BrIfNez(branch_offset) => {
+            //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
+            // }
             WI::BrAdjustIfNez(branch_offset) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
@@ -305,9 +307,9 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
-            WI::ReturnCallInternal(func) => {
+            WI::ReturnCallInternal(func_idx) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                let fn_index = func.into_usize() as u32;
+                let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return();
             }
@@ -383,7 +385,7 @@ impl<'linker> Compiler<'linker> {
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate()?;
+            self.translate(None)?;
         }
         let bytecode = &mut self.code_section;
 
@@ -406,7 +408,7 @@ impl<'linker> Compiler<'linker> {
             match code {
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
                     let func_offset = self
-                        .function_mapping
+                        .function_beginning
                         .get(&func.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
@@ -415,7 +417,7 @@ impl<'linker> Compiler<'linker> {
                 }
                 Instruction::RefFunc(func_idx) => {
                     let func_offset = self
-                        .function_mapping
+                        .function_beginning
                         .get(&func_idx.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];

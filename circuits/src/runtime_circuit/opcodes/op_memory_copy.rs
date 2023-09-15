@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, FixedColumn},
+    constraint_builder::AdviceColumn,
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -9,28 +9,22 @@ use crate::{
     rw_builder::copy_row::CopyTableTag,
     util::Field,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct OpMemoryGadget<F: Field> {
-    is_memory_copy: FixedColumn,
-    is_memory_fill: FixedColumn,
+pub struct OpMemoryCopyGadget<F: Field> {
     dest: AdviceColumn,
     source: AdviceColumn,
     len: AdviceColumn,
     marker: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
-    const NAME: &'static str = "WASM_MEMORY";
-    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_MEMORY;
+impl<F: Field> ExecutionGadget<F> for OpMemoryCopyGadget<F> {
+    const NAME: &'static str = "WASM_MEMORY_COPY";
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_MEMORY_COPY;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let is_memory_copy = cb.query_fixed();
-        let is_memory_fill = cb.query_fixed();
-
         let dest = cb.query_cell();
         let source = cb.query_cell();
         let len = cb.query_cell();
@@ -38,21 +32,14 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
         cb.stack_pop(len.current());
         cb.stack_pop(source.current());
         cb.stack_pop(dest.current());
-
-        cb.require_exactly_one_selector([is_memory_copy.current(), is_memory_fill.current()]);
-
-        cb.if_rwasm_opcode(is_memory_copy.current(), Instruction::MemoryCopy, |cb| {
-            cb.copy_lookup(
-                CopyTableTag::CopyMemory,
-                source.current(),
-                dest.current(),
-                len.current(),
-            );
-        });
+        cb.copy_lookup(
+            CopyTableTag::CopyMemory,
+            source.current(),
+            dest.current(),
+            len.current(),
+        );
 
         Self {
-            is_memory_copy,
-            is_memory_fill,
             dest,
             source,
             len,
@@ -66,15 +53,6 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        match trace.instr() {
-            Instruction::MemoryCopy => {
-                self.is_memory_copy.assign(region, offset, 1u64);
-            }
-            Instruction::MemoryFill => {
-                self.is_memory_fill.assign(region, offset, 1u64);
-            }
-            _ => unreachable!("illegal opcode place {:?}", trace.instr()),
-        }
         let len = trace.curr_nth_stack_value(0)?;
         let source = trace.curr_nth_stack_value(1)?;
         let dest = trace.curr_nth_stack_value(2)?;

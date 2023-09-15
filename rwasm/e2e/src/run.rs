@@ -1,14 +1,26 @@
 use super::{error::TestError, TestContext, TestDescriptor};
 use anyhow::Result;
-use fluentbase_rwasm::common::{F32, F64};
-use fluentbase_rwasm::rwasm::DefaultImportHandler;
-use fluentbase_rwasm::{Config, ExternRef, FuncRef, Instance, Store, Value};
+use fluentbase_rwasm::{
+    common::{F32, F64},
+    rwasm::DefaultImportHandler,
+    Config,
+    ExternRef,
+    FuncRef,
+    Store,
+    Value,
+};
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
     lexer::Lexer,
     parser::ParseBuffer,
     token::Span,
-    QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
+    QuoteWat,
+    Wast,
+    WastDirective,
+    WastExecute,
+    WastInvoke,
+    WastRet,
+    Wat,
 };
 
 /// Runs the Wasm test spec identified by the given name.
@@ -20,15 +32,28 @@ pub fn run_wasm_spec_test(name: &str, config: Config) {
     lexer.allow_confusing_unicode(true);
     let parse_buffer = match ParseBuffer::new_with_lexer(lexer) {
         Ok(buffer) => buffer,
-        Err(error) => panic!("failed to create ParseBuffer for {}: {}", test.path(), error),
+        Err(error) => panic!(
+            "failed to create ParseBuffer for {}: {}",
+            test.path(),
+            error
+        ),
     };
     let wast = match wast::parser::parse(&parse_buffer) {
         Ok(wast) => wast,
-        Err(error) => panic!("failed to parse `.wast` spec test file for {}: {}", test.path(), error),
+        Err(error) => panic!(
+            "failed to parse `.wast` spec test file for {}: {}",
+            test.path(),
+            error
+        ),
     };
 
-    execute_directives(wast, &mut context)
-        .unwrap_or_else(|error| panic!("{}: failed to execute `.wast` directive: {}", test.path(), error));
+    execute_directives(wast, &mut context).unwrap_or_else(|error| {
+        panic!(
+            "{}: failed to execute `.wast` directive: {}",
+            test.path(),
+            error
+        )
+    });
 
     println!("profiles: {:#?}", context.profile());
 }
@@ -61,7 +86,11 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
             WastDirective::AssertMalformed { .. } => {
                 test_context.profile().bump_assert_malformed();
             }
-            WastDirective::AssertInvalid { span, module, message } => {
+            WastDirective::AssertInvalid {
+                span,
+                module,
+                message,
+            } => {
                 test_context.profile().bump_assert_invalid();
                 let module = match extract_module(module) {
                     Some(module) => module,
@@ -74,7 +103,13 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
                 let module_name = module.map(|id| id.name());
                 let instance = test_context
                     .instance_by_name_or_last(module_name)
-                    .unwrap_or_else(|error| panic!("{}: failed to load module: {}", test_context.spanned(span), error));
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{}: failed to load module: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    });
                 test_context.register_instance(name, instance);
             }
             WastDirective::Invoke(wast_invoke) => {
@@ -88,7 +123,11 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
                     )
                 });
             }
-            WastDirective::AssertTrap { span, exec, message } => {
+            WastDirective::AssertTrap {
+                span,
+                exec,
+                message,
+            } => {
                 test_context.profile().bump_assert_trap();
                 match execute_wast_execute(test_context, span, exec) {
                     Ok(results) => panic!(
@@ -106,16 +145,21 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
                 results: expected,
             } => {
                 test_context.profile().bump_assert_return();
-                let results = execute_wast_execute(test_context, span, exec).unwrap_or_else(|error| {
-                    panic!(
-                        "{}: encountered unexpected failure to execute `AssertReturn`: {}",
-                        test_context.spanned(span),
-                        error
-                    )
-                });
+                let results =
+                    execute_wast_execute(test_context, span, exec).unwrap_or_else(|error| {
+                        panic!(
+                            "{}: encountered unexpected failure to execute `AssertReturn`: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    });
                 assert_results(test_context, span, &results, &expected);
             }
-            WastDirective::AssertExhaustion { span, call, message } => {
+            WastDirective::AssertExhaustion {
+                span,
+                call,
+                message,
+            } => {
                 test_context.profile().bump_assert_exhaustion();
                 match execute_wast_invoke(test_context, span, call) {
                     Ok(results) => {
@@ -204,7 +248,12 @@ fn assert_results(context: &TestContext, span: Span, results: &[Value], expected
             (Value::F32(result), WastRetCore::F32(expected)) => match expected {
                 NanPattern::CanonicalNan | NanPattern::ArithmeticNan => assert!(result.is_nan()),
                 NanPattern::Value(expected) => {
-                    assert_eq!(result.to_bits(), expected.bits, "in {}", context.spanned(span));
+                    assert_eq!(
+                        result.to_bits(),
+                        expected.bits,
+                        "in {}",
+                        context.spanned(span)
+                    );
                 }
             },
             (Value::F64(result), WastRetCore::F64(expected)) => match expected {
@@ -212,7 +261,12 @@ fn assert_results(context: &TestContext, span: Span, results: &[Value], expected
                     assert!(result.is_nan(), "in {}", context.spanned(span))
                 }
                 NanPattern::Value(expected) => {
-                    assert_eq!(result.to_bits(), expected.bits, "in {}", context.spanned(span));
+                    assert_eq!(
+                        result.to_bits(),
+                        expected.bits,
+                        "in {}",
+                        context.spanned(span)
+                    );
                 }
             },
             (Value::FuncRef(funcref), WastRetCore::RefNull(Some(HeapType::Func))) => {
@@ -242,7 +296,9 @@ fn assert_results(context: &TestContext, span: Span, results: &[Value], expected
 fn extract_module(quote_wat: QuoteWat) -> Option<wast::core::Module> {
     match quote_wat {
         QuoteWat::Wat(Wat::Module(module)) => Some(module),
-        QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteModule(_, _) | QuoteWat::QuoteComponent(_, _) => {
+        QuoteWat::Wat(Wat::Component(_))
+        | QuoteWat::QuoteModule(_, _)
+        | QuoteWat::QuoteComponent(_, _) => {
             // We currently do not allow parsing `.wat` Wasm modules in `v1`
             // therefore checks based on malformed `.wat` modules are uninteresting
             // to us at the moment.
@@ -253,7 +309,7 @@ fn extract_module(quote_wat: QuoteWat) -> Option<wast::core::Module> {
     }
 }
 
-fn module_compilation_succeeds(context: &mut TestContext, span: Span, module: wast::core::Module) -> Instance {
+fn module_compilation_succeeds(context: &mut TestContext, span: Span, module: wast::core::Module) {
     match context.compile_and_instantiate(module) {
         Ok(instance) => instance,
         Err(error) => panic!(
@@ -264,7 +320,12 @@ fn module_compilation_succeeds(context: &mut TestContext, span: Span, module: wa
     }
 }
 
-fn module_compilation_fails(context: &mut TestContext, span: Span, module: wast::core::Module, expected_message: &str) {
+fn module_compilation_fails(
+    context: &mut TestContext,
+    span: Span,
+    module: wast::core::Module,
+    expected_message: &str,
+) {
     let result = context.compile_and_instantiate(module);
     assert!(
         result.is_err(),
@@ -274,19 +335,33 @@ fn module_compilation_fails(context: &mut TestContext, span: Span, module: wast:
     );
 }
 
-fn execute_wast_execute(context: &mut TestContext, span: Span, execute: WastExecute) -> Result<Vec<Value>, TestError> {
+fn execute_wast_execute(
+    context: &mut TestContext,
+    span: Span,
+    execute: WastExecute,
+) -> Result<Vec<Value>, TestError> {
     match execute {
-        WastExecute::Invoke(invoke) => execute_wast_invoke(context, span, invoke).map_err(Into::into),
-        WastExecute::Wat(Wat::Module(module)) => context.compile_and_instantiate(module).map(|_| Vec::new()),
+        WastExecute::Invoke(invoke) => {
+            execute_wast_invoke(context, span, invoke).map_err(Into::into)
+        }
+        WastExecute::Wat(Wat::Module(module)) => {
+            context.compile_and_instantiate(module).map(|_| Vec::new())
+        }
         WastExecute::Wat(Wat::Component(_)) => {
             // Wasmi currently does not support the Wasm component model.
             Ok(vec![])
         }
-        WastExecute::Get { module, global } => context.get_global(module, global).map(|result| vec![result]),
+        WastExecute::Get { module, global } => context
+            .get_global(module, global)
+            .map(|result| vec![result]),
     }
 }
 
-fn execute_wast_invoke(context: &mut TestContext, span: Span, invoke: WastInvoke) -> Result<Vec<Value>, TestError> {
+fn execute_wast_invoke(
+    context: &mut TestContext,
+    span: Span,
+    invoke: WastInvoke,
+) -> Result<Vec<Value>, TestError> {
     let module_name = invoke.module.map(|id| id.name());
     let field_name = invoke.name;
     let mut args = <Vec<Value>>::new();

@@ -1513,4 +1513,8 @@ impl UntypedValue {
     pub fn as_u64(self) -> u64 {
         self.to_bits()
     }
+
+    pub fn as_usize(self) -> usize {
+        self.to_bits() as usize
+    }
 }

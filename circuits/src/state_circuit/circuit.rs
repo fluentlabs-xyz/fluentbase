@@ -2,7 +2,7 @@ use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
     exec_step::ExecSteps,
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
-    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
+    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE, N_RW_PREV_LOOKUP_TABLE},
     only_once,
     rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
@@ -14,7 +14,7 @@ use crate::{
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::engine::bytecode::Instruction;
+use fluentbase_rwasm::{common::UntypedValue, engine::bytecode::Instruction};
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -117,9 +117,6 @@ impl<F: Field> StateCircuitConfig<F> {
                 offset,
                 if is_first_access { F::zero() } else { F::one() },
             );
-            self.rw_table
-                .value_prev
-                .assign(region, offset, prev_rw_row.value().to_bits());
         }
         self.rw_table.assign(region, offset, rw_row);
         Ok(())
@@ -130,7 +127,14 @@ impl<F: Field> StateCircuitConfig<F> {
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
-            .map(|row| {
+            .copied()
+            .enumerate()
+            .map(|(i, row)| {
+                let prev_value = if i > 0 {
+                    rw_rows.get(i - 1).unwrap().value()
+                } else {
+                    UntypedValue::default()
+                };
                 vec![
                     rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
                     rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
@@ -143,6 +147,7 @@ impl<F: Field> StateCircuitConfig<F> {
                         .cell()
                         .justify(Justify::Center),
                     row.value().to_bits().cell().justify(Justify::Center),
+                    prev_value.to_bits().cell().justify(Justify::Center),
                 ]
             })
             .collect_vec()
@@ -156,6 +161,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 "id".cell().bold(true),
                 "address".cell().bold(true),
                 "value".cell().bold(true),
+                "value_prev".cell().bold(true),
             ])
             .bold(true);
         print_stdout(table).unwrap();
@@ -170,7 +176,7 @@ impl<F: Field> StateCircuitConfig<F> {
             || "state runtime opcodes",
             |mut region| {
                 let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
-                self.print_rw_rows_table(&rw_rows, rw_meta);
+                // self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -179,6 +185,7 @@ impl<F: Field> StateCircuitConfig<F> {
                         row.rw_counter(),
                     )
                 });
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
                     if offset > 0 {
                         self.assign_with_region(
@@ -208,6 +215,19 @@ impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
             self.rw_table.id.current(),
             self.rw_table.address.current(),
             self.rw_table.value.current(),
+        ]
+    }
+
+    fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE] {
+        [
+            self.q_enable.current().0,
+            self.rw_table.rw_counter.current(),
+            self.rw_table.is_write.current(),
+            self.rw_table.tag.current(),
+            self.rw_table.id.current(),
+            self.rw_table.address.current(),
+            self.rw_table.value.current(),
+            self.rw_table.value.previous(),
         ]
     }
 }
