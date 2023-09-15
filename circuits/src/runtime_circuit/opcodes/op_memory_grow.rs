@@ -38,6 +38,7 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGrowGadget<F> {
             RwTableContextTag::MemorySize,
             1.expr(),
             memory_size.current() + delta.current(),
+            // TODO: "add prev lookup"
         );
 
         Self {

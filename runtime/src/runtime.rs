@@ -11,6 +11,7 @@ use fluentbase_rwasm::{
     Caller,
     Config,
     Engine,
+    FuelConsumptionMode,
     Func,
     Linker,
     Module,
@@ -140,14 +141,23 @@ impl Runtime {
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
-        let config = Config::default();
+        let mut config = Config::default();
+        let fuel_enabled = true;
+        if fuel_enabled {
+            config.fuel_consumption_mode(FuelConsumptionMode::Eager);
+            config.consume_fuel(true);
+        }
         let engine = Engine::new(&config);
 
         let runtime_context = RuntimeContext::new(input_data);
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
-        let store = Store::<RuntimeContext>::new(&engine, runtime_context);
+        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+
+        if fuel_enabled {
+            store.add_fuel(100_000).unwrap();
+        }
 
         #[allow(unused_mut)]
         let mut res = Self {

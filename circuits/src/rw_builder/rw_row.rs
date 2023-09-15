@@ -39,6 +39,10 @@ impl Into<usize> for RwTableTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum RwTableContextTag {
     MemorySize = 1,
+    ConsumedFuel,
+    TableSize,
+    ProgramCounter,
+    StackPointer,
 }
 
 impl_expr!(RwTableContextTag);

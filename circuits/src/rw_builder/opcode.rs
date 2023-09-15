@@ -271,6 +271,18 @@ pub fn build_memory_fill_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
     Ok(())
 }
 
+pub fn build_consume_fuel_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    let fuel = step.instr().aux_value().unwrap_or_default();
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: true,
+        call_id: step.call_id,
+        tag: RwTableContextTag::ConsumedFuel,
+        value: fuel.as_u64(),
+    });
+    Ok(())
+}
+
 pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<(), GadgetError> {
     let mut stack_reads = 0;
     let mut stack_writes = 0;
