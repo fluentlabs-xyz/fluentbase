@@ -117,9 +117,6 @@ impl<F: Field> StateCircuitConfig<F> {
                 offset,
                 if is_first_access { F::zero() } else { F::one() },
             );
-            self.rw_table
-                .value_prev
-                .assign(region, offset, prev_rw_row.value().to_bits());
         }
         self.rw_table.assign(region, offset, rw_row);
         Ok(())
@@ -179,7 +176,7 @@ impl<F: Field> StateCircuitConfig<F> {
             || "state runtime opcodes",
             |mut region| {
                 let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
-                self.print_rw_rows_table(&rw_rows, rw_meta);
+                // self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -188,6 +185,7 @@ impl<F: Field> StateCircuitConfig<F> {
                         row.rw_counter(),
                     )
                 });
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
                     if offset > 0 {
                         self.assign_with_region(
@@ -229,7 +227,7 @@ impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
             self.rw_table.id.current(),
             self.rw_table.address.current(),
             self.rw_table.value.current(),
-            self.rw_table.value_prev.current(),
+            self.rw_table.value.previous(),
         ]
     }
 }

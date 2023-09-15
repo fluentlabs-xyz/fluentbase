@@ -6,7 +6,7 @@ pub mod rw_row;
 use crate::{
     exec_step::{ExecStep, GadgetError},
     rw_builder::{
-        opcode::{build_generic_rw_ops, build_memory_copy_rw_ops},
+        opcode::{build_generic_rw_ops, build_memory_copy_rw_ops, build_memory_fill_rw_ops},
         platform::build_platform_rw_ops,
     },
 };
@@ -24,11 +24,13 @@ impl RwBuilder {
     pub fn build(&mut self, step: &mut ExecStep) -> Result<(), GadgetError> {
         match step.instr() {
             Instruction::Call(fn_idx) => {
-                let sys_func = SysFuncIdx::from(*fn_idx);
-                build_platform_rw_ops(step, sys_func)?;
+                build_platform_rw_ops(step, SysFuncIdx::from(*fn_idx))?;
             }
             Instruction::MemoryCopy => {
                 build_memory_copy_rw_ops(step)?;
+            }
+            Instruction::MemoryFill => {
+                build_memory_fill_rw_ops(step)?;
             }
             _ => {
                 build_generic_rw_ops(step, step.instr().get_rw_ops())?;

@@ -41,7 +41,6 @@ pub fn build_sys_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
             call_id: step.call_id,
             memory_address: target.as_u64() + i as u64,
             value: *value,
-            length: length.as_u32(),
             signed: false,
         });
     });
@@ -74,7 +73,6 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
             call_id: step.call_id,
             memory_address: target.as_u64() + i as u64,
             value: *value,
-            length: length.as_u32(),
             signed: false,
         });
     });

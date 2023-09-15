@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, Query, SelectorColumn, ToExpr},
+    constraint_builder::{AdviceColumn, Query, SelectorColumn},
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -10,7 +10,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
-use std::{marker::PhantomData, ops::Add};
+use std::marker::PhantomData;
 
 pub const LIMBS_COUNT: usize = 8;
 
