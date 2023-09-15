@@ -84,7 +84,6 @@ pub fn build_memory_write_rw_ops(
             call_id: step.call_id,
             memory_address: addr.as_u64() + (offset + i) as u64,
             value: value_le_bytes[i as usize],
-            length,
             signed: false,
         });
     });
@@ -108,7 +107,6 @@ pub fn build_memory_read_rw_ops(
             call_id: step.call_id,
             memory_address: mem_addr + i as u64,
             value: value_le_bytes[i as usize],
-            length,
             signed,
         });
     });
@@ -217,7 +215,6 @@ pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
             call_id: step.call_id,
             memory_address: source.as_u64() + i as u64,
             value: *value,
-            length: len.as_u32(),
             signed: false,
         });
     });
@@ -229,7 +226,6 @@ pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
             call_id: step.call_id,
             memory_address: dest.as_u64() + i as u64,
             value: *value,
-            length: len.as_u32(),
             signed: false,
         });
     });
@@ -241,6 +237,36 @@ pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
         length: len.as_u32(),
         rw_counter: copy_rw_counter,
         data,
+    });
+    Ok(())
+}
+
+pub fn build_memory_fill_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let len = build_stack_read_rw_ops(step, 0)?;
+    let value = build_stack_read_rw_ops(step, 1)?.as_u32() as u8;
+    let dest = build_stack_read_rw_ops(step, 2)?;
+    // remember rw counter before fill
+    let fill_rw_counter = step.next_rw_counter();
+    // read result to the memory
+    (0..len.as_usize()).for_each(|i| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            memory_address: dest.as_u64() + i as u64,
+            value,
+            signed: false,
+        });
+    });
+    // create copy row
+    step.copy_rows.push(CopyRow {
+        tag: CopyTableTag::FillMemory,
+        from_address: value as u32,
+        to_address: dest.as_u32(),
+        length: len.as_u32(),
+        rw_counter: fill_rw_counter,
+        data: vec![value; len.as_usize()],
     });
     Ok(())
 }

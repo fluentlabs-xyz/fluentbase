@@ -78,7 +78,6 @@ pub enum RwRow {
         call_id: usize,
         memory_address: u64,
         value: u8,
-        length: u32,
         signed: bool,
     },
     /// Table

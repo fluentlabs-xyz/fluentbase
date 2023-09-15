@@ -187,6 +187,31 @@ impl<F: Field> CopyCircuitConfig<F> {
                 );
             },
         );
+        cb.condition(
+            tag_bits.value_equals(CopyTableTag::FillMemory, Rotation::cur()),
+            |cb| {
+                // for memory fill value and from address must be the same
+                cb.assert_equal(
+                    "value == from_address",
+                    value.current(),
+                    from_address.current(),
+                );
+                // lookup rw (we fill memory with value)
+                cb.add_lookup(
+                    "memory fill, rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + length.current() - index.current(),
+                        1.expr(), // is_write
+                        RwTableTag::Memory.expr(),
+                        Query::zero(),                                             // id
+                        to_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+            },
+        );
 
         cb.build(cs);
 

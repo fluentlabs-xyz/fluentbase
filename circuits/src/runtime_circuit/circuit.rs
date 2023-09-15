@@ -25,6 +25,7 @@ use crate::{
             op_load::OpLoadGadget,
             op_local::OpLocalGadget,
             op_memory_copy::OpMemoryCopyGadget,
+            op_memory_fill::OpMemoryFillGadget,
             op_memory_grow::OpMemoryGrowGadget,
             op_memory_size::OpMemorySizeGadget,
             op_reffunc::OpRefFuncGadget,
@@ -81,6 +82,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     memory_copy_gadget: ExecutionContextGadget<F, OpMemoryCopyGadget<F>>,
     memory_grow_gadget: ExecutionContextGadget<F, OpMemoryGrowGadget<F>>,
     memory_size_gadget: ExecutionContextGadget<F, OpMemorySizeGadget<F>>,
+    memory_fill_gadget: ExecutionContextGadget<F, OpMemoryFillGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
@@ -146,6 +148,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             memory_copy_gadget: configure_gadget!(),
             memory_grow_gadget: configure_gadget!(),
             memory_size_gadget: configure_gadget!(),
+            memory_fill_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -252,6 +255,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_MEMORY_SIZE => self
                 .memory_size_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_MEMORY_FILL => self
+                .memory_fill_gadget
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_STORE => {
