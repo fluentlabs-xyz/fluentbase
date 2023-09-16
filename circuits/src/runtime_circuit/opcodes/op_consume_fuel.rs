@@ -30,6 +30,7 @@ impl<F: Field> ExecutionGadget<F> for OpConsumeFuel<F> {
             RwTableContextTag::ConsumedFuel,
             1.expr(),
             consumed_fuel.current() + value.current(),
+            consumed_fuel.current(),
         );
         // TODO: "add OutOfFuel error check"
         Self {
@@ -59,7 +60,7 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn test() {
+    fn test_consume_fuel() {
         test_ok(instruction_set! {
             ConsumeFuel(0)
             ConsumeFuel(1)
