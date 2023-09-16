@@ -218,8 +218,20 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value);
     }
 
-    pub fn context_lookup(&mut self, tag: RwTableContextTag, is_write: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Context.expr(), tag.expr(), value);
+    pub fn context_lookup(
+        &mut self,
+        tag: RwTableContextTag,
+        is_write: Query<F>,
+        value: Query<F>,
+        value_prev: Query<F>,
+    ) {
+        self.rw_prev_lookup(
+            is_write,
+            RwTableTag::Context.expr(),
+            tag.expr(),
+            value,
+            value_prev,
+        );
     }
 
     pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
@@ -369,6 +381,29 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
+
+    pub fn rw_prev_lookup(
+        &mut self,
+        is_write: Query<F>,
+        tag: Query<F>,
+        address: Query<F>,
+        value: Query<F>,
+        value_prev: Query<F>,
+    ) {
+        self.op_lookups
+            .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
+                Query::one(),
+                self.state_transition.rw_counter(),
+                is_write,
+                tag,
+                Query::zero(),
+                address,
+                value,
+                value_prev,
+            ])));
+        self.state_transition.rw_counter_offset =
+            self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
+    }
     pub fn range_check7(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck7([val]));
     }
@@ -465,6 +500,13 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                         "rw_lookup(rw_counter,is_write,tag,id,address,value)",
                         fields.clone(),
                         rw_lookup.lookup_rw_table(),
+                    );
+                }
+                LookupTable::RwPrev(fields) => {
+                    self.base.add_lookup(
+                        "rw_lookup(rw_counter,is_write,tag,id,address,value,value_prev)",
+                        fields.clone(),
+                        rw_lookup.lookup_rw_prev_table(),
                     );
                 }
                 LookupTable::ResponsibleOpcode(fields) => {

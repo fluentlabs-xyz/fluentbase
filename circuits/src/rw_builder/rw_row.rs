@@ -97,6 +97,7 @@ pub enum RwRow {
 impl RwRow {
     pub fn value(&self) -> UntypedValue {
         match self {
+            Self::Start { .. } => UntypedValue::default(),
             Self::Context { value, .. } => UntypedValue::from(*value),
             Self::Stack { value, .. } => *value,
             Self::Global { value, .. } => *value,

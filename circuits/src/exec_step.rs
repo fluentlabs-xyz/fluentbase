@@ -117,7 +117,8 @@ impl ExecSteps {
 
         let mut global_memory = Vec::new();
         let mut global_table = BTreeMap::<u32, UntypedValue>::new();
-        let mut rw_counter = 0;
+
+        let mut rw_counter = 1; // 1 is reserved for start
 
         for (i, trace) in tracer.logs.iter().cloned().enumerate() {
             for memory_change in trace.memory_changes.iter() {

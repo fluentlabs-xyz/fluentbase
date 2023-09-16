@@ -14,7 +14,7 @@ use crate::{
     util::Field,
 };
 use cli_table::format::Justify;
-use fluentbase_rwasm::{common::UntypedValue, engine::bytecode::Instruction};
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -130,11 +130,13 @@ impl<F: Field> StateCircuitConfig<F> {
             .copied()
             .enumerate()
             .map(|(i, row)| {
-                let prev_value = if i > 0 {
-                    rw_rows.get(i - 1).unwrap().value()
-                } else {
-                    UntypedValue::default()
-                };
+                let prev_value = rw_rows
+                    .get((i as isize - 1) as usize)
+                    .filter(|v| {
+                        v.is_write() == row.is_write() && v.tag() == row.tag() && v.id() == row.id()
+                    })
+                    .map(|v| v.value())
+                    .unwrap_or_default();
                 vec![
                     rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
                     rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
@@ -175,7 +177,9 @@ impl<F: Field> StateCircuitConfig<F> {
         layouter.assign_region(
             || "state runtime opcodes",
             |mut region| {
-                let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
+                let (mut rw_rows, mut rw_meta) = exec_steps.get_rw_rows();
+                rw_rows.insert(0, RwRow::Start { rw_counter: 0 });
+                rw_meta.insert(0, (Instruction::Unreachable, 0));
                 // self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (

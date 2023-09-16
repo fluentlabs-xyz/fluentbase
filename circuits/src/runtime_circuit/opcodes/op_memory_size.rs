@@ -25,7 +25,12 @@ impl<F: Field> ExecutionGadget<F> for OpMemorySizeGadget<F> {
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let value = cb.query_cell();
 
-        cb.context_lookup(RwTableContextTag::MemorySize, 0.expr(), value.current());
+        cb.context_lookup(
+            RwTableContextTag::MemorySize,
+            0.expr(),
+            value.current(),
+            value.current(),
+        );
         cb.stack_push(value.current());
 
         Self {
