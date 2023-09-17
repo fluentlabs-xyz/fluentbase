@@ -13,6 +13,7 @@ use crate::{
             build_memory_fill_rw_ops,
         },
         platform::build_platform_rw_ops,
+        rw_row::{RwRow, RwTableContextTag},
     },
 };
 use fluentbase_runtime::SysFuncIdx;
@@ -44,6 +45,20 @@ impl RwBuilder {
                 build_generic_rw_ops(step, step.instr().get_rw_ops())?;
             }
         }
+        step.rw_rows.push(RwRow::Context {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            tag: RwTableContextTag::ProgramCounter,
+            value: step.pc_diff(),
+        });
+        // step.rw_rows.push(RwRow::Context {
+        //     rw_counter: step.next_rw_counter(),
+        //     is_write: true,
+        //     call_id: step.call_id,
+        //     tag: RwTableContextTag::StackPointer,
+        //     value: step.stack_len() as u64,
+        // });
         Ok(())
     }
 }

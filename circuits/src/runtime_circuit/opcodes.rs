@@ -49,13 +49,9 @@ pub trait ExecutionGadget<F: Field> {
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self;
 
-    fn configure_state_transition(
-        &self,
-        cb: &mut OpConstraintBuilder<F>,
-        _default_stack_diff: Query<F>,
-    ) {
+    fn configure_state_transition(&self, cb: &mut OpConstraintBuilder<F>, _stack_diff: Query<F>) {
         cb.next_pc_delta(9.expr());
-        //cb.next_sp_delta(default_stack_diff);
+        // cb.next_sp_delta(stack_diff);
     }
 
     fn assign_exec_step(

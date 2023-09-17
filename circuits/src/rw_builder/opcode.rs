@@ -334,22 +334,5 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
     }
-    step.rw_rows.push(RwRow::Context {
-        rw_counter: step.next_rw_counter(),
-        is_write: true,
-        call_id: step.call_id,
-        tag: RwTableContextTag::ProgramCounter,
-        value: step
-            .next()
-            .map(|v| v.source_pc)
-            .unwrap_or(step.curr().source_pc) as u64,
-    });
-    // step.rw_rows.push(RwRow::Context {
-    //     rw_counter: step.next_rw_counter(),
-    //     is_write: true,
-    //     call_id: step.call_id,
-    //     tag: RwTableContextTag::StackPointer,
-    //     value: (stack_writes as i64 - stack_reads as i64) as u64,
-    // });
     Ok(())
 }

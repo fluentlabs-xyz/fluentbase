@@ -43,6 +43,18 @@ impl ExecStep {
         MAX_STACK_HEIGHT as u64 - self.trace.stack.len() as u64
     }
 
+    pub fn pc_diff(&self) -> u64 {
+        self.next()
+            .map(|v| v.source_pc)
+            .unwrap_or(self.curr().source_pc) as u64
+    }
+
+    pub fn stack_len(&self) -> usize {
+        self.next()
+            .map(|v| v.stack.len())
+            .unwrap_or_else(|_| self.curr().stack.len())
+    }
+
     pub fn curr_nth_stack_value(&self, nth: usize) -> Result<UntypedValue, GadgetError> {
         Ok(self.trace.stack[self.trace.stack.len() - nth - 1])
     }
