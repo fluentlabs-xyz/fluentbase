@@ -39,6 +39,7 @@ pub enum ExecutionState {
     WASM_UNREACHABLE,
     WASM_CONSUME_FUEL,
     WASM_SHIFT,
+    WASM_RETURN,
 }
 
 impl ExecutionState {
@@ -77,6 +78,7 @@ impl ExecutionState {
             ExecutionState::WASM_UNREACHABLE => 31,
             ExecutionState::WASM_CONSUME_FUEL => 32,
             ExecutionState::WASM_SHIFT => 33,
+            ExecutionState::WASM_RETURN => 34,
         }
     }
 
@@ -132,8 +134,6 @@ impl ExecutionState {
                 Instruction::BrAdjustIfNez(Default::default()),
             ],
             Self::WASM_CALL => vec![
-                Instruction::Return(Default::default()),
-                Instruction::ReturnIfNez(Default::default()),
                 Instruction::ReturnCallInternal(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
@@ -263,6 +263,10 @@ impl ExecutionState {
             Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
             Self::WASM_MEMORY_FILL => vec![Instruction::MemoryFill],
             Self::WASM_MEMORY_INIT => vec![Instruction::MemoryInit(Default::default())],
+            Self::WASM_RETURN => vec![
+                Instruction::Return(Default::default()),
+                Instruction::ReturnIfNez(Default::default()),
+            ],
             _ => vec![],
         }
     }

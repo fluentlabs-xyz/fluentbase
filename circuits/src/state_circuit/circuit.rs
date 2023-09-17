@@ -4,7 +4,7 @@ use crate::{
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
     lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE, N_RW_PREV_LOOKUP_TABLE},
     only_once,
-    rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
+    rw_builder::rw_row::{RwRow, RwTableContextTag, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
@@ -22,6 +22,7 @@ use halo2_proofs::{
 };
 use itertools::Itertools;
 use std::marker::PhantomData;
+use strum::IntoEnumIterator;
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -137,6 +138,15 @@ impl<F: Field> StateCircuitConfig<F> {
                     })
                     .map(|v| v.value())
                     .unwrap_or_default();
+                let address = if row.tag() == RwTableTag::Context {
+                    let tag = RwTableContextTag::iter()
+                        .filter(|v| *v as u32 == row.address().unwrap_or_default())
+                        .last()
+                        .unwrap();
+                    format!("{} ({})", tag, row.address().unwrap_or_default())
+                } else {
+                    row.address().unwrap_or_default().to_string()
+                };
                 vec![
                     rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
                     rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
@@ -144,10 +154,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     row.is_write().cell().justify(Justify::Center),
                     row.tag().cell().justify(Justify::Center),
                     row.id().unwrap_or_default().cell().justify(Justify::Center),
-                    row.address()
-                        .unwrap_or_default()
-                        .cell()
-                        .justify(Justify::Center),
+                    address.cell().justify(Justify::Center),
                     row.value().to_bits().cell().justify(Justify::Center),
                     prev_value.to_bits().cell().justify(Justify::Center),
                 ]
