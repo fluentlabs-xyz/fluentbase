@@ -28,6 +28,21 @@ impl RwBuilder {
     }
 
     pub fn build(&mut self, step: &mut ExecStep) -> Result<(), GadgetError> {
+        // we must do all context lookups in the beginning, otherwise copy lookup might break it
+        step.rw_rows.push(RwRow::Context {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            tag: RwTableContextTag::ProgramCounter,
+            value: step.pc_diff(),
+        });
+        // step.rw_rows.push(RwRow::Context {
+        //     rw_counter: step.next_rw_counter(),
+        //     is_write: true,
+        //     call_id: step.call_id,
+        //     tag: RwTableContextTag::StackPointer,
+        //     value: step.stack_len() as u64,
+        // });
         match step.instr() {
             Instruction::Call(fn_idx) => {
                 build_platform_rw_ops(step, SysFuncIdx::from(*fn_idx))?;
@@ -45,20 +60,6 @@ impl RwBuilder {
                 build_generic_rw_ops(step, step.instr().get_rw_ops())?;
             }
         }
-        step.rw_rows.push(RwRow::Context {
-            rw_counter: step.next_rw_counter(),
-            is_write: true,
-            call_id: step.call_id,
-            tag: RwTableContextTag::ProgramCounter,
-            value: step.pc_diff(),
-        });
-        // step.rw_rows.push(RwRow::Context {
-        //     rw_counter: step.next_rw_counter(),
-        //     is_write: true,
-        //     call_id: step.call_id,
-        //     tag: RwTableContextTag::StackPointer,
-        //     value: step.stack_len() as u64,
-        // });
         Ok(())
     }
 }

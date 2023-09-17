@@ -1,6 +1,6 @@
 pub use crate::exec_step::{ExecStep, GadgetError};
 use crate::{
-    constraint_builder::{Query, ToExpr},
+    constraint_builder::ToExpr,
     runtime_circuit::{constraint_builder::OpConstraintBuilder, execution_state::ExecutionState},
     util::Field,
 };
@@ -49,9 +49,8 @@ pub trait ExecutionGadget<F: Field> {
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self;
 
-    fn configure_state_transition(&self, cb: &mut OpConstraintBuilder<F>, _stack_diff: Query<F>) {
+    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
         cb.next_pc_delta(9.expr());
-        // cb.next_sp_delta(stack_diff);
     }
 
     fn assign_exec_step(

@@ -212,7 +212,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value, None);
     }
 
     pub fn context_lookup(
@@ -222,12 +222,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         value: Query<F>,
         value_prev: Query<F>,
     ) {
-        self.rw_prev_lookup(
+        self.rw_lookup(
             is_write,
             RwTableTag::Context.expr(),
             tag.expr(),
             value,
-            value_prev,
+            Some(value_prev),
         );
     }
 
@@ -248,24 +248,18 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn memory_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value, None);
     }
 
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value, None);
     }
 
-    pub fn execution_state_lookup(
-        &mut self,
-        execution_state: ExecutionState,
-        opcode: Query<F>,
-        stack_diff: Query<F>,
-    ) {
+    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState, opcode: Query<F>) {
         self.op_lookups.push(LookupTable::ResponsibleOpcode(
             self.base.apply_lookup_condition([
                 Query::Constant(F::from(execution_state.to_u64())),
                 opcode,
-                stack_diff,
             ]),
         ));
     }
@@ -331,12 +325,19 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             RwTableTag::Table.expr(),
             table_idx * 1024 + elem_idx + 1.expr(),
             value,
+            None,
         );
     }
 
     pub fn table_size_lookup(&mut self, is_write: Query<F>, table_idx: Query<F>, value: Query<F>) {
         // address = b*x, where x is 1024. So this is reserved element to store size.
-        self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024, value);
+        self.rw_lookup(
+            is_write,
+            RwTableTag::Table.expr(),
+            table_idx * 1024,
+            value,
+            None,
+        );
     }
 
     pub fn range_check_1024(&mut self, value: Query<F>) {
@@ -388,43 +389,36 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         tag: Query<F>,
         address: Query<F>,
         value: Query<F>,
+        value_prev: Option<Query<F>>,
     ) {
-        self.op_lookups
-            .push(LookupTable::Rw(self.base.apply_lookup_condition([
-                Query::one(),
-                self.state_transition.rw_counter(),
-                is_write,
-                tag,
-                Query::zero(),
-                address,
-                value,
-            ])));
+        if let Some(value_prev) = value_prev {
+            self.op_lookups
+                .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
+                    Query::one(),
+                    self.state_transition.rw_counter(),
+                    is_write,
+                    tag,
+                    Query::zero(),
+                    address,
+                    value,
+                    value_prev,
+                ])));
+        } else {
+            self.op_lookups
+                .push(LookupTable::Rw(self.base.apply_lookup_condition([
+                    Query::one(),
+                    self.state_transition.rw_counter(),
+                    is_write,
+                    tag,
+                    Query::zero(),
+                    address,
+                    value,
+                ])));
+        }
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
 
-    pub fn rw_prev_lookup(
-        &mut self,
-        is_write: Query<F>,
-        tag: Query<F>,
-        address: Query<F>,
-        value: Query<F>,
-        value_prev: Query<F>,
-    ) {
-        self.op_lookups
-            .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
-                Query::one(),
-                self.state_transition.rw_counter(),
-                is_write,
-                tag,
-                Query::zero(),
-                address,
-                value,
-                value_prev,
-            ])));
-        self.state_transition.rw_counter_offset =
-            self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
-    }
     pub fn range_check7(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck7([val]));
     }
@@ -532,7 +526,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 }
                 LookupTable::ResponsibleOpcode(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "responsible_opcode(execution_state,opcode,stack_len)",
                         fields.clone(),
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
                     );
@@ -546,21 +540,21 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 }
                 LookupTable::RangeCheck8(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u8",
                         fields.clone(),
                         range_check_lookup.lookup_u8_table(),
                     );
                 }
                 LookupTable::RangeCheck10(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u10",
                         fields.clone(),
                         range_check_lookup.lookup_u10_table(),
                     );
                 }
                 LookupTable::RangeCheck16(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u16",
                         fields.clone(),
                         range_check_lookup.lookup_u16_table(),
                     );

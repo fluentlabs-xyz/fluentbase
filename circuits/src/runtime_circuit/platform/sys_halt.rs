@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, Query, ToExpr},
+    constraint_builder::{AdviceColumn, ToExpr},
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -33,7 +33,7 @@ impl<F: Field> ExecutionGadget<F> for SysHaltGadget<F> {
         }
     }
 
-    fn configure_state_transition(&self, cb: &mut OpConstraintBuilder<F>, _stack_diff: Query<F>) {
+    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
         cb.next_pc_delta(0.expr());
     }
 

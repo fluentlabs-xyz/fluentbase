@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
+    constraint_builder::{AdviceColumn, SelectorColumn},
     lookup_table::{
         BitwiseCheckLookup,
         CopyLookup,
@@ -26,7 +26,6 @@ pub struct ExecutionContextGadget<F: Field, G: ExecutionGadget<F>> {
     opcode: AdviceColumn,
     value: AdviceColumn,
     state_transition: StateTransition<F>,
-    stack_diff: FixedColumn,
 }
 
 impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
@@ -47,17 +46,12 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         let mut cb = OpConstraintBuilder::new(cs, q_enable, &mut state_transition);
         // extract rwasm table with opcode and value fields (for lookup)
         let [pc, opcode, value] = cb.rwasm_table();
-        let stack_diff = cb.query_fixed();
         // make sure opcode and value fields are correct and set properly
         cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
-        cb.execution_state_lookup(
-            G::EXECUTION_STATE,
-            cb.query_rwasm_opcode(),
-            stack_diff.current(),
-        );
+        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_opcode());
         // configure gadget and build gates
+        G::configure_state_transition(&mut cb);
         let gadget_config = G::configure(&mut cb);
-        gadget_config.configure_state_transition(&mut cb, stack_diff.current());
         cb.build(
             rwasm_lookup,
             state_lookup,
@@ -75,7 +69,6 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
             value,
             q_enable,
             state_transition,
-            stack_diff,
         }
     }
 
@@ -97,8 +90,6 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         // assign state transition
         self.state_transition
             .assign(region, offset, step.stack_pointer(), rw_counter as u64);
-        self.stack_diff
-            .assign(region, offset, step.stack_len() as u64);
         // assign opcode gadget
         self.gadget.assign_exec_step(region, offset, step)
     }

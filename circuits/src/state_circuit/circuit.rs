@@ -64,6 +64,9 @@ impl<F: Field> StateCircuitConfig<F> {
         cb.condition(is_tag(RwTableTag::Start), |cb| {
             rw_table.build_start_constraints(cb);
         });
+        cb.condition(is_tag(RwTableTag::Context), |cb| {
+            rw_table.build_context_constraints(cb);
+        });
         cb.condition(is_tag(RwTableTag::Memory), |cb| {
             rw_table.build_memory_constraints(cb);
         });
@@ -119,7 +122,8 @@ impl<F: Field> StateCircuitConfig<F> {
                 if is_first_access { F::zero() } else { F::one() },
             );
         }
-        self.rw_table.assign(region, offset, rw_row);
+        self.rw_table
+            .assign(region, offset, rw_row, prev_rw_row.map(|v| v.value()));
         Ok(())
     }
 
@@ -134,10 +138,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 let prev_value = rw_rows
                     .get((i as isize - 1) as usize)
                     .filter(|v| {
-                        v.is_write() == row.is_write()
-                            && v.tag() == row.tag()
-                            && v.id() == row.id()
-                            && v.address() == row.address()
+                        v.tag() == row.tag() && v.id() == row.id() && v.address() == row.address()
                     })
                     .map(|v| v.value())
                     .unwrap_or_default();
@@ -190,7 +191,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 let (mut rw_rows, mut rw_meta) = exec_steps.get_rw_rows();
                 rw_rows.insert(0, RwRow::Start { rw_counter: 0 });
                 rw_meta.insert(0, (Instruction::Unreachable, 0));
-                // self.print_rw_rows_table(&rw_rows, rw_meta);
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -199,15 +200,15 @@ impl<F: Field> StateCircuitConfig<F> {
                         row.rw_counter(),
                     )
                 });
-                self.print_rw_rows_table(&rw_rows, rw_meta);
+                // self.print_rw_rows_table(&rw_rows, rw_meta);
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
                     if offset > 0 {
-                        self.assign_with_region(
-                            &mut region,
-                            offset,
-                            rw_row,
-                            rw_rows.get(offset - 1),
-                        )?;
+                        let prev_value = rw_rows.get(offset - 1).filter(|v| {
+                            v.tag() == rw_row.tag()
+                                && v.id() == rw_row.id()
+                                && v.address() == rw_row.address()
+                        });
+                        self.assign_with_region(&mut region, offset, rw_row, prev_value)?;
                     } else {
                         self.assign_with_region(&mut region, offset, rw_row, None)?;
                     }
@@ -241,7 +242,7 @@ impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
             self.rw_table.id.current(),
             self.rw_table.address.current(),
             self.rw_table.value.current(),
-            self.rw_table.value.previous(),
+            self.rw_table.value_prev.current(),
         ]
     }
 }
