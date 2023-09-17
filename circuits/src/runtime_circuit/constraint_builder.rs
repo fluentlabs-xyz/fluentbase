@@ -10,7 +10,7 @@ use crate::{
         ToExpr,
     },
     fixed_table::FixedTableTag,
-    gadgets::is_zero::IsZeroConfig,
+    gadgets::{is_zero::IsZeroConfig, lt::LtGadget},
     lookup_table::{
         BitwiseCheckLookup,
         CopyLookup,
@@ -160,8 +160,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.base.fixed_column(self.cs)
     }
 
-    pub fn is_zero(&mut self, value: Query<F>) -> IsZeroConfig<F> {
+    pub fn is_zero_gadget(&mut self, value: Query<F>) -> IsZeroConfig<F> {
         IsZeroConfig::configure(self.cs, &mut self.base, value)
+    }
+
+    pub fn lt_gadget<const N_BYTES: usize>(
+        &mut self,
+        lhs: Query<F>,
+        rhs: Query<F>,
+    ) -> LtGadget<F, N_BYTES> {
+        LtGadget::configure(self.cs, &mut self.base, lhs, rhs)
     }
 
     pub fn query_fixed_n<const N: usize>(&mut self) -> [FixedColumn; N] {
