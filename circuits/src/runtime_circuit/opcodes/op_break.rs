@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, FixedColumn, ToExpr},
+    constraint_builder::{AdviceColumn, FixedColumn, Query, ToExpr},
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -91,6 +91,15 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
             value_inv,
             marker: Default::default(),
         }
+    }
+
+    fn configure_state_transition(
+        &self,
+        _cb: &mut OpConstraintBuilder<F>,
+        _default_stack_diff: Query<F>,
+    ) {
+        // cb.next_pc_delta(9.expr());
+        //cb.next_sp_delta(default_stack_diff);
     }
 
     fn assign_exec_step(

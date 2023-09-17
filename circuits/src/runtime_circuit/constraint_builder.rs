@@ -12,6 +12,8 @@ use crate::{
     fixed_table::FixedTableTag,
     gadgets::is_zero::IsZeroConfig,
     lookup_table::{
+        BitwiseCheckLookup,
+        CopyLookup,
         FixedLookup,
         LookupTable,
         PublicInputLookup,
@@ -21,11 +23,14 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::execution_state::ExecutionState,
+    rw_builder::{
+        copy_row::CopyTableTag,
+        rw_row::{RwTableContextTag, RwTableTag},
+    },
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
-use std::ops::Not;
 
 #[derive(Clone)]
 pub struct StateTransition<F: Field> {
@@ -33,7 +38,6 @@ pub struct StateTransition<F: Field> {
     pub(crate) stack_pointer_offset: Query<F>,
     pub(crate) rw_counter: AdviceColumn,
     pub(crate) rw_counter_offset: Query<F>,
-    pub(crate) program_counter: Query<F>,
 }
 
 impl<F: Field> StateTransition<F> {
@@ -45,13 +49,7 @@ impl<F: Field> StateTransition<F> {
             stack_pointer_offset: Query::zero(),
             rw_counter,
             rw_counter_offset: Query::zero(),
-            program_counter: Query::zero(),
         }
-    }
-
-    pub fn reset_offsets(&mut self) {
-        self.stack_pointer_offset = Query::zero();
-        self.rw_counter_offset = Query::zero();
     }
 
     pub fn assign(
@@ -85,17 +83,7 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     // rw fields
     state_transition: &'st mut StateTransition<F>,
     op_lookups: Vec<LookupTable<F>>,
-    next_program_counter: Option<Query<F>>,
 }
-
-use crate::{
-    lookup_table::{BitwiseCheckLookup, CopyLookup},
-    rw_builder::{
-        copy_row::CopyTableTag,
-        rw_row::{RwTableContextTag, RwTableTag},
-    },
-};
-use Query as Q;
 
 #[allow(unused_variables)]
 impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
@@ -116,7 +104,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             value,
             state_transition,
             op_lookups: vec![],
-            next_program_counter: None,
         }
     }
 
@@ -130,10 +117,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_rwasm_value(&self) -> Query<F> {
         self.value.current()
-    }
-
-    pub fn query_rwasm_pc(&self) -> Query<F> {
-        self.state_transition.program_counter.clone()
     }
 
     pub fn require_exactly_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
@@ -190,16 +173,30 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn next_pc_delta(&mut self, delta: Query<F>) {
-        let condition = self.base.resolve_condition();
-        self.state_transition.program_counter =
-            self.state_transition.program_counter.clone() + condition.0 * delta;
+        self.context_lookup(
+            RwTableContextTag::ProgramCounter,
+            1.expr(),
+            self.pc.current() + delta,
+            self.pc.current(),
+        );
     }
 
     pub fn next_pc_jump(&mut self, value: Query<F>) {
-        let condition = self.base.resolve_condition();
-        self.state_transition.program_counter = condition.clone().not().0
-            * self.state_transition.program_counter.clone()
-            + condition.0 * value;
+        self.context_lookup(
+            RwTableContextTag::ProgramCounter,
+            1.expr(),
+            value,
+            self.pc.current(),
+        );
+    }
+
+    pub fn next_sp_delta(&mut self, delta: Query<F>) {
+        self.context_lookup(
+            RwTableContextTag::StackPointer,
+            1.expr(),
+            self.state_transition.stack_pointer.current() + delta,
+            self.state_transition.stack_pointer.current(),
+        );
     }
 
     pub fn stack_push(&mut self, value: Query<F>) {
@@ -262,47 +259,71 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         &mut self,
         execution_state: ExecutionState,
         opcode: Query<F>,
-        affects_pc: Query<F>,
+        stack_diff: Query<F>,
     ) {
         self.op_lookups.push(LookupTable::ResponsibleOpcode(
             self.base.apply_lookup_condition([
                 Query::Constant(F::from(execution_state.to_u64())),
                 opcode,
-                affects_pc,
+                stack_diff,
             ]),
         ));
     }
 
-    pub fn table_size(&mut self, table_idx: Q<F>, value: Q<F>) {
+    pub fn table_size(&mut self, table_idx: Query<F>, value: Query<F>) {
         self.table_size_lookup(0.expr(), table_idx * 1024, value);
     }
-    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
+    pub fn table_fill(
+        &mut self,
+        table_index: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+        value: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_grow(&mut self, table_idx: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
+    pub fn table_grow(
+        &mut self,
+        table_idx: Query<F>,
+        init: Query<F>,
+        grow: Query<F>,
+        res: Query<F>,
+    ) {
         self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
         self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
         self.table_fill(table_idx, res, grow, init);
     }
-    pub fn table_get(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+    pub fn table_get(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
     }
-    pub fn table_set(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+    pub fn table_set(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
     }
-    pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+    pub fn table_copy(
+        &mut self,
+        table_index: Query<F>,
+        table_index2: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_init(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+    pub fn table_init(
+        &mut self,
+        table_index: Query<F>,
+        table_index2: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
 
     pub fn table_elem_lookup(
         &mut self,
-        is_write: Q<F>,
-        table_idx: Q<F>,
-        elem_idx: Q<F>,
-        value: Q<F>,
+        is_write: Query<F>,
+        table_idx: Query<F>,
+        elem_idx: Query<F>,
+        value: Query<F>,
     ) {
         // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
         self.rw_lookup(
@@ -313,12 +334,12 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         );
     }
 
-    pub fn table_size_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, value: Q<F>) {
+    pub fn table_size_lookup(&mut self, is_write: Query<F>, table_idx: Query<F>, value: Query<F>) {
         // address = b*x, where x is 1024. So this is reserved element to store size.
         self.rw_lookup(is_write, RwTableTag::Table.expr(), table_idx * 1024, value);
     }
 
-    pub fn range_check_1024(&mut self, value: Q<F>) {
+    pub fn range_check_1024(&mut self, value: Query<F>) {
         // unreachable!("not implemented yet")
     }
 

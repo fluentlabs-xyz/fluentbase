@@ -31,6 +31,7 @@ use crate::{
             op_memory_init::OpMemoryInitGadget,
             op_memory_size::OpMemorySizeGadget,
             op_reffunc::OpRefFuncGadget,
+            op_return::OpReturnGadget,
             op_select::OpSelectGadget,
             op_shift::OpShiftGadget,
             op_store::OpStoreGadget,
@@ -91,6 +92,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     memory_size_gadget: ExecutionContextGadget<F, OpMemorySizeGadget<F>>,
     memory_fill_gadget: ExecutionContextGadget<F, OpMemoryFillGadget<F>>,
     memory_init_gadget: ExecutionContextGadget<F, OpMemoryInitGadget<F>>,
+    return_gadget: ExecutionContextGadget<F, OpReturnGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
@@ -161,6 +163,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             memory_size_gadget: configure_gadget!(),
             memory_fill_gadget: configure_gadget!(),
             memory_init_gadget: configure_gadget!(),
+            return_gadget: configure_gadget!(),
             // system calls
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
@@ -290,6 +293,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 self.store_gadget.assign(region, offset, step, rw_counter)
             }
             ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_RETURN => {
+                self.return_gadget.assign(region, offset, step, rw_counter)
+            }
             _ => unreachable!("not supported gadget {:?}", execution_state),
         };
         // TODO: "do normal error handling here"

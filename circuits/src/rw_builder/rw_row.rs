@@ -47,6 +47,24 @@ pub enum RwTableContextTag {
 
 impl_expr!(RwTableContextTag);
 
+impl fmt::Display for RwTableContextTag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RwTableContextTag::MemorySize => write!(f, "MS"),
+            RwTableContextTag::ConsumedFuel => write!(f, "CF"),
+            RwTableContextTag::TableSize => write!(f, "TS"),
+            RwTableContextTag::ProgramCounter => write!(f, "PC"),
+            RwTableContextTag::StackPointer => write!(f, "SP"),
+        }
+    }
+}
+
+impl Into<usize> for RwTableContextTag {
+    fn into(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum RwRow {
     /// Start
