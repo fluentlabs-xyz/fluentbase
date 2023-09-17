@@ -40,6 +40,13 @@ impl RwBuilder {
         //     rw_counter: step.next_rw_counter(),
         //     is_write: true,
         //     call_id: step.call_id,
+        //     tag: RwTableContextTag::MemorySize,
+        //     value: step.curr().memory_size as u64,
+        // });
+        // step.rw_rows.push(RwRow::Context {
+        //     rw_counter: step.next_rw_counter(),
+        //     is_write: true,
+        //     call_id: step.call_id,
         //     tag: RwTableContextTag::StackPointer,
         //     value: step.stack_len() as u64,
         // });

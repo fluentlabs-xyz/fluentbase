@@ -4,6 +4,7 @@ use crate::{
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
+        memory_expansion::MemoryExpansionGadget,
         opcodes::ExecutionGadget,
     },
     util::Field,
@@ -13,7 +14,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct OpStoreGadget<F> {
+pub(crate) struct OpStoreGadget<F: Field> {
     is_i32_store: SelectorColumn,
     is_i32_store8: SelectorColumn,
     is_i32_store16: SelectorColumn,
@@ -29,6 +30,7 @@ pub(crate) struct OpStoreGadget<F> {
     value_as_bytes: [AdviceColumn; Instruction::MAX_BYTE_LEN],
     address: AdviceColumn,
     address_base_offset: AdviceColumn,
+    memory_expansion: MemoryExpansionGadget<F>,
 
     _marker: PhantomData<F>,
 }
@@ -58,6 +60,8 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         value_as_bytes.iter().for_each(|v| {
             cb.range_check8(v.current());
         });
+
+        let memory_expansion = MemoryExpansionGadget::configure(cb);
 
         cb.stack_pop(value.current());
         cb.stack_pop(address.current());
@@ -128,6 +132,7 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             value_as_bytes,
             address_base_offset,
             value_stored,
+            memory_expansion,
             _marker: Default::default(),
         }
     }
@@ -136,13 +141,13 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
         &self,
         region: &mut Region<'_, F>,
         offset: usize,
-        trace: &ExecStep,
+        step: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let value = trace.curr_nth_stack_value(0)?.to_bits();
-        let address = trace.curr_nth_stack_value(1)?.to_bits();
+        let value = step.curr_nth_stack_value(0)?.to_bits();
+        let address = step.curr_nth_stack_value(1)?.to_bits();
         let value_le_bytes = value.to_le_bytes();
 
-        let instr = trace.instr();
+        let instr = step.instr();
 
         let mut assign = |selector: &SelectorColumn, address_offset: &AddressOffset| {
             selector.enable(region, offset);
@@ -195,6 +200,8 @@ impl<F: Field> ExecutionGadget<F> for OpStoreGadget<F> {
             }
             _ => unreachable!("illegal opcode assign {:?}", instr),
         };
+
+        self.memory_expansion.assign(region, offset, step);
 
         Ok(())
     }
