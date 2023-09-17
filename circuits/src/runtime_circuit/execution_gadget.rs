@@ -98,7 +98,7 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         self.state_transition
             .assign(region, offset, step.stack_pointer(), rw_counter as u64);
         self.stack_diff
-            .assign(region, offset, step.instr().get_stack_diff() as u64);
+            .assign(region, offset, step.stack_len() as u64);
         // assign opcode gadget
         self.gadget.assign_exec_step(region, offset, step)
     }

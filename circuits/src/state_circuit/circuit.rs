@@ -134,7 +134,10 @@ impl<F: Field> StateCircuitConfig<F> {
                 let prev_value = rw_rows
                     .get((i as isize - 1) as usize)
                     .filter(|v| {
-                        v.is_write() == row.is_write() && v.tag() == row.tag() && v.id() == row.id()
+                        v.is_write() == row.is_write()
+                            && v.tag() == row.tag()
+                            && v.id() == row.id()
+                            && v.address() == row.address()
                     })
                     .map(|v| v.value())
                     .unwrap_or_default();

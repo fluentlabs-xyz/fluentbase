@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, Query, ToExpr},
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -20,7 +20,6 @@ pub struct SysHaltGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for SysHaltGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(_sys_halt)";
-
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_HALT);
 
@@ -32,6 +31,10 @@ impl<F: Field> ExecutionGadget<F> for SysHaltGadget<F> {
             exit_code,
             pd: Default::default(),
         }
+    }
+
+    fn configure_state_transition(&self, cb: &mut OpConstraintBuilder<F>, _stack_diff: Query<F>) {
+        cb.next_pc_delta(0.expr());
     }
 
     fn assign_exec_step(
