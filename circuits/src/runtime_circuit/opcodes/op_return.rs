@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{Query, ToExpr},
+    constraint_builder::ToExpr,
     exec_step::{ExecStep, GadgetError},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -26,13 +26,8 @@ impl<F: Field> ExecutionGadget<F> for OpReturnGadget<F> {
         }
     }
 
-    fn configure_state_transition(
-        &self,
-        cb: &mut OpConstraintBuilder<F>,
-        _default_stack_diff: Query<F>,
-    ) {
+    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
         cb.next_pc_delta(0.expr());
-        //cb.next_sp_delta(default_stack_diff);
     }
 
     fn assign_exec_step(

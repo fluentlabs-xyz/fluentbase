@@ -17,7 +17,6 @@ use strum::IntoEnumIterator;
 pub struct ResponsibleOpcodeTable<F: Field> {
     execution_state: FixedColumn,
     opcode: FixedColumn,
-    stack_diff: FixedColumn,
     marker: PhantomData<F>,
 }
 
@@ -26,7 +25,6 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
         Self {
             execution_state: FixedColumn(cs.fixed_column()),
             opcode: FixedColumn(cs.fixed_column()),
-            stack_diff: FixedColumn(cs.fixed_column()),
             marker: Default::default(),
         }
     }
@@ -43,8 +41,6 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
                             .assign(&mut region, offset, state.to_u64());
                         self.opcode
                             .assign(&mut region, offset, opcode.code_value() as u64);
-                        self.stack_diff
-                            .assign(&mut region, offset, opcode.get_stack_diff() as u64);
                         offset += 1;
                     }
                 }
@@ -57,7 +53,6 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
                         offset,
                         Instruction::Call(Default::default()).code_value() as u64,
                     );
-                    self.stack_diff.assign(&mut region, offset, 1u64);
                     offset += 1;
                 }
                 Ok(())
@@ -69,10 +64,6 @@ impl<F: Field> ResponsibleOpcodeTable<F> {
 
 impl<F: Field> ResponsibleOpcodeLookup<F> for ResponsibleOpcodeTable<F> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE] {
-        [
-            self.execution_state.current(),
-            self.opcode.current(),
-            self.stack_diff.current(),
-        ]
+        [self.execution_state.current(), self.opcode.current()]
     }
 }
