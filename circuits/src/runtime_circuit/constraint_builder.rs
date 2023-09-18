@@ -10,8 +10,10 @@ use crate::{
         ToExpr,
     },
     fixed_table::FixedTableTag,
-    gadgets::is_zero::IsZeroConfig,
+    gadgets::{is_zero::IsZeroConfig, lt::LtGadget},
     lookup_table::{
+        BitwiseCheckLookup,
+        CopyLookup,
         FixedLookup,
         LookupTable,
         PublicInputLookup,
@@ -21,11 +23,14 @@ use crate::{
         RwasmLookup,
     },
     runtime_circuit::execution_state::ExecutionState,
+    rw_builder::{
+        copy_row::CopyTableTag,
+        rw_row::{RwTableContextTag, RwTableTag},
+    },
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
-use std::ops::Not;
 
 #[derive(Clone)]
 pub struct StateTransition<F: Field> {
@@ -33,7 +38,6 @@ pub struct StateTransition<F: Field> {
     pub(crate) stack_pointer_offset: Query<F>,
     pub(crate) rw_counter: AdviceColumn,
     pub(crate) rw_counter_offset: Query<F>,
-    pub(crate) program_counter: Query<F>,
 }
 
 impl<F: Field> StateTransition<F> {
@@ -45,13 +49,7 @@ impl<F: Field> StateTransition<F> {
             stack_pointer_offset: Query::zero(),
             rw_counter,
             rw_counter_offset: Query::zero(),
-            program_counter: Query::zero(),
         }
-    }
-
-    pub fn reset_offsets(&mut self) {
-        self.stack_pointer_offset = Query::zero();
-        self.rw_counter_offset = Query::zero();
     }
 
     pub fn assign(
@@ -85,17 +83,7 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
     // rw fields
     state_transition: &'st mut StateTransition<F>,
     op_lookups: Vec<LookupTable<F>>,
-    next_program_counter: Option<Query<F>>,
 }
-
-use crate::{
-    lookup_table::{BitwiseCheckLookup, CopyLookup},
-    rw_builder::{
-        copy_row::CopyTableTag,
-        rw_row::{RwTableContextTag, RwTableTag},
-    },
-};
-use Query as Q;
 
 #[allow(unused_variables)]
 impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
@@ -116,7 +104,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             value,
             state_transition,
             op_lookups: vec![],
-            next_program_counter: None,
         }
     }
 
@@ -130,10 +117,6 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn query_rwasm_value(&self) -> Query<F> {
         self.value.current()
-    }
-
-    pub fn query_rwasm_pc(&self) -> Query<F> {
-        self.state_transition.program_counter.clone()
     }
 
     pub fn require_exactly_one_selector<const N: usize>(&mut self, selectors: [Query<F>; N]) {
@@ -177,8 +160,16 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         self.base.fixed_column(self.cs)
     }
 
-    pub fn is_zero(&mut self, value: Query<F>) -> IsZeroConfig<F> {
+    pub fn is_zero_gadget(&mut self, value: Query<F>) -> IsZeroConfig<F> {
         IsZeroConfig::configure(self.cs, &mut self.base, value)
+    }
+
+    pub fn lt_gadget<const N_BYTES: usize>(
+        &mut self,
+        lhs: Query<F>,
+        rhs: Query<F>,
+    ) -> LtGadget<F, N_BYTES> {
+        LtGadget::configure(self.cs, &mut self.base, lhs, rhs)
     }
 
     pub fn query_fixed_n<const N: usize>(&mut self) -> [FixedColumn; N] {
@@ -190,16 +181,30 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn next_pc_delta(&mut self, delta: Query<F>) {
-        let condition = self.base.resolve_condition();
-        self.state_transition.program_counter =
-            self.state_transition.program_counter.clone() + condition.0 * delta;
+        self.context_lookup(
+            RwTableContextTag::ProgramCounter,
+            1.expr(),
+            self.pc.current() + delta,
+            self.pc.current(),
+        );
     }
 
     pub fn next_pc_jump(&mut self, value: Query<F>) {
-        let condition = self.base.resolve_condition();
-        self.state_transition.program_counter = condition.clone().not().0
-            * self.state_transition.program_counter.clone()
-            + condition.0 * value;
+        self.context_lookup(
+            RwTableContextTag::ProgramCounter,
+            1.expr(),
+            value,
+            self.pc.current(),
+        );
+    }
+
+    pub fn next_sp_delta(&mut self, delta: Query<F>) {
+        self.context_lookup(
+            RwTableContextTag::StackPointer,
+            1.expr(),
+            self.state_transition.stack_pointer.current() + delta,
+            self.state_transition.stack_pointer.current(),
+        );
     }
 
     pub fn stack_push(&mut self, value: Query<F>) {
@@ -215,11 +220,23 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn stack_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Stack.expr(), address, value, None);
     }
 
-    pub fn context_lookup(&mut self, tag: RwTableContextTag, is_write: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Context.expr(), tag.expr(), value);
+    pub fn context_lookup(
+        &mut self,
+        tag: RwTableContextTag,
+        is_write: Query<F>,
+        value: Query<F>,
+        value_prev: Query<F>,
+    ) {
+        self.rw_lookup(
+            is_write,
+            RwTableTag::Context.expr(),
+            tag.expr(),
+            value,
+            Some(value_prev),
+        );
     }
 
     pub fn global_get(&mut self, index: Query<F>, value: Query<F>) {
@@ -239,57 +256,77 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn memory_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Memory.expr(), address, value, None);
     }
 
     pub fn global_lookup(&mut self, is_write: Query<F>, address: Query<F>, value: Query<F>) {
-        self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value);
+        self.rw_lookup(is_write, RwTableTag::Global.expr(), address, value, None);
     }
 
-    pub fn execution_state_lookup(
-        &mut self,
-        execution_state: ExecutionState,
-        opcode: Query<F>,
-        affects_pc: Query<F>,
-    ) {
+    pub fn execution_state_lookup(&mut self, execution_state: ExecutionState, opcode: Query<F>) {
         self.op_lookups.push(LookupTable::ResponsibleOpcode(
             self.base.apply_lookup_condition([
                 Query::Constant(F::from(execution_state.to_u64())),
                 opcode,
-                affects_pc,
             ]),
         ));
     }
 
-    pub fn table_size(&mut self, table_idx: Q<F>, value: Q<F>) {
-        self.table_size_lookup(0.expr(), table_idx * 1024, value, 0.expr());
+    pub fn table_size(&mut self, table_idx: Query<F>, value: Query<F>) {
+        self.table_size_lookup(0.expr(), table_idx * 1024, value, None);
     }
-    pub fn table_fill(&mut self, table_index: Q<F>, start: Q<F>, range: Q<F>, value: Q<F>) {
+    pub fn table_fill(
+        &mut self,
+        table_index: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+        value: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_grow(&mut self, table_idx: Q<F>, init: Q<F>, grow: Q<F>, res: Q<F>) {
-        self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone(), res.clone());
+    pub fn table_grow(
+        &mut self,
+        table_idx: Query<F>,
+        init: Query<F>,
+        grow: Query<F>,
+        res: Query<F>,
+    ) {
+        //self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
+        //self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
+        //self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone(), res.clone());
         self.table_fill(table_idx, res, grow, init);
     }
-    pub fn table_get(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+    pub fn table_get(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
     }
-    pub fn table_set(&mut self, table_idx: Q<F>, elem_idx: Q<F>, value: Q<F>) {
+    pub fn table_set(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
     }
-    pub fn table_copy(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+    pub fn table_copy(
+        &mut self,
+        table_index: Query<F>,
+        table_index2: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
-    pub fn table_init(&mut self, table_index: Q<F>, table_index2: Q<F>, start: Q<F>, range: Q<F>) {
+    pub fn table_init(
+        &mut self,
+        table_index: Query<F>,
+        table_index2: Query<F>,
+        start: Query<F>,
+        range: Query<F>,
+    ) {
         // unreachable!("not implemented yet")
     }
 
     pub fn table_elem_lookup(
         &mut self,
-        is_write: Q<F>,
-        table_idx: Q<F>,
-        elem_idx: Q<F>,
-        value: Q<F>,
+        is_write: Query<F>,
+        table_idx: Query<F>,
+        elem_idx: Query<F>,
+        value: Query<F>,
     ) {
         // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
         self.rw_lookup(
@@ -297,15 +334,22 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             RwTableTag::Table.expr(),
             table_idx * 1024 + elem_idx + 1.expr(),
             value,
+            None,
         );
     }
 
-    pub fn table_size_lookup(&mut self, is_write: Q<F>, table_idx: Q<F>, value: Q<F>, prev_value: Q<F>) {
+    pub fn table_size_lookup(&mut self, is_write: Query<F>, table_idx: Query<F>, value: Query<F>, prev_value: Option<Query<F>>) {
         // address = b*x, where x is 1024. So this is reserved element to store size.
-        self.rw_lookup_with_prev(is_write, RwTableTag::Table.expr(), table_idx * 1024, value, prev_value);
+        self.rw_lookup(
+            is_write,
+            RwTableTag::Table.expr(),
+            table_idx * 1024,
+            value,
+            prev_value,
+        );
     }
 
-    pub fn range_check_1024(&mut self, val: Q<F>) {
+    pub fn range_check_1024(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck10([val]));
     }
 
@@ -354,44 +398,35 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
         tag: Query<F>,
         address: Query<F>,
         value: Query<F>,
+        value_prev: Option<Query<F>>,
     ) {
-        self.op_lookups
-            .push(LookupTable::Rw(self.base.apply_lookup_condition([
-                Query::one(),
-                self.state_transition.rw_counter(),
-                is_write,
-                tag,
-                Query::zero(),
-                address,
-                value,
-            ])));
+        if let Some(value_prev) = value_prev {
+            self.op_lookups
+                .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
+                    Query::one(),
+                    self.state_transition.rw_counter(),
+                    is_write,
+                    tag,
+                    Query::zero(),
+                    address,
+                    value,
+                    value_prev,
+                ])));
+        } else {
+            self.op_lookups
+                .push(LookupTable::Rw(self.base.apply_lookup_condition([
+                    Query::one(),
+                    self.state_transition.rw_counter(),
+                    is_write,
+                    tag,
+                    Query::zero(),
+                    address,
+                    value,
+                ])));
+        }
         self.state_transition.rw_counter_offset =
             self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
     }
-
-    pub fn rw_lookup_with_prev(
-        &mut self,
-        is_write: Query<F>,
-        tag: Query<F>,
-        address: Query<F>,
-        value: Query<F>,
-        prev_value: Query<F>,
-    ) {
-        self.op_lookups
-            .push(LookupTable::RwPrev(self.base.apply_lookup_condition([
-                Query::one(),
-                self.state_transition.rw_counter(),
-                is_write,
-                tag,
-                Query::zero(),
-                address,
-                value,
-                prev_value,
-            ])));
-        self.state_transition.rw_counter_offset =
-            self.state_transition.rw_counter_offset.clone() + self.base.resolve_condition().0;
-    }
-
 
     pub fn range_check7(&mut self, val: Query<F>) {
         self.op_lookups.push(LookupTable::RangeCheck7([val]));
@@ -493,14 +528,14 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 }
                 LookupTable::RwPrev(fields) => {
                     self.base.add_lookup(
-                        "rw_lookup_with_prev(rw_counter,is_write,tag,id,address,value)",
+                        "rw_lookup(rw_counter,is_write,tag,id,address,value,value_prev)",
                         fields.clone(),
                         rw_lookup.lookup_rw_prev_table(),
                     );
                 }
                 LookupTable::ResponsibleOpcode(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "responsible_opcode(execution_state,opcode,stack_len)",
                         fields.clone(),
                         responsible_opcode_lookup.lookup_responsible_opcode_table(),
                     );
@@ -514,21 +549,21 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
                 }
                 LookupTable::RangeCheck8(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u8",
                         fields.clone(),
                         range_check_lookup.lookup_u8_table(),
                     );
                 }
                 LookupTable::RangeCheck10(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u10",
                         fields.clone(),
                         range_check_lookup.lookup_u10_table(),
                     );
                 }
                 LookupTable::RangeCheck16(fields) => {
                     self.base.add_lookup(
-                        "responsible_opcode(execution_state,opcode)",
+                        "range_check_u16",
                         fields.clone(),
                         range_check_lookup.lookup_u16_table(),
                     );

@@ -37,7 +37,9 @@ pub enum ExecutionState {
     WASM_MEMORY_FILL,
     WASM_MEMORY_INIT,
     WASM_UNREACHABLE,
+    WASM_CONSUME_FUEL,
     WASM_SHIFT,
+    WASM_RETURN,
 }
 
 impl ExecutionState {
@@ -74,7 +76,9 @@ impl ExecutionState {
             ExecutionState::WASM_MEMORY_FILL => 29,
             ExecutionState::WASM_MEMORY_INIT => 30,
             ExecutionState::WASM_UNREACHABLE => 31,
-            ExecutionState::WASM_SHIFT => 32,
+            ExecutionState::WASM_CONSUME_FUEL => 32,
+            ExecutionState::WASM_SHIFT => 33,
+            ExecutionState::WASM_RETURN => 34,
         }
     }
 
@@ -105,6 +109,7 @@ impl ExecutionState {
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
             Self::WASM_UNREACHABLE => vec![Instruction::Unreachable],
+            Self::WASM_CONSUME_FUEL => vec![Instruction::ConsumeFuel(Default::default())],
             Self::WASM_BIN => vec![
                 Instruction::I32Add,
                 Instruction::I64Add,
@@ -129,8 +134,6 @@ impl ExecutionState {
                 Instruction::BrAdjustIfNez(Default::default()),
             ],
             Self::WASM_CALL => vec![
-                Instruction::Return(Default::default()),
-                Instruction::ReturnIfNez(Default::default()),
                 Instruction::ReturnCallInternal(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
@@ -260,6 +263,10 @@ impl ExecutionState {
             Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
             Self::WASM_MEMORY_FILL => vec![Instruction::MemoryFill],
             Self::WASM_MEMORY_INIT => vec![Instruction::MemoryInit(Default::default())],
+            Self::WASM_RETURN => vec![
+                Instruction::Return(Default::default()),
+                Instruction::ReturnIfNez(Default::default()),
+            ],
             _ => vec![],
         }
     }
@@ -269,7 +276,6 @@ impl ExecutionState {
 mod test {
     use crate::runtime_circuit::execution_state::ExecutionState;
     use fluentbase_rwasm::engine::bytecode::Instruction;
-    use log::debug;
     use std::collections::HashMap;
     use strum::IntoEnumIterator;
 
@@ -306,14 +312,14 @@ mod test {
             }
         }
         let coverage = 100 * total_used / used_opcodes.len();
-        debug!(
+        println!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
         );
-        debug!("\n not implemented opcodes:");
+        println!("\n not implemented opcodes:");
         for (opcode, used) in used_opcodes.iter() {
             if *used == 0 {
-                debug!("- {:?}", opcode)
+                println!("- {:?}", opcode)
             }
         }
     }
