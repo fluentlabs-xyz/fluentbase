@@ -31,6 +31,7 @@ pub struct TracerInstrState {
     pub code: u16,
     pub memory_size: u32,
     pub index: usize,
+    pub consumed_fuel: u64,
 }
 
 #[derive(Debug)]
@@ -99,6 +100,7 @@ impl Tracer {
         stack: Vec<UntypedValue>,
         meta: &InstrMeta,
         memory_size: u32,
+        consumed_fuel: u64,
     ) {
         let memory_changes = take(&mut self.memory_changes);
         let table_changes = take(&mut self.table_changes);
@@ -112,6 +114,7 @@ impl Tracer {
             code: meta.opcode(),
             memory_size,
             index: meta.index(),
+            consumed_fuel,
         };
         // println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());

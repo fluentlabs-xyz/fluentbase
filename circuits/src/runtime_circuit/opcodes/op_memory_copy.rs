@@ -73,9 +73,9 @@ mod test {
         let default_memory = vec![0x01, 0x02, 0x03, 0x04, 0x05];
         let code = instruction_set! {
             .add_memory(0, default_memory.as_slice())
-            I32Const(5)
-            I32Const(0)
-            I32Const(5)
+            I32Const(5) // dest
+            I32Const(0) // source
+            I32Const(5) // len
             MemoryCopy
         };
         test_ok(code);

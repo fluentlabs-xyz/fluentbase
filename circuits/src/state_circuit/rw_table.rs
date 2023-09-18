@@ -4,6 +4,7 @@ use crate::{
     state_circuit::lexicographic_ordering::LexicographicOrderingConfig,
     util::Field,
 };
+use fluentbase_rwasm::common::UntypedValue;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::marker::PhantomData;
 
@@ -15,7 +16,7 @@ pub struct RwTable<F: Field> {
     pub(crate) id: AdviceColumn,
     pub(crate) address: AdviceColumn,
     pub(crate) value: AdviceColumn,
-    //pub(crate) value_prev: AdviceColumn,
+    pub(crate) value_prev: AdviceColumn,
     pub(crate) not_first_access: AdviceColumn,
     _marker: PhantomData<F>,
 }
@@ -29,12 +30,19 @@ impl<F: Field> RwTable<F> {
             id: AdviceColumn(cs.advice_column()),
             address: AdviceColumn(cs.advice_column()),
             value: AdviceColumn(cs.advice_column()),
+            value_prev: AdviceColumn(cs.advice_column()),
             not_first_access: AdviceColumn(cs.advice_column()),
             _marker: Default::default(),
         }
     }
 
-    pub fn assign(&self, region: &mut Region<'_, F>, offset: usize, rw_row: &RwRow) {
+    pub fn assign(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        rw_row: &RwRow,
+        value_prev: Option<UntypedValue>,
+    ) {
         self.rw_counter
             .assign(region, offset, rw_row.rw_counter() as u64);
         self.is_write
@@ -45,11 +53,9 @@ impl<F: Field> RwTable<F> {
         self.address
             .assign(region, offset, rw_row.address().unwrap_or_default() as u64);
         self.value.assign(region, offset, rw_row.value().to_bits());
-/*
-        rw_row.prev_value().map(|prev_value| {
-            self.value_prev.assign(region, offset, prev_value.to_bits());
-        });
-*/
+        if let Some(value_prev) = value_prev {
+            self.value_prev.assign(region, offset, value_prev.to_bits());
+        }
     }
 
     fn q_first_access(&self) -> BinaryQuery<F> {
@@ -114,7 +120,7 @@ impl<F: Field> RwTable<F> {
             cb.assert_zero(
                 "non-first access reads don't change value",
                 (1.expr() - self.is_write.current())
-                    * (self.value.current() - self.value.previous()),
+                    * (self.value.current() - self.value_prev.current()),
             );
         });
     }
@@ -132,6 +138,16 @@ impl<F: Field> RwTable<F> {
         cb.assert_zero("Start value is 0", self.value.current());
         // 1.3. Start initial value is 0
         // 1.4. state_root is unchanged for every non-first row
+    }
+
+    pub fn build_context_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+        cb.condition(!self.q_first_access(), |cb| {
+            cb.assert_equal(
+                "value column at Rotation::prev() equals value_prev at Rotation::cur()",
+                self.value_prev.current(),
+                self.value.previous(),
+            );
+        });
     }
 
     pub fn build_memory_constraints(&self, cb: &mut ConstraintBuilder<F>) {

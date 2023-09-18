@@ -30,6 +30,12 @@ pub enum Query<F: Field> {
     Mul(Box<Self>, Box<Self>),
 }
 
+impl<F: Field> Default for Query<F> {
+    fn default() -> Self {
+        Self::Constant(F::zero())
+    }
+}
+
 impl<F: Field> Query<F> {
     pub fn zero() -> Self {
         Self::from(0)

@@ -1,5 +1,5 @@
 use crate::{
-    constraint_builder::{AdviceColumn, FixedColumn, SelectorColumn},
+    constraint_builder::{AdviceColumn, SelectorColumn},
     lookup_table::{
         BitwiseCheckLookup,
         CopyLookup,
@@ -26,7 +26,6 @@ pub struct ExecutionContextGadget<F: Field, G: ExecutionGadget<F>> {
     opcode: AdviceColumn,
     value: AdviceColumn,
     state_transition: StateTransition<F>,
-    affects_pc: FixedColumn,
 }
 
 impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
@@ -47,18 +46,11 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         let mut cb = OpConstraintBuilder::new(cs, q_enable, &mut state_transition);
         // extract rwasm table with opcode and value fields (for lookup)
         let [pc, opcode, value] = cb.rwasm_table();
-        let affects_pc = cb.query_fixed();
         // make sure opcode and value fields are correct and set properly
         cb.rwasm_lookup(pc.current(), opcode.current(), value.current());
-        cb.execution_state_lookup(
-            G::EXECUTION_STATE,
-            cb.query_rwasm_opcode(),
-            affects_pc.current(),
-        );
-        cb.condition(affects_pc.current(), |_cb| {
-            // TODO: "check pc transition here"
-        });
+        cb.execution_state_lookup(G::EXECUTION_STATE, cb.query_rwasm_opcode());
         // configure gadget and build gates
+        G::configure_state_transition(&mut cb);
         let gadget_config = G::configure(&mut cb);
         cb.build(
             rwasm_lookup,
@@ -77,7 +69,6 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
             value,
             q_enable,
             state_transition,
-            affects_pc,
         }
     }
 
@@ -99,8 +90,6 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         // assign state transition
         self.state_transition
             .assign(region, offset, step.stack_pointer(), rw_counter as u64);
-        self.affects_pc
-            .assign(region, offset, step.instr().affects_pc() as u64);
         // assign opcode gadget
         self.gadget.assign_exec_step(region, offset, step)
     }
