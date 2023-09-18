@@ -50,6 +50,13 @@ pub struct Compiler<'linker> {
     import_linker: Option<&'linker ImportLinker>,
     // for automatic translation
     is_translated: bool,
+    injection_segments: Vec<Injection>
+}
+
+#[derive(Debug)]
+pub struct Injection {
+    pub begin: u32,
+    pub end: u32,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -73,6 +80,7 @@ impl<'linker> Compiler<'linker> {
             function_beginning: BTreeMap::new(),
             import_linker,
             is_translated: false,
+            injection_segments: vec![],
         })
     }
 
@@ -238,9 +246,12 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn swap(&mut self, param_num: u32) {
+        let injection_start = self.code_section.len();
         for i in (0..param_num).rev() {
             self.swap_with_depth(i + 1);
         }
+        let injection_end = self.code_section.len();
+        self.injection_segments.push(Injection{ begin: injection_start, end: injection_end });
     }
 
     fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
@@ -370,6 +381,10 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2;
+                self.injection_segments.push(Injection {
+                    begin: self.code_section.len(),
+                    end: self.code_section.len() + 1,
+                });
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
@@ -425,6 +440,37 @@ impl<'linker> Compiler<'linker> {
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
                         self.function_beginning[&func.to_u32()] as i32 - i as i32,
                     ));
+                }
+                Instruction::Br(offset)
+                | Instruction::BrIfNez(offset)
+                | Instruction::BrAdjust(offset)
+                | Instruction::BrAdjustIfNez(offset)
+                | Instruction::BrIfEqz(offset) => {
+                    let mut offset = offset.to_i32() as u32;
+                    let start = i as u32;
+                    let target = start + offset;
+                    if offset > 0 {
+                        for injection in &self.injection_segments {
+                            if injection.begin < target && start < injection.end {
+                                offset += injection.end - injection.begin;
+                            }
+                        }
+                    } else {
+                        for injection in self.injection_segments.iter().rev() {
+                            if injection.begin < start && target < injection.end {
+                                offset -= injection.end - injection.begin;
+                            }
+                        }
+                    };
+
+                    bytecode.instr[i] =   match  bytecode.instr[i] {
+                        Instruction::Br(_) => Instruction::Br(BranchOffset::from(offset as i32)),
+                        Instruction::BrIfNez(_) => Instruction::BrIfNez(BranchOffset::from(offset as i32)),
+                        Instruction::BrAdjust(_) => Instruction::BrAdjust(BranchOffset::from(offset as i32)),
+                        Instruction::BrAdjustIfNez(_) => Instruction::BrAdjustIfNez(BranchOffset::from(offset as i32)),
+                        Instruction::BrIfEqz(_) => Instruction::BrIfEqz(BranchOffset::from(offset as i32)),
+                        _ => panic!("Unreachable"),
+                    };
                 }
                 _ => {}
             }
