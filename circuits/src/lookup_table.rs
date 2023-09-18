@@ -33,7 +33,7 @@ pub trait RwLookup<F: Field> {
     fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE];
 }
 
-pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 3;
+pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 2;
 
 pub trait ResponsibleOpcodeLookup<F: Field> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE];
@@ -63,6 +63,7 @@ pub trait CopyLookup<F: Field> {
 pub enum LookupTable<F: Field> {
     Rwasm([Query<F>; N_RWASM_LOOKUP_TABLE]),
     Rw([Query<F>; N_RW_LOOKUP_TABLE]),
+    RwPrev([Query<F>; N_RW_PREV_LOOKUP_TABLE]),
     ResponsibleOpcode([Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE]),
     RangeCheck7([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck8([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),

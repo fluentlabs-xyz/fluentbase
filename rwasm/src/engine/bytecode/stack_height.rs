@@ -159,7 +159,7 @@ impl Instruction {
                 stack_ops.push(RwOp::MemorySizeWrite);
             }
             Instruction::MemoryFill | Instruction::MemoryCopy => {
-                unreachable!("not implemented here")
+                // unreachable!("not implemented here")
             }
             Instruction::MemoryInit(_) => {}
             Instruction::DataDrop(_) => {}
@@ -198,6 +198,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));
             }
+            Instruction::TableInit(_) => {}
 
             Instruction::ElemDrop(_) => {}
             Instruction::RefFunc(_) => {
@@ -208,7 +209,12 @@ impl Instruction {
             }
             Instruction::ConstRef(_) => stack_ops.push(RwOp::StackWrite(0)),
 
-            Instruction::I32Eqz | Instruction::I64Eqz => {
+            Instruction::I32Eqz
+            | Instruction::I32Eq
+            | Instruction::I64Eqz
+            | Instruction::I64Eq
+            | Instruction::I32Ne
+            | Instruction::I64Ne => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));
             }
@@ -352,5 +358,17 @@ impl Instruction {
             _ => unreachable!("not supported rws for opcode: {:?}", self),
         }
         stack_ops
+    }
+
+    pub fn get_stack_diff(&self) -> i32 {
+        let mut stack_diff = 0;
+        for rw_op in self.get_rw_ops() {
+            match rw_op {
+                RwOp::StackWrite(_) => stack_diff += 1,
+                RwOp::StackRead(_) => stack_diff -= 1,
+                _ => {}
+            }
+        }
+        stack_diff
     }
 }

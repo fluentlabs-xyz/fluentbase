@@ -80,6 +80,16 @@ impl<F: Field> CopyCircuitConfig<F> {
             );
             cb.assert_equal(
                 "if (!q_last) length=length",
+                from_address.current(),
+                from_address.next(),
+            );
+            cb.assert_equal(
+                "if (!q_last) length=length",
+                to_address.current(),
+                to_address.next(),
+            );
+            cb.assert_equal(
+                "if (!q_last) length=length",
                 length.current(),
                 length.next(),
             );
