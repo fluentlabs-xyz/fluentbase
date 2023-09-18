@@ -39,9 +39,31 @@ impl Into<usize> for RwTableTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum RwTableContextTag {
     MemorySize = 1,
+    ConsumedFuel,
+    TableSize,
+    ProgramCounter,
+    StackPointer,
 }
 
 impl_expr!(RwTableContextTag);
+
+impl fmt::Display for RwTableContextTag {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RwTableContextTag::MemorySize => write!(f, "MS"),
+            RwTableContextTag::ConsumedFuel => write!(f, "CF"),
+            RwTableContextTag::TableSize => write!(f, "TS"),
+            RwTableContextTag::ProgramCounter => write!(f, "PC"),
+            RwTableContextTag::StackPointer => write!(f, "SP"),
+        }
+    }
+}
+
+impl Into<usize> for RwTableContextTag {
+    fn into(self) -> usize {
+        self as usize
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum RwRow {
@@ -93,6 +115,7 @@ pub enum RwRow {
 impl RwRow {
     pub fn value(&self) -> UntypedValue {
         match self {
+            Self::Start { .. } => UntypedValue::default(),
             Self::Context { value, .. } => UntypedValue::from(*value),
             Self::Stack { value, .. } => *value,
             Self::Global { value, .. } => *value,

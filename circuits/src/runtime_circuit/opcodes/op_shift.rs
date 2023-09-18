@@ -412,9 +412,9 @@ mod test {
     fn gen_params<const N: usize, const MAX_VAL: i64, const POSITIVE: bool>() -> [i64; N] {
         let params = {
             if POSITIVE {
-                [0; N].map(|_i| thread_rng().gen_range(0..=MAX_VAL))
+                [0; N].map(|_| thread_rng().gen_range(0..=MAX_VAL))
             } else {
-                [0; N].map(|_i| thread_rng().gen_range(0..=MAX_VAL + 1) - (MAX_VAL + 1))
+                [0; N].map(|_| thread_rng().gen_range(0..=MAX_VAL + 1) - (MAX_VAL + 1))
             }
         };
         debug!("params {:?}", params);

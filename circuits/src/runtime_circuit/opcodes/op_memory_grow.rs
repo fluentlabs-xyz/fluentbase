@@ -38,6 +38,7 @@ impl<F: Field> ExecutionGadget<F> for OpMemoryGrowGadget<F> {
             RwTableContextTag::MemorySize,
             1.expr(),
             memory_size.current() + delta.current(),
+            memory_size.current(),
         );
 
         Self {
@@ -90,6 +91,23 @@ mod test {
             Drop
             I32Const(3)
             MemoryGrow
+            Drop
+        };
+        test_ok(code);
+    }
+
+    #[test]
+    fn test_add_memory() {
+        let code = instruction_set! {
+            .add_memory(0, &[0x01, 0x02, 0x03])
+            I32Const(0)
+            I32Load8U(0)
+            I32Const(1)
+            I32Load8U(0)
+            I32Const(2)
+            I32Load8U(0)
+            Drop
+            Drop
             Drop
         };
         test_ok(code);
