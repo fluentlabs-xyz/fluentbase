@@ -293,7 +293,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     ) {
         //self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
         //self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
-        //self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone(), res.clone());
+        self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone(), Some(res.clone()));
         self.table_fill(table_idx, res, grow, init);
     }
     pub fn table_get(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
