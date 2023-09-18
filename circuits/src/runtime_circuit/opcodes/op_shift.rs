@@ -7,11 +7,11 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::ExecutionGadget,
         utils::{
-            alloc_u64_with_flag_bit_cell_dyn,
-            prepare_alloc_u64_cell,
-            AllocatedU64Cell,
-            AllocatedU64CellWithFlagBitDyn,
+            query_u64_cell,
+            query_u64_with_flag_bit_cell_dyn,
             ShiftOp,
+            U64Cell,
+            U64CellWithFlagBitDyn,
         },
     },
     util::Field,
@@ -24,11 +24,11 @@ const LIMBS_COUNT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct OpShiftGadget<F: Field> {
-    lhs: AllocatedU64CellWithFlagBitDyn<F>,
-    rhs: AllocatedU64Cell<F>,
-    round: AllocatedU64Cell<F>,
-    rem: AllocatedU64Cell<F>,
-    diff: AllocatedU64Cell<F>,
+    lhs: U64CellWithFlagBitDyn<F>,
+    rhs: U64Cell<F>,
+    round: U64Cell<F>,
+    rem: U64Cell<F>,
+    diff: U64Cell<F>,
     pad: AdviceColumn,
     res: AdviceColumn,
     rhs_modulus: AdviceColumn,
@@ -38,7 +38,7 @@ pub struct OpShiftGadget<F: Field> {
     rhs_rem: AdviceColumn,
     rhs_rem_diff: AdviceColumn,
 
-    is_i32: SelectorColumn,
+    is_i32_otherwise_i64: SelectorColumn,
 
     is_shl: SelectorColumn,
     is_shr_u: SelectorColumn,
@@ -59,13 +59,13 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_SHIFT;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let is_i32 = cb.query_selector();
-        let lhs = alloc_u64_with_flag_bit_cell_dyn(cb, is_i32);
-        let rhs = prepare_alloc_u64_cell(cb, Query::one());
+        let is_i32_otherwise_i64 = cb.query_selector();
+        let lhs = query_u64_with_flag_bit_cell_dyn(cb, is_i32_otherwise_i64);
+        let rhs = query_u64_cell(cb, Query::one());
         let res = cb.query_cell();
-        let round = prepare_alloc_u64_cell(cb, Query::one());
-        let rem = prepare_alloc_u64_cell(cb, Query::one());
-        let diff = prepare_alloc_u64_cell(cb, Query::one());
+        let round = query_u64_cell(cb, Query::one());
+        let rem = query_u64_cell(cb, Query::one());
+        let diff = query_u64_cell(cb, Query::one());
         let pad = cb.query_cell();
         let rhs_modulus = cb.query_cell();
         let size_modulus = cb.query_cell();
@@ -85,8 +85,8 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
 
         let degree_helper = cb.query_cell();
 
-        cb.stack_pop(rhs.u64_cell.current());
-        cb.stack_pop(lhs.u64_cell.current());
+        cb.stack_pop(rhs.u64.current());
+        cb.stack_pop(lhs.u64.current());
         cb.stack_push(res.current());
 
         let pow_modulus = cb.query_cell();
@@ -107,13 +107,14 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
             ],
         );
 
-        // cs 1: rhs_modulus = if is_i32 { 32 } else { 64 }
+        // cs 1: rhs_modulus = if is_i32_otherwise_i64 { 32 } else { 64 }
         // cs 2: size_modulus = 1 << rhs_modulus
         cb.require_zeros("op_bin_shift modulus", {
             vec![
-                rhs_modulus.current() - Query::from(64) + is_i32.current().0 * Query::from(32),
+                rhs_modulus.current() - Query::from(64)
+                    + is_i32_otherwise_i64.current().0 * Query::from(32),
                 size_modulus.current() - Query::from_bn(&(BigUint::from(1u64) << 64usize))
-                    + is_i32.current().0 * Query::from((u32::MAX as u64) << 32),
+                    + is_i32_otherwise_i64.current().0 * Query::from((u32::MAX as u64) << 32),
             ]
         });
 
@@ -122,7 +123,7 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         cb.require_zeros("op_bin_shift rhs rem", {
             vec![
                 rhs_round.current() * rhs_modulus.current() + rhs_rem.current()
-                    - rhs.u16_cells_le[0].current(),
+                    - rhs.u64_as_u16_le[0].current(),
                 rhs_rem.current() + rhs_rem_diff.current() + Query::from(1) - rhs_modulus.current(),
             ]
         });
@@ -139,10 +140,10 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         cb.require_zeros("op_bin_shift is_r", {
             vec![
                 is_r.current().0
-                    * (rem.u64_cell.current() + round.u64_cell.current() * pow_modulus.current()
-                        - lhs.u64_cell.current()),
+                    * (rem.u64.current() + round.u64.current() * pow_modulus.current()
+                        - lhs.u64.current()),
                 is_r.current().0
-                    * (rem.u64_cell.current() + diff.u64_cell.current() + Query::from(1)
+                    * (rem.u64.current() + diff.u64.current() + Query::from(1)
                         - pow_modulus.current()),
             ]
         });
@@ -150,11 +151,11 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         // cs is_shr_u:
         // 2: res = round
         cb.require_zeros("op_bin_shift shr_u", {
-            vec![is_shr_u.current().0 * (res.current() - round.u64_cell.current())]
+            vec![is_shr_u.current().0 * (res.current() - round.u64.current())]
         });
 
         // cs is_shr_s:
-        // let size = if is_i32 { 32 } else { 64 }
+        // let size = if is_i32_otherwise_i64 { 32 } else { 64 }
         // 1. pad = flag * ((1 << rhs_rem) - 1)) << (size - rhs_rem)
         // 2: res = pad + round
         cb.require_zeros("op_bin_shift shr_s", {
@@ -163,8 +164,8 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
                     - (pow_modulus.current() - Query::from(1)) * size_modulus.current(),
                 is_shr_s.current().0
                     * (pad.current() * pow_modulus.current()
-                        - lhs.flag_bit_cell.current() * degree_helper.current()),
-                is_shr_s.current().0 * (res.current() - round.u64_cell.current() - pad.current()),
+                        - lhs.sign_bit.current() * degree_helper.current()),
+                is_shr_s.current().0 * (res.current() - round.u64.current() - pad.current()),
             ]
         });
 
@@ -174,8 +175,8 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
             vec![
                 is_rotr.current().0
                     * (res.current() * pow_modulus.current()
-                        - round.u64_cell.current() * pow_modulus.current()
-                        - rem.u64_cell.current() * size_modulus.current()),
+                        - round.u64.current() * pow_modulus.current()
+                        - rem.u64.current() * size_modulus.current()),
             ]
         });
 
@@ -185,11 +186,11 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         cb.require_zeros("op_bin_shift shl", {
             vec![
                 is_l.current().0
-                    * (lhs.u64_cell.current() * pow_modulus.current()
-                        - round.u64_cell.current() * size_modulus.current()
-                        - rem.u64_cell.current()),
+                    * (lhs.u64.current() * pow_modulus.current()
+                        - round.u64.current() * size_modulus.current()
+                        - rem.u64.current()),
                 is_l.current().0
-                    * (rem.u64_cell.current() + diff.u64_cell.current() + Query::from(1)
+                    * (rem.u64.current() + diff.u64.current() + Query::from(1)
                         - size_modulus.current()),
             ]
         });
@@ -198,16 +199,13 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         // 1: res = rem
         cb.require_zeros(
             "op_bin_shift shl",
-            vec![is_shl.current().0 * (res.current() - rem.u64_cell.current())],
+            vec![is_shl.current().0 * (res.current() - rem.u64.current())],
         );
 
         // cs is_rotl:
         // 2: res = rem + round
         cb.require_zeros("op_bin_shift rotl", {
-            vec![
-                is_rotl.current().0
-                    * (res.current() - rem.u64_cell.current() - round.u64_cell.current()),
-            ]
+            vec![is_rotl.current().0 * (res.current() - rem.u64.current() - round.u64.current())]
         });
 
         Self {
@@ -221,7 +219,7 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
             rhs_round,
             rhs_rem,
             rhs_rem_diff,
-            is_i32,
+            is_i32_otherwise_i64,
             is_shl,
             is_shr_u,
             is_shr_s,
@@ -248,7 +246,7 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         let res = trace.next_nth_stack_value(0)?.to_bits();
 
         let opcode = trace.trace.opcode;
-        let (class, left, right, value, power, is_eight_bytes, _is_sign) = match opcode {
+        let (class, left, right, value, power, is_eight_bytes) = match opcode {
             Instruction::I32Rotr
             | Instruction::I32Rotl
             | Instruction::I32Shl
@@ -259,9 +257,8 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
                 let value = res as u32 as u64;
                 let power = right % 32;
                 let is_eight_bytes = false;
-                let is_sign = true;
                 let class = OpShiftGadget::<F>::opcode_class(&opcode);
-                (class, left, right, value, power, is_eight_bytes, is_sign)
+                (class, left, right, value, power, is_eight_bytes)
             }
             Instruction::I64Rotl
             | Instruction::I64Rotr
@@ -273,9 +270,8 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
                 let value = res;
                 let power = right % 64;
                 let is_eight_bytes = true;
-                let is_sign = true;
                 let class = OpShiftGadget::<F>::opcode_class(&opcode);
-                (class, left, right, value, power, is_eight_bytes, is_sign)
+                (class, left, right, value, power, is_eight_bytes)
             }
             _ => {
                 unreachable!("unsupported shift opcode {:?}", opcode)
@@ -307,7 +303,7 @@ impl<F: Field> ExecutionGadget<F> for OpShiftGadget<F> {
         self.pow_modulus.assign(region, offset, modulus);
         self.pow_power
             .assign_bn(region, offset, &BigUint::from(power));
-        self.is_i32
+        self.is_i32_otherwise_i64
             .assign(region, offset, if is_eight_bytes { false } else { true });
         self.res.assign(region, offset, F::from(value));
         self.rhs_modulus
@@ -416,9 +412,9 @@ mod test {
     fn gen_params<const N: usize, const MAX_VAL: i64, const POSITIVE: bool>() -> [i64; N] {
         let params = {
             if POSITIVE {
-                [0; N].map(|i| thread_rng().gen_range(0..=MAX_VAL))
+                [0; N].map(|_i| thread_rng().gen_range(0..=MAX_VAL))
             } else {
-                [0; N].map(|i| thread_rng().gen_range(0..=MAX_VAL + 1) - (MAX_VAL + 1))
+                [0; N].map(|_i| thread_rng().gen_range(0..=MAX_VAL + 1) - (MAX_VAL + 1))
             }
         };
         debug!("params {:?}", params);
