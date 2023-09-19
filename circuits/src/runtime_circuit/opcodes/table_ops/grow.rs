@@ -37,7 +37,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         cb.stack_pop(init_val.current());
         //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
         cb.context_lookup(
-            RwTableContextTag::TableSize,
+            RwTableContextTag::TableSize { table_index: 0 },
             1.expr(),
             res_val.current() + grow_val.current(),
             res_val.current(),

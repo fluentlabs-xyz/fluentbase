@@ -155,7 +155,7 @@ pub fn build_table_size_read_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
-        tag: RwTableContextTag::TableSize,
+        tag: RwTableContextTag::TableSize { table_index: 0 },
         value: table_size as u64,
     });
     Ok(())
@@ -184,7 +184,7 @@ pub fn build_table_size_write_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
-        tag: RwTableContextTag::TableSize,
+        tag: RwTableContextTag::TableSize { table_index: 0 },
         value: (table_size as u32 + grow.as_u32()) as u64,
     });
     Ok(())
