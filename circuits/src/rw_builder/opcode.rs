@@ -2,7 +2,7 @@ use crate::{
     exec_step::{ExecStep, GadgetError},
     rw_builder::{
         copy_row::{CopyRow, CopyTableTag},
-        rw_row::{RwRow, RwTableContextTag, TagArg},
+        rw_row::{RwRow, RwTableContextTag},
     },
 };
 use fluentbase_rwasm::{common::UntypedValue, RwOp};
@@ -137,9 +137,9 @@ pub fn build_memory_size_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetEr
 
 pub fn build_table_size_read_rw_ops(
     step: &mut ExecStep,
-    table_idx: u32,
+    table_index: u32,
 ) -> Result<(), GadgetError> {
-    let table_size = step.read_table_size(table_idx);
+    let table_size = step.read_table_size(table_index);
 /*
     step.rw_rows.push(RwRow::Table {
         rw_counter: step.next_rw_counter(),
@@ -155,7 +155,7 @@ pub fn build_table_size_read_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
-        tag: RwTableContextTag::TableSize { table_index: TagArg::Number(table_idx) },
+        tag: RwTableContextTag::TableSize { table_index },
         value: table_size as u64,
     });
     Ok(())
@@ -163,9 +163,9 @@ pub fn build_table_size_read_rw_ops(
 
 pub fn build_table_size_write_rw_ops(
     step: &mut ExecStep,
-    table_idx: u32,
+    table_index: u32,
 ) -> Result<(), GadgetError> {
-    let table_size = step.read_table_size(table_idx);
+    let table_size = step.read_table_size(table_index);
     let grow = step.curr_nth_stack_value(0)?;
     println!("DEBUG table size, grow {:#?} {:#?}", table_size, grow);
 /*
@@ -184,7 +184,7 @@ pub fn build_table_size_write_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
-        tag: RwTableContextTag::TableSize { table_index: TagArg::Number(table_idx) },
+        tag: RwTableContextTag::TableSize { table_index },
         value: (table_size as u32 + grow.as_u32()) as u64,
     });
     Ok(())

@@ -6,7 +6,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
-    rw_builder::rw_row::{RwTableContextTag, TagArg},
+    rw_builder::rw_row::RwTableContextTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -37,7 +37,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         cb.stack_pop(init_val.current());
         //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
         cb.context_lookup(
-            RwTableContextTag::TableSize { table_index: TagArg::Query(table_index.current()) },
+            RwTableContextTag::TableSize { table_index: table_index.current() },
             1.expr(),
             res_val.current() + grow_val.current(),
             res_val.current(),
