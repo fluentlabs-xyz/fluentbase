@@ -143,7 +143,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     .map(|v| v.value())
                     .unwrap_or_default();
                 let address = if row.tag() == RwTableTag::Context {
-                    let tag = RwTableContextTag::iter()
+                    let tag = RwTableContextTag::<u32>::iter()
                         .filter(|v| Into::<u32>::into(*v) == row.address().unwrap_or_default())
                         .last()
                         .unwrap();

@@ -36,11 +36,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         cb.stack_pop(grow_val.current());
         cb.stack_pop(init_val.current());
         //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
-        // TODO: this needs to take care about memory and raw pointer from box, one solution is to use generics.
-        let table_index_box = Box::new(table_index.current::<F>());
         cb.context_lookup(
-            // TODO: fix unsafe pointer, for example by right designed generics etc.
-            RwTableContextTag::TableSize { table_index: TagArg::Query(Box::into_raw(table_index_box)) },
+            RwTableContextTag::TableSize { table_index: TagArg::Query(table_index.current()) },
             1.expr(),
             res_val.current() + grow_val.current(),
             res_val.current(),

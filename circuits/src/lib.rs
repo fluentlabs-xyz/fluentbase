@@ -6,6 +6,8 @@
     clippy::type_complexity
 )]
 
+#![feature(type_name_of_val)]
+
 extern crate core;
 
 mod bitwise_check;
