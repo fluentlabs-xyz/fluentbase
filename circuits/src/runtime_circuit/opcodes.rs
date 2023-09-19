@@ -47,6 +47,10 @@ pub trait ExecutionGadget<F: Field> {
 
     const EXECUTION_STATE: ExecutionState;
 
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self;
 
     fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {

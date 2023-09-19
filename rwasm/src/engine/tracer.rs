@@ -3,8 +3,8 @@ use crate::{
     engine::bytecode::{InstrMeta, Instruction},
     Extern,
 };
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use core::fmt::{Debug, Formatter};
-use std::{collections::BTreeMap, mem::take};
 
 #[derive(Debug, Clone)]
 pub struct TracerMemoryState {
@@ -88,7 +88,8 @@ impl Tracer {
             Extern::Table(_) => {}
             Extern::Memory(_) => {}
             Extern::Func(_) => {
-                self.extern_names.insert(entity_index, name.to_string());
+                self.extern_names
+                    .insert(entity_index, name.clone().into_string());
             }
         }
     }
@@ -102,8 +103,8 @@ impl Tracer {
         memory_size: u32,
         consumed_fuel: u64,
     ) {
-        let memory_changes = take(&mut self.memory_changes);
-        let table_changes = take(&mut self.table_changes);
+        let memory_changes = core::mem::take(&mut self.memory_changes);
+        let table_changes = core::mem::take(&mut self.table_changes);
         let opcode_state = TracerInstrState {
             program_counter,
             opcode,
