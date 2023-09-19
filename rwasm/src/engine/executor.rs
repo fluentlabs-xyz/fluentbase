@@ -35,6 +35,7 @@ use crate::{
     StoreInner,
     Table,
 };
+use alloc::string::String;
 use core::cmp::{self};
 
 /// The outcome of a Wasm execution.

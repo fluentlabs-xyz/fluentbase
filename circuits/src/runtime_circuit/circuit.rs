@@ -1,4 +1,5 @@
 use crate::{
+    bail_illegal_opcode,
     exec_step::{ExecSteps, GadgetError},
     lookup_table::{
         BitwiseCheckLookup,
@@ -54,6 +55,7 @@ use crate::{
     util::Field,
 };
 use fluentbase_runtime::SysFuncIdx;
+use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
@@ -76,7 +78,13 @@ pub struct RuntimeCircuitConfig<F: Field> {
     select_gadget: ExecutionContextGadget<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionContextGadget<F, OpUnaryGadget<F>>,
     test_gadget: ExecutionContextGadget<F, OpTestGadget<F>>,
-    store_gadget: ExecutionContextGadget<F, OpStoreGadget<F>>,
+    i32_store_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 4>>,
+    i32_store8_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 1>>,
+    i32_store16_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 2>>,
+    i64_store_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 8>>,
+    i64_store8_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 1>>,
+    i64_store16_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 2>>,
+    i64_store32_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 4>>,
     load_gadget: ExecutionContextGadget<F, OpLoadGadget<F>>,
     table_copy_gadget: ExecutionContextGadget<F, OpTableCopyGadget<F>>,
     table_fill_gadget: ExecutionContextGadget<F, OpTableFillGadget<F>>,
@@ -147,7 +155,13 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
-            store_gadget: configure_gadget!(),
+            i32_store_gadget: configure_gadget!(),
+            i32_store8_gadget: configure_gadget!(),
+            i32_store16_gadget: configure_gadget!(),
+            i64_store_gadget: configure_gadget!(),
+            i64_store8_gadget: configure_gadget!(),
+            i64_store16_gadget: configure_gadget!(),
+            i64_store32_gadget: configure_gadget!(),
             load_gadget: configure_gadget!(),
             table_copy_gadget: configure_gadget!(),
             table_fill_gadget: configure_gadget!(),
@@ -289,9 +303,30 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .memory_init_gadget
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_TEST => self.test_gadget.assign(region, offset, step, rw_counter),
-            ExecutionState::WASM_STORE => {
-                self.store_gadget.assign(region, offset, step, rw_counter)
-            }
+            ExecutionState::WASM_STORE => match step.instr() {
+                Instruction::I32Store(_) => self
+                    .i32_store_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I32Store8(_) => self
+                    .i32_store8_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I32Store16(_) => self
+                    .i32_store16_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I64Store8(_) => self
+                    .i64_store8_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I64Store16(_) => self
+                    .i64_store16_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I64Store32(_) => self
+                    .i64_store32_gadget
+                    .assign(region, offset, step, rw_counter),
+                Instruction::I64Store(_) => self
+                    .i64_store_gadget
+                    .assign(region, offset, step, rw_counter),
+                _ => bail_illegal_opcode!(step),
+            },
             ExecutionState::WASM_LOAD => self.load_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_RETURN => {
                 self.return_gadget.assign(region, offset, step, rw_counter)

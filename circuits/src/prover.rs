@@ -148,7 +148,6 @@ mod tests {
         rwasm::{Compiler, ImportLinker, InstructionSet},
     };
     use halo2_proofs::plonk::{keygen_pk, keygen_vk};
-    use log::debug;
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
         let rwasm_binary: Vec<u8> = bytecode.into();
@@ -166,7 +165,7 @@ mod tests {
             key.clone()
         };
         let elapsed = test_actual(circuit, vec![vec![Fr::zero()]], key, degree);
-        debug!("elapsed time (gen/proof/verify): {}ms", elapsed);
+        println!("elapsed time (gen/proof/verify): {}ms", elapsed);
         elapsed
     }
 
@@ -205,9 +204,9 @@ mod tests {
         for iters in [100, 1000] {
             let mut bytecode = InstructionSet::new();
             (0..iters).for_each(|i| bytecode.op_i32_const(i));
-            debug!("proving {} iters", iters);
+            println!("proving {} iters", iters);
             let elapsed_time_ms = gen_proof_verify(bytecode);
-            debug!("est. ms per iter {}", elapsed_time_ms / iters as u64);
+            println!("est. ms per iter {}", elapsed_time_ms / iters as u64);
         }
     }
 }
