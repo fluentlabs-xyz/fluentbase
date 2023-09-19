@@ -126,6 +126,14 @@ impl<F: Field, T: Into<Query<F>>> std::ops::Mul<T> for Query<F> {
 }
 
 pub trait ToExpr {
+    type Guard<F: Field>: Field = F;
+
+    unsafe fn cast_query<F: Field>(a: &Query<Self::Guard<F>>) -> &Query<F> {
+        use std::any::TypeId;
+        assert_eq!(TypeId::of::<Self::Guard<F>>(), TypeId::of::<F>());
+        &*( a as *const Query<Self::Guard<F>> as *const Query<F> )
+    }
+
     fn expr<F: Field>(&self) -> Query<F>;
 
     fn query<F: Field>(&self) -> Query<F> {
@@ -138,6 +146,7 @@ macro_rules! impl_expr {
     (RwTableContextTag<Q>) => {
         impl<_F: $crate::util::Field> $crate::constraint_builder::ToExpr
           for RwTableContextTag<$crate::constraint_builder::Query<_F>> {
+            type Guard<F: $crate::util::Field> = _F;
             fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
                 // Using tricky solution where `_F` and `F` types must be same.
                 // TODO: solve problems without tricks.
@@ -148,13 +157,8 @@ macro_rules! impl_expr {
                 use TagArg::*;
                 let variant = Into::<u32>::into(self.clone());
                 match self {
-                    TableSize { table_index: Query(_query) } => {
-                        let typ_a = std::any::type_name_of_val(_query);
-                        let typ_b = std::any::type_name_of_val(&Query::<F>::zero());
-                        println!("DEBUG TYP NAME {:#?} {:#?}", typ_a, typ_b);
-                        // TODO: add type checking, or better to find not so tricky way.
-                        let query: Query<F> = unsafe { std::mem::transmute_copy(_query) };
-                        variant.expr() + query
+                    TableSize { table_index: Query(query) } => {
+                        variant.expr() + unsafe { Self::cast_query(query) }.clone()
                     }
                     _ => $crate::constraint_builder::Query::from(variant as u64)
                 }
