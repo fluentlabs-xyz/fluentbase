@@ -24,9 +24,9 @@ pub use self::utils::{
 };
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
 use crate::common::{UntypedValue, F32};
+use alloc::{fmt, vec::Vec};
 use core::fmt::{Debug, Formatter};
 pub use stack_height::RwOp;
-use std::fmt;
 #[cfg(feature = "std")]
 use strum_macros::EnumIter;
 

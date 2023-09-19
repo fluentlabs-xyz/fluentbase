@@ -1,5 +1,10 @@
 #![no_std]
 
+#[cfg(feature = "evm")]
+mod evm;
+
+#[cfg(feature = "evm")]
+use crate::evm::evm;
 use fluentbase_rwasm::rwasm::Compiler;
 use fluentbase_sdk::{evm_return_slice, sys_read};
 
@@ -32,4 +37,6 @@ pub extern "C" fn main() {
     panic();
     #[cfg(feature = "translator")]
     translator();
+    #[cfg(feature = "evm")]
+    evm();
 }
