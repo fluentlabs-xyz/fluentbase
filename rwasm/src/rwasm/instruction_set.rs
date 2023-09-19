@@ -35,7 +35,8 @@ pub struct InstructionSet {
 }
 
 impl Into<Vec<u8>> for InstructionSet {
-    fn into(self) -> Vec<u8> {
+    fn into(mut self) -> Vec<u8> {
+        self.finalize(true);
         let mut buffer = vec![0; 65536 * 2];
         let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
         let n = self.write_binary(&mut binary_writer).unwrap();

@@ -1,4 +1,5 @@
 use crate::engine::bytecode::Instruction;
+use alloc::vec::Vec;
 
 #[derive(Debug, Copy, Clone)]
 pub enum RwTableOp {
