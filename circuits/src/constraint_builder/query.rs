@@ -138,7 +138,19 @@ macro_rules! impl_expr {
     (RwTableContextTag) => {
         impl $crate::constraint_builder::ToExpr for RwTableContextTag {
             fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
-                $crate::constraint_builder::Query::from(Into::<u32>::into(*self) as u64)
+                use $crate::constraint_builder::ToExpr;
+                use $crate::util::Field;
+                use $crate::constraint_builder::Query;
+                use RwTableContextTag::*;
+                use TagArg::*;
+                let variant = Into::<u32>::into(*self);
+                match self {
+                    TableSize { table_index: Query(dptr) } => {
+                        let dcast = unsafe { Box::from_raw(*dptr) }.downcast_ref::<Query<F>>().unwrap().clone();
+                        variant.expr() + dcast
+                    }
+                    _ => $crate::constraint_builder::Query::from(variant as u64)
+                }
             }
         }
     };

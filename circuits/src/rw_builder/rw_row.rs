@@ -37,14 +37,28 @@ impl Into<usize> for RwTableTag {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TagArg {
+    Number(u32),
+    // Using unsafe pointer and dynamic type to quickly solve problem.
+    // TODO: this can be of course optimized and done in more smooth usual way.
+    Query(*mut dyn std::any::Any),
+}
+
+impl Default for TagArg {
+  fn default() -> Self {
+    Self::Number(0)
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
-#[repr(u32)]
+#[repr(u64)]
 pub enum RwTableContextTag {
     MemorySize = 1,
     ConsumedFuel,
     ProgramCounter,
     StackPointer,
-    TableSize { table_index: u16 },
+    TableSize { table_index: TagArg },
 }
 
 impl_expr!(RwTableContextTag);
@@ -70,6 +84,7 @@ impl Into<usize> for RwTableContextTag {
 impl Into<u32> for RwTableContextTag {
     fn into(self) -> u32 {
         use RwTableContextTag::*;
+        use TagArg::*;
         // TODO: use rust intetnals to do this.
         match self {
             MemorySize => 1,
@@ -77,7 +92,9 @@ impl Into<u32> for RwTableContextTag {
             ProgramCounter => 3,
             StackPointer => 4,
             // TODO: solve this problem using rust internals.
-            TableSize { table_index } => (5 + table_index).into(),
+            TableSize { table_index: Number(ti) } => (5 + ti).into(),
+            // TODO: improve logic of translation with `dyn Any` where `Quert<F>` inside.
+            TableSize { table_index: Query(_) } => 5,
         }
     }
 }
