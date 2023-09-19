@@ -3,6 +3,7 @@ use halo2_proofs::plonk::{ConstraintSystem, SecondPhase};
 mod binary_column;
 mod binary_query;
 mod column;
+pub mod dynamic_cell_manager;
 mod query;
 
 pub use self::{
