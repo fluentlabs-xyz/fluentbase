@@ -1,5 +1,6 @@
 use crate::{
     bail_illegal_opcode,
+    constraint_builder::{dynamic_cell_manager::DynamicCellManager, AdviceColumn},
     exec_step::{ExecSteps, GadgetError},
     lookup_table::{
         BitwiseCheckLookup,
@@ -60,6 +61,7 @@ use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
+use log::debug;
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
@@ -122,11 +124,14 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         bitwise_check_lookup: &impl BitwiseCheckLookup<F>,
     ) -> Self {
         let responsible_opcode_table = ResponsibleOpcodeTable::configure(cs);
+        let advices = [0; 40].map(|i| AdviceColumn(cs.advice_column()));
+        let mut dcm = DynamicCellManager::new(100);
 
         macro_rules! configure_gadget {
-            () => {
-                ExecutionContextGadget::configure(
+            () => {{
+                let g = ExecutionContextGadget::configure(
                     cs,
+                    &mut dcm,
                     rwasm_lookup,
                     state_lookup,
                     &responsible_opcode_table,
@@ -135,8 +140,10 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                     public_input_lookup,
                     copy_lookup,
                     bitwise_check_lookup,
-                )
-            };
+                );
+                dcm.next_line();
+                g
+            }};
         }
 
         Self {
