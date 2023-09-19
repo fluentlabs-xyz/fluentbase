@@ -37,31 +37,20 @@ impl Into<usize> for RwTableTag {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TagArg<Q> {
-    Number(u32),
-    Query(Q),
-}
-
-impl<Q> Default for TagArg<Q> {
-  fn default() -> Self {
-    Self::Number(0)
-  }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 #[repr(u64)]
-pub enum RwTableContextTag<Q> {
+pub enum RwTableContextTag<Q: Default>
+{
     MemorySize = 1,
     ConsumedFuel,
     ProgramCounter,
     StackPointer,
-    TableSize { table_index: TagArg<Q> },
+    TableSize { table_index: Q },
 }
 
 impl_expr!(RwTableContextTag<Q>);
 
-impl<Q> fmt::Display for RwTableContextTag<Q> {
+impl<Q: Default> fmt::Display for RwTableContextTag<Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             RwTableContextTag::MemorySize => write!(f, "MS"),
@@ -73,16 +62,16 @@ impl<Q> fmt::Display for RwTableContextTag<Q> {
     }
 }
 
-impl<Q> Into<usize> for RwTableContextTag<Q> {
+impl<Q: Default> Into<usize> for RwTableContextTag<Q> where Self: Into<u32>
+{
     fn into(self) -> usize {
         Into::<u32>::into(self) as usize
     }
 }
 
-impl<Q> Into<u32> for RwTableContextTag<Q> {
+impl Into<u32> for RwTableContextTag<u32> {
     fn into(self) -> u32 {
         use RwTableContextTag::*;
-        use TagArg::*;
         // TODO: use rust intetnals to do this.
         match self {
             MemorySize => 1,
@@ -90,9 +79,22 @@ impl<Q> Into<u32> for RwTableContextTag<Q> {
             ProgramCounter => 3,
             StackPointer => 4,
             // TODO: solve this problem using rust internals.
-            TableSize { table_index: Number(ti) } => (5 + ti).into(),
+            TableSize { table_index } => (5 + table_index).into(),
+        }
+    }
+}
+
+impl<F: crate::util::Field> Into<u32> for RwTableContextTag<crate::constraint_builder::Query<F>> {
+    fn into(self) -> u32 {
+        use RwTableContextTag::*;
+        // TODO: use rust intetnals to do this.
+        match self {
+            MemorySize => 1,
+            ConsumedFuel => 2,
+            ProgramCounter => 3,
+            StackPointer => 4,
             // TODO: improve logic of translation with `dyn Any` where `Quert<F>` inside.
-            TableSize { table_index: Query(_) } => 5,
+            TableSize { .. } => 5,
         }
     }
 }

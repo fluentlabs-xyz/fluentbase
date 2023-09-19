@@ -154,10 +154,9 @@ macro_rules! impl_expr {
                 use $crate::util::Field;
                 use $crate::constraint_builder::Query;
                 use RwTableContextTag::*;
-                use TagArg::*;
                 let variant = Into::<u32>::into(self.clone());
                 match self {
-                    TableSize { table_index: Query(query) } => {
+                    TableSize { table_index: query } => {
                         variant.expr() + unsafe { Self::cast_query(query) }.clone()
                     }
                     _ => $crate::constraint_builder::Query::from(variant as u64)
