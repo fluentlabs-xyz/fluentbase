@@ -50,6 +50,25 @@ pub enum RwTableContextTag<Q: Default>
 
 impl_expr!(RwTableContextTag<Q>);
 
+impl<Q: Default> RwTableContextTag<Q> {
+  fn get_address(&self, arg: u32) -> u32 {
+      let var = self.get_variant();
+      var as u32 * 1024 + arg
+  }
+
+  fn get_variant(&self) -> u8 {
+      let dis = std::mem::discriminant(self);
+      unsafe { *( &dis as *const std::mem::Discriminant<Self> as *const u8 ) }
+  }
+
+  fn get_argument(self) -> Q {
+      match self {
+          Self::TableSize { table_index } => table_index,
+          _ => Q::default(),
+      }
+  }
+}
+
 impl<Q: Default> fmt::Display for RwTableContextTag<Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -71,31 +90,13 @@ impl<Q: Default> Into<usize> for RwTableContextTag<Q> where Self: Into<u32>
 
 impl Into<u32> for RwTableContextTag<u32> {
     fn into(self) -> u32 {
-        use RwTableContextTag::*;
-        // TODO: use rust intetnals to do this.
-        match self {
-            MemorySize => 1,
-            ConsumedFuel => 2,
-            ProgramCounter => 3,
-            StackPointer => 4,
-            // TODO: solve this problem using rust internals.
-            TableSize { table_index } => (5 + table_index).into(),
-        }
+        self.get_address(self.get_argument())
     }
 }
 
 impl<F: crate::util::Field> Into<u32> for RwTableContextTag<crate::constraint_builder::Query<F>> {
     fn into(self) -> u32 {
-        use RwTableContextTag::*;
-        // TODO: use rust intetnals to do this.
-        match self {
-            MemorySize => 1,
-            ConsumedFuel => 2,
-            ProgramCounter => 3,
-            StackPointer => 4,
-            // TODO: improve logic of translation with `dyn Any` where `Quert<F>` inside.
-            TableSize { .. } => 5,
-        }
+        self.get_address(0)
     }
 }
 
