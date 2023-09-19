@@ -8,9 +8,16 @@ pub enum SysFuncIdx {
     #[default]
     IMPORT_UNKNOWN = 0x0000,
     // SYS host functions (starts with 0xAA00)
-    IMPORT_SYS_HALT = 0xAA01,  // _sys_halt(i32)
-    IMPORT_SYS_WRITE = 0xAA02, // _sys_write(...)
-    IMPORT_SYS_READ = 0xAA03,  // _sys_read(...)
+    IMPORT_SYS_HALT = 0xA001,  // _sys_halt
+    IMPORT_SYS_WRITE = 0xA002, // _sys_write
+    IMPORT_SYS_READ = 0xA003,  // _sys_read
+    // WASI runtime
+    IMPORT_WASI_PROC_EXIT = 0xB001,         // proc_exit
+    IMPORT_WASI_FD_WRITE = 0xB002,          // fd_write
+    IMPORT_WASI_ENVIRON_SIZES_GET = 0xB003, // environ_sizes_get
+    IMPORT_WASI_ENVIRON_GET = 0xB004,       // environ_get
+    IMPORT_WASI_ARGS_SIZES_GET = 0xB005,    // args_sizes_get
+    IMPORT_WASI_ARGS_GET = 0xB006,          // args_get
     // EVM-compatible host functions (starts with 0xEE00)
     IMPORT_EVM_STOP = 0xEE01,
     IMPORT_EVM_RETURN = 0xEE02,
