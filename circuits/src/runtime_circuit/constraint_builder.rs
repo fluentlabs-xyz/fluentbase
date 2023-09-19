@@ -225,7 +225,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
 
     pub fn context_lookup(
         &mut self,
-        tag: RwTableContextTag,
+        tag: RwTableContextTag<Query<F>>,
         is_write: Query<F>,
         value: Query<F>,
         value_prev: Query<F>,

@@ -38,14 +38,12 @@ impl Into<usize> for RwTableTag {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TagArg {
+pub enum TagArg<Q> {
     Number(u32),
-    // Using unsafe pointer and dynamic type to quickly solve problem.
-    // TODO: this can be of course optimized and done in more smooth usual way.
-    Query(*mut dyn std::any::Any),
+    Query(Q),
 }
 
-impl Default for TagArg {
+impl<Q> Default for TagArg<Q> {
   fn default() -> Self {
     Self::Number(0)
   }
@@ -53,17 +51,17 @@ impl Default for TagArg {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 #[repr(u64)]
-pub enum RwTableContextTag {
+pub enum RwTableContextTag<Q> {
     MemorySize = 1,
     ConsumedFuel,
     ProgramCounter,
     StackPointer,
-    TableSize { table_index: TagArg },
+    TableSize { table_index: TagArg<Q> },
 }
 
-impl_expr!(RwTableContextTag);
+impl_expr!(RwTableContextTag<Q>);
 
-impl fmt::Display for RwTableContextTag {
+impl<Q> fmt::Display for RwTableContextTag<Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             RwTableContextTag::MemorySize => write!(f, "MS"),
@@ -75,13 +73,13 @@ impl fmt::Display for RwTableContextTag {
     }
 }
 
-impl Into<usize> for RwTableContextTag {
+impl<Q> Into<usize> for RwTableContextTag<Q> {
     fn into(self) -> usize {
         Into::<u32>::into(self) as usize
     }
 }
 
-impl Into<u32> for RwTableContextTag {
+impl<Q> Into<u32> for RwTableContextTag<Q> {
     fn into(self) -> u32 {
         use RwTableContextTag::*;
         use TagArg::*;
@@ -108,7 +106,7 @@ pub enum RwRow {
         rw_counter: usize,
         is_write: bool,
         call_id: usize,
-        tag: RwTableContextTag,
+        tag: RwTableContextTag<u32>,
         value: u64,
     },
     /// Stack

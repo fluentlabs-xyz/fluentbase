@@ -135,19 +135,26 @@ pub trait ToExpr {
 
 #[macro_export]
 macro_rules! impl_expr {
-    (RwTableContextTag) => {
-        impl $crate::constraint_builder::ToExpr for RwTableContextTag {
+    (RwTableContextTag<Q>) => {
+        impl<_F: $crate::util::Field> $crate::constraint_builder::ToExpr
+          for RwTableContextTag<$crate::constraint_builder::Query<_F>> {
             fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
+                // Using tricky solution where `_F` and `F` types must be same.
+                // TODO: solve problems without tricks.
                 use $crate::constraint_builder::ToExpr;
                 use $crate::util::Field;
                 use $crate::constraint_builder::Query;
                 use RwTableContextTag::*;
                 use TagArg::*;
-                let variant = Into::<u32>::into(*self);
+                let variant = Into::<u32>::into(self.clone());
                 match self {
-                    TableSize { table_index: Query(dptr) } => {
-                        let dcast = unsafe { Box::from_raw(*dptr) }.downcast_ref::<Query<F>>().unwrap().clone();
-                        variant.expr() + dcast
+                    TableSize { table_index: Query(_query) } => {
+                        let typ_a = std::any::type_name_of_val(_query);
+                        let typ_b = std::any::type_name_of_val(&Query::<F>::zero());
+                        println!("DEBUG TYP NAME {:#?} {:#?}", typ_a, typ_b);
+                        // TODO: add type checking, or better to find not so tricky way.
+                        let query: Query<F> = unsafe { std::mem::transmute_copy(_query) };
+                        variant.expr() + query
                     }
                     _ => $crate::constraint_builder::Query::from(variant as u64)
                 }
