@@ -2,6 +2,7 @@ use crate::impl_expr;
 use fluentbase_rwasm::common::UntypedValue;
 use std::{fmt, fmt::Formatter};
 use strum_macros::EnumIter;
+use std::mem::discriminant;
 
 pub const N_RW_TABLE_TAG_BITS: usize = 4;
 
@@ -37,12 +38,13 @@ impl Into<usize> for RwTableTag {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
+#[repr(u32)]
 pub enum RwTableContextTag {
     MemorySize = 1,
     ConsumedFuel,
-    TableSize,
     ProgramCounter,
     StackPointer,
+    TableSize { table_index: u16 },
 }
 
 impl_expr!(RwTableContextTag);
@@ -52,7 +54,7 @@ impl fmt::Display for RwTableContextTag {
         match self {
             RwTableContextTag::MemorySize => write!(f, "MS"),
             RwTableContextTag::ConsumedFuel => write!(f, "CF"),
-            RwTableContextTag::TableSize => write!(f, "TS"),
+            RwTableContextTag::TableSize { .. } => write!(f, "TS"),
             RwTableContextTag::ProgramCounter => write!(f, "PC"),
             RwTableContextTag::StackPointer => write!(f, "SP"),
         }
@@ -61,7 +63,22 @@ impl fmt::Display for RwTableContextTag {
 
 impl Into<usize> for RwTableContextTag {
     fn into(self) -> usize {
-        self as usize
+        Into::<u32>::into(self) as usize
+    }
+}
+
+impl Into<u32> for RwTableContextTag {
+    fn into(self) -> u32 {
+        use RwTableContextTag::*;
+        // TODO: use rust intetnals to do this.
+        match self {
+            MemorySize => 1,
+            ConsumedFuel => 2,
+            ProgramCounter => 3,
+            StackPointer => 4,
+            // TODO: solve this problem using rust internals.
+            TableSize { table_index } => (5 + table_index).into(),
+        }
     }
 }
 
@@ -208,7 +225,7 @@ impl RwRow {
 
     pub fn address(&self) -> Option<u32> {
         match self {
-            Self::Context { tag, .. } => Some(*tag as u32),
+            Self::Context { tag, .. } => Some(Into::<u32>::into(*tag)),
             Self::Memory { memory_address, .. } => Some(*memory_address as u32),
             Self::Stack { stack_pointer, .. } => Some(*stack_pointer as u32),
             Self::Global { global_index, .. } => Some(*global_index as u32),

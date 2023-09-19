@@ -135,6 +135,13 @@ pub trait ToExpr {
 
 #[macro_export]
 macro_rules! impl_expr {
+    (RwTableContextTag) => {
+        impl $crate::constraint_builder::ToExpr for RwTableContextTag {
+            fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
+                $crate::constraint_builder::Query::from(Into::<u32>::into(*self) as u64)
+            }
+        }
+    };
     ($ty:ty) => {
         impl $crate::constraint_builder::ToExpr for $ty {
             fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
