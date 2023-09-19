@@ -14,16 +14,18 @@
     i32.const 0
     local.set 1
     local.get 0
+    i32.const 10
+    i32.add
+    i32.const 0
+    i32.store8
+    local.get 0
+    i32.const 0
+    i32.store16 offset=8
+    local.get 0
     i32.const 8
     i32.add
     i32.const 0
-    i32.store16
-    local.get 0
-    i64.const 0
-    i64.store
-    local.get 0
-    i32.const 0
-    i32.const 10
+    i32.const 3
     call $_sys_read
     drop
     i32.const 0
@@ -31,6 +33,8 @@
     loop  ;; label = @1
       local.get 1
       local.get 0
+      i32.const 8
+      i32.add
       local.get 2
       i32.add
       i32.load8_u
@@ -40,7 +44,7 @@
       i32.const 1
       i32.add
       local.tee 2
-      i32.const 10
+      i32.const 3
       i32.ne
       br_if 0 (;@1;)
     end

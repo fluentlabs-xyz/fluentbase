@@ -1,4 +1,5 @@
 use crate::{
+    common::ValueType,
     engine::bytecode::Instruction,
     module::{FuncIdx, FuncTypeIdx, MemoryIdx, ModuleBuilder, ModuleError, ModuleResources},
     rwasm::{
