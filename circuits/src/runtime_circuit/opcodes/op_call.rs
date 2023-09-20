@@ -65,7 +65,7 @@ mod test {
     fn test_exit() {
         test_ok(instruction_set! {
             I32Const(7)
-            Call(SysFuncIdx::IMPORT_SYS_HALT)
+            Call(SysFuncIdx::SYS_HALT)
         });
     }
 }
