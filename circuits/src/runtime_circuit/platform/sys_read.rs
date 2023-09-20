@@ -25,8 +25,7 @@ pub struct SysReadGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(_sys_read)";
-    const EXECUTION_STATE: ExecutionState =
-        ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_READ);
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CALL_HOST(SysFuncIdx::SYS_READ);
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let target = cb.query_cell();
@@ -84,7 +83,7 @@ mod test {
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -97,19 +96,19 @@ mod test {
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(3) // target
             I32Const(3) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(6) // target
             I32Const(6) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(9) // target
             I32Const(9) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -122,7 +121,7 @@ mod test {
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(10) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -135,7 +134,7 @@ mod test {
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -148,7 +147,7 @@ mod test {
             I32Const(0) // target
             I32Const(3) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }

@@ -20,8 +20,7 @@ pub struct SysHaltGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for SysHaltGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(_sys_halt)";
-    const EXECUTION_STATE: ExecutionState =
-        ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_HALT);
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CALL_HOST(SysFuncIdx::SYS_HALT);
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let exit_code = cb.query_cell();
@@ -59,7 +58,7 @@ mod test {
     fn test_exit() {
         test_ok(instruction_set! {
             I32Const(7)
-            Call(SysFuncIdx::IMPORT_SYS_HALT)
+            Call(SysFuncIdx::SYS_HALT)
         });
     }
 }

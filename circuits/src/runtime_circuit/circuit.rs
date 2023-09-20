@@ -196,13 +196,13 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         system_call: SysFuncIdx,
     ) -> Result<(), GadgetError> {
         match system_call {
-            SysFuncIdx::IMPORT_SYS_HALT => self
+            SysFuncIdx::SYS_HALT => self
                 .sys_halt_gadget
                 .assign(region, offset, step, rw_counter)?,
-            SysFuncIdx::IMPORT_SYS_READ => self
+            SysFuncIdx::SYS_READ => self
                 .sys_read_gadget
                 .assign(region, offset, step, rw_counter)?,
-            SysFuncIdx::IMPORT_SYS_WRITE => self
+            SysFuncIdx::SYS_WRITE => self
                 .sys_write_gadget
                 .assign(region, offset, step, rw_counter)?,
             _ => unreachable!("not supported sys call: {:?}", system_call),
