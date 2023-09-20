@@ -1451,6 +1451,7 @@ dependencies = [
  "strum_macros 0.25.2",
  "subtle",
  "thiserror",
+ "wasi 0.11.0+wasi-snapshot-preview1",
  "wasm-encoder 0.31.1",
  "wat",
 ]

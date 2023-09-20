@@ -50,7 +50,16 @@ use crate::{
             },
             ExecStep,
         },
-        platform::{sys_halt::SysHaltGadget, sys_read::SysReadGadget, sys_write::SysWriteGadget},
+        platform::{
+            sys_halt::SysHaltGadget,
+            sys_read::SysReadGadget,
+            sys_write::SysWriteGadget,
+            wasi_args_get::WasiArgsGet,
+            wasi_args_sizes_get::WasiArgsSizesGet,
+            wasi_environ_get::WasiEnvironGet,
+            wasi_fd_write::WasiFdWrite,
+            wasi_proc_exit::WasiProcExit,
+        },
         responsible_opcode::ResponsibleOpcodeTable,
     },
     util::Field,
@@ -61,7 +70,6 @@ use halo2_proofs::{
     circuit::{Layouter, Region},
     plonk::{ConstraintSystem, Error},
 };
-use log::debug;
 
 #[derive(Clone)]
 pub struct RuntimeCircuitConfig<F: Field> {
@@ -107,6 +115,12 @@ pub struct RuntimeCircuitConfig<F: Field> {
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
     sys_write_gadget: ExecutionContextGadget<F, SysWriteGadget<F>>,
+    wasi_args_get: ExecutionContextGadget<F, WasiArgsGet<F>>,
+    wasi_args_sizes_get: ExecutionContextGadget<F, WasiArgsSizesGet<F>>,
+    wasi_environ_get: ExecutionContextGadget<F, WasiEnvironGet<F>>,
+    wasi_environ_sizes_get: ExecutionContextGadget<F, WasiArgsSizesGet<F>>,
+    wasi_fd_write: ExecutionContextGadget<F, WasiFdWrite<F>>,
+    wasi_proc_exit: ExecutionContextGadget<F, WasiProcExit<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -189,6 +203,12 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
             sys_write_gadget: configure_gadget!(),
+            wasi_args_get: configure_gadget!(),
+            wasi_args_sizes_get: configure_gadget!(),
+            wasi_environ_get: configure_gadget!(),
+            wasi_environ_sizes_get: configure_gadget!(),
+            wasi_fd_write: configure_gadget!(),
+            wasi_proc_exit: configure_gadget!(),
             // other
             responsible_opcode_table,
         }
@@ -211,6 +231,24 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .assign(region, offset, step, rw_counter)?,
             SysFuncIdx::SYS_WRITE => self
                 .sys_write_gadget
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_ARGS_GET => self
+                .wasi_args_get
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_ARGS_SIZES_GET => self
+                .wasi_args_sizes_get
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_PROC_EXIT => self
+                .wasi_proc_exit
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_FD_WRITE => self
+                .wasi_fd_write
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_ENVIRON_SIZES_GET => self
+                .wasi_environ_sizes_get
+                .assign(region, offset, step, rw_counter)?,
+            SysFuncIdx::WASI_ENVIRON_GET => self
+                .wasi_environ_get
                 .assign(region, offset, step, rw_counter)?,
             _ => unreachable!("not supported sys call: {:?}", system_call),
         }

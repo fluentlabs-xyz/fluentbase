@@ -1,4 +1,4 @@
-use crate::{runtime::RuntimeContext, ExitCode};
+use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 use std::mem::size_of;
 
@@ -96,7 +96,7 @@ pub(crate) fn wasi_fd_write(
 pub(crate) fn wasi_environ_sizes_get(
     _caller: Caller<'_, RuntimeContext>,
     _rp0_ptr: i32,
-    _pr1_ptr: i32,
+    _rp1_ptr: i32,
 ) -> Result<i32, Trap> {
     Ok(wasi::ERRNO_CANCELED.raw() as i32)
 }
@@ -111,16 +111,16 @@ pub(crate) fn wasi_environ_get(
 
 pub(crate) fn wasi_args_sizes_get(
     mut caller: Caller<'_, RuntimeContext>,
-    rp0: i32,
-    rp1: i32,
+    argv_len: i32,
+    argv_buffer_len: i32,
 ) -> Result<i32, Trap> {
     // first arg is always 1, because we pass only one string
-    let rp0_ptr = exported_memory_slice(&mut caller, rp0 as usize, 4);
-    rp0_ptr.copy_from_slice(&1u32.to_be_bytes());
+    let argv_slice = exported_memory_slice(&mut caller, argv_len as usize, 4);
+    argv_slice.copy_from_slice(&1u32.to_be_bytes());
     // second arg is length of input
     let input_len = caller.data().input.len() as u32;
-    let rp1_ptr = exported_memory_slice(&mut caller, rp1 as usize, 4);
-    rp1_ptr.copy_from_slice(&input_len.to_be_bytes());
+    let argv_buffer_slice = exported_memory_slice(&mut caller, argv_buffer_len as usize, 4);
+    argv_buffer_slice.copy_from_slice(&input_len.to_be_bytes());
     // its always success
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
@@ -135,7 +135,34 @@ pub(crate) fn wasi_args_get(
     caller.write_memory(argv_buffer as usize, &input.as_slice());
     // init argv array (we have only 1 element inside argv)
     caller.write_memory(argv as usize, &argv_buffer.to_be_bytes());
-    Ok(wasi::ERRNO_CANCELED.raw() as i32)
+    Ok(wasi::ERRNO_SUCCESS.raw() as i32)
+}
+
+pub(crate) fn rwasm_transact(
+    mut caller: Caller<'_, RuntimeContext>,
+    code_offset: i32,
+    code_len: i32,
+    input_offset: i32,
+    input_len: i32,
+    output_offset: i32,
+    output_len: i32,
+) -> Result<i32, Trap> {
+    let bytecode = exported_memory_vec(&mut caller, code_offset as usize, code_len as usize);
+    let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
+    // TODO: "we probably need custom linker here with reduced host calls number"
+    let res = Runtime::run(bytecode.as_slice(), input.as_slice());
+    if res.is_err() {
+        return Err(ExitCode::TransactError.into());
+    }
+    let execution_result = res.unwrap();
+    // copy output into memory
+    let output = execution_result.data().output();
+    if output.len() > output_len as usize {
+        return Err(ExitCode::TransactOutputOverflow.into());
+    }
+    caller.write_memory(output_offset as usize, output.as_slice());
+    // put exit code on stack
+    Ok(execution_result.data().exit_code)
 }
 
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
