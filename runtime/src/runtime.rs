@@ -215,6 +215,13 @@ impl Runtime {
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 
+        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
+        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, ivs_len: i32, rp0_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, pr1_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(rp0: i32, rp1: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
 
