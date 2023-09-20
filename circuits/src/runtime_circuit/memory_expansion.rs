@@ -18,8 +18,8 @@ pub struct MemoryExpansionGadget<F: Field> {
     marker: PhantomData<F>,
 }
 
-impl<'cs, 'st, F: Field> MemoryExpansionGadget<F> {
-    pub fn configure(cb: &mut OpConstraintBuilder<'cs, 'st, F>) -> Self {
+impl<'cs, 'st, 'dcm, F: Field> MemoryExpansionGadget<F> {
+    pub fn configure(cb: &mut OpConstraintBuilder<'cs, 'st, 'dcm, F>) -> Self {
         let used_pages = cb.query_cell();
         let used_memory = cb.query_cell();
         let value = cb.query_cell();
