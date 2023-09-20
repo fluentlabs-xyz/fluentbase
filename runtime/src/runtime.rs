@@ -90,39 +90,83 @@ pub struct Runtime {
 impl Runtime {
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
-
+        // Fluentbase sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_halt".to_string(),
-            SysFuncIdx::IMPORT_SYS_HALT as u16,
+            SysFuncIdx::SYS_HALT as u16,
             &[ValueType::I32; 1],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_write".to_string(),
-            SysFuncIdx::IMPORT_SYS_WRITE as u16,
+            SysFuncIdx::SYS_WRITE as u16,
             &[ValueType::I32; 2],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_read".to_string(),
-            SysFuncIdx::IMPORT_SYS_READ as u16,
+            SysFuncIdx::SYS_READ as u16,
             &[ValueType::I32; 3],
             &[],
         ));
+        // WASI sys calls
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "proc_exit".to_string(),
+            SysFuncIdx::WASI_PROC_EXIT as u16,
+            &[ValueType::I32; 1],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "fd_write".to_string(),
+            SysFuncIdx::WASI_FD_WRITE as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "environ_sizes_get".to_string(),
+            SysFuncIdx::WASI_ENVIRON_SIZES_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "environ_get".to_string(),
+            SysFuncIdx::WASI_ENVIRON_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "args_sizes_get".to_string(),
+            SysFuncIdx::WASI_ARGS_SIZES_GET as u16,
+            &[ValueType::I32; 0],
+            &[ValueType::I32; 2],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "args_get".to_string(),
+            SysFuncIdx::WASI_ARGS_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        // EVM sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_evm_stop".to_string(),
-            SysFuncIdx::IMPORT_EVM_STOP as u16,
+            SysFuncIdx::EVM_STOP as u16,
             &[ValueType::I32; 0],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_evm_return".to_string(),
-            SysFuncIdx::IMPORT_EVM_RETURN as u16,
+            SysFuncIdx::EVM_RETURN as u16,
             &[ValueType::I32; 2],
             &[],
         ));
@@ -170,6 +214,13 @@ impl Runtime {
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
+
+        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
+        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, ivs_len: i32, rp0_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, pr1_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(rp0: i32, rp1: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
