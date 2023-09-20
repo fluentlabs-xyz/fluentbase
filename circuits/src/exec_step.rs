@@ -1,4 +1,5 @@
 use crate::rw_builder::{copy_row::CopyRow, rw_row::RwRow, RwBuilder};
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::{
     common::UntypedValue,
     engine::{bytecode::Instruction, Tracer, TracerInstrState},
@@ -10,6 +11,7 @@ use std::collections::BTreeMap;
 pub enum GadgetError {
     MissingNext,
     OutOfStack,
+    UnknownSysCall(SysFuncIdx),
     OutOfMemory,
     Plonk(plonk::Error),
 }
