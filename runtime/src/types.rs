@@ -2,8 +2,9 @@ use fluentbase_rwasm::common::Trap;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ExitCode {
-    Stop = -1001,
+    EvmStop = -1001,
     MemoryOutOfBounds = -1002,
+    NotSupportedCall = -1003,
 }
 
 impl Into<Trap> for ExitCode {

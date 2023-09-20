@@ -46,6 +46,7 @@ pub enum Instruction {
     LocalTee(LocalDepth),
     /// An unconditional branch.
     Br(BranchOffset),
+    BrIndirect,
     /// Branches if the top-most stack value is equal to zero.
     BrIfEqz(BranchOffset),
     /// Branches if the top-most stack value is _not_ equal to zero.

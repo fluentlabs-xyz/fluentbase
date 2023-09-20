@@ -1,4 +1,4 @@
-FILES = greeting panic translator evm
+FILES = greeting panic rwasm evm wasi
 
 all: $(FILES)
 

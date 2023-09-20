@@ -66,6 +66,8 @@ impl<'a> BinaryFormat<'a> for Instruction {
                 sink.write_u8(0x10)? + table.write_binary(sink)?
             }
             Instruction::CallInternal(sig) => sink.write_u8(0x11)? + sig.write_binary(sink)?,
+            Instruction::BrIndirect => sink.write_u8(0x12)?,
+
             Instruction::Call(jump_dest) => sink.write_u8(0x13)? + jump_dest.write_binary(sink)?,
             // Instruction::CallIndirect(signature) => sink.write_u8(0x14)? +
             // signature.write_binary(sink)?,
@@ -292,6 +294,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
             // 0x10 => Instruction::ReturnCallIndirect(SignatureIdx::read_binary(sink)?),
             0x10 => Instruction::ReturnCallIndirectUnsafe(TableIdx::read_binary(sink)?),
             0x11 => Instruction::CallInternal(CompiledFunc::read_binary(sink)?),
+            0x12 => Instruction::BrIndirect,
             0x13 => Instruction::Call(FuncIdx::read_binary(sink)?),
             // 0x14 => Instruction::CallIndirect(SignatureIdx::read_binary(sink)?),
             0x14 => Instruction::CallIndirectUnsafe(TableIdx::read_binary(sink)?),

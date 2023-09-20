@@ -91,9 +91,9 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
 
 pub fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<(), GadgetError> {
     match sys_func {
-        SysFuncIdx::IMPORT_SYS_HALT => build_sys_halt_rw_ops(step)?,
-        SysFuncIdx::IMPORT_SYS_WRITE => build_sys_write_rw_ops(step)?,
-        SysFuncIdx::IMPORT_SYS_READ => build_sys_read_rw_ops(step)?,
+        SysFuncIdx::SYS_HALT => build_sys_halt_rw_ops(step)?,
+        SysFuncIdx::SYS_WRITE => build_sys_write_rw_ops(step)?,
+        SysFuncIdx::SYS_READ => build_sys_read_rw_ops(step)?,
         // SysFuncIdx::IMPORT_EVM_STOP => {}
         // SysFuncIdx::IMPORT_EVM_RETURN => {}
         _ => unreachable!("not supported host call {:?}", sys_func),
