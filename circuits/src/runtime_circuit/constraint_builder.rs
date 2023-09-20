@@ -1,5 +1,6 @@
 use crate::{
     constraint_builder::{
+        dynamic_cell_manager::{CellType, DynamicCellManager},
         AdviceColumn,
         AdviceColumnPhase2,
         BinaryQuery,
@@ -72,10 +73,11 @@ impl<F: Field> StateTransition<F> {
     }
 }
 
-pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
+pub struct OpConstraintBuilder<'cs, 'st, 'dcm, F: Field> {
     q_enable: SelectorColumn,
     pub(crate) base: ConstraintBuilder<F>,
     cs: &'cs mut ConstraintSystem<F>,
+    dcm: &'dcm mut DynamicCellManager<F>,
     // rwasm table fields
     pc: AdviceColumn,
     opcode: AdviceColumn,
@@ -86,9 +88,10 @@ pub struct OpConstraintBuilder<'cs, 'st, F: Field> {
 }
 
 #[allow(unused_variables)]
-impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
+impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
     pub fn new(
         cs: &'cs mut ConstraintSystem<F>,
+        dcm: &'dcm mut DynamicCellManager<F>,
         q_enable: SelectorColumn,
         state_transition: &'st mut StateTransition<F>,
     ) -> Self {
@@ -99,6 +102,7 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
             q_enable,
             base: ConstraintBuilder::new(q_enable),
             cs,
+            dcm,
             pc,
             opcode,
             value,
@@ -141,19 +145,27 @@ impl<'cs, 'st, F: Field> OpConstraintBuilder<'cs, 'st, F> {
     }
 
     pub fn query_cell(&mut self) -> AdviceColumn {
-        self.base.advice_column(self.cs)
+        self.query_cells::<1>()[0]
     }
 
     pub fn query_cells<const N: usize>(&mut self) -> [AdviceColumn; N] {
-        self.base.advice_columns(self.cs)
+        self.dcm
+            .query_cells(self.cs, &CellType::Advice)
+            .map(|v| v.try_into().unwrap())
+            .try_into()
+            .unwrap()
     }
 
     pub fn query_selector(&mut self) -> SelectorColumn {
-        SelectorColumn(self.base.fixed_column(self.cs).0)
+        self.query_selectors::<1>()[0]
     }
 
     pub fn query_selectors<const N: usize>(&mut self) -> [SelectorColumn; N] {
-        [0; N].map(|v| SelectorColumn(self.base.fixed_column(self.cs).0))
+        self.dcm
+            .query_cells(self.cs, &CellType::Selector)
+            .map(|v| v.try_into().unwrap())
+            .try_into()
+            .unwrap()
     }
 
     pub fn query_fixed(&mut self) -> FixedColumn {
