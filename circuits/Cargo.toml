@@ -36,6 +36,7 @@ bitintr = "0.3.0"
 seq-macro = "0.3.5"
 env_logger = "0.10.0"
 ctor = "0.2.4"
+byteorder = "1.4.3"
 
 [features]
 default = ["dev-graph", "std"]

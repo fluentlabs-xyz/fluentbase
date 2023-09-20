@@ -1424,6 +1424,7 @@ version = "0.1.0"
 dependencies = [
  "bencher",
  "bitintr",
+ "byteorder",
  "cli-table",
  "ctor",
  "env_logger 0.10.0",
