@@ -50,7 +50,7 @@ pub struct Compiler<'linker> {
     import_linker: Option<&'linker ImportLinker>,
     // for automatic translation
     is_translated: bool,
-    injection_segments: Vec<Injection>
+    injection_segments: Vec<Injection>,
 }
 
 #[derive(Debug)]
@@ -251,7 +251,10 @@ impl<'linker> Compiler<'linker> {
             self.swap_with_depth(i + 1);
         }
         let injection_end = self.code_section.len();
-        self.injection_segments.push(Injection{ begin: injection_start, end: injection_end });
+        self.injection_segments.push(Injection {
+            begin: injection_start,
+            end: injection_end,
+        });
     }
 
     fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
@@ -462,22 +465,11 @@ impl<'linker> Compiler<'linker> {
                             }
                         }
                     };
-
-                    bytecode.instr[i] =   match  bytecode.instr[i] {
-                        Instruction::Br(_) => Instruction::Br(BranchOffset::from(offset as i32)),
-                        Instruction::BrIfNez(_) => Instruction::BrIfNez(BranchOffset::from(offset as i32)),
-                        Instruction::BrAdjust(_) => Instruction::BrAdjust(BranchOffset::from(offset as i32)),
-                        Instruction::BrAdjustIfNez(_) => Instruction::BrAdjustIfNez(BranchOffset::from(offset as i32)),
-                        Instruction::BrIfEqz(_) => Instruction::BrIfEqz(BranchOffset::from(offset as i32)),
-                        _ => panic!("Unreachable"),
-                    };
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
                 }
                 _ => {}
             }
         }
-
-        // let (stack_height, max_height) = sanitizer.stack_height();
-        // assert!(stack_height == 0 && max_height < 1024);
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;
