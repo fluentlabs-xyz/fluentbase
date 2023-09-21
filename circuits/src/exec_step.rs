@@ -24,7 +24,8 @@ pub struct ExecStep {
     pub(crate) global_memory: Vec<u8>,
     pub(crate) global_table: BTreeMap<u32, UntypedValue>,
     pub(crate) rw_rows: Vec<RwRow>,
-    pub(crate) copy_rows: Vec<CopyRow>,
+    pub(crate) copy_rows: Vec<CopyRow<u8>>,
+    pub(crate) copy_funrefs: Vec<CopyRow<u32>>,
     pub(crate) output_len: u32,
     pub(crate) call_id: usize,
     pub(crate) rw_counter: usize,
@@ -159,6 +160,7 @@ impl ExecSteps {
                 global_table: global_table.clone(),
                 rw_rows: vec![],
                 copy_rows: vec![],
+                copy_funrefs: vec![],
                 output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
                 call_id: 0,
                 rw_counter,
@@ -172,7 +174,7 @@ impl ExecSteps {
         Ok(res)
     }
 
-    pub fn get_copy_rows(&self) -> Vec<CopyRow> {
+    pub fn get_copy_rows(&self) -> Vec<CopyRow<u8>> {
         let mut res = Vec::new();
         for copy_rows in self.0.iter().map(|v| v.copy_rows.clone()) {
             res.extend(copy_rows);

@@ -11,6 +11,7 @@ use crate::{
             build_generic_rw_ops,
             build_memory_copy_rw_ops,
             build_memory_fill_rw_ops,
+            build_table_fill_rw_ops,
         },
         platform::build_platform_rw_ops,
         rw_row::{RwRow, RwTableContextTag},
@@ -62,6 +63,9 @@ impl RwBuilder {
             }
             Instruction::MemoryFill => {
                 build_memory_fill_rw_ops(step)?;
+            }
+            Instruction::TableFill(table_idx) => {
+                build_table_fill_rw_ops(step, table_idx.to_u32())?;
             }
             _ => {
                 build_generic_rw_ops(step, step.instr().get_rw_ops())?;

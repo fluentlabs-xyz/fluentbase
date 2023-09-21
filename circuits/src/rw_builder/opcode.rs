@@ -300,6 +300,80 @@ pub fn build_memory_fill_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
     Ok(())
 }
 
+pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let start = build_stack_read_rw_ops(step, 0)?;
+    let value = build_stack_read_rw_ops(step, 2)?;
+    let range = build_stack_read_rw_ops(step, 3)?;
+    // remember rw counter before fill
+    let fill_rw_counter = step.next_rw_counter();
+    // read result to the table
+    (start.as_usize()..(start.as_usize() + range.as_usize())).for_each(|i| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            address: table_index as u64 * 1024 + i as u64,
+            value: value.as_u64(),
+            prev_value: 0, // FIXME
+        });
+    });
+    // create copy row
+    step.copy_funrefs.push(CopyRow {
+        tag: CopyTableTag::FillTable,
+        from_address: table_index * 1024 + start.as_u32(),
+        to_address: table_index * 1024 + start.as_u32() + range.as_u32(),
+        length: range.as_u32(),
+        rw_counter: fill_rw_counter,
+        data: vec![value.as_u32(); range.as_usize()],
+    });
+    Ok(())
+}
+
+pub fn build_table_copy_rw_ops(step: &mut ExecStep, table_src: u32, table_dst: u32) -> Result<(), GadgetError> {
+    // pop 2 elems from stack
+    let start = build_stack_read_rw_ops(step, 0)?;
+    let range = build_stack_read_rw_ops(step, 1)?;
+    // read copied data
+    let mut data = vec![0; range.as_u32() as usize];
+    for i in 0..range.as_usize() {
+        data[i] = step.read_table_elem(table_src, i as u32).unwrap().as_u32();
+    }
+    let copy_rw_counter = step.next_rw_counter();
+    // read result to the table
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: false,
+            call_id: step.call_id,
+            address: table_src as u64 * 1024 + start.as_u64() + i as u64,
+            value: *value as u64,
+            prev_value: 0, // FIXME
+        });
+    });
+    // write result to the table
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            address: table_dst as u64 * 1024 + start.as_u64() + i as u64,
+            value: *value as u64,
+            prev_value: 0, // FIXME
+        });
+    });
+    // create copy row
+    step.copy_funrefs.push(CopyRow {
+        tag: CopyTableTag::CopyTable,
+        from_address: table_src * 1024,
+        to_address: table_dst * 1024 + start.as_u32(),
+        length: range.as_u32(),
+        rw_counter: copy_rw_counter,
+        data,
+    });
+    Ok(())
+}
+
 pub fn build_consume_fuel_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
     let consumed_fuel = step.curr().consumed_fuel;
     let fuel = step.instr().aux_value().unwrap_or_default();
