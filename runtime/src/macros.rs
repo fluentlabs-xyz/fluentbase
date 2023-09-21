@@ -14,6 +14,12 @@ macro_rules! forward_call_args {
     ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty]) => {
         crate::instruction::$func($caller, $a1, $a2, $a3, $a4)
     };
+    ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty]) => {
+        crate::instruction::$func($caller, $a1, $a2, $a3, $a4, $a5)
+    };
+    ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty]) => {
+        crate::instruction::$func($caller, $a1, $a2, $a3, $a4, $a5, $a6)
+    };
 }
 
 macro_rules! forward_call {

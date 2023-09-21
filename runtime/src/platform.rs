@@ -18,6 +18,9 @@ pub enum SysFuncIdx {
     WASI_ENVIRON_GET = 0xB004,       // environ_get
     WASI_ARGS_SIZES_GET = 0xB005,    // args_sizes_get
     WASI_ARGS_GET = 0xB006,          // args_get
+    // RWASM runtime
+    RWASM_TRANSACT = 0xC001, // _rwasm_transact
+    RWASM_COMPILE = 0xC002,  // _rwasm_compile
     // EVM-compatible host functions (starts with 0xEE00)
     EVM_STOP = 0xEE01,
     EVM_RETURN = 0xEE02,

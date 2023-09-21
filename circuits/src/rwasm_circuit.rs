@@ -150,16 +150,6 @@ impl<F: Field> RwasmCircuitConfig<F> {
                 poseidon_lookup,
             );
         });
-        cb.condition(lookup_hash.current().and(!q_last.current()), |cb| {
-            cb.poseidon_lookup(
-                "poseidon_lookup(code_hash,input1,input2,offset)",
-                code_hash.current(),   // code hash
-                field_input.current(), // left
-                field_input.next(),    // right
-                offset.current(),      // offset
-                poseidon_lookup,
-            );
-        });
 
         cb.assert_equal(
             "field_input=code<<64|code",
