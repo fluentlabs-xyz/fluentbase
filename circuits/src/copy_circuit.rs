@@ -241,7 +241,7 @@ impl<F: Field> CopyCircuitConfig<F> {
         }
     }
 
-    pub fn print_copy_row_table(&self, rw_rows: &Vec<CopyRow>) {
+    pub fn print_copy_row_table(&self, rw_rows: &Vec<CopyRow<u8>>) {
         only_once!();
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
