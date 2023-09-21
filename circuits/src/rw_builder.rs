@@ -2,6 +2,8 @@ pub mod copy_row;
 mod opcode;
 mod platform;
 pub mod rw_row;
+mod rwasm;
+mod wasi;
 
 use crate::{
     exec_step::{ExecStep, GadgetError},
@@ -13,8 +15,17 @@ use crate::{
             build_memory_fill_rw_ops,
             build_table_fill_rw_ops,
         },
-        platform::build_platform_rw_ops,
+        platform::{build_sys_halt_rw_ops, build_sys_read_rw_ops, build_sys_write_rw_ops},
         rw_row::{RwRow, RwTableContextTag},
+        rwasm::build_rwasm_transact_rw_ops,
+        wasi::{
+            build_wasi_args_get_rw_ops,
+            build_wasi_args_sizes_get_rw_ops,
+            build_wasi_environ_get_rw_ops,
+            build_wasi_environ_sizes_get_rw_ops,
+            build_wasi_fd_write_rw_ops,
+            build_wasi_proc_exit_rw_ops,
+        },
     },
 };
 use fluentbase_runtime::SysFuncIdx;
@@ -72,5 +83,25 @@ impl RwBuilder {
             }
         }
         Ok(())
+    }
+}
+
+fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<(), GadgetError> {
+    match sys_func {
+        // sys calls
+        SysFuncIdx::SYS_HALT => build_sys_halt_rw_ops(step),
+        SysFuncIdx::SYS_WRITE => build_sys_write_rw_ops(step),
+        SysFuncIdx::SYS_READ => build_sys_read_rw_ops(step),
+        // wasi calls
+        SysFuncIdx::WASI_PROC_EXIT => build_wasi_proc_exit_rw_ops(step),
+        SysFuncIdx::WASI_FD_WRITE => build_wasi_fd_write_rw_ops(step),
+        SysFuncIdx::WASI_ENVIRON_SIZES_GET => build_wasi_environ_sizes_get_rw_ops(step),
+        SysFuncIdx::WASI_ENVIRON_GET => build_wasi_environ_get_rw_ops(step),
+        SysFuncIdx::WASI_ARGS_SIZES_GET => build_wasi_args_sizes_get_rw_ops(step),
+        SysFuncIdx::WASI_ARGS_GET => build_wasi_args_get_rw_ops(step),
+        // rwasm calls
+        SysFuncIdx::RWASM_TRANSACT => build_rwasm_transact_rw_ops(step),
+        // this is not possible right now
+        _ => Err(GadgetError::UnknownSysCall(sys_func)),
     }
 }
