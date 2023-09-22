@@ -55,8 +55,9 @@ pub struct Compiler<'linker> {
 
 #[derive(Debug)]
 pub struct Injection {
-    pub begin: u32,
-    pub end: u32,
+    pub begin: i32,
+    pub end: i32,
+    pub origin_len: i32,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -246,12 +247,9 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn swap(&mut self, param_num: u32) {
-        let injection_start = self.code_section.len();
         for i in (0..param_num).rev() {
             self.swap_with_depth(i + 1);
         }
-        let injection_end = self.code_section.len();
-        self.injection_segments.push(Injection{ begin: injection_start, end: injection_end });
     }
 
     fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
@@ -319,8 +317,11 @@ impl<'linker> Compiler<'linker> {
         _offset: usize,
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
+        let injection_begin = self.code_section.len();
+        let mut opcode_count = 1;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
+                opcode_count += 1;
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
@@ -329,10 +330,11 @@ impl<'linker> Compiler<'linker> {
             //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
             // }
             WI::BrAdjustIfNez(branch_offset) => {
+                opcode_count += 1;
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                let drop_keep_len = self.code_section.len() - br_if_offset - 1;
+                let drop_keep_len = self.code_section.len() - br_if_offset + 1;
                 self.code_section
                     .get_mut(br_if_offset as usize)
                     .unwrap()
@@ -341,6 +343,7 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return();
             }
             WI::ReturnCallInternal(func_idx) => {
+                opcode_count += 1;
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
@@ -372,7 +375,7 @@ impl<'linker> Compiler<'linker> {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
                 drop_keep.translate(&mut self.code_section)?;
-                let drop_keep_len = self.code_section.len() - br_if_offset - 1;
+                let drop_keep_len = self.code_section.len() - br_if_offset;
                 self.code_section
                     .get_mut(br_if_offset as usize)
                     .unwrap()
@@ -381,17 +384,20 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2;
-                self.injection_segments.push(Injection {
-                    begin: self.code_section.len(),
-                    end: self.code_section.len() + 1,
-                });
+
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
             }
             WI::CallIndirect(_) => {
                 let table_idx = Self::extract_table(instr_ptr);
-                self.code_section.op_call_indirect(table_idx);
+                opcode_count += 1;
+                let target = self.code_section.len() + 3;
+
+                self.code_section.op_table_get(table_idx);
+                self.code_section.op_i32_const(target);
+                self.swap(1);
+                self.code_section.op_br_indirect();
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
@@ -404,6 +410,11 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.push(*instr_ptr.get());
             }
         };
+        let injection_end = self.code_section.len();
+        if injection_end - injection_begin > opcode_count {
+            self.injection_segments.push(Injection{ begin: injection_begin as i32, end: injection_end as i32, origin_len: opcode_count as i32 });
+        }
+
         instr_ptr.add(1);
         Ok(())
     }
@@ -446,19 +457,21 @@ impl<'linker> Compiler<'linker> {
                 | Instruction::BrAdjust(offset)
                 | Instruction::BrAdjustIfNez(offset)
                 | Instruction::BrIfEqz(offset) => {
-                    let mut offset = offset.to_i32() as u32;
-                    let start = i as u32;
-                    let target = start + offset;
+                    let mut offset = offset.to_i32();
+                    let start = i as i32;
+                    let mut target = start + offset;
                     if offset > 0 {
                         for injection in &self.injection_segments {
-                            if injection.begin < target && start < injection.end {
-                                offset += injection.end - injection.begin;
+                            if injection.begin < target && start < injection.begin {
+                                offset += injection.end - injection.begin - injection.origin_len;
+                                target += injection.end - injection.begin - injection.origin_len;
                             }
                         }
                     } else {
                         for injection in self.injection_segments.iter().rev() {
-                            if injection.begin < start && target < injection.end {
-                                offset -= injection.end - injection.begin;
+                            if injection.end < start && target < injection.end {
+                                offset -= injection.end - injection.begin - injection.origin_len;
+                                target -= injection.end - injection.begin - injection.origin_len;
                             }
                         }
                     };
