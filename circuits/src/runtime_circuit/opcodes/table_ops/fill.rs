@@ -1,11 +1,12 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::copy_row::CopyTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -45,9 +46,16 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         cb.stack_pop(value.current());
         cb.stack_pop(range.current());
         cb.stack_push(out.current());
-        cb.range_check_1024(value.expr());
-        cb.range_check_1024(range.expr());
-        cb.range_check_1024(size.expr() - (value.expr() + range.expr()));
+        cb.range_check_1024(value.current());
+        cb.range_check_1024(range.current() - 1.expr()); // Range must be non zero value, one or larger.
+        cb.range_check_1024(size.current() - (value.current() + range.current()));
+        cb.copy_lookup(
+            CopyTableTag::FillTable,
+            // First element in table is forced to be set to value, others is copyed by circuit.
+            table_index.current() * 1024 + start.current() + 1.expr(),
+            table_index.current() * 1024 + start.current() + range.expr(),
+            range.current() - 1.expr(),
+        );
         Self {
             table_index,
             start,
