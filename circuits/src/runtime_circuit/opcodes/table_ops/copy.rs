@@ -1,11 +1,12 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::copy_row::CopyTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -38,23 +39,32 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         let size_dst = cb.query_cell();
         let out = cb.query_cell();
         cb.require_opcode(Instruction::TableCopy(Default::default()));
-        cb.table_size(table_index_src.expr(), size_src.expr());
-        cb.table_size(table_index_dst.expr(), size_dst.expr());
-        cb.table_init(
+        cb.table_size(table_index_src.current(), size_src.current());
+        cb.table_size(table_index_dst.current(), size_dst.current());
+/*
+        cb.table_copy(
             table_index_src.expr(),
             table_index_dst.expr(),
             start.expr(),
             range.expr(),
         );
+*/
         cb.stack_pop(start.current());
         cb.stack_pop(range.current());
         cb.stack_push(out.current());
-        cb.range_check_1024(start.expr());
-        cb.range_check_1024(range.expr());
-        cb.range_check_1024(size_src.expr());
-        cb.range_check_1024(size_dst.expr());
-        cb.range_check_1024(size_src.expr() - (start.expr() + range.expr()));
-        cb.range_check_1024(size_dst.expr() - (start.expr() + range.expr()));
+        cb.range_check_1024(start.current());
+        cb.range_check_1024(range.current());
+        cb.range_check_1024(size_src.current());
+        cb.range_check_1024(size_dst.current());
+        cb.range_check_1024(size_src.current() - (start.current() + range.current()));
+        cb.range_check_1024(size_dst.current() - (start.current() + range.current()));
+        cb.copy_lookup(
+            CopyTableTag::CopyTable,
+            table_index_src.current() * 1024.expr() + start.current(),
+            table_index_dst.current() * 1024.expr() + start.current(),
+            range.current(),
+        );
+
         Self {
             table_index_src,
             table_index_dst,
