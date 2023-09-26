@@ -51,14 +51,16 @@ use crate::{
             ExecStep,
         },
         platform::{
+            rwasm_transact::RwasmTransactGadget,
             sys_halt::SysHaltGadget,
             sys_read::SysReadGadget,
             sys_write::SysWriteGadget,
-            wasi_args_get::WasiArgsGet,
-            wasi_args_sizes_get::WasiArgsSizesGet,
-            wasi_environ_get::WasiEnvironGet,
-            wasi_fd_write::WasiFdWrite,
-            wasi_proc_exit::WasiProcExit,
+            wasi_args_get::WasiArgsGetGadget,
+            wasi_args_sizes_get::WasiArgsSizesGetGadget,
+            wasi_environ_get::WasiEnvironGetGadget,
+            wasi_environ_sizes_get::WasiEnvironSizesGetGadget,
+            wasi_fd_write::WasiFdWriteGadget,
+            wasi_proc_exit::WasiProcExitGadget,
         },
         responsible_opcode::ResponsibleOpcodeTable,
     },
@@ -112,15 +114,16 @@ pub struct RuntimeCircuitConfig<F: Field> {
     memory_init_gadget: ExecutionContextGadget<F, OpMemoryInitGadget<F>>,
     return_gadget: ExecutionContextGadget<F, OpReturnGadget<F>>,
     // system calls TODO: "lets design an extension library for this"
+    rwasm_transact_gadget: ExecutionContextGadget<F, RwasmTransactGadget<F>>,
     sys_halt_gadget: ExecutionContextGadget<F, SysHaltGadget<F>>,
     sys_read_gadget: ExecutionContextGadget<F, SysReadGadget<F>>,
     sys_write_gadget: ExecutionContextGadget<F, SysWriteGadget<F>>,
-    wasi_args_get: ExecutionContextGadget<F, WasiArgsGet<F>>,
-    wasi_args_sizes_get: ExecutionContextGadget<F, WasiArgsSizesGet<F>>,
-    wasi_environ_get: ExecutionContextGadget<F, WasiEnvironGet<F>>,
-    wasi_environ_sizes_get: ExecutionContextGadget<F, WasiArgsSizesGet<F>>,
-    wasi_fd_write: ExecutionContextGadget<F, WasiFdWrite<F>>,
-    wasi_proc_exit: ExecutionContextGadget<F, WasiProcExit<F>>,
+    wasi_args_get: ExecutionContextGadget<F, WasiArgsGetGadget<F>>,
+    wasi_args_sizes_get: ExecutionContextGadget<F, WasiArgsSizesGetGadget<F>>,
+    wasi_environ_get: ExecutionContextGadget<F, WasiEnvironGetGadget<F>>,
+    wasi_environ_sizes_get: ExecutionContextGadget<F, WasiEnvironSizesGetGadget<F>>,
+    wasi_fd_write: ExecutionContextGadget<F, WasiFdWriteGadget<F>>,
+    wasi_proc_exit: ExecutionContextGadget<F, WasiProcExitGadget<F>>,
     // runtime state gadgets
     responsible_opcode_table: ResponsibleOpcodeTable<F>,
 }
@@ -200,6 +203,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             memory_init_gadget: configure_gadget!(),
             return_gadget: configure_gadget!(),
             // system calls
+            rwasm_transact_gadget: configure_gadget!(),
             sys_halt_gadget: configure_gadget!(),
             sys_read_gadget: configure_gadget!(),
             sys_write_gadget: configure_gadget!(),
@@ -223,6 +227,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
         system_call: SysFuncIdx,
     ) -> Result<(), GadgetError> {
         match system_call {
+            SysFuncIdx::RWASM_TRANSACT => self
+                .rwasm_transact_gadget
+                .assign(region, offset, step, rw_counter)?,
             SysFuncIdx::SYS_HALT => self
                 .sys_halt_gadget
                 .assign(region, offset, step, rw_counter)?,

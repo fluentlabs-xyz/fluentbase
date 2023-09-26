@@ -162,7 +162,7 @@ impl ExecSteps {
                 rw_rows: vec![],
                 copy_rows: vec![],
                 output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
-                call_id: 0,
+                call_id: res.0.last().map(|v| v.call_id).unwrap_or_default(),
                 rw_counter,
             };
             let mut rw_builder = RwBuilder::new();

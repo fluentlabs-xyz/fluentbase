@@ -43,6 +43,7 @@ pub enum RwTableContextTag {
     TableSize,
     ProgramCounter,
     StackPointer,
+    CallDepth,
 }
 
 impl_expr!(RwTableContextTag);
@@ -55,6 +56,7 @@ impl fmt::Display for RwTableContextTag {
             RwTableContextTag::TableSize => write!(f, "TS"),
             RwTableContextTag::ProgramCounter => write!(f, "PC"),
             RwTableContextTag::StackPointer => write!(f, "SP"),
+            RwTableContextTag::CallDepth => write!(f, "CD"),
         }
     }
 }

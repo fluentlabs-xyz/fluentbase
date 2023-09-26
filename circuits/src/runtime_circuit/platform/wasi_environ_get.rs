@@ -13,13 +13,13 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct WasiEnvironGet<F: Field> {
+pub struct WasiEnvironGetGadget<F: Field> {
     environ: AdviceColumn,
     environ_buffer: AdviceColumn,
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasiEnvironGet<F> {
+impl<F: Field> ExecutionGadget<F> for WasiEnvironGetGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(wasi_snapshot_preview1::environ_get)";
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::WASI_ENVIRON_GET);

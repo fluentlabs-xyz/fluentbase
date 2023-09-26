@@ -13,12 +13,12 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct WasiProcExit<F: Field> {
+pub struct WasiProcExitGadget<F: Field> {
     exit_code: AdviceColumn,
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasiProcExit<F> {
+impl<F: Field> ExecutionGadget<F> for WasiProcExitGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(wasi_snapshot_preview1::proc_exit)";
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::WASI_PROC_EXIT);
