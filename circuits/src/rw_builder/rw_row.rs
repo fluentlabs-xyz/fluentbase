@@ -45,6 +45,7 @@ pub enum RwTableContextTag<Q: Default>
     ConsumedFuel,
     ProgramCounter,
     StackPointer,
+    CallDepth,
     TableSize { table_index: Q },
 }
 
@@ -77,6 +78,7 @@ impl<Q: Default> fmt::Display for RwTableContextTag<Q> {
             RwTableContextTag::TableSize { .. } => write!(f, "TS"),
             RwTableContextTag::ProgramCounter => write!(f, "PC"),
             RwTableContextTag::StackPointer => write!(f, "SP"),
+            RwTableContextTag::CallDepth => write!(f, "CD"),
         }
     }
 }
