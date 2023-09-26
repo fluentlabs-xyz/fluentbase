@@ -14,7 +14,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct WasiArgsGet<F: Field> {
+pub struct WasiArgsGetGadget<F: Field> {
     argv: AdviceColumn,
     argv_buffer: AdviceColumn,
     argv_buffer_limbs: [AdviceColumn; 4],
@@ -22,7 +22,7 @@ pub struct WasiArgsGet<F: Field> {
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasiArgsGet<F> {
+impl<F: Field> ExecutionGadget<F> for WasiArgsGetGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(wasi_snapshot_preview1::args_get)";
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::WASI_ARGS_GET);

@@ -13,14 +13,14 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct WasiArgsSizesGet<F: Field> {
+pub struct WasiArgsSizesGetGadget<F: Field> {
     argv: AdviceColumn,
     argv_buffer: AdviceColumn,
     length: AdviceColumn,
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasiArgsSizesGet<F> {
+impl<F: Field> ExecutionGadget<F> for WasiArgsSizesGetGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(wasi_snapshot_preview1::args_sizes_get)";
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::WASI_ARGS_SIZES_GET);

@@ -13,7 +13,7 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
-pub struct WasiFdWrite<F: Field> {
+pub struct WasiFdWriteGadget<F: Field> {
     fd: AdviceColumn,
     iovs_ptr: AdviceColumn,
     iovs_len: AdviceColumn,
@@ -21,7 +21,7 @@ pub struct WasiFdWrite<F: Field> {
     pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for WasiFdWrite<F> {
+impl<F: Field> ExecutionGadget<F> for WasiFdWriteGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(wasi_snapshot_preview1::fd_write)";
     const EXECUTION_STATE: ExecutionState =
         ExecutionState::WASM_CALL_HOST(SysFuncIdx::WASI_FD_WRITE);

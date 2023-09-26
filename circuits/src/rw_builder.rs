@@ -88,6 +88,8 @@ impl RwBuilder {
 
 fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<(), GadgetError> {
     match sys_func {
+        // rwasm calls
+        SysFuncIdx::RWASM_TRANSACT => build_rwasm_transact_rw_ops(step),
         // sys calls
         SysFuncIdx::SYS_HALT => build_sys_halt_rw_ops(step),
         SysFuncIdx::SYS_WRITE => build_sys_write_rw_ops(step),
@@ -99,8 +101,6 @@ fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<()
         SysFuncIdx::WASI_ENVIRON_GET => build_wasi_environ_get_rw_ops(step),
         SysFuncIdx::WASI_ARGS_SIZES_GET => build_wasi_args_sizes_get_rw_ops(step),
         SysFuncIdx::WASI_ARGS_GET => build_wasi_args_get_rw_ops(step),
-        // rwasm calls
-        SysFuncIdx::RWASM_TRANSACT => build_rwasm_transact_rw_ops(step),
         // this is not possible right now
         _ => Err(GadgetError::UnknownSysCall(sys_func)),
     }

@@ -1,3 +1,4 @@
+pub(crate) mod rwasm_transact;
 pub(crate) mod sys_halt;
 pub(crate) mod sys_read;
 pub(crate) mod sys_write;
