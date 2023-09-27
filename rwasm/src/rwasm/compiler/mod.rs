@@ -322,9 +322,35 @@ impl<'linker> Compiler<'linker> {
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
                 opcode_count += 1;
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_br(branch_offset);
-                self.code_section.op_return();
+                if let Some(mut br_table_status) = self.br_table_status.take() {
+                    let drop_keep = Self::extract_drop_keep(instr_ptr);
+                    let injection_begin = br_table_status.instr_countdown as i32 + br_table_status.injection_instructions.len() as i32;
+                    let mut drop_keep_ixs = translate_drop_keep(drop_keep)?;
+                    self.code_section.op_br(BranchOffset::from(injection_begin));
+                    self.code_section.op_return();
+                    br_table_status.instr_countdown -= 2;
+
+                    br_table_status.injection_instructions.append(&mut drop_keep_ixs);
+                    br_table_status.injection_instructions.push(WI::Br(BranchOffset::from(branch_offset.to_i32() - br_table_status.instr_countdown as i32)));
+                    br_table_status.injection_instructions.push(WI::Return(DropKeep::none()));
+
+                    if br_table_status.instr_countdown == 0 {
+                        let injection_len = br_table_status.injection_instructions.len();
+                        for i in 0..injection_len {
+                            if let Some(offset) = br_table_status.injection_instructions[i].get_jump_offset() {
+                                br_table_status.injection_instructions[i].update_branch_offset(BranchOffset::from(offset.to_i32() + injection_len as i32 - i as i32 - 2));
+                            }
+                        }
+                        self.code_section.instr.append(&mut br_table_status.injection_instructions);
+                        self.br_table_status = None;
+                    } else {
+                        self.br_table_status = Some(br_table_status);
+                    }
+                } else {
+                    Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                    self.code_section.op_br(branch_offset);
+                    self.code_section.op_return();
+                }
             }
             // WI::BrIfNez(branch_offset) => {
             //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
@@ -392,7 +418,7 @@ impl<'linker> Compiler<'linker> {
             WI::CallIndirect(_) => {
                 let table_idx = Self::extract_table(instr_ptr);
                 opcode_count += 1;
-                let target = self.code_section.len() + 3;
+                let target = self.code_section.len() + 3 + 4;
 
                 self.code_section.op_table_get(table_idx);
                 self.code_section.op_i32_const(target);
@@ -445,7 +471,8 @@ impl<'linker> Compiler<'linker> {
         }
         let bytecode = &mut self.code_section;
 
-        for i in 0..bytecode.len() as usize {
+        let mut i = 0;
+        while i < bytecode.len() as usize {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
@@ -485,8 +512,12 @@ impl<'linker> Compiler<'linker> {
                         _ => panic!("Unreachable"),
                     };
                 }
+                Instruction::BrTable(target) => {
+                    i += target.to_usize() * 2;
+                }
                 _ => {}
-            }
+            };
+            i += 1;
         }
 
         // let (stack_height, max_height) = sanitizer.stack_height();
