@@ -73,6 +73,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
             .assign(region, offset, F::from(init_val.to_bits()));
         self.grow_val
             .assign(region, offset, F::from(grow_val.to_bits()));
+        println!("TABLE GROW DEBUG, res_val {:#?}", res_val);
         self.res_val
             .assign(region, offset, F::from(res_val.to_bits()));
         Ok(())
@@ -102,7 +103,7 @@ mod test {
             TableGrow(0)
             Drop
             RefFunc(0)
-            I32Const(2)
+            I32Const(3)
             TableGrow(0)
             Drop
         });

@@ -47,6 +47,7 @@ impl RwBuilder {
             call_id: step.call_id,
             tag: RwTableContextTag::ProgramCounter,
             value: step.pc_diff(),
+            prev_value: 0, // FIXME
         });
         // step.rw_rows.push(RwRow::Context {
         //     rw_counter: step.next_rw_counter(),

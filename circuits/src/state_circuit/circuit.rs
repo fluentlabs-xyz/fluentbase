@@ -135,13 +135,14 @@ impl<F: Field> StateCircuitConfig<F> {
             .copied()
             .enumerate()
             .map(|(i, row)| {
-                let prev_value = rw_rows
+                let _prev_value = rw_rows
                     .get((i as isize - 1) as usize)
                     .filter(|v| {
                         v.tag() == row.tag() && v.id() == row.id() && v.address() == row.address()
                     })
                     .map(|v| v.value())
                     .unwrap_or_default();
+                let prev_value = row.prev_value().unwrap_or_default();
                 let address = if row.tag() == RwTableTag::Context {
                     let tag = RwTableContextTag::<u32>::iter()
                         .filter(|v| Into::<u32>::into(*v) == row.address().unwrap_or_default())
@@ -160,6 +161,8 @@ impl<F: Field> StateCircuitConfig<F> {
                     row.id().unwrap_or_default().cell().justify(Justify::Center),
                     address.cell().justify(Justify::Center),
                     row.value().to_bits().cell().justify(Justify::Center),
+                    //prev_value.to_bits().cell().justify(Justify::Center),
+                    // FIXME
                     prev_value.to_bits().cell().justify(Justify::Center),
                 ]
             })

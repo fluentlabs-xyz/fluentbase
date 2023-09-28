@@ -120,6 +120,7 @@ pub fn build_memory_size_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetE
         call_id: step.call_id,
         tag: RwTableContextTag::MemorySize,
         value: step.next().map(|t| t.memory_size).unwrap_or_default() as u64,
+        prev_value: 0, // FIXME
     });
     Ok(())
 }
@@ -131,6 +132,7 @@ pub fn build_memory_size_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetEr
         call_id: step.call_id,
         tag: RwTableContextTag::MemorySize,
         value: step.curr().memory_size as u64,
+        prev_value: 0, // FIXME
     });
     Ok(())
 }
@@ -140,23 +142,13 @@ pub fn build_table_size_read_rw_ops(
     table_index: u32,
 ) -> Result<(), GadgetError> {
     let table_size = step.read_table_size(table_index);
-/*
-    step.rw_rows.push(RwRow::Table {
-        rw_counter: step.next_rw_counter(),
-        is_write: false,
-        call_id: step.call_id,
-        address: (table_idx * 1024) as u64,
-        value: table_size as u64,
-        prev_value: 0,
-    });
-    // Providing both versions now, and old version is to be remove after.
-*/
     step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
         tag: RwTableContextTag::TableSize { table_index },
         value: table_size as u64,
+        prev_value: 0, // FIXME
     });
     Ok(())
 }
@@ -168,24 +160,14 @@ pub fn build_table_size_write_rw_ops(
     let table_size = step.read_table_size(table_index);
     let grow = step.curr_nth_stack_value(0)?;
     println!("DEBUG table size, grow {:#?} {:#?}", table_size, grow);
-/*
-    step.rw_rows.push(RwRow::Table {
-        rw_counter: step.next_rw_counter(),
-        is_write: true,
-        call_id: step.call_id,
-        address: (table_idx * 1024) as u64,
-        value: (table_size as u32 + grow.as_u32()) as u64,
-        prev_value: table_size as u64,
-        //prev_value: 0,
-    });
-    // Providing both versions now, and old version is to be remove after.
-*/
     step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
         tag: RwTableContextTag::TableSize { table_index },
         value: (table_size as u32 + grow.as_u32()) as u64,
+        //prev_value: table_size as u64,
+        prev_value: 0, // FIXME
     });
     Ok(())
 }
@@ -383,6 +365,7 @@ pub fn build_consume_fuel_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError>
         call_id: step.call_id,
         tag: RwTableContextTag::ConsumedFuel,
         value: consumed_fuel + fuel.as_u64(),
+        prev_value: 0, // FIXME
     });
     Ok(())
 }

@@ -113,6 +113,7 @@ pub enum RwRow {
         call_id: usize,
         tag: RwTableContextTag<u32>,
         value: u64,
+        prev_value: u64, // Equal to zero in case of read operation.
     },
     /// Stack
     Stack {
@@ -166,6 +167,7 @@ impl RwRow {
     pub fn prev_value(&self) -> Option<UntypedValue> {
         match self {
             Self::Table { prev_value, .. } => Some(UntypedValue::from(*prev_value)),
+            Self::Context { prev_value, .. } => Some(UntypedValue::from(*prev_value)),
             _ => None,
         }
     }
