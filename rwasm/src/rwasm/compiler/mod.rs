@@ -19,6 +19,7 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
+use crate::rwasm::compiler::drop_keep::translate_drop_keep;
 
 mod drop_keep;
 
@@ -50,7 +51,8 @@ pub struct Compiler<'linker> {
     import_linker: Option<&'linker ImportLinker>,
     // for automatic translation
     is_translated: bool,
-    injection_segments: Vec<Injection>
+    injection_segments: Vec<Injection>,
+    br_table_status: Option<BrTableStatus>,
 }
 
 #[derive(Debug)]
@@ -58,6 +60,12 @@ pub struct Injection {
     pub begin: i32,
     pub end: i32,
     pub origin_len: i32,
+}
+
+#[derive(Debug)]
+struct BrTableStatus {
+    injection_instructions: Vec<Instruction>,
+    instr_countdown: u32,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -82,6 +90,7 @@ impl<'linker> Compiler<'linker> {
             import_linker,
             is_translated: false,
             injection_segments: vec![],
+            br_table_status: None,
         })
     }
 
