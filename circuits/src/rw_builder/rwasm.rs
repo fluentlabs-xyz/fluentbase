@@ -34,6 +34,7 @@ pub fn build_rwasm_transact_rw_ops(step: &mut ExecStep) -> Result<(), GadgetErro
         call_id: step.call_id,
         tag: RwTableContextTag::CallDepth,
         value: step.call_id as u64,
+        prev_value: 0, // FIXME
     });
     // TODO: "add memory write rw rows"
     build_stack_write_rw_ops(step, 0)?;
