@@ -1441,7 +1441,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "plotters",
- "poseidon-circuit",
+ "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main)",
  "rand",
  "rand_chacha",
  "rand_xorshift",
@@ -1472,7 +1472,7 @@ dependencies = [
  "fluentbase-rwasm",
  "halo2curves 0.4.0",
  "lazy_static",
- "poseidon-circuit",
+ "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=scroll-dev-0901)",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "wasi 0.11.0+wasi-snapshot-preview1",
@@ -1688,7 +1688,7 @@ dependencies = [
  "log",
  "num-bigint",
  "num-traits",
- "poseidon-circuit",
+ "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=scroll-dev-0901)",
  "rand",
  "serde",
  "serde_json",
@@ -2465,6 +2465,20 @@ dependencies = [
  "group 0.12.1",
  "halo2curves 0.3.1",
  "subtle",
+]
+
+[[package]]
+name = "poseidon-circuit"
+version = "0.1.0"
+source = "git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main#69524f42bdc55c581088c2fe64c2ab9a2921146b"
+dependencies = [
+ "bitvec",
+ "halo2_proofs",
+ "lazy_static",
+ "log",
+ "rand",
+ "rand_xorshift",
+ "thiserror",
 ]
 
 [[package]]
