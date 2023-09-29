@@ -1,3 +1,4 @@
+#![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};

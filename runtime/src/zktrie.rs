@@ -1,8 +1,8 @@
 use crate::{instruction::exported_memory_vec, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
-use halo2curves::bn256::Fr;
-use hash_circuit::hash::Hashable;
+use halo2_proofs::halo2curves::{bn256::Fr, group::ff::PrimeField};
 use lazy_static::lazy_static;
+use poseidon_circuit::hash::Hashable;
 use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
