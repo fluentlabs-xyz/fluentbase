@@ -1,6 +1,5 @@
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
-use std::mem::size_of;
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
@@ -27,7 +26,7 @@ fn exported_memory_slice<'a>(
     return &mut [];
 }
 
-fn exported_memory_vec(
+pub(crate) fn exported_memory_vec(
     caller: &mut Caller<'_, RuntimeContext>,
     offset: usize,
     length: usize,
