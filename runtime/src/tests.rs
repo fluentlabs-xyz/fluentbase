@@ -84,13 +84,13 @@ fn test_panic() {
     assert_trap_i32_exit(result, Trap::i32_exit(1));
 }
 
-#[test]
-#[ignore]
-fn test_translator() {
-    let wasm_binary = include_bytes!("../examples/bin/translator.wasm");
-    let import_linker = Runtime::new_linker();
-    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let result =
-        Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
-    println!("{:?}", result.data().output().clone());
-}
+// #[test]
+// #[ignore]
+// fn test_translator() {
+//     let wasm_binary = include_bytes!("../examples/bin/translator.wasm");
+//     let import_linker = Runtime::new_linker();
+//     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+//     let result =
+//         Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+//     println!("{:?}", result.data().output().clone());
+// }
