@@ -11,9 +11,9 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
-halo2curves = "0.4.0"
 lazy_static = "1.4.0"
-hash-circuit = { package = "poseidon-circuit", git = "https://github.com/scroll-tech/poseidon-circuit.git", branch = "scroll-dev-0901"}
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
+poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", branch = "main" }
 strum = "0.25.0"
 strum_macros = "0.25.2"
 wasi = "0.11.0"

@@ -1364,7 +1364,6 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ded41244b729663b1e574f1b4fb731469f69f79c17667b5d776b16cda0479449"
 dependencies = [
- "bitvec",
  "rand_core",
  "subtle",
 ]
@@ -1470,9 +1469,9 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "fluentbase-rwasm",
- "halo2curves 0.4.0",
+ "halo2_proofs",
  "lazy_static",
- "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=scroll-dev-0901)",
+ "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main)",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "wasi 0.11.0+wasi-snapshot-preview1",
@@ -1709,7 +1708,7 @@ dependencies = [
  "env_logger 0.8.4",
  "ff 0.12.1",
  "group 0.12.1",
- "halo2curves 0.3.1",
+ "halo2curves",
  "log",
  "num-bigint",
  "num-integer",
@@ -1733,32 +1732,11 @@ dependencies = [
  "lazy_static",
  "num-bigint",
  "num-traits",
- "pasta_curves 0.4.1",
+ "pasta_curves",
  "paste",
  "rand",
  "rand_core",
  "serde",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
-name = "halo2curves"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d0263c2933ee18bf416552719c5621f677f87acca8d50afe4ee74c81bb8ecca"
-dependencies = [
- "blake2b_simd",
- "ff 0.13.0",
- "group 0.13.0",
- "lazy_static",
- "num-bigint",
- "num-traits",
- "pairing",
- "pasta_curves 0.5.1",
- "paste",
- "rand",
- "rand_core",
  "static_assertions",
  "subtle",
 ]
@@ -2267,15 +2245,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d5d9eb14b174ee9aa2ef96dc2b94637a2d4b6e7cb873c7e171f0c20c6cf3eac"
 
 [[package]]
-name = "pairing"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81fec4625e73cf41ef4bb6846cafa6d44736525f442ba45e407c4a000a13996f"
-dependencies = [
- "group 0.13.0",
-]
-
-[[package]]
 name = "parity-scale-codec"
 version = "3.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2310,21 +2279,6 @@ dependencies = [
  "blake2b_simd",
  "ff 0.12.1",
  "group 0.12.1",
- "lazy_static",
- "rand",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
-name = "pasta_curves"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
-dependencies = [
- "blake2b_simd",
- "ff 0.13.0",
- "group 0.13.0",
  "lazy_static",
  "rand",
  "static_assertions",
@@ -2463,7 +2417,7 @@ version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
 dependencies = [
  "group 0.12.1",
- "halo2curves 0.3.1",
+ "halo2curves",
  "subtle",
 ]
 
