@@ -110,7 +110,7 @@ pub enum RwRow {
     Context {
         rw_counter: usize,
         is_write: bool,
-        call_id: usize,
+        call_id: u32,
         tag: RwTableContextTag<u32>,
         value: u64,
         prev_value: u64, // Equal to zero in case of read operation.
@@ -119,7 +119,7 @@ pub enum RwRow {
     Stack {
         rw_counter: usize,
         is_write: bool,
-        call_id: usize,
+        call_id: u32,
         stack_pointer: usize,
         value: UntypedValue,
     },
@@ -127,7 +127,7 @@ pub enum RwRow {
     Global {
         rw_counter: usize,
         is_write: bool,
-        call_id: usize,
+        call_id: u32,
         global_index: usize,
         value: UntypedValue,
     },
@@ -135,7 +135,7 @@ pub enum RwRow {
     Memory {
         rw_counter: usize,
         is_write: bool,
-        call_id: usize,
+        call_id: u32,
         memory_address: u64,
         value: u8,
         signed: bool,
@@ -144,7 +144,7 @@ pub enum RwRow {
     Table {
         rw_counter: usize,
         is_write: bool,
-        call_id: usize,
+        call_id: u32,
         address: u64,
         value: u64,
         prev_value: u64, // Equal to zero in case of read operation.
@@ -234,7 +234,7 @@ impl RwRow {
         }
     }
 
-    pub fn id(&self) -> Option<usize> {
+    pub fn id(&self) -> Option<u32> {
         match self {
             Self::Context { call_id, .. }
             | Self::Stack { call_id, .. }

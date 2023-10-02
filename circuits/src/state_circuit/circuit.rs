@@ -106,7 +106,7 @@ impl<F: Field> StateCircuitConfig<F> {
             .rw_counter
             .assign(region, offset, rw_row.rw_counter() as u32)?;
         if let Some(id) = rw_row.id() {
-            self.sort_keys.id.assign(region, offset, id as u32)?;
+            self.sort_keys.id.assign(region, offset, id)?;
         }
         if let Some(address) = rw_row.address() {
             self.sort_keys.address.assign(region, offset, address)?;
