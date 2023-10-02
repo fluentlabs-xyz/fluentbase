@@ -399,7 +399,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             || "runtime opcodes",
             |mut region| {
                 for (i, trace) in exec_steps.0.iter().enumerate() {
-                    self.assign_trace_step(&mut region, i, trace, trace.rw_counter)?;
+                    self.assign_trace_step(&mut region, i, trace, trace.rw_counter as usize)?;
                 }
                 Ok(())
             },

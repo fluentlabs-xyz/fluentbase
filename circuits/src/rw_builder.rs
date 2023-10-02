@@ -65,6 +65,9 @@ impl RwBuilder {
             Instruction::Call(fn_idx) => {
                 build_platform_rw_ops(step, SysFuncIdx::from(*fn_idx))?;
             }
+            Instruction::Return(_) => {
+                build_return_rw_ops(step)?;
+            }
             Instruction::ConsumeFuel(_) => {
                 build_consume_fuel_rw_ops(step)?;
             }
@@ -100,4 +103,18 @@ fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<()
         // this is not possible right now
         _ => Err(GadgetError::UnknownSysCall(sys_func)),
     }
+}
+
+fn build_return_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    if step.call_id > 0 {
+        // step.rw_rows.push(RwRow::Context {
+        //     rw_counter: step.next_rw_counter(),
+        //     is_write: true,
+        //     call_id: step.call_id,
+        //     tag: RwTableContextTag::CallDepth,
+        //     value: step.call_id as u64 - 1,
+        // });
+        // step.next_call_id = Some(step.call_id - 1);
+    }
+    Ok(())
 }

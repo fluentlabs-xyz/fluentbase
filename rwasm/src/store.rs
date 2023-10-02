@@ -1014,6 +1014,10 @@ impl<'a, T> StoreContextMut<'a, T> {
         self.store.engine()
     }
 
+    pub fn tracer_mut(&mut self) -> &mut Tracer {
+        self.store.tracer_mut()
+    }
+
     /// Access the underlying data owned by this store.
     ///
     /// Same as [`Store::data`].    
