@@ -29,8 +29,8 @@ pub struct ExecStep {
     pub(crate) copy_rows: Vec<CopyRow<u8>>,
     pub(crate) copy_funrefs: Vec<CopyRow<u32>>,
     pub(crate) output_len: u32,
-    pub(crate) call_id: usize,
-    pub(crate) rw_counter: usize,
+    pub(crate) call_id: u32,
+    pub(crate) rw_counter: u32,
 }
 
 impl ExecStep {
@@ -39,7 +39,7 @@ impl ExecStep {
     }
 
     pub fn next_rw_counter(&self) -> usize {
-        self.rw_counter + self.rw_rows.len()
+        self.rw_counter as usize + self.rw_rows.len()
     }
 
     pub fn stack_pointer(&self) -> u64 {
@@ -136,6 +136,7 @@ impl ExecSteps {
         let mut rw_counter = 1; // 1 is reserved for start
 
         for (i, trace) in tracer.logs.iter().cloned().enumerate() {
+            let mut call_id = trace.call_id;
             for memory_change in trace.memory_changes.iter() {
                 let max_offset = (memory_change.offset + memory_change.len) as usize;
                 if max_offset > global_memory.len() {
@@ -164,12 +165,12 @@ impl ExecSteps {
                 copy_rows: vec![],
                 copy_funrefs: vec![],
                 output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
-                call_id: res.0.last().map(|v| v.call_id).unwrap_or_default(),
+                call_id,
                 rw_counter,
             };
             let mut rw_builder = RwBuilder::new();
             rw_builder.build(&mut step)?;
-            rw_counter += step.rw_rows.len();
+            rw_counter += step.rw_rows.len() as u32;
             res.0.push(step);
         }
 

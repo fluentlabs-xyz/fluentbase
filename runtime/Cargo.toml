@@ -15,3 +15,5 @@ strum = "0.25.0"
 strum_macros = "0.25.2"
 wasi = "0.11.0"
 wat = "1.0.69"
+zktrie = { git = "https://github.com/scroll-tech/zktrie", tag = "v0.6.0" }
+

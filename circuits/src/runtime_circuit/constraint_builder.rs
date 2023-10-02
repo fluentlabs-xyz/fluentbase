@@ -39,17 +39,20 @@ pub struct StateTransition<F: Field> {
     pub(crate) stack_pointer_offset: Query<F>,
     pub(crate) rw_counter: AdviceColumn,
     pub(crate) rw_counter_offset: Query<F>,
+    pub(crate) call_id: AdviceColumn,
 }
 
 impl<F: Field> StateTransition<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         let stack_pointer = AdviceColumn(cs.advice_column());
         let rw_counter = AdviceColumn(cs.advice_column());
+        let call_id = AdviceColumn(cs.advice_column());
         Self {
             stack_pointer,
             stack_pointer_offset: Query::zero(),
             rw_counter,
             rw_counter_offset: Query::zero(),
+            call_id,
         }
     }
 
@@ -59,9 +62,11 @@ impl<F: Field> StateTransition<F> {
         offset: usize,
         stack_pointer: u64,
         rw_counter: u64,
+        call_id: u64,
     ) {
         self.stack_pointer.assign(region, offset, stack_pointer);
         self.rw_counter.assign(region, offset, rw_counter);
+        self.call_id.assign(region, offset, call_id);
     }
 
     pub fn stack_pointer(&self) -> Query<F> {
@@ -113,6 +118,10 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
 
     pub fn rwasm_table(&self) -> [AdviceColumn; 3] {
         [self.pc.clone(), self.opcode.clone(), self.value.clone()]
+    }
+
+    pub fn call_id(&self) -> Query<F> {
+        self.state_transition.call_id.current()
     }
 
     pub fn query_rwasm_opcode(&self) -> Query<F> {
@@ -419,7 +428,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
                     self.state_transition.rw_counter(),
                     is_write,
                     tag,
-                    Query::zero(),
+                    self.call_id(),
                     address,
                     value,
                     value_prev,
@@ -431,7 +440,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
                     self.state_transition.rw_counter(),
                     is_write,
                     tag,
-                    Query::zero(),
+                    self.call_id(),
                     address,
                     value,
                 ])));

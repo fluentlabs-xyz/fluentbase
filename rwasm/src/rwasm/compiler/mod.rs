@@ -411,7 +411,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+    fn resolve_host_call(&mut self, fn_index: u32) -> Result<u32, CompilerError> {
         let imports = self.module.imports.items.deref();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
@@ -427,7 +427,12 @@ impl<'linker> Compiler<'linker> {
             .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        self.code_section.op_call(*import_index);
+        Ok(*import_index)
+    }
+
+    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+        let import_index = self.resolve_host_call(fn_index)?;
+        self.code_section.op_call(import_index);
         Ok(())
     }
 
@@ -498,13 +503,22 @@ impl<'linker> Compiler<'linker> {
                     affected = true;
                 }
                 Instruction::RefFunc(func_idx) => {
-                    let func_offset = self
-                        .function_beginning
-                        .get(&func_idx.to_u32())
-                        .ok_or(CompilerError::MissingFunction)?;
-                    let state = &states[*func_offset as usize];
-                    code.update_call_index(state.0);
-                    affected = true;
+                    let imports = self.module.imports.items.deref();
+                    // if ref func refers to host call
+                    if func_idx.to_u32() < imports.len() as u32 {
+                        panic!("this is not supported right now, no ref func for host calls")
+                        // let import_index = self.resolve_host_call(func_idx.to_u32())?;
+                        // code.update_call_index(import_index);
+                        // affected = true;
+                    } else {
+                        let func_offset = self
+                            .function_beginning
+                            .get(&func_idx.to_u32())
+                            .ok_or(CompilerError::MissingFunction)?;
+                        let state = &states[*func_offset as usize];
+                        code.update_call_index(state.0);
+                        affected = true;
+                    }
                 }
                 _ => {}
             };

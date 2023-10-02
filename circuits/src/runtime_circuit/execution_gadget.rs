@@ -94,8 +94,13 @@ impl<F: Field, G: ExecutionGadget<F>> ExecutionContextGadget<F, G> {
         let value = step.curr().opcode.aux_value().unwrap_or_default();
         self.value.assign(region, offset, F::from(value.to_bits()));
         // assign state transition
-        self.state_transition
-            .assign(region, offset, step.stack_pointer(), rw_counter as u64);
+        self.state_transition.assign(
+            region,
+            offset,
+            step.stack_pointer(),
+            rw_counter as u64,
+            step.call_id as u64,
+        );
         // assign opcode gadget
         self.gadget.assign_exec_step(region, offset, step)
     }
