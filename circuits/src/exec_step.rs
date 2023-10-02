@@ -150,11 +150,20 @@ impl ExecSteps {
                 global_table.insert(elem_addr, table_change.func_ref);
                 let size_addr = table_change.table_idx * 1024;
                 global_table.insert(size_addr, UntypedValue::from(0));
+/*
                 let table_size = global_table
                     .keys()
                     .filter(|key| (*key / 1024) == table_change.table_idx)
                     .count();
                 global_table.insert(size_addr, UntypedValue::from(table_size - 1));
+*/
+            }
+            for table_size_change in trace.table_size_changes.iter() {
+                let size_addr = table_size_change.table_idx * 1024;
+                let zero = UntypedValue::from(0);
+                let old_size = global_table.get(&size_addr).or(Some(&zero)).unwrap();
+                let new_size = old_size.as_u32() + table_size_change.delta;
+                global_table.insert(size_addr, UntypedValue::from(new_size));
             }
             let mut step = ExecStep {
                 trace,

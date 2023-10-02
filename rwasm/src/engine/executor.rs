@@ -1344,6 +1344,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
+        self.tracer.table_size_change(table_index.to_u32(), delta);
         self.try_next_instr()
     }
 
