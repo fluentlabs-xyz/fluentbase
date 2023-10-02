@@ -32,6 +32,7 @@ pub struct TracerInstrState {
     pub memory_size: u32,
     pub index: usize,
     pub consumed_fuel: u64,
+    pub call_id: u32,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ pub struct Tracer {
     pub fns_meta: Vec<TracerFunctionMeta>,
     pub global_variables: Vec<TracerGlobalVariable>,
     pub extern_names: BTreeMap<u32, String>,
+    pub nested_calls: u32,
 }
 
 impl Debug for Tracer {
@@ -70,6 +72,14 @@ impl Debug for Tracer {
 }
 
 impl Tracer {
+    pub fn merge_nested_call(&mut self, tracer: &Tracer) {
+        self.nested_calls += 1;
+        for mut log in tracer.logs.iter().cloned() {
+            log.call_id = self.nested_calls;
+            self.logs.push(log);
+        }
+    }
+
     pub fn global_memory(&mut self, offset: u32, len: u32, memory: &[u8]) {
         self.global_memory.push(TracerMemoryState {
             offset,
@@ -116,6 +126,7 @@ impl Tracer {
             memory_size,
             index: meta.index(),
             consumed_fuel,
+            call_id: 0,
         };
         // println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());
