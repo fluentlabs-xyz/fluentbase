@@ -4,6 +4,7 @@ use crate::{
     state_circuit::lexicographic_ordering::LexicographicOrderingConfig,
     util::Field,
 };
+use fluentbase_rwasm::common::UntypedValue;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::marker::PhantomData;
 
@@ -35,7 +36,13 @@ impl<F: Field> RwTable<F> {
         }
     }
 
-    pub fn assign(&self, region: &mut Region<'_, F>, offset: usize, rw_row: &RwRow) {
+    pub fn assign(
+        &self,
+        region: &mut Region<'_, F>,
+        offset: usize,
+        rw_row: &RwRow,
+        value_prev: Option<UntypedValue>,
+    ) {
         self.rw_counter
             .assign(region, offset, rw_row.rw_counter() as u64);
         self.is_write
@@ -46,7 +53,9 @@ impl<F: Field> RwTable<F> {
         self.address
             .assign(region, offset, rw_row.address().unwrap_or_default() as u64);
         self.value.assign(region, offset, rw_row.value().to_bits());
-        // self.value_prev.assign(region, offset, rw_row.value().to_bits());
+        if let Some(value_prev) = value_prev {
+            self.value_prev.assign(region, offset, value_prev.to_bits());
+        }
     }
 
     fn q_first_access(&self) -> BinaryQuery<F> {
@@ -129,10 +138,16 @@ impl<F: Field> RwTable<F> {
         cb.assert_zero("Start value is 0", self.value.current());
         // 1.3. Start initial value is 0
         // 1.4. state_root is unchanged for every non-first row
-        cb.assert_zero(
-            "value_prev column is 0 for Start",
-            self.value_prev.current(),
-        );
+    }
+
+    pub fn build_context_constraints(&self, cb: &mut ConstraintBuilder<F>) {
+        cb.condition(!self.q_first_access(), |cb| {
+            cb.assert_equal(
+                "value column at Rotation::prev() equals value_prev at Rotation::cur()",
+                self.value_prev.current(),
+                self.value.previous(),
+            );
+        });
     }
 
     pub fn build_memory_constraints(&self, cb: &mut ConstraintBuilder<F>) {

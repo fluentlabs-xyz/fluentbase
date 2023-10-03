@@ -11,6 +11,7 @@ use fluentbase_rwasm::{
     Caller,
     Config,
     Engine,
+    FuelConsumptionMode,
     Func,
     Linker,
     Module,
@@ -89,39 +90,91 @@ pub struct Runtime {
 impl Runtime {
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
-
+        // Fluentbase sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_halt".to_string(),
-            SysFuncIdx::IMPORT_SYS_HALT as u16,
+            SysFuncIdx::SYS_HALT as u16,
             &[ValueType::I32; 1],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_write".to_string(),
-            SysFuncIdx::IMPORT_SYS_WRITE as u16,
+            SysFuncIdx::SYS_WRITE as u16,
             &[ValueType::I32; 2],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_read".to_string(),
-            SysFuncIdx::IMPORT_SYS_READ as u16,
+            SysFuncIdx::SYS_READ as u16,
             &[ValueType::I32; 3],
             &[],
         ));
+        // WASI sys calls
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "proc_exit".to_string(),
+            SysFuncIdx::WASI_PROC_EXIT as u16,
+            &[ValueType::I32; 1],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "fd_write".to_string(),
+            SysFuncIdx::WASI_FD_WRITE as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "environ_sizes_get".to_string(),
+            SysFuncIdx::WASI_ENVIRON_SIZES_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "environ_get".to_string(),
+            SysFuncIdx::WASI_ENVIRON_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "args_sizes_get".to_string(),
+            SysFuncIdx::WASI_ARGS_SIZES_GET as u16,
+            &[ValueType::I32; 0],
+            &[ValueType::I32; 2],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "wasi_snapshot_preview1".to_string(),
+            "args_get".to_string(),
+            SysFuncIdx::WASI_ARGS_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        // RWASM sys calls
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_rwasm_transact".to_string(),
+            SysFuncIdx::RWASM_TRANSACT as u16,
+            &[ValueType::I32; 6],
+            &[ValueType::I32; 1],
+        ));
+        // EVM sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_evm_stop".to_string(),
-            SysFuncIdx::IMPORT_EVM_STOP as u16,
+            SysFuncIdx::EVM_STOP as u16,
             &[ValueType::I32; 0],
             &[],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_evm_return".to_string(),
-            SysFuncIdx::IMPORT_EVM_RETURN as u16,
+            SysFuncIdx::EVM_RETURN as u16,
             &[ValueType::I32; 2],
             &[],
         ));
@@ -140,14 +193,23 @@ impl Runtime {
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
-        let config = Config::default();
+        let mut config = Config::default();
+        let fuel_enabled = true;
+        if fuel_enabled {
+            config.fuel_consumption_mode(FuelConsumptionMode::Eager);
+            config.consume_fuel(true);
+        }
         let engine = Engine::new(&config);
 
         let runtime_context = RuntimeContext::new(input_data);
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
-        let store = Store::<RuntimeContext>::new(&engine, runtime_context);
+        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+
+        if fuel_enabled {
+            store.add_fuel(100_000).unwrap();
+        }
 
         #[allow(unused_mut)]
         let mut res = Self {
@@ -161,6 +223,17 @@ impl Runtime {
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 
+        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
+        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+
+        // add zktrie functions
+
+        forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
 
@@ -172,7 +245,11 @@ impl Runtime {
 
         // we need to fix logs, because we lost information about instr meta during conversion
         let tracer = res.store.tracer_mut();
+        let call_id = tracer.logs.first().map(|v| v.call_id).unwrap_or_default();
         for log in tracer.logs.iter_mut() {
+            if log.call_id != call_id {
+                continue;
+            }
             let instr = reduced_module.bytecode().get(log.index).unwrap();
             log.opcode = *instr;
         }

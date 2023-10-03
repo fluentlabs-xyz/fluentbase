@@ -498,7 +498,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+    fn resolve_host_call(&mut self, fn_index: u32) -> Result<u32, CompilerError> {
         let imports = self.module.imports.items.deref();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
@@ -514,7 +514,12 @@ impl<'linker> Compiler<'linker> {
             .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        self.code_section.op_call(*import_index);
+        Ok(*import_index)
+    }
+
+    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+        let import_index = self.resolve_host_call(fn_index)?;
+        self.code_section.op_call(import_index);
         Ok(())
     }
 
@@ -556,23 +561,7 @@ impl<'linker> Compiler<'linker> {
                             }
                         }
                     };
-
-                    bytecode.instr[i] = match bytecode.instr[i] {
-                        Instruction::Br(_) => Instruction::Br(BranchOffset::from(offset as i32)),
-                        Instruction::BrIfNez(_) => {
-                            Instruction::BrIfNez(BranchOffset::from(offset as i32))
-                        }
-                        Instruction::BrAdjust(_) => {
-                            Instruction::BrAdjust(BranchOffset::from(offset as i32))
-                        }
-                        Instruction::BrAdjustIfNez(_) => {
-                            Instruction::BrAdjustIfNez(BranchOffset::from(offset as i32))
-                        }
-                        Instruction::BrIfEqz(_) => {
-                            Instruction::BrIfEqz(BranchOffset::from(offset as i32))
-                        }
-                        _ => panic!("Unreachable"),
-                    };
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
                 }
                 Instruction::BrTable(target) => {
                     i += target.to_usize() * 2;
@@ -581,9 +570,6 @@ impl<'linker> Compiler<'linker> {
             };
             i += 1;
         }
-
-        // let (stack_height, max_height) = sanitizer.stack_height();
-        // assert!(stack_height == 0 && max_height < 1024);
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
         let mut buffer_offset = 0u32;
@@ -614,13 +600,22 @@ impl<'linker> Compiler<'linker> {
                 }
                 Instruction::RefFunc(func_idx) => {
                     let func_idx = func_idx.to_u32() + 1;
-                    let func_offset = self
-                        .function_beginning
-                        .get(&func_idx)
-                        .ok_or(CompilerError::MissingFunction)?;
-                    let state = &states[*func_offset as usize];
-                    code.update_call_index(state.0);
-                    affected = true;
+                    let imports = self.module.imports.items.deref();
+                    // if ref func refers to host call
+                    if func_idx < imports.len() as u32 {
+                        panic!("this is not supported right now, no ref func for host calls")
+                        // let import_index = self.resolve_host_call(func_idx.to_u32())?;
+                        // code.update_call_index(import_index);
+                        // affected = true;
+                    } else {
+                        let func_offset = self
+                            .function_beginning
+                            .get(&func_idx)
+                            .ok_or(CompilerError::MissingFunction)?;
+                        let state = &states[*func_offset as usize];
+                        code.update_call_index(state.0);
+                        affected = true;
+                    }
                 }
                 _ => {}
             };

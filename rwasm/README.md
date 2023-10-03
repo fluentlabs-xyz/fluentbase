@@ -28,30 +28,27 @@ Here is a list of differences:
 3. Block/Loop statements are not supported anymore, instead of this we're using Br/BrIf instructions
 4. Break instructions are redesigned to support PC offsets instead of depth-level
 5. Sections are removed to simplify binary verification
-6. Memory section is computed using WebAssembly instructions instead of sections
+6. Memory and table sections is computed using WebAssembly instructions instead of sections
 7. Global variables are recovered from codebase (no need for section)
 8. Type mappings are not required anymore since code is validated
 9. Drop/keep is replaced with Get/Set/Tee local instructions
 
 The new binary representation produces 100% valid WASMi's runtime module from binary.
-There are several features that are not supported anymore, like exports since the only way to interact with rWASM is only though start section.
+There are several features that are not supported anymore, like exports since the only way to interact with rWASM is the start section.
 
 List of non-supported features:
 1. Export section doesn't work anymore (it can be fixed by injecting router inside)
-2. Passive mode data sections (it can be simulated via memory copy)
+2. Passive mode data and table sections (it can be simulated by injecting additional functions for memory init)
 
 ### Function order based on the position
 
 There is no need to store information about each function inside WASM binary, like function section and code section.
-Instead of can say that all bytecode is presented in flat structure, and we store functions one by one.
-To achieve this we mark function positions in the bytecode and remember each function position.
+Instead of can say that all bytecode is presented in a flat structure, and we store all functions as one function.
+To achieve this we remove all `CallInternal` related opcodes and replace them with breaks.
+To simulate function return we use new instruction `BrIndirect` that reads IP from the stack and jumps.
+It means that `Return` opcode is always used only for execution termination since there is only one function.
 
 ### Function order and internal calls
-
-For internal calls WASMi uses `CallInternal` IR code.
-It stores function index inside (same is for original WASM binary).
-Sometimes it's quite expensive to prove these function indices because it refers to the function section, and we must parse and verify entire function section and lookup right function with right type inside this section.
-To avoid this we replace function index with bytecode offset index.
 
 For example, let's say we have two internal functions inside function and code sections.
 Let it be `foo` and `bar` function.

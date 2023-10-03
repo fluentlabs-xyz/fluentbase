@@ -35,6 +35,7 @@ use crate::{
     StoreInner,
     Table,
 };
+use alloc::string::String;
 use core::cmp::{self};
 
 /// The outcome of a Wasm execution.
@@ -250,11 +251,19 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             // );
 
             // handle pre-instruction state
+            let memory_size: u32 = self
+                .ctx
+                .resolve_memory(self.cache.default_memory(self.ctx))
+                .current_pages()
+                .into();
+            let consumed_fuel = self.ctx.fuel().fuel_consumed();
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
                 instr,
                 self.value_stack.dump_stack(self.sp),
                 &meta,
+                memory_size,
+                consumed_fuel,
             );
 
             match instr {

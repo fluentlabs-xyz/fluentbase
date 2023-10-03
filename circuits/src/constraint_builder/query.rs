@@ -9,6 +9,7 @@ use halo2_proofs::{
     plonk::{Advice, Challenge, Column, Expression, Fixed, Instance, VirtualCells},
     poly::Rotation,
 };
+use num_bigint::BigUint;
 
 #[derive(Clone, Copy)]
 pub enum ColumnType {
@@ -27,6 +28,12 @@ pub enum Query<F: Field> {
     Neg(Box<Self>),
     Add(Box<Self>, Box<Self>),
     Mul(Box<Self>, Box<Self>),
+}
+
+impl<F: Field> Default for Query<F> {
+    fn default() -> Self {
+        Self::Constant(F::zero())
+    }
 }
 
 impl<F: Field> Query<F> {
@@ -63,6 +70,18 @@ impl<F: Field> Query<F> {
 impl<F: Field> From<u64> for Query<F> {
     fn from(x: u64) -> Self {
         Self::Constant(F::from(x))
+    }
+}
+
+pub fn bn_to_field<F: Field>(bn: &BigUint) -> F {
+    let mut bytes = bn.to_bytes_le();
+    bytes.resize(64, 0);
+    F::from_bytes_wide(&bytes.try_into().unwrap())
+}
+
+impl<F: Field> Query<F> {
+    pub fn from_bn(x: &BigUint) -> Self {
+        Self::Constant(bn_to_field(x))
     }
 }
 

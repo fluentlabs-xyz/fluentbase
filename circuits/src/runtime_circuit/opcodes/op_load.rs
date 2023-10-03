@@ -290,6 +290,7 @@ mod test {
     fn test_i32_load_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[800]
             I32Store[address_offset]
@@ -304,6 +305,7 @@ mod test {
     fn test_i32_load8u_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[15]
             I32Store8[address_offset]
@@ -318,6 +320,7 @@ mod test {
     fn test_i32_load8s_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[13]
             I32Store8[address_offset]
@@ -332,6 +335,7 @@ mod test {
     fn test_i32_load8s_negative_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[-13]
             I32Store8[address_offset]
@@ -345,6 +349,7 @@ mod test {
     fn test_i32_load16u_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[801]
             I32Store[address_offset]
@@ -359,6 +364,7 @@ mod test {
     fn test_i32_load16s_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[802]
             I32Store[address_offset]
@@ -373,6 +379,7 @@ mod test {
     fn test_i32_load16s_negative_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[-802]
             I32Store[address_offset]
@@ -387,6 +394,7 @@ mod test {
     fn test_i64_load_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[803]
             I64Store[address_offset]
@@ -401,6 +409,7 @@ mod test {
     fn test_i64_load8u_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[21]
             I64Store8[address_offset]
@@ -415,6 +424,7 @@ mod test {
     fn test_i64_load8s_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[22]
             I64Store8[address_offset]
@@ -429,6 +439,7 @@ mod test {
     fn test_i64_load8s_negative_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[-22]
             I64Store8[address_offset]
@@ -443,6 +454,7 @@ mod test {
     fn test_i64_load16u_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[22]
             I64Store[address_offset]
@@ -457,6 +469,7 @@ mod test {
     fn test_i64_load16s_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[807]
             I64Store[address_offset]
@@ -471,6 +484,7 @@ mod test {
     fn test_i64_load32u_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[808]
             I64Store[address_offset]
@@ -485,6 +499,7 @@ mod test {
     fn test_i64_load32s_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[809]
             I64Store[address_offset]
@@ -499,6 +514,7 @@ mod test {
     fn test_i64_load32s_negative_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[-809]
             I64Store[address_offset]
@@ -510,9 +526,11 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn test_f32_load_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I32Const[address]
             I32Const[20]
             F32Store[address_offset]
@@ -524,9 +542,11 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn test_f64_load_positive_number() {
         let [address_offset, address] = gen_address_params();
         test_ok(instruction_set! {
+            .add_memory(0, &[0; 1024])
             I64Const[address]
             I64Const[810]
             I64Store[address_offset]

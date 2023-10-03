@@ -22,7 +22,7 @@ pub struct BitwiseCheckConfig<F: Field> {
 impl<F: Field> BitwiseCheckConfig<F> {
     pub fn configure(cs: &mut ConstraintSystem<F>) -> Self {
         Self {
-            inputs: [0; 2].map(|v| FixedColumn(cs.fixed_column())),
+            inputs: [0; 2].map(|_| FixedColumn(cs.fixed_column())),
             and: FixedColumn(cs.fixed_column()),
             or: FixedColumn(cs.fixed_column()),
             xor: FixedColumn(cs.fixed_column()),
