@@ -104,9 +104,18 @@ impl InstructionSet {
         opcode_pos
     }
 
+    pub fn add_memory_pages(&mut self, initial_pages: u32) {
+        assert_eq!(self.init_memory_pages, 0);
+        self.op_i32_const(initial_pages);
+        self.op_memory_grow();
+        self.op_drop();
+        self.init_memory_pages = initial_pages;
+        self.init_memory_size = initial_pages * N_BYTES_PER_MEMORY_PAGE;
+    }
+
     pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
         // make sure we have enough allocated memory
-        let new_size = self.init_memory_size + bytes.len() as u32;
+        let new_size = self.init_memory_size + offset + bytes.len() as u32;
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
         if total_pages > N_MAX_MEMORY_PAGES {
             return false;

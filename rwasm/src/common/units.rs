@@ -15,6 +15,10 @@ impl Pages {
     pub const fn max() -> Self {
         Self(65536) // 2^16
     }
+
+    pub fn into_inner(self) -> u32 {
+        self.0
+    }
 }
 
 impl From<u16> for Pages {

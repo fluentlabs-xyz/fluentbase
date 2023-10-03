@@ -239,6 +239,16 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
+            // println!(
+            //     "{:?} {:?}",
+            //     instr,
+            //     self.value_stack
+            //         .dump_stack(self.sp)
+            //         .iter()
+            //         .map(|v| v.as_u64())
+            //         .collect::<Vec<_>>()
+            // );
+
             // handle pre-instruction state
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
@@ -1053,14 +1063,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_br_indirect(
-        &mut self,
-    ) {
+    fn visit_br_indirect(&mut self) {
         let target = self.sp.pop_as::<i32>();
         let offset = target - self.ip.pc() as i32;
 
         self.branch_to(offset.into());
-
     }
 
     #[inline(always)]

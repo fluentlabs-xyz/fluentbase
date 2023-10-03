@@ -9,7 +9,7 @@ use crate::{
     module::{ConstExpr, DataSegment, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-        compiler::drop_keep::DropKeepWithReturnParam,
+        compiler::drop_keep::{translate_drop_keep, DropKeepWithReturnParam},
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -19,7 +19,6 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
-use crate::rwasm::compiler::drop_keep::translate_drop_keep;
 
 mod drop_keep;
 
@@ -98,17 +97,6 @@ impl<'linker> Compiler<'linker> {
         if self.is_translated {
             unreachable!("already translated");
         }
-        // translate globals, tables and memory
-        let total_globals = self.module.globals.len();
-        for i in 0..total_globals {
-            self.translate_global(i as u32)?;
-        }
-        let total_tables = self.module.tables.len();
-        for i in 0..total_tables {
-            self.translate_table(i as u32)?;
-        }
-        self.translate_memory()?;
-
         // find main entrypoint (it must starts with `main` keyword)
         let main_index = if main_index.is_none() {
             self.module
@@ -120,19 +108,52 @@ impl<'linker> Compiler<'linker> {
         } else {
             main_index.unwrap()
         };
+        // first we must translate all sections, this is an entrypoint
+        self.translate_sections(main_index)?;
         // translate main entrypoint
-        self.translate_function(main_index, true)?;
+        self.translate_function(main_index)?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
             if i != main_index as usize {
-                self.translate_function(i as u32, false)?;
+                self.translate_function(i as u32)?;
             }
         }
 
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
         self.is_translated = true;
+        Ok(())
+    }
+
+    fn translate_sections(&mut self, main_index: u32) -> Result<(), CompilerError> {
+        // lets reserve 0 index and offset for sections init
+        self.function_beginning.insert(0, 0);
+        // translate global section (replaces with set/get global opcodes)
+        let total_globals = self.module.globals.len();
+        for i in 0..total_globals {
+            self.translate_global(i as u32)?;
+        }
+        // translate table section (replace with grow/set table opcodes)
+        let total_tables = self.module.tables.len();
+        for i in 0..total_tables {
+            self.translate_table(i as u32)?;
+        }
+        // translate memory section (replace with grow/load memory opcodes)
+        self.translate_memory()?;
+        // inject main function call with return
+        let return_offset = self.code_section.len() + 2;
+        self.code_section.op_i32_const(return_offset);
+        let num_imports = self.module.imports.len_funcs as u32;
+        self.code_section.op_call_internal(main_index - num_imports);
+        self.code_section.op_return();
+        self.code_section.op_unreachable();
+        // remember that this is injected and shifts br/br_if offset
+        self.injection_segments.push(Injection {
+            begin: 0,
+            end: self.code_section.len() as i32,
+            origin_len: 0,
+        });
         Ok(())
     }
 
@@ -155,6 +176,10 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
+        for memory in self.module.memories.iter() {
+            self.code_section
+                .add_memory_pages(memory.initial_pages().into_inner());
+        }
         for memory in self.module.data_segments.iter() {
             let (offset, bytes) = Self::read_memory_segment(memory)?;
             self.code_section.add_memory(offset.to_bits() as u32, bytes);
@@ -248,20 +273,17 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn swap_with_depth(&mut self, depth: u32) {
-        self.code_section.op_local_get(depth + 1);
-        self.code_section.op_local_get(2);
-        self.code_section.op_local_set(depth + 2);
-        self.code_section.op_local_set(1);
-    }
-
-    fn swap(&mut self, param_num: u32) {
+    fn swap_stack_parameters(&mut self, param_num: u32) {
         for i in (0..param_num).rev() {
-            self.swap_with_depth(i + 1);
+            let depth = i + 1;
+            self.code_section.op_local_get(depth + 1);
+            self.code_section.op_local_get(2);
+            self.code_section.op_local_set(depth + 2);
+            self.code_section.op_local_set(1);
         }
     }
 
-    fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
+    fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
         if fn_index < import_len as u32 {
@@ -274,9 +296,7 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        if !is_main {
-            self.swap(num_inputs.len() as u32);
-        }
+        self.swap_stack_parameters(num_inputs.len() as u32);
 
         let func_body = self
             .module
@@ -293,11 +313,12 @@ impl<'linker> Compiler<'linker> {
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
         let mut offset = 0;
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr, is_main, offset)?;
+            self.translate_opcode(&mut instr_ptr, offset)?;
             offset += 1;
         }
-        // remember function offset in the mapping
-        self.function_beginning.insert(fn_index, beginning_offset);
+        // remember function offset in the mapping (+1 because 0 is reserved for sections init)
+        self.function_beginning
+            .insert(fn_index + 1, beginning_offset);
         Ok(())
     }
 
@@ -322,7 +343,6 @@ impl<'linker> Compiler<'linker> {
     fn translate_opcode(
         &mut self,
         instr_ptr: &mut InstructionPtr,
-        is_main: bool,
         _offset: usize,
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
@@ -333,24 +353,41 @@ impl<'linker> Compiler<'linker> {
                 opcode_count += 1;
                 if let Some(mut br_table_status) = self.br_table_status.take() {
                     let drop_keep = Self::extract_drop_keep(instr_ptr);
-                    let injection_begin = br_table_status.instr_countdown as i32 + br_table_status.injection_instructions.len() as i32;
+                    let injection_begin = br_table_status.instr_countdown as i32
+                        + br_table_status.injection_instructions.len() as i32;
                     let mut drop_keep_ixs = translate_drop_keep(drop_keep)?;
                     self.code_section.op_br(BranchOffset::from(injection_begin));
                     self.code_section.op_return();
                     br_table_status.instr_countdown -= 2;
 
-                    br_table_status.injection_instructions.append(&mut drop_keep_ixs);
-                    br_table_status.injection_instructions.push(WI::Br(BranchOffset::from(branch_offset.to_i32() - br_table_status.instr_countdown as i32)));
-                    br_table_status.injection_instructions.push(WI::Return(DropKeep::none()));
+                    br_table_status
+                        .injection_instructions
+                        .append(&mut drop_keep_ixs);
+                    br_table_status
+                        .injection_instructions
+                        .push(WI::Br(BranchOffset::from(
+                            branch_offset.to_i32() - br_table_status.instr_countdown as i32,
+                        )));
+                    br_table_status
+                        .injection_instructions
+                        .push(WI::Return(DropKeep::none()));
 
                     if br_table_status.instr_countdown == 0 {
                         let injection_len = br_table_status.injection_instructions.len();
                         for i in 0..injection_len {
-                            if let Some(offset) = br_table_status.injection_instructions[i].get_jump_offset() {
-                                br_table_status.injection_instructions[i].update_branch_offset(BranchOffset::from(offset.to_i32() + injection_len as i32 - i as i32 - 2));
+                            if let Some(offset) =
+                                br_table_status.injection_instructions[i].get_jump_offset()
+                            {
+                                br_table_status.injection_instructions[i].update_branch_offset(
+                                    BranchOffset::from(
+                                        offset.to_i32() + injection_len as i32 - i as i32 - 2,
+                                    ),
+                                );
                             }
                         }
-                        self.code_section.instr.append(&mut br_table_status.injection_instructions);
+                        self.code_section
+                            .instr
+                            .append(&mut br_table_status.injection_instructions);
                         self.br_table_status = None;
                     } else {
                         self.br_table_status = Some(br_table_status);
@@ -398,13 +435,8 @@ impl<'linker> Compiler<'linker> {
                 unreachable!("check this")
             }
             WI::Return(drop_keep) => {
-                if is_main {
-                    drop_keep.translate(&mut self.code_section)?;
-                    self.code_section.op_return();
-                } else {
-                    DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
-                    self.code_section.op_br_indirect();
-                }
+                DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
+                self.code_section.op_br_indirect();
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -431,7 +463,7 @@ impl<'linker> Compiler<'linker> {
 
                 self.code_section.op_table_get(table_idx);
                 self.code_section.op_i32_const(target);
-                self.swap(1);
+                self.swap_stack_parameters(1);
                 self.code_section.op_br_indirect();
             }
             WI::Call(func_idx) => {
@@ -455,7 +487,11 @@ impl<'linker> Compiler<'linker> {
         };
         let injection_end = self.code_section.len();
         if injection_end - injection_begin > opcode_count as u32 {
-            self.injection_segments.push(Injection{ begin: injection_begin as i32, end: injection_end as i32, origin_len: opcode_count as i32 });
+            self.injection_segments.push(Injection {
+                begin: injection_begin as i32,
+                end: injection_end as i32,
+                origin_len: opcode_count,
+            });
         }
 
         instr_ptr.add(1);
@@ -492,8 +528,9 @@ impl<'linker> Compiler<'linker> {
         while i < bytecode.len() as usize {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
+                    let func_idx = func.to_u32() + 1;
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
-                        self.function_beginning[&func.to_u32()] as i32 - i as i32,
+                        self.function_beginning[&func_idx] as i32 - i as i32,
                     ));
                 }
                 Instruction::Br(offset)
@@ -520,12 +557,20 @@ impl<'linker> Compiler<'linker> {
                         }
                     };
 
-                    bytecode.instr[i] =   match  bytecode.instr[i] {
+                    bytecode.instr[i] = match bytecode.instr[i] {
                         Instruction::Br(_) => Instruction::Br(BranchOffset::from(offset as i32)),
-                        Instruction::BrIfNez(_) => Instruction::BrIfNez(BranchOffset::from(offset as i32)),
-                        Instruction::BrAdjust(_) => Instruction::BrAdjust(BranchOffset::from(offset as i32)),
-                        Instruction::BrAdjustIfNez(_) => Instruction::BrAdjustIfNez(BranchOffset::from(offset as i32)),
-                        Instruction::BrIfEqz(_) => Instruction::BrIfEqz(BranchOffset::from(offset as i32)),
+                        Instruction::BrIfNez(_) => {
+                            Instruction::BrIfNez(BranchOffset::from(offset as i32))
+                        }
+                        Instruction::BrAdjust(_) => {
+                            Instruction::BrAdjust(BranchOffset::from(offset as i32))
+                        }
+                        Instruction::BrAdjustIfNez(_) => {
+                            Instruction::BrAdjustIfNez(BranchOffset::from(offset as i32))
+                        }
+                        Instruction::BrIfEqz(_) => {
+                            Instruction::BrIfEqz(BranchOffset::from(offset as i32))
+                        }
                         _ => panic!("Unreachable"),
                     };
                 }
@@ -558,18 +603,20 @@ impl<'linker> Compiler<'linker> {
             let mut affected = false;
             match code {
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
+                    let func_idx = func.to_u32() + 1;
                     let func_offset = self
                         .function_beginning
-                        .get(&func.to_u32())
+                        .get(&func_idx)
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
                     code.update_call_index(state.0);
                     affected = true;
                 }
                 Instruction::RefFunc(func_idx) => {
+                    let func_idx = func_idx.to_u32() + 1;
                     let func_offset = self
                         .function_beginning
-                        .get(&func_idx.to_u32())
+                        .get(&func_idx)
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
                     code.update_call_index(state.0);

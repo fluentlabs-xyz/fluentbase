@@ -2,7 +2,7 @@ use crate::{HALT_CODE_EXIT, HALT_CODE_PANIC};
 
 extern "C" {
     fn _sys_halt(code: u32);
-    fn _sys_read(target: *mut u8, offset: u32, length: u32) -> u32;
+    fn _sys_read(target: *mut u8, offset: u32, length: u32);
     fn _evm_stop();
     fn _evm_return(offset: *const u8, size: u32);
     fn _evm_keccak256(offset: *const u8, size: u32, dest: *mut u8);
@@ -35,7 +35,13 @@ extern "C" {
     fn _evm_log0(data_offset: i32, data_length: u32);
     fn _evm_log1(data_offset: i32, data_length: u32, topic0: *const u8);
     fn _evm_log2(data_offset: i32, data_length: u32, topic0: *const u8, topic1: *const u8);
-    fn _evm_log3(data_offset: i32, data_length: u32, topic0: *const u8, topic1: *const u8, topic2: *const u8);
+    fn _evm_log3(
+        data_offset: i32,
+        data_length: u32,
+        topic0: *const u8,
+        topic1: *const u8,
+        topic2: *const u8,
+    );
     fn _evm_log4(
         data_offset: i32,
         data_length: u32,
@@ -74,7 +80,13 @@ extern "C" {
         return_length: u32,
         dest: *mut bool,
     );
-    fn _evm_create2(value: *const u8, bytecode_offset: *const u8, bytecode_length: u32, salt: *const u8, dest: *mut u8);
+    fn _evm_create2(
+        value: *const u8,
+        bytecode_offset: *const u8,
+        bytecode_length: u32,
+        salt: *const u8,
+        dest: *mut u8,
+    );
     fn _evm_staticcall(
         gas: u64,
         address: *const u8,
@@ -89,12 +101,12 @@ extern "C" {
 }
 
 #[inline(always)]
-pub fn sys_read(target: *mut u8, offset: u32, len: u32) -> u32 {
+pub fn sys_read(target: *mut u8, offset: u32, len: u32) {
     unsafe { _sys_read(target, offset, len) }
 }
 
 #[inline(always)]
-pub fn sys_read_slice(target: &mut [u8], offset: u32) -> u32 {
+pub fn sys_read_slice(target: &mut [u8], offset: u32) {
     unsafe { _sys_read(target.as_mut_ptr(), offset, target.len() as u32) }
 }
 
