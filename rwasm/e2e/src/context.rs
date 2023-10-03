@@ -304,7 +304,7 @@ impl TestContext<'_> {
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
-        if func_name == "as-block-first" {
+        if func_name == "32_good5" && args.len() > 0 && args[0].i32().unwrap() == 65508 {
             println!("{}", func_name)
         }
         let wasm_binary = self.binaries.get(&func_name.to_string()).unwrap().clone();
