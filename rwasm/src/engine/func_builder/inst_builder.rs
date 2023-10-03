@@ -276,7 +276,8 @@ impl Instruction {
     /// # Panics
     ///
     /// If `self` is not a branch [`Instruction`].
-    pub fn update_branch_offset(&mut self, new_offset: BranchOffset) {
+    pub fn update_branch_offset<I: Into<BranchOffset>>(&mut self, new_offset: I) {
+        let new_offset: BranchOffset = new_offset.into();
         match self {
             Instruction::Br(offset)
             | Instruction::BrIfEqz(offset)
