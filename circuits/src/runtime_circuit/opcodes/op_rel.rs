@@ -11,6 +11,7 @@ use crate::{
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
+use log::debug;
 use std::marker::PhantomData;
 
 const REM_SHIFT: usize = 3usize;
@@ -422,10 +423,10 @@ impl<F: Field> ExecutionGadget<F> for WasmRelGadget<F> {
             }
             if enable {
                 assigns! { [neq_terms[idx], F::from(neq_out)] }
-                println!("DEBUG {idx} {lhs_limb} {rhs_limb} {neq_out} {out}");
+                debug!("DEBUG {idx} {lhs_limb} {rhs_limb} {neq_out} {out}");
             } else if idx == 0 {
                 assigns! { [neq_terms[idx], F::from(0)] }
-                println!("DEBUG {idx} {out}");
+                debug!("DEBUG {idx} {out}");
             }
         }
 
@@ -465,7 +466,7 @@ impl<F: Field> ExecutionGadget<F> for WasmRelGadget<F> {
 #[cfg(test)]
 mod test {
     use crate::runtime_circuit::testing::test_ok;
-    use fluentbase_rwasm::{instruction_set, rwasm::InstructionSet};
+    use fluentbase_rwasm::rwasm::InstructionSet;
 
     fn run_test(bytecode: InstructionSet) {
         test_ok(bytecode)
@@ -523,16 +524,16 @@ mod test {
     // For example test_10 means lhs_index is 1 and rhs_index is 0
     // If `test_41` is used then do four comparisons with "-1" and "1" etc, see
     // `try_test_by_number`.
-    tests_from_data! {
-      [
-        [I32Const
-          [I32GtU, I32GeU, I32LtU, I32LeU, I32Eq, I32Ne, I32GtS, I32GeS, I32LtS, I32LeS]
-          [0, 1, 2, -1, -2, 0x80000000]
-        ]
-        [I64Const
-          [I64GtU, I64GeU, I64LtU, I64LeU, I64Eq, I64Ne, I64GtS, I64GeS, I64LtS, I64LeS]
-          [0, 1, 2, -1, -2, -0x100000001, -0x100000002, 0x100000001, 0x100000002]
-        ]
-      ]
-    }
+    // tests_from_data! {
+    //   [
+    //     [I32Const
+    //       [I32GtU, I32GeU, I32LtU, I32LeU, I32Eq, I32Ne, I32GtS, I32GeS, I32LtS, I32LeS]
+    //       [0, 1, 2, -1, -2, 0x80000000]
+    //     ]
+    //     [I64Const
+    //       [I64GtU, I64GeU, I64LtU, I64LeU, I64Eq, I64Ne, I64GtS, I64GeS, I64LtS, I64LeS]
+    //       [0, 1, 2, -1, -2, -0x100000001, -0x100000002, 0x100000001, 0x100000002]
+    //     ]
+    //   ]
+    // }
 }

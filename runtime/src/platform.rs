@@ -6,14 +6,24 @@ use strum_macros::EnumIter;
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum SysFuncIdx {
     #[default]
-    IMPORT_UNKNOWN = 0x0000,
+    UNKNOWN = 0x0000,
     // SYS host functions (starts with 0xAA00)
-    IMPORT_SYS_HALT = 0xAA01,  // _sys_halt(i32)
-    IMPORT_SYS_WRITE = 0xAA02, // _sys_write(...)
-    IMPORT_SYS_READ = 0xAA03,  // _sys_read(...)
+    SYS_HALT = 0xA001,  // env::_sys_halt
+    SYS_WRITE = 0xA002, // env::_sys_write
+    SYS_READ = 0xA003,  // env::_sys_read
+    // WASI runtime
+    WASI_PROC_EXIT = 0xB001,         // wasi_snapshot_preview1::proc_exit
+    WASI_FD_WRITE = 0xB002,          // wasi_snapshot_preview1::fd_write
+    WASI_ENVIRON_SIZES_GET = 0xB003, // wasi_snapshot_preview1::environ_sizes_get
+    WASI_ENVIRON_GET = 0xB004,       // wasi_snapshot_preview1::environ_get
+    WASI_ARGS_SIZES_GET = 0xB005,    // wasi_snapshot_preview1::args_sizes_get
+    WASI_ARGS_GET = 0xB006,          // wasi_snapshot_preview1::args_get
+    // RWASM runtime
+    RWASM_TRANSACT = 0xC001, // env::_rwasm_transact
+    RWASM_COMPILE = 0xC002,  // env::_rwasm_compile
     // EVM-compatible host functions (starts with 0xEE00)
-    IMPORT_EVM_STOP = 0xEE01,
-    IMPORT_EVM_RETURN = 0xEE02,
+    EVM_STOP = 0xEE01,
+    EVM_RETURN = 0xEE02,
 }
 
 impl From<FuncIdx> for SysFuncIdx {
@@ -23,7 +33,7 @@ impl From<FuncIdx> for SysFuncIdx {
                 return item;
             }
         }
-        Self::IMPORT_UNKNOWN
+        Self::UNKNOWN
     }
 }
 
@@ -36,7 +46,7 @@ impl Into<FuncIdx> for SysFuncIdx {
 impl SysFuncIdx {
     pub fn get_rw_rows(&self) -> Vec<RwOp> {
         match self {
-            SysFuncIdx::IMPORT_SYS_HALT => {
+            SysFuncIdx::SYS_HALT => {
                 vec![RwOp::StackRead(0)]
             }
             _ => vec![],

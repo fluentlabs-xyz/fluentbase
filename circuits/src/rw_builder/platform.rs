@@ -6,7 +6,6 @@ use crate::{
         rw_row::RwRow,
     },
 };
-use fluentbase_runtime::SysFuncIdx;
 
 pub fn build_sys_halt_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
     build_stack_read_rw_ops(step, 0)?;
@@ -41,7 +40,6 @@ pub fn build_sys_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
             call_id: step.call_id,
             memory_address: target.as_u64() + i as u64,
             value: *value,
-            length: length.as_u32(),
             signed: false,
         });
     });
@@ -74,7 +72,6 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
             call_id: step.call_id,
             memory_address: target.as_u64() + i as u64,
             value: *value,
-            length: length.as_u32(),
             signed: false,
         });
     });
@@ -88,17 +85,5 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
         data,
     });
     step.output_len += length.as_u32();
-    Ok(())
-}
-
-pub fn build_platform_rw_ops(step: &mut ExecStep, sys_func: SysFuncIdx) -> Result<(), GadgetError> {
-    match sys_func {
-        SysFuncIdx::IMPORT_SYS_HALT => build_sys_halt_rw_ops(step)?,
-        SysFuncIdx::IMPORT_SYS_WRITE => build_sys_write_rw_ops(step)?,
-        SysFuncIdx::IMPORT_SYS_READ => build_sys_read_rw_ops(step)?,
-        // SysFuncIdx::IMPORT_EVM_STOP => {}
-        // SysFuncIdx::IMPORT_EVM_RETURN => {}
-        _ => unreachable!("not supported host call {:?}", sys_func),
-    }
     Ok(())
 }

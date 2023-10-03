@@ -3,7 +3,7 @@ use crate::{
     engine::bytecode::{BranchOffset, InstrMeta, Instruction},
     rwasm::{BinaryFormat, BinaryFormatError, BinaryFormatReader, InstructionSet},
 };
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 #[derive(Debug, Clone)]
 pub struct ReducedModuleTrace {

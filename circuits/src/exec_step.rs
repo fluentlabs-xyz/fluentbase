@@ -1,4 +1,5 @@
 use crate::rw_builder::{copy_row::CopyRow, rw_row::RwRow, RwBuilder};
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::{
     common::UntypedValue,
     engine::{bytecode::Instruction, Tracer, TracerInstrState},
@@ -10,6 +11,7 @@ use std::collections::BTreeMap;
 pub enum GadgetError {
     MissingNext,
     OutOfStack,
+    UnknownSysCall(SysFuncIdx),
     OutOfMemory,
     Plonk(plonk::Error),
 }
@@ -26,8 +28,8 @@ pub struct ExecStep {
     pub(crate) rw_rows: Vec<RwRow>,
     pub(crate) copy_rows: Vec<CopyRow>,
     pub(crate) output_len: u32,
-    pub(crate) call_id: usize,
-    pub(crate) rw_counter: usize,
+    pub(crate) call_id: u32,
+    pub(crate) rw_counter: u32,
 }
 
 impl ExecStep {
@@ -36,11 +38,23 @@ impl ExecStep {
     }
 
     pub fn next_rw_counter(&self) -> usize {
-        self.rw_counter + self.rw_rows.len()
+        self.rw_counter as usize + self.rw_rows.len()
     }
 
     pub fn stack_pointer(&self) -> u64 {
         MAX_STACK_HEIGHT as u64 - self.trace.stack.len() as u64
+    }
+
+    pub fn pc_diff(&self) -> u64 {
+        self.next()
+            .map(|v| v.source_pc)
+            .unwrap_or(self.curr().source_pc) as u64
+    }
+
+    pub fn stack_len(&self) -> usize {
+        self.next()
+            .map(|v| v.stack.len())
+            .unwrap_or_else(|_| self.curr().stack.len())
     }
 
     pub fn curr_nth_stack_value(&self, nth: usize) -> Result<UntypedValue, GadgetError> {
@@ -117,9 +131,11 @@ impl ExecSteps {
 
         let mut global_memory = Vec::new();
         let mut global_table = BTreeMap::<u32, UntypedValue>::new();
-        let mut rw_counter = 0;
+
+        let mut rw_counter = 1; // 1 is reserved for start
 
         for (i, trace) in tracer.logs.iter().cloned().enumerate() {
+            let mut call_id = trace.call_id;
             for memory_change in trace.memory_changes.iter() {
                 let max_offset = (memory_change.offset + memory_change.len) as usize;
                 if max_offset > global_memory.len() {
@@ -147,12 +163,12 @@ impl ExecSteps {
                 rw_rows: vec![],
                 copy_rows: vec![],
                 output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
-                call_id: 0,
+                call_id,
                 rw_counter,
             };
             let mut rw_builder = RwBuilder::new();
             rw_builder.build(&mut step)?;
-            rw_counter += step.rw_rows.len();
+            rw_counter += step.rw_rows.len() as u32;
             res.0.push(step);
         }
 

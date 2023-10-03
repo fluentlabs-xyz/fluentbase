@@ -13,7 +13,7 @@ itertools = "0.10.5"
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
 poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", branch = "main"}
 #halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde", default-features = false }
-#mpt-circuits = { package = "halo2-mpt-circuits", git = "https://github.com/scroll-tech/mpt-circuit.git", tag = "v0.5.1" }
+mpt-circuits = { package = "halo2-mpt-circuits", git = "https://github.com/scroll-tech/mpt-circuit.git", tag = "v0.6.5" }
 rand = "0.8"
 lazy_static = "1.4.0"
 num-traits = "0.2.15"
@@ -34,6 +34,10 @@ rand_xorshift = "0.3.0"
 cli-table = "0.4.7"
 bitintr = "0.3.0"
 seq-macro = "0.3.5"
+env_logger = "0.10.0"
+ctor = "0.2.4"
+byteorder = "1.4.3"
+wasi = "0.11.0"
 
 [features]
 default = ["dev-graph", "std"]

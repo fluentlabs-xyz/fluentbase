@@ -23,8 +23,7 @@ pub struct SysWriteGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for SysWriteGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(_sys_write)";
-    const EXECUTION_STATE: ExecutionState =
-        ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_WRITE);
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CALL_HOST(SysFuncIdx::SYS_WRITE);
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let target = cb.query_cell();
@@ -80,7 +79,7 @@ mod test {
             .add_memory(0, data.as_slice())
             I32Const(0) // target
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
         };
         test_ok_with_input(bytecode, vec![]);
     }
@@ -92,7 +91,7 @@ mod test {
             .add_memory(0, data.as_slice())
             I32Const(1) // target
             I32Const(4) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
         };
         test_ok_with_input(bytecode, vec![]);
     }
@@ -105,11 +104,11 @@ mod test {
             // copy first 2 bytes
             I32Const(0) // target
             I32Const(2) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
             // copy rest 3 bytes
             I32Const(2) // target
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
         };
         test_ok_with_input(bytecode, vec![]);
     }
@@ -121,10 +120,10 @@ mod test {
             .add_memory(0, data.as_slice())
             I32Const(0) // target
             I32Const(5) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
             I32Const(0) // target
             I32Const(2) // length
-            Call(SysFuncIdx::IMPORT_SYS_WRITE)
+            Call(SysFuncIdx::SYS_WRITE)
         };
         test_ok_with_input(bytecode, vec![]);
     }
