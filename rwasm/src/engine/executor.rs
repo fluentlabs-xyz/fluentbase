@@ -26,6 +26,7 @@ use crate::{
         ValueStack,
     },
     func::FuncEntity,
+    module::DEFAULT_MEMORY_INDEX,
     store::ResourceLimiterRef,
     table::TableEntity,
     FuelConsumptionMode,
@@ -251,11 +252,21 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             // );
 
             // handle pre-instruction state
-            let memory_size: u32 = self
-                .ctx
-                .resolve_memory(self.cache.default_memory(self.ctx))
-                .current_pages()
-                .into();
+            let has_default_memory = {
+                let instance = self.cache.instance();
+                self.ctx
+                    .resolve_instance(instance)
+                    .get_memory(DEFAULT_MEMORY_INDEX)
+                    .is_some()
+            };
+            let memory_size: u32 = if has_default_memory {
+                self.ctx
+                    .resolve_memory(self.cache.default_memory(self.ctx))
+                    .current_pages()
+                    .into()
+            } else {
+                0
+            };
             let consumed_fuel = self.ctx.fuel().fuel_consumed();
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
