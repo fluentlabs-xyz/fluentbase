@@ -111,7 +111,8 @@ impl InstructionSet {
         self.op_memory_grow();
         self.op_drop();
         self.init_memory_pages = initial_pages;
-        self.init_memory_size = initial_pages * N_BYTES_PER_MEMORY_PAGE;
+        // we set here 0 because this memory is not used yet
+        self.init_memory_size = 0;
     }
 
     pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
