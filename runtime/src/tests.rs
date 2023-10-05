@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, Error};
+use crate::{evm_keccak256, runtime::Runtime, Error};
 use fluentbase_rwasm::{
     common::Trap,
     rwasm::{Compiler, ImportLinker},
@@ -93,4 +93,43 @@ fn test_translator() {
     let result =
         Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
     println!("{:?}", result.data().output().clone());
+}
+
+/// EVM instructions
+// use fluentbase_sdk::{evm_keccak256, sys_read};
+
+#[test]
+fn test_keccak256() {
+    let rwasm_binary = wat2rwasm(
+        r#"
+(module
+  (type (;0;) (func (param i32 i32 i32)))
+  (type (;1;) (func))
+  (import "env" "_evm_keccak256" (func $_evm_keccak256 (type 0)))
+  (func $main (type 1)
+    i32.const 0
+    i32.const 12
+    i32.const 50
+    call $_evm_keccak256
+    )
+  (memory (;0;) 100)
+  (data (;0;) (i32.const 0) "Hello, World")
+  (export "main" (func $main)))
+    "#,
+    );
+    Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+
+    // let wasm_binary = include_bytes!("../examples/bin/evm.wasm");
+    // let import_linker = Runtime::new_linker();
+    // let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+
+    // // Test Data
+    // let data1 = b"Hello, World!";
+    // evm_keccak256(caller, offset, size);
+    // let offset1 = 0;
+    // let size1 = data1.len() as u32;
+    // let result =
+    //     Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+
+    // println!("{:?}", result.data().output().clone());
 }

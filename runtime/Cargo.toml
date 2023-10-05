@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
+tiny-keccak = { version = "2.0", features = ["sha3"] }
 strum = "0.25.0"
 strum_macros = "0.25.2"
 wasi = "0.11.0"

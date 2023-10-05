@@ -121,6 +121,11 @@ pub fn evm_return_slice(return_data: &[u8]) {
 }
 
 #[inline(always)]
+pub fn evm_keccak256(input_data: &[u8]) {
+    unsafe { _evm_keccak256(input_data.as_ptr(), input_data.len() as u32, 0 as *mut u8) }
+}
+
+#[inline(always)]
 pub fn sys_exit() {
     unsafe { _sys_halt(HALT_CODE_EXIT) }
 }
