@@ -241,15 +241,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
-            // println!(
-            //     "{:?} {:?}",
-            //     instr,
-            //     self.value_stack
-            //         .dump_stack(self.sp)
-            //         .iter()
-            //         .map(|v| v.as_u64())
-            //         .collect::<Vec<_>>()
-            // );
+            println!(
+                "{:?} {:?}",
+                instr,
+                self.value_stack
+                    .dump_stack(self.sp)
+                    .iter()
+                    .map(|v| v.as_u64())
+                    .collect::<Vec<_>>()
+            );
 
             // handle pre-instruction state
             let has_default_memory = {
@@ -282,7 +282,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instr::LocalTee(local_depth) => self.visit_local_tee(local_depth),
                 Instr::Br(offset) => self.visit_br(offset),
-                Instr::BrIndirect => self.visit_br_indirect(),
+                Instr::BrIndirect(offset) => self.visit_br_indirect(offset),
                 Instr::BrIfEqz(offset) => self.visit_br_if_eqz(offset),
                 Instr::BrIfNez(offset) => self.visit_br_if_nez(offset),
                 Instr::BrAdjust(offset) => self.visit_br_adjust(offset),
@@ -1083,10 +1083,13 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_br_indirect(&mut self) {
-        let target = self.sp.pop_as::<i32>();
-        let offset = target - self.ip.pc() as i32;
-
+    fn visit_br_indirect(&mut self, offset: BranchOffset) {
+        assert_eq!(offset.to_i32(), 0);
+        let return_pointer = self.sp.pop_as::<i32>();
+        // let return_pointer = self.sp.nth_back(offset.to_i32() as usize);
+        // let drop_keep = DropKeep::new(1, offset.to_i32() as usize).unwrap();
+        // self.sp.drop_keep(drop_keep);
+        let offset = return_pointer as i32 - self.ip.pc() as i32;
         self.branch_to(offset.into());
     }
 
@@ -1473,9 +1476,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     #[inline(always)]
     fn visit_ref_func(&mut self, func_index: FuncIdx) {
-        let func = self.cache.get_func(self.ctx, func_index);
-        let funcref = FuncRef::new(func);
-        self.sp.push_as(funcref);
+        // let func = self.cache.get_func(self.ctx, func_index);
+        // let funcref = FuncRef::new(func);
+        self.sp.push_as(func_index.to_u32());
         self.next_instr();
     }
 }

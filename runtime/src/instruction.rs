@@ -1,7 +1,6 @@
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 use std::mem::size_of;
-use zktrie::{AccountData, ZkMemoryDb};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller

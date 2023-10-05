@@ -209,4 +209,28 @@ mod tests {
         );
         assert_eq!(host_state.exit_code, 123);
     }
+
+    #[test]
+    fn test_call_indirect() {
+        execute_binary(
+            r#"
+    (module
+      (type $check (func (param i32) (param i32) (result i32)))
+      (table funcref (elem $add))
+      (func $main
+        i32.const 100
+        i32.const 20
+        i32.const 0
+        call_indirect (type $check)
+        drop
+        )
+      (func $add (type $check)
+        local.get 0
+        local.get 1
+        i32.add
+        )
+      (export "main" (func $main)))
+        "#,
+        );
+    }
 }
