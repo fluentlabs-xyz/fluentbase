@@ -2,7 +2,6 @@ use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 use std::mem::size_of;
 use tiny_keccak::{Hasher, Sha3};
-use zktrie::{AccountData, ZkMemoryDb};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
@@ -234,9 +233,7 @@ pub(crate) fn evm_keccak256(
 
     let data_slice = input_data.as_slice();
     let mut hasher = Sha3::v256();
-
     hasher.update(data_slice);
-
     let mut result = [0u8; 32];
     hasher.finalize(&mut result);
 
