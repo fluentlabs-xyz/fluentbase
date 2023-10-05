@@ -178,6 +178,13 @@ impl Runtime {
             &[ValueType::I32; 2],
             &[],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_keccak256".to_string(),
+            SysFuncIdx::EVM_KECCAK256 as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 0],
+        ));
 
         import_linker
     }
@@ -236,6 +243,7 @@ impl Runtime {
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+        forward_call!(res, "env", "_evm_keccak256", fn evm_keccak256(offset: u32, length: u32, target: u32) -> ());
 
         let result = res
             .linker

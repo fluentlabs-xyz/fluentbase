@@ -24,6 +24,7 @@ pub enum SysFuncIdx {
     // EVM-compatible host functions (starts with 0xEE00)
     EVM_STOP = 0xEE01,
     EVM_RETURN = 0xEE02,
+    EVM_KECCAK256 = 0xEE03,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

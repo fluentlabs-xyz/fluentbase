@@ -8,6 +8,7 @@ pub trait ImportHandler {
     fn sys_read(&mut self, _offset: u32, _length: u32) {}
     // evm calls
     fn evm_return(&mut self, _offset: u32, _length: u32) {}
+    fn evm_keccak256(&mut self, _offset: u32, _size: u32, _dest: u32) {}
 }
 
 #[derive(Default, Debug)]
