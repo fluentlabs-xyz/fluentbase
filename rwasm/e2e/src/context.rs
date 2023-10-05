@@ -186,6 +186,7 @@ impl TestContext<'_> {
     ) -> Result<Instance, TestError> {
         let mut config = Config::default();
         config.consume_fuel(false);
+        println!("compiling function: {}", fn_name);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice())?;
         let elem = module
@@ -208,6 +209,7 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
+        self.last_instance = Some(instance);
         Ok(instance)
     }
 
