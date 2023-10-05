@@ -110,14 +110,10 @@ impl<'linker> Compiler<'linker> {
         };
         // first we must translate all sections, this is an entrypoint
         self.translate_sections(main_index)?;
-        // translate main entrypoint
-        self.translate_function(main_index)?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
-            if i != main_index as usize {
-                self.translate_function(i as u32)?;
-            }
+            self.translate_function(i as u32)?;
         }
 
         // there is no need to inject because code is already validated
@@ -478,7 +474,7 @@ impl<'linker> Compiler<'linker> {
                     injection_instructions: vec![],
                     instr_countdown: target.to_usize() as u32 * 2,
                 });
-                println!("Add table status: {:?}", self.br_table_status);
+                // println!("Add table status: {:?}", self.br_table_status);
                 self.code_section.push(*instr_ptr.get());
             }
             _ => {
