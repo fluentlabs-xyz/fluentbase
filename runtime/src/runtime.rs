@@ -215,7 +215,7 @@ impl Runtime {
         let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
         if fuel_enabled {
-            store.add_fuel(100_000).unwrap();
+            store.add_fuel(100_000_000).unwrap();
         }
 
         #[allow(unused_mut)]

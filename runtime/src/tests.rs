@@ -3,10 +3,11 @@ use fluentbase_rwasm::{
     common::Trap,
     rwasm::{Compiler, ImportLinker},
 };
+use tiny_keccak::{keccakf, Hasher, Sha3};
 
-fn wat2rwasm(wat: &str) -> Vec<u8> {
+fn wat2rwasm(wat: &str, import_linker: Option<&ImportLinker>) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
-    let mut compiler = Compiler::new(&wasm_binary).unwrap();
+    let mut compiler = Compiler::new_with_linker(&wasm_binary, import_linker).unwrap();
     compiler.finalize().unwrap()
 }
 
@@ -40,6 +41,7 @@ fn test_simple() {
   (global (;2;) i32 (i32.const 3))
   (export "main" (func $main)))
     "#,
+        None,
     );
     Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
 }
@@ -95,41 +97,37 @@ fn test_translator() {
     println!("{:?}", result.data().output().clone());
 }
 
-/// EVM instructions
-// use fluentbase_sdk::{evm_keccak256, sys_read};
-
 #[test]
 fn test_keccak256() {
+    let import_linker = Runtime::new_linker();
     let rwasm_binary = wat2rwasm(
         r#"
 (module
   (type (;0;) (func (param i32 i32 i32)))
   (type (;1;) (func))
+  (type (;2;) (func (param i32 i32)))
   (import "env" "_evm_keccak256" (func $_evm_keccak256 (type 0)))
+  (import "env" "_evm_return" (func $_evm_return (type 2)))
   (func $main (type 1)
     i32.const 0
     i32.const 12
     i32.const 50
     call $_evm_keccak256
+    i32.const 50
+    i32.const 32
+    call $_evm_return
     )
   (memory (;0;) 100)
   (data (;0;) (i32.const 0) "Hello, World")
   (export "main" (func $main)))
     "#,
+        Some(&import_linker),
     );
-    Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
-
-    // let wasm_binary = include_bytes!("../examples/bin/evm.wasm");
-    // let import_linker = Runtime::new_linker();
-    // let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-
-    // // Test Data
-    // let data1 = b"Hello, World!";
-    // evm_keccak256(caller, offset, size);
-    // let offset1 = 0;
-    // let size1 = data1.len() as u32;
-    // let result =
-    //     Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
-
-    // println!("{:?}", result.data().output().clone());
+    let result =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+    let mut hasher = Sha3::v256();
+    hasher.update("Hello, World".as_bytes());
+    let mut expected_hash = [0u8; 32];
+    hasher.finalize(&mut expected_hash);
+    assert_eq!(expected_hash, result.data().output().as_slice());
 }
