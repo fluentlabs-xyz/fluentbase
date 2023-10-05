@@ -231,13 +231,13 @@ pub(crate) fn evm_keccak256(
     let input_data = exported_memory_vec(&mut caller, offset as usize, size as usize);
     assert!(offset + size as u32 <= input_data.len() as u32);
 
+    // let's calculate a hash via tiny_keccak::sha3
     let data_slice = input_data.as_slice();
     let mut hasher = Sha3::v256();
     hasher.update(data_slice);
     let mut result = [0u8; 32];
     hasher.finalize(&mut result);
 
-    // caller.data_mut().return_data(result.as_slice());
-
+    caller.write_memory(target as usize, result.as_slice());
     Ok(())
 }
