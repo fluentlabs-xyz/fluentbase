@@ -1,14 +1,4 @@
-use crate::{
-    common::ValueType,
-    linker::LinkerError,
-    module::ImportName,
-    AsContextMut,
-    Caller,
-    Func,
-    FuncType,
-    Linker,
-    Store,
-};
+use crate::{common::ValueType, module::ImportName, FuncType};
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 pub trait ImportHandler {
@@ -128,46 +118,6 @@ impl ImportLinker {
             .insert(import_func.index, import_func.clone());
         self.func_by_name
             .insert(import_func.import_name(), import_func.index);
-    }
-
-    #[deprecated(note = "will be removed soon")]
-    pub fn attach_linker<D>(
-        &mut self,
-        linker: &mut Linker<D>,
-        store: &mut Store<D>,
-    ) -> Result<(), LinkerError>
-    where
-        D: ImportHandler,
-    {
-        macro_rules! link_call {
-            ($fn_name:ident($arg1:ident: $type1:ident, $arg2:ident: $type2:ident)) => {
-                linker.define(
-                    "env",
-                    concat!("_", stringify!($fn_name)),
-                    Func::wrap(
-                        store.as_context_mut(),
-                        |mut caller: Caller<'_, D>, $arg1: $type1, $arg2: $type2| {
-                            caller.data_mut().$fn_name($arg1, $arg2);
-                        },
-                    ),
-                )?;
-            };
-            ($fn_name:ident($arg1:ident: $type1:ident)) => {
-                linker.define(
-                    "env",
-                    concat!("_", stringify!($fn_name)),
-                    Func::wrap(
-                        store.as_context_mut(),
-                        |mut caller: Caller<'_, D>, $arg1: $type1| {
-                            caller.data_mut().$fn_name($arg1);
-                        },
-                    ),
-                )?;
-            };
-        }
-        link_call!(sys_halt(exit_code: u32));
-        link_call!(sys_write(offset: u32, length: u32));
-        Ok(())
     }
 
     pub fn resolve_by_index(&self, index: u32) -> Option<&ImportFunc> {

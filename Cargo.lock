@@ -1473,7 +1473,6 @@ dependencies = [
  "strum_macros 0.25.2",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "wat",
- "zktrie",
 ]
 
 [[package]]
@@ -1632,15 +1631,6 @@ checksum = "80792593675e051cf94a4b111980da2ba60d4a83e43e0048c5693baab3977045"
 dependencies = [
  "color_quant",
  "weezl",
-]
-
-[[package]]
-name = "gobuild"
-version = "0.1.0-alpha.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3862,12 +3852,4 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.28",
-]
-
-[[package]]
-name = "zktrie"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/zktrie?tag=v0.6.0#83318659773604fa565e2ebeb810a6d3746f0af4"
-dependencies = [
- "gobuild",
 ]

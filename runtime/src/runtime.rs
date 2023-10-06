@@ -18,19 +18,19 @@ use fluentbase_rwasm::{
     Store,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
     pub(crate) exit_code: i32,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
+    pub(crate) timestamp: u64,
 }
 
 impl RuntimeContext {
     pub fn new(input_data: &[u8]) -> Self {
         Self {
-            exit_code: 0,
             input: input_data.to_vec(),
-            output: Vec::new(),
+            ..Default::default()
         }
     }
 

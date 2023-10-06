@@ -14,27 +14,23 @@ mod tests {
         common::ValueType,
         rwasm::{
             compiler::Compiler,
-            platform::{ImportHandler, ImportLinker},
+            platform::ImportLinker,
             reduced_module::ReducedModule,
             ImportFunc,
         },
+        AsContextMut,
+        Caller,
         Config,
         Engine,
+        Func,
         Linker,
         Store,
     };
-    use alloc::{string::ToString, vec::Vec};
+    use alloc::string::ToString;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
-        return_data: Vec<u8>,
-        exit_code: u32,
-    }
-
-    impl ImportHandler for HostState {
-        fn sys_halt(&mut self, exit_code: u32) {
-            self.exit_code = exit_code;
-        }
+        exit_code: i32,
     }
 
     fn execute_binary(wat: &str) -> HostState {
@@ -46,20 +42,6 @@ mod tests {
             "_sys_halt".to_string(),
             10,
             &[ValueType::I32],
-            &[],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_read".to_string(),
-            11,
-            &[ValueType::I32; 3],
-            &[ValueType::I32; 1],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_evm_return".to_string(),
-            12,
-            &[ValueType::I32; 2],
             &[],
         ));
         let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
@@ -74,8 +56,17 @@ mod tests {
         let mut store = Store::new(&engine, HostState::default());
         let mut linker = Linker::<HostState>::new(&engine);
         let module = reduced_module.to_module(&engine, &mut import_linker);
-        import_linker
-            .attach_linker(&mut linker, &mut store)
+        linker
+            .define(
+                "env",
+                "_sys_halt",
+                Func::wrap(
+                    store.as_context_mut(),
+                    |mut caller: Caller<'_, HostState>, exit_code: i32| {
+                        caller.data_mut().exit_code = exit_code;
+                    },
+                ),
+            )
             .unwrap();
         // run start entrypoint
         linker
@@ -84,6 +75,22 @@ mod tests {
             .start(&mut store)
             .unwrap();
         store.data().clone()
+    }
+
+    #[test]
+    fn test_memory_section() {
+        execute_binary(
+            r#"
+    (module
+      (type (;0;) (func))
+      (func (;0;) (type 0)
+        return
+        )
+      (memory (;0;) 17)
+      (export "main" (func 0))
+      (data (;0;) (i32.const 1048576) "Hello, World"))
+        "#,
+        );
     }
 
     #[test]
@@ -105,8 +112,7 @@ mod tests {
         return
         )
       (memory (;0;) 17)
-      (export "main" (func 0))
-      (data (;0;) (i32.const 1048576) "Hello, World"))
+      (export "main" (func 0)))
         "#,
         );
     }
@@ -130,6 +136,31 @@ mod tests {
         )
       (memory (;0;) 17)
       (export "main" (func 1)))
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_recursive_main_call() {
+        execute_binary(
+            r#"
+    (module
+      (type (;0;) (func))
+      (func (;0;) (type 0)
+        (block $my_block
+          global.get 0
+          i32.const 3
+          i32.gt_u
+          br_if $my_block
+          global.get 0
+          i32.const 1
+          i32.add
+          global.set 0
+          call 0
+          )
+        )
+      (global (;0;) (mut i32) (i32.const 0))
+      (export "main" (func 0)))
         "#,
         );
     }
@@ -177,5 +208,29 @@ mod tests {
         "#,
         );
         assert_eq!(host_state.exit_code, 123);
+    }
+
+    #[test]
+    fn test_call_indirect() {
+        execute_binary(
+            r#"
+    (module
+      (type $check (func (param i32) (param i32) (result i32)))
+      (table funcref (elem $add))
+      (func $main
+        i32.const 100
+        i32.const 20
+        i32.const 0
+        call_indirect (type $check)
+        drop
+        )
+      (func $add (type $check)
+        local.get 0
+        local.get 1
+        i32.add
+        )
+      (export "main" (func $main)))
+        "#,
+        );
     }
 }

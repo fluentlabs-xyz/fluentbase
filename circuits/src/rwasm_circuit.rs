@@ -152,7 +152,7 @@ impl<F: Field> RwasmCircuitConfig<F> {
         });
 
         cb.assert_equal(
-            "field_input=code<<64|code",
+            "field_input=code<<64+aux",
             code.current() * Query::Constant(F::from_u128(0x10000000000000000u128)) + aux.current(),
             field_input.current(),
         );
