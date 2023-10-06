@@ -93,6 +93,10 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
         }
     }
 
+    fn configure_state_transition(_cb: &mut OpConstraintBuilder<F>) {
+        // cb.next_pc_delta(9.expr());
+    }
+
     fn assign_exec_step(
         &self,
         region: &mut Region<'_, F>,

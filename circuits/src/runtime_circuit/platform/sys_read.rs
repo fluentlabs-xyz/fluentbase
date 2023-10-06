@@ -25,8 +25,7 @@ pub struct SysReadGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
     const NAME: &'static str = "WASM_CALL_HOST(_sys_read)";
-    const EXECUTION_STATE: ExecutionState =
-        ExecutionState::WASM_CALL_HOST(SysFuncIdx::IMPORT_SYS_READ);
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_CALL_HOST(SysFuncIdx::SYS_READ);
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let target = cb.query_cell();
@@ -40,7 +39,7 @@ impl<F: Field> ExecutionGadget<F> for SysReadGadget<F> {
 
         // lookup copy table
         cb.copy_lookup(
-            CopyTableTag::Input,
+            CopyTableTag::ReadInput,
             offset.current(),
             target.current(),
             length.current(),
@@ -80,10 +79,11 @@ mod test {
     fn test_read_part() {
         let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let bytecode = instruction_set! {
+            .add_memory(0, &[0; 30])
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -92,22 +92,23 @@ mod test {
     fn test_read_in_one_row() {
         let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let bytecode = instruction_set! {
+            .add_memory(0, &[0; 30])
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(3) // target
             I32Const(3) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(6) // target
             I32Const(6) // offset
             I32Const(3) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
             I32Const(9) // target
             I32Const(9) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -116,10 +117,11 @@ mod test {
     fn test_read_fully() {
         let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let bytecode = instruction_set! {
+            .add_memory(0, &[0; 30])
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(10) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -128,10 +130,11 @@ mod test {
     fn test_read_one_byte() {
         let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let bytecode = instruction_set! {
+            .add_memory(0, &[0; 30])
             I32Const(0) // target
             I32Const(0) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }
@@ -140,10 +143,11 @@ mod test {
     fn test_read_with_offset() {
         let input = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let bytecode = instruction_set! {
+            .add_memory(0, &[0; 30])
             I32Const(0) // target
             I32Const(3) // offset
             I32Const(1) // length
-            Call(SysFuncIdx::IMPORT_SYS_READ)
+            Call(SysFuncIdx::SYS_READ)
         };
         test_ok_with_input(bytecode, input);
     }

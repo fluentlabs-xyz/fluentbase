@@ -17,4 +17,5 @@ pub enum ReducedModuleError {
     BinaryFormat(BinaryFormatError),
 }
 
-pub const MAX_MEMORY_PAGES: u32 = 512;
+pub const N_BYTES_PER_MEMORY_PAGE: u32 = 65536;
+pub const N_MAX_MEMORY_PAGES: u32 = 512;

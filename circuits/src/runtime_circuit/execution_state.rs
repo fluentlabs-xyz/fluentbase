@@ -6,22 +6,22 @@ use strum_macros::EnumIter;
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
 pub enum ExecutionState {
-    WASM_BIN, // DONE
+    WASM_BIN,
     WASM_BREAK,
     WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
-    WASM_CONST,      // DONE
+    WASM_CONST,
     WASM_REFFUNC,
-    WASM_CONVERSION, // DONE
-    WASM_DROP,       // DONE
-    WASM_GLOBAL,     // DONE
+    WASM_CONVERSION,
+    WASM_DROP,
+    WASM_GLOBAL,
     WASM_LOAD,
-    WASM_LOCAL,  // DONE
-    WASM_REL,    // DONE
-    WASM_SELECT, // DONE
-    WASM_STORE,  // DONE
-    WASM_TEST,   // DONE
-    WASM_UNARY,  // DONE
+    WASM_LOCAL,
+    WASM_REL,
+    WASM_SELECT,
+    WASM_STORE,
+    WASM_TEST,
+    WASM_UNARY,
     WASM_TABLE_SIZE,
     WASM_TABLE_FILL,
     WASM_TABLE_GROW,
@@ -29,6 +29,17 @@ pub enum ExecutionState {
     WASM_TABLE_GET,
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
+    WASM_BITWISE,
+    WASM_EXTEND,
+    WASM_MEMORY_COPY,
+    WASM_MEMORY_GROW,
+    WASM_MEMORY_SIZE,
+    WASM_MEMORY_FILL,
+    WASM_MEMORY_INIT,
+    WASM_UNREACHABLE,
+    WASM_CONSUME_FUEL,
+    WASM_SHIFT,
+    WASM_RETURN,
 }
 
 impl ExecutionState {
@@ -57,6 +68,17 @@ impl ExecutionState {
             ExecutionState::WASM_TABLE_INIT => 21,
             ExecutionState::WASM_TABLE_SET => 22,
             ExecutionState::WASM_TABLE_SIZE => 23,
+            ExecutionState::WASM_BITWISE => 24,
+            ExecutionState::WASM_EXTEND => 25,
+            ExecutionState::WASM_MEMORY_COPY => 26,
+            ExecutionState::WASM_MEMORY_GROW => 27,
+            ExecutionState::WASM_MEMORY_SIZE => 28,
+            ExecutionState::WASM_MEMORY_FILL => 29,
+            ExecutionState::WASM_MEMORY_INIT => 30,
+            ExecutionState::WASM_UNREACHABLE => 31,
+            ExecutionState::WASM_CONSUME_FUEL => 32,
+            ExecutionState::WASM_SHIFT => 33,
+            ExecutionState::WASM_RETURN => 34,
         }
     }
 
@@ -86,6 +108,8 @@ impl ExecutionState {
 
     pub fn responsible_opcodes(&self) -> Vec<Instruction> {
         match self {
+            Self::WASM_UNREACHABLE => vec![Instruction::Unreachable],
+            Self::WASM_CONSUME_FUEL => vec![Instruction::ConsumeFuel(Default::default())],
             Self::WASM_BIN => vec![
                 Instruction::I32Add,
                 Instruction::I64Add,
@@ -110,14 +134,12 @@ impl ExecutionState {
                 Instruction::BrAdjustIfNez(Default::default()),
             ],
             Self::WASM_CALL => vec![
-                Instruction::Return(Default::default()),
-                Instruction::ReturnIfNez(Default::default()),
                 Instruction::ReturnCallInternal(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
                 Instruction::CallIndirectUnsafe(Default::default()),
             ],
-            Self::WASM_CALL_HOST(SysFuncIdx::IMPORT_UNKNOWN) => vec![
+            Self::WASM_CALL_HOST(SysFuncIdx::UNKNOWN) => vec![
                 Instruction::ReturnCall(Default::default()),
                 Instruction::Call(Default::default()),
             ],
@@ -160,8 +182,8 @@ impl ExecutionState {
             ],
             Self::WASM_CONVERSION => vec![
                 Instruction::I32WrapI64,
-                Instruction::I64ExtendI32U,
-                Instruction::I64ExtendI32S,
+                // Instruction::I64ExtendI32U,
+                // Instruction::I64ExtendI32S,
             ],
             Self::WASM_GLOBAL => vec![
                 Instruction::GlobalGet(Default::default()),
@@ -188,14 +210,14 @@ impl ExecutionState {
                 Instruction::I64Store8(Default::default()),
                 Instruction::I64Store16(Default::default()),
                 Instruction::I64Store32(Default::default()),
-                Instruction::F32Store(Default::default()),
-                Instruction::F64Store(Default::default()),
+                // Instruction::F32Store(Default::default()),
+                // Instruction::F64Store(Default::default()),
             ],
             Self::WASM_LOAD => vec![
                 Instruction::I32Load(Default::default()),
                 Instruction::I64Load(Default::default()),
-                Instruction::F32Load(Default::default()),
-                Instruction::F64Load(Default::default()),
+                // Instruction::F32Load(Default::default()),
+                // Instruction::F64Load(Default::default()),
                 Instruction::I32Load8S(Default::default()),
                 Instruction::I32Load8U(Default::default()),
                 Instruction::I32Load16S(Default::default()),
@@ -206,6 +228,44 @@ impl ExecutionState {
                 Instruction::I64Load16U(Default::default()),
                 Instruction::I64Load32S(Default::default()),
                 Instruction::I64Load32U(Default::default()),
+            ],
+            Self::WASM_BITWISE => vec![
+                Instruction::I32And,
+                Instruction::I64And,
+                Instruction::I32Or,
+                Instruction::I64Or,
+                Instruction::I32Xor,
+                Instruction::I64Xor,
+            ],
+            Self::WASM_EXTEND => vec![
+                Instruction::I32Extend8S,
+                Instruction::I32Extend16S,
+                Instruction::I64Extend8S,
+                Instruction::I64Extend16S,
+                Instruction::I64Extend32S,
+                Instruction::I64ExtendI32S,
+                Instruction::I64ExtendI32U,
+            ],
+            Self::WASM_SHIFT => vec![
+                Instruction::I32Shl,
+                Instruction::I32ShrS,
+                Instruction::I32ShrU,
+                Instruction::I64Shl,
+                Instruction::I64ShrS,
+                Instruction::I64ShrU,
+                Instruction::I32Rotl,
+                Instruction::I32Rotr,
+                Instruction::I64Rotl,
+                Instruction::I64Rotr,
+            ],
+            Self::WASM_MEMORY_COPY => vec![Instruction::MemoryCopy],
+            Self::WASM_MEMORY_GROW => vec![Instruction::MemoryGrow],
+            Self::WASM_MEMORY_SIZE => vec![Instruction::MemorySize],
+            Self::WASM_MEMORY_FILL => vec![Instruction::MemoryFill],
+            Self::WASM_MEMORY_INIT => vec![Instruction::MemoryInit(Default::default())],
+            Self::WASM_RETURN => vec![
+                Instruction::Return(Default::default()),
+                Instruction::ReturnIfNez(Default::default()),
             ],
             _ => vec![],
         }
@@ -221,18 +281,32 @@ mod test {
 
     #[test]
     fn calc_opcode_coverage() {
-        let mut used_opcodes: HashMap<Instruction, usize> =
-            Instruction::iter().map(|instr| (instr, 0usize)).collect();
+        let mut used_opcodes: HashMap<Instruction, usize> = Instruction::iter()
+            .filter(|instr| {
+                let opcode_str = format!("{:?}", instr);
+                if opcode_str.contains("F32") || opcode_str.contains("F64") {
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|instr| (instr, 0usize))
+            .collect();
         let mut total_used = 0usize;
         for state in ExecutionState::iter() {
             for opcode in state.responsible_opcodes() {
-                let used_opcode = used_opcodes.get_mut(&opcode).unwrap();
+                let used_opcode = used_opcodes.get_mut(&opcode);
+                if used_opcode.is_none() {
+                    panic!("opcode is filtered: {:?}", opcode)
+                }
+                let used_opcode = used_opcode.unwrap();
                 if *used_opcode == 1 {
                     panic!(
                         "opcode ({:?}) is used more than 1 time, its not allowed",
                         opcode
                     )
                 }
+                let _opcode_str = format!("{:?}", opcode);
                 *used_opcode += 1;
                 total_used += 1;
             }
@@ -241,6 +315,12 @@ mod test {
         println!(
             "opcode coverage (based on execution state) is: {}%",
             coverage
-        )
+        );
+        println!("\n not implemented opcodes:");
+        for (opcode, used) in used_opcodes.iter() {
+            if *used == 0 {
+                println!("- {:?}", opcode)
+            }
+        }
     }
 }

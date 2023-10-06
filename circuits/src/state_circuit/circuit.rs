@@ -2,9 +2,9 @@ use crate::{
     constraint_builder::{BinaryQuery, ConstraintBuilder, Query, SelectorColumn},
     exec_step::ExecSteps,
     gadgets::binary_number::{BinaryNumberChip, BinaryNumberConfig},
-    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE},
+    lookup_table::{RangeCheckLookup, RwLookup, N_RW_LOOKUP_TABLE, N_RW_PREV_LOOKUP_TABLE},
     only_once,
-    rw_builder::rw_row::{RwRow, RwTableTag, N_RW_TABLE_TAG_BITS},
+    rw_builder::rw_row::{RwRow, RwTableContextTag, RwTableTag, N_RW_TABLE_TAG_BITS},
     state_circuit::{
         lexicographic_ordering::{LexicographicOrderingConfig, LimbIndex},
         mpi_config::MpiConfig,
@@ -22,6 +22,7 @@ use halo2_proofs::{
 };
 use itertools::Itertools;
 use std::marker::PhantomData;
+use strum::IntoEnumIterator;
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -63,6 +64,9 @@ impl<F: Field> StateCircuitConfig<F> {
         cb.condition(is_tag(RwTableTag::Start), |cb| {
             rw_table.build_start_constraints(cb);
         });
+        cb.condition(is_tag(RwTableTag::Context), |cb| {
+            rw_table.build_context_constraints(cb);
+        });
         cb.condition(is_tag(RwTableTag::Memory), |cb| {
             rw_table.build_memory_constraints(cb);
         });
@@ -102,7 +106,7 @@ impl<F: Field> StateCircuitConfig<F> {
             .rw_counter
             .assign(region, offset, rw_row.rw_counter() as u32)?;
         if let Some(id) = rw_row.id() {
-            self.sort_keys.id.assign(region, offset, id as u32)?;
+            self.sort_keys.id.assign(region, offset, id)?;
         }
         if let Some(address) = rw_row.address() {
             self.sort_keys.address.assign(region, offset, address)?;
@@ -117,11 +121,9 @@ impl<F: Field> StateCircuitConfig<F> {
                 offset,
                 if is_first_access { F::zero() } else { F::one() },
             );
-            self.rw_table
-                .value_prev
-                .assign(region, offset, prev_rw_row.value().to_bits());
         }
-        self.rw_table.assign(region, offset, rw_row);
+        self.rw_table
+            .assign(region, offset, rw_row, prev_rw_row.map(|v| v.value()));
         Ok(())
     }
 
@@ -130,7 +132,25 @@ impl<F: Field> StateCircuitConfig<F> {
         use cli_table::{print_stdout, Cell, Style, Table};
         let table = rw_rows
             .iter()
-            .map(|row| {
+            .copied()
+            .enumerate()
+            .map(|(i, row)| {
+                let prev_value = rw_rows
+                    .get((i as isize - 1) as usize)
+                    .filter(|v| {
+                        v.tag() == row.tag() && v.id() == row.id() && v.address() == row.address()
+                    })
+                    .map(|v| v.value())
+                    .unwrap_or_default();
+                let address = if row.tag() == RwTableTag::Context {
+                    let tag = RwTableContextTag::<u32>::iter()
+                        .filter(|v| Into::<u32>::into(*v) == row.address().unwrap_or_default())
+                        .last()
+                        .unwrap();
+                    format!("{} ({})", tag, row.address().unwrap_or_default())
+                } else {
+                    row.address().unwrap_or_default().to_string()
+                };
                 vec![
                     rw_meta[row.rw_counter()].1.cell().justify(Justify::Center),
                     rw_meta[row.rw_counter()].0.cell().justify(Justify::Center),
@@ -138,11 +158,9 @@ impl<F: Field> StateCircuitConfig<F> {
                     row.is_write().cell().justify(Justify::Center),
                     row.tag().cell().justify(Justify::Center),
                     row.id().unwrap_or_default().cell().justify(Justify::Center),
-                    row.address()
-                        .unwrap_or_default()
-                        .cell()
-                        .justify(Justify::Center),
+                    address.cell().justify(Justify::Center),
                     row.value().to_bits().cell().justify(Justify::Center),
+                    prev_value.to_bits().cell().justify(Justify::Center),
                 ]
             })
             .collect_vec()
@@ -156,6 +174,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 "id".cell().bold(true),
                 "address".cell().bold(true),
                 "value".cell().bold(true),
+                "value_prev".cell().bold(true),
             ])
             .bold(true);
         print_stdout(table).unwrap();
@@ -169,8 +188,10 @@ impl<F: Field> StateCircuitConfig<F> {
         layouter.assign_region(
             || "state runtime opcodes",
             |mut region| {
-                let (mut rw_rows, rw_meta) = exec_steps.get_rw_rows();
-                self.print_rw_rows_table(&rw_rows, rw_meta);
+                let (mut rw_rows, mut rw_meta) = exec_steps.get_rw_rows();
+                rw_rows.insert(0, RwRow::Start { rw_counter: 0 });
+                rw_meta.insert(0, (Instruction::Unreachable, 0));
+                // self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -179,14 +200,15 @@ impl<F: Field> StateCircuitConfig<F> {
                         row.rw_counter(),
                     )
                 });
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
                     if offset > 0 {
-                        self.assign_with_region(
-                            &mut region,
-                            offset,
-                            rw_row,
-                            rw_rows.get(offset - 1),
-                        )?;
+                        let prev_value = rw_rows.get(offset - 1).filter(|v| {
+                            v.tag() == rw_row.tag()
+                                && v.id() == rw_row.id()
+                                && v.address() == rw_row.address()
+                        });
+                        self.assign_with_region(&mut region, offset, rw_row, prev_value)?;
                     } else {
                         self.assign_with_region(&mut region, offset, rw_row, None)?;
                     }
@@ -200,6 +222,18 @@ impl<F: Field> StateCircuitConfig<F> {
 
 impl<F: Field> RwLookup<F> for StateCircuitConfig<F> {
     fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE] {
+        [
+            self.q_enable.current().0,
+            self.rw_table.rw_counter.current(),
+            self.rw_table.is_write.current(),
+            self.rw_table.tag.current(),
+            self.rw_table.id.current(),
+            self.rw_table.address.current(),
+            self.rw_table.value.current(),
+        ]
+    }
+
+    fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE] {
         [
             self.q_enable.current().0,
             self.rw_table.rw_counter.current(),

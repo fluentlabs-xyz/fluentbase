@@ -2,14 +2,14 @@ use crate::{
     arena::ArenaIndex,
     common::{UntypedValue, ValueType},
     engine::{
-        bytecode::{AddressOffset, BranchOffset, Instruction},
+        bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },
-    module::{ConstExpr, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
+    module::{ConstExpr, DataSegment, DataSegmentKind, ElementSegmentKind, ImportName, Imported},
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
-        compiler::sanitizer::Sanitizer,
+        compiler::drop_keep::DropKeepWithReturnParam,
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -18,11 +18,9 @@ use crate::{
     Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
-use byteorder::{BigEndian, ByteOrder};
 use core::ops::Deref;
 
 mod drop_keep;
-mod sanitizer;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -34,6 +32,8 @@ pub enum CompilerError {
     BinaryFormat(BinaryFormatError),
     NotSupportedImport,
     UnknownImport(ImportName),
+    MemoryUsageTooBig,
+    DropKeepOutOfBounds,
 }
 
 pub trait Translator {
@@ -45,10 +45,18 @@ pub struct Compiler<'linker> {
     module: Module,
     // translation state
     pub(crate) code_section: InstructionSet,
-    function_mapping: BTreeMap<u32, u32>,
+    // mapping from function index to its position inside code section
+    function_beginning: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
+    // for automatic translation
     is_translated: bool,
-    sanitizer: Option<Sanitizer>,
+    injection_segments: Vec<Injection>,
+}
+
+#[derive(Debug)]
+pub struct Injection {
+    pub begin: u32,
+    pub end: u32,
 }
 
 impl<'linker> Compiler<'linker> {
@@ -69,14 +77,14 @@ impl<'linker> Compiler<'linker> {
             engine,
             module,
             code_section: InstructionSet::new(),
-            function_mapping: BTreeMap::new(),
+            function_beginning: BTreeMap::new(),
             import_linker,
             is_translated: false,
-            sanitizer: None, //Some(Sanitizer::new()),
+            injection_segments: vec![],
         })
     }
 
-    pub fn translate(&mut self) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, main_index: Option<u32>) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
@@ -90,93 +98,56 @@ impl<'linker> Compiler<'linker> {
             self.translate_table(i as u32)?;
         }
         self.translate_memory()?;
+
         // find main entrypoint (it must starts with `main` keyword)
-        let main_index = self
-            .module
-            .exports
-            .get("main")
-            .ok_or(CompilerError::MissingEntrypoint)?
-            .into_func_idx()
-            .ok_or(CompilerError::MissingEntrypoint)?;
+        let main_index = if main_index.is_none() {
+            self.module
+                .exports
+                .get("main")
+                .ok_or(CompilerError::MissingEntrypoint)?
+                .into_func_idx()
+                .ok_or(CompilerError::MissingEntrypoint)?
+        } else {
+            main_index.unwrap()
+        };
         // translate main entrypoint
-        self.translate_function(main_index)?;
+        self.translate_function(main_index, true)?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
             if i != main_index as usize {
-                self.translate_function(i as u32)?;
+                self.translate_function(i as u32, false)?;
             }
         }
+
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
         self.is_translated = true;
         Ok(())
     }
 
-    pub fn translate_wo_entrypoint(&mut self) -> Result<(), CompilerError> {
-        if self.is_translated {
-            unreachable!("already translated");
+    fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
+        match memory.kind() {
+            DataSegmentKind::Active(seg) => {
+                let data_offset = seg
+                    .offset()
+                    .eval_const()
+                    .ok_or(CompilerError::NotSupported("can't eval offset"))?;
+                if seg.memory_index().into_u32() != 0 {
+                    return Err(CompilerError::NotSupported("not zero index"));
+                }
+                Ok((data_offset, memory.bytes()))
+            }
+            DataSegmentKind::Passive => {
+                Err(CompilerError::NotSupported("passive mode is not supported"))
+            }
         }
-        // translate memory and global first
-        let total_globals = self.module.globals.len();
-        for i in 0..total_globals {
-            self.translate_global(i as u32)?;
-        }
-        self.translate_memory()?;
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            self.translate_function(i as u32)?;
-        }
-        self.is_translated = true;
-        Ok(())
     }
 
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
         for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = match memory.kind() {
-                DataSegmentKind::Active(seg) => {
-                    let data_offset = seg
-                        .offset()
-                        .eval_const()
-                        .ok_or(CompilerError::NotSupported("can't eval offset"))?;
-                    if seg.memory_index().into_u32() != 0 {
-                        return Err(CompilerError::NotSupported("not zero index"));
-                    }
-                    (data_offset, memory.bytes())
-                }
-                DataSegmentKind::Passive => {
-                    return Err(CompilerError::NotSupported("passive mode is not supported"));
-                }
-            };
-            let mut offset = offset.to_bits() as u32;
-            for chunk in bytes.chunks(8) {
-                let (opcode, value) = match chunk.len() {
-                    8 => (
-                        Instruction::I64Store(AddressOffset::from(0)),
-                        BigEndian::read_u64(chunk),
-                    ),
-                    4 => (
-                        Instruction::I64Store32(AddressOffset::from(0)),
-                        BigEndian::read_u32(chunk) as u64,
-                    ),
-                    2 => (
-                        Instruction::I32Store16(AddressOffset::from(0)),
-                        BigEndian::read_u16(chunk) as u64,
-                    ),
-                    1 => (
-                        Instruction::I32Store8(AddressOffset::from(0)),
-                        chunk[0] as u64,
-                    ),
-                    _ => {
-                        unreachable!("not possible chunk len: {}", chunk.len())
-                    }
-                };
-                self.code_section.op_i32_const(offset);
-                self.code_section.op_i64_const(value);
-                self.code_section.push(opcode);
-                offset += chunk.len() as u32;
-            }
+            let (offset, bytes) = Self::read_memory_segment(memory)?;
+            self.code_section.add_memory(offset.to_bits() as u32, bytes);
         }
         Ok(())
     }
@@ -187,8 +158,12 @@ impl<'linker> Compiler<'linker> {
         assert!(global_index < globals.len() as u32);
         let global_inits = &self.module.globals_init;
         assert!(global_index < global_inits.len() as u32);
-        self.code_section
-            .op_i64_const(self.translate_const_expr(&global_inits[global_index as usize])?);
+        let global_expr = &global_inits[global_index as usize];
+        if let Some(value) = global_expr.eval_const() {
+            self.code_section.op_i64_const(value);
+        } else if let Some(value) = global_expr.funcref() {
+            self.code_section.op_ref_func(value.into_u32());
+        }
         self.code_section.op_global_set(global_index);
         Ok(())
     }
@@ -208,9 +183,30 @@ impl<'linker> Compiler<'linker> {
                 "only funcref type is supported for tables",
             ));
         }
-        self.code_section
-            .op_i64_const(table.maximum().unwrap_or_default());
+        let mut table_init_size = 0;
+        for e in self.module.element_segments.iter() {
+            let aes = match &e.kind {
+                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "passive or declared mode for element segments is not supported",
+                    ))
+                }
+                ElementSegmentKind::Active(aes) => aes,
+            };
+            if aes.table_index().into_u32() != table_index {
+                continue;
+            }
+            if e.ty != ValueType::FuncRef {
+                return Err(CompilerError::NotSupported(
+                    "only funcref type is supported for element segments",
+                ));
+            }
+            table_init_size += e.items.items().len();
+        }
+        self.code_section.op_ref_func(0);
+        self.code_section.op_i64_const(table_init_size);
         self.code_section.op_table_grow(table_index);
+        self.code_section.op_drop();
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
                 ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
@@ -229,33 +225,60 @@ impl<'linker> Compiler<'linker> {
                 ));
             }
             let table_idx = self.translate_const_expr(aes.offset())?;
-            for item in e.items.items().iter() {
-                let res = self.translate_const_expr(item)?;
-                self.code_section.op_i64_const(res);
+            for (index, item) in e.items.items().iter().enumerate() {
+                self.code_section.op_i32_const(index as u32);
+                if let Some(value) = item.eval_const() {
+                    self.code_section.op_i64_const(value);
+                } else if let Some(value) = item.funcref() {
+                    self.code_section.op_ref_func(value.into_u32());
+                }
                 self.code_section.op_table_set(table_idx.to_bits() as u32);
             }
         }
         Ok(())
     }
 
-    fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+    fn swap_with_depth(&mut self, depth: u32) {
+        self.code_section.op_local_get(depth + 1);
+        self.code_section.op_local_get(2);
+        self.code_section.op_local_set(depth + 2);
+        self.code_section.op_local_set(1);
+    }
+
+    fn swap(&mut self, param_num: u32) {
+        let injection_start = self.code_section.len();
+        for i in (0..param_num).rev() {
+            self.swap_with_depth(i + 1);
+        }
+        let injection_end = self.code_section.len();
+        self.injection_segments.push(Injection {
+            begin: injection_start,
+            end: injection_end,
+        });
+    }
+
+    fn translate_function(&mut self, fn_index: u32, is_main: bool) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
         if fn_index < import_len as u32 {
             return Ok(());
         }
         let fn_index = fn_index - import_len as u32;
+
+        let func_type = self.module.funcs[fn_index as usize + import_len];
+        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+        let num_inputs = func_type.params();
+        let beginning_offset = self.code_section.len();
+
+        if !is_main {
+            self.swap(num_inputs.len() as u32);
+        }
+
         let func_body = self
             .module
             .compiled_funcs
             .get(fn_index as usize)
             .ok_or(CompilerError::MissingFunction)?;
-        let beginning_offset = self.code_section.len();
-        // ....
-        // let func_type = self.module.funcs[*fn_index as usize + import_len];
-        // let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-        // let num_inputs = func_type.params();
-        // let num_outputs = func_type.results();
 
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
@@ -264,11 +287,13 @@ impl<'linker> Compiler<'linker> {
         });
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
+        let mut offset = 0;
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr)?;
+            self.translate_opcode(&mut instr_ptr, is_main, offset)?;
+            offset += 1;
         }
         // remember function offset in the mapping
-        self.function_mapping.insert(fn_index, beginning_offset);
+        self.function_beginning.insert(fn_index, beginning_offset);
         Ok(())
     }
 
@@ -281,7 +306,21 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn translate_opcode(&mut self, instr_ptr: &mut InstructionPtr) -> Result<(), CompilerError> {
+    fn extract_table(instr_ptr: &mut InstructionPtr) -> TableIdx {
+        instr_ptr.add(1);
+        let next_instr = instr_ptr.get();
+        match next_instr {
+            Instruction::TableGet(table_idx) => *table_idx,
+            _ => unreachable!("incorrect instr after break adjust ({:?})", *next_instr),
+        }
+    }
+
+    fn translate_opcode(
+        &mut self,
+        instr_ptr: &mut InstructionPtr,
+        is_main: bool,
+        _offset: usize,
+    ) -> Result<(), CompilerError> {
         use Instruction as WI;
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
@@ -289,6 +328,9 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
+            // WI::BrIfNez(branch_offset) => {
+            //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
+            // }
             WI::BrAdjustIfNez(branch_offset) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
@@ -301,26 +343,33 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
-            WI::ReturnCallInternal(func) => {
+            WI::ReturnCallInternal(func_idx) => {
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                let fn_index = func.into_usize() as u32;
+                let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_return_call_internal(fn_index);
                 self.code_section.op_return();
             }
             WI::ReturnCall(_func) => {
-                unreachable!("wait, should it call translate host call?");
                 // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                // self.code_section.op_return_call(func);
+                // self.code_section.op_call(func);
                 // self.code_section.op_return();
+                unreachable!("wait, should it call translate host call?");
             }
-            WI::ReturnCallIndirect(sig) => {
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                self.code_section.op_return_call_indirect(sig);
-                self.code_section.op_return();
+            WI::ReturnCallIndirect(_) => {
+                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                // let table_idx = Self::extract_table(instr_ptr);
+                // self.code_section.op_return_call_indirect(table_idx);
+                // self.code_section.op_return();
+                unreachable!("check this")
             }
             WI::Return(drop_keep) => {
-                drop_keep.translate(&mut self.code_section)?;
-                self.code_section.op_return();
+                if is_main {
+                    drop_keep.translate(&mut self.code_section)?;
+                    self.code_section.op_return();
+                } else {
+                    DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
+                    self.code_section.op_br_indirect();
+                }
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -334,8 +383,18 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return_if_nez();
             }
             WI::CallInternal(func_idx) => {
+                let target = self.code_section.len() + 2;
+                self.injection_segments.push(Injection {
+                    begin: self.code_section.len(),
+                    end: self.code_section.len() + 1,
+                });
+                self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
+            }
+            WI::CallIndirect(_) => {
+                let table_idx = Self::extract_table(instr_ptr);
+                self.code_section.op_call_indirect(table_idx);
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
@@ -352,7 +411,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+    fn resolve_host_call(&mut self, fn_index: u32) -> Result<u32, CompilerError> {
         let imports = self.module.imports.items.deref();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
@@ -368,60 +427,53 @@ impl<'linker> Compiler<'linker> {
             .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        self.code_section.op_call(*import_index);
+        Ok(*import_index)
+    }
+
+    fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
+        let import_index = self.resolve_host_call(fn_index)?;
+        self.code_section.op_call(import_index);
         Ok(())
     }
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate()?;
+            self.translate(None)?;
         }
-
         let bytecode = &mut self.code_section;
 
-        if let Some(mut sanitizer) = self.sanitizer.clone() {
-            let import_len = self.module.imports.len_funcs;
-            let bytecode2 = bytecode.instr.clone();
-            let mut iter = bytecode2.iter().enumerate();
-            let mut j = 0;
-            while let Some((i, instr)) = iter.next() {
-                // let is_fn = self.function_mapping.iter().filter(|(_, v)| **v == i as u32).last();
-                // if let Some((fn_index, _)) = is_fn {
-                //     let func_type = self.module.funcs[*fn_index as usize + import_len];
-                //     let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                //     sanitizer.register_internal_fn(&func_type, bytecode, i);
-                //     iter.next();
-                // }
-                let pos = i + j;
-                match instr {
-                    Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
-                        let func_type = self.module.funcs[func.to_u32() as usize + import_len];
-                        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
-                        sanitizer.check_stack_height_call(&instr, &func_type, bytecode, pos);
-                        iter.next();
-                        j += 1;
-                    }
-                    Instruction::Call(func) | Instruction::ReturnCall(func) => {
-                        // we can safely unwrap because we already know that import exists
-                        let import_func = self
-                            .import_linker
-                            .unwrap()
-                            .resolve_by_index(func.to_u32())
-                            .unwrap();
-                        let func_type = import_func.func_type();
-                        sanitizer.check_stack_height_call(&instr, func_type, bytecode, pos);
-                        iter.next();
-                        j += 1;
-                    }
-                    _ => {
-                        if sanitizer.check_stack_height(&instr, bytecode, pos) {
-                            j += 1;
-                        }
-                    }
+        for i in 0..bytecode.len() as usize {
+            match bytecode.instr[i] {
+                Instruction::CallInternal(func) => {
+                    bytecode.instr[i] = Instruction::Br(BranchOffset::from(
+                        self.function_beginning[&func.to_u32()] as i32 - i as i32,
+                    ));
                 }
+                Instruction::Br(offset)
+                | Instruction::BrIfNez(offset)
+                | Instruction::BrAdjust(offset)
+                | Instruction::BrAdjustIfNez(offset)
+                | Instruction::BrIfEqz(offset) => {
+                    let mut offset = offset.to_i32() as u32;
+                    let start = i as u32;
+                    let target = start + offset;
+                    if offset > 0 {
+                        for injection in &self.injection_segments {
+                            if injection.begin < target && start < injection.end {
+                                offset += injection.end - injection.begin;
+                            }
+                        }
+                    } else {
+                        for injection in self.injection_segments.iter().rev() {
+                            if injection.begin < start && target < injection.end {
+                                offset -= injection.end - injection.begin;
+                            }
+                        }
+                    };
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
+                }
+                _ => {}
             }
-            // let (stack_height, max_height) = sanitizer.stack_height();
-            // assert!(stack_height == 0 && max_height < 1024);
         }
 
         let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
@@ -443,7 +495,7 @@ impl<'linker> Compiler<'linker> {
             match code {
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
                     let func_offset = self
-                        .function_mapping
+                        .function_beginning
                         .get(&func.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
                     let state = &states[*func_offset as usize];
@@ -451,13 +503,22 @@ impl<'linker> Compiler<'linker> {
                     affected = true;
                 }
                 Instruction::RefFunc(func_idx) => {
-                    let func_offset = self
-                        .function_mapping
-                        .get(&func_idx.to_u32())
-                        .ok_or(CompilerError::MissingFunction)?;
-                    let state = &states[*func_offset as usize];
-                    code.update_call_index(state.0);
-                    affected = true;
+                    let imports = self.module.imports.items.deref();
+                    // if ref func refers to host call
+                    if func_idx.to_u32() < imports.len() as u32 {
+                        panic!("this is not supported right now, no ref func for host calls")
+                        // let import_index = self.resolve_host_call(func_idx.to_u32())?;
+                        // code.update_call_index(import_index);
+                        // affected = true;
+                    } else {
+                        let func_offset = self
+                            .function_beginning
+                            .get(&func_idx.to_u32())
+                            .ok_or(CompilerError::MissingFunction)?;
+                        let state = &states[*func_offset as usize];
+                        code.update_call_index(state.0);
+                        affected = true;
+                    }
                 }
                 _ => {}
             };
