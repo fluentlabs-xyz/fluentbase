@@ -3,8 +3,8 @@ use crate::{
     engine::bytecode::{InstrMeta, Instruction},
     Extern,
 };
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use core::fmt::{Debug, Formatter};
-use std::{collections::BTreeMap, mem::take};
 
 #[derive(Debug, Clone)]
 pub struct TracerMemoryState {
@@ -21,15 +21,25 @@ pub struct TraceTableState {
 }
 
 #[derive(Debug, Clone)]
+pub struct TraceTableSizeState {
+    pub table_idx: u32,
+    pub delta: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct TracerInstrState {
     pub program_counter: u32,
     pub opcode: Instruction,
     pub memory_changes: Vec<TracerMemoryState>,
     pub table_changes: Vec<TraceTableState>,
+    pub table_size_changes: Vec<TraceTableSizeState>,
     pub stack: Vec<UntypedValue>,
     pub source_pc: u32,
     pub code: u16,
+    pub memory_size: u32,
     pub index: usize,
+    pub consumed_fuel: u64,
+    pub call_id: u32,
 }
 
 #[derive(Debug)]
@@ -52,9 +62,11 @@ pub struct Tracer {
     pub logs: Vec<TracerInstrState>,
     pub memory_changes: Vec<TracerMemoryState>,
     pub table_changes: Vec<TraceTableState>,
+    pub table_size_changes: Vec<TraceTableSizeState>,
     pub fns_meta: Vec<TracerFunctionMeta>,
     pub global_variables: Vec<TracerGlobalVariable>,
     pub extern_names: BTreeMap<u32, String>,
+    pub nested_calls: u32,
 }
 
 impl Debug for Tracer {
@@ -68,6 +80,14 @@ impl Debug for Tracer {
 }
 
 impl Tracer {
+    pub fn merge_nested_call(&mut self, tracer: &Tracer) {
+        self.nested_calls += 1;
+        for mut log in tracer.logs.iter().cloned() {
+            log.call_id = self.nested_calls;
+            self.logs.push(log);
+        }
+    }
+
     pub fn global_memory(&mut self, offset: u32, len: u32, memory: &[u8]) {
         self.global_memory.push(TracerMemoryState {
             offset,
@@ -86,7 +106,8 @@ impl Tracer {
             Extern::Table(_) => {}
             Extern::Memory(_) => {}
             Extern::Func(_) => {
-                self.extern_names.insert(entity_index, name.to_string());
+                self.extern_names
+                    .insert(entity_index, name.clone().into_string());
             }
         }
     }
@@ -97,19 +118,27 @@ impl Tracer {
         opcode: Instruction,
         stack: Vec<UntypedValue>,
         meta: &InstrMeta,
+        memory_size: u32,
+        consumed_fuel: u64,
     ) {
-        let memory_changes = take(&mut self.memory_changes);
-        let table_changes = take(&mut self.table_changes);
+        let memory_changes = core::mem::take(&mut self.memory_changes);
+        let table_changes = core::mem::take(&mut self.table_changes);
+        let table_size_changes = core::mem::take(&mut self.table_size_changes);
         let opcode_state = TracerInstrState {
             program_counter,
             opcode,
             memory_changes,
             table_changes,
+            table_size_changes,
             stack,
             source_pc: meta.offset() as u32,
             code: meta.opcode(),
+            memory_size,
             index: meta.index(),
+            consumed_fuel,
+            call_id: 0,
         };
+        // println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());
     }
 
@@ -149,6 +178,13 @@ impl Tracer {
             table_idx,
             elem_idx,
             func_ref,
+        });
+    }
+
+    pub fn table_size_change(&mut self, table_idx: u32, delta: u32) {
+        self.table_size_changes.push(TraceTableSizeState {
+            table_idx,
+            delta,
         });
     }
 }

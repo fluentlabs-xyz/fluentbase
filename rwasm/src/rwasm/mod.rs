@@ -63,7 +63,7 @@ mod tests {
             &[],
         ));
         let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-        translator.translate().unwrap();
+        translator.translate(None).unwrap();
         let binary = translator.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());

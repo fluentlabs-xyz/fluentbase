@@ -1,13 +1,16 @@
 use crate::{
     exec_step::{ExecStep, GadgetError},
-    rw_builder::rw_row::RwRow,
+    rw_builder::{
+        copy_row::{CopyRow, CopyTableTag},
+        rw_row::{RwRow, RwTableContextTag},
+    },
 };
-use fluentbase_rwasm::RwOp;
+use fluentbase_rwasm::{common::UntypedValue, RwOp};
 
 pub fn build_stack_write_rw_ops(
     step: &mut ExecStep,
     local_depth: usize,
-) -> Result<(), GadgetError> {
+) -> Result<UntypedValue, GadgetError> {
     let addr = step.next_nth_stack_addr(local_depth)?;
     let value = step.next_nth_stack_value(local_depth)?;
     step.rw_rows.push(RwRow::Stack {
@@ -17,10 +20,13 @@ pub fn build_stack_write_rw_ops(
         stack_pointer: addr as usize,
         value,
     });
-    Ok(())
+    Ok(value)
 }
 
-pub fn build_stack_read_rw_ops(step: &mut ExecStep, local_depth: usize) -> Result<(), GadgetError> {
+pub fn build_stack_read_rw_ops(
+    step: &mut ExecStep,
+    local_depth: usize,
+) -> Result<UntypedValue, GadgetError> {
     let addr = step.curr_nth_stack_addr(local_depth)?;
     let value = step.curr_nth_stack_value(local_depth)?;
     step.rw_rows.push(RwRow::Stack {
@@ -30,7 +36,7 @@ pub fn build_stack_read_rw_ops(step: &mut ExecStep, local_depth: usize) -> Resul
         stack_pointer: addr as usize,
         value,
     });
-    Ok(())
+    Ok(value)
 }
 
 pub fn build_global_write_rw_ops(
@@ -78,7 +84,6 @@ pub fn build_memory_write_rw_ops(
             call_id: step.call_id,
             memory_address: addr.as_u64() + (offset + i) as u64,
             value: value_le_bytes[i as usize],
-            length,
             signed: false,
         });
     });
@@ -102,42 +107,62 @@ pub fn build_memory_read_rw_ops(
             call_id: step.call_id,
             memory_address: mem_addr + i as u64,
             value: value_le_bytes[i as usize],
-            length,
             signed,
         });
     });
     Ok(())
 }
 
-pub fn build_table_size_read_rw_ops(
-    step: &mut ExecStep,
-    table_idx: u32,
-) -> Result<(), GadgetError> {
-    let table_size = step.read_table_size(table_idx);
-    step.rw_rows.push(RwRow::Table {
+pub fn build_memory_size_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: true,
+        call_id: step.call_id,
+        tag: RwTableContextTag::MemorySize,
+        value: step.next().map(|t| t.memory_size).unwrap_or_default() as u64,
+    });
+    Ok(())
+}
+
+pub fn build_memory_size_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64,
+        tag: RwTableContextTag::MemorySize,
+        value: step.curr().memory_size as u64,
+    });
+    Ok(())
+}
+
+pub fn build_table_size_read_rw_ops(
+    step: &mut ExecStep,
+    table_index: u32,
+) -> Result<(), GadgetError> {
+    let table_size = step.read_table_size(table_index);
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: false,
+        call_id: step.call_id,
+        tag: RwTableContextTag::TableSize { table_index },
         value: table_size as u64,
-        prev_value: 0,
     });
     Ok(())
 }
 
 pub fn build_table_size_write_rw_ops(
     step: &mut ExecStep,
-    table_idx: u32,
+    table_index: u32,
 ) -> Result<(), GadgetError> {
-    let table_size = step.read_table_size(table_idx);
-    let grow = step.curr_nth_stack_value(1)?;
-    step.rw_rows.push(RwRow::Table {
+    let table_size = step.read_table_size(table_index);
+    let grow = step.curr_nth_stack_value(0)?;
+    println!("DEBUG table size, grow {:#?} {:#?}", table_size, grow);
+    step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64,
+        tag: RwTableContextTag::TableSize { table_index },
         value: (table_size as u32 + grow.as_u32()) as u64,
-        prev_value: table_size as u64,
     });
     Ok(())
 }
@@ -154,7 +179,6 @@ pub fn build_table_elem_read_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
         value: value.as_u32() as u64,
-        prev_value: 0,
     });
     Ok(())
 }
@@ -173,8 +197,167 @@ pub fn build_table_elem_write_rw_ops(
         call_id: step.call_id,
         address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
         value: value.as_u32() as u64,
-        prev_value: 0,
-        // prev_value: prev_value.as_u32() as u64,
+    });
+    Ok(())
+}
+
+pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let len = build_stack_read_rw_ops(step, 0)?;
+    let source = build_stack_read_rw_ops(step, 1)?;
+    let dest = build_stack_read_rw_ops(step, 2)?;
+    // read copied data
+    let mut data = vec![0; len.as_u32() as usize];
+    step.curr_read_memory(source.as_u64(), data.as_mut_ptr(), len.as_u32())?;
+    let copy_rw_counter = step.next_rw_counter();
+    // read result to the memory
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: false,
+            call_id: step.call_id,
+            memory_address: source.as_u64() + i as u64,
+            value: *value,
+            signed: false,
+        });
+    });
+    // write result to the memory
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            memory_address: dest.as_u64() + i as u64,
+            value: *value,
+            signed: false,
+        });
+    });
+    // create copy row
+    step.copy_rows.push(CopyRow {
+        tag: CopyTableTag::CopyMemory,
+        from_address: source.as_u32(),
+        to_address: dest.as_u32(),
+        length: len.as_u32(),
+        rw_counter: copy_rw_counter,
+        data,
+    });
+    Ok(())
+}
+
+pub fn build_memory_fill_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let len = build_stack_read_rw_ops(step, 0)?;
+    let value = build_stack_read_rw_ops(step, 1)?.as_u32() as u8;
+    let dest = build_stack_read_rw_ops(step, 2)?;
+    // remember rw counter before fill
+    let fill_rw_counter = step.next_rw_counter();
+    // read result to the memory
+    (0..len.as_usize()).for_each(|i| {
+        step.rw_rows.push(RwRow::Memory {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            memory_address: dest.as_u64() + i as u64,
+            value,
+            signed: false,
+        });
+    });
+    // create copy row
+    step.copy_rows.push(CopyRow {
+        tag: CopyTableTag::FillMemory,
+        from_address: value as u32,
+        to_address: dest.as_u32(),
+        length: len.as_u32(),
+        rw_counter: fill_rw_counter,
+        data: vec![value; len.as_usize()],
+    });
+    Ok(())
+}
+
+pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<(), GadgetError> {
+    // pop 3 elems from stack
+    let start = build_stack_read_rw_ops(step, 0)?;
+    let value = build_stack_read_rw_ops(step, 2)?;
+    let range = build_stack_read_rw_ops(step, 3)?;
+    // remember rw counter before fill
+    let fill_rw_counter = step.next_rw_counter();
+    // read result to the table
+    (start.as_usize()..(start.as_usize() + range.as_usize())).for_each(|i| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            address: table_index as u64 * 1024 + i as u64,
+            value: value.as_u64(),
+        });
+    });
+    // create copy row
+    step.copy_funrefs.push(CopyRow {
+        tag: CopyTableTag::FillTable,
+        from_address: table_index * 1024 + start.as_u32(),
+        to_address: table_index * 1024 + start.as_u32() + range.as_u32(),
+        length: range.as_u32(),
+        rw_counter: fill_rw_counter,
+        data: vec![value.as_u32(); range.as_usize()],
+    });
+    Ok(())
+}
+
+pub fn build_table_copy_rw_ops(
+    step: &mut ExecStep,
+    table_src: u32,
+    table_dst: u32,
+) -> Result<(), GadgetError> {
+    // pop 2 elems from stack
+    let start = build_stack_read_rw_ops(step, 0)?;
+    let range = build_stack_read_rw_ops(step, 1)?;
+    // read copied data
+    let mut data = vec![0; range.as_u32() as usize];
+    for i in 0..range.as_usize() {
+        data[i] = step.read_table_elem(table_src, i as u32).unwrap().as_u32();
+    }
+    let copy_rw_counter = step.next_rw_counter();
+    // read result to the table
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: false,
+            call_id: step.call_id,
+            address: table_src as u64 * 1024 + start.as_u64() + i as u64,
+            value: *value as u64,
+        });
+    });
+    // write result to the table
+    data.iter().enumerate().for_each(|(i, value)| {
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            address: table_dst as u64 * 1024 + start.as_u64() + i as u64,
+            value: *value as u64,
+        });
+    });
+    // create copy row
+    step.copy_funrefs.push(CopyRow {
+        tag: CopyTableTag::CopyTable,
+        from_address: table_src * 1024,
+        to_address: table_dst * 1024 + start.as_u32(),
+        length: range.as_u32(),
+        rw_counter: copy_rw_counter,
+        data,
+    });
+    Ok(())
+}
+
+pub fn build_consume_fuel_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+    let consumed_fuel = step.curr().consumed_fuel;
+    let fuel = step.instr().aux_value().unwrap_or_default();
+    step.rw_rows.push(RwRow::Context {
+        rw_counter: step.next_rw_counter(),
+        is_write: true,
+        call_id: step.call_id,
+        tag: RwTableContextTag::ConsumedFuel,
+        value: consumed_fuel + fuel.as_u64(),
     });
     Ok(())
 }
@@ -207,6 +390,12 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
                 signed,
             } => {
                 build_memory_read_rw_ops(step, offset, length, signed)?;
+            }
+            RwOp::MemorySizeWrite => {
+                build_memory_size_write_rw_ops(step)?;
+            }
+            RwOp::MemorySizeRead => {
+                build_memory_size_read_rw_ops(step)?;
             }
             RwOp::TableSizeRead(table_idx) => {
                 build_table_size_read_rw_ops(step, table_idx)?;

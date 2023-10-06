@@ -6,7 +6,7 @@ use crate::{
         platform::ImportLinker,
         reduced_module::{
             reader::ReducedModuleReader,
-            types::{ReducedModuleError, MAX_MEMORY_PAGES},
+            types::{ReducedModuleError, N_MAX_MEMORY_PAGES},
         },
     },
     Engine,
@@ -42,7 +42,7 @@ impl ReducedModule {
     }
 
     pub fn to_module(&self, engine: &Engine, import_linker: &ImportLinker) -> Module {
-        let builder = self.to_module_builder(engine, import_linker);
+        let builder = self.to_module_builder(engine, import_linker, FuncType::new([], []));
         builder.finish()
     }
 
@@ -50,6 +50,7 @@ impl ReducedModule {
         &'a self,
         engine: &'a Engine,
         import_linker: &ImportLinker,
+        func_type: FuncType,
     ) -> ModuleBuilder {
         let mut builder = ModuleBuilder::new(engine);
 
@@ -68,7 +69,7 @@ impl ReducedModule {
                 };
                 FuncTypeIdx::from(func_type_idx as u32)
             };
-        get_func_type_or_create(FuncType::new([], []), &mut builder);
+        get_func_type_or_create(func_type, &mut builder);
 
         let mut code_section = self.bytecode().clone();
 
@@ -147,7 +148,7 @@ impl ReducedModule {
         }
         // allocate default memory
         builder
-            .push_default_memory(MAX_MEMORY_PAGES, Some(MAX_MEMORY_PAGES))
+            .push_default_memory(0, Some(N_MAX_MEMORY_PAGES))
             .unwrap();
         builder
             .push_export("memory".to_string().into_boxed_str(), MemoryIdx::from(0))

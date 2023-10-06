@@ -13,16 +13,16 @@ use crate::{
             InstrMeta,
             Instruction,
             LocalDepth,
-            SignatureIdx,
             TableIdx,
         },
         CompiledFunc,
         ConstRef,
         DropKeep,
     },
-    rwasm::{BinaryFormat, BinaryFormatWriter},
+    rwasm::{BinaryFormat, BinaryFormatWriter, N_BYTES_PER_MEMORY_PAGE, N_MAX_MEMORY_PAGES},
 };
 use alloc::{slice::SliceIndex, vec::Vec};
+use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct InstructionSet {
@@ -30,10 +30,13 @@ pub struct InstructionSet {
     pub metas: Option<Vec<InstrMeta>>,
     // translate state
     total_locals: Vec<usize>,
+    init_memory_size: u32,
+    init_memory_pages: u32,
 }
 
 impl Into<Vec<u8>> for InstructionSet {
-    fn into(self) -> Vec<u8> {
+    fn into(mut self) -> Vec<u8> {
+        self.finalize(true);
         let mut buffer = vec![0; 65536 * 2];
         let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
         let n = self.write_binary(&mut binary_writer).unwrap();
@@ -72,6 +75,8 @@ impl From<Vec<Instruction>> for InstructionSet {
             instr: value,
             metas: None,
             total_locals: vec![],
+            init_memory_size: 0,
+            init_memory_pages: 0,
         }
     }
 }
@@ -98,6 +103,46 @@ impl InstructionSet {
         };
         assert_eq!(self.instr.len(), metas_len, "instr len and meta mismatched");
         opcode_pos
+    }
+
+    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
+        // make sure we have enough allocated memory
+        let new_size = self.init_memory_size + bytes.len() as u32;
+        let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
+        if total_pages > N_MAX_MEMORY_PAGES {
+            return false;
+        } else if total_pages > self.init_memory_pages {
+            self.op_i32_const(total_pages - self.init_memory_pages);
+            self.op_memory_grow();
+            self.op_drop();
+        }
+        self.init_memory_size += bytes.len() as u32;
+        self.init_memory_pages = total_pages;
+        // translate input bytes
+        [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
+            let mut it = bytes.chunks_exact(chunk_size);
+            while let Some(chunk) = it.next() {
+                let value = match chunk_size {
+                    8 => LittleEndian::read_u64(chunk),
+                    4 => LittleEndian::read_u32(chunk) as u64,
+                    2 => LittleEndian::read_u16(chunk) as u64,
+                    1 => chunk[0] as u64,
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                };
+                self.op_i32_const(offset);
+                self.op_i64_const(value);
+                match chunk_size {
+                    8 => self.op_i64_store(0u32),
+                    4 => self.op_i32_store(0u32),
+                    2 => self.op_i32_store16(0u32),
+                    1 => self.op_i64_store8(0u32),
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                }
+                offset += chunk_size as u32;
+            }
+            bytes = it.remainder();
+        });
+        return true;
     }
 
     pub fn propagate_locals(&mut self, n: usize) {
@@ -211,13 +256,15 @@ impl InstructionSet {
     impl_opcode!(op_unreachable, Unreachable);
     impl_opcode!(op_consume_fuel, ConsumeFuel(BlockFuel));
     impl_opcode!(op_return, Return, DropKeep::none());
+    impl_opcode!(op_br_indirect, BrIndirect);
+
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
-    impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
+    impl_opcode!(op_return_call_indirect, ReturnCallIndirectUnsafe(TableIdx));
     impl_opcode!(op_call_internal, CallInternal(CompiledFunc));
     impl_opcode!(op_call, Call(FuncIdx));
-    impl_opcode!(op_call_indirect, CallIndirect(SignatureIdx));
+    impl_opcode!(op_call_indirect, CallIndirectUnsafe(TableIdx));
     impl_opcode!(op_drop, Drop);
     impl_opcode!(op_select, Select);
     impl_opcode!(op_global_get, GlobalGet(GlobalIdx));

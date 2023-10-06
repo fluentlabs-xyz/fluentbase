@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { path = "../../sdk", default-features = false }
 fluentbase-rwasm = { path = "../../rwasm", default-features = false }
+revm = { version = "3.3.0", default-features = false }
+revm-primitives = { version = "1.1.2", default-features = false }
+revm-interpreter = { version = "1.1.2", default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
@@ -13,4 +16,6 @@ crate-type = ["cdylib"]
 [features]
 greeting = []
 panic = []
-translator = []
+rwasm = []
+evm = []
+wasi = []

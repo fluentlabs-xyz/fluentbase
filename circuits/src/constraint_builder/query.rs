@@ -9,6 +9,7 @@ use halo2_proofs::{
     plonk::{Advice, Challenge, Column, Expression, Fixed, Instance, VirtualCells},
     poly::Rotation,
 };
+use num_bigint::BigUint;
 
 #[derive(Clone, Copy)]
 pub enum ColumnType {
@@ -27,6 +28,12 @@ pub enum Query<F: Field> {
     Neg(Box<Self>),
     Add(Box<Self>, Box<Self>),
     Mul(Box<Self>, Box<Self>),
+}
+
+impl<F: Field> Default for Query<F> {
+    fn default() -> Self {
+        Self::Constant(F::zero())
+    }
 }
 
 impl<F: Field> Query<F> {
@@ -63,6 +70,18 @@ impl<F: Field> Query<F> {
 impl<F: Field> From<u64> for Query<F> {
     fn from(x: u64) -> Self {
         Self::Constant(F::from(x))
+    }
+}
+
+pub fn bn_to_field<F: Field>(bn: &BigUint) -> F {
+    let mut bytes = bn.to_bytes_le();
+    bytes.resize(64, 0);
+    F::from_bytes_wide(&bytes.try_into().unwrap())
+}
+
+impl<F: Field> Query<F> {
+    pub fn from_bn(x: &BigUint) -> Self {
+        Self::Constant(bn_to_field(x))
     }
 }
 
@@ -107,6 +126,14 @@ impl<F: Field, T: Into<Query<F>>> std::ops::Mul<T> for Query<F> {
 }
 
 pub trait ToExpr {
+    type Guard<F: Field>: Field = F;
+
+    unsafe fn cast_query<F: Field>(a: &Query<Self::Guard<F>>) -> &Query<F> {
+        use std::any::TypeId;
+        assert_eq!(TypeId::of::<Self::Guard<F>>(), TypeId::of::<F>());
+        &*( a as *const Query<Self::Guard<F>> as *const Query<F> )
+    }
+
     fn expr<F: Field>(&self) -> Query<F>;
 
     fn query<F: Field>(&self) -> Query<F> {
@@ -116,6 +143,27 @@ pub trait ToExpr {
 
 #[macro_export]
 macro_rules! impl_expr {
+    (RwTableContextTag<Q>) => {
+        impl<_F: $crate::util::Field> $crate::constraint_builder::ToExpr
+          for RwTableContextTag<$crate::constraint_builder::Query<_F>> {
+            type Guard<F: $crate::util::Field> = _F;
+            fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
+                // Using tricky solution where `_F` and `F` types must be same.
+                // TODO: solve problems without tricks.
+                use $crate::constraint_builder::ToExpr;
+                use $crate::util::Field;
+                use $crate::constraint_builder::Query;
+                use RwTableContextTag::*;
+                let variant = Into::<u32>::into(self.clone());
+                match self {
+                    TableSize { table_index: query } => {
+                        variant.expr() + unsafe { Self::cast_query(query) }.clone()
+                    }
+                    _ => $crate::constraint_builder::Query::from(variant as u64)
+                }
+            }
+        }
+    };
     ($ty:ty) => {
         impl $crate::constraint_builder::ToExpr for $ty {
             fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {

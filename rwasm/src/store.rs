@@ -308,7 +308,7 @@ impl StoreInner {
     /// # Panics
     ///
     /// If the [`Stored<Idx>`] does not originate from this [`Store`].
-    fn unwrap_stored<Idx>(&self, stored: &Stored<Idx>) -> Idx
+    pub(crate) fn unwrap_stored<Idx>(&self, stored: &Stored<Idx>) -> Idx
     where
         Idx: ArenaIndex + Debug,
     {
@@ -1012,6 +1012,10 @@ impl<'a, T> StoreContextMut<'a, T> {
     /// Returns the underlying [`Engine`] this store is connected to.
     pub fn engine(&self) -> &Engine {
         self.store.engine()
+    }
+
+    pub fn tracer_mut(&mut self) -> &mut Tracer {
+        self.store.tracer_mut()
     }
 
     /// Access the underlying data owned by this store.

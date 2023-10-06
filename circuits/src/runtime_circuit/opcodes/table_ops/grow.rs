@@ -1,11 +1,12 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::rw_row::RwTableContextTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -32,9 +33,15 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         let grow_val = cb.query_cell();
         let res_val = cb.query_cell();
         cb.require_opcode(Instruction::TableGrow(Default::default()));
-        cb.stack_pop(init_val.current());
         cb.stack_pop(grow_val.current());
+        cb.stack_pop(init_val.current());
         //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
+        cb.context_lookup(
+            RwTableContextTag::TableSize { table_index: table_index.current() },
+            1.expr(),
+            res_val.current() + grow_val.current(),
+            res_val.current(),
+        );
         cb.stack_push(res_val.current());
         Self {
             table_index,
@@ -54,8 +61,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         let (table_index, init_val, grow_val, res_val) = match trace.instr() {
             Instruction::TableGrow(ti) => (
                 ti,
-                trace.curr_nth_stack_value(0)?,
                 trace.curr_nth_stack_value(1)?,
+                trace.curr_nth_stack_value(0)?,
                 trace.next_nth_stack_value(0)?,
             ),
             _ => bail_illegal_opcode!(trace),
@@ -66,6 +73,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
             .assign(region, offset, F::from(init_val.to_bits()));
         self.grow_val
             .assign(region, offset, F::from(grow_val.to_bits()));
+        println!("TABLE GROW DEBUG, res_val {:#?}", res_val);
         self.res_val
             .assign(region, offset, F::from(res_val.to_bits()));
         Ok(())
@@ -86,4 +94,19 @@ mod test {
             Drop
         });
     }
+
+    #[test]
+    fn table_two_times_grow() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(3)
+            TableGrow(0)
+            Drop
+        });
+    }
+
 }

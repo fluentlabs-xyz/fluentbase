@@ -11,19 +11,29 @@ pub trait RangeCheckLookup<F: Field> {
     fn lookup_u16_table(&self) -> [Query<F>; N_RANGE_CHECK_LOOKUP_TABLE];
 }
 
+pub const N_BITWISE_CHECK_LOOKUP_TABLE: usize = 3;
+
+pub trait BitwiseCheckLookup<F: Field> {
+    fn lookup_and(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+    fn lookup_or(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+    fn lookup_xor(&self) -> [Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE];
+}
+
 pub const N_RWASM_LOOKUP_TABLE: usize = 4;
 
 pub trait RwasmLookup<F: Field> {
     fn lookup_rwasm_table(&self) -> [Query<F>; N_RWASM_LOOKUP_TABLE];
 }
 
-pub const N_RW_LOOKUP_TABLE: usize = 8;
+pub const N_RW_LOOKUP_TABLE: usize = 7;
+pub const N_RW_PREV_LOOKUP_TABLE: usize = 8;
 
 pub trait RwLookup<F: Field> {
     fn lookup_rw_table(&self) -> [Query<F>; N_RW_LOOKUP_TABLE];
+    fn lookup_rw_prev_table(&self) -> [Query<F>; N_RW_PREV_LOOKUP_TABLE];
 }
 
-pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 3;
+pub const N_RESPONSIBLE_OPCODE_LOOKUP_TABLE: usize = 2;
 
 pub trait ResponsibleOpcodeLookup<F: Field> {
     fn lookup_responsible_opcode_table(&self) -> [Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE];
@@ -53,11 +63,15 @@ pub trait CopyLookup<F: Field> {
 pub enum LookupTable<F: Field> {
     Rwasm([Query<F>; N_RWASM_LOOKUP_TABLE]),
     Rw([Query<F>; N_RW_LOOKUP_TABLE]),
+    RwPrev([Query<F>; N_RW_PREV_LOOKUP_TABLE]),
     ResponsibleOpcode([Query<F>; N_RESPONSIBLE_OPCODE_LOOKUP_TABLE]),
     RangeCheck7([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck8([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck10([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
     RangeCheck16([Query<F>; N_RANGE_CHECK_LOOKUP_TABLE]),
+    BitwiseAnd([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
+    BitwiseOr([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
+    BitwiseXor([Query<F>; N_BITWISE_CHECK_LOOKUP_TABLE]),
     Fixed([Query<F>; N_FIXED_LOOKUP_TABLE]),
     PublicInput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),
     PublicOutput([Query<F>; N_PUBLIC_INPUT_LOOKUP_TABLE]),

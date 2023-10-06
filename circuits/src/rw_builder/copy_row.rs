@@ -5,9 +5,17 @@ use strum_macros::EnumIter;
 #[derive(Debug, Clone, Copy, EnumIter)]
 pub enum CopyTableTag {
     // copy from input to memory (_sys_read)
-    Input = 1,
+    ReadInput = 1,
     // copy from memory to output (_sys_write)
-    Output,
+    WriteOutput,
+    // copy from memory to memory
+    CopyMemory,
+    // fill memory
+    FillMemory,
+    // fill table
+    FillTable,
+    // copy table
+    CopyTable,
 }
 
 impl_expr!(CopyTableTag);
@@ -15,8 +23,12 @@ impl_expr!(CopyTableTag);
 impl fmt::Display for CopyTableTag {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            CopyTableTag::Input => write!(f, "Input"),
-            CopyTableTag::Output => write!(f, "Output"),
+            CopyTableTag::ReadInput => write!(f, "ReadInput"),
+            CopyTableTag::WriteOutput => write!(f, "WriteOutput"),
+            CopyTableTag::CopyMemory => write!(f, "CopyMemory"),
+            CopyTableTag::FillMemory => write!(f, "FillMemory"),
+            CopyTableTag::FillTable => write!(f, "FillTable"),
+            CopyTableTag::CopyTable => write!(f, "CopyTable"),
         }
     }
 }
@@ -27,14 +39,21 @@ impl Into<usize> for CopyTableTag {
     }
 }
 
-pub const N_COPY_TABLE_TAG_BITS: usize = 2;
+pub const N_COPY_TABLE_TAG_BITS: usize = 3;
 
 #[derive(Debug, Clone)]
-pub struct CopyRow {
+pub struct CopyRow<T> {
     pub tag: CopyTableTag,
     pub from_address: u32,
     pub to_address: u32,
     pub length: u32,
     pub rw_counter: usize,
-    pub data: Vec<u8>,
+    pub data: Vec<T>,
 }
+
+pub type CopyRowU8 = CopyRow<u8>;
+
+
+
+
+

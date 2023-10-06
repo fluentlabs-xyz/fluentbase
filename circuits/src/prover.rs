@@ -103,15 +103,15 @@ fn test_actual<C: Circuit<Fr>>(
     }
 
     let general_params = get_general_params(degree);
-    // println!("general params: {:?}", general_params);
+    // debug!("general params: {:?}", general_params);
     let verifier_params: ParamsVerifierKZG<Bn256> = general_params.verifier_params().clone();
-    // println!("verifier params: {:?}", verifier_params);
+    // debug!("verifier params: {:?}", verifier_params);
 
     let transcript = Blake2bWrite::<_, G1Affine, Challenge255<_>>::init(vec![]);
 
     // change instace to slice
     let instance: Vec<&[Fr]> = instance.iter().map(|v| v.as_slice()).collect();
-    // println!("instance: {:?}", instance);
+    // debug!("instance: {:?}", instance);
 
     let start = Instant::now();
     let proof = test_gen_proof(
@@ -123,7 +123,7 @@ fn test_actual<C: Circuit<Fr>>(
         &instance,
     );
     let elapsed = start.elapsed();
-    // println!("proof: {:?}", proof);
+    // debug!("proof: {:?}", proof);
 
     let verifying_key = proving_key.get_vk();
     test_verify(
@@ -133,7 +133,7 @@ fn test_actual<C: Circuit<Fr>>(
         &proof,
         &instance,
     );
-    // println!("proof verified");
+    // debug!("proof verified");
 
     elapsed.as_millis() as u64
 }

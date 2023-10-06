@@ -11,7 +11,7 @@ use crate::engine::{
     Engine,
 };
 use alloc::vec::Vec;
-use std::mem::take;
+use core::mem::take;
 
 /// A reference to an instruction of the partially
 /// constructed function body of the [`InstructionsBuilder`].
