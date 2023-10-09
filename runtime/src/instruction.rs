@@ -1,3 +1,4 @@
+pub use crate::zktrie::*;
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 
@@ -218,5 +219,3 @@ pub(crate) fn evm_return(
     caller.data_mut().return_data(memory.as_slice());
     Ok(())
 }
-
-pub use crate::zktrie::*;

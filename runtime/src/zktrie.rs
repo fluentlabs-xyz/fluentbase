@@ -155,7 +155,8 @@ macro_rules! impl_get {
         pub fn $fn_name(
             mut caller: Caller<'_, RuntimeContext>,
             key_offset: i32,
-        ) -> Result<[u8; FIELDSIZE], Trap> {
+            output_offset: i32,
+        ) -> Result<(), Trap> {
             let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
 
             let trie = zktrie_get(&TRIE_ID_DEFAULT)?;
@@ -164,7 +165,10 @@ macro_rules! impl_get {
                 return Err(Trap::new(format!("failed to get value")));
             }
 
-            Ok($data_fetcher(&data.unwrap()))
+            let data = $data_fetcher(&data.unwrap());
+            caller.write_memory(output_offset as usize, data.as_slice());
+
+            Ok(())
         }
     };
 }
