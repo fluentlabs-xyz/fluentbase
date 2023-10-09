@@ -66,13 +66,14 @@ lazy_static! {
 }
 
 type TrieId = i32;
+const TRIE_ID_DEFAULT: i32 = 1;
 thread_local! {
     static ZK_MEMORY_DB: RefCell<ZkMemoryDb> = RefCell::new(ZkMemoryDb::new());
-    static LAST_TRIE_ID: RefCell<TrieId> = RefCell::new(0);
+    static LAST_TRIE_ID: RefCell<TrieId> = RefCell::new(1);
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn zktrie_new_trie(
+pub(crate) fn zktrie_open(
     mut _caller: Option<Caller<'_, RuntimeContext>>,
     // root: &Hash,
 ) -> Result<TrieId, Trap> {
@@ -81,10 +82,11 @@ pub(crate) fn zktrie_new_trie(
         let t = db.borrow_mut().new_trie(&root);
         if let Some(t) = t {
             let trie_id = LAST_TRIE_ID.take();
+            if trie_id != TRIE_ID_DEFAULT {
+                return Err(Trap::new("only 1 trie allowed right now"));
+            }
             TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(t))));
-            LAST_TRIE_ID.with_borrow_mut(|v| {
-                *v = *v + 1;
-            });
+            LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
             return Ok(trie_id);
         }
         Err(Trap::new("failed to init new trie"))
@@ -102,45 +104,43 @@ pub(crate) fn zktrie_get(id: &TrieId) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
     })
 }
 
-fn get_or_default_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> AccountData {
+fn get_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<AccountData> {
     let acc_data = trie.get_account(&key);
     if let Some(ad) = acc_data {
-        ad
-    } else {
-        AccountData::default()
+        return Some(ad);
     }
+    return None;
 }
 
-fn get_or_default_store_data(key: &[u8], trie: RefMut<ZkTrie>) -> StoreData {
+fn get_store_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<StoreData> {
     let acc_data = trie.get_store(&key);
     if let Some(ad) = acc_data {
-        ad
-    } else {
-        StoreData::default()
+        return Some(ad);
     }
+    return None;
 }
 
-macro_rules! impl_account_update {
-    ($fn_name:ident, $extractor:ident, $field_updater:ident, $trie_updater:ident, ) => {
-        pub(crate) fn $fn_name(
+macro_rules! impl_update {
+    ($fn_name:ident, $data_extractor:ident, $field_updater:ident, $trie_updater:ident, ) => {
+        pub fn $fn_name(
             mut caller: Caller<'_, RuntimeContext>,
-            trie_id: TrieId,
             key_offset: i32,
             value_offset: i32,
         ) -> Result<(), Trap> {
             let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
-            let nonce = exported_memory_vec(&mut caller, value_offset as usize, FIELDSIZE);
+            let value = exported_memory_vec(&mut caller, value_offset as usize, FIELDSIZE);
 
-            let trie = zktrie_get(&trie_id)?;
-            let mut data = $extractor(&key, trie.borrow_mut());
-            let mut nonce_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
+            let trie = zktrie_get(&TRIE_ID_DEFAULT)?;
+            let data = $data_extractor(&key, trie.borrow_mut());
+            let mut data = data.unwrap_or(Default::default());
+            let mut field_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
             // TODO BE or LE?
-            nonce_array[FIELDSIZE - nonce.len()..FIELDSIZE].copy_from_slice(nonce.as_slice());
-            $field_updater(&mut data, &nonce_array);
+            field_array[FIELDSIZE - value.len()..FIELDSIZE].copy_from_slice(value.as_slice());
+            $field_updater(&mut data, &field_array);
             let res = trie.borrow_mut().$trie_updater(&key, &data);
             if res.is_err() {
                 return Err(Trap::new(format!(
-                    "failed to update account nonce: {}",
+                    "failed to update value: {}",
                     res.err().unwrap().to_string()
                 )));
             }
@@ -149,132 +149,117 @@ macro_rules! impl_account_update {
         }
     };
 }
-impl_account_update!(
-    zktrie_update_nonce,
-    get_or_default_account_data,
-    update_nonce,
-    update_account,
-);
-impl_account_update!(
-    zktrie_update_balance,
-    get_or_default_account_data,
-    update_balance,
-    update_account,
-);
-impl_account_update!(
-    zktrie_update_storage_root,
-    get_or_default_account_data,
-    update_storage_root,
-    update_account,
-);
-impl_account_update!(
-    zktrie_update_code_hash,
-    get_or_default_account_data,
-    update_code_hash,
-    update_account,
-);
-impl_account_update!(
-    zktrie_update_code_size,
-    get_or_default_account_data,
-    update_code_size,
-    update_account,
-);
 
-impl_account_update!(
-    zktrie_update_store,
-    get_or_default_store_data,
-    update_store,
-    update_store,
-);
+macro_rules! impl_get {
+    ($fn_name:ident, $data_extractor:ident, $data_fetcher:ident, ) => {
+        pub fn $fn_name(
+            mut caller: Caller<'_, RuntimeContext>,
+            key_offset: i32,
+        ) -> Result<[u8; FIELDSIZE], Trap> {
+            let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
 
-pub(crate) fn zktrie_update_nonce_(
-    // mut caller: Caller<'_, RuntimeContext>,
-    trie_id: TrieId,
-    // key_offset: i32,
-    // value_offset: i32,
-    key: Vec<u8>,
-    nonce: Vec<u8>,
-) -> Result<(), Trap> {
-    // let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
-    // let nonce = exported_memory_vec(&mut caller, value_offset as usize, FIELDSIZE);
+            let trie = zktrie_get(&TRIE_ID_DEFAULT)?;
+            let data = $data_extractor(&key, trie.borrow_mut());
+            if !data.is_some() {
+                return Err(Trap::new(format!("failed to get value")));
+            }
 
-    let trie = zktrie_get(&trie_id)?;
-    let mut acc_data = get_or_default_account_data(&key, trie.borrow_mut());
-    let mut nonce_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
-    // TODO BE or LE?
-    nonce_array[FIELDSIZE - nonce.len()..FIELDSIZE].copy_from_slice(nonce.as_slice());
-    update_nonce(&mut acc_data, &nonce_array);
-    let res = trie.borrow_mut().update_account(&key, &acc_data);
-    if res.is_err() {
-        return Err(Trap::new(format!(
-            "failed to update account nonce: {}",
-            res.err().unwrap().to_string()
-        )));
-    }
-
-    Ok(())
-}
-
-pub(crate) fn zktrie_update_store_(
-    // mut caller: Caller<'_, RuntimeContext>,
-    trie_id: TrieId,
-    // key_offset: i32,
-    // value_offset: i32,
-    key: Vec<u8>,
-    nonce: Vec<u8>,
-) -> Result<(), Trap> {
-    // let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
-    // let nonce = exported_memory_vec(&mut caller, value_offset as usize, FIELDSIZE);
-
-    let trie = zktrie_get(&trie_id)?;
-    let mut data = get_or_default_store_data(&key, trie.borrow_mut());
-    let mut nonce_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
-    // TODO BE or LE?
-    nonce_array[FIELDSIZE - nonce.len()..FIELDSIZE].copy_from_slice(nonce.as_slice());
-    update_store(&mut data, &nonce_array);
-    let res = trie.borrow_mut().update_store(&key, &data);
-    if res.is_err() {
-        return Err(Trap::new(format!(
-            "failed to update account nonce: {}",
-            res.err().unwrap().to_string()
-        )));
-    }
-
-    Ok(())
+            Ok($data_fetcher(&data.unwrap()))
+        }
+    };
 }
 
 fn update_nonce(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[0] = *v;
 }
+fn fetch_nonce(data: &AccountData) -> [u8; FIELDSIZE] {
+    data[0]
+}
 
 fn update_balance(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[1] = *v;
+}
+fn fetch_balance(data: &AccountData) -> [u8; FIELDSIZE] {
+    data[1]
 }
 
 fn update_storage_root(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[2] = *v;
 }
+fn fetch_storage_root(data: &AccountData) -> [u8; FIELDSIZE] {
+    data[2]
+}
 
 fn update_code_hash(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[3] = *v;
+}
+fn fetch_code_hash(data: &AccountData) -> [u8; FIELDSIZE] {
+    data[3]
 }
 
 fn update_code_size(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[4] = *v;
 }
+fn fetch_code_size(data: &AccountData) -> [u8; FIELDSIZE] {
+    data[4]
+}
 
 fn update_store(data: &mut StoreData, v: &[u8; FIELDSIZE]) {
     *data = *v;
 }
-
-#[cfg(test)]
-mod zktrie_tests {
-    use crate::zktrie::{zktrie_new_trie, zktrie_update_nonce_};
-
-    #[test]
-    pub fn test() {
-        let trie_id = zktrie_new_trie(None).unwrap();
-        let res = zktrie_update_nonce_(trie_id, [1; 32].to_vec(), vec![12]);
-        res.unwrap();
-    }
+fn fetch_store(data: &StoreData) -> [u8; FIELDSIZE] {
+    *data
 }
+
+impl_update!(
+    zktrie_update_nonce,
+    get_account_data,
+    update_nonce,
+    update_account,
+);
+impl_update!(
+    zktrie_update_balance,
+    get_account_data,
+    update_balance,
+    update_account,
+);
+impl_update!(
+    zktrie_update_storage_root,
+    get_account_data,
+    update_storage_root,
+    update_account,
+);
+impl_update!(
+    zktrie_update_code_hash,
+    get_account_data,
+    update_code_hash,
+    update_account,
+);
+impl_update!(
+    zktrie_update_code_size,
+    get_account_data,
+    update_code_size,
+    update_account,
+);
+
+// account gets
+impl_get!(zktrie_get_nonce, get_account_data, fetch_nonce,);
+impl_get!(zktrie_get_balance, get_account_data, fetch_balance,);
+impl_get!(
+    zktrie_get_storage_root,
+    get_account_data,
+    fetch_storage_root,
+);
+impl_get!(zktrie_get_code_hash, get_account_data, fetch_code_hash,);
+impl_get!(zktrie_get_code_size, get_account_data, fetch_code_size,);
+
+// store updates
+impl_update!(
+    zktrie_update_store,
+    get_store_data,
+    update_store,
+    update_store,
+);
+
+// store gets
+impl_get!(zktrie_get_store, get_store_data, fetch_store,);
