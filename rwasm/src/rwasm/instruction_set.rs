@@ -36,7 +36,7 @@ pub struct InstructionSet {
 
 impl Into<Vec<u8>> for InstructionSet {
     fn into(mut self) -> Vec<u8> {
-        self.finalize();
+        self.finalize(true);
         let mut buffer = vec![0; 65536 * 2];
         let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
         let n = self.write_binary(&mut binary_writer).unwrap();
@@ -178,12 +178,15 @@ impl InstructionSet {
             .unwrap_or_default()
     }
 
-    pub fn finalize(&mut self) {
+    pub fn finalize(&mut self, inject_return: bool) {
         // 0 means there is no locals, 1 means main locals, 1+ means error
         if self.total_locals.len() > 1 {
             unreachable!("missing [drop_locals] call/s somewhere");
         } else if self.total_locals.len() == 1 {
             self.drop_locals();
+        }
+        if inject_return && !self.is_return_last() {
+            self.op_return();
         }
     }
 
