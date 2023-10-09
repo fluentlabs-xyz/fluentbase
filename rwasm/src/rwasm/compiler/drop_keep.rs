@@ -81,6 +81,7 @@ mod tests {
             (vec![1, 2, 3, 4, 5, 6], vec![3, 4, 5, 6], drop_keep!(2, 4)),
             (vec![7, 100, 20, 3], vec![7], drop_keep!(3, 0)),
             (vec![100, 20, 120], vec![120], drop_keep!(2, 1)),
+            (vec![1, 2, 3, 4, 5], vec![5], drop_keep!(4, 1)),
         ];
         for (input, output, drop_keep) in tests.iter() {
             let opcodes = translate_drop_keep(*drop_keep).unwrap();

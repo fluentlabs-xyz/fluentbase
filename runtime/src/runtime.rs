@@ -19,19 +19,19 @@ use fluentbase_rwasm::{
 };
 use zktrie::FIELDSIZE;
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
     pub(crate) exit_code: i32,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
+    pub(crate) timestamp: u64,
 }
 
 impl RuntimeContext {
     pub fn new(input_data: &[u8]) -> Self {
         Self {
-            exit_code: 0,
             input: input_data.to_vec(),
-            output: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -231,6 +231,8 @@ impl Runtime {
         forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
         forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
 
+        // add zktrie functions
+
         forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
@@ -267,7 +269,11 @@ impl Runtime {
 
         // we need to fix logs, because we lost information about instr meta during conversion
         let tracer = res.store.tracer_mut();
+        let call_id = tracer.logs.first().map(|v| v.call_id).unwrap_or_default();
         for log in tracer.logs.iter_mut() {
+            if log.call_id != call_id {
+                continue;
+            }
             let instr = reduced_module.bytecode().get(log.index).unwrap();
             log.opcode = *instr;
         }

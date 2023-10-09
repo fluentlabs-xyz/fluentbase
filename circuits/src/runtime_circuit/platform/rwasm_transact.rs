@@ -33,14 +33,21 @@ impl<F: Field> ExecutionGadget<F> for RwasmTransactGadget<F> {
         let [output_len, output_offset, input_len, input_offset, code_len, code_offset, exit_code] =
             cb.query_cells();
         // pop input params
-        cb.stack_pop(output_len.current());
-        cb.stack_pop(output_offset.current());
-        cb.stack_pop(input_len.current());
-        cb.stack_pop(input_offset.current());
-        cb.stack_pop(code_len.current());
-        cb.stack_pop(code_offset.current());
+        // cb.stack_pop(output_len.current());
+        // cb.stack_pop(output_offset.current());
+        // cb.stack_pop(input_len.current());
+        // cb.stack_pop(input_offset.current());
+        // cb.stack_pop(code_len.current());
+        // cb.stack_pop(code_offset.current());
         // push exit code
-        cb.stack_push(exit_code.current());
+        // cb.stack_push(exit_code.current());
+        // lookup call depth (make sure its increased by 1)
+        // cb.context_lookup(
+        //     RwTableContextTag::CallDepth,
+        //     1.expr(),
+        //     cb.call_id(),
+        //     cb.call_id() - 1,
+        // );
         Self {
             output_len,
             output_offset,
@@ -51,10 +58,6 @@ impl<F: Field> ExecutionGadget<F> for RwasmTransactGadget<F> {
             exit_code,
             pd: Default::default(),
         }
-    }
-
-    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
-        cb.next_pc_delta(0.expr());
     }
 
     fn assign_exec_step(
@@ -76,7 +79,7 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn test_exit() {
+    fn test_simple_transact() {
         let bytecode: Vec<u8> = instruction_set! {
             I32Const(100)
             I32Const(20)

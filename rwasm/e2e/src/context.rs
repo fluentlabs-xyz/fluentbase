@@ -186,6 +186,7 @@ impl TestContext<'_> {
     ) -> Result<Instance, TestError> {
         let mut config = Config::default();
         config.consume_fuel(false);
+        println!("compiling function: {}", fn_name);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice())?;
         let elem = module
@@ -208,6 +209,7 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
+        self.last_instance = Some(instance);
         Ok(instance)
     }
 
@@ -304,7 +306,7 @@ impl TestContext<'_> {
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
-        if func_name == "as-block-first" {
+        if func_name == "32_good5" && args.len() > 0 && args[0].i32().unwrap() == 65508 {
             println!("{}", func_name)
         }
         let wasm_binary = self.binaries.get(&func_name.to_string()).unwrap().clone();

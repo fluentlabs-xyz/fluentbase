@@ -36,7 +36,7 @@ pub struct InstructionSet {
 
 impl Into<Vec<u8>> for InstructionSet {
     fn into(mut self) -> Vec<u8> {
-        self.finalize(true);
+        self.finalize();
         let mut buffer = vec![0; 65536 * 2];
         let mut binary_writer = BinaryFormatWriter::new(buffer.as_mut_slice());
         let n = self.write_binary(&mut binary_writer).unwrap();
@@ -105,9 +105,19 @@ impl InstructionSet {
         opcode_pos
     }
 
+    pub fn add_memory_pages(&mut self, initial_pages: u32) {
+        assert_eq!(self.init_memory_pages, 0);
+        self.op_i32_const(initial_pages);
+        self.op_memory_grow();
+        self.op_drop();
+        self.init_memory_pages = initial_pages;
+        // we set here 0 because this memory is not used yet
+        self.init_memory_size = 0;
+    }
+
     pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
         // make sure we have enough allocated memory
-        let new_size = self.init_memory_size + bytes.len() as u32;
+        let new_size = self.init_memory_size + offset + bytes.len() as u32;
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
         if total_pages > N_MAX_MEMORY_PAGES {
             return false;
@@ -168,19 +178,13 @@ impl InstructionSet {
             .unwrap_or_default()
     }
 
-    pub fn finalize(&mut self, inject_return: bool) {
+    pub fn finalize(&mut self) {
         // 0 means there is no locals, 1 means main locals, 1+ means error
         if self.total_locals.len() > 1 {
             unreachable!("missing [drop_locals] call/s somewhere");
         } else if self.total_locals.len() == 1 {
             self.drop_locals();
         }
-        // inject return as a last opcode before unreachable
-        if inject_return && !self.is_return_last() {
-            self.op_return();
-        }
-        // inject unreachable in the end of file to be sure that return is presented
-        self.op_unreachable();
     }
 
     pub fn has_meta(&self) -> bool {
@@ -256,7 +260,7 @@ impl InstructionSet {
     impl_opcode!(op_unreachable, Unreachable);
     impl_opcode!(op_consume_fuel, ConsumeFuel(BlockFuel));
     impl_opcode!(op_return, Return, DropKeep::none());
-    impl_opcode!(op_br_indirect, BrIndirect);
+    impl_opcode!(op_br_indirect, BrIndirect(BranchOffset));
 
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));

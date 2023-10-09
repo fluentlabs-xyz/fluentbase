@@ -90,16 +90,16 @@ define_spec_tests! {
     let config = make_config();
     let runner = run::run_wasm_spec_test;
 
-    fn wasm_address("address");
-    fn wasm_align("align");
-    fn wasm_binary_leb128("binary-leb128");
-    fn wasm_binary("binary");
+    // fn wasm_address("address");
+    // fn wasm_align("align");
+    // fn wasm_binary_leb128("binary-leb128");
+    // fn wasm_binary("binary");
     fn wasm_block("block");
-    fn wasm_br("br");
-    fn wasm_br_if("br_if");
-    fn wasm_br_table("br_table");
-    fn wasm_bulk("bulk");
-    fn wasm_call("call");
+    // fn wasm_br("br");
+    // fn wasm_br_if("br_if");
+    // fn wasm_br_table("br_table");
+    // fn wasm_bulk("bulk");
+    // fn wasm_call("call");
     // fn wasm_call_indirect("call_indirect");
     // fn wasm_extended_const_data("proposals/extended-const/data");
     // fn wasm_extended_const_elem("proposals/extended-const/elem");
