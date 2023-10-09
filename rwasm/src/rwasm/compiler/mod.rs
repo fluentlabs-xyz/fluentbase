@@ -419,13 +419,13 @@ impl<'linker> Compiler<'linker> {
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
-                drop_keep.translate(&mut self.code_section)?;
+                DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
                 let drop_keep_len = self.code_section.len() - br_if_offset;
                 self.code_section
                     .get_mut(br_if_offset as usize)
                     .unwrap()
                     .update_branch_offset(BranchOffset::from(1 + drop_keep_len as i32));
-                self.code_section.op_return_if_nez();
+                self.code_section.op_br_indirect(0);
             }
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2;
