@@ -179,3 +179,5 @@ pub(crate) fn evm_return(
     caller.data_mut().return_data(memory.as_slice());
     Ok(())
 }
+
+pub use crate::zktrie::*;
