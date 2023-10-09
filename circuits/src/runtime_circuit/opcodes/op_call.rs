@@ -29,7 +29,9 @@ impl<F: Field> ExecutionGadget<F> for OpCallGadget<F> {
         cb.if_rwasm_opcode(
             is_host_call.current(),
             Instruction::Call(Default::default()),
-            |_cb| {},
+            |_cb| {
+                // call_id += 1
+            },
         );
 
         Self {
