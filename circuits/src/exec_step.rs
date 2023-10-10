@@ -194,6 +194,14 @@ impl ExecSteps {
         res
     }
 
+    pub fn get_copy_funrefs(&self) -> Vec<CopyRow<u32>> {
+        let mut res = Vec::new();
+        for copy_funrefs in self.0.iter().map(|v| v.copy_funrefs.clone()) {
+            res.extend(copy_funrefs);
+        }
+        res
+    }
+
     pub fn get_rw_rows(&self) -> (Vec<RwRow>, Vec<(Instruction, u32)>) {
         let mut rw_rows = Vec::new();
         let mut meta = Vec::new();

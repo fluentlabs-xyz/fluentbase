@@ -190,7 +190,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::TableElemWrite(table_idx.to_u32()));
-                stack_ops.push(RwOp::StackWrite(0));
+                //stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::TableCopy(_) => {
                 stack_ops.push(RwOp::StackRead(0));

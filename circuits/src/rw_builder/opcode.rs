@@ -156,7 +156,8 @@ pub fn build_table_size_write_rw_ops(
 ) -> Result<(), GadgetError> {
     let table_size = step.read_table_size(table_index);
     let grow = step.curr_nth_stack_value(0)?;
-    println!("DEBUG table size, grow {:#?} {:#?}", table_size, grow);
+    let init_val = step.curr_nth_stack_value(1)?;
+    println!("DEBUG table size {:#?}, grow {:#?}, init_val {:#?}", table_size, grow, init_val);
     step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: true,
@@ -164,6 +165,7 @@ pub fn build_table_size_write_rw_ops(
         tag: RwTableContextTag::TableSize { table_index },
         value: (table_size as u32 + grow.as_u32()) as u64,
     });
+    //build_table_fill_rw_ops_with_args(step, table_index, grow.as_u32(), init_val.as_u32(), table_size as u32);
     Ok(())
 }
 
@@ -177,7 +179,7 @@ pub fn build_table_elem_read_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64,
         value: value.as_u32() as u64,
     });
     Ok(())
@@ -187,17 +189,17 @@ pub fn build_table_elem_write_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
-    let elem_index = step.curr_nth_stack_value(1)?;
-    let value = step.curr_nth_stack_value(2)?;
-    // Now `prev_value` only used in table size write operation.
-    // let prev_value = step.read_table_elem(table_idx, elem_index.as_u32()).unwrap();
+    let elem_index = step.curr_nth_stack_value(0)?;
+    let value = step.curr_nth_stack_value(1)?;
+
     step.rw_rows.push(RwRow::Table {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64 + 1,
+        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64,
         value: value.as_u32() as u64,
     });
+
     Ok(())
 }
 
@@ -279,30 +281,35 @@ pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
     let range = build_stack_read_rw_ops(step, 0)?;
     let value = build_stack_read_rw_ops(step, 1)?;
     let start = build_stack_read_rw_ops(step, 2)?;
+    build_table_fill_rw_ops_with_args(step, table_index, range.as_u32(), value.as_u32(), start.as_u32())
+}
 
-/*
+pub fn build_table_fill_rw_ops_with_args(step: &mut ExecStep, table_index: u32, range: u32, value: u32, start: u32)
+  -> Result<(), GadgetError> {
+    println!("DEBUG BUILD VALUE {:#?}", value);
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();
     // read result to the table
-    (start.as_usize()..(start.as_usize() + range.as_usize())).for_each(|i| {
+    (start as usize..(start as usize + range as usize)).for_each(|i| {
         step.rw_rows.push(RwRow::Table {
             rw_counter: step.next_rw_counter(),
             is_write: true,
             call_id: step.call_id,
             address: table_index as u64 * 1024 + i as u64,
-            value: value.as_u64(),
+            value: value as u64,
         });
     });
     // create copy row
-    step.copy_funrefs.push(CopyRow {
+    let row = CopyRow {
         tag: CopyTableTag::FillTable,
-        from_address: table_index * 1024 + start.as_u32(),
-        to_address: table_index * 1024 + start.as_u32() + range.as_u32(),
-        length: range.as_u32(),
+        from_address: value,
+        to_address: table_index * 1024 + start,
+        length: range,
         rw_counter: fill_rw_counter,
-        data: vec![value.as_u32(); range.as_usize()],
-    });
-*/
+        data: vec![value; range as usize],
+    };
+    println!("DEBUG ROW {:#?}, TAG {}", row, row.tag as u32);
+    step.copy_funrefs.push(row);
     Ok(())
 }
 
@@ -326,7 +333,7 @@ pub fn build_table_copy_rw_ops(
             rw_counter: step.next_rw_counter(),
             is_write: false,
             call_id: step.call_id,
-            address: table_src as u64 * 1024 + start.as_u64() + i as u64,
+            address: table_src as u64 * 1024 + i as u64,
             value: *value as u64,
         });
     });
