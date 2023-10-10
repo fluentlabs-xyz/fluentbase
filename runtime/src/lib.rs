@@ -1,6 +1,8 @@
 #![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
+extern crate core;
+
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 pub use instruction::*;
 pub use macros::*;
