@@ -19,6 +19,7 @@ mod runtime;
 mod tests;
 mod types;
 mod zktrie;
+mod zktrie_helpers;
 
 #[derive(Debug)]
 pub enum Error {
