@@ -7,6 +7,7 @@ use crate::{
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
     rw_builder::rw_row::RwTableContextTag,
+    rw_builder::copy_row::CopyTableTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -31,11 +32,10 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         let table_index = cb.query_cell();
         let init_val = cb.query_cell();
         let grow_val = cb.query_cell();
-        let res_val = cb.query_cell();
+        let res_val = cb.query_cell(); // This is table size.
         cb.require_opcode(Instruction::TableGrow(Default::default()));
         cb.stack_pop(grow_val.current());
         cb.stack_pop(init_val.current());
-        //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
         cb.context_lookup(
             RwTableContextTag::TableSize { table_index: table_index.current() },
             1.expr(),
@@ -43,6 +43,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
             res_val.current(),
         );
         cb.stack_push(res_val.current());
+/*
+        cb.copy_lookup(
+            CopyTableTag::FillTable,
+            init_val.current(),
+            table_index.current() * 1024 + res_val.current(),
+            grow_val.current(),
+        );
+*/
         Self {
             table_index,
             init_val,
@@ -74,8 +82,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         self.grow_val
             .assign(region, offset, F::from(grow_val.to_bits()));
         println!("TABLE GROW DEBUG, res_val {:#?}", res_val);
-        self.res_val
-            .assign(region, offset, F::from(res_val.to_bits()));
+        self.res_val.assign(region, offset, F::from(res_val.to_bits()));
         Ok(())
     }
 }

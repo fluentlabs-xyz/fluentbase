@@ -42,19 +42,16 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         cb.stack_pop(value.current());
         cb.stack_pop(start.current());
 
-        cb.range_check_1024(value.current());
+        cb.range_check_1024(start.current());
         cb.range_check_1024(range.current() - 1.expr()); // Range must be non zero value, one or larger.
         cb.range_check_1024(size.current() - (start.current() + range.current()));
 
-/*
         cb.copy_lookup(
             CopyTableTag::FillTable,
-            // First element in table is forced to be set to value, others is copyed by circuit.
-            table_index.current() * 1024 + start.current() + 1.expr(),
-            table_index.current() * 1024 + start.current() + range.expr(),
-            range.current() - 1.expr(),
+            value.current(),
+            table_index.current() * 1024 + start.current(),
+            range.current(),
         );
-*/
 
         Self {
             table_index,
@@ -101,13 +98,35 @@ mod test {
     fn table_fill() {
         test_ok(instruction_set! {
             RefFunc(0)
-            I32Const(2)
+            I32Const(4)
+            TableGrow(0)
+            Drop
+            I32Const(0)
+            RefFunc(0)
+            I32Const(4)
+            TableFill(0)
+        });
+    }
+
+    #[test]
+    fn table_two_times_fill() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(4)
             TableGrow(0)
             Drop
             I32Const(0)
             RefFunc(0)
             I32Const(2)
             TableFill(0)
+            I32Const(2)
+            RefFunc(0)
+            I32Const(2)
+            TableFill(0)
         });
     }
+
+
+
+
 }

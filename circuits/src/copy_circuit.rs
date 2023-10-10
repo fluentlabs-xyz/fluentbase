@@ -255,6 +255,7 @@ impl<F: Field> CopyCircuitConfig<F> {
                 );
             },
         );
+
         cb.condition(
             tag_bits.value_equals(CopyTableTag::FillTable, Rotation::cur()),
             |cb| {
@@ -326,14 +327,44 @@ impl<F: Field> CopyCircuitConfig<F> {
         print_stdout(table).unwrap();
     }
 
+    pub fn print_copy_funref_table(&self, rw_rows: &Vec<CopyRow<u32>>) {
+        only_once!();
+        use cli_table::{print_stdout, Cell, Style, Table};
+        let table = rw_rows
+            .iter()
+            .map(|row| {
+                vec![
+                    row.tag.cell().justify(Justify::Center),
+                    row.from_address.cell().justify(Justify::Center),
+                    row.to_address.cell().justify(Justify::Center),
+                    row.length.cell().justify(Justify::Center),
+                    row.rw_counter.cell().justify(Justify::Center),
+                ]
+            })
+            .collect_vec()
+            .table()
+            .title(vec![
+                "tag".cell().bold(true),
+                "from_address".cell().bold(true),
+                "to_address".cell().bold(true),
+                "length".cell().bold(true),
+                "rw_counter".cell().bold(true),
+            ])
+            .bold(true);
+        print_stdout(table).unwrap();
+    }
+
     pub fn assign_with_region(
         &self,
         region: &mut Region<'_, F>,
         exec_steps: &ExecSteps,
     ) -> Result<(), Error> {
         let copy_rows = exec_steps.get_copy_rows();
+        let copy_funrefs = exec_steps.get_copy_funrefs();
         self.print_copy_row_table(&copy_rows);
+        self.print_copy_funref_table(&copy_funrefs);
         let mut offset = 0;
+
         for copy_row in copy_rows.iter() {
             self.q_first.enable(region, offset);
             let mut last_offset = offset;
@@ -357,6 +388,32 @@ impl<F: Field> CopyCircuitConfig<F> {
             }
             self.q_last.enable(region, last_offset);
         }
+
+        for copy_funref in copy_funrefs.iter() {
+            self.q_first.enable(region, offset);
+            let mut last_offset = offset;
+            for (i, value) in copy_funref.data.iter().enumerate() {
+                self.q_enable.enable(region, offset);
+                self.tag.assign(region, offset, copy_funref.tag as u64);
+                let tag_bits = BinaryNumberChip::construct(self.tag_bits);
+                tag_bits.assign(region, offset, &copy_funref.tag)?;
+                self.from_address
+                    .assign(region, offset, copy_funref.from_address as u64);
+                self.to_address
+                    .assign(region, offset, copy_funref.to_address as u64);
+                println!("DEBUG COPY ASSIGN address {:#?}", copy_funref.to_address);
+                self.length.assign(region, offset, copy_funref.length as u64);
+                self.index
+                    .assign(region, offset, (copy_funref.length - i as u32) as u64);
+                self.rw_counter
+                    .assign(region, offset, copy_funref.rw_counter as u64);
+                self.value.assign(region, offset, *value as u64);
+                last_offset = offset;
+                offset += 1;
+            }
+            self.q_last.enable(region, last_offset);
+        }
+
         Ok(())
     }
 
