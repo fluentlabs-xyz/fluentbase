@@ -276,9 +276,13 @@ pub fn build_memory_fill_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
 
 pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<(), GadgetError> {
     // pop 3 elems from stack
-    let start = build_stack_read_rw_ops(step, 0)?;
-    let value = build_stack_read_rw_ops(step, 2)?;
-    let range = build_stack_read_rw_ops(step, 3)?;
+    let range = build_stack_read_rw_ops(step, 0)?;
+    let value = build_stack_read_rw_ops(step, 1)?;
+    let value_type = build_stack_read_rw_ops(step, 2)?;
+    let start = build_stack_read_rw_ops(step, 3)?;
+    let out = build_stack_write_rw_ops(step, 0)?;
+    println!("DEBUG BUILD RANGE {:#?}, OUT {:#?}", range, out);
+/*
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();
     // read result to the table
@@ -300,6 +304,7 @@ pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
         rw_counter: fill_rw_counter,
         data: vec![value.as_u32(); range.as_usize()],
     });
+*/
     Ok(())
 }
 
