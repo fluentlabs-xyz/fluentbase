@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     rc::Rc,
 };
-use zktrie::{AccountData, StoreData, ZkMemoryDb, ZkTrie, FIELDSIZE};
+use zktrie::{AccountData, Hash, StoreData, ZkMemoryDb, ZkTrie, ACCOUNTSIZE, FIELDSIZE};
 
 static FILED_ERROR_READ: &str = "invalid input field";
 static FILED_ERROR_OUT: &str = "output field fail";
@@ -73,23 +73,55 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
+fn account_data_from_bytes(data: &[u8]) -> Result<AccountData, Trap> {
+    if data.len() != ACCOUNTSIZE {
+        return Err(Trap::new("failed to init new trie"));
+    }
+    let mut ad: AccountData = Default::default();
+    for (i, b) in data.iter().enumerate() {
+        ad[i / FIELDSIZE][i % FIELDSIZE] = *b;
+    }
+
+    Ok(ad)
+}
+
 pub(crate) fn zktrie_open(
-    mut _caller: Option<Caller<'_, RuntimeContext>>,
-    // root: &Hash,
-) -> Result<TrieId, Trap> {
-    let root = [0; FIELDSIZE];
+    mut caller: Caller<'_, RuntimeContext>,
+    input_offset: i32,
+    input_count: i32,
+) -> Result<(), Trap> {
     ZK_MEMORY_DB.with(|db| {
-        let t = db.borrow_mut().new_trie(&root);
-        if let Some(t) = t {
-            let trie_id = LAST_TRIE_ID.take();
-            if trie_id != TRIE_ID_DEFAULT {
-                return Err(Trap::new("only 1 trie allowed right now"));
-            }
-            TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(t))));
-            LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
-            return Ok(trie_id);
+        let len = FIELDSIZE + input_count as usize * ACCOUNTSIZE;
+        let trie_data = exported_memory_vec(&mut caller, input_offset as usize, len);
+        let committed_root: Hash = trie_data[0..FIELDSIZE].try_into().unwrap();
+        let root_zero: Hash = [0; FIELDSIZE];
+        let mut t: ZkTrie = db
+            .borrow_mut()
+            .new_trie(&root_zero)
+            .ok_or(Trap::new("failed to init new trie"))?;
+        let trie_id;
+        trie_id = LAST_TRIE_ID.take();
+        if trie_id != TRIE_ID_DEFAULT {
+            return Err(Trap::new("only 1 trie allowed at the moment"));
         }
-        Err(Trap::new("failed to init new trie"))
+
+        // fill the trie with dump data
+        let mut leaf_offset = FIELDSIZE;
+        while leaf_offset < len {
+            let account_data: AccountData =
+                account_data_from_bytes(&trie_data[leaf_offset..leaf_offset + ACCOUNTSIZE])?;
+            t.update_account(&[1, 2, 3], &account_data)
+                .map_err(|v| Trap::new(v.to_string()))?;
+            leaf_offset += FIELDSIZE;
+        }
+        if t.root() != committed_root {
+            return Err(Trap::new("computed root doesn't match committed root"));
+        }
+
+        TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(t))));
+        LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
+
+        return Ok(());
     })
 }
 
