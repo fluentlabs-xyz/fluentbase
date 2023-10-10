@@ -348,7 +348,7 @@ impl Runtime {
 
         // zktrie functions
         // base
-        forward_call!(res, "env", "zktrie_open", fn zktrie_open(data_offset: i32, trie_size: i32) -> ());
+        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_start_offset: i32, root_len: i32, key_start_offset: i32, key_len: i32, leafs_start_offset: i32, leafs_count: i32) -> ());
         // account updates
         forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());

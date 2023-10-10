@@ -1,4 +1,8 @@
-use crate::{instruction::exported_memory_vec, RuntimeContext};
+use crate::{
+    instruction::exported_memory_vec,
+    zktrie_helpers::account_data_from_bytes,
+    RuntimeContext,
+};
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2_proofs::halo2curves::{bn256::Fr, group::ff::PrimeField};
 use lazy_static::lazy_static;
@@ -73,27 +77,27 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-fn account_data_from_bytes(data: &[u8]) -> Result<AccountData, Trap> {
-    if data.len() != ACCOUNTSIZE {
-        return Err(Trap::new("failed to init new trie"));
-    }
-    let mut ad: AccountData = Default::default();
-    for (i, b) in data.iter().enumerate() {
-        ad[i / FIELDSIZE][i % FIELDSIZE] = *b;
-    }
-
-    Ok(ad)
-}
-
 pub(crate) fn zktrie_open(
     mut caller: Caller<'_, RuntimeContext>,
-    input_offset: i32,
-    input_count: i32,
+    root_start_offset: i32,
+    root_len: i32,
+    key_start_offset: i32,
+    key_len: i32,
+    leafs_start_offset: i32,
+    leafs_count: i32,
 ) -> Result<(), Trap> {
     ZK_MEMORY_DB.with(|db| {
-        let len = FIELDSIZE + input_count as usize * ACCOUNTSIZE;
-        let trie_data = exported_memory_vec(&mut caller, input_offset as usize, len);
-        let committed_root: Hash = trie_data[0..FIELDSIZE].try_into().unwrap();
+        let committed_root: Hash =
+            exported_memory_vec(&mut caller, root_start_offset as usize, root_len as usize)
+                .try_into()
+                .unwrap();
+        let key_data =
+            exported_memory_vec(&mut caller, key_start_offset as usize, key_len as usize);
+        let leafs_data = exported_memory_vec(
+            &mut caller,
+            leafs_start_offset as usize,
+            leafs_count as usize * ACCOUNTSIZE,
+        );
         let root_zero: Hash = [0; FIELDSIZE];
         let mut t: ZkTrie = db
             .borrow_mut()
@@ -106,13 +110,13 @@ pub(crate) fn zktrie_open(
         }
 
         // fill the trie with dump data
-        let mut leaf_offset = FIELDSIZE;
-        while leaf_offset < len {
+        let mut leaf_offset = leafs_start_offset as usize;
+        while leaf_offset < leafs_start_offset as usize + leafs_count as usize * ACCOUNTSIZE {
             let account_data: AccountData =
-                account_data_from_bytes(&trie_data[leaf_offset..leaf_offset + ACCOUNTSIZE])?;
-            t.update_account(&[1, 2, 3], &account_data)
+                account_data_from_bytes(&leafs_data[leaf_offset..leaf_offset + ACCOUNTSIZE])?;
+            t.update_account(key_data.as_slice(), &account_data)
                 .map_err(|v| Trap::new(v.to_string()))?;
-            leaf_offset += FIELDSIZE;
+            leaf_offset += ACCOUNTSIZE;
         }
         if t.root() != committed_root {
             return Err(Trap::new("computed root doesn't match committed root"));
@@ -166,7 +170,7 @@ macro_rules! impl_update {
             let data = $data_extractor(&key, trie.borrow_mut());
             let mut data = data.unwrap_or(Default::default());
             let mut field_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
-            // TODO BE or LE?
+            // BE or LE?
             field_array[FIELDSIZE - value.len()..FIELDSIZE].copy_from_slice(value.as_slice());
             $field_updater(&mut data, &field_array);
             let res = trie.borrow_mut().$trie_updater(&key, &data);
