@@ -278,10 +278,8 @@ pub fn build_table_fill_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
     // pop 3 elems from stack
     let range = build_stack_read_rw_ops(step, 0)?;
     let value = build_stack_read_rw_ops(step, 1)?;
-    let value_type = build_stack_read_rw_ops(step, 2)?;
-    let start = build_stack_read_rw_ops(step, 3)?;
-    let out = build_stack_write_rw_ops(step, 0)?;
-    println!("DEBUG BUILD RANGE {:#?}, OUT {:#?}", range, out);
+    let start = build_stack_read_rw_ops(step, 2)?;
+
 /*
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();

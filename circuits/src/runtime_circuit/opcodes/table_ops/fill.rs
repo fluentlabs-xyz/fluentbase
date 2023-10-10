@@ -17,11 +17,9 @@ use std::marker::PhantomData;
 pub(crate) struct OpTableFillGadget<F: Field> {
     table_index: AdviceColumn,
     start: AdviceColumn,
-    value_type: AdviceColumn,
     value: AdviceColumn,
     range: AdviceColumn,
     size: AdviceColumn,
-    out: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
@@ -33,26 +31,22 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let table_index = cb.query_cell();
         let start = cb.query_cell();
-        let value_type = cb.query_cell();
         let value = cb.query_cell();
         let range = cb.query_cell();
         let size = cb.query_cell();
-        let out = cb.query_cell();
         cb.require_opcode(Instruction::TableFill(Default::default()));
         //cb.table_size(table_index.expr(), size.expr());
         //cb.table_fill(table_index.expr(), start.expr(), value.expr(), range.expr());
 
         cb.stack_pop(range.current());
         cb.stack_pop(value.current());
-        cb.stack_pop(value_type.current());
         cb.stack_pop(start.current());
 
-        cb.stack_push(out.current());
-
-/*
         cb.range_check_1024(value.current());
         cb.range_check_1024(range.current() - 1.expr()); // Range must be non zero value, one or larger.
-        cb.range_check_1024(size.current() - (value.current() + range.current()));
+        cb.range_check_1024(size.current() - (start.current() + range.current()));
+
+/*
         cb.copy_lookup(
             CopyTableTag::FillTable,
             // First element in table is forced to be set to value, others is copyed by circuit.
@@ -61,14 +55,13 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
             range.current() - 1.expr(),
         );
 */
+
         Self {
             table_index,
             start,
-            value_type,
             value,
             range,
             size,
-            out,
             _pd: Default::default(),
         }
     }
@@ -79,30 +72,22 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, start, value_type, value, range, out) = match trace.instr() {
+        let (table_index, start, value, range, size) = match trace.instr() {
             Instruction::TableFill(ti) => (
                 ti,
-                trace.curr_nth_stack_value(3)?,
                 trace.curr_nth_stack_value(2)?,
                 trace.curr_nth_stack_value(1)?,
                 trace.curr_nth_stack_value(0)?,
-                trace.next_nth_stack_value(0)?,
+                trace.read_table_size(ti.to_u32()),
             ),
             _ => bail_illegal_opcode!(trace),
         };
-        println!("DEBUG RANGE {}", range.to_bits());
-        println!("DEBUG VALUE {}", value.to_bits());
-        println!("DEBUG VALUE_TYPE {}", value_type.to_bits());
-        println!("DEBUG START {}", start.to_bits());
-        println!("DEBUG OUT {}", out.to_bits());
         self.table_index
             .assign(region, offset, F::from(table_index.to_u32() as u64));
         self.start.assign(region, offset, F::from(start.to_bits()));
-        self.value_type
-            .assign(region, offset, F::from(value_type.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
         self.range.assign(region, offset, F::from(range.to_bits()));
-        self.out.assign(region, offset, F::from(out.to_bits()));
+        self.size.assign(region, offset, F::from(size as u64));
         Ok(())
     }
 }
@@ -120,11 +105,9 @@ mod test {
             TableGrow(0)
             Drop
             I32Const(0)
-            I32Const(0)
             RefFunc(0)
             I32Const(2)
             TableFill(0)
-            Drop
         });
     }
 }

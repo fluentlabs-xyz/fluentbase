@@ -179,8 +179,6 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
-                stack_ops.push(RwOp::StackRead(0));
-                stack_ops.push(RwOp::StackWrite(0));
             }
             Instruction::TableGet(_table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
