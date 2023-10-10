@@ -64,7 +64,6 @@ fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
     match err {
         Error::Rwasm(err) => match err {
             fluentbase_rwasm::Error::Trap(trap) => {
-                println!("{:?}", trap);
                 assert_eq!(
                     trap.i32_exit_status().unwrap(),
                     trap_code.i32_exit_status().unwrap()
