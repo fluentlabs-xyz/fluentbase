@@ -129,8 +129,10 @@ impl ReducedModule {
             code_section.instr.clone(),
             code_section.metas.clone().unwrap(),
         );
-        // push data segments
+        // push segments
         let mut data_segments = HashSet::new();
+        let mut elem_segmenets = HashSet::new();
+
         for instr in code_section.instr.iter() {
             match instr {
                 Instruction::DataStore8(seg)
@@ -138,6 +140,9 @@ impl ReducedModule {
                 | Instruction::DataStore32(seg)
                 | Instruction::DataStore64(seg) => {
                     data_segments.insert(seg.to_u32());
+                }
+                Instruction::ElemStore(seg) => {
+                    elem_segmenets.insert(seg.to_u32());
                 }
                 _ => continue,
             }
@@ -147,6 +152,12 @@ impl ReducedModule {
             (0..=max_data_segment).for_each(|_| {
                 builder.push_passive_data_segment();
             });
+        }
+
+        if !elem_segmenets.is_empty() {
+            (0..=elem_segmenets.len()).for_each(|_| {
+                builder.push_passive_elem_segment();
+            })
         }
         // allocate default memory
         builder

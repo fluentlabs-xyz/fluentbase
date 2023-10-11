@@ -210,6 +210,10 @@ impl Instruction {
             }
             Instruction::TableInit(_) => {}
 
+            Instruction::ElemStore(seg) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::TableElemWrite(seg.to_u32()))
+            }
             Instruction::ElemDrop(_) => {}
             Instruction::RefFunc(_) => {
                 stack_ops.push(RwOp::StackWrite(0));

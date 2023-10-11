@@ -26,7 +26,7 @@ use crate::{
         ValueStack,
     },
     func::FuncEntity,
-    module::DEFAULT_MEMORY_INDEX,
+    module::{ConstExpr, DEFAULT_MEMORY_INDEX},
     store::ResourceLimiterRef,
     table::TableEntity,
     FuelConsumptionMode,
@@ -364,6 +364,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::TableSet(table) => self.visit_table_set(table)?,
                 Instr::TableCopy(dst) => self.visit_table_copy(dst)?,
                 Instr::TableInit(elem) => self.visit_table_init(elem)?,
+                Instr::ElemStore(segment) => self.visit_element_store(segment),
                 Instr::ElemDrop(segment) => self.visit_element_drop(segment),
                 Instr::RefFunc(func_index) => self.visit_ref_func(func_index),
                 Instr::I32Const(value) => self.visit_untyped_const(value),
@@ -1492,8 +1493,24 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
+    fn visit_element_store(&mut self, elem_index: ElementSegmentIdx) {
+        // get offset and value from stack
+        let v = self.sp.pop();
+
+        let segment = self
+            .cache
+            .get_element_segment(self.ctx, elem_index.to_u32());
+        self.ctx
+            .resolve_element_segment_mut(&segment)
+            .add_item(ConstExpr::new_funcref(v.as_u32()));
+        self.next_instr()
+    }
+
+    #[inline(always)]
     fn visit_element_drop(&mut self, segment_index: ElementSegmentIdx) {
-        let segment = self.cache.get_element_segment(self.ctx, segment_index);
+        let segment = self
+            .cache
+            .get_element_segment(self.ctx, segment_index.to_u32());
         self.ctx.resolve_element_segment_mut(&segment).drop_items();
         self.next_instr();
     }
