@@ -31,6 +31,8 @@ pub enum RwOp {
     TableSizeWrite(u32),
     TableElemRead(u32),
     TableElemWrite(u32),
+    DataWrite(u32),
+    DataRead(u32),
 }
 
 impl Instruction {
@@ -163,6 +165,13 @@ impl Instruction {
                 // unreachable!("not implemented here")
             }
             Instruction::MemoryInit(_) => {}
+            Instruction::DataStore8(seg)
+            | Instruction::DataStore16(seg)
+            | Instruction::DataStore32(seg)
+            | Instruction::DataStore64(seg) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::DataWrite(seg.to_u32()))
+            }
             Instruction::DataDrop(_) => {}
 
             Instruction::TableSize(table_idx) => {

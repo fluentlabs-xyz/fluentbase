@@ -1506,6 +1506,10 @@ macro_rules! impl_encode_untyped_slice {
 for_each_tuple!(impl_encode_untyped_slice);
 
 impl UntypedValue {
+    pub fn as_u16(self) -> u16 {
+        self.to_bits() as u16
+    }
+
     pub fn as_u32(self) -> u32 {
         self.to_bits() as u32
     }

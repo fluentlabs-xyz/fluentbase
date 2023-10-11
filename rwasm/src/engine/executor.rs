@@ -352,6 +352,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::MemoryFill => self.visit_memory_fill()?,
                 Instr::MemoryCopy => self.visit_memory_copy()?,
                 Instr::MemoryInit(segment) => self.visit_memory_init(segment)?,
+                Instr::DataStore8(segment) => self.visit_data_store(segment, 1),
+                Instr::DataStore16(segment) => self.visit_data_store(segment, 2),
+                Instr::DataStore32(segment) => self.visit_data_store(segment, 4),
+                Instr::DataStore64(segment) => self.visit_data_store(segment, 8),
                 Instr::DataDrop(segment) => self.visit_data_drop(segment),
                 Instr::TableSize(table) => self.visit_table_size(table),
                 Instr::TableGrow(table) => self.visit_table_grow(table, &mut *resource_limiter)?,
@@ -1323,6 +1327,26 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             },
         )?;
         self.try_next_instr()
+    }
+
+    #[inline(always)]
+    fn visit_data_store(&mut self, segment_index: DataSegmentIdx, size: usize) {
+        // get offset and value from stack
+        let v = self.sp.pop();
+        let le_bytes = match size {
+            8 => v.as_u64().to_le_bytes().to_vec(),
+            4 => v.as_u32().to_le_bytes().to_vec(),
+            2 => v.as_u16().to_le_bytes().to_vec(),
+            1 => vec![v.as_u32() as u8],
+            _ => unreachable!("unknown size"),
+        };
+        let segment = self
+            .cache
+            .get_data_segment(self.ctx, segment_index.to_u32());
+        self.ctx
+            .resolve_data_segment_mut(&segment)
+            .add_bytes(le_bytes.as_slice());
+        self.next_instr()
     }
 
     #[inline(always)]

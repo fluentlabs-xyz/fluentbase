@@ -17,6 +17,7 @@ use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
 };
+use std::collections::HashSet;
 
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
@@ -128,6 +129,25 @@ impl ReducedModule {
             code_section.instr.clone(),
             code_section.metas.clone().unwrap(),
         );
+        // push data segments
+        let mut data_segments = HashSet::new();
+        for instr in code_section.instr.iter() {
+            match instr {
+                Instruction::DataStore8(seg)
+                | Instruction::DataStore16(seg)
+                | Instruction::DataStore32(seg)
+                | Instruction::DataStore64(seg) => {
+                    data_segments.insert(seg.to_u32());
+                }
+                _ => continue,
+            }
+        }
+        if !data_segments.is_empty() {
+            let max_data_segment = data_segments.iter().max().copied().unwrap_or_default() as usize;
+            (0..=max_data_segment).for_each(|_| {
+                builder.push_passive_data_segment();
+            });
+        }
         // allocate default memory
         builder
             .push_default_memory(0, Some(N_MAX_MEMORY_PAGES))
