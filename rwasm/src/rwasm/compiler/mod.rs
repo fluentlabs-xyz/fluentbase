@@ -242,7 +242,14 @@ impl<'linker> Compiler<'linker> {
                         "declared mode for element segments is not supported",
                     ))
                 }
-                ElementSegmentKind::Passive => self.code_section.add_passive_elem(table_index),
+                ElementSegmentKind::Passive => {
+                    for (_, item) in e.items.items().iter().enumerate() {
+                        if let Some(value) = item.funcref() {
+                            self.code_section.op_i32_const(value.into_u32());
+                            self.code_section.op_elem_store(table_index);
+                        }
+                    }
+                }
                 ElementSegmentKind::Active(aes) => {
                     if aes.table_index().into_u32() != table_index {
                         continue;
