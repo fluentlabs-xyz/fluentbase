@@ -92,25 +92,18 @@ pub(crate) fn zktrie_open(
             exported_memory_vec(&mut caller, root_offset as usize, root_len as usize)
                 .try_into()
                 .unwrap();
-        println!(
-            "committed_root {:?} len {}",
-            committed_root,
-            committed_root.len()
-        );
         let keys_data = exported_memory_vec(
             &mut caller,
             keys_offset as usize,
             accounts_count as usize * KEYSIZE,
         );
-        println!("keys_data {:?} len {}", keys_data, keys_data.len());
         let leafs_data = exported_memory_vec(
             &mut caller,
             leafs_offset as usize,
             accounts_count as usize * ACCOUNTSIZE,
         );
-        println!("leafs_data {:?} len {}", leafs_data, leafs_data.len());
         let root_zero: Hash = [0; FIELDSIZE];
-        let mut t: ZkTrie = db
+        let mut zk_trie: ZkTrie = db
             .borrow_mut()
             .new_trie(&root_zero)
             .ok_or(Trap::new("failed to init new trie"))?;
@@ -129,19 +122,15 @@ pub(crate) fn zktrie_open(
                 .map_err(|_| Trap::new("key data wrong len"))?;
             let account_data: AccountData =
                 account_data_from_bytes(&leafs_data[leaf_offset..leaf_offset + ACCOUNTSIZE])?;
-            t.update_account(&key_data, &account_data)
+            zk_trie
+                .update_account(&key_data, &account_data)
                 .map_err(|v| Trap::new(v.to_string()))?;
         }
-        if t.root() != committed_root {
-            println!(
-                "computed root {:?} committed root {:?}",
-                t.root(),
-                committed_root
-            );
-            return Err(Trap::new("computed root doesn't match committed root"));
+        if zk_trie.root() != committed_root {
+            return Err(Trap::new("computed root != committed root"));
         }
 
-        TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(t))));
+        TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(zk_trie))));
         LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
 
         return Ok(());
