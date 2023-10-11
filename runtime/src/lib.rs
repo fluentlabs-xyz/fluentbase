@@ -9,7 +9,7 @@ pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
-pub use zktrie::*;
+pub use crate::zktrie::*;
 
 mod instruction;
 mod macros;
