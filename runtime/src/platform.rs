@@ -24,6 +24,21 @@ pub enum SysFuncIdx {
     // EVM-compatible host functions (starts with 0xEE00)
     EVM_STOP = 0xEE01,
     EVM_RETURN = 0xEE02,
+
+    // zktrie functions
+    ZKTRIE_OPEN = 0xDD01,
+    ZKTRIE_UPDATE_NONCE = 0xDD02,
+    ZKTRIE_UPDATE_BALANCE = 0xDD03,
+    ZKTRIE_UPDATE_STORAGE_ROOT = 0xDD04,
+    ZKTRIE_UPDATE_CODE_HASH = 0xDD05,
+    ZKTRIE_UPDATE_CODE_SIZE = 0xDD06,
+    ZKTRIE_GET_NONCE = 0xDD07,
+    ZKTRIE_GET_BALANCE = 0xDD08,
+    ZKTRIE_GET_STORAGE_ROOT = 0xDD09,
+    ZKTRIE_GET_CODE_HASH = 0xDD0A,
+    ZKTRIE_GET_CODE_SIZE = 0xDD0B,
+    ZKTRIE_UPDATE_STORE = 0xDD0C,
+    ZKTRIE_GET_STORE = 0xDD0D,
 }
 
 impl From<FuncIdx> for SysFuncIdx {
