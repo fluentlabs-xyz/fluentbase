@@ -230,7 +230,7 @@ impl<'linker> Compiler<'linker> {
         self.code_section.op_i64_const(table.minimum() as usize);
         self.code_section.op_table_grow(table_index);
         self.code_section.op_drop();
-        for e in self.module.element_segments.iter() {
+        for (i, e) in self.module.element_segments.iter().enumerate() {
             if e.ty != ValueType::FuncRef {
                 return Err(CompilerError::NotSupported(
                     "only funcref type is supported for element segments",
@@ -246,7 +246,7 @@ impl<'linker> Compiler<'linker> {
                     for (_, item) in e.items.items().iter().enumerate() {
                         if let Some(value) = item.funcref() {
                             self.code_section.op_i32_const(value.into_u32());
-                            self.code_section.op_elem_store(table_index);
+                            self.code_section.op_elem_store(i as u32);
                         }
                     }
                 }
