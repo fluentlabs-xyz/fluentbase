@@ -263,7 +263,7 @@ mod tests {
        i32.const 42
        )
       (func $f2 (result i32)
-       i32.const 42
+       i32.const 100
        )
       (elem func $f1)
       (elem func $f2)

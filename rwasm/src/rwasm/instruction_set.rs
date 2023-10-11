@@ -180,11 +180,6 @@ impl InstructionSet {
         });
     }
 
-    pub fn add_passive_elem(&mut self, table_index: u32) {
-        self.op_i32_const(table_index);
-        self.op_elem_store(0u32);
-    }
-
     pub fn propagate_locals(&mut self, n: usize) {
         (0..n).for_each(|_| self.op_i32_const(0));
         self.total_locals.push(n);
