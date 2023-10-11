@@ -231,33 +231,36 @@ impl<'linker> Compiler<'linker> {
         self.code_section.op_table_grow(table_index);
         self.code_section.op_drop();
         for e in self.module.element_segments.iter() {
-            let aes = match &e.kind {
-                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
-                    return Err(CompilerError::NotSupported(
-                        "passive or declared mode for element segments is not supported",
-                    ))
-                }
-                ElementSegmentKind::Active(aes) => aes,
-            };
-            if aes.table_index().into_u32() != table_index {
-                continue;
-            }
             if e.ty != ValueType::FuncRef {
                 return Err(CompilerError::NotSupported(
                     "only funcref type is supported for element segments",
                 ));
             }
-            let dest_offset = self.translate_const_expr(aes.offset())?;
-            for (index, item) in e.items.items().iter().enumerate() {
-                self.code_section
-                    .op_i32_const(dest_offset.as_u32() + index as u32);
-                if let Some(value) = item.eval_const() {
-                    self.code_section.op_i64_const(value);
-                } else if let Some(value) = item.funcref() {
-                    self.code_section.op_ref_func(value.into_u32());
+            match &e.kind {
+                ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "declared mode for element segments is not supported",
+                    ))
                 }
-                self.code_section.op_table_set(table_index);
-            }
+                ElementSegmentKind::Passive => self.code_section.add_passive_elem(table_index),
+                ElementSegmentKind::Active(aes) => {
+                    if aes.table_index().into_u32() != table_index {
+                        continue;
+                    }
+                    let dest_offset = self.translate_const_expr(aes.offset())?;
+                    for (index, item) in e.items.items().iter().enumerate() {
+                        self.code_section
+                            .op_i32_const(dest_offset.as_u32() + index as u32);
+                        if let Some(value) = item.eval_const() {
+                            self.code_section.op_i64_const(value);
+                        } else if let Some(value) = item.funcref() {
+                            self.code_section.op_ref_func(value.into_u32());
+                        }
+                        self.code_section.op_table_set(table_index);
+                    }
+                }
+                _ => {}
+            };
         }
         Ok(())
     }

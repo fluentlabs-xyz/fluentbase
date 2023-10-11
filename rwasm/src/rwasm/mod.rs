@@ -249,4 +249,26 @@ mod tests {
         "#,
         );
     }
+
+    #[test]
+    fn test_passive_elem_section() {
+        execute_binary(
+            r#"
+    (module
+      (table 1 anyfunc)
+      (func $main
+        return
+        )
+      (func $f1 (result i32)
+       i32.const 42
+       )
+      (func $f2 (result i32)
+       i32.const 42
+       )
+      (elem func $f1)
+      (elem func $f2)
+      (export "main" (func $main)))
+        "#,
+        );
+    }
 }

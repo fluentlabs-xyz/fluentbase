@@ -180,6 +180,11 @@ impl InstructionSet {
         });
     }
 
+    pub fn add_passive_elem(&mut self, table_index: u32) {
+        self.op_i32_const(table_index);
+        self.op_elem_store(0u32);
+    }
+
     pub fn propagate_locals(&mut self, n: usize) {
         (0..n).for_each(|_| self.op_i32_const(0));
         self.total_locals.push(n);
@@ -341,6 +346,7 @@ impl InstructionSet {
     impl_opcode!(op_table_set, TableSet(TableIdx));
     impl_opcode!(op_table_copy, TableCopy(TableIdx));
     impl_opcode!(op_table_init, TableInit(ElementSegmentIdx));
+    impl_opcode!(op_elem_store, ElemStore(ElementSegmentIdx));
     impl_opcode!(op_elem_drop, ElemDrop(ElementSegmentIdx));
     impl_opcode!(op_ref_func, RefFunc(FuncIdx));
     impl_opcode!(op_i32_const, I32Const(UntypedValue));

@@ -95,14 +95,10 @@ impl InstanceCache {
     ///
     /// If there is no [`ElementSegment`] for the [`Instance`] at the `index`.
     #[inline]
-    pub fn get_element_segment(
-        &mut self,
-        ctx: &StoreInner,
-        index: ElementSegmentIdx,
-    ) -> ElementSegment {
+    pub fn get_element_segment(&mut self, ctx: &StoreInner, index: u32) -> ElementSegment {
         let instance = self.instance();
-        ctx.resolve_instance(self.instance())
-            .get_element_segment(index.to_u32())
+        ctx.resolve_instance(instance)
+            .get_element_segment(index)
             .unwrap_or_else(|| {
                 unreachable!("missing element segment ({index:?}) for instance: {instance:?}",)
             })
@@ -142,7 +138,7 @@ impl InstanceCache {
         &'a ElementSegmentEntity,
     ) {
         let tab = self.get_table(ctx, table);
-        let seg = self.get_element_segment(ctx, segment);
+        let seg = self.get_element_segment(ctx, segment.to_u32());
         let inst = self.instance();
         ctx.resolve_instance_table_element(inst, &tab, &seg)
     }

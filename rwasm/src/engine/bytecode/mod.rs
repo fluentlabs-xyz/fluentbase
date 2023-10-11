@@ -215,6 +215,7 @@ pub enum Instruction {
     /// [`Instruction::TableGet`] which stores a [`TableIdx`]
     /// that refers to the table to be initialized.
     TableInit(ElementSegmentIdx),
+    ElemStore(ElementSegmentIdx),
     ElemDrop(ElementSegmentIdx),
     RefFunc(FuncIdx),
     /// A 32/64-bit constant value.

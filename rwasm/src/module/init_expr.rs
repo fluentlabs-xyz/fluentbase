@@ -59,6 +59,17 @@ pub enum Op {
     Expr(ExprOp),
 }
 
+impl Clone for Op {
+    fn clone(&self) -> Self {
+        match self {
+            Op::Const(op) => Op::Const(op.clone()),
+            Op::Global(op) => Op::Global(op.clone()),
+            Op::FuncRef(op) => Op::FuncRef(op.clone()),
+            Op::Expr(_) => unreachable!("cloning of expr is not possible"),
+        }
+    }
+}
+
 /// A constant value operator.
 ///
 /// This may represent the following Wasm operators:
@@ -184,7 +195,7 @@ impl Eval for Op {
 /// These are used to determine the offsets of memory data
 /// and table element segments as well as the initial value
 /// of global variables.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstExpr {
     /// The root operator of the [`ConstExpr`].
     pub(crate) op: Op,

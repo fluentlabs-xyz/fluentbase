@@ -16,7 +16,7 @@ use crate::{
     common::ValueType,
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
-    module::DataSegmentKind,
+    module::{DataSegmentKind, ElementSegmentItems, ElementSegmentKind},
     Engine,
     FuncType,
     GlobalType,
@@ -454,6 +454,14 @@ impl<'engine> ModuleBuilder<'engine> {
         self.data_segments.push(DataSegment {
             kind: DataSegmentKind::Passive,
             bytes: Arc::new([]),
+        });
+    }
+
+    pub fn push_passive_elem_segment(&mut self) {
+        self.element_segments.push(ElementSegment {
+            kind: ElementSegmentKind::Passive,
+            ty: ValueType::FuncRef,
+            items: ElementSegmentItems::default(),
         });
     }
 
