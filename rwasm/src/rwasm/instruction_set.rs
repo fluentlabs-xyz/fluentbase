@@ -155,6 +155,31 @@ impl InstructionSet {
         return true;
     }
 
+    pub fn add_data(&mut self, mut bytes: &[u8]) {
+        // translate input bytes
+        [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
+            let mut it = bytes.chunks_exact(chunk_size);
+            while let Some(chunk) = it.next() {
+                let value = match chunk_size {
+                    8 => LittleEndian::read_u64(chunk),
+                    4 => LittleEndian::read_u32(chunk) as u64,
+                    2 => LittleEndian::read_u16(chunk) as u64,
+                    1 => chunk[0] as u64,
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                };
+                self.op_i64_const(value);
+                match chunk_size {
+                    8 => self.op_data_store64(0u32),
+                    4 => self.op_data_store32(0u32),
+                    2 => self.op_data_store16(0u32),
+                    1 => self.op_data_store8(0u32),
+                    _ => unreachable!("not supported chunk size: {}", chunk_size),
+                }
+            }
+            bytes = it.remainder();
+        });
+    }
+
     pub fn propagate_locals(&mut self, n: usize) {
         (0..n).for_each(|_| self.op_i32_const(0));
         self.total_locals.push(n);
@@ -304,6 +329,10 @@ impl InstructionSet {
     impl_opcode!(op_memory_fill, MemoryFill);
     impl_opcode!(op_memory_copy, MemoryCopy);
     impl_opcode!(op_memory_init, MemoryInit(DataSegmentIdx));
+    impl_opcode!(op_data_store8, DataStore8(DataSegmentIdx));
+    impl_opcode!(op_data_store16, DataStore16(DataSegmentIdx));
+    impl_opcode!(op_data_store32, DataStore32(DataSegmentIdx));
+    impl_opcode!(op_data_store64, DataStore64(DataSegmentIdx));
     impl_opcode!(op_data_drop, DataDrop(DataSegmentIdx));
     impl_opcode!(op_table_size, TableSize(TableIdx));
     impl_opcode!(op_table_grow, TableGrow(TableIdx));

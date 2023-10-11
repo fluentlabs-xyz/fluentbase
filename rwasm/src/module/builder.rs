@@ -16,6 +16,7 @@ use crate::{
     common::ValueType,
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
+    module::DataSegmentKind,
     Engine,
     FuncType,
     GlobalType,
@@ -24,6 +25,7 @@ use crate::{
     TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use std::sync::Arc;
 
 /// A builder for a WebAssembly [`Module`].
 #[derive(Debug)]
@@ -446,6 +448,13 @@ impl<'engine> ModuleBuilder<'engine> {
         );
         self.data_segments = data.into_iter().collect::<Result<Vec<_>, _>>()?;
         Ok(())
+    }
+
+    pub fn push_passive_data_segment(&mut self) {
+        self.data_segments.push(DataSegment {
+            kind: DataSegmentKind::Passive,
+            bytes: Arc::new([]),
+        });
     }
 
     /// Finishes construction of the WebAssembly [`Module`].

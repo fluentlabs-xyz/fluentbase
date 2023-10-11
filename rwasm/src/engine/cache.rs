@@ -1,5 +1,6 @@
 use super::bytecode::{DataSegmentIdx, ElementSegmentIdx, FuncIdx, GlobalIdx, TableIdx};
 use crate::{
+    common::UntypedValue,
     instance::InstanceEntity,
     memory::DataSegment,
     module::DEFAULT_MEMORY_INDEX,
@@ -13,7 +14,6 @@ use crate::{
     Table,
 };
 use core::ptr::NonNull;
-use crate::common::UntypedValue;
 
 /// A cache for frequently used entities of an [`Instance`].
 #[derive(Debug)]
@@ -82,7 +82,7 @@ impl InstanceCache {
     #[inline]
     pub fn get_data_segment(&mut self, ctx: &StoreInner, index: u32) -> DataSegment {
         let instance = self.instance();
-        ctx.resolve_instance(self.instance())
+        ctx.resolve_instance(instance)
             .get_data_segment(index)
             .unwrap_or_else(|| {
                 unreachable!("missing data segment ({index:?}) for instance: {instance:?}",)
@@ -207,10 +207,10 @@ impl InstanceCache {
     ///
     /// # Note
     ///
-    /// - This is important when operations such as `memory.grow` have
-    ///   occured that might have invalidated the cached memory.
-    /// - It is equally important to reset cached default memory bytes
-    ///   when calling a host function since it might call `memory.grow`.
+    /// - This is important when operations such as `memory.grow` have occured that might have
+    ///   invalidated the cached memory.
+    /// - It is equally important to reset cached default memory bytes when calling a host function
+    ///   since it might call `memory.grow`.
     #[inline]
     pub fn reset_default_memory_bytes(&mut self) {
         self.default_memory_bytes = None;
@@ -221,11 +221,10 @@ impl InstanceCache {
     ///
     /// # Note
     ///
-    /// - This is required for host function calls for reasons explained
-    ///   in [`InstanceCache::reset_default_memory_bytes`].
-    /// - Furthermore a called host function could introduce new global
-    ///   variables to the [`Store`] and thus might invalidate cached
-    ///   global variables. So we need to reset them as well.
+    /// - This is required for host function calls for reasons explained in
+    ///   [`InstanceCache::reset_default_memory_bytes`].
+    /// - Furthermore a called host function could introduce new global variables to the [`Store`]
+    ///   and thus might invalidate cached global variables. So we need to reset them as well.
     ///
     /// [`Store`]: crate::Store
     #[inline]
@@ -261,8 +260,7 @@ impl InstanceCache {
             .unwrap_or_else(|| {
                 unreachable!(
                     "missing table at index {:?} for instance: {:?}",
-                    index,
-                    self.instance
+                    index, self.instance
                 )
             });
         self.last_table = Some((index, table));
@@ -283,8 +281,7 @@ impl InstanceCache {
             .unwrap_or_else(|| {
                 unreachable!(
                     "missing func at index {:?} for instance: {:?}",
-                    index,
-                    self.instance
+                    index, self.instance
                 )
             });
         self.last_func = Some((index, func));
@@ -321,8 +318,7 @@ impl InstanceCache {
             .unwrap_or_else(|| {
                 unreachable!(
                     "missing global variable at index {:?} for instance: {:?}",
-                    index,
-                    self.instance
+                    index, self.instance
                 )
             });
         self.last_global = Some((index, global));

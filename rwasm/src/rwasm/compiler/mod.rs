@@ -138,6 +138,8 @@ impl<'linker> Compiler<'linker> {
         }
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
+        // translate data section
+        self.translate_data()?;
         // inject main function call with return
         let return_offset = self.code_section.len() + 2;
         self.code_section.op_i32_const(return_offset);
@@ -154,7 +156,9 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
+    fn read_memory_segment(
+        memory: &DataSegment,
+    ) -> Result<(UntypedValue, &[u8], bool), CompilerError> {
         match memory.kind() {
             DataSegmentKind::Active(seg) => {
                 let data_offset = seg
@@ -164,11 +168,9 @@ impl<'linker> Compiler<'linker> {
                 if seg.memory_index().into_u32() != 0 {
                     return Err(CompilerError::NotSupported("not zero index"));
                 }
-                Ok((data_offset, memory.bytes()))
+                Ok((data_offset, memory.bytes(), true))
             }
-            DataSegmentKind::Passive => {
-                Err(CompilerError::NotSupported("passive mode is not supported"))
-            }
+            DataSegmentKind::Passive => Ok((0.into(), memory.bytes(), false)),
         }
     }
 
@@ -177,9 +179,17 @@ impl<'linker> Compiler<'linker> {
             self.code_section
                 .add_memory_pages(memory.initial_pages().into_inner());
         }
+        Ok(())
+    }
+
+    fn translate_data(&mut self) -> Result<(), CompilerError> {
         for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = Self::read_memory_segment(memory)?;
-            self.code_section.add_memory(offset.to_bits() as u32, bytes);
+            let (offset, bytes, is_active) = Self::read_memory_segment(memory)?;
+            if is_active {
+                self.code_section.add_memory(offset.to_bits() as u32, bytes);
+            } else {
+                self.code_section.add_data(bytes);
+            }
         }
         Ok(())
     }
