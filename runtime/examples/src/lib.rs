@@ -41,14 +41,14 @@ fn zktrie_open_test() {
 
     let len = ROOTSIZE + keys_size + leafs_size;
     let mut v = vec![0; len];
-    // sys_read(v.as_mut_ptr(), root_offset as u32, len as u32);
-    sys_write(root_offset as u32, len as u32);
+    sys_read(v.as_mut_ptr(), root_offset as u32, len as u32);
+    // sys_write(root_offset as u32, len as u32);
 
     zktrie_open_(
-        root_offset as i32,
+        v.as_mut_ptr() as i32,
         ROOTSIZE as i32,
-        keys_offset as i32,
-        leafs_offset as i32,
+        v.as_mut_ptr() as i32 + keys_offset as i32,
+        v.as_mut_ptr() as i32 + leafs_offset as i32,
         ACCOUNTS_COUNT as i32,
     );
 }
