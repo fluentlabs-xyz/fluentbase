@@ -185,8 +185,7 @@ impl Runtime {
             "env".to_string(),
             "zktrie_open".to_string(),
             SysFuncIdx::ZKTRIE_OPEN as u16,
-            // TODO
-            &[ValueType::I32; 2],
+            &[ValueType::I32; 5],
             &[],
         ));
         // account updates
@@ -348,7 +347,7 @@ impl Runtime {
 
         // zktrie functions
         // base
-        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_start_offset: i32, root_len: i32, key_start_offset: i32, key_len: i32, leafs_start_offset: i32, leafs_count: i32) -> ());
+        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
         // account updates
         forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
