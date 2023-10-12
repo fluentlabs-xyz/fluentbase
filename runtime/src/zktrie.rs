@@ -4,9 +4,9 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_rwasm::{common::Trap, Caller};
-use halo2_proofs::halo2curves::{bn256::Fr, group::ff::PrimeField};
+use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use lazy_static::lazy_static;
-use poseidon_circuit::hash::Hashable;
+use poseidon::Poseidon;
 use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
@@ -51,7 +51,10 @@ extern "C" fn hash_scheme(
         return FILED_ERROR_READ.as_ptr().cast();
     };
 
-    let h = Fr::hash_with_domain([fa, fb], fdomain);
+    let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
+    hasher.update(&[fa, fb]);
+    let h = hasher.squeeze();
+
     let repr_h = h.to_repr();
     if repr_h.len() == 32 {
         out.copy_from_slice(repr_h.as_ref());

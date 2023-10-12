@@ -137,7 +137,6 @@ impl ExecutionState {
                 Instruction::ReturnCallInternal(Default::default()),
                 Instruction::ReturnCallIndirectUnsafe(Default::default()),
                 Instruction::CallInternal(Default::default()),
-                Instruction::CallIndirectUnsafe(Default::default()),
             ],
             Self::WASM_CALL_HOST(SysFuncIdx::UNKNOWN) => vec![
                 Instruction::ReturnCall(Default::default()),
