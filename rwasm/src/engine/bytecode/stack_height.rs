@@ -89,7 +89,7 @@ impl Instruction {
             }
             Instruction::CallInternal(_) => {}
             Instruction::Call(_) => {}
-            Instruction::CallIndirect(_) | Instruction::CallIndirectUnsafe(_) => {
+            Instruction::CallIndirect(_) => {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::Drop => {
