@@ -298,12 +298,13 @@ pub fn build_table_grow_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
     let delta = build_stack_read_rw_ops(step, 0)?;
     let init = build_stack_read_rw_ops(step, 1)?;
     // put result on stack
-    let _result = build_stack_write_rw_ops(step, 0)?;
-    // if result.as_u32() == u32::MAX {
-    //     return Ok(());
-    // }
+    let result = build_stack_write_rw_ops(step, 0)?;
+    if result.as_u32() == u32::MAX {
+        // return Ok(());
+    }
     // fetch current table size
     let table_size = step.read_table_size(table_index) as u32;
+    assert_eq!(table_size, result.as_u32());
     step.rw_rows.push(RwRow::Context {
         rw_counter: step.next_rw_counter(),
         is_write: true,
@@ -327,7 +328,7 @@ pub fn build_table_grow_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
     step.copy_rows.push(CopyRow {
         tag: CopyTableTag::FillTable,
         from_address: 0,
-        to_address: table_index * (MAX_TABLE_SIZE as u32),
+        to_address: table_index * (MAX_TABLE_SIZE as u32) + table_size,
         length: delta.as_u32(),
         rw_counter: copy_rw_counter,
         data: vec![init.as_u32(); delta.as_usize()],

@@ -27,7 +27,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let init = cb.query_cell();
         let delta = cb.query_cell();
-        let res = cb.query_cell(); // This is table size.
+        let res = cb.query_cell();
         cb.stack_pop(delta.current());
         cb.stack_pop(init.current());
         cb.stack_push(res.current());
@@ -40,7 +40,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         cb.copy_lookup(
             CopyTableTag::FillTable,
             init.current(),
-            cb.query_rwasm_value() * MAX_TABLE_SIZE.expr(),
+            cb.query_rwasm_value() * MAX_TABLE_SIZE.expr() + res.current(),
             delta.current(),
         );
         Self {
@@ -57,14 +57,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let grow_val = trace.curr_nth_stack_value(0)?;
-        self.delta
-            .assign(region, offset, F::from(grow_val.to_bits()));
-        let init_val = trace.curr_nth_stack_value(1)?;
-        self.init
-            .assign(region, offset, F::from(init_val.to_bits()));
-        let res_val = trace.next_nth_stack_value(0)?;
-        self.res.assign(region, offset, F::from(res_val.to_bits()));
+        let delta = trace.curr_nth_stack_value(0)?;
+        self.delta.assign(region, offset, F::from(delta.to_bits()));
+        let init = trace.curr_nth_stack_value(1)?;
+        self.init.assign(region, offset, F::from(init.to_bits()));
+        let res = trace.next_nth_stack_value(0)?;
+        self.res.assign(region, offset, F::from(res.to_bits()));
         Ok(())
     }
 }
