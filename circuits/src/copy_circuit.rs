@@ -340,12 +340,6 @@ impl<F: Field> CopyCircuitConfig<F> {
             self.q_first.enable(region, offset);
             let mut last_offset = offset;
             for (i, value) in copy_row.data.iter().enumerate() {
-                println!(
-                    "i={} value={} index={}",
-                    i,
-                    value,
-                    copy_row.length - i as u32
-                );
                 self.q_enable.enable(region, offset);
                 self.tag.assign(region, offset, copy_row.tag as u64);
                 let tag_bits = BinaryNumberChip::construct(self.tag_bits);
