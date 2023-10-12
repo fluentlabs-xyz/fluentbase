@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::vec;
-use fluentbase_sdk::{evm_return_slice, sys_read, sys_write, zktrie_open_};
+use fluentbase_sdk::{sys_read, sys_write, zktrie_open_};
 
 #[cfg(feature = "evm")]
 mod evm;
@@ -18,7 +18,7 @@ fn greeting() {
     sys_read(input.as_mut_ptr(), 0, 3);
     let sum = input.iter().fold(0u32, |r, v| r + *v as u32);
     let sum_bytes = sum.to_be_bytes();
-    evm_return_slice(&sum_bytes)
+    sys_write(sum_bytes.as_ptr() as u32, sum_bytes.len() as u32);
 }
 
 fn panic() {
