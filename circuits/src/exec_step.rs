@@ -26,8 +26,7 @@ pub struct ExecStep {
     pub(crate) global_memory: Vec<u8>,
     pub(crate) global_table: BTreeMap<u32, UntypedValue>,
     pub(crate) rw_rows: Vec<RwRow>,
-    pub(crate) copy_rows: Vec<CopyRow<u8>>,
-    pub(crate) copy_funrefs: Vec<CopyRow<u32>>,
+    pub(crate) copy_rows: Vec<CopyRow>,
     pub(crate) output_len: u32,
     pub(crate) call_id: u32,
     pub(crate) rw_counter: u32,
@@ -136,7 +135,7 @@ impl ExecSteps {
         let mut rw_counter = 1; // 1 is reserved for start
 
         for (i, trace) in tracer.logs.iter().cloned().enumerate() {
-            let mut call_id = trace.call_id;
+            let call_id = trace.call_id;
             for memory_change in trace.memory_changes.iter() {
                 let max_offset = (memory_change.offset + memory_change.len) as usize;
                 if max_offset > global_memory.len() {
@@ -150,13 +149,13 @@ impl ExecSteps {
                 global_table.insert(elem_addr, table_change.func_ref);
                 let size_addr = table_change.table_idx * 1024;
                 global_table.insert(size_addr, UntypedValue::from(0));
-/*
-                let table_size = global_table
-                    .keys()
-                    .filter(|key| (*key / 1024) == table_change.table_idx)
-                    .count();
-                global_table.insert(size_addr, UntypedValue::from(table_size - 1));
-*/
+                /*
+                                let table_size = global_table
+                                    .keys()
+                                    .filter(|key| (*key / 1024) == table_change.table_idx)
+                                    .count();
+                                global_table.insert(size_addr, UntypedValue::from(table_size - 1));
+                */
             }
             for table_size_change in trace.table_size_changes.iter() {
                 let size_addr = table_size_change.table_idx * 1024;
@@ -172,7 +171,6 @@ impl ExecSteps {
                 global_table: global_table.clone(),
                 rw_rows: vec![],
                 copy_rows: vec![],
-                copy_funrefs: vec![],
                 output_len: res.0.last().map(|v| v.output_len).unwrap_or_default(),
                 call_id,
                 rw_counter,
@@ -186,18 +184,10 @@ impl ExecSteps {
         Ok(res)
     }
 
-    pub fn get_copy_rows(&self) -> Vec<CopyRow<u8>> {
+    pub fn get_copy_rows(&self) -> Vec<CopyRow> {
         let mut res = Vec::new();
         for copy_rows in self.0.iter().map(|v| v.copy_rows.clone()) {
             res.extend(copy_rows);
-        }
-        res
-    }
-
-    pub fn get_copy_funrefs(&self) -> Vec<CopyRow<u32>> {
-        let mut res = Vec::new();
-        for copy_funrefs in self.0.iter().map(|v| v.copy_funrefs.clone()) {
-            res.extend(copy_funrefs);
         }
         res
     }

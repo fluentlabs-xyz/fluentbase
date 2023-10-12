@@ -1,6 +1,6 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::{AdviceColumn, ToExpr},
+    constraint_builder::AdviceColumn,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -43,8 +43,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         cb.table_set(table_index.expr(), elem_index.expr(), value.expr());
         //cb.stack_push(out.current());
         cb.range_check_1024(elem_index.expr());
-        // Minus one is needed here, for example if size of table is zero then zero elem_index will require size to be one.
-        //cb.range_check_1024(size.expr() - elem_index.expr() - 1_i32.expr());
+        // Minus one is needed here, for example if size of table is zero then zero elem_index will
+        // require size to be one. cb.range_check_1024(size.expr() - elem_index.expr() -
+        // 1_i32.expr());
         Self {
             table_index,
             elem_index,
@@ -62,7 +63,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, /* elem_type, */ elem_index, value, /* out, */ size) = match trace.instr() {
+        let (table_index, /* elem_type, */ elem_index, value, /* out, */ size) = match trace.instr()
+        {
             Instruction::TableSet(ti) => (
                 ti,
                 trace.curr_nth_stack_value(0)?,
