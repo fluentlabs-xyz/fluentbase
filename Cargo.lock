@@ -1469,9 +1469,9 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "fluentbase-rwasm",
- "halo2_proofs",
+ "halo2curves",
  "lazy_static",
- "poseidon-circuit 0.1.0 (git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main)",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "wasi 0.11.0+wasi-snapshot-preview1",
@@ -1713,7 +1713,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "plotters",
- "poseidon",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220)",
  "rand_core",
  "rayon",
  "sha3 0.9.1",
@@ -2415,6 +2415,16 @@ dependencies = [
 name = "poseidon"
 version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
+dependencies = [
+ "group 0.12.1",
+ "halo2curves",
+ "subtle",
+]
+
+[[package]]
+name = "poseidon"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon#0b9965fbcd9e03559088b8f68489592286bc55e0"
 dependencies = [
  "group 0.12.1",
  "halo2curves",

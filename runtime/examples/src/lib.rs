@@ -9,6 +9,7 @@ mod wasi;
 
 use fluentbase_sdk::{evm_return_slice, sys_read};
 
+#[cfg(feature = "greeting")]
 fn greeting() {
     let mut input: [u8; 3] = [0; 3];
     sys_read(input.as_mut_ptr(), 0, 3);
