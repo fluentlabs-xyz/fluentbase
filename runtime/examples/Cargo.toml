@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [features]
 greeting = []
+zktrie_open_test = []
 panic = []
 rwasm = []
 evm = []
