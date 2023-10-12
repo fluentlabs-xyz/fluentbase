@@ -1,6 +1,13 @@
-use crate::impl_expr;
+use crate::{
+    constraint_builder::{Query, ToExpr},
+    impl_expr,
+    util::Field,
+};
 use fluentbase_rwasm::common::UntypedValue;
-use std::{fmt, fmt::Formatter, mem::discriminant};
+use std::{
+    fmt,
+    fmt::{Debug, Formatter},
+};
 use strum_macros::EnumIter;
 
 pub const N_RW_TABLE_TAG_BITS: usize = 4;
@@ -44,61 +51,47 @@ pub enum RwTableContextTag<Q: Default> {
     ProgramCounter,
     StackPointer,
     CallDepth,
-    TableSize { table_index: Q },
+    TableSize(Q),
 }
 
-impl_expr!(RwTableContextTag<Q>);
-
-impl<Q: Default> RwTableContextTag<Q> {
-    fn get_address(&self, arg: u32) -> u32 {
-        let var = self.get_variant();
-        var as u32 * 1024 + arg
-    }
-
-    fn get_variant(&self) -> u8 {
-        let dis = std::mem::discriminant(self);
-        unsafe { *(&dis as *const std::mem::Discriminant<Self> as *const u8) }
-    }
-
-    fn get_argument(self) -> Q {
+impl<F: Field> ToExpr<F> for RwTableContextTag<Query<F>> {
+    fn expr(&self) -> Query<F> {
         match self {
-            Self::TableSize { table_index } => table_index,
-            _ => Q::default(),
+            RwTableContextTag::MemorySize => 1.expr(),
+            RwTableContextTag::ConsumedFuel => 2.expr(),
+            RwTableContextTag::ProgramCounter => 3.expr(),
+            RwTableContextTag::StackPointer => 4.expr(),
+            RwTableContextTag::CallDepth => 5.expr(),
+            RwTableContextTag::TableSize(table_index) => {
+                6.expr() + table_index.clone() * 256.expr()
+            }
         }
     }
 }
 
-impl<Q: Default> fmt::Display for RwTableContextTag<Q> {
+impl RwTableContextTag<u32> {
+    pub(crate) fn address(&self) -> u32 {
+        match self {
+            RwTableContextTag::MemorySize => 1,
+            RwTableContextTag::ConsumedFuel => 2,
+            RwTableContextTag::ProgramCounter => 3,
+            RwTableContextTag::StackPointer => 4,
+            RwTableContextTag::CallDepth => 5,
+            RwTableContextTag::TableSize(table_index) => 6 + table_index * 256,
+        }
+    }
+}
+
+impl<Q: Default + Debug> fmt::Display for RwTableContextTag<Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             RwTableContextTag::MemorySize => write!(f, "MS"),
             RwTableContextTag::ConsumedFuel => write!(f, "CF"),
-            RwTableContextTag::TableSize { .. } => write!(f, "TS"),
+            RwTableContextTag::TableSize(v) => write!(f, "TS({:?})", v),
             RwTableContextTag::ProgramCounter => write!(f, "PC"),
             RwTableContextTag::StackPointer => write!(f, "SP"),
             RwTableContextTag::CallDepth => write!(f, "CD"),
         }
-    }
-}
-
-impl<Q: Default> Into<usize> for RwTableContextTag<Q>
-where
-    Self: Into<u32>,
-{
-    fn into(self) -> usize {
-        Into::<u32>::into(self) as usize
-    }
-}
-
-impl Into<u32> for RwTableContextTag<u32> {
-    fn into(self) -> u32 {
-        self.get_address(self.get_argument())
-    }
-}
-
-impl<F: crate::util::Field> Into<u32> for RwTableContextTag<crate::constraint_builder::Query<F>> {
-    fn into(self) -> u32 {
-        self.get_address(0)
     }
 }
 
@@ -210,7 +203,7 @@ impl RwRow {
 
     pub fn address(&self) -> Option<u32> {
         match self {
-            Self::Context { tag, .. } => Some(Into::<u32>::into(*tag)),
+            Self::Context { tag, .. } => Some(tag.address()),
             Self::Memory { memory_address, .. } => Some(*memory_address as u32),
             Self::Stack { stack_pointer, .. } => Some(*stack_pointer as u32),
             Self::Global { global_index, .. } => Some(*global_index as u32),

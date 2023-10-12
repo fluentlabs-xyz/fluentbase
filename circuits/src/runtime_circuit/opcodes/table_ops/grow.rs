@@ -1,61 +1,52 @@
 use crate::{
-    bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
+    exec_step::MAX_TABLE_SIZE,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
-    rw_builder::rw_row::RwTableContextTag,
-    rw_builder::copy_row::CopyTableTag,
+    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableContextTag},
     util::Field,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableGrowGadget<F: Field> {
-    table_index: AdviceColumn,
-    init_val: AdviceColumn,
-    grow_val: AdviceColumn,
-    res_val: AdviceColumn,
+    init: AdviceColumn,
+    delta: AdviceColumn,
+    res: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
 impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
     const NAME: &'static str = "WASM_TABLE_GROW";
-
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GROW;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_cell();
-        let init_val = cb.query_cell();
-        let grow_val = cb.query_cell();
-        let res_val = cb.query_cell(); // This is table size.
-        cb.require_opcode(Instruction::TableGrow(Default::default()));
-        cb.stack_pop(grow_val.current());
-        cb.stack_pop(init_val.current());
+        let init = cb.query_cell();
+        let delta = cb.query_cell();
+        let res = cb.query_cell(); // This is table size.
+        cb.stack_pop(delta.current());
+        cb.stack_pop(init.current());
+        cb.stack_push(res.current());
         cb.context_lookup(
-            RwTableContextTag::TableSize { table_index: table_index.current() },
+            RwTableContextTag::TableSize(cb.query_rwasm_value()),
             1.expr(),
-            res_val.current() + grow_val.current(),
-            res_val.current(),
+            res.current() + delta.current(),
+            res.current(),
         );
-        cb.stack_push(res_val.current());
-/*
         cb.copy_lookup(
             CopyTableTag::FillTable,
-            init_val.current(),
-            table_index.current() * 1024 + res_val.current(),
-            grow_val.current(),
+            init.current(),
+            cb.query_rwasm_value() * MAX_TABLE_SIZE.expr(),
+            delta.current(),
         );
-*/
         Self {
-            table_index,
-            init_val,
-            grow_val,
-            res_val,
+            init,
+            delta,
+            res,
             _pd: Default::default(),
         }
     }
@@ -66,23 +57,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, init_val, grow_val, res_val) = match trace.instr() {
-            Instruction::TableGrow(ti) => (
-                ti,
-                trace.curr_nth_stack_value(1)?,
-                trace.curr_nth_stack_value(0)?,
-                trace.next_nth_stack_value(0)?,
-            ),
-            _ => bail_illegal_opcode!(trace),
-        };
-        self.table_index
-            .assign(region, offset, F::from(table_index.to_u32() as u64));
-        self.init_val
-            .assign(region, offset, F::from(init_val.to_bits()));
-        self.grow_val
+        let grow_val = trace.curr_nth_stack_value(0)?;
+        self.delta
             .assign(region, offset, F::from(grow_val.to_bits()));
-        println!("TABLE GROW DEBUG, res_val {:#?}", res_val);
-        self.res_val.assign(region, offset, F::from(res_val.to_bits()));
+        let init_val = trace.curr_nth_stack_value(1)?;
+        self.init
+            .assign(region, offset, F::from(init_val.to_bits()));
+        let res_val = trace.next_nth_stack_value(0)?;
+        self.res.assign(region, offset, F::from(res_val.to_bits()));
         Ok(())
     }
 }
@@ -115,5 +97,4 @@ mod test {
             Drop
         });
     }
-
 }

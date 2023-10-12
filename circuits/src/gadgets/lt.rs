@@ -21,7 +21,7 @@ pub struct LtGadget<F: Field, const N_BYTES: usize> {
     range: F, // The range of the inputs, `256**N_BYTES`
 }
 
-pub(crate) fn from_bytes_expr<F: Field, E: ToExpr>(bytes: &[E]) -> Query<F> {
+pub(crate) fn from_bytes_expr<F: Field, E: ToExpr<F>>(bytes: &[E]) -> Query<F> {
     debug_assert!(
         bytes.len() <= 31,
         "Too many bytes to compose an integer in field"

@@ -31,7 +31,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
         cb.require_opcode(Instruction::TableSize(Default::default()));
         //cb.table_size(table_index.expr(), value.expr());
         cb.context_lookup(
-            RwTableContextTag::TableSize { table_index: table_index.current() },
+            RwTableContextTag::TableSize(table_index.current()),
             0.expr(),
             value.current(),
             0.expr(),

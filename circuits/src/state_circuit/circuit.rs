@@ -144,7 +144,7 @@ impl<F: Field> StateCircuitConfig<F> {
                     .unwrap_or_default();
                 let address = if row.tag() == RwTableTag::Context {
                     let tag = RwTableContextTag::<u32>::iter()
-                        .filter(|v| Into::<u32>::into(*v) == row.address().unwrap_or_default())
+                        .filter(|v| v.address() == row.address().unwrap_or_default())
                         .last()
                         .unwrap();
                     format!("{} ({})", tag, row.address().unwrap_or_default())
@@ -191,7 +191,7 @@ impl<F: Field> StateCircuitConfig<F> {
                 let (mut rw_rows, mut rw_meta) = exec_steps.get_rw_rows();
                 rw_rows.insert(0, RwRow::Start { rw_counter: 0 });
                 rw_meta.insert(0, (Instruction::Unreachable, 0));
-                // self.print_rw_rows_table(&rw_rows, rw_meta);
+                self.print_rw_rows_table(&rw_rows, rw_meta);
                 rw_rows.sort_by_key(|row| {
                     (
                         row.tag() as u64,
@@ -200,7 +200,7 @@ impl<F: Field> StateCircuitConfig<F> {
                         row.rw_counter(),
                     )
                 });
-                self.print_rw_rows_table(&rw_rows, rw_meta);
+                // self.print_rw_rows_table(&rw_rows, rw_meta);
                 for (offset, rw_row) in rw_rows.iter().enumerate() {
                     if offset > 0 {
                         let prev_value = rw_rows.get(offset - 1).filter(|v| {
