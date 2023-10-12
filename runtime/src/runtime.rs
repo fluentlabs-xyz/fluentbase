@@ -345,24 +345,18 @@ impl Runtime {
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
 
-        // zktrie functions
-        // base
         forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
-        // account updates
         forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
-        // account gets
         forward_call!(res, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
         forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
-        // store updates
-        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(offset: i32, length: i32) -> ());
-        // store gets
+        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
         forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
 
         let result = res
