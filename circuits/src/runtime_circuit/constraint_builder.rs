@@ -246,7 +246,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
 
     pub fn context_lookup(
         &mut self,
-        tag: RwTableContextTag,
+        tag: RwTableContextTag<Query<F>>,
         is_write: Query<F>,
         value: Query<F>,
         value_prev: Query<F>,
@@ -293,52 +293,11 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         ));
     }
 
-    pub fn table_size(&mut self, table_idx: Query<F>, value: Query<F>) {
-        self.table_size_lookup(0.expr(), table_idx * 1024, value);
-    }
-    pub fn table_fill(
-        &mut self,
-        table_index: Query<F>,
-        start: Query<F>,
-        range: Query<F>,
-        value: Query<F>,
-    ) {
-        // unreachable!("not implemented yet")
-    }
-    pub fn table_grow(
-        &mut self,
-        table_idx: Query<F>,
-        init: Query<F>,
-        grow: Query<F>,
-        res: Query<F>,
-    ) {
-        self.table_size_lookup(0.expr(), table_idx.clone(), res.clone());
-        self.table_size_lookup(1.expr(), table_idx.clone(), res.clone() + grow.clone());
-        self.table_fill(table_idx, res, grow, init);
-    }
     pub fn table_get(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
     }
     pub fn table_set(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
         self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
-    }
-    pub fn table_copy(
-        &mut self,
-        table_index: Query<F>,
-        table_index2: Query<F>,
-        start: Query<F>,
-        range: Query<F>,
-    ) {
-        // unreachable!("not implemented yet")
-    }
-    pub fn table_init(
-        &mut self,
-        table_index: Query<F>,
-        table_index2: Query<F>,
-        start: Query<F>,
-        range: Query<F>,
-    ) {
-        // unreachable!("not implemented yet")
     }
 
     pub fn table_elem_lookup(
@@ -348,29 +307,18 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         elem_idx: Query<F>,
         value: Query<F>,
     ) {
-        // address = 1 + a + b*x, where x is 1024. Adding one used to reserve element to store size.
+        // address = a + b*x, where x is 1024.
         self.rw_lookup(
             is_write,
             RwTableTag::Table.expr(),
-            table_idx * 1024 + elem_idx + 1.expr(),
+            table_idx * 1024 + elem_idx,
             value,
             None,
         );
     }
 
-    pub fn table_size_lookup(&mut self, is_write: Query<F>, table_idx: Query<F>, value: Query<F>) {
-        // address = b*x, where x is 1024. So this is reserved element to store size.
-        self.rw_lookup(
-            is_write,
-            RwTableTag::Table.expr(),
-            table_idx * 1024,
-            value,
-            None,
-        );
-    }
-
-    pub fn range_check_1024(&mut self, value: Query<F>) {
-        // unreachable!("not implemented yet")
+    pub fn range_check_1024(&mut self, val: Query<F>) {
+        self.op_lookups.push(LookupTable::RangeCheck10([val]));
     }
 
     pub fn rwasm_lookup(&mut self, index: Query<F>, code: Query<F>, value: Query<F>) {

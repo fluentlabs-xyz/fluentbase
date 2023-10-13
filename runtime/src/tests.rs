@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, Error};
+use crate::{runtime::Runtime, Error, HASH_SCHEME_DONE};
 use fluentbase_rwasm::{
     common::Trap,
     rwasm::{Compiler, ImportLinker},
@@ -59,12 +59,44 @@ fn test_greeting() {
     assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
+#[test]
+fn zktrie_open_test() {
+    use HASH_SCHEME_DONE;
+    assert_eq!(*HASH_SCHEME_DONE, true);
+
+    let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
+    let import_linker = Runtime::new_linker();
+    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+
+    let mut input_data = vec![];
+
+    let root_updated: Vec<u8> = vec![
+        1, 158, 59, 182, 29, 224, 81, 156, 63, 5, 24, 82, 92, 243, 23, 118, 114, 252, 249, 133, 70,
+        229, 137, 214, 108, 4, 219, 78, 152, 25, 152, 109,
+    ];
+    input_data.extend(root_updated);
+
+    let key = "key".as_bytes();
+    let mut key_bytes = [0u8; 20];
+    let l = key_bytes.len();
+    key_bytes[l - key.len()..].copy_from_slice(key);
+    input_data.extend(key_bytes.as_slice());
+
+    let mut account_data = [0u8; 32 * 5];
+    account_data[0] = 1;
+    input_data.extend(account_data.as_slice());
+
+    let output =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &input_data, &import_linker, false)
+            .unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
 fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
     let err = result.err().unwrap();
     match err {
         Error::Rwasm(err) => match err {
             fluentbase_rwasm::Error::Trap(trap) => {
-                println!("{:?}", trap);
                 assert_eq!(
                     trap.i32_exit_status().unwrap(),
                     trap_code.i32_exit_status().unwrap()

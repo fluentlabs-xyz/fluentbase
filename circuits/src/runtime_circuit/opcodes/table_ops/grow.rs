@@ -1,46 +1,52 @@
 use crate::{
-    bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
+    exec_step::MAX_TABLE_SIZE,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableContextTag},
     util::Field,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableGrowGadget<F: Field> {
-    table_index: AdviceColumn,
-    init_val: AdviceColumn,
-    grow_val: AdviceColumn,
-    res_val: AdviceColumn,
+    init: AdviceColumn,
+    delta: AdviceColumn,
+    res: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
 impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
     const NAME: &'static str = "WASM_TABLE_GROW";
-
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GROW;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_cell();
-        let init_val = cb.query_cell();
-        let grow_val = cb.query_cell();
-        let res_val = cb.query_cell();
-        cb.require_opcode(Instruction::TableGrow(Default::default()));
-        cb.stack_pop(init_val.current());
-        cb.stack_pop(grow_val.current());
-        //cb.table_grow(table_index.expr(), init_val.expr(), grow_val.expr(), res_val.expr());
-        cb.stack_push(res_val.current());
+        let init = cb.query_cell();
+        let delta = cb.query_cell();
+        let res = cb.query_cell();
+        cb.stack_pop(delta.current());
+        cb.stack_pop(init.current());
+        cb.stack_push(res.current());
+        cb.context_lookup(
+            RwTableContextTag::TableSize(cb.query_rwasm_value()),
+            1.expr(),
+            res.current() + delta.current(),
+            res.current(),
+        );
+        cb.copy_lookup(
+            CopyTableTag::FillTable,
+            init.current(),
+            cb.query_rwasm_value() * MAX_TABLE_SIZE.expr() + res.current(),
+            delta.current(),
+        );
         Self {
-            table_index,
-            init_val,
-            grow_val,
-            res_val,
+            init,
+            delta,
+            res,
             _pd: Default::default(),
         }
     }
@@ -51,23 +57,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, init_val, grow_val, res_val) = match trace.instr() {
-            Instruction::TableGrow(ti) => (
-                ti,
-                trace.curr_nth_stack_value(0)?,
-                trace.curr_nth_stack_value(1)?,
-                trace.next_nth_stack_value(0)?,
-            ),
-            _ => bail_illegal_opcode!(trace),
-        };
-        self.table_index
-            .assign(region, offset, F::from(table_index.to_u32() as u64));
-        self.init_val
-            .assign(region, offset, F::from(init_val.to_bits()));
-        self.grow_val
-            .assign(region, offset, F::from(grow_val.to_bits()));
-        self.res_val
-            .assign(region, offset, F::from(res_val.to_bits()));
+        let delta = trace.curr_nth_stack_value(0)?;
+        self.delta.assign(region, offset, F::from(delta.to_bits()));
+        let init = trace.curr_nth_stack_value(1)?;
+        self.init.assign(region, offset, F::from(init.to_bits()));
+        let res = trace.next_nth_stack_value(0)?;
+        self.res.assign(region, offset, F::from(res.to_bits()));
         Ok(())
     }
 }
@@ -82,6 +77,20 @@ mod test {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(2)
+            TableGrow(0)
+            Drop
+        });
+    }
+
+    #[test]
+    fn table_two_times_grow() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(3)
             TableGrow(0)
             Drop
         });

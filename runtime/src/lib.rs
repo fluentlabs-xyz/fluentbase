@@ -1,6 +1,15 @@
+#![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
+extern crate core;
+
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
+pub use instruction::*;
+pub use macros::*;
+pub use platform::*;
+pub use runtime::*;
+pub use types::*;
+pub use crate::zktrie::*;
 
 mod instruction;
 mod macros;
@@ -9,12 +18,8 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 mod types;
-
-pub use instruction::*;
-pub use macros::*;
-pub use platform::*;
-pub use runtime::*;
-pub use types::*;
+mod zktrie;
+mod zktrie_helpers;
 
 #[derive(Debug)]
 pub enum Error {

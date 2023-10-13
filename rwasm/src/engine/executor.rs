@@ -241,15 +241,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
-            println!(
-                "{:?} {:?}",
-                instr,
-                self.value_stack
-                    .dump_stack(self.sp)
-                    .iter()
-                    .map(|v| v.as_u64())
-                    .collect::<Vec<_>>()
-            );
+            // println!(
+            //     "{:?} {:?}",
+            //     instr,
+            //     self.value_stack
+            //         .dump_stack(self.sp)
+            //         .iter()
+            //         .map(|v| v.as_u64())
+            //         .collect::<Vec<_>>()
+            // );
 
             // handle pre-instruction state
             let has_default_memory = {
@@ -1365,6 +1365,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
+        self.tracer.table_size_change(table_index.to_u32(), delta);
         self.try_next_instr()
     }
 

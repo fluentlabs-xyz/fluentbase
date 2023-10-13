@@ -1,6 +1,13 @@
-use crate::impl_expr;
+use crate::{
+    constraint_builder::{Query, ToExpr},
+    impl_expr,
+    util::Field,
+};
 use fluentbase_rwasm::common::UntypedValue;
-use std::{fmt, fmt::Formatter};
+use std::{
+    fmt,
+    fmt::{Debug, Formatter},
+};
 use strum_macros::EnumIter;
 
 pub const N_RW_TABLE_TAG_BITS: usize = 4;
@@ -37,33 +44,54 @@ impl Into<usize> for RwTableTag {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
-pub enum RwTableContextTag {
+#[repr(u64)]
+pub enum RwTableContextTag<Q: Default> {
     MemorySize = 1,
     ConsumedFuel,
-    TableSize,
     ProgramCounter,
     StackPointer,
     CallDepth,
+    TableSize(Q),
 }
 
-impl_expr!(RwTableContextTag);
-
-impl fmt::Display for RwTableContextTag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl<F: Field> ToExpr<F> for RwTableContextTag<Query<F>> {
+    fn expr(&self) -> Query<F> {
         match self {
-            RwTableContextTag::MemorySize => write!(f, "MS"),
-            RwTableContextTag::ConsumedFuel => write!(f, "CF"),
-            RwTableContextTag::TableSize => write!(f, "TS"),
-            RwTableContextTag::ProgramCounter => write!(f, "PC"),
-            RwTableContextTag::StackPointer => write!(f, "SP"),
-            RwTableContextTag::CallDepth => write!(f, "CD"),
+            RwTableContextTag::MemorySize => 1.expr(),
+            RwTableContextTag::ConsumedFuel => 2.expr(),
+            RwTableContextTag::ProgramCounter => 3.expr(),
+            RwTableContextTag::StackPointer => 4.expr(),
+            RwTableContextTag::CallDepth => 5.expr(),
+            RwTableContextTag::TableSize(table_index) => {
+                6.expr() + table_index.clone() * 256.expr()
+            }
         }
     }
 }
 
-impl Into<usize> for RwTableContextTag {
-    fn into(self) -> usize {
-        self as usize
+impl RwTableContextTag<u32> {
+    pub(crate) fn address(&self) -> u32 {
+        match self {
+            RwTableContextTag::MemorySize => 1,
+            RwTableContextTag::ConsumedFuel => 2,
+            RwTableContextTag::ProgramCounter => 3,
+            RwTableContextTag::StackPointer => 4,
+            RwTableContextTag::CallDepth => 5,
+            RwTableContextTag::TableSize(table_index) => 6 + table_index * 256,
+        }
+    }
+}
+
+impl<Q: Default + Debug> fmt::Display for RwTableContextTag<Q> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RwTableContextTag::MemorySize => write!(f, "MS"),
+            RwTableContextTag::ConsumedFuel => write!(f, "CF"),
+            RwTableContextTag::TableSize(v) => write!(f, "TS({:?})", v),
+            RwTableContextTag::ProgramCounter => write!(f, "PC"),
+            RwTableContextTag::StackPointer => write!(f, "SP"),
+            RwTableContextTag::CallDepth => write!(f, "CD"),
+        }
     }
 }
 
@@ -76,7 +104,7 @@ pub enum RwRow {
         rw_counter: usize,
         is_write: bool,
         call_id: u32,
-        tag: RwTableContextTag,
+        tag: RwTableContextTag<u32>,
         value: u64,
     },
     /// Stack
@@ -175,7 +203,7 @@ impl RwRow {
 
     pub fn address(&self) -> Option<u32> {
         match self {
-            Self::Context { tag, .. } => Some(*tag as u32),
+            Self::Context { tag, .. } => Some(tag.address()),
             Self::Memory { memory_address, .. } => Some(*memory_address as u32),
             Self::Stack { stack_pointer, .. } => Some(*stack_pointer as u32),
             Self::Global { global_index, .. } => Some(*global_index as u32),
