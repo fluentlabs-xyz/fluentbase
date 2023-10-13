@@ -30,10 +30,15 @@ pub(crate) mod op_return;
 pub(crate) mod op_select;
 pub(crate) mod op_shift;
 pub(crate) mod op_store;
+pub(crate) mod op_table_copy;
+pub(crate) mod op_table_fill;
+pub(crate) mod op_table_get;
+pub(crate) mod op_table_grow;
+pub(crate) mod op_table_set;
+pub(crate) mod op_table_size;
 pub(crate) mod op_test;
 pub(crate) mod op_unary;
 pub(crate) mod op_unreachable;
-pub(crate) mod table_ops;
 
 #[macro_export]
 macro_rules! bail_illegal_opcode {
