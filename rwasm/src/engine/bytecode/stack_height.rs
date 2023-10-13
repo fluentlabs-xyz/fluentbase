@@ -84,7 +84,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::ReturnCallInternal(_) | Instruction::ReturnCall(_) => {}
-            Instruction::ReturnCallIndirect(_) | Instruction::ReturnCallIndirectUnsafe(_) => {
+            Instruction::ReturnCallIndirect(_) => {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::CallInternal(_) => {}
