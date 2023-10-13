@@ -13,6 +13,7 @@ use crate::{
             InstrMeta,
             Instruction,
             LocalDepth,
+            SignatureIdx,
             TableIdx,
         },
         CompiledFunc,
@@ -268,10 +269,10 @@ impl InstructionSet {
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
-    impl_opcode!(op_return_call_indirect, ReturnCallIndirectUnsafe(TableIdx));
+    impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
     impl_opcode!(op_call_internal, CallInternal(CompiledFunc));
     impl_opcode!(op_call, Call(FuncIdx));
-    impl_opcode!(op_call_indirect, CallIndirectUnsafe(TableIdx));
+    impl_opcode!(op_call_indirect, CallIndirect(SignatureIdx));
     impl_opcode!(op_drop, Drop);
     impl_opcode!(op_select, Select);
     impl_opcode!(op_global_get, GlobalGet(GlobalIdx));
