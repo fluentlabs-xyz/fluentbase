@@ -1,5 +1,4 @@
 use crate::{
-    bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
@@ -9,7 +8,6 @@ use crate::{
     rw_builder::rw_row::RwTableContextTag,
     util::Field,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
