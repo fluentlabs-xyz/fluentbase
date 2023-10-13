@@ -34,7 +34,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         let size = cb.query_cell();
         cb.require_opcode(Instruction::TableGet(Default::default()));
         cb.stack_pop(elem_index.current());
-        cb.table_get(table_index.current(), elem_index.current(), value.current());
+        cb.table_elem_lookup(
+            0.expr(),
+            table_index.current(),
+            elem_index.current(),
+            value.current(),
+        );
         cb.stack_push(value.current());
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr() - elem_index.expr());
@@ -42,7 +47,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             RwTableContextTag::TableSize(cb.query_rwasm_value()),
             0.expr(),
             size.current(),
-            0.expr(),
+            None,
         );
         Self {
             table_index,

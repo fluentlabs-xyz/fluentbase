@@ -15,8 +15,7 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableSetGadget<F: Field> {
-    table_index: AdviceColumn,
-    elem_index: AdviceColumn,
+    elem: AdviceColumn,
     value: AdviceColumn,
     size: AdviceColumn,
     _pd: PhantomData<F>,
@@ -24,32 +23,34 @@ pub(crate) struct OpTableSetGadget<F: Field> {
 
 impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
     const NAME: &'static str = "WASM_TABLE_SET";
-
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_cell();
-        let elem_index = cb.query_cell();
+        let elem = cb.query_cell();
         let value = cb.query_cell();
         let size = cb.query_cell();
-        cb.require_opcode(Instruction::TableSet(Default::default()));
-        cb.stack_pop(elem_index.current());
         cb.stack_pop(value.current());
-        cb.table_set(table_index.current(), elem_index.current(), value.current());
-        cb.range_check_1024(elem_index.expr());
-        // Minus one is needed here, for example if size of table is zero then zero elem_index will
-        // require size to be one. cb.range_check_1024(size.expr() - elem_index.expr() -
-        // 1_i32.expr());
-        cb.range_check_1024(size.current() - elem_index.current() - 1.expr());
+        cb.stack_pop(elem.current());
+        cb.table_elem_lookup(
+            1.expr(),
+            cb.query_rwasm_value(),
+            elem.current(),
+            value.current(),
+        );
         cb.context_lookup(
             RwTableContextTag::TableSize(cb.query_rwasm_value()),
             0.expr(),
             size.current(),
-            0.expr(),
+            None,
         );
+        // TODO: "table size overflow check"
+        // cb.range_check_1024(elem.expr());
+        // Minus one is needed here, for example if size of table is zero then zero elem_index will
+        // require size to be one. cb.range_check_1024(size.expr() - elem_index.expr() -
+        // 1_i32.expr());
+        // cb.range_check_1024(size.current() - elem.current() - 1.expr());
         Self {
-            table_index,
-            elem_index,
+            elem,
             value,
             size,
             _pd: Default::default(),
@@ -62,23 +63,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, elem_index, value, size) = match trace.instr()
-        {
-            Instruction::TableSet(ti) => (
-                ti,
-                trace.curr_nth_stack_value(0)?,
-                trace.curr_nth_stack_value(1)?,
-                trace.read_table_size(ti.to_u32()),
-            ),
-            _ => bail_illegal_opcode!(trace),
-        };
-        println!("DEBUG ELEM {:#?}, VALUE {:#?}", elem_index, value);
-        self.table_index
-            .assign(region, offset, F::from(table_index.to_u32() as u64));
-        self.elem_index
-            .assign(region, offset, F::from(elem_index.to_bits()));
+        let table_index = trace.instr().aux_value().unwrap_or_default().as_u32();
+        let elem = trace.curr_nth_stack_value(0)?;
+        let value = trace.curr_nth_stack_value(1)?;
+        let size = trace.read_table_size(table_index);
+        self.elem.assign(region, offset, F::from(elem.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
-        println!("DEBUG TABLE SIZE {size}");
         self.size.assign(region, offset, F::from(size as u64));
         Ok(())
     }

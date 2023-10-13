@@ -35,7 +35,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
             RwTableContextTag::TableSize(cb.query_rwasm_value()),
             1.expr(),
             res.current() + delta.current(),
-            res.current(),
+            Some(res.current()),
         );
         cb.copy_lookup(
             CopyTableTag::FillTable,
