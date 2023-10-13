@@ -112,6 +112,9 @@ impl<'linker> Compiler<'linker> {
         };
         // first we must translate all sections, this is an entrypoint
         self.translate_sections(main_index)?;
+
+        self.translate_imports_funcs()?;
+
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
@@ -120,6 +123,24 @@ impl<'linker> Compiler<'linker> {
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
         self.is_translated = true;
+        Ok(())
+    }
+
+    fn translate_imports_funcs(&mut self, ) -> Result<(), CompilerError> {
+        for func_idx in 0..self.module.imports.len_funcs as u32 {
+            let beginning_offset = self.code_section.len();
+            self.function_beginning
+                .insert(func_idx + 1, beginning_offset);
+
+            let func = self.module.funcs[func_idx as usize];
+            let func_type = self.engine.resolve_func_type(&func, Clone::clone);
+            let num_inputs = func_type.params();
+            let num_outputs = func_type.results();
+            self.swap_stack_parameters(num_inputs.len() as u32);
+            self.translate_host_call(func_idx as u32)?;
+            DropKeepWithReturnParam(DropKeep::new(1, num_outputs.len()).map_err(|_| CompilerError::DropKeepOutOfBounds)?).translate(&mut self.code_section)?;
+        }
+
         Ok(())
     }
 
@@ -223,13 +244,11 @@ impl<'linker> Compiler<'linker> {
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
                 ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
-                    return Err(CompilerError::NotSupported(
-                        "passive or declared mode for element segments is not supported",
-                    ))
+                    None
                 }
-                ElementSegmentKind::Active(aes) => aes,
+                ElementSegmentKind::Active(aes) => Some(aes),
             };
-            if aes.table_index().into_u32() != table_index {
+            if aes.filter(|aes| aes.table_index().into_u32() != table_index).is_some() {
                 continue;
             }
             if e.ty != ValueType::FuncRef {
@@ -237,16 +256,18 @@ impl<'linker> Compiler<'linker> {
                     "only funcref type is supported for element segments",
                 ));
             }
-            let dest_offset = self.translate_const_expr(aes.offset())?;
-            for (index, item) in e.items.items().iter().enumerate() {
-                self.code_section
-                    .op_i32_const(dest_offset.as_u32() + index as u32);
-                if let Some(value) = item.eval_const() {
-                    self.code_section.op_i64_const(value);
-                } else if let Some(value) = item.funcref() {
-                    self.code_section.op_ref_func(value.into_u32());
+            if let Some(aes) = aes {
+                let dest_offset = self.translate_const_expr(aes.offset())?;
+                for (index, item) in e.items.items().iter().enumerate() {
+                    self.code_section
+                        .op_i32_const(dest_offset.as_u32() + index as u32);
+                    if let Some(value) = item.eval_const() {
+                        self.code_section.op_i64_const(value);
+                    } else if let Some(value) = item.funcref() {
+                        self.code_section.op_ref_func(value.into_u32());
+                    }
+                    self.code_section.op_table_set(table_index);
                 }
-                self.code_section.op_table_set(table_index);
             }
         }
         Ok(())
@@ -268,9 +289,7 @@ impl<'linker> Compiler<'linker> {
         if fn_index < import_len as u32 {
             return Ok(());
         }
-        let fn_index = fn_index - import_len as u32;
-
-        let func_type = self.module.funcs[fn_index as usize + import_len];
+        let func_type = self.module.funcs[fn_index as usize];
         let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
@@ -280,7 +299,7 @@ impl<'linker> Compiler<'linker> {
         let func_body = self
             .module
             .compiled_funcs
-            .get(fn_index as usize)
+            .get(fn_index as usize - import_len  as usize)
             .ok_or(CompilerError::MissingFunction)?;
 
         // reserve stack for locals
@@ -598,23 +617,14 @@ impl<'linker> Compiler<'linker> {
                     affected = true;
                 }
                 Instruction::RefFunc(func_idx) => {
-                    let func_idx = func_idx.to_u32() + 1;
-                    let imports = self.module.imports.items.deref();
                     // if ref func refers to host call
-                    if func_idx < imports.len() as u32 {
-                        panic!("this is not supported right now, no ref func for host calls")
-                        // let import_index = self.resolve_host_call(func_idx.to_u32())?;
-                        // code.update_call_index(import_index);
-                        // affected = true;
-                    } else {
-                        let func_offset = self
-                            .function_beginning
-                            .get(&func_idx)
-                            .ok_or(CompilerError::MissingFunction)?;
-                        let state = &states[*func_offset as usize];
-                        code.update_call_index(state.0);
-                        affected = true;
-                    }
+                    let func_offset = self
+                        .function_beginning
+                        .get(&(func_idx.to_u32() + 1))
+                        .ok_or(CompilerError::MissingFunction)?;
+                    let state = &states[*func_offset as usize];
+                    code.update_call_index(state.0);
+                    affected = true;
                 }
                 _ => {}
             };
