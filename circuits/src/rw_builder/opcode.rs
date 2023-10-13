@@ -318,7 +318,7 @@ pub fn build_table_grow_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
             rw_counter: step.next_rw_counter(),
             is_write: true,
             call_id: step.call_id,
-            address: table_size as u64 + i as u64,
+            address: (table_index * (MAX_TABLE_SIZE as u32)) as u64 + table_size as u64 + i as u64,
             value: init.as_u64(),
         });
     });
