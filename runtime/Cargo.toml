@@ -11,9 +11,11 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
+lazy_static = "1.4.0"
 strum = "0.25.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
 strum_macros = "0.25.2"
 wasi = "0.11.0"
 wat = "1.0.69"
-#zktrie = { git = "https://github.com/scroll-tech/zktrie", tag = "v0.6.0" }
-
+zktrie = { git = "https://github.com/scroll-tech/zktrie.git", tag="v0.6.0" }
+poseidon = { git = "https://github.com/scroll-tech/poseidon" }

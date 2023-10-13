@@ -1,11 +1,12 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::rw_row::RwTableContextTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -28,7 +29,13 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
         let table_index = cb.query_cell();
         let value = cb.query_cell();
         cb.require_opcode(Instruction::TableSize(Default::default()));
-        cb.table_size(table_index.expr(), value.expr());
+        //cb.table_size(table_index.expr(), value.expr());
+        cb.context_lookup(
+            RwTableContextTag::TableSize(table_index.current()),
+            0.expr(),
+            value.current(),
+            0.expr(),
+        );
         cb.stack_push(value.current());
         Self {
             table_index,

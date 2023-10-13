@@ -112,7 +112,7 @@ pub fn build_wasi_args_get_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError
         to_address: argv_buffer_offset.as_u32(),
         length: input_data.len() as u32,
         rw_counter: copy_rw_counter,
-        data: input_data.to_vec().clone(),
+        data: input_data.iter().map(|v| *v as u32).collect(),
     });
     Ok(())
 }

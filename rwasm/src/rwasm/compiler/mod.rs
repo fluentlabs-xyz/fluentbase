@@ -118,7 +118,7 @@ impl<'linker> Compiler<'linker> {
             self.translate_function(i as u32)?;
         }
         // there is no need to inject because code is already validated
-        self.code_section.finalize();
+        self.code_section.finalize(false);
         self.is_translated = true;
         Ok(())
     }

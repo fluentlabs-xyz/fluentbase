@@ -345,7 +345,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive",
- "hashbrown 0.12.3",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -1469,10 +1469,14 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "fluentbase-rwasm",
+ "halo2curves",
+ "lazy_static",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "wat",
+ "zktrie",
 ]
 
 [[package]]
@@ -1634,6 +1638,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gobuild"
+version = "0.1.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1700,7 +1713,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "plotters",
- "poseidon",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220)",
  "rand_core",
  "rayon",
  "sha3 0.9.1",
@@ -2409,9 +2422,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "poseidon"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon#0b9965fbcd9e03559088b8f68489592286bc55e0"
+dependencies = [
+ "group 0.12.1",
+ "halo2curves",
+ "subtle",
+]
+
+[[package]]
 name = "poseidon-circuit"
 version = "0.1.0"
-source = "git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main#1652d54bf7ca9d8f286b53fe077d9efefdcf6d5f"
+source = "git+https://github.com/scroll-tech/poseidon-circuit.git?branch=main#69524f42bdc55c581088c2fe64c2ab9a2921146b"
 dependencies = [
  "bitvec",
  "halo2_proofs",
@@ -3852,4 +3875,12 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.28",
+]
+
+[[package]]
+name = "zktrie"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/zktrie.git?tag=v0.6.0#83318659773604fa565e2ebeb810a6d3746f0af4"
+dependencies = [
+ "gobuild",
 ]
