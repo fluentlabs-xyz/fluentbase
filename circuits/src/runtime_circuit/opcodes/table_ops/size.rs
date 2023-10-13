@@ -34,7 +34,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
             RwTableContextTag::TableSize(table_index.current()),
             0.expr(),
             value.current(),
-            0.expr(),
+            None,
         );
         cb.stack_push(value.current());
         Self {
