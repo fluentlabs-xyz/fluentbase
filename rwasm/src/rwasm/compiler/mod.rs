@@ -19,6 +19,7 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
+use crate::engine::bytecode::LocalDepth;
 
 mod drop_keep;
 
@@ -337,6 +338,86 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
+    fn translate_br_table(
+        &mut self,
+        instr_ptr: &mut InstructionPtr,
+        branch_offset: Option<BranchOffset>,
+    ) -> Result<(), CompilerError> {
+        if let Some(mut br_table_status) = self.br_table_status.take() {
+            let drop_keep = Self::extract_drop_keep(instr_ptr);
+            let injection_begin = br_table_status.instr_countdown as i32
+                + br_table_status.injection_instructions.len() as i32;
+
+            self.code_section.op_br(BranchOffset::from(injection_begin));
+            self.code_section.op_return();
+            br_table_status.instr_countdown -= 2;
+
+
+            match branch_offset {
+                Some(branch_offset) => {
+                    let mut drop_keep_ixs = translate_drop_keep(drop_keep)?;
+
+                    br_table_status
+                        .injection_instructions
+                        .append(&mut drop_keep_ixs);
+                    br_table_status
+                        .injection_instructions
+                        .push(Instruction::Br(BranchOffset::from(
+                            branch_offset.to_i32() - br_table_status.instr_countdown as i32,
+                        )));
+                }
+                None => {
+                    br_table_status
+                        .injection_instructions
+                        .push(Instruction::LocalGet(LocalDepth::from((drop_keep.drop() + drop_keep.keep() + 1) as u32)));
+
+                    let mut drop_keep_ixs = translate_drop_keep(
+                        DropKeep::new(
+                            drop_keep.drop() as usize + 1,
+                            drop_keep.keep() as usize + 1
+                        ).map_err(|_| CompilerError::DropKeepOutOfBounds)?
+                    )?;
+
+                    br_table_status
+                        .injection_instructions
+                        .append(&mut drop_keep_ixs);
+                    br_table_status
+                        .injection_instructions
+                        .push(
+                            Instruction::BrIndirect(BranchOffset::from(0))
+                        );
+                }
+            }
+
+            br_table_status
+                .injection_instructions
+                .push(Instruction::Return(DropKeep::none()));
+
+            if br_table_status.instr_countdown == 0 {
+                let injection_len = br_table_status.injection_instructions.len();
+                for i in 0..injection_len {
+                    if let Some(offset) =
+                        br_table_status.injection_instructions[i].get_jump_offset()
+                    {
+                        br_table_status.injection_instructions[i].update_branch_offset(
+                            BranchOffset::from(
+                                offset.to_i32() + injection_len as i32 - i as i32 - 2,
+                            ),
+                        );
+                    }
+                }
+                self.code_section
+                    .instr
+                    .append(&mut br_table_status.injection_instructions);
+                self.br_table_status = None;
+            } else {
+                self.br_table_status = Some(br_table_status);
+            }
+        }
+
+        Ok(())
+    }
+
     fn translate_opcode(
         &mut self,
         instr_ptr: &mut InstructionPtr,
@@ -348,47 +429,8 @@ impl<'linker> Compiler<'linker> {
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
                 opcode_count += 1;
-                if let Some(mut br_table_status) = self.br_table_status.take() {
-                    let drop_keep = Self::extract_drop_keep(instr_ptr);
-                    let injection_begin = br_table_status.instr_countdown as i32
-                        + br_table_status.injection_instructions.len() as i32;
-                    let mut drop_keep_ixs = translate_drop_keep(drop_keep)?;
-                    self.code_section.op_br(BranchOffset::from(injection_begin));
-                    self.code_section.op_return();
-                    br_table_status.instr_countdown -= 2;
-
-                    br_table_status
-                        .injection_instructions
-                        .append(&mut drop_keep_ixs);
-                    br_table_status
-                        .injection_instructions
-                        .push(WI::Br(BranchOffset::from(
-                            branch_offset.to_i32() - br_table_status.instr_countdown as i32,
-                        )));
-                    br_table_status
-                        .injection_instructions
-                        .push(WI::Return(DropKeep::none()));
-
-                    if br_table_status.instr_countdown == 0 {
-                        let injection_len = br_table_status.injection_instructions.len();
-                        for i in 0..injection_len {
-                            if let Some(offset) =
-                                br_table_status.injection_instructions[i].get_jump_offset()
-                            {
-                                br_table_status.injection_instructions[i].update_branch_offset(
-                                    BranchOffset::from(
-                                        offset.to_i32() + injection_len as i32 - i as i32 - 2,
-                                    ),
-                                );
-                            }
-                        }
-                        self.code_section
-                            .instr
-                            .append(&mut br_table_status.injection_instructions);
-                        self.br_table_status = None;
-                    } else {
-                        self.br_table_status = Some(br_table_status);
-                    }
+                if self.br_table_status.is_some() {
+                    self.translate_br_table(instr_ptr, Some(branch_offset))?;
                 } else {
                     Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
                     self.code_section.op_br(branch_offset);
@@ -432,8 +474,12 @@ impl<'linker> Compiler<'linker> {
                 unreachable!("check this")
             }
             WI::Return(drop_keep) => {
-                DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
-                self.code_section.op_br_indirect(0);
+                if self.br_table_status.is_some() {
+                    self.translate_br_table(instr_ptr, None)?;
+                } else {
+                    DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
+                    self.code_section.op_br_indirect(0);
+                }
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -461,16 +507,12 @@ impl<'linker> Compiler<'linker> {
             WI::CallIndirect(_) => {
                 let table_idx = Self::extract_table(instr_ptr);
                 opcode_count += 1;
-                let return_target = self.code_section.len() + 4;
-                // replace elem index with func offset
+                let target = self.code_section.len() + 3 + 4;
+
                 self.code_section.op_table_get(table_idx);
-                self.code_section.op_i32_const(return_target);
-                // copy func offset on the top of the stack
-                self.code_section.op_local_get(2);
-                // jump to the table's func offset
-                self.code_section.op_br_indirect(return_ptr_offset as i32);
-                // drop remaining func offset from the stack (we copied it before)
-                self.code_section.op_drop();
+                self.code_section.op_i32_const(target);
+                self.swap_stack_parameters(1);
+                self.code_section.op_br_indirect(0);
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
