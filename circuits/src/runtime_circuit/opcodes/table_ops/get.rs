@@ -1,11 +1,12 @@
 use crate::{
     bail_illegal_opcode,
-    constraint_builder::AdviceColumn,
+    constraint_builder::{AdviceColumn, ToExpr},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
+    rw_builder::rw_row::RwTableContextTag,
     util::Field,
 };
 use fluentbase_rwasm::engine::bytecode::Instruction;
@@ -33,11 +34,16 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         let size = cb.query_cell();
         cb.require_opcode(Instruction::TableGet(Default::default()));
         cb.stack_pop(elem_index.current());
-        //cb.table_size(table_index.expr(), size.expr());
-        //cb.table_get(table_index.expr(), elem_index.expr(), value.expr());
+        cb.table_get(table_index.current(), elem_index.current(), value.current());
         cb.stack_push(value.current());
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr() - elem_index.expr());
+        cb.context_lookup(
+            RwTableContextTag::TableSize(cb.query_rwasm_value()),
+            0.expr(),
+            size.current(),
+            0.expr(),
+        );
         Self {
             table_index,
             elem_index,
@@ -83,10 +89,8 @@ mod test {
             TableGrow(0)
             Drop
             I32Const(0)
-            I32Const(0)
             RefFunc(0)
             TableSet(0)
-            Drop
             I32Const(0)
             TableGet(0)
             Drop
