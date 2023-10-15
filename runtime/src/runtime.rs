@@ -28,9 +28,10 @@ pub struct RuntimeContext {
 }
 
 impl RuntimeContext {
-    pub fn new(input_data: &[u8]) -> Self {
+    pub fn new(input_data: &[u8], state: u32) -> Self {
         Self {
             input: input_data.to_vec(),
+            state,
             ..Default::default()
         }
     }
@@ -302,12 +303,26 @@ impl Runtime {
 
     pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, Error> {
         let import_linker = Self::new_linker();
-        Self::run_with_linker(rwasm_binary, input_data, &import_linker, true)
+        Self::run_with_input(rwasm_binary, input_data, &import_linker, true)
     }
 
-    pub fn run_with_linker(
+    pub fn run_with_input(
         rwasm_binary: &[u8],
         input_data: &[u8],
+        import_linker: &ImportLinker,
+        catch_trap: bool,
+    ) -> Result<ExecutionResult, Error> {
+        Self::run_with_context(
+            rwasm_binary,
+            RuntimeContext::new(input_data, 0),
+            import_linker,
+            catch_trap,
+        )
+    }
+
+    pub fn run_with_context(
+        rwasm_binary: &[u8],
+        runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
@@ -319,7 +334,6 @@ impl Runtime {
         }
         let engine = Engine::new(&config);
 
-        let runtime_context = RuntimeContext::new(input_data);
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
