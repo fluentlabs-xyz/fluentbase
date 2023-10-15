@@ -69,6 +69,19 @@ struct BrTableStatus {
     instr_countdown: u32,
 }
 
+#[derive(Debug)]
+pub enum FuncOrExport {
+    Export(&'static str),
+    Func(u32),
+    StateRouter(Vec<FuncOrExport>, Instruction),
+}
+
+impl Default for FuncOrExport {
+    fn default() -> Self {
+        Self::Export("main")
+    }
+}
+
 impl<'linker> Compiler<'linker> {
     pub fn new(wasm_binary: &[u8]) -> Result<Self, CompilerError> {
         Self::new_with_linker(wasm_binary, None)
@@ -95,23 +108,12 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate(&mut self, main_index: Option<u32>) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
-        // find main entrypoint (it must starts with `main` keyword)
-        let main_index = if main_index.is_none() {
-            self.module
-                .exports
-                .get("main")
-                .ok_or(CompilerError::MissingEntrypoint)?
-                .into_func_idx()
-                .ok_or(CompilerError::MissingEntrypoint)?
-        } else {
-            main_index.unwrap()
-        };
         // first we must translate all sections, this is an entrypoint
-        self.translate_sections(main_index)?;
+        self.translate_sections(main_index.unwrap_or_default())?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
@@ -123,8 +125,51 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_sections(&mut self, main_index: u32) -> Result<(), CompilerError> {
+    fn translate_router(&self, main_index: FuncOrExport) -> Result<InstructionSet, CompilerError> {
+        let mut router_opcodes = InstructionSet::new();
+        let resolve_export_index = |name| -> Result<u32, CompilerError> {
+            let main_index = self
+                .module
+                .exports
+                .get(name)
+                .ok_or(CompilerError::MissingEntrypoint)?
+                .into_func_idx()
+                .ok_or(CompilerError::MissingEntrypoint)?;
+            Ok(main_index)
+        };
+        // find main entrypoint (it must starts with `main` keyword)
+        let num_imports = self.module.imports.len_funcs as u32;
+        match main_index {
+            FuncOrExport::Export(name) => {
+                let main_index = resolve_export_index(name)?;
+                router_opcodes.op_call_internal(main_index - num_imports);
+            }
+            FuncOrExport::StateRouter(states, check_instr) => {
+                for (state_value, state) in states.iter().enumerate() {
+                    let func_index = match state {
+                        FuncOrExport::Export(name) => resolve_export_index(name)?,
+                        FuncOrExport::Func(index) => *index,
+                        _ => unreachable!("not supported router state ({:?})", state),
+                    };
+                    // push current and second states on the stack
+                    router_opcodes.push(check_instr);
+                    router_opcodes.op_i32_const(state_value);
+                    // if states are not equal then skip this call
+                    router_opcodes.op_i32_eq();
+                    router_opcodes.op_br_if_nez(2);
+                    router_opcodes.op_call_internal(func_index);
+                }
+            }
+            FuncOrExport::Func(index) => {
+                router_opcodes.op_call_internal(index - num_imports);
+            }
+        }
+        Ok(router_opcodes)
+    }
+
+    fn translate_sections(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         // lets reserve 0 index and offset for sections init
+        assert_eq!(self.code_section.len(), 0, "code section must be empty");
         self.function_beginning.insert(0, 0);
         // translate global section (replaces with set/get global opcodes)
         let total_globals = self.module.globals.len();
@@ -138,11 +183,12 @@ impl<'linker> Compiler<'linker> {
         }
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
+        // translate router into separate instruction set
+        let router_opcodes = self.translate_router(main_index)?;
         // inject main function call with return
-        let return_offset = self.code_section.len() + 2;
+        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
-        let num_imports = self.module.imports.len_funcs as u32;
-        self.code_section.op_call_internal(main_index - num_imports);
+        self.code_section.extend(router_opcodes);
         self.code_section.op_return();
         self.code_section.op_unreachable();
         // remember that this is injected and shifts br/br_if offset
