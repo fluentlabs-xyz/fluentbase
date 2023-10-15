@@ -1,7 +1,8 @@
-use crate::{runtime::Runtime, Error, HASH_SCHEME_DONE};
+use crate::{runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
 use fluentbase_rwasm::{
     common::Trap,
-    rwasm::{Compiler, ImportLinker},
+    engine::bytecode::Instruction,
+    rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
 
 fn wat2rwasm(wat: &str) -> Vec<u8> {
@@ -126,4 +127,51 @@ fn test_translator() {
     let result =
         Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
     println!("{:?}", result.data().output().clone());
+}
+
+#[test]
+fn test_state() {
+    let wasm_binary = wat::parse_str(
+        r#"
+(module
+  (func $main
+    global.get 0
+    global.get 1
+    call $add
+    global.get 2
+    call $add
+    drop
+    )
+  (func $deploy
+    )
+  (func $add (param $lhs i32) (param $rhs i32) (result i32)
+    local.get $lhs
+    local.get $rhs
+    i32.add
+    )
+  (global (;0;) i32 (i32.const 100))
+  (global (;1;) i32 (i32.const 20))
+  (global (;2;) i32 (i32.const 3))
+  (export "main" (func $main))
+  (export "deploy" (func $deploy)))
+    "#,
+    )
+    .unwrap();
+    let import_linker = Runtime::new_linker();
+    let mut compiler =
+        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+    compiler
+        .translate(Some(FuncOrExport::StateRouter(
+            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+            Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+        )))
+        .unwrap();
+    let rwasm_bytecode = compiler.finalize().unwrap();
+    Runtime::run_with_context(
+        rwasm_bytecode.as_slice(),
+        RuntimeContext::new(&[], 0),
+        &import_linker,
+        false,
+    )
+    .unwrap();
 }
