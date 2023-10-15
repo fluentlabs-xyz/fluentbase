@@ -1,4 +1,7 @@
-use fluentbase_rwasm::{engine::bytecode::FuncIdx, RwOp};
+use fluentbase_rwasm::{
+    engine::{bytecode::FuncIdx, CompiledFunc},
+    RwOp,
+};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -50,6 +53,12 @@ impl From<FuncIdx> for SysFuncIdx {
             }
         }
         Self::UNKNOWN
+    }
+}
+
+impl Into<CompiledFunc> for SysFuncIdx {
+    fn into(self) -> CompiledFunc {
+        CompiledFunc::from(self as u32)
     }
 }
 
