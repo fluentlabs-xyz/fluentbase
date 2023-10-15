@@ -20,6 +20,7 @@ use fluentbase_rwasm::{
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
+    pub(crate) state: u32,
     pub(crate) exit_code: i32,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
@@ -97,6 +98,13 @@ impl Runtime {
             SysFuncIdx::SYS_HALT as u16,
             &[ValueType::I32; 1],
             &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_state".to_string(),
+            SysFuncIdx::SYS_STATE as u16,
+            &[],
+            &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -330,6 +338,7 @@ impl Runtime {
         };
 
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 

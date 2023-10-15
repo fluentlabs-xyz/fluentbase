@@ -47,6 +47,10 @@ pub(crate) fn sys_halt(mut caller: Caller<'_, RuntimeContext>, exit_code: u32) -
     Err(Trap::i32_exit(exit_code as i32))
 }
 
+pub(crate) fn sys_state(caller: Caller<'_, RuntimeContext>) -> Result<u32, Trap> {
+    Ok(caller.data().state)
+}
+
 pub(crate) fn sys_read(
     mut caller: Caller<'_, RuntimeContext>,
     target: u32,

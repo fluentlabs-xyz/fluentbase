@@ -9,8 +9,9 @@ pub enum SysFuncIdx {
     UNKNOWN = 0x0000,
     // SYS host functions (starts with 0xAA00)
     SYS_HALT = 0xA001,  // env::_sys_halt
-    SYS_WRITE = 0xA002, // env::_sys_write
+    SYS_STATE = 0xA002, // env::_sys_state
     SYS_READ = 0xA003,  // env::_sys_read
+    SYS_WRITE = 0xA004, // env::_sys_write
     // WASI runtime
     WASI_PROC_EXIT = 0xB001,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0xB002,          // wasi_snapshot_preview1::fd_write
