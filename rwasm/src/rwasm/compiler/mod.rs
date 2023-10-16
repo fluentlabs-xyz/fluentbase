@@ -128,6 +128,7 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_imports_funcs(&mut self, ) -> Result<(), CompilerError> {
+        let injection_start = self.code_section.len();
         for func_idx in 0..self.module.imports.len_funcs as u32 {
             let beginning_offset = self.code_section.len();
             self.function_beginning
@@ -139,9 +140,19 @@ impl<'linker> Compiler<'linker> {
             let num_outputs = func_type.results();
             self.swap_stack_parameters(num_inputs.len() as u32);
             self.translate_host_call(func_idx as u32)?;
-            DropKeepWithReturnParam(DropKeep::new(1, num_outputs.len()).map_err(|_| CompilerError::DropKeepOutOfBounds)?).translate(&mut self.code_section)?;
+            if num_outputs.len() > 0 {
+                DropKeepWithReturnParam(DropKeep::new(0, num_outputs.len()).map_err(|_| CompilerError::DropKeepOutOfBounds)?).translate(&mut self.code_section)?;
+            }
+            self.code_section.op_br_indirect(0);
         }
 
+        self.injection_segments.push(Injection {
+            begin: injection_start as i32,
+            end: self.code_section.len() as i32,
+            origin_len: 0,
+        });
+
+        println!("Translate imports: {:?}", self.code_section);
         Ok(())
     }
 
@@ -593,7 +604,7 @@ impl<'linker> Compiler<'linker> {
         while i < bytecode.len() as usize {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
-                    let func_idx = func.to_u32() + 1;
+                    let func_idx = func.to_u32() + 1 + self.module.imports.len_funcs as u32;
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
                         self.function_beginning[&func_idx] as i32 - i as i32,
                     ));
