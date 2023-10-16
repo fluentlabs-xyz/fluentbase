@@ -222,6 +222,65 @@ impl<F: Field> CopyCircuitConfig<F> {
                 );
             },
         );
+        cb.condition(
+            tag_bits.value_equals(CopyTableTag::CopyTable, Rotation::cur()),
+            |cb| {
+                // lookup rw (we copy from table)
+                cb.add_lookup(
+                    "rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + length.current() - index.current(),
+                        0.expr(), // is_write
+                        RwTableTag::Table.expr(),
+                        Query::zero(), // id
+                        from_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+                // lookup rw (we copy into table)
+                cb.add_lookup(
+                    "rw table lookup",
+                    [
+                        Query::one(), // selector
+                        rw_counter.current() + 2.expr() * length.current() - index.current(),
+                        1.expr(), // is_write
+                        RwTableTag::Table.expr(),
+                        Query::zero(),                                             // id
+                        to_address.current() + length.current() - index.current(), // address
+                        value.current(),
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+            },
+        );
+
+        cb.condition(
+            tag_bits.value_equals(CopyTableTag::FillTable, Rotation::cur()),
+            |cb| {
+                // for table fill value and from address must be the same
+                cb.assert_equal(
+                    "value == from_address",
+                    value.current(),
+                    from_address.current(),
+                );
+                // lookup rw (we fill table with value)
+                cb.add_lookup(
+                    "table fill, rw table lookup",
+                    [
+                        Query::one(),                                              // selector
+                        rw_counter.current() + length.current() - index.current(), // rw counter
+                        1.expr(),                                                  // is_write
+                        RwTableTag::Table.expr(),                                  // tag
+                        Query::zero(),                                             // id
+                        to_address.current() + length.current() - index.current(), // address
+                        value.current(),                                           // value
+                    ],
+                    rw_lookup.lookup_rw_table(),
+                );
+            },
+        );
 
         cb.build(cs);
 
@@ -276,6 +335,7 @@ impl<F: Field> CopyCircuitConfig<F> {
         let copy_rows = exec_steps.get_copy_rows();
         self.print_copy_row_table(&copy_rows);
         let mut offset = 0;
+
         for copy_row in copy_rows.iter() {
             self.q_first.enable(region, offset);
             let mut last_offset = offset;
@@ -299,6 +359,7 @@ impl<F: Field> CopyCircuitConfig<F> {
             }
             self.q_last.enable(region, last_offset);
         }
+
         Ok(())
     }
 

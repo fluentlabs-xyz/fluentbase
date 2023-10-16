@@ -11,10 +11,25 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
+lazy_static = "1.4.0"
 tiny-keccak = { version = "2.0", features = ["sha3"] }
+tokio = { version = "1.33", features = ["full"] }
+rlp = "0.5.2"
+ethereum-types = "0.14.1"
+hex = "0.4.3"
+codec = { package = "parity-scale-codec", version = "3.1.5", default-features = false, features = [ "derive" ] }
+web3 = "0.19.0"
+ethereum = "0.14.0"
+open-fastrlp = "0.1.4"
+reqwest = { version = "0.11", features = ["json"] }
+ethers="2.0.10"
+serde = "1"
+serde_json = "1"
 strum = "0.25.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
 strum_macros = "0.25.2"
 wasi = "0.11.0"
 wat = "1.0.69"
-#zktrie = { git = "https://github.com/scroll-tech/zktrie", tag = "v0.6.0" }
+zktrie = { git = "https://github.com/scroll-tech/zktrie.git", tag="v0.6.0" }
+poseidon = { git = "https://github.com/scroll-tech/poseidon" }
 

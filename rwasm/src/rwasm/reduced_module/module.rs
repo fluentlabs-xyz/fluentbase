@@ -16,7 +16,6 @@ use crate::{
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
-    vec::Vec,
 };
 
 pub struct ReducedModule {
@@ -101,51 +100,34 @@ impl ReducedModule {
         let import_len = import_mapping.len() as u32;
 
         // reconstruct all functions and fix bytecode calls
-        let mut func_index_offset = BTreeMap::new();
-        func_index_offset.insert(import_len, 0);
         for instr in code_section.instr.iter_mut() {
             let func_offset = match instr {
-                Instruction::CallInternal(func) => func.to_u32(),
-                Instruction::ReturnCallInternal(func) => func.to_u32(),
                 Instruction::RefFunc(func) => func.to_u32(),
                 _ => continue,
             };
-            let func_index = func_index_offset.len() as u32;
-            instr.update_call_index(func_index);
             let relative_pos = self.relative_position.get(&func_offset).unwrap();
-            func_index_offset.insert(func_index + import_len, *relative_pos);
+            instr.update_call_index(*relative_pos);
         }
 
         // push main functions (we collapse all functions into one)
-        let funcs: Vec<Result<FuncTypeIdx, ModuleError>> = func_index_offset
-            .iter()
-            .map(|_| Result::<FuncTypeIdx, ModuleError>::Ok(FuncTypeIdx::from(0)))
-            .collect();
-        builder.push_funcs(funcs).unwrap();
+        builder
+            .push_funcs(vec![Result::<FuncTypeIdx, ModuleError>::Ok(
+                FuncTypeIdx::from(0),
+            )])
+            .unwrap();
 
         // mark headers for missing functions inside binary
         let resources = ModuleResources::new(&builder);
-        for (func_index, func_offset) in func_index_offset.iter() {
-            let compiled_func = resources
-                .get_compiled_func(FuncIdx::from(*func_index))
-                .unwrap();
-            if *func_offset == 0 || compiled_func.to_u32() == 0 {
-                // TODO: "what if we don't have main function? it might happen in e2e tests"
-                //assert_eq!(compiled_func.to_u32(), 0, "main function doesn't have zero offset");
-            }
-            // function main has 0 offset, init bytecode for entire section
-            if *func_offset == 0 {
-                engine.init_func(
-                    compiled_func,
-                    0,
-                    0,
-                    code_section.instr.clone(),
-                    code_section.metas.clone().unwrap(),
-                );
-            } else {
-                engine.mark_func(compiled_func, 0, 0, *func_offset as usize);
-            }
-        }
+        let compiled_func = resources
+            .get_compiled_func(FuncIdx::from(import_len))
+            .unwrap();
+        engine.init_func(
+            compiled_func,
+            0,
+            0,
+            code_section.instr.clone(),
+            code_section.metas.clone().unwrap(),
+        );
         // allocate default memory
         builder
             .push_default_memory(0, Some(N_MAX_MEMORY_PAGES))

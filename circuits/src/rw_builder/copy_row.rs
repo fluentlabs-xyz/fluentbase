@@ -12,6 +12,10 @@ pub enum CopyTableTag {
     CopyMemory,
     // fill memory
     FillMemory,
+    // fill table
+    FillTable,
+    // copy table
+    CopyTable,
 }
 
 impl_expr!(CopyTableTag);
@@ -23,6 +27,8 @@ impl fmt::Display for CopyTableTag {
             CopyTableTag::WriteOutput => write!(f, "WriteOutput"),
             CopyTableTag::CopyMemory => write!(f, "CopyMemory"),
             CopyTableTag::FillMemory => write!(f, "FillMemory"),
+            CopyTableTag::FillTable => write!(f, "FillTable"),
+            CopyTableTag::CopyTable => write!(f, "CopyTable"),
         }
     }
 }
@@ -42,5 +48,5 @@ pub struct CopyRow {
     pub to_address: u32,
     pub length: u32,
     pub rw_counter: usize,
-    pub data: Vec<u8>,
+    pub data: Vec<u32>,
 }

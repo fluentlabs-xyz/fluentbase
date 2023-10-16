@@ -379,6 +379,10 @@ impl DropKeep {
         self.keep
     }
 
+    pub fn add_keep(&mut self, delta: u16) {
+        self.keep += delta;
+    }
+
     /// Returns the amount of stack values to drop.
     pub fn drop(self) -> u16 {
         self.drop

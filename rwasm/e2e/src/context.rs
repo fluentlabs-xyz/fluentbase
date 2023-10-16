@@ -2,7 +2,7 @@ use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
     common::{ValueType, F32, F64},
-    rwasm::{Compiler, DefaultImportHandler, ImportLinker, ReducedModule},
+    rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule},
     Config,
     Engine,
     Extern,
@@ -186,6 +186,7 @@ impl TestContext<'_> {
     ) -> Result<Instance, TestError> {
         let mut config = Config::default();
         config.consume_fuel(false);
+        println!("compiling function: {}", fn_name);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice())?;
         let elem = module
@@ -195,7 +196,9 @@ impl TestContext<'_> {
         let import_linker = ImportLinker::default();
         let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
         compiler
-            .translate(Some(elem.index().into_func_idx().unwrap()))
+            .translate(Some(FuncOrExport::Func(
+                elem.index().into_func_idx().unwrap(),
+            )))
             .unwrap();
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
@@ -208,6 +211,7 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
+        self.last_instance = Some(instance);
         Ok(instance)
     }
 

@@ -1,4 +1,4 @@
-FILES = greeting panic rwasm evm wasi
+FILES = greeting zktrie_open_test panic rwasm evm wasi
 
 all: $(FILES)
 
