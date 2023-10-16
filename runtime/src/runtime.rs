@@ -1,6 +1,7 @@
 use crate::{
     macros::{forward_call, forward_call_args},
     Error,
+    ExitCode,
     SysFuncIdx,
 };
 use fluentbase_rwasm::{
@@ -409,16 +410,16 @@ impl Runtime {
         if let Err(ref err) = result {
             let exit_code = match err {
                 fluentbase_rwasm::Error::Trap(trap) => {
-                    if trap.i32_exit_status().is_none() {
-                        result?;
-                        return Ok(execution_result);
+                    if let Some(exit_status) = trap.i32_exit_status() {
+                        exit_status
+                    } else if let Some(trap_code) = trap.trap_code() {
+                        let exit_code: ExitCode = trap_code.into();
+                        exit_code as i32
+                    } else {
+                        ExitCode::UnknownError as i32
                     }
-                    trap.i32_exit_status().unwrap()
                 }
-                _ => {
-                    result?;
-                    return Ok(execution_result);
-                }
+                _ => ExitCode::UnknownError as i32,
             };
             execution_result.data_mut().exit_code = exit_code;
         }
