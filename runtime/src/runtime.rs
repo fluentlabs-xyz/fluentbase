@@ -1,12 +1,13 @@
 use crate::{
     macros::{forward_call, forward_call_args},
     Error,
+    ExitCode,
     SysFuncIdx,
 };
 use fluentbase_rwasm::{
     common::{Trap, ValueType},
     engine::Tracer,
-    rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule},
+    rwasm::{ImportFunc, ImportLinker, ReducedModule},
     AsContextMut,
     Caller,
     Config,
@@ -20,6 +21,7 @@ use fluentbase_rwasm::{
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
+    pub(crate) state: u32,
     pub(crate) exit_code: i32,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
@@ -27,9 +29,10 @@ pub struct RuntimeContext {
 }
 
 impl RuntimeContext {
-    pub fn new(input_data: &[u8]) -> Self {
+    pub fn new(input_data: &[u8], state: u32) -> Self {
         Self {
             input: input_data.to_vec(),
+            state,
             ..Default::default()
         }
     }
@@ -97,6 +100,13 @@ impl Runtime {
             SysFuncIdx::SYS_HALT as u16,
             &[ValueType::I32; 1],
             &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_state".to_string(),
+            SysFuncIdx::SYS_STATE as u16,
+            &[],
+            &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -178,12 +188,115 @@ impl Runtime {
             &[ValueType::I32; 2],
             &[],
         ));
+
+        // zktrie
+        // zktrie_open
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "_evm_keccak256".to_string(),
-            SysFuncIdx::EVM_KECCAK256 as u16,
-            &[ValueType::I32; 3],
-            &[ValueType::I32; 0],
+            "zktrie_open".to_string(),
+            SysFuncIdx::ZKTRIE_OPEN as u16,
+            &[ValueType::I32; 5],
+            &[],
+        ));
+        // account updates
+        // zktrie_update_nonce
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_nonce".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_NONCE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_update_balance
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_balance".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_BALANCE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_update_storage_root
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_storage_root".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_STORAGE_ROOT as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_update_code_hash
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_code_hash".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_CODE_HASH as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_update_code_size
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_code_size".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_CODE_SIZE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // account gets
+        // zktrie_get_nonce
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_nonce".to_string(),
+            SysFuncIdx::ZKTRIE_GET_NONCE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_get_balance
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_balance".to_string(),
+            SysFuncIdx::ZKTRIE_GET_BALANCE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_get_storage_root
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_storage_root".to_string(),
+            SysFuncIdx::ZKTRIE_GET_STORAGE_ROOT as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_get_code_hash
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_code_hash".to_string(),
+            SysFuncIdx::ZKTRIE_GET_CODE_HASH as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // zktrie_get_code_size
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_code_size".to_string(),
+            SysFuncIdx::ZKTRIE_GET_CODE_SIZE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // store updates
+        // zktrie_update_store
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_update_store".to_string(),
+            SysFuncIdx::ZKTRIE_UPDATE_STORE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // store gets
+        // zktrie_get_store
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "zktrie_get_store".to_string(),
+            SysFuncIdx::ZKTRIE_GET_STORE as u16,
+            &[ValueType::I32; 2],
+            &[],
         ));
 
         import_linker
@@ -191,12 +304,26 @@ impl Runtime {
 
     pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, Error> {
         let import_linker = Self::new_linker();
-        Self::run_with_linker(rwasm_binary, input_data, &import_linker, true)
+        Self::run_with_input(rwasm_binary, input_data, &import_linker, true)
     }
 
-    pub fn run_with_linker(
+    pub fn run_with_input(
         rwasm_binary: &[u8],
         input_data: &[u8],
+        import_linker: &ImportLinker,
+        catch_trap: bool,
+    ) -> Result<ExecutionResult, Error> {
+        Self::run_with_context(
+            rwasm_binary,
+            RuntimeContext::new(input_data, 0),
+            import_linker,
+            catch_trap,
+        )
+    }
+
+    pub fn run_with_context(
+        rwasm_binary: &[u8],
+        runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
@@ -208,14 +335,13 @@ impl Runtime {
         }
         let engine = Engine::new(&config);
 
-        let runtime_context = RuntimeContext::new(input_data);
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
         let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
         if fuel_enabled {
-            store.add_fuel(100_000_000).unwrap();
+            store.add_fuel(100_000).unwrap();
         }
 
         #[allow(unused_mut)]
@@ -227,6 +353,7 @@ impl Runtime {
         };
 
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 
@@ -237,13 +364,24 @@ impl Runtime {
         forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
         forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
 
-        // add zktrie functions
-
         forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
-        forward_call!(res, "env", "_evm_keccak256", fn evm_keccak256(offset: u32, length: u32, target: u32) -> ());
+
+        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
 
         let result = res
             .linker
@@ -272,16 +410,16 @@ impl Runtime {
         if let Err(ref err) = result {
             let exit_code = match err {
                 fluentbase_rwasm::Error::Trap(trap) => {
-                    if trap.i32_exit_status().is_none() {
-                        result?;
-                        return Ok(execution_result);
+                    if let Some(exit_status) = trap.i32_exit_status() {
+                        exit_status
+                    } else if let Some(trap_code) = trap.trap_code() {
+                        let exit_code: ExitCode = trap_code.into();
+                        exit_code as i32
+                    } else {
+                        ExitCode::UnknownError as i32
                     }
-                    trap.i32_exit_status().unwrap()
                 }
-                _ => {
-                    result?;
-                    return Ok(execution_result);
-                }
+                _ => ExitCode::UnknownError as i32,
             };
             execution_result.data_mut().exit_code = exit_code;
         }

@@ -20,7 +20,7 @@ impl<F: Field> ExecutionGadget<F> for OpReturnGadget<F> {
     const NAME: &'static str = "WASM_RETURN";
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_RETURN;
 
-    fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
+    fn configure(_cb: &mut OpConstraintBuilder<F>) -> Self {
         // if we're not inside root call then decrease call depth by one
         // cb.condition(cb.call_id(), |cb| {
         //     cb.context_lookup(

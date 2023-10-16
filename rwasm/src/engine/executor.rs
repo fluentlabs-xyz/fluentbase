@@ -282,7 +282,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instr::LocalTee(local_depth) => self.visit_local_tee(local_depth),
                 Instr::Br(offset) => self.visit_br(offset),
-                Instr::BrIndirect => self.visit_br_indirect(),
+                Instr::BrIndirect(offset) => self.visit_br_indirect(offset),
                 Instr::BrIfEqz(offset) => self.visit_br_if_eqz(offset),
                 Instr::BrIfNez(offset) => self.visit_br_if_nez(offset),
                 Instr::BrAdjust(offset) => self.visit_br_adjust(offset),
@@ -309,16 +309,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::ReturnCallIndirect(func_type) => {
                     forward_call!(self.visit_return_call_indirect(func_type))
                 }
-                Instr::ReturnCallIndirectUnsafe(func_type) => {
-                    forward_call!(self.visit_return_call_indirect_unsafe(func_type))
-                }
                 Instr::CallInternal(compiled_func) => self.visit_call_internal(compiled_func)?,
                 Instr::Call(func) => forward_call!(self.visit_call(func.into())),
                 Instr::CallIndirect(func_type) => {
                     forward_call!(self.visit_call_indirect(func_type))
-                }
-                Instr::CallIndirectUnsafe(table) => {
-                    forward_call!(self.visit_call_indirect_unsafe(table))
                 }
                 Instr::Drop => self.visit_drop(),
                 Instr::Select => self.visit_select(),
@@ -1083,10 +1077,13 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_br_indirect(&mut self) {
-        let target = self.sp.pop_as::<i32>();
-        let offset = target - self.ip.pc() as i32;
-
+    fn visit_br_indirect(&mut self, offset: BranchOffset) {
+        assert_eq!(offset.to_i32(), 0);
+        let return_pointer = self.sp.pop_as::<i32>();
+        // let return_pointer = self.sp.nth_back(offset.to_i32() as usize);
+        // let drop_keep = DropKeep::new(1, offset.to_i32() as usize).unwrap();
+        // self.sp.drop_keep(drop_keep);
+        let offset = return_pointer as i32 - self.ip.pc() as i32;
         self.branch_to(offset.into());
     }
 
@@ -1100,17 +1097,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         let func_index: u32 = self.sp.pop_as();
         self.sp.drop_keep(drop_keep);
         self.execute_call_indirect(3, table, func_index, Some(func_type), CallKind::Tail)
-    }
-
-    #[inline(always)]
-    fn visit_return_call_indirect_unsafe(
-        &mut self,
-        table: TableIdx,
-    ) -> Result<CallOutcome, TrapCode> {
-        let drop_keep = self.fetch_drop_keep(1);
-        let func_index: u32 = self.sp.pop_as();
-        self.sp.drop_keep(drop_keep);
-        self.execute_call_indirect(2, table, func_index, None, CallKind::Tail)
     }
 
     #[inline(always)]
@@ -1129,12 +1115,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         let table = self.fetch_table_idx(1);
         let func_index: u32 = self.sp.pop_as();
         self.execute_call_indirect(2, table, func_index, Some(func_type), CallKind::Nested)
-    }
-
-    #[inline(always)]
-    fn visit_call_indirect_unsafe(&mut self, table: TableIdx) -> Result<CallOutcome, TrapCode> {
-        let func_index: u32 = self.sp.pop_as();
-        self.execute_call_indirect(1, table, func_index, None, CallKind::Nested)
     }
 
     #[inline(always)]
@@ -1362,6 +1342,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
+        self.tracer.table_size_change(table_index.to_u32(), delta);
         self.try_next_instr()
     }
 
@@ -1473,9 +1454,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     #[inline(always)]
     fn visit_ref_func(&mut self, func_index: FuncIdx) {
-        let func = self.cache.get_func(self.ctx, func_index);
-        let funcref = FuncRef::new(func);
-        self.sp.push_as(funcref);
+        // let func = self.cache.get_func(self.ctx, func_index);
+        // let funcref = FuncRef::new(func);
+        self.sp.push_as(func_index.to_u32());
         self.next_instr();
     }
 }

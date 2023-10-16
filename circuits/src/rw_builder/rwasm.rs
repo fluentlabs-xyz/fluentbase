@@ -1,9 +1,6 @@
-use crate::{
-    exec_step::{ExecStep, GadgetError},
-    rw_builder::opcode::{build_stack_read_rw_ops, build_stack_write_rw_ops},
-};
+use crate::exec_step::{ExecStep, GadgetError};
 
-pub fn build_rwasm_transact_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
+pub fn build_rwasm_transact_rw_ops(_step: &mut ExecStep) -> Result<(), GadgetError> {
     // read input
     // let output_len = build_stack_read_rw_ops(step, 0)?;
     // let output_offset = build_stack_read_rw_ops(step, 1)?;

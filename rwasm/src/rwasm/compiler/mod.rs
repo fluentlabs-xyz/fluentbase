@@ -54,6 +54,8 @@ pub struct Compiler<'linker> {
     br_table_status: Option<BrTableStatus>,
 }
 
+const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
+
 #[derive(Debug)]
 pub struct Injection {
     pub begin: i32,
@@ -65,6 +67,19 @@ pub struct Injection {
 struct BrTableStatus {
     injection_instructions: Vec<Instruction>,
     instr_countdown: u32,
+}
+
+#[derive(Debug)]
+pub enum FuncOrExport {
+    Export(&'static str),
+    Func(u32),
+    StateRouter(Vec<FuncOrExport>, Instruction),
+}
+
+impl Default for FuncOrExport {
+    fn default() -> Self {
+        Self::Export("main")
+    }
 }
 
 impl<'linker> Compiler<'linker> {
@@ -93,37 +108,68 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate(&mut self, main_index: Option<u32>) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
-        // find main entrypoint (it must starts with `main` keyword)
-        let main_index = if main_index.is_none() {
-            self.module
-                .exports
-                .get("main")
-                .ok_or(CompilerError::MissingEntrypoint)?
-                .into_func_idx()
-                .ok_or(CompilerError::MissingEntrypoint)?
-        } else {
-            main_index.unwrap()
-        };
         // first we must translate all sections, this is an entrypoint
-        self.translate_sections(main_index)?;
+        self.translate_sections(main_index.unwrap_or_default())?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
             self.translate_function(i as u32)?;
         }
-
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
         self.is_translated = true;
         Ok(())
     }
 
-    fn translate_sections(&mut self, main_index: u32) -> Result<(), CompilerError> {
+    fn translate_router(&self, main_index: FuncOrExport) -> Result<InstructionSet, CompilerError> {
+        let mut router_opcodes = InstructionSet::new();
+        let resolve_export_index = |name| -> Result<u32, CompilerError> {
+            let main_index = self
+                .module
+                .exports
+                .get(name)
+                .ok_or(CompilerError::MissingEntrypoint)?
+                .into_func_idx()
+                .ok_or(CompilerError::MissingEntrypoint)?;
+            Ok(main_index)
+        };
+        // find main entrypoint (it must starts with `main` keyword)
+        let num_imports = self.module.imports.len_funcs as u32;
+        match main_index {
+            FuncOrExport::Export(name) => {
+                let main_index = resolve_export_index(name)?;
+                router_opcodes.op_call_internal(main_index - num_imports);
+            }
+            FuncOrExport::StateRouter(states, check_instr) => {
+                for (state_value, state) in states.iter().enumerate() {
+                    let func_index = match state {
+                        FuncOrExport::Export(name) => resolve_export_index(name)?,
+                        FuncOrExport::Func(index) => *index,
+                        _ => unreachable!("not supported router state ({:?})", state),
+                    };
+                    // push current and second states on the stack
+                    router_opcodes.push(check_instr);
+                    router_opcodes.op_i32_const(state_value);
+                    // if states are not equal then skip this call
+                    router_opcodes.op_i32_eq();
+                    router_opcodes.op_br_if_nez(2);
+                    router_opcodes.op_call_internal(func_index);
+                }
+            }
+            FuncOrExport::Func(index) => {
+                router_opcodes.op_call_internal(index - num_imports);
+            }
+        }
+        Ok(router_opcodes)
+    }
+
+    fn translate_sections(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         // lets reserve 0 index and offset for sections init
+        assert_eq!(self.code_section.len(), 0, "code section must be empty");
         self.function_beginning.insert(0, 0);
         // translate global section (replaces with set/get global opcodes)
         let total_globals = self.module.globals.len();
@@ -137,11 +183,12 @@ impl<'linker> Compiler<'linker> {
         }
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
+        // translate router into separate instruction set
+        let router_opcodes = self.translate_router(main_index)?;
         // inject main function call with return
-        let return_offset = self.code_section.len() + 2;
+        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
-        let num_imports = self.module.imports.len_funcs as u32;
-        self.code_section.op_call_internal(main_index - num_imports);
+        self.code_section.extend(router_opcodes);
         self.code_section.op_return();
         self.code_section.op_unreachable();
         // remember that this is injected and shifts br/br_if offset
@@ -214,28 +261,9 @@ impl<'linker> Compiler<'linker> {
                 "only funcref type is supported for tables",
             ));
         }
-        let mut table_init_size = 0;
-        for e in self.module.element_segments.iter() {
-            let aes = match &e.kind {
-                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
-                    return Err(CompilerError::NotSupported(
-                        "passive or declared mode for element segments is not supported",
-                    ))
-                }
-                ElementSegmentKind::Active(aes) => aes,
-            };
-            if aes.table_index().into_u32() != table_index {
-                continue;
-            }
-            if e.ty != ValueType::FuncRef {
-                return Err(CompilerError::NotSupported(
-                    "only funcref type is supported for element segments",
-                ));
-            }
-            table_init_size += e.items.items().len();
-        }
-        self.code_section.op_ref_func(0);
-        self.code_section.op_i64_const(table_init_size);
+        // don't use ref_func here due to the entrypoint section
+        self.code_section.op_i32_const(0);
+        self.code_section.op_i64_const(table.minimum() as usize);
         self.code_section.op_table_grow(table_index);
         self.code_section.op_drop();
         for e in self.module.element_segments.iter() {
@@ -255,15 +283,16 @@ impl<'linker> Compiler<'linker> {
                     "only funcref type is supported for element segments",
                 ));
             }
-            let table_idx = self.translate_const_expr(aes.offset())?;
+            let dest_offset = self.translate_const_expr(aes.offset())?;
             for (index, item) in e.items.items().iter().enumerate() {
-                self.code_section.op_i32_const(index as u32);
+                self.code_section
+                    .op_i32_const(dest_offset.as_u32() + index as u32);
                 if let Some(value) = item.eval_const() {
                     self.code_section.op_i64_const(value);
                 } else if let Some(value) = item.funcref() {
                     self.code_section.op_ref_func(value.into_u32());
                 }
-                self.code_section.op_table_set(table_idx.to_bits() as u32);
+                self.code_section.op_table_set(table_index);
             }
         }
         Ok(())
@@ -307,11 +336,10 @@ impl<'linker> Compiler<'linker> {
         });
         // translate instructions
         let (mut instr_ptr, instr_end) = self.engine.instr_ptr(*func_body);
-        let mut offset = 0;
         while instr_ptr != instr_end {
-            self.translate_opcode(&mut instr_ptr, offset)?;
-            offset += 1;
+            self.translate_opcode(&mut instr_ptr, 0)?;
         }
+        self.code_section.op_unreachable();
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
         self.function_beginning
             .insert(fn_index + 1, beginning_offset);
@@ -339,7 +367,7 @@ impl<'linker> Compiler<'linker> {
     fn translate_opcode(
         &mut self,
         instr_ptr: &mut InstructionPtr,
-        _offset: usize,
+        return_ptr_offset: usize,
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
         let injection_begin = self.code_section.len();
@@ -432,7 +460,7 @@ impl<'linker> Compiler<'linker> {
             }
             WI::Return(drop_keep) => {
                 DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
-                self.code_section.op_br_indirect();
+                self.code_section.op_br_indirect(0);
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -447,20 +475,29 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2;
-
+                // we use this constant to remember ref func offset w/o moving function indices
+                // self.function_beginning
+                //     .insert(REF_FUNC_FUNCTION_OFFSET + target, target);
+                // self.code_section
+                //     .op_ref_func(REF_FUNC_FUNCTION_OFFSET + target - 1);
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
                 self.code_section.op_call_internal(fn_index);
+                // self.code_section.op_drop();
             }
             WI::CallIndirect(_) => {
                 let table_idx = Self::extract_table(instr_ptr);
                 opcode_count += 1;
-                let target = self.code_section.len() + 3 + 4;
-
+                let return_target = self.code_section.len() + 4;
+                // replace elem index with func offset
                 self.code_section.op_table_get(table_idx);
-                self.code_section.op_i32_const(target);
-                self.swap_stack_parameters(1);
-                self.code_section.op_br_indirect();
+                self.code_section.op_i32_const(return_target);
+                // copy func offset on the top of the stack
+                self.code_section.op_local_get(2);
+                // jump to the table's func offset
+                self.code_section.op_br_indirect(return_ptr_offset as i32);
+                // drop remaining func offset from the stack (we copied it before)
+                self.code_section.op_drop();
             }
             WI::Call(func_idx) => {
                 self.translate_host_call(func_idx.to_u32())?;
@@ -477,6 +514,18 @@ impl<'linker> Compiler<'linker> {
                 // println!("Add table status: {:?}", self.br_table_status);
                 self.code_section.push(*instr_ptr.get());
             }
+            // WI::LocalGet(local_depth) => {
+            //     self.code_section
+            //         .op_local_get(local_depth.to_usize() as u32 + 1);
+            // }
+            // WI::LocalSet(local_depth) => {
+            //     self.code_section
+            //         .op_local_set(local_depth.to_usize() as u32 + 1);
+            // }
+            // WI::LocalTee(local_depth) => {
+            //     self.code_section
+            //         .op_local_tee(local_depth.to_usize() as u32 + 1);
+            // }
             _ => {
                 self.code_section.push(*instr_ptr.get());
             }

@@ -125,19 +125,15 @@ impl<F: Field, T: Into<Query<F>>> std::ops::Mul<T> for Query<F> {
     }
 }
 
-pub trait ToExpr {
-    fn expr<F: Field>(&self) -> Query<F>;
-
-    fn query<F: Field>(&self) -> Query<F> {
-        self.expr()
-    }
+pub trait ToExpr<F: Field> {
+    fn expr(&self) -> Query<F>;
 }
 
 #[macro_export]
 macro_rules! impl_expr {
     ($ty:ty) => {
-        impl $crate::constraint_builder::ToExpr for $ty {
-            fn expr<F: $crate::util::Field>(&self) -> $crate::constraint_builder::Query<F> {
+        impl<F: $crate::util::Field> $crate::constraint_builder::ToExpr<F> for $ty {
+            fn expr(&self) -> $crate::constraint_builder::Query<F> {
                 $crate::constraint_builder::Query::from(*self as u64)
             }
         }
@@ -155,18 +151,18 @@ impl_expr!(i8);
 impl_expr!(usize);
 impl_expr!(isize);
 
-impl ToExpr for AdviceColumn {
-    fn expr<F: Field>(&self) -> Query<F> {
+impl<F: Field> ToExpr<F> for AdviceColumn {
+    fn expr(&self) -> Query<F> {
         self.current()
     }
 }
-impl ToExpr for AdviceColumnPhase2 {
-    fn expr<F: Field>(&self) -> Query<F> {
+impl<F: Field> ToExpr<F> for AdviceColumnPhase2 {
+    fn expr(&self) -> Query<F> {
         self.current()
     }
 }
-impl ToExpr for FixedColumn {
-    fn expr<F: Field>(&self) -> Query<F> {
+impl<F: Field> ToExpr<F> for FixedColumn {
+    fn expr(&self) -> Query<F> {
         self.current()
     }
 }

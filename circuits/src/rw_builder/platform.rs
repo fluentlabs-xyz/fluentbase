@@ -50,7 +50,7 @@ pub fn build_sys_read_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
         to_address: target.as_u32(),
         length: length.as_u32(),
         rw_counter: copy_rw_counter,
-        data,
+        data: data.iter().map(|v| *v as u32).collect(),
     });
     Ok(())
 }
@@ -82,7 +82,7 @@ pub fn build_sys_write_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> {
         to_address: step.output_len,
         length: length.as_u32(),
         rw_counter: copy_rw_counter,
-        data,
+        data: vec![0; length.as_usize()],
     });
     step.output_len += length.as_u32();
     Ok(())
