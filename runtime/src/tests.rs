@@ -127,3 +127,13 @@ fn test_translator() {
         Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
     println!("{:?}", result.data().output().clone());
 }
+
+#[test]
+fn test_import_section() {
+    let wasm_binary = include_bytes!("../examples/bin/import.wasm");
+    let import_linker = Runtime::new_linker();
+    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+    let result =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+    println!("Output: {:?}", result.data().output().clone());
+}
