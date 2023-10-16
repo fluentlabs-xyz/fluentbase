@@ -148,7 +148,9 @@ impl ExecSteps {
                 let elem_addr = table_change.table_idx * 1024 + table_change.elem_idx + 1;
                 global_table.insert(elem_addr, table_change.func_ref);
                 let size_addr = table_change.table_idx * 1024;
-                global_table.insert(size_addr, UntypedValue::from(0));
+                if !global_table.contains_key(&size_addr) {
+                    global_table.insert(size_addr, UntypedValue::from(0));
+                }
                 /*
                                 let table_size = global_table
                                     .keys()
