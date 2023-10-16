@@ -15,7 +15,6 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableGetGadget<F: Field> {
-    table_index: AdviceColumn,
     elem_index: AdviceColumn,
     value: AdviceColumn,
     size: AdviceColumn,
@@ -28,15 +27,15 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let table_index = cb.query_cell();
         let elem_index = cb.query_cell();
         let value = cb.query_cell();
         let size = cb.query_cell();
         cb.require_opcode(Instruction::TableGet(Default::default()));
+
         cb.stack_pop(elem_index.current());
         cb.table_elem_lookup(
             0.expr(),
-            table_index.current(),
+            cb.query_rwasm_value(),
             elem_index.current(),
             value.current(),
         );
@@ -50,7 +49,6 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             None,
         );
         Self {
-            table_index,
             elem_index,
             value,
             size,
@@ -64,19 +62,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, elem_index, value) = match trace.instr() {
-            Instruction::TableGet(ti) => (
-                ti,
-                trace.curr_nth_stack_value(0)?,
-                trace.next_nth_stack_value(0)?,
-            ),
-            _ => bail_illegal_opcode!(trace),
-        };
-        self.table_index
-            .assign(region, offset, F::from(table_index.to_u32() as u64));
+        let table_index = trace.instr().aux_value().unwrap_or_default().as_u32();
+        let elem_index = trace.curr_nth_stack_value(0)?;
+        let value = trace.next_nth_stack_value(0)?;
+        let size = trace.read_table_size(table_index);
         self.elem_index
             .assign(region, offset, F::from(elem_index.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
+        self.size.assign(region, offset, F::from(size as u64));
         Ok(())
     }
 }

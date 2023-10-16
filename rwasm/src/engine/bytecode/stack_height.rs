@@ -180,10 +180,11 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
             }
-            Instruction::TableGet(_table_idx) => {
+            Instruction::TableGet(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
-                //stack_ops.push(RwOp::TableElemRead(table_idx.to_u32()));
+                stack_ops.push(RwOp::TableElemRead(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
             }
             Instruction::TableSet(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
