@@ -25,12 +25,12 @@ mod zktrie;
 mod zktrie_helpers;
 
 #[derive(Debug)]
-pub enum Error {
+pub enum RuntimeError {
     ReducedModule(ReducedModuleError),
     Rwasm(fluentbase_rwasm::Error),
 }
 
-impl From<ReducedModuleError> for Error {
+impl From<ReducedModuleError> for RuntimeError {
     fn from(value: ReducedModuleError) -> Self {
         Self::ReducedModule(value)
     }
@@ -38,7 +38,7 @@ impl From<ReducedModuleError> for Error {
 
 macro_rules! rwasm_error {
     ($error_type:path) => {
-        impl From<$error_type> for Error {
+        impl From<$error_type> for RuntimeError {
             fn from(value: $error_type) -> Self {
                 Self::Rwasm(value.into())
             }
@@ -52,7 +52,7 @@ rwasm_error!(fluentbase_rwasm::table::TableError);
 rwasm_error!(fluentbase_rwasm::linker::LinkerError);
 rwasm_error!(fluentbase_rwasm::module::ModuleError);
 
-impl From<fluentbase_rwasm::Error> for Error {
+impl From<fluentbase_rwasm::Error> for RuntimeError {
     fn from(value: fluentbase_rwasm::Error) -> Self {
         Self::Rwasm(value)
     }
