@@ -83,6 +83,7 @@ mod test {
         let dec = rlp::decode::<KeysValues>(&enc).unwrap();
 
         assert_eq!(kvs.0.len(), 0);
+        assert_eq!(dec.0.len(), 0);
     }
 
     #[test]

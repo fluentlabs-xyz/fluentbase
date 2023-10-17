@@ -1,43 +1,86 @@
 use crate::{
     macros::{forward_call, forward_call_args},
-    Error,
     ExitCode,
+    RuntimeError,
     SysFuncIdx,
+    RECURSIVE_MAX_DEPTH,
+    STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
     common::{Trap, ValueType},
     engine::Tracer,
-    rwasm::{ImportFunc, ImportLinker, ReducedModule},
+    rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
     AsContextMut,
     Caller,
     Config,
     Engine,
     FuelConsumptionMode,
     Func,
+    FuncType,
+    Instance,
     Linker,
     Module,
+    StackLimits,
     Store,
 };
+use std::mem::take;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RuntimeContext {
+    // context inputs
+    pub(crate) bytecode: Vec<u8>,
+    pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
-    pub(crate) exit_code: i32,
+    pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
+    // context outputs
+    pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
-    pub(crate) timestamp: u64,
+}
+
+impl Default for RuntimeContext {
+    fn default() -> Self {
+        Self {
+            bytecode: vec![],
+            fuel_limit: 0,
+            state: 0,
+            catch_trap: true,
+            input: vec![],
+            exit_code: 0,
+            output: vec![],
+        }
+    }
 }
 
 impl RuntimeContext {
-    pub fn new(input_data: &[u8], state: u32) -> Self {
+    pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
         Self {
-            input: input_data.to_vec(),
-            state,
+            bytecode: bytecode.into(),
             ..Default::default()
         }
     }
 
-    pub(crate) fn return_data(&mut self, value: &[u8]) {
+    pub fn with_input(mut self, input_data: &[u8]) -> Self {
+        self.input = input_data.to_vec();
+        self
+    }
+
+    pub fn with_state(mut self, state: u32) -> Self {
+        self.state = state;
+        self
+    }
+
+    pub fn with_catch_trap(mut self, catch_trap: bool) -> Self {
+        self.catch_trap = catch_trap;
+        self
+    }
+
+    pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
+        self.fuel_limit = fuel_limit;
+        self
+    }
+
+    pub(crate) fn extend_return_data(&mut self, value: &[u8]) {
         self.output.extend(value);
     }
 
@@ -56,38 +99,46 @@ impl RuntimeContext {
 
 #[derive(Debug)]
 pub struct ExecutionResult {
-    store: Store<RuntimeContext>,
-    bytecode: Vec<u8>,
+    runtime_context: RuntimeContext,
+    tracer: Tracer,
 }
 
 impl ExecutionResult {
-    pub fn new(store: Store<RuntimeContext>, bytecode: Vec<u8>) -> Self {
-        Self { store, bytecode }
+    pub fn cloned(store: &Store<RuntimeContext>) -> Self {
+        Self {
+            runtime_context: store.data().clone(),
+            tracer: store.tracer().clone(),
+        }
+    }
+
+    pub fn taken(store: &mut Store<RuntimeContext>) -> Self {
+        Self {
+            runtime_context: take(store.data_mut()),
+            tracer: take(store.tracer_mut()),
+        }
     }
 
     pub fn bytecode(&self) -> &Vec<u8> {
-        &self.bytecode
+        &self.runtime_context.bytecode
     }
 
     pub fn tracer(&self) -> &Tracer {
-        self.store.tracer()
+        &self.tracer
     }
 
     pub fn data(&self) -> &RuntimeContext {
-        self.store.data()
-    }
-
-    pub fn data_mut(&mut self) -> &mut RuntimeContext {
-        self.store.data_mut()
+        &self.runtime_context
     }
 }
 
 #[allow(dead_code)]
 pub struct Runtime {
     engine: Engine,
+    bytecode: InstructionSet,
     module: Module,
     linker: Linker<RuntimeContext>,
     store: Store<RuntimeContext>,
+    instance: Instance,
 }
 
 impl Runtime {
@@ -338,133 +389,170 @@ impl Runtime {
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, Error> {
+    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, RuntimeError> {
+        let runtime_context = RuntimeContext::new(rwasm_binary).with_input(input_data);
         let import_linker = Self::new_linker();
-        Self::run_with_input(rwasm_binary, input_data, &import_linker, true)
-    }
-
-    pub fn run_with_input(
-        rwasm_binary: &[u8],
-        input_data: &[u8],
-        import_linker: &ImportLinker,
-        catch_trap: bool,
-    ) -> Result<ExecutionResult, Error> {
-        Self::run_with_context(
-            rwasm_binary,
-            RuntimeContext::new(input_data, 0),
-            import_linker,
-            catch_trap,
-        )
+        Self::run_with_context(runtime_context, &import_linker)
     }
 
     pub fn run_with_context(
-        rwasm_binary: &[u8],
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
-        catch_trap: bool,
-    ) -> Result<ExecutionResult, Error> {
-        let mut config = Config::default();
-        let fuel_enabled = true;
-        if fuel_enabled {
-            config.fuel_consumption_mode(FuelConsumptionMode::Eager);
-            config.consume_fuel(true);
-        }
-        let engine = Engine::new(&config);
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let mut runtime = Self::new(runtime_context, import_linker)?;
+        Ok(ExecutionResult::taken(&mut runtime.store))
+    }
 
-        let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
-        let module = reduced_module.to_module(&engine, import_linker);
-        let linker = Linker::<RuntimeContext>::new(&engine);
+    pub fn new(
+        runtime_context: RuntimeContext,
+        import_linker: &ImportLinker,
+    ) -> Result<Self, RuntimeError> {
+        let fuel_limit = runtime_context.fuel_limit;
+
+        let engine = {
+            let mut config = Config::default();
+            config.set_stack_limits(
+                StackLimits::new(STACK_MAX_HEIGHT, STACK_MAX_HEIGHT, RECURSIVE_MAX_DEPTH).unwrap(),
+            );
+            config.floats(false);
+            if fuel_limit > 0 {
+                config.fuel_consumption_mode(FuelConsumptionMode::Eager);
+                config.consume_fuel(true);
+            }
+            Engine::new(&config)
+        };
+
+        let (module, bytecode) = {
+            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
+                .map_err(Into::<RuntimeError>::into)?;
+            let module_builder =
+                reduced_module.to_module_builder(&engine, import_linker, FuncType::new([], []));
+            (module_builder.finish(), reduced_module.bytecode().clone())
+        };
+
+        let mut linker = Linker::<RuntimeContext>::new(&engine);
         let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
-        if fuel_enabled {
-            store.add_fuel(100_000).unwrap();
+        if fuel_limit > 0 {
+            store.add_fuel(fuel_limit as u64).unwrap();
         }
 
-        #[allow(unused_mut)]
-        let mut res = Self {
+        Self::register_bindings(&mut linker, &mut store);
+
+        // we save original state to pass u32::MAX for init (router doesn't work in this case)
+        let original_state = store.data().state;
+        store.data_mut().state = u32::MAX;
+
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .map_err(Into::<RuntimeError>::into)?
+            .start(&mut store)
+            .map_err(Into::<RuntimeError>::into)?;
+
+        // restore state for next runs
+        store.data_mut().state = original_state;
+
+        let result = Self {
             engine,
+            bytecode,
             module,
             linker,
             store,
+            instance,
         };
 
-        forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
-        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
-        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
-        forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
+        Ok(result)
+    }
 
-        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
-        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
+        let func =
+            self.instance
+                .get_func(&mut self.store, "main")
+                .ok_or(RuntimeError::ReducedModule(
+                    ReducedModuleError::MissingEntrypoint,
+                ))?;
+        let res = func
+            .call(&mut self.store, &[], &mut [])
+            .map_err(Into::<RuntimeError>::into);
+        if self.store.data().catch_trap && res.is_err() {
+            Self::catch_trap(res.err().unwrap());
+        }
+        // we need to restore trace to recover missing opcode values
+        self.restore_trace();
+        let execution_result = ExecutionResult::cloned(&self.store);
+        Ok(execution_result)
+    }
 
-        forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+    fn register_bindings(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>) {
+        // sys
+        forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
+        forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
+        // wasi
+        forward_call!(linker, store, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
+        forward_call!(linker, store, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+        // rwasm
+        forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+        // evm (orphaned)
+        forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
+        forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+        // zktrie
+        forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
+        // mpt
+        forward_call!(linker, store, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) -> ());
+        forward_call!(linker, store, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
+    }
 
-        forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
-        forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+    pub fn catch_trap(err: RuntimeError) -> i32 {
+        let err = match err {
+            RuntimeError::Rwasm(err) => err,
+            RuntimeError::ReducedModule(_) => return ExitCode::UnknownError as i32,
+        };
+        let err = match err {
+            fluentbase_rwasm::Error::Trap(err) => err,
+            _ => return ExitCode::UnknownError as i32,
+        };
+        // for i32 error code (raw error) just return result
+        if let Some(exit_status) = err.i32_exit_status() {
+            return exit_status;
+        }
+        // for trap code (wasmi error) convert error to i32
+        if let Some(trap_code) = err.trap_code() {
+            return Into::<ExitCode>::into(trap_code) as i32;
+        }
+        // otherwise its just an unknown error
+        ExitCode::UnknownError as i32
+    }
 
-        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
-
-        forward_call!(res, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) -> i32);
-        forward_call!(res, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) -> ());
-        forward_call!(res, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(res, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
-
-        let result = res
-            .linker
-            .instantiate(&mut res.store, &res.module)
-            .map_err(Into::<Error>::into)?
-            .start(&mut res.store);
-
+    fn restore_trace(&mut self) {
         // we need to fix logs, because we lost information about instr meta during conversion
-        let tracer = res.store.tracer_mut();
+        let tracer = self.store.tracer_mut();
         let call_id = tracer.logs.first().map(|v| v.call_id).unwrap_or_default();
         for log in tracer.logs.iter_mut() {
             if log.call_id != call_id {
                 continue;
             }
-            let instr = reduced_module.bytecode().get(log.index).unwrap();
+            let instr = self.bytecode.get(log.index).unwrap();
             log.opcode = *instr;
         }
-
-        let mut execution_result = ExecutionResult::new(res.store, rwasm_binary.to_vec());
-
-        if !catch_trap {
-            result?;
-            return Ok(execution_result);
-        }
-
-        if let Err(ref err) = result {
-            let exit_code = match err {
-                fluentbase_rwasm::Error::Trap(trap) => {
-                    if let Some(exit_status) = trap.i32_exit_status() {
-                        exit_status
-                    } else if let Some(trap_code) = trap.trap_code() {
-                        let exit_code: ExitCode = trap_code.into();
-                        exit_code as i32
-                    } else {
-                        ExitCode::UnknownError as i32
-                    }
-                }
-                _ => ExitCode::UnknownError as i32,
-            };
-            execution_result.data_mut().exit_code = exit_code;
-        }
-
-        Ok(execution_result)
     }
 }
