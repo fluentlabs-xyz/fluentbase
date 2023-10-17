@@ -9,8 +9,6 @@ pub type Bytes = Vec<u8>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VerifyBlockError {
-    BlockHashWrong,
-
     PrevBlockHashWrong,
 
     CurrentBlockHashWrong,
@@ -19,13 +17,12 @@ pub enum VerifyBlockError {
 
     BlockNumbersNotConsistent,
 
-    /// Custom rlp decoding error.
     Custom(&'static str),
 }
 
 /// Helper structure, used for encoding blocks.
 #[derive(Default)]
-pub struct Block {
+pub(crate) struct Block {
     pub header: Header,
     pub transactions: Vec<transaction::UnverifiedTransaction>,
     pub uncles: Vec<Header>,
@@ -59,10 +56,7 @@ impl Block {
         if self_block_encoded.eq(&cmp_block_encoded) {
             return false;
         }
-
         true
-
-        //
     }
 }
 
@@ -82,118 +76,134 @@ impl Decodable for Block {
     }
 }
 
-pub fn verify_input_blocks(
-    prev_blk_hash: &[u8],
-    cur_blk_hash: &[u8],
+pub(crate) fn verify_input_blocks(
+    prev_blk_hash: &H256,
+    cur_blk_hash: &H256,
     prev_blk: &Block,
     cur_blk: &Block,
 ) -> Result<bool, VerifyBlockError> {
-    if !prev_blk_hash.eq(prev_blk.header.hash().as_bytes()) {
-        return Err(VerifyBlockError::BlockHashWrong);
-    }
-    if !cur_blk_hash.eq(cur_blk.header.hash().as_bytes()) {
-        return Err(VerifyBlockError::BlockHashWrong);
-    }
-    //
-    if !prev_blk.is_equal_to(cur_blk) {
+    // 1. verify the parent block hash
+    if !prev_blk_hash
+        .as_bytes()
+        .eq(prev_blk.header.hash().as_bytes())
+    {
         return Err(VerifyBlockError::PrevBlockHashWrong);
     }
-    //
+    // 2. verify the current block hash
+    if !cur_blk_hash.as_bytes().eq(cur_blk.header.hash().as_bytes()) {
+        return Err(VerifyBlockError::CurrentBlockHashWrong);
+    }
+    // 3. compare the prev block hash vs curret block's parent hash
     if !prev_blk.header.hash().eq(cur_blk.header.parent_hash()) {
         return Err(VerifyBlockError::ParentHashWrong);
+    }
+    // 4. verify consistency of block numbers
+    if !(prev_blk.header.number() == (cur_blk.header.number() - 1)) {
+        return Err(VerifyBlockError::BlockNumbersNotConsistent);
     }
     return Ok(true);
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::eth_t::{block::Block, header::Header};
-    use ethereum_types::{Address, Bloom, H256};
+    use super::Header;
+    use crate::eth_t::{
+        block::{verify_input_blocks, Block, VerifyBlockError},
+        header::{generate_random_header, generate_random_header_based_on_prev_block},
+    };
+    use ethereum_types::{Address, H256};
+    use rlp;
+
     #[test]
-    fn test_encode_block_header() {
-        let expected = hex::decode("f901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000").unwrap();
-        let mut data = vec![];
-        let header = Header {
-            parent_hash: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            // beneficiary: H160::from_str("0000000000000000000000000000000000000000").unwrap(),
-            state_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            transactions_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            receipts_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            // logs_bloom: <[u8;
-            // 256]>::from_hex("
-            //
-            // ).unwrap().into(),
-            difficulty: 0x8aeu64.into(),
-            number: 0xd05u64.into(),
-            gas_limit: 0x115cu64.into(),
-            gas_used: 0x15b3u64.into(),
-            timestamp: 0x1a0au64,
-            extra_data: hex::decode("7788").unwrap().into(),
-            author: ethereum_types::H160(""),
-            uncles_hash:  H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            log_bloom: Bloom::from_slice( "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".as_bytes()),
-            seal: todo!(),
-            hash: todo!(),
-            bare_hash: todo!(),
-            // mix_hash: H256::from_str(
-            //     "0000000000000000000000000000000000000000000000000000000000000000",
-            // )
-            //  .unwrap(),
-            //nonce: H64::from_low_u64_be(0x0),
-            // base_fee_per_gas: None,
+    fn verify_block_inputs_with_proper_data() {
+        // 1. prev block
+        let prev_blk_header = generate_random_header(&123120);
+        let prev_blk_hash = prev_blk_header.hash();
+        let prev_blk = Block {
+            header: prev_blk_header,
+            transactions: vec![],
+            uncles: vec![],
         };
-        // TODO
-        // header.encode(&mut data);
-        assert_eq!(hex::encode(&data), hex::encode(expected));
-        //  assert_eq!(header.length(), data.len());
+
+        // 1. prev block
+        let cur_blk_header = generate_random_header_based_on_prev_block(&123121, prev_blk_hash);
+        let cur_blk_hash = cur_blk_header.hash();
+        let cur_blk = Block {
+            header: cur_blk_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+
+        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        match res {
+            Ok(res) => {
+                assert!(res);
+            }
+            Err(err) => {
+                println!("{:?}", err);
+            }
+        }
     }
 
     #[test]
-    fn test_decode_block_header() {
-        let rlp_hex =
-    hex::decode("
-    f901f9a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000940000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008208ae820d0582115c8215b3821a0a827788a00000000000000000000000000000000000000000000000000000000000000000880000000000000000"
-    ).unwrap();
-        let expected = Header {
-            parent_hash: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            author: Address::from_slice("0000000000000000000000000000000000000000".as_bytes()),
-            state_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            transactions_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            receipts_root: H256::from_slice(
-                "0000000000000000000000000000000000000000000000000000000000000000".as_bytes(),
-            ),
-            //   log_bloom:
-            // Bloom::from_slice("
-            // 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-            // .as_bytes()),
-            difficulty: 0x8aeu64.into(),
-            number: 0xd05u64.into(),
-            gas_limit: 0x115cu64.into(),
-            gas_used: 0x15b3u64.into(),
-            timestamp: 0x1a0au64,
-            extra_data: hex::decode("7788").unwrap().into(),
-            uncles_hash: todo!(),
-            seal: todo!(),
-            hash: todo!(),
-            bare_hash: todo!(),
-            log_bloom: todo!(),
+    fn verify_block_inputs_with_wrong_prev_blk_num() {
+        // 1. prev block
+        let prev_blk_header = generate_random_header(&123120);
+        let prev_blk_hash = prev_blk_header.hash();
+        let prev_blk = Block {
+            header: prev_blk_header,
+            transactions: vec![],
+            uncles: vec![],
         };
-        let header = rlp::decode::<crate::eth_t::header::Header>(&rlp_hex).unwrap();
-        assert_eq!(header, expected);
+
+        // 2. current block
+        let cur_blk_header = generate_random_header_based_on_prev_block(&123122, prev_blk_hash);
+        let cur_blk_hash = cur_blk_header.hash();
+        let cur_blk = Block {
+            header: cur_blk_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+
+        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        match res {
+            Ok(result) => {
+                assert!(!result);
+            }
+            Err(err) => {
+                assert_eq!(err, VerifyBlockError::BlockNumbersNotConsistent)
+            }
+        }
+    }
+
+    #[test]
+    fn verify_block_inputs_with_wrong_prev_blk_hash() {
+        // 1. prev block
+        let prev_blk_header = generate_random_header(&123120);
+        let prev_blk_hash = prev_blk_header.hash();
+        let prev_blk = Block {
+            header: prev_blk_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+
+        // 2. current block
+        let cur_blk_header = generate_random_header_based_on_prev_block(&123121, H256::random());
+        let cur_blk_hash = cur_blk_header.hash();
+        let cur_blk = Block {
+            header: cur_blk_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+
+        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        match res {
+            Ok(result) => {
+                assert!(!result);
+            }
+            Err(err) => {
+                assert_eq!(err, VerifyBlockError::ParentHashWrong)
+            }
+        }
     }
 }

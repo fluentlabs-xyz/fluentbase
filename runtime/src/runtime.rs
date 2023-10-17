@@ -188,6 +188,13 @@ impl Runtime {
             &[ValueType::I32; 2],
             &[],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_keccak256".to_string(),
+            SysFuncIdx::EVM_KECCAK256 as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 0],
+        ));
 
         // zktrie
         // zktrie_open
@@ -368,6 +375,7 @@ impl Runtime {
 
         forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+        forward_call!(res, "env", "_evm_keccak256", fn evm_keccak256(offset: u32, length: u32, target: u32) -> ());
 
         forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
         forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());

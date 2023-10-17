@@ -1,6 +1,5 @@
 extern crate ethereum_types;
 extern crate tiny_keccak;
-
 pub use ethereum_types::H256;
 use std::io;
 use tiny_keccak::{Hasher, Keccak};
@@ -23,13 +22,6 @@ pub const KECCAK_EMPTY_LIST_RLP: H256 = H256([
     0xd3, 0x12, 0x45, 0x1b, 0x94, 0x8a, 0x74, 0x13, 0xf0, 0xa1, 0x42, 0xfd, 0x40, 0xd4, 0x93, 0x47,
 ]);
 
-extern "C" {
-    /// Hashes input. Returns -1 if either out or input does not exist. Otherwise returns 0.
-    pub fn keccak_256(out: *mut u8, outlen: usize, input: *const u8, inputlen: usize) -> i32;
-    /// Hashes input. Returns -1 if either out or input does not exist. Otherwise returns 0.
-    pub fn keccak_512(out: *mut u8, outlen: usize, input: *const u8, inputlen: usize) -> i32;
-}
-
 pub fn keccak<T: AsRef<[u8]>>(s: T) -> H256 {
     let mut result = [0u8; 32];
     write_keccak(s, &mut result);
@@ -37,28 +29,7 @@ pub fn keccak<T: AsRef<[u8]>>(s: T) -> H256 {
 }
 
 pub fn write_keccak<T: AsRef<[u8]>>(s: T, dest: &mut [u8]) {
-    let input = s.as_ref();
-    unsafe {
-        // we can safely ignore keccak_256 output, cause we know that both input
-        // and dest are properly allocated
-        keccak_256(dest.as_mut_ptr(), dest.len(), input.as_ptr(), input.len());
-    }
-}
-
-pub fn keccak_buffer(r: &mut dyn io::BufRead) -> Result<H256, io::Error> {
-    let mut output = [0u8; 32];
-    let mut input = [0u8; 1024];
-    let mut keccak = Keccak::v256();
-
-    // read file
-    loop {
-        let some = r.read(&mut input)?;
-        if some == 0 {
-            break;
-        }
-        keccak.update(&input[0..some]);
-    }
-
-    keccak.finalize(&mut output);
-    Ok(output.into())
+    let mut keccak256 = Keccak::v256();
+    keccak256.update(s.as_ref());
+    keccak256.finalize(dest);
 }
