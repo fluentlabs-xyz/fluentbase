@@ -37,11 +37,6 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         let size = cb.query_cell();
         let exit_code = cb.query_cell();
 
-        cb.stack_pop(value.current());
-        cb.stack_pop(elem.current());
-
-        cb.exit_code_lookup(exit_code.current());
-
         // cb.range_check_1024(elem.expr());
         // Minus one is needed here, for example if size of table is zero then zero elem_index will
         // require size to be one. cb.range_check_1024(size.expr() - elem_index.expr() -
@@ -58,11 +53,33 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         let threshold = range + RANGE_THRESHOLD.expr();
         let lt_gadget = cb.lt_gadget(threshold, RANGE_THRESHOLD.expr());
 
+        // So in case of exit code causing error, pc delta must be different.
+        // To solve this problem `configure_state_transition` is defined with disabled constraint.
+        cb.condition(1.expr() - lt_gadget.expr(), |cb| {
+            cb.next_pc_delta(9.expr());
+        });
+
         cb.condition(lt_gadget.expr(), |cb| {
             cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32 as u64).expr());
         });
 
-        // If exit code causing error than nothing is written.
+        cb.exit_code_lookup(exit_code.current());
+
+        // Value is not important if exit code cause error, but we need to shift (rw_counter and offset).
+        // TODO: Change `draft_shift` to something more correct.
+        cb.condition(lt_gadget.expr(), |cb| {
+            cb.draft_shift(2, 1);
+        });
+        cb.condition(1.expr() - lt_gadget.expr(), |cb| {
+            cb.stack_pop(value.current());
+        });
+
+        cb.stack_pop(elem.current());
+
+        // If exit code causing error than nothing is written, but we need to shift.
+        cb.condition(lt_gadget.expr(), |cb| {
+            cb.draft_shift(1, 0);
+        });
         cb.condition(1.expr() - lt_gadget.expr(), |cb| {
             cb.table_elem_lookup(
                1.expr(),
@@ -87,6 +104,10 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
             lt_gadget,
             _pd: Default::default(),
         }
+    }
+
+    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
+        //cb.next_pc_delta(9.expr());
     }
 
     fn assign_exec_step(
@@ -121,7 +142,7 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn table_set() {
+    fn table_set_simple() {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(2)
