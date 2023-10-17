@@ -25,7 +25,7 @@ use fluentbase_rwasm::{
 };
 use std::mem::take;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RuntimeContext {
     // context inputs
     pub(crate) bytecode: Vec<u8>,
@@ -36,6 +36,15 @@ pub struct RuntimeContext {
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
+}
+
+impl Default for RuntimeContext {
+    fn default() -> Self {
+        Self {
+            catch_trap: true,
+            ..Default::default()
+        }
+    }
 }
 
 impl RuntimeContext {
@@ -461,7 +470,7 @@ impl Runtime {
             .call(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
         if self.store.data().catch_trap && res.is_err() {
-            self.catch_trap(res.err().unwrap());
+            Self::catch_trap(res.err().unwrap());
         }
         // we need to restore trace to recover missing opcode values
         self.restore_trace();
@@ -508,7 +517,7 @@ impl Runtime {
         forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
     }
 
-    fn catch_trap(&mut self, err: RuntimeError) -> i32 {
+    pub fn catch_trap(err: RuntimeError) -> i32 {
         let err = match err {
             RuntimeError::Rwasm(err) => err,
             RuntimeError::ReducedModule(_) => return ExitCode::UnknownError as i32,
