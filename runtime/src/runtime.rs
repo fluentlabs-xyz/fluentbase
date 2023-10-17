@@ -1,6 +1,7 @@
 use crate::{
     macros::{forward_call, forward_call_args},
     Error,
+    ExitCode,
     SysFuncIdx,
 };
 use fluentbase_rwasm::{
@@ -20,6 +21,7 @@ use fluentbase_rwasm::{
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
+    pub(crate) state: u32,
     pub(crate) exit_code: i32,
     pub(crate) input: Vec<u8>,
     pub(crate) output: Vec<u8>,
@@ -27,9 +29,10 @@ pub struct RuntimeContext {
 }
 
 impl RuntimeContext {
-    pub fn new(input_data: &[u8]) -> Self {
+    pub fn new(input_data: &[u8], state: u32) -> Self {
         Self {
             input: input_data.to_vec(),
+            state,
             ..Default::default()
         }
     }
@@ -97,6 +100,13 @@ impl Runtime {
             SysFuncIdx::SYS_HALT as u16,
             &[ValueType::I32; 1],
             &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_state".to_string(),
+            SysFuncIdx::SYS_STATE as u16,
+            &[],
+            &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -330,12 +340,26 @@ impl Runtime {
 
     pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, Error> {
         let import_linker = Self::new_linker();
-        Self::run_with_linker(rwasm_binary, input_data, &import_linker, true)
+        Self::run_with_input(rwasm_binary, input_data, &import_linker, true)
     }
 
-    pub fn run_with_linker(
+    pub fn run_with_input(
         rwasm_binary: &[u8],
         input_data: &[u8],
+        import_linker: &ImportLinker,
+        catch_trap: bool,
+    ) -> Result<ExecutionResult, Error> {
+        Self::run_with_context(
+            rwasm_binary,
+            RuntimeContext::new(input_data, 0),
+            import_linker,
+            catch_trap,
+        )
+    }
+
+    pub fn run_with_context(
+        rwasm_binary: &[u8],
+        runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
@@ -347,7 +371,6 @@ impl Runtime {
         }
         let engine = Engine::new(&config);
 
-        let runtime_context = RuntimeContext::new(input_data);
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         let module = reduced_module.to_module(&engine, import_linker);
         let linker = Linker::<RuntimeContext>::new(&engine);
@@ -366,6 +389,7 @@ impl Runtime {
         };
 
         forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
         forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
 
@@ -427,16 +451,16 @@ impl Runtime {
         if let Err(ref err) = result {
             let exit_code = match err {
                 fluentbase_rwasm::Error::Trap(trap) => {
-                    if trap.i32_exit_status().is_none() {
-                        result?;
-                        return Ok(execution_result);
+                    if let Some(exit_status) = trap.i32_exit_status() {
+                        exit_status
+                    } else if let Some(trap_code) = trap.trap_code() {
+                        let exit_code: ExitCode = trap_code.into();
+                        exit_code as i32
+                    } else {
+                        ExitCode::UnknownError as i32
                     }
-                    trap.i32_exit_status().unwrap()
                 }
-                _ => {
-                    result?;
-                    return Ok(execution_result);
-                }
+                _ => ExitCode::UnknownError as i32,
             };
             execution_result.data_mut().exit_code = exit_code;
         }
