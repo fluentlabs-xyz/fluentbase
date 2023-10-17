@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::vec;
-use fluentbase_sdk::{sys_read, sys_write, zktrie_open_};
+use fluentbase_sdk::{mpt_open_, sys_read, sys_write, zktrie_open_};
 
 #[cfg(feature = "evm")]
 mod evm;
@@ -31,6 +31,7 @@ pub const ACCOUNTFIELDS: usize = 5;
 pub const ACCOUNTSIZE: usize = FIELDSIZE * ACCOUNTFIELDS;
 const ROOTSIZE: usize = FIELDSIZE;
 const KEYSIZE: usize = 20;
+#[cfg(feature = "zktrie_open_test")]
 fn zktrie_open_test() {
     const ACCOUNTS_COUNT: usize = 1;
 
@@ -52,6 +53,15 @@ fn zktrie_open_test() {
         ACCOUNTS_COUNT as i32,
     );
 }
+#[cfg(feature = "mpt_open_test")]
+fn mpt_open_test() {
+    // encoded value is: [['key', 'value']]
+    let mut rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
+    sys_read(rlp_data.as_mut_ptr(), 0u32, rlp_data.len() as u32);
+
+    let res = mpt_open_(rlp_data.as_mut_ptr() as i32, rlp_data.len() as i32);
+    assert_eq!(res, 1);
+}
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -59,6 +69,8 @@ pub extern "C" fn main() {
     greeting();
     #[cfg(feature = "zktrie_open_test")]
     zktrie_open_test();
+    #[cfg(feature = "mpt_open_test")]
+    mpt_open_test();
     #[cfg(feature = "panic")]
     panic();
     #[cfg(feature = "rwasm")]

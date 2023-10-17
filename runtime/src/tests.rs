@@ -92,6 +92,20 @@ fn zktrie_open_test() {
     assert_eq!(output.data().output().clone(), vec![]);
 }
 
+#[test]
+fn mpt_open_test() {
+    let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
+    let import_linker = Runtime::new_linker();
+    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+
+    let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
+
+    let output =
+        Runtime::run_with_linker(rwasm_binary.as_slice(), &rlp_data, &import_linker, false)
+            .unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
 fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
     let err = result.err().unwrap();
     match err {
