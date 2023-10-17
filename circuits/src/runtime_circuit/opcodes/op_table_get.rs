@@ -14,32 +14,46 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub(crate) struct OpTableSizeGadget<F: Field> {
+pub(crate) struct OpTableGetGadget<F: Field> {
     table_index: AdviceColumn,
+    elem_index: AdviceColumn,
     value: AdviceColumn,
+    size: AdviceColumn,
     _pd: PhantomData<F>,
 }
 
-impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
-    const NAME: &'static str = "WASM_TABLE_SIZE";
+impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
+    const NAME: &'static str = "WASM_TABLE_GET";
 
-    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SIZE;
+    const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_GET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let table_index = cb.query_cell();
+        let elem_index = cb.query_cell();
         let value = cb.query_cell();
-        cb.require_opcode(Instruction::TableSize(Default::default()));
-        //cb.table_size(table_index.expr(), value.expr());
-        cb.context_lookup(
-            RwTableContextTag::TableSize(table_index.current()),
+        let size = cb.query_cell();
+        cb.require_opcode(Instruction::TableGet(Default::default()));
+        cb.stack_pop(elem_index.current());
+        cb.table_elem_lookup(
             0.expr(),
+            table_index.current(),
+            elem_index.current(),
             value.current(),
-            0.expr(),
         );
         cb.stack_push(value.current());
+        cb.range_check_1024(elem_index.expr());
+        cb.range_check_1024(size.expr() - elem_index.expr());
+        cb.context_lookup(
+            RwTableContextTag::TableSize(cb.query_rwasm_value()),
+            0.expr(),
+            size.current(),
+            None,
+        );
         Self {
             table_index,
+            elem_index,
             value,
+            size,
             _pd: Default::default(),
         }
     }
@@ -50,12 +64,18 @@ impl<F: Field> ExecutionGadget<F> for OpTableSizeGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-        let (table_index, value) = match trace.instr() {
-            Instruction::TableSize(ti) => (ti, trace.next_nth_stack_value(0)?),
+        let (table_index, elem_index, value) = match trace.instr() {
+            Instruction::TableGet(ti) => (
+                ti,
+                trace.curr_nth_stack_value(0)?,
+                trace.next_nth_stack_value(0)?,
+            ),
             _ => bail_illegal_opcode!(trace),
         };
         self.table_index
             .assign(region, offset, F::from(table_index.to_u32() as u64));
+        self.elem_index
+            .assign(region, offset, F::from(elem_index.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
         Ok(())
     }
@@ -67,9 +87,17 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn table_size() {
+    fn table_get() {
         test_ok(instruction_set! {
-            TableSize(0)
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+            I32Const(0)
+            RefFunc(0)
+            TableSet(0)
+            I32Const(0)
+            TableGet(0)
             Drop
         });
     }
