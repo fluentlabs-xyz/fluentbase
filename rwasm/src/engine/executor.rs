@@ -309,16 +309,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::ReturnCallIndirect(func_type) => {
                     forward_call!(self.visit_return_call_indirect(func_type))
                 }
-                Instr::ReturnCallIndirectUnsafe(func_type) => {
-                    forward_call!(self.visit_return_call_indirect_unsafe(func_type))
-                }
                 Instr::CallInternal(compiled_func) => self.visit_call_internal(compiled_func)?,
                 Instr::Call(func) => forward_call!(self.visit_call(func.into())),
                 Instr::CallIndirect(func_type) => {
                     forward_call!(self.visit_call_indirect(func_type))
-                }
-                Instr::CallIndirectUnsafe(table) => {
-                    forward_call!(self.visit_call_indirect_unsafe(table))
                 }
                 Instr::Drop => self.visit_drop(),
                 Instr::Select => self.visit_select(),
@@ -1106,17 +1100,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_return_call_indirect_unsafe(
-        &mut self,
-        table: TableIdx,
-    ) -> Result<CallOutcome, TrapCode> {
-        let drop_keep = self.fetch_drop_keep(1);
-        let func_index: u32 = self.sp.pop_as();
-        self.sp.drop_keep(drop_keep);
-        self.execute_call_indirect(2, table, func_index, None, CallKind::Tail)
-    }
-
-    #[inline(always)]
     fn visit_call_internal(&mut self, compiled_func: CompiledFunc) -> Result<(), TrapCode> {
         self.call_func_internal(compiled_func, CallKind::Nested)
     }
@@ -1132,12 +1115,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         let table = self.fetch_table_idx(1);
         let func_index: u32 = self.sp.pop_as();
         self.execute_call_indirect(2, table, func_index, Some(func_type), CallKind::Nested)
-    }
-
-    #[inline(always)]
-    fn visit_call_indirect_unsafe(&mut self, table: TableIdx) -> Result<CallOutcome, TrapCode> {
-        let func_index: u32 = self.sp.pop_as();
-        self.execute_call_indirect(1, table, func_index, None, CallKind::Nested)
     }
 
     #[inline(always)]

@@ -182,7 +182,7 @@ pub fn build_table_elem_read_rw_ops(
         rw_counter: step.next_rw_counter(),
         is_write: false,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64,
+        address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
         value: value.as_u32() as u64,
     });
     Ok(())
@@ -192,17 +192,15 @@ pub fn build_table_elem_write_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
-    let elem_index = step.curr_nth_stack_value(0)?;
-    let value = step.curr_nth_stack_value(1)?;
-
+    let value = step.curr_nth_stack_value(0)?;
+    let elem_index = step.curr_nth_stack_value(1)?;
     step.rw_rows.push(RwRow::Table {
         rw_counter: step.next_rw_counter(),
         is_write: true,
         call_id: step.call_id,
-        address: (table_idx * 1024) as u64 + elem_index.as_u32() as u64,
+        address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
         value: value.as_u32() as u64,
     });
-
     Ok(())
 }
 
@@ -320,7 +318,7 @@ pub fn build_table_grow_rw_ops(step: &mut ExecStep, table_index: u32) -> Result<
             rw_counter: step.next_rw_counter(),
             is_write: true,
             call_id: step.call_id,
-            address: table_size as u64 + i as u64,
+            address: (table_index * (MAX_TABLE_SIZE as u32)) as u64 + table_size as u64 + i as u64,
             value: init.as_u64(),
         });
     });

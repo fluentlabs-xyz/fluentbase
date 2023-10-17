@@ -125,7 +125,6 @@ pub enum Instruction {
     /// and [`Instruction::TableGet`] only act as a storage for parameters to the
     /// [`Instruction::ReturnCallIndirect`] and will never be executed by themselves.
     ReturnCallIndirect(SignatureIdx),
-    ReturnCallIndirectUnsafe(TableIdx),
     /// Calls an internal (compiled) function.
     ///
     /// # Note
@@ -151,7 +150,6 @@ pub enum Instruction {
     /// only acts as a storage for the parameter of the [`Instruction::CallIndirect`]
     /// and will never be executed by itself.
     CallIndirect(SignatureIdx),
-    CallIndirectUnsafe(TableIdx),
     Drop,
     Select,
     GlobalGet(GlobalIdx),

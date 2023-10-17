@@ -13,6 +13,7 @@ use crate::{
             InstrMeta,
             Instruction,
             LocalDepth,
+            SignatureIdx,
             TableIdx,
         },
         CompiledFunc,
@@ -185,6 +186,7 @@ impl InstructionSet {
         } else if self.total_locals.len() == 1 {
             self.drop_locals();
         }
+        // inject return in the end (its used mostly for unit tests)
         if inject_return && !self.is_return_last() {
             self.op_return();
         }
@@ -268,10 +270,10 @@ impl InstructionSet {
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
-    impl_opcode!(op_return_call_indirect, ReturnCallIndirectUnsafe(TableIdx));
+    impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
     impl_opcode!(op_call_internal, CallInternal(CompiledFunc));
     impl_opcode!(op_call, Call(FuncIdx));
-    impl_opcode!(op_call_indirect, CallIndirectUnsafe(TableIdx));
+    impl_opcode!(op_call_indirect, CallIndirect(SignatureIdx));
     impl_opcode!(op_drop, Drop);
     impl_opcode!(op_select, Select);
     impl_opcode!(op_global_get, GlobalGet(GlobalIdx));
@@ -451,7 +453,11 @@ impl InstructionSet {
     impl_opcode!(op_i64_trunc_sat_f64u, I64TruncSatF64U);
 
     pub fn extend<I: Into<InstructionSet>>(&mut self, with: I) {
-        self.instr.extend(Into::<InstructionSet>::into(with).instr);
+        let o: InstructionSet = with.into();
+        self.instr.extend(o.instr);
+        if let Some(metas) = &mut self.metas {
+            metas.extend(o.metas.unwrap());
+        }
     }
 }
 
@@ -460,16 +466,16 @@ macro_rules! instruction_set_internal {
     // Nothing left to do
     ($code:ident, ) => {};
     ($code:ident, $x:ident [$v:expr] $($rest:tt)*) => {{
-        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x($v.into()));
+        $code.push($crate::engine::bytecode::Instruction::$x($v.into()));
         $crate::instruction_set_internal!($code, $($rest)*);
     }};
     ($code:ident, $x:ident ($v:expr) $($rest:tt)*) => {{
-        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x($v.into()));
+        $code.push($crate::engine::bytecode::Instruction::$x($v.into()));
         $crate::instruction_set_internal!($code, $($rest)*);
     }};
     // Default opcode without any inputs
     ($code:ident, $x:ident $($rest:tt)*) => {{
-        $code.push(fluentbase_rwasm::engine::bytecode::Instruction::$x);
+        $code.push($crate::engine::bytecode::Instruction::$x);
         $crate::instruction_set_internal!($code, $($rest)*);
     }};
     // Function calls
@@ -481,37 +487,6 @@ macro_rules! instruction_set_internal {
 
 #[macro_export]
 macro_rules! instruction_set {
-    ($($args:tt)*) => {{
-        let mut code = $crate::rwasm::InstructionSet::new();
-        $crate::instruction_set_internal!(code, $($args)*);
-        code
-    }};
-}
-
-#[deprecated(note = "use [instruction_set_internal] instead")]
-#[macro_export]
-macro_rules! bytecode_internal {
-    // Nothing left to do
-    ($code:ident, ) => {};
-    ($code:ident, $x:ident ($v:expr) $($rest:tt)*) => {{
-        $code.$x($v);
-        $crate::instruction_set_internal!($code, $($rest)*);
-    }};
-    // Default opcode without any inputs
-    ($code:ident, $x:ident $($rest:tt)*) => {{
-        $code.write_op(fluentbase_rwasm::engine::bytecode::Instruction::$x);
-        $crate::instruction_set_internal!($code, $($rest)*);
-    }};
-    // Function calls
-    ($code:ident, .$function:ident ($($args:expr),* $(,)?) $($rest:tt)*) => {{
-        $code.$function($($args,)*);
-        $crate::instruction_set_internal!($code, $($rest)*);
-    }};
-}
-
-#[deprecated(note = "use [instruction_set] instead")]
-#[macro_export]
-macro_rules! bytecode {
     ($($args:tt)*) => {{
         let mut code = $crate::rwasm::InstructionSet::new();
         $crate::instruction_set_internal!(code, $($args)*);

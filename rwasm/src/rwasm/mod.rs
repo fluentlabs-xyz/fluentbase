@@ -12,10 +12,12 @@ pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, r
 mod tests {
     use crate::{
         common::ValueType,
+        engine::bytecode::Instruction,
         rwasm::{
             compiler::Compiler,
             platform::ImportLinker,
             reduced_module::ReducedModule,
+            FuncOrExport,
             ImportFunc,
         },
         AsContextMut,
@@ -33,7 +35,16 @@ mod tests {
         exit_code: i32,
     }
 
-    fn execute_binary(wat: &str) -> HostState {
+    #[derive(Default)]
+    struct RunConfig {
+        entrypoint: Option<FuncOrExport>,
+    }
+
+    fn execute_binary_default(wat: &str) -> HostState {
+        execute_binary(wat, Default::default())
+    }
+
+    fn execute_binary(wat: &str, run_config: RunConfig) -> HostState {
         let wasm_binary = wat::parse_str(wat).unwrap();
         // translate and compile module
         let mut import_linker = ImportLinker::default();
@@ -45,7 +56,7 @@ mod tests {
             &[],
         ));
         let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-        translator.translate(None).unwrap();
+        translator.translate(run_config.entrypoint).unwrap();
         let binary = translator.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
@@ -79,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_memory_section() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (type (;0;) (func))
@@ -95,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_execute_br_and_drop_keep() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (type (;0;) (func))
@@ -119,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_executed_nested_function_calls() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (type (;0;) (func))
@@ -142,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_recursive_main_call() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (type (;0;) (func))
@@ -167,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_execute_simple_add_program() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (func $main
@@ -193,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_exit_code() {
-        let host_state = execute_binary(
+        let host_state = execute_binary_default(
             r#"
     (module
       (type (;0;) (func (param i32)))
@@ -212,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_call_indirect() {
-        execute_binary(
+        execute_binary_default(
             r#"
     (module
       (type $check (func (param i32) (param i32) (result i32)))
@@ -231,6 +242,35 @@ mod tests {
         )
       (export "main" (func $main)))
         "#,
+        );
+    }
+
+    #[test]
+    fn test_state_router() {
+        execute_binary(
+            r#"
+    (module
+      (type $check (func (param i32) (param i32) (result i32)))
+      (func $main
+        i32.const 100
+        drop
+        )
+      (func $deploy
+        )
+      (func $add (type $check)
+        local.get 0
+        local.get 1
+        i32.add
+        )
+      (export "main" (func $main))
+      (export "deploy" (func $deploy)))
+        "#,
+            RunConfig {
+                entrypoint: Some(FuncOrExport::StateRouter(
+                    vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+                    Instruction::I32Const(0.into()),
+                )),
+            },
         );
     }
 }

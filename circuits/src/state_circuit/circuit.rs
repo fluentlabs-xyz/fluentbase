@@ -22,7 +22,6 @@ use halo2_proofs::{
 };
 use itertools::Itertools;
 use std::marker::PhantomData;
-use strum::IntoEnumIterator;
 
 #[derive(Clone)]
 pub struct StateCircuitConfig<F: Field> {
@@ -143,11 +142,8 @@ impl<F: Field> StateCircuitConfig<F> {
                     .map(|v| v.value())
                     .unwrap_or_default();
                 let address = if row.tag() == RwTableTag::Context {
-                    let tag = RwTableContextTag::<u32>::iter()
-                        .filter(|v| v.address() == row.address().unwrap_or_default())
-                        .last()
-                        .unwrap();
-                    format!("{} ({})", tag, row.address().unwrap_or_default())
+                    let tag = RwTableContextTag::<u32>::from_tag(row.address().unwrap_or_default());
+                    format!("{}", tag.to_string())
                 } else {
                     row.address().unwrap_or_default().to_string()
                 };

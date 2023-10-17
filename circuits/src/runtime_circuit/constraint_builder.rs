@@ -10,6 +10,7 @@ use crate::{
         SelectorColumn,
         ToExpr,
     },
+    exec_step::MAX_TABLE_SIZE,
     fixed_table::FixedTableTag,
     gadgets::{is_zero::IsZeroConfig, lt::LtGadget},
     lookup_table::{
@@ -206,7 +207,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
             RwTableContextTag::ProgramCounter,
             1.expr(),
             self.pc.current() + delta,
-            self.pc.current(),
+            Some(self.pc.current()),
         );
     }
 
@@ -215,7 +216,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
             RwTableContextTag::ProgramCounter,
             1.expr(),
             value,
-            self.pc.current(),
+            Some(self.pc.current()),
         );
     }
 
@@ -224,7 +225,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
             RwTableContextTag::StackPointer,
             1.expr(),
             self.state_transition.stack_pointer.current() + delta,
-            self.state_transition.stack_pointer.current(),
+            Some(self.state_transition.stack_pointer.current()),
         );
     }
 
@@ -249,14 +250,14 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         tag: RwTableContextTag<Query<F>>,
         is_write: Query<F>,
         value: Query<F>,
-        value_prev: Query<F>,
+        value_prev: Option<Query<F>>,
     ) {
         self.rw_lookup(
             is_write,
             RwTableTag::Context.expr(),
             tag.expr(),
             value,
-            Some(value_prev),
+            value_prev,
         );
     }
 
@@ -293,13 +294,6 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         ));
     }
 
-    pub fn table_get(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
-        self.table_elem_lookup(0.expr(), table_idx, elem_idx, value);
-    }
-    pub fn table_set(&mut self, table_idx: Query<F>, elem_idx: Query<F>, value: Query<F>) {
-        self.table_elem_lookup(1.expr(), table_idx, elem_idx, value);
-    }
-
     pub fn table_elem_lookup(
         &mut self,
         is_write: Query<F>,
@@ -311,7 +305,7 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         self.rw_lookup(
             is_write,
             RwTableTag::Table.expr(),
-            table_idx * 1024 + elem_idx,
+            table_idx * MAX_TABLE_SIZE.expr() + elem_idx,
             value,
             None,
         );

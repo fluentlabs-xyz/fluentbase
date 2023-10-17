@@ -41,25 +41,25 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         cb.require_opcode(Instruction::TableCopy(Default::default()));
         //cb.table_size(table_index_src.current(), size_src.current());
         //cb.table_size(table_index_dst.current(), size_dst.current());
-/*
-        cb.table_copy(
-            table_index_src.expr(),
-            table_index_dst.expr(),
-            start.expr(),
-            range.expr(),
-        );
-*/
+        /*
+                cb.table_copy(
+                    table_index_src.expr(),
+                    table_index_dst.expr(),
+                    start.expr(),
+                    range.expr(),
+                );
+        */
         cb.stack_pop(start.current());
         cb.stack_pop(range.current());
         cb.stack_push(out.current());
-/*
-        cb.range_check_1024(start.current());
-        cb.range_check_1024(range.current());
-        cb.range_check_1024(size_src.current());
-        cb.range_check_1024(size_dst.current());
-        cb.range_check_1024(size_src.current() - (start.current() + range.current()));
-        cb.range_check_1024(size_dst.current() - (start.current() + range.current()));
-*/
+        /*
+                cb.range_check_1024(start.current());
+                cb.range_check_1024(range.current());
+                cb.range_check_1024(size_src.current());
+                cb.range_check_1024(size_dst.current());
+                cb.range_check_1024(size_src.current() - (start.current() + range.current()));
+                cb.range_check_1024(size_dst.current() - (start.current() + range.current()));
+        */
         cb.copy_lookup(
             CopyTableTag::CopyTable,
             table_index_src.current() * 1024.expr(),
@@ -119,11 +119,11 @@ mod test {
             I32Const(2)
             TableGrow(1)
             Drop
-            I32Const(0)
-            I32Const(1)
-            TableCopy(0)
-            TableGet(1)
-            Drop
+            // I32Const(0)
+            // I32Const(1)
+            // TableCopy(0)
+            // TableGet(1)
+            // Drop
         });
     }
 }

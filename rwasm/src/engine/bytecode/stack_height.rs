@@ -84,7 +84,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::ReturnCallInternal(_) | Instruction::ReturnCall(_) => {}
-            Instruction::ReturnCallIndirect(_) | Instruction::ReturnCallIndirectUnsafe(_) => {
+            Instruction::ReturnCallIndirect(_) => {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::CallInternal(_) => {}
@@ -188,9 +188,8 @@ impl Instruction {
             Instruction::TableSet(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
-                //stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::TableElemWrite(table_idx.to_u32()));
-                //stack_ops.push(RwOp::StackWrite(0));
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
             }
             Instruction::TableCopy(_) => {
                 stack_ops.push(RwOp::StackRead(0));

@@ -10,4 +10,4 @@ rwasm/spec/target
 
 /.idea
 .DS_Store
-circuits/libzktrie.so
+libzktrie.so
