@@ -21,7 +21,7 @@ pub(crate) struct OpTableSetGadget<F: Field> {
     value: AdviceColumn,
     size: AdviceColumn,
     exit_code: AdviceColumn,
-    lt_gadget: LtGadget<F, 8>,
+    lt_gadget: LtGadget<F, 2>,
     _pd: PhantomData<F>,
 }
 
@@ -68,7 +68,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         let threshold = range + RANGE_THRESHOLD.expr();
         let lt_gadget = cb.lt_gadget(threshold, RANGE_THRESHOLD.expr());
         cb.condition(lt_gadget.expr(), |cb| {
-            cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32).neg().expr());
+            cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32 as u64).expr());
         });
 
         Self {
@@ -94,7 +94,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         self.elem.assign(region, offset, F::from(elem.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
         self.size.assign(region, offset, F::from(size as u64));
-        self.exit_code.assign(region, offset, F::from(0_u64));
+        if elem.to_bits() >= size as u64 {
+            self.exit_code.assign(region, offset, F::from((ExitCode::TableOutOfBounds as i32) as u64));
+        }
         self.lt_gadget.assign(
             region,
             offset,
