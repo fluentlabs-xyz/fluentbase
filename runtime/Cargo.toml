@@ -14,7 +14,6 @@ fluentbase-rwasm = { path = "../rwasm" }
 lazy_static = "1.4.0"
 tiny-keccak = { version = "2.0", features = ["sha3"] }
 tokio = { version = "1.33", features = ["full"] }
-rlp = "0.5.2"
 ethereum-types = "0.14.1"
 hex = "0.4.3"
 codec = { package = "parity-scale-codec", version = "3.1.5", default-features = false, features = [ "derive" ] }

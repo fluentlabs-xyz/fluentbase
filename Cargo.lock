@@ -783,7 +783,7 @@ version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3db8fba409ce3dc04f7d804074039eb68b960b0829161f8e06c95fea3f122528"
 dependencies = [
- "bitvec",
+ "bitvec 1.0.1",
  "coins-bip32",
  "hmac",
  "once_cell",
@@ -1501,6 +1501,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "eth-keystore"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fda3bf123be441da5260717e0661c25a2fd9cb2b2c1d20bf2e05580047158ab"
+dependencies = [
+ "aes",
+ "ctr",
+ "digest 0.10.7",
+ "hex",
+ "hmac",
+ "pbkdf2 0.11.0",
+ "rand",
+ "scrypt",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3 0.10.8",
+ "thiserror",
+ "uuid 0.8.2",
+]
+
+[[package]]
 name = "eth_trie"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1599,7 +1621,7 @@ dependencies = [
  "ethereum-types 0.14.1",
  "hash-db",
  "hash256-std-hasher",
- "parity-scale-codec",
+ "parity-scale-codec 3.6.4",
  "rlp",
  "scale-info",
  "serde",
@@ -2113,13 +2135,19 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "eth_trie",
+ "ethereum",
+ "ethereum-types 0.14.1",
+ "ethers",
  "fluentbase-rwasm",
  "halo2curves",
+ "hex",
  "keccak-hash",
  "lazy_static",
- "parity-scale-codec",
+ "parity-scale-codec 3.6.4",
  "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
  "rlp",
+ "serde",
+ "serde_json",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "tiny-keccak",
@@ -3097,6 +3125,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "lalrpop"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da4081d44f4611b66c6dd725e6de3169f9f63905421e8626fcb86b6a898998b8"
+dependencies = [
+ "ascii-canvas",
+ "bit-set",
+ "diff",
+ "ena",
+ "is-terminal",
+ "itertools 0.10.5",
+ "lalrpop-util",
+ "petgraph",
+ "regex",
+ "regex-syntax 0.7.4",
+ "string_cache",
+ "term",
+ "tiny-keccak",
+ "unicode-xid",
+]
+
+[[package]]
+name = "lalrpop-util"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f35c735096c0293d313e8f2a641627472b83d01b937177fe76e5e2708d31e0d"
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3527,6 +3583,17 @@ dependencies = [
  "redox_syscall 0.3.5",
  "smallvec",
  "windows-targets",
+]
+
+[[package]]
+name = "password-hash"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7676374caaee8a325c9e7a2ae557f216c5563a171d6997b0ef8a65af35147700"
+dependencies = [
+ "base64ct",
+ "rand_core",
+ "subtle",
 ]
 
 [[package]]
@@ -4518,7 +4585,7 @@ version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35c0a159d0c45c12b20c5a844feb1fe4bea86e28f17b92a5f0c42193634d3782"
 dependencies = [
- "bitvec",
+ "bitvec 1.0.1",
  "cfg-if 1.0.0",
  "derive_more",
  "parity-scale-codec 3.6.4",
