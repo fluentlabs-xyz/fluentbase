@@ -80,9 +80,10 @@ mod test {
         let kvs = KeysValues(vec![]);
 
         let enc = rlp::encode(&kvs);
-        let _dec = rlp::decode::<KeysValues>(&enc).unwrap();
+        let dec = rlp::decode::<KeysValues>(&enc).unwrap();
 
         assert_eq!(kvs.0.len(), 0);
+        assert_eq!(dec.0.len(), 0);
     }
 
     #[test]
