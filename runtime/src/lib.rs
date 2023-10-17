@@ -11,6 +11,8 @@ pub use platform::*;
 pub use runtime::*;
 pub use types::*;
 
+mod eth_t;
+mod hash;
 mod instruction;
 mod macros;
 mod platform;

@@ -74,10 +74,10 @@ pub(crate) fn sys_state(caller: Caller<'_, RuntimeContext>) -> Result<u32, Trap>
 }
 
 pub(crate) fn sys_read(
-    mut caller: Caller<'_, RuntimeContext>,
-    target: u32,
-    offset: u32,
-    length: u32,
+    _caller: Caller<'_, RuntimeContext>,
+    _target: u32,
+    _offset: u32,
+    _length: u32,
 ) -> Result<(), Trap> {
     //  let input = caller.data().input().clone();
     // if offset + length > input.len() as u32 {
@@ -152,9 +152,9 @@ pub(crate) fn wasi_args_sizes_get(
 }
 
 pub(crate) fn wasi_args_get(
-    mut caller: Caller<'_, RuntimeContext>,
-    argv: i32,
-    argv_buffer: i32,
+    _caller: Caller<'_, RuntimeContext>,
+    _argv: i32,
+    _argv_buffer: i32,
 ) -> Result<i32, Trap> {
     // let input = caller.data().input().clone();
     // // copy all input into argv buffer
@@ -273,15 +273,15 @@ pub(crate) fn evm_callvalue(mut caller: Caller<'_, RuntimeContext>, dest: u32) -
     // start_index, U256(32)
     // let input_data = exported_memory_vec(&mut caller, offset as usize, size as usize);
 
-    let mut result = [0u8; 32];
+    let result = [0u8; 32];
     caller.write_memory(dest as usize, result.as_slice());
     Ok(())
 }
 
 pub(crate) fn evm_calldataload(
-    mut caller: Caller<'_, RuntimeContext>,
-    offset: u32,
-    dest: u32,
+    _caller: Caller<'_, RuntimeContext>,
+    _offset: u32,
+    _dest: u32,
 ) -> Result<(), Trap> {
     // let mut input_data = caller.data().input().to_vec();
 
