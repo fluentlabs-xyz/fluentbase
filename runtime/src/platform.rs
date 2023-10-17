@@ -46,6 +46,11 @@ pub enum SysFuncIdx {
     ZKTRIE_GET_CODE_SIZE = 0xDD0B,
     ZKTRIE_UPDATE_STORE = 0xDD0C,
     ZKTRIE_GET_STORE = 0xDD0D,
+
+    MPT_OPEN = 0xDF01,
+    MPT_UPDATE = 0xDF02,
+    MPT_GET = 0xDF03,
+    MPT_GET_ROOT = 0xDF04,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

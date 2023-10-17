@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
+use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx, HASH_SCHEME_DONE};
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::Instruction,
@@ -14,8 +14,9 @@ fn wat2rwasm(wat: &str) -> Vec<u8> {
     compiler.finalize().unwrap()
 }
 
-fn wasm2rwasm(wasm_binary: &[u8], import_linker: &ImportLinker) -> Vec<u8> {
-    Compiler::new_with_linker(&wasm_binary.to_vec(), Some(import_linker))
+fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
+    let import_linker = Runtime::new_linker();
+    Compiler::new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))
         .unwrap()
         .finalize()
         .unwrap()
@@ -51,15 +52,8 @@ fn test_simple() {
 #[test]
 fn test_greeting() {
     let wasm_binary = include_bytes!("../examples/bin/greeting.wasm");
-    let import_linker = Runtime::new_linker();
-    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let output = Runtime::run_with_input(
-        rwasm_binary.as_slice(),
-        &[100, 20, 3],
-        &import_linker,
-        false,
-    )
-    .unwrap();
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let output = Runtime::run(rwasm_binary.as_slice(), &[100, 20, 3]).unwrap();
     assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
@@ -69,8 +63,7 @@ fn zktrie_open_test() {
     assert_eq!(*HASH_SCHEME_DONE, true);
 
     let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
-    let import_linker = Runtime::new_linker();
-    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+    let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let mut input_data = vec![];
 
@@ -90,16 +83,25 @@ fn zktrie_open_test() {
     account_data[0] = 1;
     input_data.extend(account_data.as_slice());
 
-    let output =
-        Runtime::run_with_input(rwasm_binary.as_slice(), &input_data, &import_linker, false)
-            .unwrap();
-    // assert_eq!(output.data().output().clone(), vec![]);
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
 }
 
-fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
+#[test]
+fn mpt_open_test() {
+    let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+
+    let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
+
+    let output = Runtime::run(rwasm_binary.as_slice(), &rlp_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
+fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {
     let err = result.err().unwrap();
     match err {
-        Error::Rwasm(err) => match err {
+        RuntimeError::Rwasm(err) => match err {
             fluentbase_rwasm::Error::Trap(trap) => {
                 assert_eq!(
                     trap.i32_exit_status().unwrap(),
@@ -115,20 +117,17 @@ fn assert_trap_i32_exit<T>(result: Result<T, Error>, trap_code: Trap) {
 #[test]
 fn test_panic() {
     let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
-    let import_linker = Runtime::new_linker();
-    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let result = Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, false);
-    assert_trap_i32_exit(result, Trap::i32_exit(1));
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let result = Runtime::run(rwasm_binary.as_slice(), &[]);
+    assert_trap_i32_exit(result, Trap::i32_exit(71));
 }
 
 #[test]
 #[ignore]
 fn test_translator() {
     let wasm_binary = include_bytes!("../examples/bin/rwasm.wasm");
-    let import_linker = Runtime::new_linker();
-    let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-    let result =
-        Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
     println!("{:?}", result.data().output().clone());
 }
 
@@ -170,13 +169,7 @@ fn test_state() {
         )))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
-    Runtime::run_with_context(
-        rwasm_bytecode.as_slice(),
-        RuntimeContext::new(&[], 0),
-        &import_linker,
-        false,
-    )
-    .unwrap();
+    Runtime::run_with_context(RuntimeContext::new(rwasm_bytecode), &import_linker).unwrap();
 }
 
 #[test]
