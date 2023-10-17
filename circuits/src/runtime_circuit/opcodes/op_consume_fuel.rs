@@ -30,7 +30,7 @@ impl<F: Field> ExecutionGadget<F> for OpConsumeFuel<F> {
             RwTableContextTag::ConsumedFuel,
             1.expr(),
             consumed_fuel.current() + value.current(),
-            consumed_fuel.current(),
+            Some(consumed_fuel.current()),
         );
         // TODO: "add OutOfFuel error check"
         Self {

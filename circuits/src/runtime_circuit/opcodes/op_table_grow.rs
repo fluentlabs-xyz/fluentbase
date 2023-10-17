@@ -35,7 +35,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGrowGadget<F> {
             RwTableContextTag::TableSize(cb.query_rwasm_value()),
             1.expr(),
             res.current() + delta.current(),
-            res.current(),
+            Some(res.current()),
         );
         cb.copy_lookup(
             CopyTableTag::FillTable,
@@ -83,7 +83,21 @@ mod test {
     }
 
     #[test]
-    fn table_two_times_grow() {
+    fn table_grow_for_two_tables() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(1)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(1)
+            Drop
+        });
+    }
+
+    #[test]
+    fn table_grow_in_row() {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(2)

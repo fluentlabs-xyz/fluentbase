@@ -29,7 +29,7 @@ impl<F: Field> ExecutionGadget<F> for OpMemorySizeGadget<F> {
             RwTableContextTag::MemorySize,
             0.expr(),
             value.current(),
-            value.current(),
+            None,
         );
         cb.stack_push(value.current());
 

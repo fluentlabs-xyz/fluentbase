@@ -3,13 +3,13 @@
 
 extern crate core;
 
+pub use crate::zktrie::*;
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 pub use instruction::*;
 pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
-pub use crate::zktrie::*;
 
 mod instruction;
 mod macros;

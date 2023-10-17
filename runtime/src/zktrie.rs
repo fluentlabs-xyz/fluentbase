@@ -47,7 +47,7 @@ extern "C" fn hash_scheme(
         return FILED_ERROR_READ.as_ptr().cast();
     };
     let fdomain = Fr::from_bytes(&domain);
-    let fdomain = if fdomain.is_some().into() {
+    let _fdomain = if fdomain.is_some().into() {
         fdomain.unwrap()
     } else {
         return FILED_ERROR_READ.as_ptr().cast();

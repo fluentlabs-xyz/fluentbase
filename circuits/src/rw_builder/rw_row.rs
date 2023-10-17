@@ -46,12 +46,28 @@ impl Into<usize> for RwTableTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 #[repr(u64)]
 pub enum RwTableContextTag<Q: Default> {
-    MemorySize = 1,
+    MemorySize,
     ConsumedFuel,
     ProgramCounter,
     StackPointer,
     CallDepth,
     TableSize(Q),
+}
+
+const MAX_RW_TAGS: u32 = 256;
+
+impl RwTableContextTag<u32> {
+    pub(crate) fn from_tag(value: u32) -> Self {
+        match value & (MAX_RW_TAGS - 1) {
+            1 => RwTableContextTag::MemorySize,
+            2 => RwTableContextTag::ConsumedFuel,
+            3 => RwTableContextTag::ProgramCounter,
+            4 => RwTableContextTag::StackPointer,
+            5 => RwTableContextTag::CallDepth,
+            6 => RwTableContextTag::TableSize(value / MAX_RW_TAGS),
+            _ => unreachable!("unknown tag value: {}", value),
+        }
+    }
 }
 
 impl<F: Field> ToExpr<F> for RwTableContextTag<Query<F>> {
@@ -63,7 +79,7 @@ impl<F: Field> ToExpr<F> for RwTableContextTag<Query<F>> {
             RwTableContextTag::StackPointer => 4.expr(),
             RwTableContextTag::CallDepth => 5.expr(),
             RwTableContextTag::TableSize(table_index) => {
-                6.expr() + table_index.clone() * 256.expr()
+                6.expr() + table_index.clone() * MAX_RW_TAGS.expr()
             }
         }
     }
@@ -77,7 +93,7 @@ impl RwTableContextTag<u32> {
             RwTableContextTag::ProgramCounter => 3,
             RwTableContextTag::StackPointer => 4,
             RwTableContextTag::CallDepth => 5,
-            RwTableContextTag::TableSize(table_index) => 6 + table_index * 256,
+            RwTableContextTag::TableSize(table_index) => 6 + table_index * MAX_RW_TAGS,
         }
     }
 }
