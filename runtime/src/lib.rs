@@ -9,10 +9,12 @@ pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
-pub use crate::zktrie::*;
 
 mod instruction;
+mod keccak_hash;
 mod macros;
+mod mpt;
+mod mpt_helpers;
 mod platform;
 mod runtime;
 #[cfg(test)]

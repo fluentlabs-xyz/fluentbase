@@ -289,6 +289,42 @@ impl Runtime {
             &[],
         ));
 
+        // forward_call!(res, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) ->
+        // i32);
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "mpt_open".to_string(),
+            SysFuncIdx::MPT_OPEN as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        // forward_call!(res, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) ->
+        // ());
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "mpt_update".to_string(),
+            SysFuncIdx::MPT_UPDATE as u16,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        // forward_call!(res, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32,
+        // output_offset: i32) -> i32);
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "mpt_get".to_string(),
+            SysFuncIdx::MPT_GET as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+        // forward_call!(res, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "mpt_get_root".to_string(),
+            SysFuncIdx::MPT_GET_ROOT as u16,
+            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -358,6 +394,11 @@ impl Runtime {
         forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
         forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
         forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
+
+        forward_call!(res, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) -> i32);
+        forward_call!(res, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) -> ());
+        forward_call!(res, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(res, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
 
         let result = res
             .linker
