@@ -32,24 +32,14 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_TABLE_SET;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let elem = cb.query_cell();
         let value = cb.query_cell();
+        let elem = cb.query_cell();
         let size = cb.query_cell();
         let exit_code = cb.query_cell();
+
         cb.stack_pop(value.current());
         cb.stack_pop(elem.current());
-        cb.table_elem_lookup(
-            1.expr(),
-            cb.query_rwasm_value(),
-            elem.current(),
-            value.current(),
-        );
-        cb.context_lookup(
-            RwTableContextTag::TableSize(cb.query_rwasm_value()),
-            0.expr(),
-            size.current(),
-            None,
-        );
+
         cb.exit_code_lookup(exit_code.current());
 
         // cb.range_check_1024(elem.expr());
@@ -67,9 +57,27 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         // 2049 is RANGE_THRESHOLD now.
         let threshold = range + RANGE_THRESHOLD.expr();
         let lt_gadget = cb.lt_gadget(threshold, RANGE_THRESHOLD.expr());
+
         cb.condition(lt_gadget.expr(), |cb| {
             cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32 as u64).expr());
         });
+
+        // If exit code causing error than nothing is written.
+        cb.condition(1.expr() - lt_gadget.expr(), |cb| {
+            cb.table_elem_lookup(
+               1.expr(),
+               cb.query_rwasm_value(),
+               elem.current(),
+               value.current(),
+            );
+        });
+
+        cb.context_lookup(
+            RwTableContextTag::TableSize(cb.query_rwasm_value()),
+            0.expr(),
+            size.current(),
+            None,
+        );
 
         Self {
             elem,
@@ -88,8 +96,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let table_index = trace.instr().aux_value().unwrap_or_default().as_u32();
-        let elem = trace.curr_nth_stack_value(0)?;
-        let value = trace.curr_nth_stack_value(1)?;
+        let value = trace.curr_nth_stack_value(0)?;
+        let elem = trace.curr_nth_stack_value(1)?;
         let size = trace.read_table_size(table_index);
         self.elem.assign(region, offset, F::from(elem.to_bits()));
         self.value.assign(region, offset, F::from(value.to_bits()));
@@ -119,7 +127,7 @@ mod test {
             I32Const(2)
             TableGrow(0)
             Drop
-            I32Const(0)
+            I32Const(1)
             RefFunc(0)
             TableSet(0)
         });
@@ -132,7 +140,7 @@ mod test {
             I32Const(2)
             TableGrow(0)
             Drop
-            I32Const(3)
+            I32Const(2)
             RefFunc(0)
             TableSet(0)
         });
