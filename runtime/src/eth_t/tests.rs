@@ -1,9 +1,10 @@
 use super::*;
 use crate::eth_t::proof::{AccountProof, StorageProof};
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethers::types::Bytes;
 use serde::Deserialize;
 use std::collections::HashMap;
-pub type Bytes = Vec<u8>;
+// pub type Bytes = Vec<u8>;
 
 type AccountTrieProofs = HashMap<Address, Vec<Bytes>>;
 type StorageTrieProofs = HashMap<Address, HashMap<U256, Vec<Bytes>>>;

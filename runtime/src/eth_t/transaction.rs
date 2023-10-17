@@ -1,4 +1,3 @@
-use super::rpl_custom;
 use ethereum_types::{Address, H160, H256, U256};
 // use ethjson;
 // use ethkey::{public_to_address, recover, Public, Secret, Signature};
