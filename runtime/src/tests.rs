@@ -102,8 +102,7 @@ fn mpt_open_test() {
     let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
 
     let output =
-        Runtime::run_with_linker(rwasm_binary.as_slice(), &rlp_data, &import_linker, false)
-            .unwrap();
+        Runtime::run_with_input(rwasm_binary.as_slice(), &rlp_data, &import_linker, false).unwrap();
     assert_eq!(output.data().output().clone(), vec![]);
 }
 
