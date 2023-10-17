@@ -41,8 +41,13 @@ pub struct RuntimeContext {
 impl Default for RuntimeContext {
     fn default() -> Self {
         Self {
+            bytecode: vec![],
+            fuel_limit: 0,
+            state: 0,
             catch_trap: true,
-            ..Default::default()
+            input: vec![],
+            exit_code: 0,
+            output: vec![],
         }
     }
 }
