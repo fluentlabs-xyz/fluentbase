@@ -1,4 +1,4 @@
-pub use crate::zktrie::*;
+pub use crate::{mpt::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 
@@ -141,41 +141,6 @@ pub(crate) fn wasi_args_get(
     caller.write_memory(argv as usize, &argv_buffer.to_be_bytes());
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
-
-// global map
-
-// pub(crate) fn zktrie_open(mut caller: Caller<'_, RuntimeContext>) -> Result<i32, Trap> {
-//     Ok(0)
-// }
-//
-// pub(crate) fn zktrie_change_nonce(
-//     mut caller: Caller<'_, RuntimeContext>,
-//     trie_id: i32,
-//     key_offset: i32,
-//     value_offset: i32,
-// ) { let root = exported_memory_vec(&mut caller, root_offset as usize, 32); let key =
-//   exported_memory_vec(&mut caller, key_offset as usize, 32); let value = exported_memory_vec(&mut
-//   caller, value_offset as usize, 32);
-//
-//     let mut db = ZkMemoryDb::new();
-//
-//     /* for some trie node data encoded as bytes `buf` */
-//     let hash: zktrie::Hash = root.try_into().unwrap();
-//     let mut trie = db.new_trie(&hash).unwrap();
-//
-//     trie.update_account(key.as_slice(), &AccountData::default())
-//         .unwrap();
-//
-//     let new_root = trie.root();
-//
-//     // initial_value (prev_trie_root)
-//
-//     // BeginTx -> zktrie_open_trie
-//     // EndTx -> zktrie_commit_trie / zktrie_rollback_trie
-//
-//     // open_trie
-//     // commit_trie
-// }
 
 pub(crate) fn rwasm_transact(
     mut caller: Caller<'_, RuntimeContext>,

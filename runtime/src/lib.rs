@@ -12,7 +12,10 @@ pub use runtime::*;
 pub use types::*;
 
 mod instruction;
+mod keccak_hash;
 mod macros;
+mod mpt;
+mod mpt_helpers;
 mod platform;
 mod runtime;
 #[cfg(test)]
