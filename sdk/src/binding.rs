@@ -124,6 +124,11 @@ extern "C" {
     fn zktrie_update_store(offset: i32, length: i32);
     // store gets
     fn zktrie_get_store(key_offset: i32, output_offset: i32);
+
+    pub fn mpt_open(rlp_offset: i32, rlp_len: i32) -> i32;
+    pub fn mpt_update(rlp_offset: i32, rlp_len: i32);
+    pub fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
+    pub fn mpt_get_root(output_offset: i32) -> i32;
 }
 
 #[inline(always)]
@@ -235,4 +240,24 @@ pub fn zktrie_update_store_(offset: i32, length: i32) {
 #[inline(always)]
 pub fn zktrie_get_store_(key_offset: i32, output_offset: i32) {
     unsafe { zktrie_get_store(key_offset, output_offset) }
+}
+
+#[inline(always)]
+pub fn mpt_open_(rlp_offset: i32, rlp_len: i32) -> i32 {
+    unsafe { mpt_open(rlp_offset, rlp_len) }
+}
+
+#[inline(always)]
+pub fn mpt_update_(rlp_offset: i32, rlp_len: i32) {
+    unsafe { mpt_update(rlp_offset, rlp_len) }
+}
+
+#[inline(always)]
+pub fn mpt_get_(key_offset: i32, key_len: i32, output_offset: i32) -> i32 {
+    unsafe { mpt_get(key_offset, key_len, output_offset) }
+}
+
+#[inline(always)]
+pub fn mpt_get_root_(output_offset: i32) -> i32 {
+    unsafe { mpt_get_root(output_offset) }
 }

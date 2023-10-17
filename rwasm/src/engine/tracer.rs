@@ -42,7 +42,7 @@ pub struct TracerInstrState {
     pub call_id: u32,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct TracerFunctionMeta {
     pub fn_index: u32,
     pub max_stack_height: u32,
@@ -50,13 +50,13 @@ pub struct TracerFunctionMeta {
     pub fn_name: String,
 }
 
-#[derive(Debug)]
+#[derive(Default, Clone)]
 pub struct TracerGlobalVariable {
     pub index: u32,
     pub value: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Tracer {
     pub global_memory: Vec<TracerMemoryState>,
     pub logs: Vec<TracerInstrState>,
@@ -182,9 +182,7 @@ impl Tracer {
     }
 
     pub fn table_size_change(&mut self, table_idx: u32, delta: u32) {
-        self.table_size_changes.push(TraceTableSizeState {
-            table_idx,
-            delta,
-        });
+        self.table_size_changes
+            .push(TraceTableSizeState { table_idx, delta });
     }
 }
