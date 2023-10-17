@@ -23,12 +23,12 @@ macro_rules! forward_call_args {
 }
 
 macro_rules! forward_call {
-    ($res:tt, $module:literal, $name:literal, fn $func:ident($($t:tt)*) -> $out:ty) => {
-        $res.linker.define(
+    ($linker:tt, $store:tt, $module:literal, $name:literal, fn $func:ident($($t:tt)*) -> $out:ty) => {
+        $linker.define(
             $module,
             $name,
             Func::wrap(
-                $res.store.as_context_mut(),
+                $store.as_context_mut(),
                 |caller: Caller<'_, RuntimeContext>, $($t)*| -> Result<$out, Trap> {
                     return forward_call_args! { $func, caller, [$($t)*] };
                 })
