@@ -32,7 +32,7 @@ pub struct RuntimeContext {
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
     pub(crate) catch_trap: bool,
-    pub(crate) input: Vec<u8>,
+    pub(crate) input: Vec<Vec<u8>>,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
@@ -61,7 +61,7 @@ impl RuntimeContext {
     }
 
     pub fn with_input(mut self, input_data: &[u8]) -> Self {
-        self.input = input_data.to_vec();
+        self.input = vec![input_data.to_vec()];
         self
     }
 
@@ -88,8 +88,28 @@ impl RuntimeContext {
         self.exit_code
     }
 
-    pub fn input(&self) -> &Vec<u8> {
-        &self.input
+    pub fn input(&self, argc: usize) -> &Vec<u8> {
+        // TODO: "add overflow check here"
+        &self.input[argc].as_ref().unwrap()
+    }
+
+    pub fn input_count(&self) -> u32 {
+        self.input.len() as u32
+    }
+
+    pub fn input_size(&self) -> u32 {
+        self.input.iter().map(|v| v.len()).sum() as u32
+    }
+
+    pub fn argv_buffer(&self) -> Vec<u8> {
+        self.input
+            .iter()
+            .reduce(|mut a, b| {
+                a.extend(b);
+                a
+            })
+            .unwrap_or_default()
+            .clone()
     }
 
     pub fn output(&self) -> &Vec<u8> {
@@ -173,6 +193,13 @@ impl Runtime {
             &[ValueType::I32; 3],
             &[],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_input".to_string(),
+            SysFuncIdx::SYS_INPUT as u16,
+            &[ValueType::I32; 4],
+            &[],
+        ));
         // WASI sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "wasi_snapshot_preview1".to_string(),
@@ -206,8 +233,8 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "args_sizes_get".to_string(),
             SysFuncIdx::WASI_ARGS_SIZES_GET as u16,
-            &[ValueType::I32; 0],
             &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "wasi_snapshot_preview1".to_string(),
@@ -488,14 +515,15 @@ impl Runtime {
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_sys_input", fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> ());
         forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
         // wasi
         forward_call!(linker, store, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
         forward_call!(linker, store, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
         forward_call!(linker, store, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
         forward_call!(linker, store, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
-        forward_call!(linker, store, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
-        forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argc_ptr: i32, argv_ptr: i32) -> i32);
+        forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32);
         // rwasm
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
         // evm (orphaned)
