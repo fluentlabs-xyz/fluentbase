@@ -14,16 +14,6 @@ fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     }
 }
 
-// fn exported_value(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
-//     let memory = caller
-//         .get_export("memory")
-//         .unwrap_or_else(|| unreachable!("there is no memory export inside"));
-//     match memory {
-//         Extern::Memory(memory) => memory,
-//         _ => unreachable!("there is no memory export inside"),
-//     }
-// }
-
 fn exported_input(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
         .get_export("memory")

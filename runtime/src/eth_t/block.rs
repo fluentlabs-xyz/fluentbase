@@ -1,11 +1,10 @@
 // use super::bloom::WithBloom;
 use crate::eth_t::{header, transaction};
 use ethereum_types::{Address, Bloom, H256, U256};
+use ethers::types::Bytes;
 use header::{Header, Seal};
 use rlp::{Decodable, DecoderError, Encodable, RlpStream, *};
 use std::{cmp, collections::HashSet, sync::Arc};
-
-pub type Bytes = Vec<u8>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VerifyBlockError {
@@ -44,7 +43,7 @@ impl Block {
         self.header.stream_rlp(&mut block_rlp, seal);
         block_rlp.append_list(&self.transactions);
         block_rlp.append_list(&self.uncles);
-        block_rlp.out().to_vec()
+        Bytes(block_rlp.out().into())
     }
 
     pub fn is_equal_to(&self, cmp_block: &Block) -> bool {

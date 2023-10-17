@@ -181,7 +181,6 @@ fn test_state() {
 
 #[test]
 fn test_keccak256() {
-    let import_linker = Runtime::new_linker();
     let rwasm_binary = wat2rwasm(
         r#"
 (module
