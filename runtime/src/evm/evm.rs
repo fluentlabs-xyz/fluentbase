@@ -25,11 +25,11 @@ enum EvmInputSpec {
 pub(crate) fn evm_block_number(
     mut caller: Caller<'_, RuntimeContext>,
     ptr: u32,
-) -> Result<i32, Trap> {
+) -> Result<(), Trap> {
     // let buff = caller.data().input(EvmInputSpec::BlockNumberA as usize);
     // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
     // block.copy_from_slice(buff.as_slice());
-    Ok(());
+    Ok(())
 }
 
 pub(crate) fn evm_block_hash(
