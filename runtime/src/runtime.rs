@@ -529,6 +529,7 @@ impl Runtime {
         // evm (orphaned)
         forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_evm_block_number", fn evm_block_number(block_ptr: u32) -> ());
         // zktrie
         forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
         forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());

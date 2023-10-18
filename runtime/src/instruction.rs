@@ -1,4 +1,4 @@
-pub use crate::{mpt::*, zktrie::*};
+pub use crate::{evm::*, mpt::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 
@@ -12,7 +12,7 @@ fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     }
 }
 
-fn exported_memory_slice<'a>(
+pub(crate) fn exported_memory_slice<'a>(
     caller: &'a mut Caller<'_, RuntimeContext>,
     offset: usize,
     length: usize,
