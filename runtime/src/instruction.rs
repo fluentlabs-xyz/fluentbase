@@ -142,15 +142,15 @@ pub(crate) fn wasi_args_sizes_get(
 }
 
 pub(crate) fn wasi_args_get(
-    _caller: Caller<'_, RuntimeContext>,
-    _argv: i32,
-    _argv_buffer: i32,
+    caller: Caller<'_, RuntimeContext>,
+    argv: i32,
+    argv_buffer: i32,
 ) -> Result<i32, Trap> {
-    // let input = caller.data().input().clone();
-    // // copy all input into argv buffer
-    // caller.write_memory(argv_buffer as usize, &input.as_slice());
-    // // init argv array (we have only 1 element inside argv)
-    // caller.write_memory(argv as usize, &argv_buffer.to_be_bytes());
+    let input = caller.data().input(argv);
+    // copy all input into argv buffer
+    caller.write_memory(argv_buffer as usize, &input.as_slice());
+    // init argv array (we have only 1 element inside argv)
+    caller.write_memory(argv as usize, &argv_buffer.to_be_bytes());
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
 

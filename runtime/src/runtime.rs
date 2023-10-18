@@ -32,7 +32,7 @@ pub struct RuntimeContext {
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
     pub(crate) catch_trap: bool,
-    pub(crate) input: Vec<u8>,
+    pub(crate) input: Vec<Vec<u8>>,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
@@ -83,8 +83,9 @@ impl RuntimeContext {
         self.exit_code
     }
 
-    pub fn input(&self) -> &Vec<u8> {
-        &self.input
+    pub fn input(&self, index: usize) -> &Vec<u8> {
+        // TODO: "add overflow check"
+        &self.input[index].as_ref().unwrap()
     }
 
     pub fn output(&self) -> &Vec<u8> {
