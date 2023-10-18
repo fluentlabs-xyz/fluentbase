@@ -1,886 +1,438 @@
-// use crate::{Bytes, EnvelopedDecodable, EnvelopedDecoderError, EnvelopedEncodable};
-// use alloc::vec::Vec;
-// use bytes::BytesMut;
-// use core::ops::Deref;
-// use ethereum_types::{Address, H160, H256, U256};
-// use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
-// use sha3::{Digest, Keccak256};
+use ethereum_types::{Address, H160, H256, U256};
+// use ethjson;
+// use ethkey::{public_to_address, recover, Public, Secret, Signature};
+// use evm::Schedule;
+// use heapsize::HeapSizeOf;
+use rlp::{self, DecoderError, Encodable, RlpStream};
+use std::ops::Deref;
+use tiny_keccak::{Hasher, Sha3};
 
-// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub enum TransactionAction {
-// 	Call(H160),
-// 	Create,
+/// Wrapper structure around hex-encoded data.
+#[derive(Debug, PartialEq, Eq, Default, Hash, Clone)]
+pub struct HexEncode<T>(pub T);
+
+// use rlp::*;
+
+type Bytes = Vec<u8>;
+type BlockNumber = u64;
+
+/// Fake address for unsigned transactions as defined by EIP-86.
+pub const UNSIGNED_SENDER: Address = H160([0xff; 20]);
+
+/// System sender address for internal state updates.
+pub const SYSTEM_ADDRESS: Address = H160([
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xfe,
+]);
+
+// /// Transaction action type.
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// pub enum Action {
+//     /// Create creates new contract.
+//     Create,
+//     /// Calls contract at given address.
+//     /// In the case of a transfer, this is the receiver's address.'
+//     Call(Address),
 // }
 
-// impl Encodable for TransactionAction {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		match self {
-// 			Self::Call(address) => {
-// 				s.encoder().encode_value(&address[..]);
-// 			}
-// 			Self::Create => s.encoder().encode_value(&[]),
-// 		}
-// 	}
+// impl Default for Action {
+//     fn default() -> Action {
+//         Action::Create
+//     }
 // }
 
-// impl Decodable for TransactionAction {
-// 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-// 		if rlp.is_empty() {
-// 			if rlp.is_data() {
-// 				Ok(TransactionAction::Create)
-// 			} else {
-// 				Err(DecoderError::RlpExpectedToBeData)
-// 			}
-// 		} else {
-// 			Ok(TransactionAction::Call(rlp.as_val()?))
-// 		}
-// 	}
+// impl rlp::Decodable for Action {
+//     fn decode(rlp: &UntrustedRlp) -> Result<Self, DecoderError> {
+//         if rlp.is_empty() {
+//             Ok(Action::Create)
+//         } else {
+//             Ok(Action::Call(rlp.as_val()?))
+//         }
+//     }
 // }
 
-// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub struct TransactionRecoveryId(pub u64);
-
-// impl Deref for TransactionRecoveryId {
-// 	type Target = u64;
-
-// 	fn deref(&self) -> &u64 {
-// 		&self.0
-// 	}
+// impl rlp::Encodable for Action {
+//     fn rlp_append(&self, s: &mut RlpStream) {
+//         match *self {
+//             Action::Create => s.append_internal(&""),
+//             Action::Call(ref addr) => s.append_internal(addr),
+//         };
+//     }
 // }
 
-// impl TransactionRecoveryId {
-// 	pub fn standard(self) -> u8 {
-// 		if self.0 == 27 || self.0 == 28 || self.0 > 36 {
-// 			((self.0 - 1) % 2) as u8
-// 		} else {
-// 			4
-// 		}
-// 	}
+/// Transaction activation condition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Condition {
+    /// Valid at this block number or later.
+    Number(BlockNumber),
+    /// Valid at this unix time or later.
+    Timestamp(u64),
+}
 
-// 	pub fn chain_id(self) -> Option<u64> {
-// 		if self.0 > 36 {
-// 			Some((self.0 - 35) / 2)
-// 		} else {
-// 			None
-// 		}
-// 	}
+/// A set of information describing an externally-originating message call
+/// or contract creation operation.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct Transaction {
+    /// Nonce.
+    pub nonce: U256,
+    /// Gas price.
+    pub gas_price: U256,
+    /// Gas paid up front for transaction execution.
+    pub gas: U256,
+    /// Action, can be either call or contract create.
+    // pub action: Action,
+    /// Transfered value.
+    pub value: U256,
+    /// Transaction data.
+    pub data: Bytes,
+}
+
+impl Transaction {
+    /// Append object with a without signature into RLP stream
+    pub fn rlp_append_unsigned_transaction(&self, s: &mut RlpStream, chain_id: Option<u64>) {
+        s.begin_list(if chain_id.is_none() { 6 } else { 9 });
+        s.append(&self.nonce);
+        s.append(&self.gas_price);
+        s.append(&self.gas);
+        // s.append(&self.action);
+        s.append(&self.value);
+        s.append(&self.data);
+        if let Some(n) = chain_id {
+            s.append(&n);
+            s.append(&0u8);
+            s.append(&0u8);
+        }
+    }
+
+    // pub fn hash(&self, chain_id: Option<u64>) -> H256 {
+    //     let mut stream = RlpStream::new();
+    //     self.rlp_append_unsigned_transaction(&mut stream, chain_id);
+    //     // keccak(stream.as_raw())
+    // }
+}
+
+// impl HeapSizeOf for Transaction {
+//     fn heap_size_of_children(&self) -> usize {
+//         self.data.heap_size_of_children()
+//     }
 // }
 
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(feature = "with-codec", derive(scale_info::TypeInfo))]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub struct TransactionSignature {
-// 	v: TransactionRecoveryId,
-// 	r: H256,
-// 	s: H256,
+// impl From<ethjson::state::Transaction> for SignedTransaction {
+//     fn from(t: ethjson::state::Transaction) -> Self {
+//         let to: Option<ethjson::hash::Address> = t.to.into();
+//         let secret = t.secret.map(|s| Secret::from_slice(&s.0));
+//         let tx = Transaction {
+//             nonce: t.nonce.into(),
+//             gas_price: t.gas_price.into(),
+//             gas: t.gas_limit.into(),
+//             action: match to {
+//                 Some(to) => Action::Call(to.into()),
+//                 None => Action::Create,
+//             },
+//             value: t.value.into(),
+//             data: t.data.into(),
+//         };
+//         match secret {
+//             Some(s) => tx.sign(&s, None),
+//             None => tx.null_sign(1),
+//         }
+//     }
 // }
 
-// impl TransactionSignature {
-// 	#[must_use]
-// 	pub fn new(v: u64, r: H256, s: H256) -> Option<Self> {
-// 		const LOWER: H256 = H256([
-// 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-// 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-// 			0x00, 0x00, 0x00, 0x01,
-// 		]);
-// 		const UPPER: H256 = H256([
-// 			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-// 			0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
-// 			0xd0, 0x36, 0x41, 0x41,
-// 		]);
-
-// 		let v = TransactionRecoveryId(v);
-// 		let is_valid = v.standard() <= 1 && r < UPPER && r >= LOWER && s < UPPER && s >= LOWER;
-
-// 		if is_valid {
-// 			Some(Self { v, r, s })
-// 		} else {
-// 			None
-// 		}
-// 	}
-
-// 	#[must_use]
-// 	pub fn v(&self) -> u64 {
-// 		self.v.0
-// 	}
-
-// 	#[must_use]
-// 	pub fn standard_v(&self) -> u8 {
-// 		self.v.standard()
-// 	}
-
-// 	#[must_use]
-// 	pub fn chain_id(&self) -> Option<u64> {
-// 		self.v.chain_id()
-// 	}
-
-// 	#[must_use]
-// 	pub fn r(&self) -> &H256 {
-// 		&self.r
-// 	}
-
-// 	#[must_use]
-// 	pub fn s(&self) -> &H256 {
-// 		&self.s
-// 	}
-
-// 	#[must_use]
-// 	pub fn is_low_s(&self) -> bool {
-// 		const LOWER: H256 = H256([
-// 			0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-// 			0xff, 0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46,
-// 			0x68, 0x1b, 0x20, 0xa0,
-// 		]);
-
-// 		self.s <= LOWER
-// 	}
+// impl From<ethjson::transaction::Transaction> for UnverifiedTransaction {
+//     fn from(t: ethjson::transaction::Transaction) -> Self {
+//         let to: Option<ethjson::hash::Address> = t.to.into();
+//         UnverifiedTransaction {
+//             unsigned: Transaction {
+//                 nonce: t.nonce.into(),
+//                 gas_price: t.gas_price.into(),
+//                 gas: t.gas_limit.into(),
+//                 action: match to {
+//                     Some(to) => Action::Call(to.into()),
+//                     None => Action::Create,
+//                 },
+//                 value: t.value.into(),
+//                 data: t.data.into(),
+//             },
+//             r: t.r.into(),
+//             s: t.s.into(),
+//             v: t.v.into(),
+//             hash: 0.into(),
+//         }
+//         .compute_hash()
+//     }
 // }
 
-// #[cfg(feature = "codec")]
-// impl codec::Encode for TransactionSignature {
-// 	fn size_hint(&self) -> usize {
-// 		codec::Encode::size_hint(&(self.v.0, self.r, self.s))
-// 	}
+/// Signed transaction information without verified signature.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct UnverifiedTransaction {
+    /// Plain Transaction.
+    unsigned: Transaction,
+    /// The V field of the signature; the LS bit described which half of the curve our point falls
+    /// in. The MS bits describe which chain this transaction is for. If 27/28, its for all chains.
+    v: u64,
+    /// The R field of the signature; helps describe the point on the curve.
+    r: U256,
+    /// The S field of the signature; helps describe the point on the curve.
+    s: U256,
+    /// Hash of the transaction
+    hash: H256,
+}
 
-// 	fn using_encoded<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
-// 		codec::Encode::using_encoded(&(self.v.0, self.r, self.s), f)
-// 	}
+impl Deref for UnverifiedTransaction {
+    type Target = Transaction;
+
+    fn deref(&self) -> &Self::Target {
+        &self.unsigned
+    }
+}
+
+impl rlp::Decodable for UnverifiedTransaction {
+    fn decode(d: &rlp::Rlp) -> Result<Self, DecoderError> {
+        if d.item_count()? != 9 {
+            return Err(DecoderError::RlpIncorrectListLen);
+        }
+
+        // @TODO
+        let hash = H256::zero();
+        Ok(UnverifiedTransaction {
+            unsigned: Transaction {
+                nonce: d.val_at(0)?,
+                gas_price: d.val_at(1)?,
+                gas: d.val_at(2)?,
+                //action: d.val_at(3)?,
+                value: d.val_at(4)?,
+                data: d.val_at(5)?,
+            },
+            v: d.val_at(6)?,
+            r: d.val_at(7)?,
+            s: d.val_at(8)?,
+            hash,
+        })
+    }
+}
+
+impl rlp::Encodable for UnverifiedTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        self.rlp_append_sealed_transaction(s)
+    }
+}
+
+impl UnverifiedTransaction {
+    // /// Used to compute hash of created transactions
+    // fn compute_hash(mut self) -> UnverifiedTransaction {
+    //     let hash = tiny_keccak::keccakf(&*self.rlp_bytes());
+    //     self.hash = hash;
+    //     self
+    // }
+
+    /// Checks is signature is empty.
+    pub fn is_unsigned(&self) -> bool {
+        self.r.is_zero() && self.s.is_zero()
+    }
+
+    /// Append object with a signature into RLP stream
+    fn rlp_append_sealed_transaction(&self, s: &mut RlpStream) {
+        s.begin_list(9);
+        s.append(&self.nonce);
+        s.append(&self.gas_price);
+        s.append(&self.gas);
+        // s.append(&self.action);
+        s.append(&self.value);
+        s.append(&self.data);
+        s.append(&self.v);
+        s.append(&self.r);
+        s.append(&self.s);
+    }
+
+    ///	Reference to unsigned part of this transaction.
+    pub fn as_unsigned(&self) -> &Transaction {
+        &self.unsigned
+    }
+
+    /// 0 if `v` would have been 27 under "Electrum" notation, 1 if 28 or 4 if invalid.
+    pub fn standard_v(&self) -> u8 {
+        match self.v {
+            v if v == 27 || v == 28 || v > 36 => ((v - 1) % 2) as u8,
+            _ => 4,
+        }
+    }
+
+    /// The `v` value that appears in the RLP.
+    pub fn original_v(&self) -> u64 {
+        self.v
+    }
+
+    /// The chain ID, or `None` if this is a global transaction.
+    pub fn chain_id(&self) -> Option<u64> {
+        match self.v {
+            v if self.is_unsigned() => Some(v),
+            v if v > 36 => Some((v - 35) / 2),
+            _ => None,
+        }
+    }
+
+    /// Get the hash of this header (keccak of the RLP).
+    pub fn hash(&self) -> H256 {
+        self.hash
+    }
+
+    /// Do basic validation, checking for valid signature and minimum gas,
+    // TODO: consider use in block validation.
+    #[cfg(feature = "json-tests")]
+    pub fn validate(
+        self,
+        schedule: &Schedule,
+        require_low: bool,
+        allow_chain_id_of_one: bool,
+        allow_empty_signature: bool,
+    ) -> Result<UnverifiedTransaction, error::Error> {
+        let chain_id = if allow_chain_id_of_one { Some(1) } else { None };
+        self.verify_basic(require_low, chain_id, allow_empty_signature)?;
+        if !allow_empty_signature || !self.is_unsigned() {
+            self.recover_public()?;
+        }
+        if self.gas < U256::from(self.gas_required(&schedule)) {
+            return Err(error::Error::InvalidGasLimit(::unexpected::OutOfBounds {
+                min: Some(U256::from(self.gas_required(&schedule))),
+                max: None,
+                found: self.gas,
+            })
+            .into());
+        }
+        Ok(self)
+    }
+}
+
+/// A `UnverifiedTransaction` with successfully recovered `sender`.
+// pub struct SignedTransaction {
+//     transaction: UnverifiedTransaction,
+//     sender: Address,
+//     public: Option<Public>,
 // }
 
-// #[cfg(feature = "codec")]
-// impl codec::Decode for TransactionSignature {
-// 	fn decode<I: codec::Input>(value: &mut I) -> Result<Self, codec::Error> {
-// 		let (v, r, s) = codec::Decode::decode(value)?;
-// 		match Self::new(v, r, s) {
-// 			Some(signature) => Ok(signature),
-// 			None => Err(codec::Error::from("Invalid signature")),
-// 		}
-// 	}
+// impl HeapSizeOf for SignedTransaction {
+//     fn heap_size_of_children(&self) -> usize {
+//         self.transaction.unsigned.heap_size_of_children()
+//     }
 // }
 
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(
-// 	feature = "with-serde",
-// 	derive(serde::Serialize, serde::Deserialize),
-// 	serde(rename_all = "camelCase")
-// )]
-// pub struct AccessListItem {
-// 	pub address: Address,
-// 	pub storage_keys: Vec<H256>,
+/// Transaction action type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// Create creates new contract.
+    Create,
+    /// Calls contract at given address.
+    /// In the case of a transfer, this is the receiver's address.'
+    Call(Address),
+}
+
+impl Default for Action {
+    fn default() -> Action {
+        Action::Create
+    }
+}
+
+impl rlp::Decodable for Action {
+    fn decode(r: &rlp::Rlp) -> Result<Self, DecoderError> {
+        if r.is_empty() {
+            if r.is_data() {
+                Ok(Action::Create)
+            } else {
+                Err(DecoderError::RlpExpectedToBeData)
+            }
+        } else {
+            Ok(Action::Call(r.as_val()?))
+        }
+    }
+}
+
+// impl rlp::Encodable for SignedTransaction {
+//     fn rlp_append(&self, s: &mut RlpStream) {
+//         self.transaction.rlp_append_sealed_transaction(s)
+//     }
 // }
 
-// impl Encodable for AccessListItem {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(2);
-// 		s.append(&self.address);
-// 		s.append_list(&self.storage_keys);
-// 	}
+// impl Deref for SignedTransaction {
+//     type Target = UnverifiedTransaction;
+//     fn deref(&self) -> &Self::Target {
+//         &self.transaction
+//     }
 // }
 
-// impl Decodable for AccessListItem {
-// 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-// 		Ok(Self {
-// 			address: rlp.val_at(0)?,
-// 			storage_keys: rlp.list_at(1)?,
-// 		})
-// 	}
+// impl From<SignedTransaction> for UnverifiedTransaction {
+//     fn from(tx: SignedTransaction) -> Self {
+//         tx.transaction
+//     }
 // }
 
-// pub type AccessList = Vec<AccessListItem>;
+// impl SignedTransaction {
+//     // /// Try to verify transaction and recover sender.
+//     // pub fn new(transaction: UnverifiedTransaction) -> Result<Self, ethkey::Error> {
+//     //     if transaction.is_unsigned() {
+//     //         Ok(SignedTransaction {
+//     //             transaction: transaction,
+//     //             sender: UNSIGNED_SENDER,
+//     //             public: None,
+//     //         })
+//     //     } else {
+//     //         let public = transaction.recover_public()?;
+//     //         let sender = public_to_address(&public);
+//     //         Ok(SignedTransaction {
+//     //             transaction: transaction,
+//     //             sender: sender,
+//     //             public: Some(public),
+//     //         })
+//     //     }
+//     // }
 
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// pub struct LegacyTransactionMessage {
-// 	pub nonce: U256,
-// 	pub gas_price: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub chain_id: Option<u64>,
+//     /// Returns transaction sender.
+//     pub fn sender(&self) -> Address {
+//         self.sender
+//     }
+
+//     /// Checks is signature is empty.
+//     pub fn is_unsigned(&self) -> bool {
+//         self.transaction.is_unsigned()
+//     }
 // }
 
-// impl LegacyTransactionMessage {
-// 	pub fn hash(&self) -> H256 {
-// 		H256::from_slice(Keccak256::digest(&rlp::encode(self)).as_slice())
-// 	}
-// }
-
-// impl From<LegacyTransaction> for LegacyTransactionMessage {
-// 	fn from(t: TransactionV0) -> Self {
-// 		Self {
-// 			nonce: t.nonce,
-// 			gas_price: t.gas_price,
-// 			gas_limit: t.gas_limit,
-// 			action: t.action,
-// 			value: t.value,
-// 			input: t.input,
-// 			chain_id: t.signature.chain_id(),
-// 		}
-// 	}
-// }
-
-// impl Encodable for LegacyTransactionMessage {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		if let Some(chain_id) = self.chain_id {
-// 			s.begin_list(9);
-// 			s.append(&self.nonce);
-// 			s.append(&self.gas_price);
-// 			s.append(&self.gas_limit);
-// 			s.append(&self.action);
-// 			s.append(&self.value);
-// 			s.append(&self.input);
-// 			s.append(&chain_id);
-// 			s.append(&0_u8);
-// 			s.append(&0_u8);
-// 		} else {
-// 			s.begin_list(6);
-// 			s.append(&self.nonce);
-// 			s.append(&self.gas_price);
-// 			s.append(&self.gas_limit);
-// 			s.append(&self.action);
-// 			s.append(&self.value);
-// 			s.append(&self.input);
-// 		}
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// pub struct EIP2930TransactionMessage {
-// 	pub chain_id: u64,
-// 	pub nonce: U256,
-// 	pub gas_price: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub access_list: Vec<AccessListItem>,
-// }
-
-// impl From<EIP2930Transaction> for EIP2930TransactionMessage {
-// 	fn from(t: EIP2930Transaction) -> Self {
-// 		Self {
-// 			chain_id: t.chain_id,
-// 			nonce: t.nonce,
-// 			gas_price: t.gas_price,
-// 			gas_limit: t.gas_limit,
-// 			action: t.action,
-// 			value: t.value,
-// 			input: t.input,
-// 			access_list: t.access_list,
-// 		}
-// 	}
-// }
-
-// impl Encodable for EIP2930TransactionMessage {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(8);
-// 		s.append(&self.chain_id);
-// 		s.append(&self.nonce);
-// 		s.append(&self.gas_price);
-// 		s.append(&self.gas_limit);
-// 		s.append(&self.action);
-// 		s.append(&self.value);
-// 		s.append(&self.input);
-// 		s.append_list(&self.access_list);
-// 	}
-// }
-
-// impl EIP2930TransactionMessage {
-// 	pub fn hash(&self) -> H256 {
-// 		let encoded = rlp::encode(self);
-// 		let mut out = alloc::vec![0; 1 + encoded.len()];
-// 		out[0] = 1;
-// 		out[1..].copy_from_slice(&encoded);
-// 		H256::from_slice(Keccak256::digest(&out).as_slice())
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// pub struct EIP1559TransactionMessage {
-// 	pub chain_id: u64,
-// 	pub nonce: U256,
-// 	pub max_priority_fee_per_gas: U256,
-// 	pub max_fee_per_gas: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub access_list: Vec<AccessListItem>,
-// }
-
-// impl From<EIP1559Transaction> for EIP1559TransactionMessage {
-// 	fn from(t: EIP1559Transaction) -> Self {
-// 		Self {
-// 			chain_id: t.chain_id,
-// 			nonce: t.nonce,
-// 			max_priority_fee_per_gas: t.max_priority_fee_per_gas,
-// 			max_fee_per_gas: t.max_fee_per_gas,
-// 			gas_limit: t.gas_limit,
-// 			action: t.action,
-// 			value: t.value,
-// 			input: t.input,
-// 			access_list: t.access_list,
-// 		}
-// 	}
-// }
-
-// impl Encodable for EIP1559TransactionMessage {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(9);
-// 		s.append(&self.chain_id);
-// 		s.append(&self.nonce);
-// 		s.append(&self.max_priority_fee_per_gas);
-// 		s.append(&self.max_fee_per_gas);
-// 		s.append(&self.gas_limit);
-// 		s.append(&self.action);
-// 		s.append(&self.value);
-// 		s.append(&self.input);
-// 		s.append_list(&self.access_list);
-// 	}
-// }
-
-// impl EIP1559TransactionMessage {
-// 	pub fn hash(&self) -> H256 {
-// 		let encoded = rlp::encode(self);
-// 		let mut out = alloc::vec![0; 1 + encoded.len()];
-// 		out[0] = 2;
-// 		out[1..].copy_from_slice(&encoded);
-// 		H256::from_slice(Keccak256::digest(&out).as_slice())
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub struct LegacyTransaction {
-// 	pub nonce: U256,
-// 	pub gas_price: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub signature: TransactionSignature,
-// }
-
-// impl LegacyTransaction {
-// 	pub fn hash(&self) -> H256 {
-// 		H256::from_slice(Keccak256::digest(&rlp::encode(self)).as_slice())
-// 	}
-// }
-
-// impl Encodable for LegacyTransaction {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(9);
-// 		s.append(&self.nonce);
-// 		s.append(&self.gas_price);
-// 		s.append(&self.gas_limit);
-// 		s.append(&self.action);
-// 		s.append(&self.value);
-// 		s.append(&self.input);
-// 		s.append(&self.signature.v.0);
-// 		s.append(&U256::from_big_endian(&self.signature.r[..]));
-// 		s.append(&U256::from_big_endian(&self.signature.s[..]));
-// 	}
-// }
-
-// impl Decodable for LegacyTransaction {
-// 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-// 		if rlp.item_count()? != 9 {
-// 			return Err(DecoderError::RlpIncorrectListLen);
-// 		}
-
-// 		let v = rlp.val_at(6)?;
-// 		let r = {
-// 			let mut rarr = [0_u8; 32];
-// 			rlp.val_at::<U256>(7)?.to_big_endian(&mut rarr);
-// 			H256::from(rarr)
-// 		};
-// 		let s = {
-// 			let mut sarr = [0_u8; 32];
-// 			rlp.val_at::<U256>(8)?.to_big_endian(&mut sarr);
-// 			H256::from(sarr)
-// 		};
-// 		let signature = TransactionSignature::new(v, r, s)
-// 			.ok_or(DecoderError::Custom("Invalid transaction signature format"))?;
-
-// 		Ok(Self {
-// 			nonce: rlp.val_at(0)?,
-// 			gas_price: rlp.val_at(1)?,
-// 			gas_limit: rlp.val_at(2)?,
-// 			action: rlp.val_at(3)?,
-// 			value: rlp.val_at(4)?,
-// 			input: rlp.val_at(5)?,
-// 			signature,
-// 		})
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub struct EIP2930Transaction {
-// 	pub chain_id: u64,
-// 	pub nonce: U256,
-// 	pub gas_price: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub access_list: AccessList,
-// 	pub odd_y_parity: bool,
-// 	pub r: H256,
-// 	pub s: H256,
-// }
-
-// impl EIP2930Transaction {
-// 	pub fn hash(&self) -> H256 {
-// 		let encoded = rlp::encode(self);
-// 		let mut out = alloc::vec![0; 1 + encoded.len()];
-// 		out[0] = 1;
-// 		out[1..].copy_from_slice(&encoded);
-// 		H256::from_slice(Keccak256::digest(&out).as_slice())
-// 	}
-// }
-
-// impl Encodable for EIP2930Transaction {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(11);
-// 		s.append(&self.chain_id);
-// 		s.append(&self.nonce);
-// 		s.append(&self.gas_price);
-// 		s.append(&self.gas_limit);
-// 		s.append(&self.action);
-// 		s.append(&self.value);
-// 		s.append(&self.input);
-// 		s.append_list(&self.access_list);
-// 		s.append(&self.odd_y_parity);
-// 		s.append(&U256::from_big_endian(&self.r[..]));
-// 		s.append(&U256::from_big_endian(&self.s[..]));
-// 	}
-// }
-
-// impl Decodable for EIP2930Transaction {
-// 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-// 		if rlp.item_count()? != 11 {
-// 			return Err(DecoderError::RlpIncorrectListLen);
-// 		}
-
-// 		Ok(Self {
-// 			chain_id: rlp.val_at(0)?,
-// 			nonce: rlp.val_at(1)?,
-// 			gas_price: rlp.val_at(2)?,
-// 			gas_limit: rlp.val_at(3)?,
-// 			action: rlp.val_at(4)?,
-// 			value: rlp.val_at(5)?,
-// 			input: rlp.val_at(6)?,
-// 			access_list: rlp.list_at(7)?,
-// 			odd_y_parity: rlp.val_at(8)?,
-// 			r: {
-// 				let mut rarr = [0_u8; 32];
-// 				rlp.val_at::<U256>(9)?.to_big_endian(&mut rarr);
-// 				H256::from(rarr)
-// 			},
-// 			s: {
-// 				let mut sarr = [0_u8; 32];
-// 				rlp.val_at::<U256>(10)?.to_big_endian(&mut sarr);
-// 				H256::from(sarr)
-// 			},
-// 		})
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub struct EIP1559Transaction {
-// 	pub chain_id: u64,
-// 	pub nonce: U256,
-// 	pub max_priority_fee_per_gas: U256,
-// 	pub max_fee_per_gas: U256,
-// 	pub gas_limit: U256,
-// 	pub action: TransactionAction,
-// 	pub value: U256,
-// 	pub input: Bytes,
-// 	pub access_list: AccessList,
-// 	pub odd_y_parity: bool,
-// 	pub r: H256,
-// 	pub s: H256,
-// }
-
-// impl EIP1559Transaction {
-// 	pub fn hash(&self) -> H256 {
-// 		let encoded = rlp::encode(self);
-// 		let mut out = alloc::vec![0; 1 + encoded.len()];
-// 		out[0] = 2;
-// 		out[1..].copy_from_slice(&encoded);
-// 		H256::from_slice(Keccak256::digest(&out).as_slice())
-// 	}
-// }
-
-// impl Encodable for EIP1559Transaction {
-// 	fn rlp_append(&self, s: &mut RlpStream) {
-// 		s.begin_list(12);
-// 		s.append(&self.chain_id);
-// 		s.append(&self.nonce);
-// 		s.append(&self.max_priority_fee_per_gas);
-// 		s.append(&self.max_fee_per_gas);
-// 		s.append(&self.gas_limit);
-// 		s.append(&self.action);
-// 		s.append(&self.value);
-// 		s.append(&self.input);
-// 		s.append_list(&self.access_list);
-// 		s.append(&self.odd_y_parity);
-// 		s.append(&U256::from_big_endian(&self.r[..]));
-// 		s.append(&U256::from_big_endian(&self.s[..]));
-// 	}
-// }
-
-// impl Decodable for EIP1559Transaction {
-// 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-// 		if rlp.item_count()? != 12 {
-// 			return Err(DecoderError::RlpIncorrectListLen);
-// 		}
-
-// 		Ok(Self {
-// 			chain_id: rlp.val_at(0)?,
-// 			nonce: rlp.val_at(1)?,
-// 			max_priority_fee_per_gas: rlp.val_at(2)?,
-// 			max_fee_per_gas: rlp.val_at(3)?,
-// 			gas_limit: rlp.val_at(4)?,
-// 			action: rlp.val_at(5)?,
-// 			value: rlp.val_at(6)?,
-// 			input: rlp.val_at(7)?,
-// 			access_list: rlp.list_at(8)?,
-// 			odd_y_parity: rlp.val_at(9)?,
-// 			r: {
-// 				let mut rarr = [0_u8; 32];
-// 				rlp.val_at::<U256>(10)?.to_big_endian(&mut rarr);
-// 				H256::from(rarr)
-// 			},
-// 			s: {
-// 				let mut sarr = [0_u8; 32];
-// 				rlp.val_at::<U256>(11)?.to_big_endian(&mut sarr);
-// 				H256::from(sarr)
-// 			},
-// 		})
-// 	}
-// }
-
-// pub type TransactionV0 = LegacyTransaction;
-
-// impl EnvelopedEncodable for TransactionV0 {
-// 	fn type_id(&self) -> Option<u8> {
-// 		None
-// 	}
-// 	fn encode_payload(&self) -> BytesMut {
-// 		rlp::encode(self)
-// 	}
-// }
-
-// impl EnvelopedDecodable for TransactionV0 {
-// 	type PayloadDecoderError = DecoderError;
-
-// 	fn decode(bytes: &[u8]) -> Result<Self, EnvelopedDecoderError<Self::PayloadDecoderError>> {
-// 		Ok(rlp::decode(bytes)?)
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub enum TransactionV1 {
-// 	/// Legacy transaction type
-// 	Legacy(LegacyTransaction),
-// 	/// EIP-2930 transaction
-// 	EIP2930(EIP2930Transaction),
-// }
-
-// impl TransactionV1 {
-// 	pub fn hash(&self) -> H256 {
-// 		match self {
-// 			TransactionV1::Legacy(t) => t.hash(),
-// 			TransactionV1::EIP2930(t) => t.hash(),
-// 		}
-// 	}
-// }
-
-// impl EnvelopedEncodable for TransactionV1 {
-// 	fn type_id(&self) -> Option<u8> {
-// 		match self {
-// 			Self::Legacy(_) => None,
-// 			Self::EIP2930(_) => Some(1),
-// 		}
-// 	}
-
-// 	fn encode_payload(&self) -> BytesMut {
-// 		match self {
-// 			Self::Legacy(tx) => rlp::encode(tx),
-// 			Self::EIP2930(tx) => rlp::encode(tx),
-// 		}
-// 	}
-// }
-
-// impl EnvelopedDecodable for TransactionV1 {
-// 	type PayloadDecoderError = DecoderError;
-
-// 	fn decode(bytes: &[u8]) -> Result<Self, EnvelopedDecoderError<Self::PayloadDecoderError>> {
-// 		if bytes.is_empty() {
-// 			return Err(EnvelopedDecoderError::UnknownTypeId);
-// 		}
-
-// 		let first = bytes[0];
-
-// 		let rlp = Rlp::new(bytes);
-// 		if rlp.is_list() {
-// 			return Ok(Self::Legacy(rlp.as_val()?));
-// 		}
-
-// 		let s = &bytes[1..];
-
-// 		if first == 0x01 {
-// 			return Ok(Self::EIP2930(rlp::decode(s)?));
-// 		}
-
-// 		Err(DecoderError::Custom("invalid tx type").into())
-// 	}
-// }
-
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// #[cfg_attr(
-// 	feature = "with-codec",
-// 	derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
-// )]
-// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
-// pub enum TransactionV2 {
-// 	/// Legacy transaction type
-// 	Legacy(LegacyTransaction),
-// 	/// EIP-2930 transaction
-// 	EIP2930(EIP2930Transaction),
-// 	/// EIP-1559 transaction
-// 	EIP1559(EIP1559Transaction),
-// }
-
-// impl TransactionV2 {
-// 	pub fn hash(&self) -> H256 {
-// 		match self {
-// 			TransactionV2::Legacy(t) => t.hash(),
-// 			TransactionV2::EIP2930(t) => t.hash(),
-// 			TransactionV2::EIP1559(t) => t.hash(),
-// 		}
-// 	}
-// }
-
-// impl EnvelopedEncodable for TransactionV2 {
-// 	fn type_id(&self) -> Option<u8> {
-// 		match self {
-// 			Self::Legacy(_) => None,
-// 			Self::EIP2930(_) => Some(1),
-// 			Self::EIP1559(_) => Some(2),
-// 		}
-// 	}
-
-// 	fn encode_payload(&self) -> BytesMut {
-// 		match self {
-// 			Self::Legacy(tx) => rlp::encode(tx),
-// 			Self::EIP2930(tx) => rlp::encode(tx),
-// 			Self::EIP1559(tx) => rlp::encode(tx),
-// 		}
-// 	}
-// }
-
-// impl EnvelopedDecodable for TransactionV2 {
-// 	type PayloadDecoderError = DecoderError;
-
-// 	fn decode(bytes: &[u8]) -> Result<Self, EnvelopedDecoderError<Self::PayloadDecoderError>> {
-// 		if bytes.is_empty() {
-// 			return Err(EnvelopedDecoderError::UnknownTypeId);
-// 		}
-
-// 		let first = bytes[0];
-
-// 		let rlp = Rlp::new(bytes);
-// 		if rlp.is_list() {
-// 			return Ok(Self::Legacy(rlp.as_val()?));
-// 		}
-
-// 		let s = &bytes[1..];
-
-// 		if first == 0x01 {
-// 			return Ok(Self::EIP2930(rlp::decode(s)?));
-// 		}
-
-// 		if first == 0x02 {
-// 			return Ok(Self::EIP1559(rlp::decode(s)?));
-// 		}
-
-// 		Err(DecoderError::Custom("invalid tx type").into())
-// 	}
-// }
-
-// impl From<LegacyTransaction> for TransactionV1 {
-// 	fn from(t: LegacyTransaction) -> Self {
-// 		TransactionV1::Legacy(t)
-// 	}
-// }
-
-// impl From<LegacyTransaction> for TransactionV2 {
-// 	fn from(t: LegacyTransaction) -> Self {
-// 		TransactionV2::Legacy(t)
-// 	}
-// }
-
-// impl From<TransactionV1> for TransactionV2 {
-// 	fn from(t: TransactionV1) -> Self {
-// 		match t {
-// 			TransactionV1::Legacy(t) => TransactionV2::Legacy(t),
-// 			TransactionV1::EIP2930(t) => TransactionV2::EIP2930(t),
-// 		}
-// 	}
-// }
-
-// pub type TransactionAny = TransactionV2;
-
-// #[cfg(test)]
-// mod tests {
-// 	use super::*;
-// 	use hex_literal::hex;
-
-// 	#[test]
-// 	fn can_decode_raw_transaction() {
-// 		let bytes =
-// hex!("f901e48080831000008080b90196608060405234801561001057600080fd5b50336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055507fc68045c3c562488255b55aa2c4c7849de001859ff0d8a36a75c2d5ed80100fb660405180806020018281038252600d8152602001807f48656c6c6f2c20776f726c64210000000000000000000000000000000000000081525060200191505060405180910390a160cf806100c76000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c80638da5cb5b14602d575b600080fd5b60336075565b604051808273ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200191505060405180910390f35b6000809054906101000a900473ffffffffffffffffffffffffffffffffffffffff168156fea265627a7a72315820fae816ad954005c42bea7bc7cb5b19f7fd5d3a250715ca2023275c9ca7ce644064736f6c634300050f003278a04cab43609092a99cf095d458b61b47189d1bbab64baed10a0fd7b7d2de2eb960a011ab1bcda76dfed5e733219beb83789f9887b2a7b2e61759c7c90f7d40403201"
-// );
-
-// 		<TransactionV0 as EnvelopedDecodable>::decode(&bytes).unwrap();
-// 		<TransactionV1 as EnvelopedDecodable>::decode(&bytes).unwrap();
-// 		<TransactionV2 as EnvelopedDecodable>::decode(&bytes).unwrap();
-// 	}
-
-// 	#[test]
-// 	fn transaction_v0() {
-// 		let tx = TransactionV0 {
-// 			nonce: 12.into(),
-// 			gas_price: 20_000_000_000_u64.into(),
-// 			gas_limit: 21000.into(),
-// 			action: TransactionAction::Call(
-// 				hex!("727fc6a68321b754475c668a6abfb6e9e71c169a").into(),
-// 			),
-// 			value: U256::from(10) * 1_000_000_000 * 1_000_000_000,
-// 			input: hex!("a9059cbb000000000213ed0f886efd100b67c7e4ec0a85a7d20dc971600000000000000000000015af1d78b58c4000").into(),
-// 			signature: TransactionSignature::new(38,
-// hex!("be67e0a07db67da8d446f76add590e54b6e92cb6b8f9835aeb67540579a27717").into(),
-// hex!("2d690516512020171c1ec870f6ff45398cc8609250326be89915fb538e7bd718").into()).unwrap(), 		};
-
-// 		assert_eq!(
-// 			tx,
-// 			<TransactionV0 as EnvelopedDecodable>::decode(&tx.encode()).unwrap()
-// 		);
-// 	}
-
-// 	#[test]
-// 	fn transaction_v1() {
-// 		let tx = TransactionV1::EIP2930(EIP2930Transaction {
-// 			chain_id: 5,
-// 			nonce: 7.into(),
-// 			gas_price: 30_000_000_000_u64.into(),
-// 			gas_limit: 5_748_100_u64.into(),
-// 			action: TransactionAction::Call(
-// 				hex!("811a752c8cd697e3cb27279c330ed1ada745a8d7").into(),
-// 			),
-// 			value: U256::from(2) * 1_000_000_000 * 1_000_000_000,
-// 			input: hex!("6ebaf477f83e051589c1188bcc6ddccd").into(),
-// 			access_list: vec![
-// 				AccessListItem {
-// 					address: hex!("de0b295669a9fd93d5f28d9ec85e40f4cb697bae").into(),
-// 					storage_keys: vec![
-// 						hex!("0000000000000000000000000000000000000000000000000000000000000003")
-// 							.into(),
-// 						hex!("0000000000000000000000000000000000000000000000000000000000000007")
-// 							.into(),
-// 					],
-// 				},
-// 				AccessListItem {
-// 					address: hex!("bb9bc244d798123fde783fcc1c72d3bb8c189413").into(),
-// 					storage_keys: vec![],
-// 				},
-// 			],
-// 			odd_y_parity: false,
-// 			r: hex!("36b241b061a36a32ab7fe86c7aa9eb592dd59018cd0443adc0903590c16b02b0").into(),
-// 			s: hex!("5edcc541b4741c5cc6dd347c5ed9577ef293a62787b4510465fadbfe39ee4094").into(),
-// 		});
-
-// 		assert_eq!(
-// 			tx,
-// 			<TransactionV1 as EnvelopedDecodable>::decode(&tx.encode()).unwrap()
-// 		);
-// 	}
-
-// 	#[test]
-// 	fn transaction_v2() {
-// 		let tx = TransactionV2::EIP1559(EIP1559Transaction {
-// 			chain_id: 5,
-// 			nonce: 7.into(),
-// 			max_priority_fee_per_gas: 10_000_000_000_u64.into(),
-// 			max_fee_per_gas: 30_000_000_000_u64.into(),
-// 			gas_limit: 5_748_100_u64.into(),
-// 			action: TransactionAction::Call(
-// 				hex!("811a752c8cd697e3cb27279c330ed1ada745a8d7").into(),
-// 			),
-// 			value: U256::from(2) * 1_000_000_000 * 1_000_000_000,
-// 			input: hex!("6ebaf477f83e051589c1188bcc6ddccd").into(),
-// 			access_list: vec![
-// 				AccessListItem {
-// 					address: hex!("de0b295669a9fd93d5f28d9ec85e40f4cb697bae").into(),
-// 					storage_keys: vec![
-// 						hex!("0000000000000000000000000000000000000000000000000000000000000003")
-// 							.into(),
-// 						hex!("0000000000000000000000000000000000000000000000000000000000000007")
-// 							.into(),
-// 					],
-// 				},
-// 				AccessListItem {
-// 					address: hex!("bb9bc244d798123fde783fcc1c72d3bb8c189413").into(),
-// 					storage_keys: vec![],
-// 				},
-// 			],
-// 			odd_y_parity: false,
-// 			r: hex!("36b241b061a36a32ab7fe86c7aa9eb592dd59018cd0443adc0903590c16b02b0").into(),
-// 			s: hex!("5edcc541b4741c5cc6dd347c5ed9577ef293a62787b4510465fadbfe39ee4094").into(),
-// 		});
-
-// 		assert_eq!(
-// 			tx,
-// 			<TransactionV2 as EnvelopedDecodable>::decode(&tx.encode()).unwrap()
-// 		);
-// 	}
+/// Signed Transaction that is a part of canon blockchain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalizedTransaction {
+    /// Signed part.
+    pub signed: UnverifiedTransaction,
+    /// Block number.
+    pub block_number: BlockNumber,
+    /// Block hash.
+    pub block_hash: H256,
+    /// Transaction index within block.
+    pub transaction_index: usize,
+    /// Cached sender
+    pub cached_sender: Option<Address>,
+}
+
+// impl LocalizedTransaction {
+//     /// Returns transaction sender.
+//     /// Panics if `LocalizedTransaction` is constructed using invalid `UnverifiedTransaction`.
+//     pub fn sender(&mut self) -> Address {
+//         if let Some(sender) = self.cached_sender {
+//             return sender;
+//         }
+//         if self.is_unsigned() {
+//             return UNSIGNED_SENDER.clone();
+//         }
+//         let sender = public_to_address(&self.recover_public()
+// 			.expect("LocalizedTransaction is always constructed from transaction from blockchain; Blockchain
+// only stores verified transactions; qed"));         self.cached_sender = Some(sender);
+//         sender
+//     }
+// // }
+
+// impl Deref for LocalizedTransaction {
+//     type Target = UnverifiedTransaction;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.signed
+//     }
 // }

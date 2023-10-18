@@ -1,5 +1,4 @@
-// use super::bloom::WithBloom;
-use crate::eth_t::{header, transaction};
+use crate::eth_types::{header, transaction};
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethers::types::Bytes;
 use header::{Header, Seal};
@@ -105,10 +104,10 @@ pub(crate) fn verify_input_blocks(
 
 #[cfg(test)]
 mod tests {
-    use super::Header;
-    use crate::eth_t::{
-        block::{verify_input_blocks, Block, VerifyBlockError},
+    use super::*;
+    use crate::eth_types::{
         header::{generate_random_header, generate_random_header_based_on_prev_block},
+        *,
     };
     use ethereum_types::{Address, H256};
     use rlp;
