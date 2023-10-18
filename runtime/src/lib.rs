@@ -19,6 +19,7 @@ mod macros;
 mod mpt;
 mod mpt_helpers;
 mod platform;
+mod poseidon_hash;
 mod runtime;
 #[cfg(test)]
 mod tests;

@@ -79,6 +79,30 @@ fn mpt_open_test() {
     assert_eq!(output.data().output().clone(), vec![]);
 }
 
+#[test]
+fn keccak_test() {
+    let wasm_binary =
+        wat::parse_bytes(include_bytes!("../examples/bin/crypto_keccak.wat")).unwrap();
+    let rwasm_binary = wasm2rwasm(&wasm_binary);
+
+    let input_data: &[u8] = "hello world".as_bytes();
+
+    let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
+#[test]
+fn poseidon_test() {
+    let wasm_binary =
+        wat::parse_bytes(include_bytes!("../examples/bin/crypto_poseidon.wat")).unwrap();
+    let rwasm_binary = wasm2rwasm(&wasm_binary);
+
+    let input_data: &[u8] = "hello world".as_bytes();
+
+    let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
 fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {
     let err = result.err().unwrap();
     match err {
