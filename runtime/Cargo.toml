@@ -30,3 +30,6 @@ keccak-hash = "0.10.0"
 #heapsize = {version = "0.4.2"}
 eth_trie = "0.3.0"
 rlp = "0.5.2"
+
+[dev-dependencies]
+wat = "1.0.69"

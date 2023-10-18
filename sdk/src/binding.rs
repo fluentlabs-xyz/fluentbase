@@ -123,6 +123,8 @@ extern "C" {
     pub fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
     pub fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn mpt_get_root(output_offset: i32) -> i32;
+
+    pub fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
 }
 
 #[inline(always)]
@@ -240,4 +242,9 @@ pub fn mpt_get_(key_offset: i32, key_len: i32, output_offset: i32) -> i32 {
 #[inline(always)]
 pub fn mpt_get_root_(output_offset: i32) -> i32 {
     unsafe { mpt_get_root(output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_keccak_(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
+    unsafe { crypto_keccak(data_offset, data_len, output_offset) }
 }

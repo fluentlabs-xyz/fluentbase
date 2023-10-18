@@ -9,6 +9,7 @@ fluentbase-rwasm = { path = "../../rwasm", default-features = false }
 revm = { version = "3.3.0", default-features = false }
 revm-primitives = { version = "1.1.2", default-features = false }
 revm-interpreter = { version = "1.1.2", default-features = false }
+wat = "1.0.77"
 
 [lib]
 crate-type = ["cdylib"]
@@ -17,7 +18,12 @@ crate-type = ["cdylib"]
 greeting = []
 zktrie_open_test = []
 mpt_open_test = []
+crypto_keccak = []
+crypto_poseidon = []
 panic = []
 rwasm = []
 evm = []
 wasi = []
+
+[dev-dependencies]
+wat = "1.0.77"
