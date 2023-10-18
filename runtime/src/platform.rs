@@ -52,6 +52,11 @@ pub enum SysFuncIdx {
     MPT_UPDATE = 0xDF02,
     MPT_GET = 0xDF03,
     MPT_GET_ROOT = 0xDF04,
+
+    CRYPTO_KECCAK = 0xE001,
+    CRYPTO_POSEIDON = 0xE002,
+
+    SECP256K1_VERIFY = 0xEA03,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

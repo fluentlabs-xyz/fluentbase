@@ -11,7 +11,7 @@ pub use platform::*;
 pub use runtime::*;
 pub use types::*;
 
-mod eth_types;
+mod crypto;
 mod evm;
 mod hash;
 mod instruction;

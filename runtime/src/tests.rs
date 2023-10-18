@@ -4,9 +4,6 @@ use fluentbase_rwasm::{
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
-use rlp::Rlp;
-use std::str::FromStr;
-extern crate hex;
 
 fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -65,26 +62,10 @@ fn zktrie_open_test() {
     let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let mut input_data = vec![];
-
-    let root_updated: Vec<u8> = vec![
-        1, 158, 59, 182, 29, 224, 81, 156, 63, 5, 24, 82, 92, 243, 23, 118, 114, 252, 249, 133, 70,
-        229, 137, 214, 108, 4, 219, 78, 152, 25, 152, 109,
-    ];
-    input_data.extend(root_updated);
-
-    let key = "key".as_bytes();
-    let mut key_bytes = [0u8; 20];
-    let l = key_bytes.len();
-    key_bytes[l - key.len()..].copy_from_slice(key);
-    input_data.extend(key_bytes.as_slice());
-
-    let mut account_data = [0u8; 32 * 5];
-    account_data[0] = 1;
-    input_data.extend(account_data.as_slice());
+    let input_data = vec![];
 
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-    // assert_eq!(output.data().output().clone(), vec![]);
+    assert_eq!(output.data().output().clone(), vec![]);
 }
 
 #[test]
@@ -92,10 +73,10 @@ fn mpt_open_test() {
     let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
+    let input_data = [];
 
-    let output = Runtime::run(rwasm_binary.as_slice(), &rlp_data).unwrap();
-    // assert_eq!(output.data().output().clone(), vec![]);
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
 }
 
 fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {
@@ -170,42 +151,4 @@ fn test_state() {
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
     Runtime::run_with_context(RuntimeContext::new(rwasm_bytecode), &import_linker).unwrap();
-}
-
-#[test]
-fn test_keccak256() {
-    let rwasm_binary = wat2rwasm(
-        r#"
-(module
-  (type (;0;) (func (param i32 i32 i32)))
-  (type (;1;) (func))
-  (type (;2;) (func (param i32 i32)))
-  (import "env" "_evm_keccak256" (func $_evm_keccak256 (type 0)))
-  (import "env" "_evm_return" (func $_evm_return (type 2)))
-  (func $main (type 1)
-    i32.const 0
-    i32.const 12
-    i32.const 50
-    call $_evm_keccak256
-    i32.const 50
-    i32.const 32
-    call $_evm_return
-    )
-  (memory (;0;) 100)
-  (data (;0;) (i32.const 0) "Hello, World")
-  (export "main" (func $main)))
-    "#,
-    );
-
-    let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
-    match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
-        Ok(answer) => {
-            assert_eq!(&answer, result.data().output().as_slice());
-        }
-        Err(e) => {
-            // If there's an error, you might want to handle it in some way.
-            // For this example, I'll just print the error.
-            println!("Error: {:?}", e);
-        }
-    }
 }
