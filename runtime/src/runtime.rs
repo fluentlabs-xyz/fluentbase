@@ -90,7 +90,7 @@ impl RuntimeContext {
 
     pub fn input(&self, argc: usize) -> &Vec<u8> {
         // TODO: "add overflow check here"
-        &<Vec<u8> as AsRef<Vec<u8>>>::as_ref(&self.input[argc])
+        self.input.get(argc).as_ref().unwrap()
     }
 
     pub fn input_count(&self) -> u32 {
@@ -98,18 +98,14 @@ impl RuntimeContext {
     }
 
     pub fn input_size(&self) -> u32 {
-        self.input.iter().map(|v| v.len()).sum::<usize>() as u32
+        self.input.iter().map(|v| v.len() as u32).sum::<u32>()
     }
 
     pub fn argv_buffer(&self) -> Vec<u8> {
-        self.input.clone()
-            .iter_mut()
-            .reduce(|a, b| {
-                a.extend(b.clone());
-                a
-            })
-            .map(|x| x.clone())
-            .unwrap_or_default()
+        self.input.iter().fold(Vec::new(), |mut a, b| {
+            a.extend(b);
+            a
+        })
     }
 
     pub fn output(&self) -> &Vec<u8> {
