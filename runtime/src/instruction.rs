@@ -1,4 +1,4 @@
-pub use crate::{evm::*, mpt::*, zktrie::*};
+pub use crate::{crypto::*, evm::*, mpt::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 

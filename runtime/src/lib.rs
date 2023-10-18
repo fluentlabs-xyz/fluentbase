@@ -2,7 +2,6 @@
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;
-extern crate core;
 
 pub use crate::zktrie::*;
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
@@ -12,6 +11,7 @@ pub use platform::*;
 pub use runtime::*;
 pub use types::*;
 
+mod crypto;
 mod evm;
 mod instruction;
 mod keccak_hash;
