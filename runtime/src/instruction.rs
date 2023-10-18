@@ -1,8 +1,6 @@
-pub use crate::{mpt::*, zktrie::*};
+pub use crate::{evm::*, mpt::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
-use std::mem::size_of;
-use tiny_keccak::{Hasher, Sha3};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
@@ -14,17 +12,7 @@ fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     }
 }
 
-fn exported_input(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
-    let memory = caller
-        .get_export("memory")
-        .unwrap_or_else(|| unreachable!("there is no memory export inside"));
-    match memory {
-        Extern::Memory(memory) => memory,
-        _ => unreachable!("there is no memory export inside"),
-    }
-}
-
-fn exported_memory_slice<'a>(
+pub(crate) fn exported_memory_slice<'a>(
     caller: &'a mut Caller<'_, RuntimeContext>,
     offset: usize,
     length: usize,
@@ -64,19 +52,37 @@ pub(crate) fn sys_state(caller: Caller<'_, RuntimeContext>) -> Result<u32, Trap>
 }
 
 pub(crate) fn sys_read(
-    _caller: Caller<'_, RuntimeContext>,
-    _target: u32,
-    _offset: u32,
-    _length: u32,
+    mut caller: Caller<'_, RuntimeContext>,
+    target: u32,
+    offset: u32,
+    length: u32,
 ) -> Result<(), Trap> {
-    //  let input = caller.data().input().clone();
-    // if offset + length > input.len() as u32 {
-    //     return Err(ExitCode::MemoryOutOfBounds.into());
-    // }
-    // caller.write_memory(
-    //     target as usize,
-    //     &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
-    // );
+    let input = caller.data().input(0).clone();
+    if offset + length > input.len() as u32 {
+        return Err(ExitCode::MemoryOutOfBounds.into());
+    }
+    caller.write_memory(
+        target as usize,
+        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
+    );
+    Ok(())
+}
+
+pub(crate) fn sys_input(
+    mut caller: Caller<'_, RuntimeContext>,
+    index: u32,
+    target: u32,
+    offset: u32,
+    length: u32,
+) -> Result<(), Trap> {
+    let input = caller.data().input(index as usize).clone();
+    if offset + length > input.len() as u32 {
+        return Err(ExitCode::MemoryOutOfBounds.into());
+    }
+    caller.write_memory(
+        target as usize,
+        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
+    );
     Ok(())
 }
 
@@ -127,30 +133,40 @@ pub(crate) fn wasi_environ_get(
 
 pub(crate) fn wasi_args_sizes_get(
     mut caller: Caller<'_, RuntimeContext>,
-    argv_len: i32,
-    argv_buffer_len: i32,
+    argc_ptr: i32,
+    argv_ptr: i32,
 ) -> Result<i32, Trap> {
-    // first arg is always 1, because we pass only one string
-    let argv_slice = exported_memory_slice(&mut caller, argv_len as usize, 4);
-    argv_slice.copy_from_slice(&1u32.to_be_bytes());
+    let argc = caller.data().input_count();
+    let argv = caller.data().input_size();
+    // copy argc into memory
+    let argc_slice = exported_memory_slice(&mut caller, argc_ptr as usize, 4);
+    argc_slice.copy_from_slice(&argc.to_le_bytes());
     // second arg is length of input
-    let input_len = caller.data().input.len() as u32;
-    let argv_buffer_slice = exported_memory_slice(&mut caller, argv_buffer_len as usize, 4);
-    argv_buffer_slice.copy_from_slice(&input_len.to_be_bytes());
+    let argv_slice = exported_memory_slice(&mut caller, argv_ptr as usize, 4);
+    argv_slice.copy_from_slice(&argv.to_le_bytes());
     // its always success
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
 
 pub(crate) fn wasi_args_get(
-    caller: Caller<'_, RuntimeContext>,
-    argv: i32,
-    argv_buffer: i32,
+    mut caller: Caller<'_, RuntimeContext>,
+    argv_ptrs_ptr: i32,
+    argv_buff_ptr: i32,
 ) -> Result<i32, Trap> {
-    let input = caller.data().input(argv);
-    // copy all input into argv buffer
-    caller.write_memory(argv_buffer as usize, &input.as_slice());
-    // init argv array (we have only 1 element inside argv)
-    caller.write_memory(argv as usize, &argv_buffer.to_be_bytes());
+    let argc = caller.data().input_count();
+    let argv = caller.data().input_size();
+    // @TODO
+    // copy argv ptrs into argc buffer
+    // let argv_ptrs = exported_memory_slice(&mut caller, argv_ptrs_ptr as usize, (argc * 4) as
+    // usize); let mut ptr_sum = argv_buff_ptr;
+    // for (i, it) in caller.data().input.iter().enumerate() {
+    //     argv_ptrs[i..].copy_from_slice(&*ptr_sum.to_le_bytes());
+    //     ptr_sum += it.len();
+    // }
+    // copy argv buffer
+    let argv_buff = exported_memory_slice(&mut caller, argv_buff_ptr as usize, argv as usize);
+    argv_buff.copy_from_slice(caller.data().argv_buffer().as_slice());
+    // return success
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
 
@@ -200,57 +216,3 @@ pub(crate) fn evm_return(
     caller.data_mut().extend_return_data(memory.as_slice());
     Ok(())
 }
-
-pub(crate) fn evm_keccak256(
-    mut caller: Caller<'_, RuntimeContext>,
-    offset: u32,
-    size: u32,
-    dest: u32,
-) -> Result<(), Trap> {
-    // Ensure the offset and size are valid
-    let input_data = exported_memory_vec(&mut caller, offset as usize, size as usize);
-    assert!(offset + size as u32 <= input_data.len() as u32);
-
-    // let's calculate a hash via tiny_keccak::sha3
-    let data_slice = input_data.as_slice();
-    let mut hasher = Sha3::v256();
-    hasher.update(data_slice);
-    let mut result = [0u8; 32];
-    hasher.finalize(&mut result);
-
-    caller.write_memory(dest as usize, result.as_slice());
-    Ok(())
-}
-
-/// @TODO
-pub(crate) fn evm_callvalue(mut caller: Caller<'_, RuntimeContext>, dest: u32) -> Result<(), Trap> {
-    // Ensure the offset and size are valid
-    // start_index, U256(32)
-    // let input_data = exported_memory_vec(&mut caller, offset as usize, size as usize);
-
-    let result = [0u8; 32];
-    caller.write_memory(dest as usize, result.as_slice());
-    Ok(())
-}
-
-pub(crate) fn evm_calldataload(
-    _caller: Caller<'_, RuntimeContext>,
-    _offset: u32,
-    _dest: u32,
-) -> Result<(), Trap> {
-    // let mut input_data = caller.data().input().to_vec();
-
-    // if input_data.len() > offset as usize {
-    //     input_data = input_data.split_off(offset as usize);
-    // }
-
-    // caller.write_memory(dest as usize, input_data.as_slice());
-    Ok(())
-}
-
-// pub(crate) fn evm_calldatasize(
-//     mut caller: Caller<'_, RuntimeContext>,
-//     dest: u32,
-// ) -> Result<(), Trap> { let bytes: &[u8] = &caller.data().input().capacity().to_ne_bytes();
-//   caller.write_memory(dest as usize, bytes); Ok(())
-// }

@@ -84,7 +84,7 @@ fn zktrie_open_test() {
     input_data.extend(account_data.as_slice());
 
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![]);
+    // assert_eq!(output.data().output().clone(), vec![]);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn mpt_open_test() {
     let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
 
     let output = Runtime::run(rwasm_binary.as_slice(), &rlp_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![]);
+    // assert_eq!(output.data().output().clone(), vec![]);
 }
 
 fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {

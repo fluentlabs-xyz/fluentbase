@@ -11,7 +11,8 @@ pub use platform::*;
 pub use runtime::*;
 pub use types::*;
 
-mod eth_t;
+mod eth_types;
+mod evm;
 mod hash;
 mod instruction;
 mod keccak_hash;
