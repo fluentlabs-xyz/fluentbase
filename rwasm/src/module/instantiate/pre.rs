@@ -10,7 +10,8 @@ use crate::{module::FuncIdx, AsContextMut, Error, Instance, InstanceEntityBuilde
 /// process with regard to this need.
 #[derive(Debug)]
 pub struct InstancePre {
-    handle: Instance,
+    // TODO: how to solve problem without pub ?
+    pub handle: Instance,
     builder: InstanceEntityBuilder,
 }
 
@@ -40,7 +41,7 @@ impl InstancePre {
     /// # Panics
     ///
     /// If the `start` function is invalid albeit successful validation.
-    pub fn start(self, mut context: impl AsContextMut) -> Result<Instance, Error> {
+    pub fn start(self, mut context: impl AsContextMut) -> Result<Instance, (Instance, Error)> {
         let opt_start_index = self.start_fn();
         context
             .as_context_mut()
@@ -54,7 +55,7 @@ impl InstancePre {
                 .unwrap_or_else(|| {
                     panic!("encountered invalid start function after validation: {start_index}")
                 });
-            start_func.call(context.as_context_mut(), &[], &mut [])?
+            start_func.call(context.as_context_mut(), &[], &mut []).map_err(|x| (self.handle, x))?
         }
         Ok(self.handle)
     }

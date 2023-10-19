@@ -392,7 +392,7 @@ impl Runtime {
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, RuntimeError> {
+    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<(ExecutionResult, Option<RuntimeError>), RuntimeError> {
         let runtime_context = RuntimeContext::new(rwasm_binary).with_input(input_data);
         let import_linker = Self::new_linker();
         Self::run_with_context(runtime_context, &import_linker)
@@ -401,15 +401,15 @@ impl Runtime {
     pub fn run_with_context(
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
-    ) -> Result<ExecutionResult, RuntimeError> {
-        let mut runtime = Self::new(runtime_context, import_linker)?;
-        Ok(ExecutionResult::taken(&mut runtime.store))
+    ) -> Result<(ExecutionResult, Option<RuntimeError>), RuntimeError> {
+        let (mut runtime, opt_err) = Self::new(runtime_context, import_linker)?;
+        Ok((ExecutionResult::taken(&mut runtime.store), opt_err))
     }
 
     pub fn new(
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
-    ) -> Result<Self, RuntimeError> {
+    ) -> Result<(Self,Option<RuntimeError>), RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
 
         let engine = {
@@ -446,11 +446,14 @@ impl Runtime {
         let original_state = store.data().state;
         store.data_mut().state = u32::MAX;
 
-        let instance = linker
+        let instance_pre = linker
             .instantiate(&mut store, &module)
-            .map_err(Into::<RuntimeError>::into)?
-            .start(&mut store)
             .map_err(Into::<RuntimeError>::into)?;
+
+        let (instance, opt_err) = match instance_pre.start(&mut store) {
+            Ok(a) => (a, None),
+            Err((a,e)) => (a, Some(Into::<RuntimeError>::into(e))),
+        };
 
         // restore state for next runs
         store.data_mut().state = original_state;
@@ -464,7 +467,7 @@ impl Runtime {
             instance,
         };
 
-        Ok(result)
+        Ok((result, opt_err))
     }
 
     pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
