@@ -75,22 +75,20 @@ impl Decodable for Block {
 }
 
 pub(crate) fn verify_input_blocks(
-    prev_blk_hash: &H256,
-    cur_blk_hash: &H256,
     prev_blk: &Block,
     cur_blk: &Block,
 ) -> Result<bool, VerifyBlockError> {
-    // 1. verify the parent block hash
-    if !prev_blk_hash
-        .as_bytes()
-        .eq(prev_blk.header.hash().as_bytes())
-    {
-        return Err(VerifyBlockError::PrevBlockHashWrong);
-    }
-    // 2. verify the current block hash
-    if !cur_blk_hash.as_bytes().eq(cur_blk.header.hash().as_bytes()) {
-        return Err(VerifyBlockError::CurrentBlockHashWrong);
-    }
+    // // 1. verify the parent block hash
+    // if !prev_blk_hash
+    //     .as_bytes()
+    //     .eq(prev_blk.header.hash().as_bytes())
+    // {
+    //     return Err(VerifyBlockError::PrevBlockHashWrong);
+    // }
+    // // 2. verify the current block hash
+    // if !cur_blk_hash.as_bytes().eq(cur_blk.header.hash().as_bytes()) {
+    //     return Err(VerifyBlockError::CurrentBlockHashWrong);
+    // }
     // 3. compare the prev block hash vs curret block's parent hash
     if !prev_blk.header.hash().eq(cur_blk.header.parent_hash()) {
         return Err(VerifyBlockError::ParentHashWrong);
@@ -132,7 +130,7 @@ mod tests {
             uncles: vec![],
         };
 
-        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        let res = verify_input_blocks(&prev_blk, &cur_blk);
         match res {
             Ok(res) => {
                 assert!(res);
@@ -163,7 +161,7 @@ mod tests {
             uncles: vec![],
         };
 
-        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        let res = verify_input_blocks(&prev_blk, &cur_blk);
         match res {
             Ok(result) => {
                 assert!(!result);
@@ -194,7 +192,7 @@ mod tests {
             uncles: vec![],
         };
 
-        let res = verify_input_blocks(&prev_blk_hash, &cur_blk_hash, &prev_blk, &cur_blk);
+        let res = verify_input_blocks(&prev_blk, &cur_blk);
         match res {
             Ok(result) => {
                 assert!(!result);

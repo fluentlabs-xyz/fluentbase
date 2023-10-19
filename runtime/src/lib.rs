@@ -12,7 +12,8 @@ pub use runtime::*;
 pub use types::*;
 
 mod crypto;
-mod evm;
+mod eth_types;
+mod evm_x;
 mod hash;
 mod instruction;
 mod keccak_hash;

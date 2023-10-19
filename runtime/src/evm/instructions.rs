@@ -1,5 +1,4 @@
 use crate::{
-    eth_types::*,
     instruction::{exported_memory_slice, exported_memory_vec},
     RuntimeContext,
 };
@@ -32,12 +31,14 @@ pub(crate) fn evm_block_number(
     Ok(())
 }
 
-pub(crate) fn evm_block_hash(
-    mut caller: Caller<'_, RuntimeContext>,
-    ptr: u32,
-) -> Result<i32, Trap> {
-    let blk = Block::new();
+pub(crate) fn evm_block_hash(mut caller: Caller<'_, RuntimeContext>, ptr: u32) {
     // let buff = caller.data().input(EvmInputSpec::BlockHashA as usize);
     // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
     // block.copy_from_slice(buff.as_slice());
+}
+
+pub(crate) fn evm_rlp_block_a(mut caller: Caller<'_, RuntimeContext>, ptr: u32) {
+    let buff = caller.data().input(EvmInputSpec::RlpBlockA as usize);
+    let block_rlp = exported_memory_slice(&mut caller, ptr as usize, 8);
+    block_rlp.copy_from_slice(buff.as_slice());
 }
