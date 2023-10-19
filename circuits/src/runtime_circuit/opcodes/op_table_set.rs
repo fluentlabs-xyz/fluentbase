@@ -124,7 +124,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         self.value.assign(region, offset, F::from(value.to_bits()));
         self.size.assign(region, offset, F::from(size as u64));
         if elem.to_bits() >= size as u64 {
-            self.exit_code.assign(region, offset, F::from((ExitCode::TableOutOfBounds as i32) as u64));
+            let exit_code = ExitCode::TableOutOfBounds as i32 as u64;
+            println!("DEBUG exit_code {}", exit_code);
+            self.exit_code.assign(region, offset, F::from(exit_code));
         }
         self.lt_gadget.assign(
             region,
