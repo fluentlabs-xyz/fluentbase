@@ -412,27 +412,27 @@ pub struct LocalizedTransaction {
     pub cached_sender: Option<Address>,
 }
 
-// impl LocalizedTransaction {
-//     /// Returns transaction sender.
-//     /// Panics if `LocalizedTransaction` is constructed using invalid `UnverifiedTransaction`.
-//     pub fn sender(&mut self) -> Address {
-//         if let Some(sender) = self.cached_sender {
-//             return sender;
-//         }
-//         if self.is_unsigned() {
-//             return UNSIGNED_SENDER.clone();
-//         }
-//         let sender = public_to_address(&self.recover_public()
-// 			.expect("LocalizedTransaction is always constructed from transaction from blockchain; Blockchain
-// only stores verified transactions; qed"));         self.cached_sender = Some(sender);
-//         sender
-//     }
-// // }
+#[test]
+fn test_rlp_l1_msg() {
+    let raw_tx_rlp_bytes = hex::decode("7ef901b60b825dc0941a258d17bf244c4df02d40343a7626a9d321e10580b901848ef1332e000000000000000000000000ea08a65b1829af779261e768d609e59279b510f2000000000000000000000000f2ec6b6206f6208e8f9b394efc1a01c1cbde77750000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000b00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000a4232e87480000000000000000000000002b5ad5c4795c026514f8317c7a215e218dccd6cf0000000000000000000000002b5ad5c4795c026514f8317c7a215e218dccd6cf0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000094478cdd110520a8e733e2acf9e543d2c687ea5239")
+            .expect("decode tx's hex shall not fail");
 
-// impl Deref for LocalizedTransaction {
-//     type Target = UnverifiedTransaction;
+    let eth_tx = rlp::decode::<UnverifiedTransaction>(&raw_tx_rlp_bytes).unwrap();
+}
 
-//     fn deref(&self) -> &Self::Target {
-//         &self.signed
-//     }
-// }
+#[test]
+fn test_rlp_eip1559() {
+    // the tx is downloaded from https://etherscan.io/getRawTx?tx=0x1c5bd618bdbc575f71bfe0a54f09bca2997bbf6d90d4f371a509b05e2b3124e3
+    let raw_tx_rlp_bytes = hex::decode("02f901e901833c3139842b27f14d86012309ce540083055ca8945f65f7b609678448494de4c87521cdf6cef1e93280b8e4fa558b7100000000000000000000000095ad61b0a150d79219dcf64e1e6cc01f0b64c4ce000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000016a217dedfacdf9c23edb84b57154f26a15848e60000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000028cad80bb7cf17e27c4c8f893f7945f65f7b609678448494de4c87521cdf6cef1e932e1a0d2dc2a0881b05440a4908cf506b4871b1f7eaa46ea0c5dfdcda5f52bc17164a4f8599495ad61b0a150d79219dcf64e1e6cc01f0b64c4cef842a0ba03decd934aae936605e9d437c401439ec4cefbad5795e0965100f929fe339ca0b36e2afa1a25492257090107ad99d079032e543c8dd1ffcd44cf14a96d3015ac80a0821193127789b107351f670025dd3b862f5836e5155f627a29741a251e8d28e8a07ea1e82b1bf6f29c5d0f1e4024acdb698086ac40c353704d7d5e301fb916f2e3")
+        .expect("decode tx's hex shall not fail");
+
+    let eth_tx = rlp::decode::<UnverifiedTransaction>(&raw_tx_rlp_bytes).unwrap();
+}
+
+fn test_rlp_pre_eip155() {
+    // the tx is downloaded from https://etherscan.io/getRawTx?tx=0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060
+    let raw_tx_rlp_bytes = hex::decode("f86780862d79883d2000825208945df9b87991262f6ba471f09758cde1c0fc1de734827a69801ca088ff6cf0fefd94db46111149ae4bfc179e9b94721fffd821d38d16464b3f71d0a045e0aff800961cfce805daef7016b9b675c137a6a41a548f7b60a3484c06a33a")
+        .expect("decode tx's hex shall not fail");
+
+    let eth_tx = rlp::decode::<UnverifiedTransaction>(&raw_tx_rlp_bytes).unwrap();
+}

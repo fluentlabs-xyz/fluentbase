@@ -440,7 +440,7 @@ pub(crate) fn generate_random_header_based_on_prev_block(
 #[cfg(test)]
 mod tests {
     use super::Header;
-    use crate::eth_t::header::generate_random_header;
+    use crate::eth_types::header::generate_random_header;
     use ethereum_types::{Address, H256};
     use rlp;
 
