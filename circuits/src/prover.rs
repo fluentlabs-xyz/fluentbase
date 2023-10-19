@@ -151,9 +151,8 @@ mod tests {
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
         let rwasm_binary: Vec<u8> = bytecode.into();
-        let import_linker = Runtime::new_linker();
         let result =
-            Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, true).unwrap();
+            Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
         let circuit = FluentbaseCircuit::from_execution_result(&result);
         let degree: u32 = 17;
         let general_params = get_general_params(degree);
