@@ -82,64 +82,20 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn zktrie_open(
-    mut caller: Caller<'_, RuntimeContext>,
-    root_offset: i32,
-    root_len: i32,
-    keys_offset: i32,
-    leafs_offset: i32,
-    accounts_count: i32,
-) -> Result<(), Trap> {
+pub(crate) fn zktrie_open(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     DB.with(|db| {
-        let committed_root: Hash =
-            exported_memory_vec(&mut caller, root_offset as usize, root_len as usize)
-                .try_into()
-                .unwrap();
-        let keys_data = exported_memory_vec(
-            &mut caller,
-            keys_offset as usize,
-            accounts_count as usize * KEYSIZE,
-        );
-        let leafs_data = exported_memory_vec(
-            &mut caller,
-            leafs_offset as usize,
-            accounts_count as usize * ACCOUNTSIZE,
-        );
         let root_zero: Hash = [0; FIELDSIZE];
-        let mut zk_trie: ZkTrie = db
+        let zk_trie: ZkTrie = db
             .borrow_mut()
             .new_trie(&root_zero)
             .ok_or(Trap::new("failed to init new trie"))?;
         let trie_id;
         trie_id = LAST_TRIE_ID.take();
         if trie_id != TRIE_ID_DEFAULT {
-            return Err(Trap::new("only single trie allowed at the moment"));
-        }
-
-        // fill the trie with dump data
-        for i in 0..accounts_count {
-            let key_offset = i as usize * KEYSIZE;
-            let leaf_offset = i as usize * ACCOUNTSIZE;
-            let key_data: KeyData = keys_data[key_offset..key_offset + KEYSIZE]
-                .try_into()
-                .map_err(|_| Trap::new("key data wrong len"))?;
-            let account_data: AccountData =
-                account_data_from_bytes(&leafs_data[leaf_offset..leaf_offset + ACCOUNTSIZE])?;
-            zk_trie
-                .update_account(&key_data, &account_data)
-                .map_err(|v| Trap::new(v.to_string()))?;
-        }
-        if zk_trie.root() != committed_root {
-            println!(
-                "computed root {:?} committed root {:?}",
-                zk_trie.root(),
-                committed_root
-            );
-            return Err(Trap::new("computed root != committed root"));
+            return Err(Trap::new("only 1 trie allowed"));
         }
 
         TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(zk_trie))));
-        LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
 
         return Ok(());
     })
@@ -177,16 +133,18 @@ macro_rules! impl_update {
         pub fn $fn_name(
             mut caller: Caller<'_, RuntimeContext>,
             key_offset: i32,
+            key_len: i32,
             value_offset: i32,
+            value_len: i32,
         ) -> Result<(), Trap> {
-            let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
-            let value = exported_memory_vec(&mut caller, value_offset as usize, FIELDSIZE);
+            let key = exported_memory_vec(&mut caller, key_offset as usize, key_len as usize);
+            let value = exported_memory_vec(&mut caller, value_offset as usize, value_len as usize);
 
             let trie = zktrie_get_trie(&TRIE_ID_DEFAULT)?;
             let data = $data_extractor(&key, trie.borrow_mut());
             let mut data = data.unwrap_or(Default::default());
             let mut field_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
-            // BE or LE?
+            // be or le?
             field_array[FIELDSIZE - value.len()..FIELDSIZE].copy_from_slice(value.as_slice());
             $field_updater(&mut data, &field_array);
             let res = trie.borrow_mut().$trie_updater(&key, &data);
@@ -207,9 +165,10 @@ macro_rules! impl_get {
         pub fn $fn_name(
             mut caller: Caller<'_, RuntimeContext>,
             key_offset: i32,
+            key_len: i32,
             output_offset: i32,
-        ) -> Result<(), Trap> {
-            let key = exported_memory_vec(&mut caller, key_offset as usize, FIELDSIZE);
+        ) -> Result<i32, Trap> {
+            let key = exported_memory_vec(&mut caller, key_offset as usize, key_len as usize);
 
             let trie = zktrie_get_trie(&TRIE_ID_DEFAULT)?;
             let data = $data_extractor(&key, trie.borrow_mut());
@@ -220,7 +179,7 @@ macro_rules! impl_get {
             let data = $data_fetcher(&data.unwrap());
             caller.write_memory(output_offset as usize, data.as_slice());
 
-            Ok(())
+            Ok(data.len() as i32)
         }
     };
 }

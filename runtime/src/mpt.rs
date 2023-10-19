@@ -16,33 +16,33 @@ thread_local! {
 
 pub(crate) fn mpt_open(
     mut caller: Caller<'_, RuntimeContext>,
-    rlp_offset: i32,
-    rlp_len: i32,
-) -> Result<i32, Trap> {
+    // rlp_offset: i32,
+    // rlp_len: i32,
+) -> Result<(), Trap> {
     let trie_id;
     trie_id = LAST_TRIE_ID.take();
     if trie_id != TRIE_ID_DEFAULT {
         return Err(Trap::new("only one trie allowed at the moment"));
     }
 
-    let mut trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+    let trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-    let rlp_data = exported_memory_vec(&mut caller, rlp_offset as usize, rlp_len as usize);
-    let keys_values = rlp::decode::<KeysValues>(&rlp_data).unwrap();
-    for kv in &keys_values.0 {
-        trie.insert(kv.key.as_slice(), kv.value.as_slice())
-            .map_err(|e| {
-                Trap::new(format!(
-                    "failed to insert kv into the trie: {}",
-                    e.to_string()
-                ))
-            })?;
-    }
+    // let rlp_data = exported_memory_vec(&mut caller, rlp_offset as usize, rlp_len as usize);
+    // let keys_values = rlp::decode::<KeysValues>(&rlp_data).unwrap();
+    // for kv in &keys_values.0 {
+    //     trie.insert(kv.key.as_slice(), kv.value.as_slice())
+    //         .map_err(|e| {
+    //             Trap::new(format!(
+    //                 "failed to insert kv into the trie: {}",
+    //                 e.to_string()
+    //             ))
+    //         })?;
+    // }
 
     TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(trie))));
-    LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
+    // LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
 
-    Ok(keys_values.0.len() as i32)
+    Ok(())
 }
 
 pub(crate) fn mpt_get_trie(id: &TrieId) -> Result<Rc<RefCell<EthTrie<MemoryDB>>>, Trap> {
@@ -58,20 +58,23 @@ pub(crate) fn mpt_get_trie(id: &TrieId) -> Result<Rc<RefCell<EthTrie<MemoryDB>>>
 
 pub(crate) fn mpt_update(
     mut caller: Caller<'_, RuntimeContext>,
-    rlp_offset: i32,
-    rlp_len: i32,
+    key_offset: i32,
+    key_len: i32,
+    value_offset: i32,
+    value_len: i32,
 ) -> Result<(), Trap> {
     let trie_id;
     trie_id = LAST_TRIE_ID.take();
     if trie_id != TRIE_ID_DEFAULT {
-        return Err(Trap::new("only one trie allowed at the moment"));
+        return Err(Trap::new("only 1 trie allowed"));
     }
 
     let mut trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-    let rlp_data = exported_memory_vec(&mut caller, rlp_offset as usize, rlp_len as usize);
-    let kv = rlp::decode::<KeyValue>(&rlp_data).unwrap();
-    trie.insert(kv.key.as_slice(), kv.value.as_slice())
+    let key_data = exported_memory_vec(&mut caller, key_offset as usize, key_len as usize);
+    let value_data = exported_memory_vec(&mut caller, value_offset as usize, value_len as usize);
+    // let kv = rlp::decode::<KeyValue>(&rlp_data).unwrap();
+    trie.insert(key_data.as_slice(), value_data.as_slice())
         .map_err(|e| {
             Trap::new(format!(
                 "failed to insert kv into the trie: {}",
@@ -80,7 +83,7 @@ pub(crate) fn mpt_update(
         })?;
 
     TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(trie))));
-    LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
+    // LAST_TRIE_ID.with_borrow_mut(|v| *v += 1);
 
     Ok(())
 }
@@ -119,7 +122,7 @@ pub(crate) fn mpt_get_root(
     let trie_id;
     trie_id = LAST_TRIE_ID.take();
     if trie_id != TRIE_ID_DEFAULT {
-        return Err(Trap::new("only one trie allowed at the moment"));
+        return Err(Trap::new("only 1 trie allowed"));
     }
 
     let trie = mpt_get_trie(&trie_id)?;
@@ -127,7 +130,7 @@ pub(crate) fn mpt_get_root(
     let res = trie
         .borrow_mut()
         .root_hash()
-        .map_err(|e| Trap::new(format!("failed to get root hash: {}", e.to_string())))?;
+        .map_err(|e| Trap::new(format!("failed to get root: {}", e.to_string())))?;
 
     caller.write_memory(output_offset as usize, res.as_bytes());
 

@@ -90,7 +90,7 @@ impl RuntimeContext {
 
     pub fn input(&self, argc: usize) -> &Vec<u8> {
         // TODO: "add overflow check here"
-        &self.input[argc].as_ref().unwrap()
+        self.input.get(argc).as_ref().unwrap()
     }
 
     pub fn input_count(&self) -> u32 {
@@ -98,18 +98,14 @@ impl RuntimeContext {
     }
 
     pub fn input_size(&self) -> u32 {
-        self.input.iter().map(|v| v.len()).sum() as u32
+        self.input.iter().map(|v| v.len() as u32).sum::<u32>()
     }
 
     pub fn argv_buffer(&self) -> Vec<u8> {
-        self.input
-            .iter()
-            .reduce(|mut a, b| {
-                a.extend(b);
-                a
-            })
-            .unwrap_or_default()
-            .clone()
+        self.input.iter().fold(Vec::new(), |mut a, b| {
+            a.extend(b);
+            a
+        })
     }
 
     pub fn output(&self) -> &Vec<u8> {
@@ -268,148 +264,128 @@ impl Runtime {
         ));
 
         // zktrie
-        // zktrie_open
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_open".to_string(),
             SysFuncIdx::ZKTRIE_OPEN as u16,
-            &[ValueType::I32; 5],
-            &[],
+            &[ValueType::I32; 0],
+            &[ValueType::I32; 0],
         ));
         // account updates
-        // zktrie_update_nonce
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_nonce".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_NONCE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
-        // zktrie_update_balance
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_balance".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_BALANCE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
-        // zktrie_update_storage_root
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORAGE_ROOT as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
-        // zktrie_update_code_hash
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_HASH as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
-        // zktrie_update_code_size
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_code_size".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_SIZE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
         // account gets
-        // zktrie_get_nonce
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_nonce".to_string(),
             SysFuncIdx::ZKTRIE_GET_NONCE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
-        // zktrie_get_balance
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_balance".to_string(),
             SysFuncIdx::ZKTRIE_GET_BALANCE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
-        // zktrie_get_storage_root
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORAGE_ROOT as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
-        // zktrie_get_code_hash
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_HASH as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
-        // zktrie_get_code_size
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_code_size".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_SIZE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
         // store updates
-        // zktrie_update_store
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_update_store".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
         // store gets
-        // zktrie_get_store
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "zktrie_get_store".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
         ));
 
-        // forward_call!(res, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) ->
-        // i32);
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "mpt_open".to_string(),
             SysFuncIdx::MPT_OPEN as u16,
-            &[ValueType::I32; 2],
-            &[ValueType::I32; 1],
+            &[ValueType::I32; 0],
+            &[ValueType::I32; 0],
         ));
-        // forward_call!(res, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) ->
-        // ());
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "mpt_update".to_string(),
             SysFuncIdx::MPT_UPDATE as u16,
-            &[ValueType::I32; 2],
-            &[],
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 0],
         ));
-        // forward_call!(res, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32,
-        // output_offset: i32) -> i32);
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "mpt_get".to_string(),
             SysFuncIdx::MPT_GET as u16,
-            &[ValueType::I32; 2],
+            &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
-        // forward_call!(res, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "mpt_get_root".to_string(),
             SysFuncIdx::MPT_GET_ROOT as u16,
-            &[ValueType::I32; 2],
+            &[ValueType::I32; 1],
             &[ValueType::I32; 1],
         ));
 
@@ -530,22 +506,22 @@ impl Runtime {
         forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
         // zktrie
-        forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open() -> ());
+        forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "zktrie_update_balance", fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "zktrie_update_code_size", fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         // mpt
-        forward_call!(linker, store, "env", "mpt_open", fn mpt_open(key_offset: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "mpt_update", fn mpt_update(rlp_offset: i32, rlp_len: i32) -> ());
+        forward_call!(linker, store, "env", "mpt_open", fn mpt_open() -> ());
+        forward_call!(linker, store, "env", "mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
     }
