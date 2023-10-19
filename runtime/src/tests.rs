@@ -62,23 +62,7 @@ fn zktrie_open_test() {
     let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let mut input_data = vec![];
-
-    let root_updated: Vec<u8> = vec![
-        1, 158, 59, 182, 29, 224, 81, 156, 63, 5, 24, 82, 92, 243, 23, 118, 114, 252, 249, 133, 70,
-        229, 137, 214, 108, 4, 219, 78, 152, 25, 152, 109,
-    ];
-    input_data.extend(root_updated);
-
-    let key = "key".as_bytes();
-    let mut key_bytes = [0u8; 20];
-    let l = key_bytes.len();
-    key_bytes[l - key.len()..].copy_from_slice(key);
-    input_data.extend(key_bytes.as_slice());
-
-    let mut account_data = [0u8; 32 * 5];
-    account_data[0] = 1;
-    input_data.extend(account_data.as_slice());
+    let input_data = vec![];
 
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
     assert_eq!(output.data().output().clone(), vec![]);
@@ -89,9 +73,9 @@ fn mpt_open_test() {
     let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let rlp_data = [203, 202, 131, 107, 101, 121, 133, 118, 97, 108, 117, 101];
+    let input_data = [];
 
-    let output = Runtime::run(rwasm_binary.as_slice(), &rlp_data).unwrap();
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
     assert_eq!(output.data().output().clone(), vec![]);
 }
 
