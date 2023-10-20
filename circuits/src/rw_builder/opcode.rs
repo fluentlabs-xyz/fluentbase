@@ -176,15 +176,18 @@ pub fn build_table_elem_read_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
+    let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
-    let value = step.next_nth_stack_value(0)?;
-    step.rw_rows.push(RwRow::Table {
-        rw_counter: step.next_rw_counter(),
-        is_write: false,
-        call_id: step.call_id,
-        address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
-        value: value.as_u32() as u64,
-    });
+    if elem_index < table_size.into() {
+        let value = step.next_nth_stack_value(0)?;
+        step.rw_rows.push(RwRow::Table {
+            rw_counter: step.next_rw_counter(),
+            is_write: false,
+            call_id: step.call_id,
+            address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
+            value: value.as_u32() as u64,
+        });
+    }
     Ok(())
 }
 
