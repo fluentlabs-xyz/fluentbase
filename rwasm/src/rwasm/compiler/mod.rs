@@ -109,12 +109,16 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
+    pub fn translate_with_state(&mut self, main_index: Option<FuncOrExport>, with_state: bool) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
         // first we must translate all sections, this is an entrypoint
-        self.translate_sections(main_index.unwrap_or_default())?;
+        if with_state {
+            self.translate_sections_with_state(main_index.unwrap_or_default())?;
+        } else {
+            self.translate_sections(main_index.unwrap_or_default())?;
+        }
 
         self.translate_imports_funcs()?;
         // translate rest functions
@@ -125,6 +129,12 @@ impl<'linker> Compiler<'linker> {
         // there is no need to inject because code is already validated
         self.code_section.finalize(false);
         self.is_translated = true;
+        Ok(())
+    }
+
+    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
+        self.translate_with_state(main_index, false)?;
+
         Ok(())
     }
 
@@ -159,9 +169,18 @@ impl<'linker> Compiler<'linker> {
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
-                    router_opcodes.op_br_if_nez(2);
+                    router_opcodes.op_br_if_eqz(2);
                     router_opcodes.op_call_internal(func_index);
                 }
+
+                const INIT_PRELUDE_VALUE: i32 = 1000;
+
+                router_opcodes.push(check_instr);
+                router_opcodes.op_i32_const(INIT_PRELUDE_VALUE);
+                // if states are not equal then skip this call
+                router_opcodes.op_i32_eq();
+                router_opcodes.op_br_if_nez(4);
+                router_opcodes.op_br_indirect(0);
             }
             FuncOrExport::Func(index) => {
                 router_opcodes.op_call_internal(index - num_imports);
@@ -232,6 +251,44 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
+    fn translate_sections_with_state(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
+        // lets reserve 0 index and offset for sections init
+        assert_eq!(self.code_section.len(), 0, "code section must be empty");
+        self.function_beginning.insert(0, 0);
+        let router_opcodes = self.translate_router(main_index)?;
+
+        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
+        self.code_section.op_i32_const(return_offset);
+        self.code_section.extend(router_opcodes);
+        self.code_section.op_return();
+        self.code_section.op_unreachable();
+
+        // translate global section (replaces with set/get global opcodes)
+        let total_globals = self.module.globals.len();
+        for i in 0..total_globals {
+            self.translate_global(i as u32)?;
+        }
+        // translate table section (replace with grow/set table opcodes)
+        let total_tables = self.module.tables.len();
+        for i in 0..total_tables {
+            self.translate_table(i as u32)?;
+        }
+        // translate memory section (replace with grow/load memory opcodes)
+        self.translate_memory()?;
+        // translate router into separate instruction set
+        // inject main function call with return
+        self.code_section.op_br_indirect(0);
+
+        // remember that this is injected and shifts br/br_if offset
+        self.injection_segments.push(Injection {
+            begin: 0,
+            end: self.code_section.len() as i32,
+            origin_len: 0,
+        });
+
+        Ok(())
+    }
+
     fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
         match memory.kind() {
             DataSegmentKind::Active(seg) => {
@@ -288,11 +345,7 @@ impl<'linker> Compiler<'linker> {
     fn translate_table(&mut self, table_index: u32) -> Result<(), CompilerError> {
         assert!(table_index < self.module.tables.len() as u32);
         let table = &self.module.tables[table_index as usize];
-        if table.element() != ValueType::FuncRef {
-            return Err(CompilerError::NotSupported(
-                "only funcref type is supported for tables",
-            ));
-        }
+
         // don't use ref_func here due to the entrypoint section
         self.code_section.op_i32_const(0);
         self.code_section.op_i64_const(table.minimum() as usize);
