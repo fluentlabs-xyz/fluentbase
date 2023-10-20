@@ -9,7 +9,6 @@ use crate::poseidon_impl::poseidon::primitives::{
 };
 pub use chip_short::*;
 use halo2curves::bn256::Fr;
-// use halo2_proofs::halo2curves::bn256::Fr;
 use std::fmt::Debug as DebugT;
 
 mod chip_short {

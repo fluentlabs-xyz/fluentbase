@@ -1,4 +1,3 @@
-// use halo2_proofs::arithmetic::FieldExt;
 use super::{p128pow5t3::P128Pow5T3Constants, Mds, Spec};
 use halo2curves::FieldExt;
 use std::marker::PhantomData;
