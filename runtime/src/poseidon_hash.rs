@@ -55,7 +55,7 @@ mod poseidon_tests {
     }
 
     #[test]
-    fn domain_fn() {
+    fn with_domain() {
         let mut a = [0u8; 32];
         let mut b = [0u8; 32];
         let mut domain = [0u8; 32];
@@ -68,22 +68,14 @@ mod poseidon_tests {
         let fb = Fr::from_bytes(&b.try_into().unwrap()).unwrap();
         let fdomain = Fr::from_bytes(&domain.try_into().unwrap()).unwrap();
 
-        let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
-        hasher.update(&[fa, fb]);
-        let h1 = hasher.squeeze();
-        let repr_h1 = h1.to_repr();
-
         let hasher = Fr::hasher();
         let h2 = hasher.hash([fa, fb], fdomain);
         let repr_h2 = h2.to_repr();
 
-        // repr_h2 = [160, 7, 117, 178, 129, 18, 242, 68, 19, 50, 96, 164, 159, 63, 81, 176, 201,
-        // 231, 26, 133, 56, 207, 136, 8, 238, 33, 51, 5, 40, 31, 116, 6]
         let expected_repr = [
             160, 7, 117, 178, 129, 18, 242, 68, 19, 50, 96, 164, 159, 63, 81, 176, 201, 231, 26,
             133, 56, 207, 136, 8, 238, 33, 51, 5, 40, 31, 116, 6,
         ];
         assert_eq!(expected_repr, repr_h2);
-        // assert_eq!(repr_h1, repr_h2);
     }
 }
