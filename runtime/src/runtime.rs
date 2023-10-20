@@ -4,20 +4,7 @@ use crate::{
     ExitCode,
     SysFuncIdx,
 };
-use fluentbase_rwasm::{
-    common::{Trap, ValueType},
-    engine::Tracer,
-    rwasm::{ImportFunc, ImportLinker, ReducedModule},
-    AsContextMut,
-    Caller,
-    Config,
-    Engine,
-    FuelConsumptionMode,
-    Func,
-    Linker,
-    Module,
-    Store,
-};
+use fluentbase_rwasm::{common::{Trap, ValueType}, engine::Tracer, rwasm::{ImportFunc, ImportLinker, ReducedModule}, AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, Linker, Module, Store, Instance, InstancePre};
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
@@ -87,10 +74,75 @@ pub struct Runtime {
     engine: Engine,
     module: Module,
     linker: Linker<RuntimeContext>,
-    store: Store<RuntimeContext>,
+    pub(crate) store: Store<RuntimeContext>,
 }
 
 impl Runtime {
+
+    pub fn new_with_context(
+        rwasm_binary: &[u8],
+        runtime_context: RuntimeContext,
+        import_linker: &ImportLinker,
+    ) -> Result<Self, Error> {
+        let mut config = Config::default();
+        let fuel_enabled = true;
+        if fuel_enabled {
+            config.fuel_consumption_mode(FuelConsumptionMode::Eager);
+            config.consume_fuel(true);
+        }
+        let engine = Engine::new(&config);
+
+        let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
+        let module = reduced_module.to_module(&engine, import_linker);
+        let linker = Linker::<RuntimeContext>::new(&engine);
+        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+
+        if fuel_enabled {
+            store.add_fuel(100_000).unwrap();
+        }
+
+        #[allow(unused_mut)]
+        let mut res = Self {
+            engine,
+            module,
+            linker,
+            store,
+        };
+
+        forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
+        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
+        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
+        forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
+
+        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
+        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
+        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
+
+        forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+
+        forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
+        forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+
+        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
+        forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
+
+        Ok(res)
+    }
+
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
         // Fluentbase sys calls
@@ -327,62 +379,7 @@ impl Runtime {
         import_linker: &ImportLinker,
         catch_trap: bool,
     ) -> Result<ExecutionResult, Error> {
-        let mut config = Config::default();
-        let fuel_enabled = true;
-        if fuel_enabled {
-            config.fuel_consumption_mode(FuelConsumptionMode::Eager);
-            config.consume_fuel(true);
-        }
-        let engine = Engine::new(&config);
-
-        let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
-        let module = reduced_module.to_module(&engine, import_linker);
-        let linker = Linker::<RuntimeContext>::new(&engine);
-        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
-
-        if fuel_enabled {
-            store.add_fuel(100_000).unwrap();
-        }
-
-        #[allow(unused_mut)]
-        let mut res = Self {
-            engine,
-            module,
-            linker,
-            store,
-        };
-
-        forward_call!(res, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
-        forward_call!(res, "env", "_sys_state", fn sys_state() -> u32);
-        forward_call!(res, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
-        forward_call!(res, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
-
-        forward_call!(res, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
-        forward_call!(res, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "environ_sizes_get", fn wasi_environ_sizes_get(rp0_ptr: i32, rp1_ptr: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "environ_get", fn wasi_environ_get(environ: i32, environ_buffer: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argv_len: i32, argv_buffer_len: i32) -> i32);
-        forward_call!(res, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv: i32, argv_buffer: i32) -> i32);
-
-        forward_call!(res, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
-
-        forward_call!(res, "env", "_evm_stop", fn evm_stop() -> ());
-        forward_call!(res, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
-
-        forward_call!(res, "env", "zktrie_open", fn zktrie_open(root_offset: i32, root_len: i32, keys_offset: i32, leafs_offset: i32, accounts_count: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_nonce", fn zktrie_update_nonce(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_balance", fn zktrie_update_balance(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_code_size", fn zktrie_update_code_size(offset: i32, length: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, output_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, value_offset: i32) -> ());
-        forward_call!(res, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, output_offset: i32) -> ());
-
+        let mut res = Runtime::new_with_context(   rwasm_binary,runtime_context, import_linker)?;
         let result = res
             .linker
             .instantiate(&mut res.store, &res.module)
@@ -392,6 +389,7 @@ impl Runtime {
         // we need to fix logs, because we lost information about instr meta during conversion
         let tracer = res.store.tracer_mut();
         let call_id = tracer.logs.first().map(|v| v.call_id).unwrap_or_default();
+        let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
         for log in tracer.logs.iter_mut() {
             if log.call_id != call_id {
                 continue;
@@ -426,4 +424,16 @@ impl Runtime {
 
         Ok(execution_result)
     }
+
+    pub fn set_state(&mut self, state: u32) {
+        self.store.data_mut().state = state;
+    }
+
+    pub fn init_pre_instance(&mut self) -> Result<InstancePre, Error> {
+        Ok(self
+            .linker
+            .instantiate(&mut self.store, &self.module)
+            .map_err(Into::<Error>::into)?)
+    }
+
 }

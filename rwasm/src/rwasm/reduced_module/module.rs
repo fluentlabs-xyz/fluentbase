@@ -105,8 +105,9 @@ impl ReducedModule {
                 Instruction::RefFunc(func) => func.to_u32(),
                 _ => continue,
             };
-            let relative_pos = self.relative_position.get(&func_offset).unwrap();
-            instr.update_call_index(*relative_pos);
+            if let Some(relative_pos) = self.relative_position.get(&func_offset) {
+                instr.update_call_index(*relative_pos);
+            }
         }
 
         // push main functions (we collapse all functions into one)

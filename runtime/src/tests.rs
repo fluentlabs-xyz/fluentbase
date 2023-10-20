@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
+use crate::{runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE, runtime};
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::Instruction,
@@ -135,7 +135,7 @@ fn test_import_section() {
     let import_linker = Runtime::new_linker();
     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
     let result =
-        Runtime::run_with_linker(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
+        Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, false).unwrap();
     println!("Output: {:?}", result.data().output().clone());
 }
 
@@ -144,21 +144,28 @@ fn test_state() {
     let wasm_binary = wat::parse_str(
         r#"
 (module
+  (memory 1)
+  (data (i32.const 0) "\01\00\00\00\00\00\00\00")
+
   (func $main
-    global.get 0
-    global.get 1
-    call $add
-    global.get 2
-    call $add
+    i32.const 0
+    i32.load
     drop
-    )
-  (func $deploy
     )
   (func $add (param $lhs i32) (param $rhs i32) (result i32)
     local.get $lhs
     local.get $rhs
     i32.add
     )
+  (func $deploy
+    i32.const 1
+    memory.grow
+    drop
+    i32.const 0
+    i32.const 1000
+    i32.store
+    )
+
   (global (;0;) i32 (i32.const 100))
   (global (;1;) i32 (i32.const 20))
   (global (;2;) i32 (i32.const 3))
@@ -171,17 +178,36 @@ fn test_state() {
     let mut compiler =
         Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
+        .translate_with_state(Some(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
             Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-        )))
+        )), true)
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
-    Runtime::run_with_context(
+
+    let mut runtime = Runtime::new_with_context(
         rwasm_bytecode.as_slice(),
-        RuntimeContext::new(&[], 0),
+        RuntimeContext::new(&[], 1000),
         &import_linker,
-        false,
     )
-    .unwrap();
+        .unwrap();
+
+    let pre = runtime.init_pre_instance().unwrap();
+
+    let start_func =pre.get_start_func(&mut runtime.store).unwrap();
+
+    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+
+    runtime.set_state(0);
+
+    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+
+    runtime.set_state(1);
+
+    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+
+    runtime.set_state(0);
+
+    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+
 }

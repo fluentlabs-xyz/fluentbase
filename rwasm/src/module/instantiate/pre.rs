@@ -1,5 +1,5 @@
 use super::InstantiationError;
-use crate::{module::FuncIdx, AsContextMut, Error, Instance, InstanceEntityBuilder};
+use crate::{module::FuncIdx, AsContextMut, Error, Instance, InstanceEntityBuilder, Value, Func};
 
 /// A partially instantiated [`Instance`] where the `start` function has not yet been executed.
 ///
@@ -23,7 +23,7 @@ impl InstancePre {
     /// Returns the index of the `start` function if any.
     ///
     /// Returns `None` if the Wasm module does not have a `start` function.
-    fn start_fn(&self) -> Option<u32> {
+    pub fn start_fn(&self) -> Option<u32> {
         self.builder.get_start().map(FuncIdx::into_u32)
     }
 
@@ -57,6 +57,24 @@ impl InstancePre {
             start_func.call(context.as_context_mut(), &[], &mut [])?
         }
         Ok(self.handle)
+    }
+
+    pub fn get_start_func(self, mut context: impl AsContextMut) -> Option<Func> {
+        let opt_start_index = self.start_fn();
+        context
+            .as_context_mut()
+            .store
+            .inner
+            .initialize_instance(self.handle, self.builder.finish());
+        if let Some(start_index) = opt_start_index {
+            return Some(self
+                .handle
+                .get_func_by_index(&mut context, start_index)
+                .unwrap_or_else(|| {
+                    panic!("encountered invalid start function after validation: {start_index}")
+                }));
+        }
+        None
     }
 
     /// Finishes instantiation ensuring that no `start` function exists.
