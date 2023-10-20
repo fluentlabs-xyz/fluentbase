@@ -107,23 +107,30 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
     ) -> Result<(), GadgetError> {
         let table_index = trace.instr().aux_value().unwrap_or_default().as_u32();
         let elem_index = trace.curr_nth_stack_value(0)?;
-        let value = trace.next_nth_stack_value(0)?;
         let size = trace.read_table_size(table_index);
+
+        if elem_index.to_bits() < size as u64 {
+            let value = trace.next_nth_stack_value(0)?;
+            self.value.assign(region, offset, F::from(value.to_bits()));
+        }
+
         self.elem_index
             .assign(region, offset, F::from(elem_index.to_bits()));
-        self.value.assign(region, offset, F::from(value.to_bits()));
         self.size.assign(region, offset, F::from(size as u64));
+
         if elem_index.to_bits() >= size as u64 {
             let exit_code = ExitCode::TableOutOfBounds as i32 as u64;
             println!("DEBUG exit_code {}", exit_code);
             self.exit_code.assign(region, offset, F::from(exit_code));
         }
+
         self.lt_gadget.assign(
             region,
             offset,
             F::from((size as i64 - elem_index.to_bits() as i64 - 1 + RANGE_THRESHOLD as i64) as u64),
             F::from(RANGE_THRESHOLD as u64),
         );
+
         Ok(())
     }
 }
