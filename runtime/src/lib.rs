@@ -1,4 +1,5 @@
 #![feature(local_key_cell_methods)]
+#![feature(slice_group_by)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;
@@ -20,6 +21,7 @@ mod mpt;
 mod mpt_helpers;
 mod platform;
 mod poseidon_hash;
+mod poseidon_impl;
 mod runtime;
 #[cfg(test)]
 mod tests;

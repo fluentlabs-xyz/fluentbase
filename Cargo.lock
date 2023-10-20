@@ -1527,12 +1527,13 @@ version = "0.1.0"
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
+ "bitvec 1.0.1",
  "eth_trie",
  "fluentbase-rwasm",
  "halo2curves",
  "keccak-hash",
  "lazy_static",
- "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
+ "poseidon 0.2.0",
  "rlp",
  "strum 0.25.0",
  "strum_macros 0.25.2",
@@ -2565,7 +2566,6 @@ dependencies = [
 [[package]]
 name = "poseidon"
 version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
 dependencies = [
  "group 0.12.1",
  "halo2curves",
@@ -2575,7 +2575,7 @@ dependencies = [
 [[package]]
 name = "poseidon"
 version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon#0b9965fbcd9e03559088b8f68489592286bc55e0"
+source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
 dependencies = [
  "group 0.12.1",
  "halo2curves",
