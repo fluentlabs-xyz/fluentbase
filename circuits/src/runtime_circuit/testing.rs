@@ -19,7 +19,7 @@ pub(crate) fn test_ok_with_input(mut bytecode: InstructionSet, input: Vec<u8>) {
         exit_code_from_data
     };
     println!("OPTERR {:#?}, EXIT_CODE_FROM_DATA {}, EXIT_CODE {}", opt_err, exit_code_from_data, exit_code);
-    let circuit = FluentbaseCircuit::from_execution_result(&execution_result);
+    let circuit = FluentbaseCircuit::from_execution_result_with_exit_code(&execution_result, exit_code);
     let k = 14;
     let instance = vec![Fr::from(exit_code as u64), Fr::from(0), Fr::from(0)];
     let prover = MockProver::<Fr>::run(k, &circuit, vec![instance]).unwrap();
