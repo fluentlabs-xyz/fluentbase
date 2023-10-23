@@ -1,26 +1,11 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
-use fluentbase_rwasm::{
-    common::{ValueType, F32, F64},
-    rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule},
-    Config,
-    Engine,
-    Extern,
-    Func,
-    Global,
-    Instance,
-    Linker,
-    Memory,
-    MemoryType,
-    Module,
-    Mutability,
-    Store,
-    Table,
-    TableType,
-    Value,
-};
+use fluentbase_rwasm::{common::{ValueType, F32, F64}, rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule}, Config, Engine, Extern, Func, Global, Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType, Value, Caller};
 use std::collections::HashMap;
-use wast::token::{Id, Span};
+use wast::token::{Id, NameAnnotation, Span};
+use fluentbase_rwasm::common::Trap;
+use fluentbase_rwasm::engine::bytecode::Instruction;
+use fluentbase_rwasm::rwasm::ImportFunc;
 
 /// The context of a single Wasm test spec suite run.
 #[derive(Debug)]
@@ -49,6 +34,7 @@ pub struct TestContext<'a> {
     binaries: HashMap<String, Vec<u8>>,
 }
 
+const DEFAULT_MODULE_NAME: &'static str = "main_module";
 impl<'a> TestContext<'a> {
     /// Creates a new [`TestContext`] with the given [`TestDescriptor`].
     pub fn new(descriptor: &'a TestDescriptor, config: Config) -> Self {
@@ -87,6 +73,13 @@ impl<'a> TestContext<'a> {
         let print_f64_f64 = Func::wrap(&mut store, |v0: F64, v1: F64| {
             println!("print: {v0:?} {v1:?}");
         });
+
+        let sys_state = Func::wrap(
+            &mut store,
+            |caller: Caller<'_, DefaultImportHandler>,| -> Result<u32, Trap> {
+                Ok(caller.data().state())
+        });
+
         linker.define("spectest", "memory", default_memory).unwrap();
         linker.define("spectest", "table", default_table).unwrap();
         linker.define("spectest", "global_i32", global_i32).unwrap();
@@ -104,6 +97,11 @@ impl<'a> TestContext<'a> {
         linker
             .define("spectest", "print_f64_f64", print_f64_f64)
             .unwrap();
+
+        linker
+            .define("env", "_sys_state", sys_state)
+            .unwrap();
+
         TestContext {
             engine,
             linker,
@@ -176,6 +174,56 @@ impl TestContext<'_> {
                 .insert(elem.name().to_string(), wasm_binary.clone());
             self.instances.insert(elem.name().to_string(), instance);
         }
+        Ok(())
+    }
+
+    pub fn compile_and_instantiate_with_router(
+        &mut self,
+        mut module: wast::core::Module,
+    ) -> Result<(), TestError> {
+        let wasm_binary = module.encode().unwrap_or_else(|error| {
+            panic!(
+                "encountered unexpected failure to encode `.wast` module into `.wasm`:{}: {}",
+                self.test_path(),
+                error
+            )
+        });
+        let mut config = Config::default();
+        let name = module.name.map(|name| name.name).unwrap_or(DEFAULT_MODULE_NAME);
+        config.consume_fuel(false);
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm_binary.as_slice())?;
+        let exports = module.exports().map(|export| FuncOrExport::Export(export.name().to_string())).collect::<Vec<_>>();
+        let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
+        let mut import_linker = ImportLinker::default();
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_sys_state".to_string(),
+            SYS_STATE as u16,
+            &[],
+            &[ValueType::I32; 1],
+        ));
+        const SYS_STATE: u32 = 0xA002;
+        compiler.translate(
+            Some(FuncOrExport::StateRouter(
+                exports,
+                Instruction::Call((SYS_STATE).into() )
+            ))
+        ).unwrap();
+
+        let rwasm_binary = compiler.finalize().unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let module =
+            reduced_module.to_module(&engine, &import_linker);
+
+        let instance = self
+            .linker
+            .instantiate(&mut self.store, &module)?
+            .start(&mut self.store)?;
+
+        self.instances.insert(name.to_string(), instance);
+
         Ok(())
     }
 
@@ -313,6 +361,26 @@ impl TestContext<'_> {
         }
         let wasm_binary = self.binaries.get(&func_name.to_string()).unwrap().clone();
         let instance = self.compile_and_instantiate_method(&wasm_binary, func_name)?;
+        let func = instance
+            .get_export(&self.store, "main")
+            .and_then(Extern::into_func)
+            .unwrap();
+        println!("testing {} with args {:?}", func_name, args);
+        let len_results = func.ty(&self.store).results().len();
+        self.results.clear();
+        self.results.resize(len_results, Value::I32(0));
+        func.call(&mut self.store, args, &mut self.results)?;
+        Ok(&self.results)
+    }
+
+    pub fn invoke_with_state(
+        &mut self,
+        module_name: Option<&str>,
+        func_name: &str,
+        args: &[Value],
+    ) -> Result<&[Value], TestError> {
+        let instance = self.instances.get(module_name.unwrap_or(DEFAULT_MODULE_NAME)).unwrap();
+
         let func = instance
             .get_export(&self.store, "main")
             .and_then(Extern::into_func)

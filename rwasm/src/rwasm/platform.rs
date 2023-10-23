@@ -15,6 +15,7 @@ pub struct DefaultImportHandler {
     input: Vec<u8>,
     exit_code: u32,
     output: Vec<u8>,
+    state: u32,
 }
 
 impl ImportHandler for DefaultImportHandler {
@@ -43,6 +44,8 @@ impl DefaultImportHandler {
     pub fn output(&self) -> &Vec<u8> {
         &self.output
     }
+
+    pub fn state(&self) -> u32 { self.state }
 }
 
 #[derive(Debug, Clone)]

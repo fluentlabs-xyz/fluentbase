@@ -47,7 +47,7 @@ pub fn run_wasm_spec_test(name: &str, config: Config) {
         ),
     };
 
-    execute_directives(wast, &mut context).unwrap_or_else(|error| {
+    execute_directives_with_state(wast, &mut context).unwrap_or_else(|error| {
         panic!(
             "{}: failed to execute `.wast` directive: {}",
             test.path(),
@@ -56,6 +56,47 @@ pub fn run_wasm_spec_test(name: &str, config: Config) {
     });
 
     println!("profiles: {:#?}", context.profile());
+}
+
+fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> Result<()> {
+    for directive in wast.directives {
+        let span = directive.span();
+        test_context.profile().bump_directives();
+        match directive {
+            WastDirective::Wat(QuoteWat::Wat(Wat::Module(module))) => {
+                println!("Wat: {:?}", module.name);
+                match test_context.compile_and_instantiate_with_router(module) {
+                    Ok(instance) => instance,
+                    Err(error) => panic!(
+                        "{}: failed to instantiate module but should have suceeded: {}",
+                        test_context.spanned(span),
+                        error
+                    ),
+                }
+                test_context.profile().bump_module();
+            }
+            WastDirective::AssertReturn {
+                span,
+                exec,
+                results: expected,
+            } => {
+                println!("AsserReturn: {:?}", exec);
+                test_context.profile().bump_assert_return();
+                let results =
+                    execute_wast_execute_with_state(test_context, span, exec).unwrap_or_else(|error| {
+                        panic!(
+                            "{}: encountered unexpected failure to execute `AssertReturn`: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    });
+                assert_results(test_context, span, &results, &expected);
+            }
+            _ => ()
+        }
+    }
+
+    Ok(())
 }
 
 fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> {
@@ -115,7 +156,7 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
             WastDirective::Invoke(wast_invoke) => {
                 let span = wast_invoke.span;
                 test_context.profile().bump_invoke();
-                execute_wast_invoke(test_context, span, wast_invoke).unwrap_or_else(|error| {
+                execute_wast_invoke(test_context, span, wast_invoke, false).unwrap_or_else(|error| {
                     panic!(
                         "{}: failed to invoke `.wast` directive: {}",
                         test_context.spanned(span),
@@ -161,7 +202,7 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
                 message,
             } => {
                 test_context.profile().bump_assert_exhaustion();
-                match execute_wast_invoke(test_context, span, call) {
+                match execute_wast_invoke(test_context, span, call, false) {
                     Ok(results) => {
                         panic!(
                             "{}: expected to fail due to resource exhaustion '{}' but succeeded with: {:?}",
@@ -342,7 +383,29 @@ fn execute_wast_execute(
 ) -> Result<Vec<Value>, TestError> {
     match execute {
         WastExecute::Invoke(invoke) => {
-            execute_wast_invoke(context, span, invoke).map_err(Into::into)
+            execute_wast_invoke(context, span, invoke, false).map_err(Into::into)
+        }
+        WastExecute::Wat(Wat::Module(module)) => {
+            context.compile_and_instantiate(module).map(|_| Vec::new())
+        }
+        WastExecute::Wat(Wat::Component(_)) => {
+            // Wasmi currently does not support the Wasm component model.
+            Ok(vec![])
+        }
+        WastExecute::Get { module, global } => context
+            .get_global(module, global)
+            .map(|result| vec![result]),
+    }
+}
+
+fn execute_wast_execute_with_state(
+    context: &mut TestContext,
+    span: Span,
+    execute: WastExecute,
+) -> Result<Vec<Value>, TestError> {
+    match execute {
+        WastExecute::Invoke(invoke) => {
+            execute_wast_invoke(context, span, invoke, true).map_err(Into::into)
         }
         WastExecute::Wat(Wat::Module(module)) => {
             context.compile_and_instantiate(module).map(|_| Vec::new())
@@ -361,6 +424,7 @@ fn execute_wast_invoke(
     context: &mut TestContext,
     span: Span,
     invoke: WastInvoke,
+    with_state: bool,
 ) -> Result<Vec<Value>, TestError> {
     let module_name = invoke.module.map(|id| id.name());
     let field_name = invoke.name;
@@ -380,9 +444,15 @@ fn execute_wast_invoke(
         };
         args.push(value);
     }
-    context
-        .invoke(module_name, field_name, &args)
-        .map(|results| results.to_vec())
+    if with_state {
+        context
+            .invoke_with_state(module_name, field_name, &args)
+            .map(|results| results.to_vec())
+    } else {
+        context
+            .invoke(module_name, field_name, &args)
+            .map(|results| results.to_vec())
+    }
 }
 
 /// Converts the [`WastArgCore`][`wast::core::WastArgCore`] into a [`wasmi::Value`] if possible.

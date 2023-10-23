@@ -72,14 +72,14 @@ struct BrTableStatus {
 
 #[derive(Debug)]
 pub enum FuncOrExport {
-    Export(&'static str),
+    Export(String),
     Func(u32),
     StateRouter(Vec<FuncOrExport>, Instruction),
 }
 
 impl Default for FuncOrExport {
     fn default() -> Self {
-        Self::Export("main")
+        Self::Export("main".to_string())
     }
 }
 
@@ -154,7 +154,7 @@ impl<'linker> Compiler<'linker> {
         let num_imports = self.module.imports.len_funcs as u32;
         match main_index {
             FuncOrExport::Export(name) => {
-                let main_index = resolve_export_index(name)?;
+                let main_index = resolve_export_index(name.as_str())?;
                 router_opcodes.op_call_internal(main_index - num_imports);
             }
             FuncOrExport::StateRouter(states, check_instr) => {
