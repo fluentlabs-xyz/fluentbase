@@ -60,6 +60,11 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32 as u64).expr());
         });
 
+        // If exit code causing error than nothing is written, but we need to shift.
+        cb.condition(lt_gadget.expr(), |cb| {
+            cb.draft_shift(1, 0);
+        });
+
         cb.exit_code_lookup(exit_code.current());
 
         cb.stack_pop(elem_index.current());
@@ -72,11 +77,6 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
                 value.current(),
             );
             cb.stack_push(value.current());
-        });
-
-        // If exit code causing error than nothing is written, but we need to shift.
-        cb.condition(lt_gadget.expr(), |cb| {
-            cb.draft_shift(2, 0);
         });
 
         cb.context_lookup(

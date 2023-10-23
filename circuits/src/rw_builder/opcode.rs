@@ -178,16 +178,14 @@ pub fn build_table_elem_read_rw_ops(
 ) -> Result<(), GadgetError> {
     let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
-    if elem_index < table_size.into() {
-        let value = step.next_nth_stack_value(0)?;
-        step.rw_rows.push(RwRow::Table {
-            rw_counter: step.next_rw_counter(),
-            is_write: false,
-            call_id: step.call_id,
-            address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
-            value: value.as_u32() as u64,
-        });
-    }
+    let value = step.next_nth_stack_value(0)?;
+    step.rw_rows.push(RwRow::Table {
+        rw_counter: step.next_rw_counter(),
+        is_write: false,
+        call_id: step.call_id,
+        address: (table_idx * (MAX_TABLE_SIZE as u32)) as u64 + elem_index.as_u32() as u64,
+        value: value.as_u32() as u64,
+    });
     Ok(())
 }
 
@@ -476,6 +474,17 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
             }
             RwOp::TableElemWrite(table_idx) => {
                 build_table_elem_write_rw_ops(step, table_idx)?;
+            }
+
+            RwOp::TableElemReadAndStackWrite(table_idx, local_depth) => {
+                let table_size = step.read_table_size(table_idx);
+                let elem_index = step.curr_nth_stack_value(0)?;
+                println!("DEBUG TS EI {:#?} {:#?}", table_size, elem_index);
+                if elem_index < table_size.into() {
+                    build_stack_read_rw_ops(step, stack_reads + local_depth as usize)?;
+                    stack_reads += 1;
+                    build_table_size_read_rw_ops(step, table_idx)?;
+                }
             }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }
