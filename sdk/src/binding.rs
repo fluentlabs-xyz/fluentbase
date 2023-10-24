@@ -125,6 +125,13 @@ extern "C" {
     pub fn mpt_get_root(output_offset: i32) -> i32;
 
     pub fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
+    pub fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
+    pub fn crypto_poseidon_with_domain(
+        fa_offset: i32,
+        fb_offset: i32,
+        fdomain_offset: i32,
+        output_offset: i32,
+    ) -> i32;
 }
 
 #[inline(always)]
@@ -247,4 +254,19 @@ pub fn mpt_get_root_(output_offset: i32) -> i32 {
 #[inline(always)]
 pub fn crypto_keccak_(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
     unsafe { crypto_keccak(data_offset, data_len, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_poseidon_(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
+    unsafe { crypto_poseidon(data_offset, data_len, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_poseidon_with_domain_(
+    fa_offset: i32,
+    fb_offset: i32,
+    fdomain_offset: i32,
+    output_offset: i32,
+) -> i32 {
+    unsafe { crypto_poseidon_with_domain(fa_offset, fb_offset, fdomain_offset, output_offset) }
 }

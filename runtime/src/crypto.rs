@@ -1,8 +1,12 @@
-use crate::{instruction::exported_memory_vec, poseidon_hash::poseidon_hash, RuntimeContext};
+use crate::{
+    instruction::exported_memory_vec,
+    poseidon_hash::poseidon_hash,
+    poseidon_impl::hash::Hashable,
+    RuntimeContext,
+};
 use fluentbase_rwasm::{common::Trap, Caller};
-use halo2curves::bn256::Fr;
+use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use keccak_hash::write_keccak;
-use poseidon::Poseidon;
 
 pub(crate) fn crypto_keccak(
     mut caller: Caller<'_, RuntimeContext>,
@@ -27,6 +31,54 @@ pub(crate) fn crypto_poseidon(
     let data = exported_memory_vec(&mut caller, data_offset as usize, data_len as usize);
 
     let hash = poseidon_hash(data.as_slice());
+
+    caller.write_memory(output_offset as usize, hash.as_slice());
+
+    Ok(hash.len() as i32)
+}
+
+pub(crate) fn crypto_poseidon_with_domain(
+    mut caller: Caller<'_, RuntimeContext>,
+    fa_offset: i32,
+    fb_offset: i32,
+    fdomain_offset: i32,
+    output_offset: i32,
+) -> Result<i32, Trap> {
+    let fa_data =
+        TryInto::<[u8; 32]>::try_into(exported_memory_vec(&mut caller, fa_offset as usize, 32))
+            .map_err(|e| Trap::new(format!("failed to get fa_offset param")))?;
+    let fb_data =
+        TryInto::<[u8; 32]>::try_into(exported_memory_vec(&mut caller, fb_offset as usize, 32))
+            .map_err(|e| Trap::new(format!("failed to get fb_offset param")))?;
+    let fdomain_data = TryInto::<[u8; 32]>::try_into(exported_memory_vec(
+        &mut caller,
+        fdomain_offset as usize,
+        32,
+    ))
+    .map_err(|e| Trap::new(format!("failed to get fdomain_offset param")))?;
+
+    let fa = Fr::from_bytes(&fa_data);
+    let fa = if fa.is_some().into() {
+        fa.unwrap()
+    } else {
+        return Err(Trap::new(format!("failed to get fa param")));
+    };
+    let fb = Fr::from_bytes(&fb_data);
+    let fb = if fb.is_some().into() {
+        fb.unwrap()
+    } else {
+        return Err(Trap::new(format!("failed to get fb param")));
+    };
+    let fdomain = Fr::from_bytes(&fdomain_data);
+    let fdomain = if fdomain.is_some().into() {
+        fdomain.unwrap()
+    } else {
+        return Err(Trap::new(format!("failed to get fdomain param")));
+    };
+
+    let hasher = Fr::hasher();
+    let h2 = hasher.hash([fa, fb], fdomain);
+    let hash = h2.to_repr();
 
     caller.write_memory(output_offset as usize, hash.as_slice());
 

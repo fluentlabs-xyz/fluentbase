@@ -5,7 +5,6 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
     const CHUNK_LEN: usize = 32;
     for chunk in data.chunks(CHUNK_LEN).into_iter() {
-        println!("chunk in {:?}", chunk);
         let chunk: [u8; CHUNK_LEN] = if chunk.len() == CHUNK_LEN {
             chunk.try_into().unwrap()
         } else {
@@ -14,7 +13,6 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
             tmp_chunk[..chunk.len()].copy_from_slice(chunk);
             tmp_chunk
         };
-        println!("chunk out {:?} len {}", chunk, chunk.len());
         let v = Fr::from_bytes(&chunk).unwrap();
         hasher.update(&[v]);
     }

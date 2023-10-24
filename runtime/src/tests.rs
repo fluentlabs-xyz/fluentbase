@@ -81,9 +81,8 @@ fn mpt_open_test() {
 
 #[test]
 fn keccak_test() {
-    let wasm_binary =
-        wat::parse_bytes(include_bytes!("../examples/bin/crypto_keccak.wat")).unwrap();
-    let rwasm_binary = wasm2rwasm(&wasm_binary);
+    let wasm_binary = include_bytes!("../examples/bin/crypto_keccak.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_data: &[u8] = "hello world".as_bytes();
 
