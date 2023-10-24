@@ -397,6 +397,22 @@ impl Runtime {
             &[ValueType::I32; 1],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_poseidon".to_string(),
+            SysFuncIdx::CRYPTO_POSEIDON as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_poseidon_with_domain".to_string(),
+            SysFuncIdx::CRYPTO_POSEIDON_WITH_DOMAIN as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -539,6 +555,7 @@ impl Runtime {
         // crypto
         forward_call!(linker, store, "env", "crypto_keccak", fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "crypto_poseidon_with_domain", fn crypto_poseidon_with_domain(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {
