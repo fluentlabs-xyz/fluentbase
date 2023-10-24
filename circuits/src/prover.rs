@@ -150,22 +150,11 @@ mod tests {
     use halo2_proofs::plonk::{keygen_pk, keygen_vk};
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
-        use fluentbase_runtime::{RuntimeError, ExitCode};
+        use fluentbase_runtime::{ExitCode, RuntimeError};
         let rwasm_binary: Vec<u8> = bytecode.into();
         //let import_linker = Runtime::new_linker();
-        let (result, opt_err) = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
-        let exit_code_from_data = result.data().exit_code();
-        let exit_code = if let Some(RuntimeError::Rwasm(fluentbase_rwasm::Error::Trap(trap))) = &opt_err {
-            if let Some(trap_code) = trap.trap_code() {
-                let exit_code: ExitCode = trap_code.into();
-                exit_code as i32
-            } else {
-                exit_code_from_data
-            }
-        } else {
-            exit_code_from_data
-        };
-        println!("DEBUG OPTERR {:#?}, EXIT_CODE_FROM_DATA {}, EXIT_CODE {}", opt_err, exit_code_from_data, exit_code);
+        let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+        let exit_code = result.data().exit_code();
         let circuit = FluentbaseCircuit::from_execution_result_with_exit_code(&result, exit_code);
         let degree: u32 = 17;
         let general_params = get_general_params(degree);

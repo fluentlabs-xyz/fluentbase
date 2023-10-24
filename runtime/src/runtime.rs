@@ -392,24 +392,34 @@ impl Runtime {
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<(ExecutionResult, Option<RuntimeError>), RuntimeError> {
-        let runtime_context = RuntimeContext::new(rwasm_binary).with_input(input_data);
+    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, RuntimeError> {
+        let runtime_context = RuntimeContext::new(rwasm_binary)
+            .with_input(input_data)
+            .with_catch_trap(true);
         let import_linker = Self::new_linker();
         Self::run_with_context(runtime_context, &import_linker)
     }
 
     pub fn run_with_context(
-        runtime_context: RuntimeContext,
+        mut runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
-    ) -> Result<(ExecutionResult, Option<RuntimeError>), RuntimeError> {
-        let (mut runtime, opt_err) = Self::new(runtime_context, import_linker)?;
-        Ok((ExecutionResult::taken(&mut runtime.store), opt_err))
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let catch_error = runtime_context.catch_trap;
+        let mut runtime = Self::new(runtime_context.clone(), import_linker);
+        if catch_error && runtime.is_err() {
+            runtime_context.exit_code = Self::catch_trap(runtime.err().unwrap());
+            return Ok(ExecutionResult {
+                runtime_context,
+                tracer: Default::default(),
+            });
+        }
+        runtime?.call()
     }
 
     pub fn new(
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
-    ) -> Result<(Self,Option<RuntimeError>), RuntimeError> {
+    ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
 
         let engine = {
@@ -442,21 +452,11 @@ impl Runtime {
 
         Self::register_bindings(&mut linker, &mut store);
 
-        // we save original state to pass u32::MAX for init (router doesn't work in this case)
-        let original_state = store.data().state;
-        store.data_mut().state = u32::MAX;
-
-        let instance_pre = linker
+        let instance = linker
             .instantiate(&mut store, &module)
+            .map_err(Into::<RuntimeError>::into)?
+            .start(&mut store)
             .map_err(Into::<RuntimeError>::into)?;
-
-        let (instance, opt_err) = match instance_pre.start(&mut store) {
-            Ok(a) => (a, None),
-            Err((a,e)) => (a, Some(Into::<RuntimeError>::into(e))),
-        };
-
-        // restore state for next runs
-        store.data_mut().state = original_state;
 
         let result = Self {
             engine,
@@ -467,7 +467,7 @@ impl Runtime {
             instance,
         };
 
-        Ok((result, opt_err))
+        Ok(result)
     }
 
     pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
@@ -481,7 +481,9 @@ impl Runtime {
             .call(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
         if self.store.data().catch_trap && res.is_err() {
-            Self::catch_trap(res.err().unwrap());
+            self.store.data_mut().exit_code = Self::catch_trap(res.err().unwrap());
+        } else {
+            res?;
         }
         // we need to restore trace to recover missing opcode values
         self.restore_trace();

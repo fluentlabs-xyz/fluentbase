@@ -189,7 +189,7 @@ pub(crate) fn rwasm_transact(
     if res.is_err() {
         return Err(ExitCode::TransactError.into());
     }
-    let (execution_result, _opt_err) = res.unwrap();
+    let execution_result = res.unwrap();
     // caller
     //     .as_context_mut()
     //     .tracer_mut()
