@@ -1,6 +1,7 @@
 use crate::{
-    bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
+    exec_step::MAX_TABLE_SIZE,
+    gadgets::lt::LtGadget,
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -8,20 +9,16 @@ use crate::{
     },
     rw_builder::rw_row::RwTableContextTag,
     util::Field,
-    gadgets::lt::LtGadget,
-    exec_step::MAX_TABLE_SIZE,
 };
-use fluentbase_rwasm::engine::bytecode::Instruction;
+use fluentbase_runtime::ExitCode;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
-use fluentbase_runtime::ExitCode;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableGetGadget<F: Field> {
     elem_index: AdviceColumn,
     value: AdviceColumn,
     size: AdviceColumn,
-    exit_code: AdviceColumn,
     lt_gadget: LtGadget<F, 2>,
     _pd: PhantomData<F>,
 }
@@ -37,7 +34,6 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         let elem_index = cb.query_cell();
         let value = cb.query_cell();
         let size = cb.query_cell();
-        let exit_code = cb.query_cell();
 
         cb.range_check_1024(elem_index.expr());
         cb.range_check_1024(size.expr());
@@ -57,15 +53,11 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         });
 
         cb.condition(lt_gadget.expr(), |cb| {
-            cb.require_zero("exit code must be valid", exit_code.current() - (ExitCode::TableOutOfBounds as i32 as u64).expr());
-        });
-
-        // If exit code causing error than nothing is written, but we need to shift.
-        cb.condition(lt_gadget.expr(), |cb| {
+            // make sure proper exit code is set
+            cb.exit_code_lookup((ExitCode::TableOutOfBounds as i32 as u64).expr());
+            // If exit code causing error than nothing is written, but we need to shift.
             cb.draft_shift(1, 0);
         });
-
-        cb.exit_code_lookup(exit_code.current());
 
         cb.stack_pop(elem_index.current());
 
@@ -89,7 +81,6 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             elem_index,
             value,
             size,
-            exit_code,
             lt_gadget,
             _pd: Default::default(),
         }
@@ -118,23 +109,18 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             .assign(region, offset, F::from(elem_index.to_bits()));
         self.size.assign(region, offset, F::from(size as u64));
 
-        if elem_index.to_bits() >= size as u64 {
-            let exit_code = ExitCode::TableOutOfBounds as i32 as u64;
-            println!("DEBUG exit_code {}", exit_code);
-            self.exit_code.assign(region, offset, F::from(exit_code));
-        }
-
         self.lt_gadget.assign(
             region,
             offset,
-            F::from((size as i64 - elem_index.to_bits() as i64 - 1 + RANGE_THRESHOLD as i64) as u64),
+            F::from(
+                (size as i64 - elem_index.to_bits() as i64 - 1 + RANGE_THRESHOLD as i64) as u64,
+            ),
             F::from(RANGE_THRESHOLD as u64),
         );
 
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -172,5 +158,4 @@ mod test {
             Drop
         });
     }
-
 }
