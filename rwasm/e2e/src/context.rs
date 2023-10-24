@@ -1,11 +1,35 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
-use fluentbase_rwasm::{common::{ValueType, F32, F64}, rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule}, Config, Engine, Extern, Func, Global, Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType, Value, Caller};
+use fluentbase_rwasm::{
+    common::{Trap, ValueType, F32, F64},
+    engine::bytecode::Instruction,
+    rwasm::{
+        Compiler,
+        DefaultImportHandler,
+        FuncOrExport,
+        ImportFunc,
+        ImportLinker,
+        ReducedModule,
+    },
+    Caller,
+    Config,
+    Engine,
+    Extern,
+    Func,
+    Global,
+    Instance,
+    Linker,
+    Memory,
+    MemoryType,
+    Module,
+    Mutability,
+    Store,
+    Table,
+    TableType,
+    Value,
+};
 use std::collections::HashMap;
-use wast::token::{Id, NameAnnotation, Span};
-use fluentbase_rwasm::common::Trap;
-use fluentbase_rwasm::engine::bytecode::Instruction;
-use fluentbase_rwasm::rwasm::ImportFunc;
+use wast::token::{Id, Span};
 
 /// The context of a single Wasm test spec suite run.
 #[derive(Debug)]
@@ -76,9 +100,10 @@ impl<'a> TestContext<'a> {
 
         let sys_state = Func::wrap(
             &mut store,
-            |caller: Caller<'_, DefaultImportHandler>,| -> Result<u32, Trap> {
+            |caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
                 Ok(caller.data().state())
-        });
+            },
+        );
 
         linker.define("spectest", "memory", default_memory).unwrap();
         linker.define("spectest", "table", default_table).unwrap();
@@ -97,10 +122,7 @@ impl<'a> TestContext<'a> {
         linker
             .define("spectest", "print_f64_f64", print_f64_f64)
             .unwrap();
-
-        linker
-            .define("env", "_sys_state", sys_state)
-            .unwrap();
+        linker.define("env", "_sys_state", sys_state).unwrap();
 
         TestContext {
             engine,
@@ -189,14 +211,19 @@ impl TestContext<'_> {
             )
         });
         let mut config = Config::default();
-        let name = module.name.map(|name| name.name).unwrap_or(DEFAULT_MODULE_NAME);
+        let name = module
+            .name
+            .map(|name| name.name)
+            .unwrap_or(DEFAULT_MODULE_NAME);
         config.consume_fuel(false);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice())?;
-        let exports = module.exports().map(|export| FuncOrExport::Export(export.name().to_string())).collect::<Vec<_>>();
-        let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
+        let exports = module
+            .exports()
+            .map(|export| FuncOrExport::Export(export.name().to_string()))
+            .collect::<Vec<_>>();
+        const SYS_STATE: u32 = 0xA002;
         let mut import_linker = ImportLinker::default();
-
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_state".to_string(),
@@ -204,18 +231,18 @@ impl TestContext<'_> {
             &[],
             &[ValueType::I32; 1],
         ));
-        const SYS_STATE: u32 = 0xA002;
-        compiler.translate(
-            Some(FuncOrExport::StateRouter(
+        let mut compiler =
+            Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+        compiler
+            .translate(Some(FuncOrExport::StateRouter(
                 exports,
-                Instruction::Call((SYS_STATE).into() )
-            ))
-        ).unwrap();
+                Instruction::Call((SYS_STATE).into()),
+            )))
+            .unwrap();
 
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
-        let module =
-            reduced_module.to_module(&engine, &import_linker);
+        let module = reduced_module.to_module(&engine, &import_linker);
 
         let instance = self
             .linker
@@ -379,7 +406,10 @@ impl TestContext<'_> {
         func_name: &str,
         args: &[Value],
     ) -> Result<&[Value], TestError> {
-        let instance = self.instances.get(module_name.unwrap_or(DEFAULT_MODULE_NAME)).unwrap();
+        let instance = self
+            .instances
+            .get(module_name.unwrap_or(DEFAULT_MODULE_NAME))
+            .unwrap();
 
         let func = instance
             .get_export(&self.store, "main")
