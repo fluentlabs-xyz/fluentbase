@@ -2,7 +2,7 @@ use crate::{
     arena::ArenaIndex,
     common::{UntypedValue, ValueType},
     engine::{
-        bytecode::{BranchOffset, Instruction, TableIdx},
+        bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },
@@ -19,7 +19,6 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
-use crate::engine::bytecode::LocalDepth;
 
 mod drop_keep;
 
@@ -109,7 +108,11 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate_with_state(&mut self, main_index: Option<FuncOrExport>, with_state: bool) -> Result<(), CompilerError> {
+    pub fn translate_with_state(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        with_state: bool,
+    ) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
@@ -119,7 +122,6 @@ impl<'linker> Compiler<'linker> {
         } else {
             self.translate_sections(main_index.unwrap_or_default())?;
         }
-
         self.translate_imports_funcs()?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
@@ -134,7 +136,6 @@ impl<'linker> Compiler<'linker> {
 
     pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
         self.translate_with_state(main_index, false)?;
-
         Ok(())
     }
 
@@ -189,7 +190,7 @@ impl<'linker> Compiler<'linker> {
         Ok(router_opcodes)
     }
 
-    fn translate_imports_funcs(&mut self, ) -> Result<(), CompilerError> {
+    fn translate_imports_funcs(&mut self) -> Result<(), CompilerError> {
         let injection_start = self.code_section.len();
         for func_idx in 0..self.module.imports.len_funcs as u32 {
             let beginning_offset = self.code_section.len();
@@ -203,7 +204,11 @@ impl<'linker> Compiler<'linker> {
             self.swap_stack_parameters(num_inputs.len() as u32);
             self.translate_host_call(func_idx as u32)?;
             if num_outputs.len() > 0 {
-                DropKeepWithReturnParam(DropKeep::new(0, num_outputs.len()).map_err(|_| CompilerError::DropKeepOutOfBounds)?).translate(&mut self.code_section)?;
+                DropKeepWithReturnParam(
+                    DropKeep::new(0, num_outputs.len())
+                        .map_err(|_| CompilerError::DropKeepOutOfBounds)?,
+                )
+                .translate(&mut self.code_section)?;
             }
             self.code_section.op_br_indirect(0);
         }
@@ -251,7 +256,10 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_sections_with_state(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
+    fn translate_sections_with_state(
+        &mut self,
+        main_index: FuncOrExport,
+    ) -> Result<(), CompilerError> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
         self.function_beginning.insert(0, 0);
@@ -353,12 +361,13 @@ impl<'linker> Compiler<'linker> {
         self.code_section.op_drop();
         for e in self.module.element_segments.iter() {
             let aes = match &e.kind {
-                ElementSegmentKind::Passive | ElementSegmentKind::Declared => {
-                    None
-                }
+                ElementSegmentKind::Passive | ElementSegmentKind::Declared => None,
                 ElementSegmentKind::Active(aes) => Some(aes),
             };
-            if aes.filter(|aes| aes.table_index().into_u32() != table_index).is_some() {
+            if aes
+                .filter(|aes| aes.table_index().into_u32() != table_index)
+                .is_some()
+            {
                 continue;
             }
             if e.ty != ValueType::FuncRef {
@@ -409,7 +418,7 @@ impl<'linker> Compiler<'linker> {
         let func_body = self
             .module
             .compiled_funcs
-            .get(fn_index as usize - import_len  as usize)
+            .get(fn_index as usize - import_len as usize)
             .ok_or(CompilerError::MissingFunction)?;
 
         // reserve stack for locals
@@ -461,7 +470,6 @@ impl<'linker> Compiler<'linker> {
             self.code_section.op_return();
             br_table_status.instr_countdown -= 2;
 
-
             match branch_offset {
                 Some(branch_offset) => {
                     let mut drop_keep_ixs = translate_drop_keep(drop_keep)?;
@@ -469,22 +477,22 @@ impl<'linker> Compiler<'linker> {
                     br_table_status
                         .injection_instructions
                         .append(&mut drop_keep_ixs);
-                    br_table_status
-                        .injection_instructions
-                        .push(Instruction::Br(BranchOffset::from(
+                    br_table_status.injection_instructions.push(Instruction::Br(
+                        BranchOffset::from(
                             branch_offset.to_i32() - br_table_status.instr_countdown as i32,
-                        )));
+                        ),
+                    ));
                 }
                 None => {
                     br_table_status
                         .injection_instructions
-                        .push(Instruction::LocalGet(LocalDepth::from((drop_keep.drop() + drop_keep.keep() + 1) as u32)));
+                        .push(Instruction::LocalGet(LocalDepth::from(
+                            (drop_keep.drop() + drop_keep.keep() + 1) as u32,
+                        )));
 
                     let mut drop_keep_ixs = translate_drop_keep(
-                        DropKeep::new(
-                            drop_keep.drop() as usize + 1,
-                            drop_keep.keep() as usize + 1
-                        ).map_err(|_| CompilerError::DropKeepOutOfBounds)?
+                        DropKeep::new(drop_keep.drop() as usize + 1, drop_keep.keep() as usize + 1)
+                            .map_err(|_| CompilerError::DropKeepOutOfBounds)?,
                     )?;
 
                     br_table_status
@@ -492,9 +500,7 @@ impl<'linker> Compiler<'linker> {
                         .append(&mut drop_keep_ixs);
                     br_table_status
                         .injection_instructions
-                        .push(
-                            Instruction::BrIndirect(BranchOffset::from(0))
-                        );
+                        .push(Instruction::BrIndirect(BranchOffset::from(0)));
                 }
             }
 
@@ -530,7 +536,7 @@ impl<'linker> Compiler<'linker> {
     fn translate_opcode(
         &mut self,
         instr_ptr: &mut InstructionPtr,
-        return_ptr_offset: usize,
+        _return_ptr_offset: usize,
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
         let injection_begin = self.code_section.len();

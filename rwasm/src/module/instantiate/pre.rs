@@ -1,5 +1,5 @@
 use super::InstantiationError;
-use crate::{module::FuncIdx, AsContextMut, Error, Instance, InstanceEntityBuilder, Value, Func};
+use crate::{module::FuncIdx, AsContextMut, Error, Func, Instance, InstanceEntityBuilder};
 
 /// A partially instantiated [`Instance`] where the `start` function has not yet been executed.
 ///
@@ -67,12 +67,13 @@ impl InstancePre {
             .inner
             .initialize_instance(self.handle, self.builder.finish());
         if let Some(start_index) = opt_start_index {
-            return Some(self
-                .handle
-                .get_func_by_index(&mut context, start_index)
-                .unwrap_or_else(|| {
-                    panic!("encountered invalid start function after validation: {start_index}")
-                }));
+            return Some(
+                self.handle
+                    .get_func_by_index(&mut context, start_index)
+                    .unwrap_or_else(|| {
+                        panic!("encountered invalid start function after validation: {start_index}")
+                    }),
+            );
         }
         None
     }

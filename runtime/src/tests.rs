@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE, runtime};
+use crate::{runtime, runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::Instruction,
@@ -178,10 +178,16 @@ fn test_state() {
     let mut compiler =
         Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
     compiler
-        .translate_with_state(Some(FuncOrExport::StateRouter(
-            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-        )), true)
+        .translate_with_state(
+            Some(FuncOrExport::StateRouter(
+                vec![
+                    FuncOrExport::Export("main".into_string()),
+                    FuncOrExport::Export("deploy".into_string()),
+                ],
+                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+            )),
+            true,
+        )
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
@@ -190,24 +196,23 @@ fn test_state() {
         RuntimeContext::new(&[], 1000),
         &import_linker,
     )
-        .unwrap();
+    .unwrap();
 
     let pre = runtime.init_pre_instance().unwrap();
 
-    let start_func =pre.get_start_func(&mut runtime.store).unwrap();
+    let start_func = pre.get_start_func(&mut runtime.store).unwrap();
 
-    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
 
     runtime.set_state(0);
 
-    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
 
     runtime.set_state(1);
 
-    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
 
     runtime.set_state(0);
 
-    start_func.call(&mut runtime.store,&[], &mut []).unwrap();
-
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
 }
