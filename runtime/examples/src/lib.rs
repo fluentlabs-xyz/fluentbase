@@ -5,6 +5,8 @@ extern crate alloc;
 use fluentbase_sdk::{
     crypto_keccak_,
     crypto_poseidon_,
+    crypto_secp256k1_verify,
+    crypto_secp256k1_verify_,
     mpt_open_,
     sys_read,
     sys_write,
@@ -62,6 +64,34 @@ fn crypto_poseidon() {
         panic!("output len!={EXPECTED_LEN:?}");
     }
 }
+#[cfg(feature = "secp256k1_verify")]
+fn secp256k1_verify() {
+    const DIGEST_OFFSET: i32 = 0;
+    const DIGEST_LEN: i32 = 32;
+    const SIG_OFFSET: i32 = DIGEST_OFFSET + DIGEST_LEN;
+    const SIG_LEN: i32 = 64;
+    const RECID_OFFSET: i32 = SIG_OFFSET + SIG_LEN;
+    const RECID_LEN: i32 = 1;
+    const PK_EXPECTED_OFFSET: i32 = RECID_OFFSET + RECID_LEN;
+    const PK_EXPECTED_LEN: i32 = 33;
+
+    let mut input = [0u8; (DIGEST_LEN + SIG_LEN + RECID_LEN + PK_EXPECTED_LEN) as usize];
+    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
+    const EXPECTED_RES: i32 = 1;
+
+    let res = crypto_secp256k1_verify_(
+        input.as_mut_ptr() as i32 + DIGEST_OFFSET,
+        DIGEST_LEN,
+        input.as_mut_ptr() as i32 + SIG_OFFSET,
+        SIG_LEN,
+        RECID_OFFSET,
+        input.as_mut_ptr() as i32 + PK_EXPECTED_OFFSET,
+        input.len() as i32 + PK_EXPECTED_LEN,
+    );
+    if res != EXPECTED_RES {
+        panic!("res!={EXPECTED_RES:?}");
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -75,6 +105,8 @@ pub extern "C" fn main() {
     crypto_keccak();
     #[cfg(feature = "crypto_poseidon")]
     crypto_poseidon();
+    #[cfg(feature = "secp256k1_verify")]
+    secp256k1_verify();
     #[cfg(feature = "panic")]
     panic();
     #[cfg(feature = "rwasm")]

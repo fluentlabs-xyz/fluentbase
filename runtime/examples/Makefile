@@ -1,4 +1,4 @@
-FILES = greeting zktrie_open_test mpt_open_test crypto_keccak crypto_poseidon panic rwasm evm wasi
+FILES = greeting secp256k1_verify zktrie_open_test mpt_open_test crypto_keccak crypto_poseidon panic rwasm evm wasi
 
 all: $(FILES)
 

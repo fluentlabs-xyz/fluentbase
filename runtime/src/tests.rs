@@ -19,10 +19,14 @@ fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
         .unwrap()
 }
 
-#[test]
-fn test_simple() {
-    let rwasm_binary = wat2rwasm(
-        r#"
+#[cfg(test)]
+mod ttt {
+    use crate::{tests::wat2rwasm, Runtime};
+
+    #[test]
+    fn test_simple() {
+        let rwasm_binary = wat2rwasm(
+            r#"
 (module
   (func $main
     global.get 0
@@ -42,8 +46,9 @@ fn test_simple() {
   (global (;2;) i32 (i32.const 3))
   (export "main" (func $main)))
     "#,
-    );
-    Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+        );
+        Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+    }
 }
 
 #[test]
@@ -92,11 +97,50 @@ fn keccak_test() {
 
 #[test]
 fn poseidon_test() {
-    let wasm_binary =
-        wat::parse_bytes(include_bytes!("../examples/bin/crypto_poseidon.wat")).unwrap();
-    let rwasm_binary = wasm2rwasm(&wasm_binary);
+    let wasm_binary = include_bytes!("../examples/bin/crypto_poseidon.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_data: &[u8] = "hello world".as_bytes();
+
+    let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
+#[test]
+fn secp256k1_verify_test() {
+    let wasm_binary = include_bytes!("../examples/bin/secp256k1_verify.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+
+    // RecoveryTestVector {
+    //             pk: hex!("021a7a569e91dbf60581509c7fc946d1003b60c7dee85299538db6353538d59574"),
+    //             msg: b"example message",
+    //             sig: hex!(
+    //
+    // "ce53abb3721bafc561408ce8ff99c909f7f0b18a2f788649d6470162ab1aa0323971edc523a6d6453f3fb6128d318d9db1a5ff3386feb1047d9816e780039d52"
+    //             ),
+    //             recid: RecoveryId::new(false, false),
+    //             recid2: 0,
+    //         },
+    //         // Recovery ID 1
+    //         RecoveryTestVector {
+    //             pk: hex!("036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e2"),
+    //             msg: b"example message",
+    //             sig: hex!(
+    //
+    // "46c05b6368a44b8810d79859441d819b8e7cdc8bfd371e35c53196f4bcacdb5135c7facce2a97b95eacba8a586d87b7958aaf8368ab29cee481f76e871dbd9cb"
+    //             ),
+    //             recid: RecoveryId::new(true, false),
+    //             recid2: 1,
+    //         },
+    let mut input_data: &[u8] = &[
+        173, 132, 205, 11, 16, 252, 2, 135, 56, 151, 27, 7, 129, 36, 174, 194, 160, 231, 198, 217,
+        134, 163, 129, 190, 11, 56, 111, 50, 190, 232, 135, 175, 206, 83, 171, 179, 114, 27, 175,
+        197, 97, 64, 140, 232, 255, 153, 201, 9, 247, 240, 177, 138, 47, 120, 134, 73, 214, 71, 1,
+        98, 171, 26, 160, 50, 57, 113, 237, 197, 35, 166, 214, 69, 63, 63, 182, 18, 141, 49, 141,
+        157, 177, 165, 255, 51, 134, 254, 177, 4, 125, 152, 22, 231, 128, 3, 157, 82, 0, 2, 26,
+        122, 86, 158, 145, 219, 246, 5, 129, 80, 156, 127, 201, 70, 209, 0, 59, 96, 199, 222, 232,
+        82, 153, 83, 141, 182, 53, 53, 56, 213, 149, 116,
+    ];
 
     let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
     assert_eq!(output.data().output().clone(), vec![]);

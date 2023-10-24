@@ -2,6 +2,7 @@ use crate::{
     instruction::exported_memory_vec,
     poseidon_hash::poseidon_hash,
     poseidon_impl::hash::Hashable,
+    secp256k1_verify,
     RuntimeContext,
 };
 use fluentbase_rwasm::{common::Trap, Caller};
@@ -83,4 +84,24 @@ pub(crate) fn crypto_poseidon_with_domain(
     caller.write_memory(output_offset as usize, hash.as_slice());
 
     Ok(hash.len() as i32)
+}
+
+pub(crate) fn crypto_secp256k1_verify(
+    mut caller: Caller<'_, RuntimeContext>,
+    digest: i32,
+    digest_len: i32,
+    sig: i32,
+    sig_len: i32,
+    recid: i32,
+    pk_expected: i32,
+    pk_expected_len: i32,
+) -> Result<i32, Trap> {
+    let digest_data = exported_memory_vec(&mut caller, digest as usize, digest_len as usize);
+    let sig_data = exported_memory_vec(&mut caller, sig as usize, sig_len as usize);
+    let pk_expected_data =
+        exported_memory_vec(&mut caller, pk_expected as usize, pk_expected_len as usize);
+
+    let is_ok = secp256k1_verify(&digest_data, &sig_data, recid as u8, &pk_expected_data);
+
+    Ok(is_ok as i32)
 }

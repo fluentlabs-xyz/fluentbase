@@ -23,6 +23,9 @@ keccak-hash = "0.10.0"
 eth_trie = "0.3.0"
 rlp = "0.5.2"
 bitvec = "1"
+k256 = "0.13.1"
+sha2 = "0.10.8"
 
 [dev-dependencies]
 wat = "1.0.69"
+hex-literal = "0.4.1"
