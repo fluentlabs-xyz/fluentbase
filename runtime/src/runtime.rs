@@ -413,6 +413,14 @@ impl Runtime {
             &[ValueType::I32; 1],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_secp256k1_verify".to_string(),
+            SysFuncIdx::CRYPTO_SECP256K1_VERIFY as u16,
+            &[ValueType::I32; 7],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -556,6 +564,7 @@ impl Runtime {
         forward_call!(linker, store, "env", "crypto_keccak", fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "crypto_poseidon_with_domain", fn crypto_poseidon_with_domain(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "crypto_secp256k1_verify", fn crypto_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, recid: i32, pk_expected: i32, pk_expected_len: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

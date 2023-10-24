@@ -132,6 +132,15 @@ extern "C" {
         fdomain_offset: i32,
         output_offset: i32,
     ) -> i32;
+    pub fn crypto_secp256k1_verify(
+        digest: i32,
+        digest_len: i32,
+        sig: i32,
+        sig_len: i32,
+        recid: i32,
+        pk_expected: i32,
+        pk_expected_len: i32,
+    ) -> i32;
 }
 
 #[inline(always)]
@@ -269,4 +278,27 @@ pub fn crypto_poseidon_with_domain_(
     output_offset: i32,
 ) -> i32 {
     unsafe { crypto_poseidon_with_domain(fa_offset, fb_offset, fdomain_offset, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_secp256k1_verify_(
+    digest: i32,
+    digest_len: i32,
+    sig: i32,
+    sig_len: i32,
+    recid: i32,
+    pk_expected: i32,
+    pk_expected_len: i32,
+) -> i32 {
+    unsafe {
+        crypto_secp256k1_verify(
+            digest,
+            digest_len,
+            sig,
+            sig_len,
+            recid,
+            pk_expected,
+            pk_expected_len,
+        )
+    }
 }
