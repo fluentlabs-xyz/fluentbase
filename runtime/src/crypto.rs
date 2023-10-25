@@ -101,6 +101,11 @@ pub(crate) fn crypto_secp256k1_verify(
     let pk_expected_data =
         exported_memory_vec(&mut caller, pk_expected as usize, pk_expected_len as usize);
 
+    // println!(
+    //     "----- digest_data {:?} sig_data {:?} pk_expected_data {:?} recid {}",
+    //     digest_data, sig_data, pk_expected_data, recid
+    // );
+
     let is_ok = secp256k1_verify(&digest_data, &sig_data, recid as u8, &pk_expected_data);
 
     Ok(is_ok as i32)

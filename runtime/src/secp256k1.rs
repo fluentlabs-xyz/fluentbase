@@ -17,7 +17,14 @@ pub fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]
     let recid = RecoveryId::new(recid0, recid1);
     let pk = VerifyingKey::recover_from_prehash(digest, &sig, recid).unwrap();
 
-    return *pk_expected == *EncodedPoint::from(&pk).as_bytes();
+    let pk_computed = EncodedPoint::from(&pk);
+
+    // println!(
+    //     "pk_expected {:?} pk_computed {:?}",
+    //     pk_expected,
+    //     pk_computed.as_bytes()
+    // );
+    return pk_expected == pk_computed.as_bytes();
 }
 
 #[cfg(test)]
