@@ -1,6 +1,7 @@
 use fluentbase_rwasm::rwasm::CompilerError;
 use fluentbase_rwasm::Error as WasmiError;
 use std::{error::Error, fmt, fmt::Display};
+use std::fmt::write;
 
 /// Errors that may occur upon Wasm spec test suite execution.
 #[derive(Debug)]
@@ -19,6 +20,7 @@ pub enum TestError {
         global_name: String,
     },
     Compiler(CompilerError),
+    MainFunctionNotFound,
 }
 
 impl Error for TestError {}
@@ -44,6 +46,9 @@ impl Display for TestError {
             Self::Wasmi(wasmi_error) => Display::fmt(wasmi_error, f),
             Self::Compiler(_) => {
                 write!(f, "compiler error")
+            }
+            Self::MainFunctionNotFound => {
+                write!(f, "main funciton not found")
             }
         }
     }

@@ -56,6 +56,8 @@ pub struct TestContext<'a> {
     descriptor: &'a TestDescriptor,
 
     binaries: HashMap<String, Vec<u8>>,
+
+    main_router: HashMap<String, u32>
 }
 
 const DEFAULT_MODULE_NAME: &'static str = "main_module";
@@ -101,7 +103,7 @@ impl<'a> TestContext<'a> {
         let sys_state = Func::wrap(
             &mut store,
             |caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
-                Ok(caller.data().state())
+                Ok(caller.data().state)
             },
         );
 
@@ -135,7 +137,15 @@ impl<'a> TestContext<'a> {
             results: Vec::new(),
             descriptor,
             binaries: HashMap::new(),
+            main_router: Default::default(),
         }
+    }
+
+    pub fn set_state_by_name(&mut self, func_name: &str) -> Result<(), TestError> {
+        let state = self.main_router.get(func_name).ok_or(TestError::MainFunctionNotFound)?;
+        self.store.data_mut().state = *state;
+
+        Ok(())
     }
 }
 
@@ -216,13 +226,12 @@ impl TestContext<'_> {
             .map(|name| name.name)
             .unwrap_or(DEFAULT_MODULE_NAME);
         config.consume_fuel(false);
-        let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice())?;
-        let exports = module
-            .exports()
-            .map(|export| FuncOrExport::Export(export.name().to_string()))
-            .collect::<Vec<_>>();
-        const SYS_STATE: u32 = 0xA002;
+        let module = Module::new(&self.engine, wasm_binary.as_slice())?;
+        let exports = module.exports().enumerate().map(|(i, export)| {
+            self.main_router.insert(export.name().to_string(), i as u32);
+            FuncOrExport::Export(export.name().to_string())
+        }).collect::<Vec<_>>();
+
         let mut import_linker = ImportLinker::default();
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -233,17 +242,21 @@ impl TestContext<'_> {
         ));
         let mut compiler =
             Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
-        compiler
-            .translate(Some(FuncOrExport::StateRouter(
+        const SYS_STATE: u32 = 0xA002;
+        compiler.translate_with_state(
+            Some(FuncOrExport::StateRouter(
                 exports,
-                Instruction::Call((SYS_STATE).into()),
-            )))
-            .unwrap();
+                Instruction::Call((SYS_STATE).into() )
+            )),
+            true,
+        ).unwrap();
 
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
-        let module = reduced_module.to_module(&engine, &import_linker);
+        let module =
+            reduced_module.to_module(&self.engine, &import_linker);
 
+        self.store.data_mut().state = 1000;
         let instance = self
             .linker
             .instantiate(&mut self.store, &module)?
