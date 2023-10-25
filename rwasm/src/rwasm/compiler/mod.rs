@@ -706,6 +706,7 @@ impl<'linker> Compiler<'linker> {
 
         let mut i = 0;
         while i < bytecode.len() as usize {
+            // println!("byte ix: {}", bytecode.instr[i]);
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
                     let func_idx = func.to_u32() + 1 + self.module.imports.len_funcs as u32;

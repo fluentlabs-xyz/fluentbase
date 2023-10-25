@@ -405,6 +405,7 @@ fn execute_wast_execute_with_state(
 ) -> Result<Vec<Value>, TestError> {
     match execute {
         WastExecute::Invoke(invoke) => {
+            context.set_state_by_name(invoke.name)?;
             execute_wast_invoke(context, span, invoke, true).map_err(Into::into)
         }
         WastExecute::Wat(Wat::Module(module)) => {
