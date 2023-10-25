@@ -97,7 +97,9 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
         let table_index = trace.instr().aux_value().unwrap_or_default().as_u32();
+        println!("DEBUG _A");
         let elem_index = trace.curr_nth_stack_value(0)?;
+        println!("DEBUG _B");
         let size = trace.read_table_size(table_index);
 
         if elem_index.to_bits() < size as u64 {
@@ -135,10 +137,12 @@ mod test {
             TableGrow(0)
             Drop
             I32Const(0)
+            I32Const(0)
             RefFunc(0)
             TableSet(0)
             I32Const(0)
             TableGet(0)
+            Drop
             Drop
         });
     }
