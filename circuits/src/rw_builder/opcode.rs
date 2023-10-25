@@ -477,7 +477,9 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
             }
 
             RwOp::TableElemReadAndStackWrite(table_idx, local_depth) => {
+                println!("DEBUG A");
                 let table_size = step.read_table_size(table_idx);
+                println!("DEBUG B");
                 let elem_index = step.curr_nth_stack_value(0)?;
                 println!("DEBUG TS EI {:#?} {:#?}", table_size, elem_index);
                 if elem_index < table_size.into() {
