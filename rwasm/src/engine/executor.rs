@@ -1357,6 +1357,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             |this| {
                 let table = this.cache.get_table(this.ctx, table_index);
                 this.ctx
+                    .resolve_table(&table)
+                    .get_untyped(dst + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
+                this.ctx
                     .resolve_table_mut(&table)
                     .fill_untyped(dst, val, len)?;
                 Ok(())

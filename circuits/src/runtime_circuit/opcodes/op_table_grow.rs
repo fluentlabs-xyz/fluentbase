@@ -73,7 +73,7 @@ mod test {
     use fluentbase_rwasm::instruction_set;
 
     #[test]
-    fn table_grow() {
+    fn table_grow_simple() {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(2)
