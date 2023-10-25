@@ -5,7 +5,7 @@ use fluentbase_rwasm::{
     rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
 
-fn wat2rwasm(wat: &str) -> Vec<u8> {
+pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut compiler = Compiler::new(&wasm_binary).unwrap();
     compiler.finalize().unwrap()

@@ -13,7 +13,7 @@ pub use types::*;
 
 mod crypto;
 mod eth_types;
-mod evm_x;
+mod evm;
 mod hash;
 mod instruction;
 mod keccak_hash;

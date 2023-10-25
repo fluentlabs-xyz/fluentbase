@@ -22,7 +22,7 @@ pub enum VerifyBlockError {
 #[derive(Default)]
 pub(crate) struct Block {
     pub header: Header,
-    pub transactions: Vec<transaction::UnverifiedTransaction>,
+    pub transactions: Vec<transaction::Transaction>,
     pub uncles: Vec<Header>,
 }
 
@@ -123,7 +123,6 @@ mod tests {
 
         // 1. prev block
         let cur_blk_header = generate_random_header_based_on_prev_block(&123121, prev_blk_hash);
-        let cur_blk_hash = cur_blk_header.hash();
         let cur_blk = Block {
             header: cur_blk_header,
             transactions: vec![],
@@ -154,7 +153,6 @@ mod tests {
 
         // 2. current block
         let cur_blk_header = generate_random_header_based_on_prev_block(&123122, prev_blk_hash);
-        let cur_blk_hash = cur_blk_header.hash();
         let cur_blk = Block {
             header: cur_blk_header,
             transactions: vec![],
@@ -176,7 +174,6 @@ mod tests {
     fn verify_block_inputs_with_wrong_prev_blk_hash() {
         // 1. prev block
         let prev_blk_header = generate_random_header(&123120);
-        let prev_blk_hash = prev_blk_header.hash();
         let prev_blk = Block {
             header: prev_blk_header,
             transactions: vec![],
@@ -185,7 +182,6 @@ mod tests {
 
         // 2. current block
         let cur_blk_header = generate_random_header_based_on_prev_block(&123121, H256::random());
-        let cur_blk_hash = cur_blk_header.hash();
         let cur_blk = Block {
             header: cur_blk_header,
             transactions: vec![],

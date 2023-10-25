@@ -2138,6 +2138,7 @@ dependencies = [
  "ethereum",
  "ethereum-types 0.14.1",
  "ethers",
+ "ethers-core 2.0.10",
  "fluentbase-rwasm",
  "halo2curves",
  "hex",
