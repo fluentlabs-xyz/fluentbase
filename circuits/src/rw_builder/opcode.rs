@@ -343,6 +343,7 @@ pub fn build_table_fill_rw_ops_with_args(
     start: u32,
 ) -> Result<(), GadgetError> {
     println!("DEBUG BUILD VALUE {:#?}", value);
+    build_table_size_read_rw_ops(step, table_index)?;
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();
     // read result to the table

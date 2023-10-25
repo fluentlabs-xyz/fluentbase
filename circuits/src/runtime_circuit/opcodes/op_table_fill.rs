@@ -70,14 +70,12 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         cb.stack_pop(value.current());
         cb.stack_pop(start.current());
 
-/*
         cb.context_lookup(
             RwTableContextTag::TableSize(cb.query_rwasm_value()),
             0.expr(),
             size.current(),
             None,
         );
-*/
 
         cb.condition(1.expr() - lt_gadget.expr(), |cb| {
             cb.copy_lookup(
