@@ -1,4 +1,4 @@
-FILES = greeting zktrie_open_test mpt_open_test crypto_keccak crypto_poseidon panic rwasm evm wasi
+FILES = greeting secp256k1_verify zktrie_open_test mpt_open_test crypto_keccak crypto_poseidon panic rwasm evm wasi
 
 all: $(FILES)
 
@@ -6,6 +6,6 @@ all: $(FILES)
 $(FILES):
 	cargo b --release --target=wasm32-wasi --features=$@
 	mkdir -p bin
-	#cp ../../target/wasm32-wasi/release/fluentbase_runtime_example.wasm ./bin/$@.wasm
-	#wasm2wat ./bin/$@.wasm > ./bin/$@.wat
-	wasm2wat ../../target/wasm32-wasi/release/fluentbase_runtime_example.wasm > ./bin/$@.wat
+	cp ../../target/wasm32-wasi/release/fluentbase_runtime_example.wasm ./bin/$@.wasm
+	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+	#wasm2wat ../../target/wasm32-wasi/release/fluentbase_runtime_example.wasm > ./bin/$@.wat
