@@ -176,10 +176,11 @@ impl Instruction {
                 stack_ops.push(RwOp::TableSizeWrite(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::TableFill(_) => {
+            Instruction::TableFill(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
             }
             Instruction::TableGet(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
