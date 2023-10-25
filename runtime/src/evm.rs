@@ -56,11 +56,11 @@ pub(crate) fn verify_rlp_block_a(
     ptr: u32,
 ) -> Result<(), Trap> {
     // evm_rlp_block_a(caller, ptr).unwrap();
-    let block_txs_a_rlp_decoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
-    let block_txs_a = rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_decoded).unwrap();
+    let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
+    let block_txs_a = rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
 
-    let block_txs_b_rlp_decoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
-    let block_txs_b = rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_decoded).unwrap();
+    let block_txs_b_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
+    let block_txs_b = rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_endecoded).unwrap();
 
     // initial verification on blocks:
     let res = eth_types::block::verify_input_blocks(&block_txs_a, &block_txs_b);
@@ -98,10 +98,77 @@ pub(crate) fn verify_rlp_block_a(
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        eth_types::{
+            block::Block,
+            header::{generate_random_header, generate_random_header_based_on_prev_block},
+        },
+        tests::wat2rwasm,
+        verify_rlp_block_a,
+        Runtime,
+    };
+    use keccak_hash::H256;
+
     #[test]
     fn test_verify_block_rlp() {
-
         // 1. generate block rlp and put read it with evm_rlp_block_a
+        let blk_a_header = generate_random_header(&123120);
+        let blk_a = Block {
+            header: blk_a_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+        let blk_a_encoded = rlp::encode(&blk_a);
+
+        // 2. current block
+        let blk_b_header = generate_random_header_based_on_prev_block(&123121, H256::random());
+        let blk_b = Block {
+            header: blk_b_header,
+            transactions: vec![],
+            uncles: vec![],
+        };
+        let blk_b_encoded = rlp::encode(&blk_b);
+
+        let rwasm_binary = wat2rwasm(&format!(
+            r#"
+    (module
+      (type (;0;) (func (param i32 i32 i32)))
+      (type (;1;) (func))
+      (type (;2;) (func (param i32 i32)))
+      (import "env" "_verify_rlp_block_a" (func $_verify_rlp_block_a (type 0)))
+      (import "env" "_evm_return" (func $_evm_return (type 2)))
+      (func $main (type 1)
+        i32.const 0
+        i32.const 12
+        i32.const 50
+        call $_evm_keccak256
+        i32.const 50
+        i32.const 32
+        call $_evm_return
+        )
+      (memory (;0;) 100)
+      (data (;0;) (i32.const 0) "{}")
+      (data (;0;) (i32.const 0) "{}")
+      (export "main" (func $main)))
+        "#,
+            543,
+            123,
+            /* blk_a_encoded.to_vec(),
+             * blk_b_encoded.to_vec(), */
+        ));
+
+        let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+        println!("{:?}", result);
+        match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
+            Ok(answer) => {
+                assert_eq!(&answer, result.data().output().as_slice());
+            }
+            Err(e) => {
+                // If there's an error, you might want to handle it in some way.
+                // For this example, I'll just print the error.
+                println!("Error: {:?}", e);
+            }
+        }
 
         // verify_block_transition() {
 
