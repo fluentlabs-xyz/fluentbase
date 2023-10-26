@@ -1,9 +1,20 @@
-use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx, HASH_SCHEME_DONE};
+use crate::{
+    eth_types::{
+        block::Block,
+        header::{generate_random_header, generate_random_header_based_on_prev_block},
+    },
+    runtime::Runtime,
+    RuntimeContext,
+    RuntimeError,
+    SysFuncIdx,
+    HASH_SCHEME_DONE,
+};
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
+use keccak_hash::H256;
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -197,7 +208,27 @@ fn evm_verify_rlp_blocks_test() {
     let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let input_data: &[u8] = "hello world".as_bytes();
+    // 1. generate block rlp and put read it with evm_rlp_block_a
+    let blk_a_header = generate_random_header(&123120);
+    let blk_a = Block {
+        header: blk_a_header,
+        transactions: vec![],
+        uncles: vec![],
+    };
+    let blk_a_encoded = rlp::encode(&blk_a);
 
-    Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+    // 2. current block
+    let blk_b_header = generate_random_header_based_on_prev_block(&123121, H256::random());
+    let blk_b = Block {
+        header: blk_b_header,
+        transactions: vec![],
+        uncles: vec![],
+    };
+    let blk_b_encoded = rlp::encode(&blk_b);
+
+    let mut input_data: Vec<u8> = Vec::new();
+    input_data.extend(&blk_a_encoded);
+    input_data.extend(&blk_b_encoded);
+
+    Runtime::run(rwasm_binary.as_slice(), input_data.as_slice()).unwrap();
 }
