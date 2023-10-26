@@ -123,6 +123,10 @@ extern "C" {
     pub fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
     pub fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn mpt_get_root(output_offset: i32) -> i32;
+
+    // EVM Inputs
+    fn evm_block_number(output_offset: i32);
+    fn evm_verify_rlp_blocks();
 }
 
 #[inline(always)]
@@ -245,4 +249,16 @@ pub fn mpt_get_(key_offset: i32, key_len: i32, output_offset: i32) -> i32 {
 #[inline(always)]
 pub fn mpt_get_root_(output_offset: i32) -> i32 {
     unsafe { mpt_get_root(output_offset) }
+}
+
+// INPUTs
+
+#[inline(always)]
+pub fn evm_block_number_(output_offset: i32) {
+    unsafe { evm_block_number(output_offset) }
+}
+
+#[inline(always)]
+pub fn evm_verify_rlp_blocks_() {
+    unsafe { evm_verify_rlp_blocks() }
 }

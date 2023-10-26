@@ -191,3 +191,13 @@ fn test_keccak256() {
         }
     }
 }
+
+#[test]
+fn evm_verify_rlp_blocks_test() {
+    let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+
+    let input_data: &[u8] = "hello world".as_bytes();
+
+    Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+}

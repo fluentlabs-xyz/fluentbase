@@ -20,25 +20,23 @@ enum EvmInputSpec {
     BlockRlpTxsA = 14,
     BlockRlpReceiptsA = 15,
     // BlockDifficultyA = 16,
-    // BlockNumberA = 10,
+    BlockNumberA = 10,
     // BlockHashA = 11,
     // add more private inputs
 }
 
 pub(crate) fn evm_block_number(
     mut caller: Caller<'_, RuntimeContext>,
-    ptr: u32,
+    data_offset: i32,
+    data_len: i32,
+    output_offset: i32,
 ) -> Result<(), Trap> {
     // let buff = caller.data().input(EvmInputSpec::BlockNumberA as usize);
-    // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
-    // block.copy_from_slice(buff.as_slice());
-    Ok(())
-}
+    let block_num = exported_memory_vec(&mut caller, data_offset as usize, data_len as usize);
+    //block_data.copy_from_slice(buff.as_slice());
+    caller.write_memory(output_offset as usize, block_num.as_slice());
 
-pub(crate) fn evm_block_hash(mut caller: Caller<'_, RuntimeContext>, ptr: u32) {
-    // let buff = caller.data().input(EvmInputSpec::BlockHashA as usize);
-    // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
-    // block.copy_from_slice(buff.as_slice());
+    Ok(())
 }
 
 pub(crate) fn evm_rlp_block_a(
@@ -51,28 +49,28 @@ pub(crate) fn evm_rlp_block_a(
     Ok(())
 }
 
-pub(crate) fn verify_rlp_block_a(
-    mut caller: Caller<'_, RuntimeContext>,
-    ptr: u32,
-) -> Result<(), Trap> {
-    // evm_rlp_block_a(caller, ptr).unwrap();
+pub(crate) fn evm_verify_rlp_blocks(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
     let block_txs_a = rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
+
+    println!("block_a_nubmer: {:?}", block_txs_a.header.number());
 
     let block_txs_b_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
     let block_txs_b = rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_endecoded).unwrap();
 
-    // initial verification on blocks:
-    let res = eth_types::block::verify_input_blocks(&block_txs_a, &block_txs_b);
-    if res.is_err() {
-        let err = res.err().unwrap();
-        //return Err(eth_types::block::VerifyBlockError::ParentHashWrong);
-        // return Err(res.err());
-    }
+    println!("block_a_nubmer: {:?}", block_txs_b.header.number());
 
-    let block_receipts_a_decoded = caller
-        .data()
-        .input(EvmInputSpec::BlockRlpReceiptsA as usize);
+    // // initial verification on blocks:
+    // let res = eth_types::block::verify_input_blocks(&block_txs_a, &block_txs_b);
+    // if res.is_err() {
+    //     let err = res.err().unwrap();
+    //     //return Err(eth_types::block::VerifyBlockError::ParentHashWrong);
+    //     // return Err(res.err());
+    // }
+
+    // let block_receipts_a_decoded = caller
+    //     .data()
+    //     .input(EvmInputSpec::BlockRlpReceiptsA as usize);
 
     // let block_receipts_a = rlp_decode(sys_input(BlockReceiptsA));
 
@@ -103,8 +101,8 @@ mod tests {
             block::Block,
             header::{generate_random_header, generate_random_header_based_on_prev_block},
         },
+        evm_verify_rlp_blocks,
         tests::wat2rwasm,
-        verify_rlp_block_a,
         Runtime,
     };
     use keccak_hash::H256;
