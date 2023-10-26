@@ -126,7 +126,7 @@ extern "C" {
 
     // EVM Inputs
     fn evm_block_number(output_offset: i32);
-    fn evm_verify_rlp_blocks();
+    fn evm_verify_block_rlps();
 }
 
 #[inline(always)]
@@ -259,6 +259,6 @@ pub fn evm_block_number_(output_offset: i32) {
 }
 
 #[inline(always)]
-pub fn evm_verify_rlp_blocks_() {
-    unsafe { evm_verify_rlp_blocks() }
+pub fn evm_verify_block_rlps_() {
+    unsafe { evm_verify_block_rlps() }
 }

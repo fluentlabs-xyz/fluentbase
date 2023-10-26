@@ -49,16 +49,18 @@ pub(crate) fn evm_rlp_block_a(
     Ok(())
 }
 
-pub(crate) fn evm_verify_rlp_blocks(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
-    let block_txs_a = rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
+pub(crate) fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+    // let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
+    // let block_txs_a =
+    // rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
 
-    println!("block_a_nubmer: {:?}", block_txs_a.header.number());
+    // println!("block_a_nubmer: {:?}", block_txs_a.header.number());
 
-    let block_txs_b_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
-    let block_txs_b = rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_endecoded).unwrap();
+    // let block_txs_b_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
+    // let block_txs_b =
+    // rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_endecoded).unwrap();
 
-    println!("block_a_nubmer: {:?}", block_txs_b.header.number());
+    // println!("block_a_nubmer: {:?}", block_txs_b.header.number());
 
     // // initial verification on blocks:
     // let res = eth_types::block::verify_input_blocks(&block_txs_a, &block_txs_b);
@@ -101,7 +103,7 @@ mod tests {
             block::Block,
             header::{generate_random_header, generate_random_header_based_on_prev_block},
         },
-        evm_verify_rlp_blocks,
+        evm_verify_block_rlps,
         tests::wat2rwasm,
         Runtime,
     };

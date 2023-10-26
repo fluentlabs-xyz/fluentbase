@@ -4,7 +4,7 @@ extern crate alloc;
 
 use fluentbase_sdk::{
     evm_block_number_,
-    evm_verify_rlp_blocks_,
+    evm_verify_block_rlps_,
     mpt_open_,
     sys_read,
     sys_write,
@@ -39,13 +39,9 @@ fn evm_block_number() {
     }
 }
 
-#[cfg(feature = "evm_verify_rlp_blocks")]
-fn evm_verify_rlp_blocks() {
-    let len = evm_verify_rlp_blocks_();
-    const EXPECTED_LEN: i32 = 0;
-    if len != EXPECTED_LEN {
-        panic!("output len!={EXPECTED_LEN:?}");
-    }
+#[cfg(feature = "evm_verify_block_rlps")]
+fn evm_verify_block_rlps() {
+    evm_verify_block_rlps();
 }
 
 fn panic() {
@@ -77,6 +73,8 @@ pub extern "C" fn main() {
     mpt_open_test();
     #[cfg(feature = "panic")]
     panic();
+    #[cfg(feature = "evm_verify_rlp_blocks")]
+    evm_verify_rlp_blocks();
     #[cfg(feature = "rwasm")]
     crate::rwasm::rwasm();
     #[cfg(feature = "evm")]
