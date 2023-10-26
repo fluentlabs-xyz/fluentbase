@@ -948,13 +948,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     ///   actual instruction where the [`TableIdx`] paremeter belongs to.
     /// - This is required for some instructions that do not fit into a single instruction word and
     ///   store a [`TableIdx`] value in another instruction word.
-    fn fetch_table_idx(&self, offset: usize) -> TableIdx {
+    fn fetch_table_idx(&mut self, offset: usize) -> TableIdx {
         let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
-        match addr.get() {
+        let table_idx = match addr.get() {
             Instruction::TableGet(table_idx) => *table_idx,
             _ => unreachable!("expected TableGet instruction word at this point"),
-        }
+        };
+        self.tracer.remember_next_table(table_idx);
+        table_idx
     }
 
     #[inline(always)]
@@ -1342,7 +1344,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
-        self.tracer.table_size_change(table_index.to_u32(), init.as_u32(), delta);
+        self.tracer
+            .table_size_change(table_index.to_u32(), init.as_u32(), delta);
         self.try_next_instr()
     }
 
