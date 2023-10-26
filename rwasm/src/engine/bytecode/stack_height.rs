@@ -198,7 +198,7 @@ impl Instruction {
             Instruction::TableCopy(_) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
-                stack_ops.push(RwOp::StackWrite(0));
+                stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::TableInit(_) => {}
 

@@ -23,6 +23,7 @@ pub struct TraceTableState {
 #[derive(Debug, Clone)]
 pub struct TraceTableSizeState {
     pub table_idx: u32,
+    pub init: u32,
     pub delta: u32,
 }
 
@@ -181,8 +182,8 @@ impl Tracer {
         });
     }
 
-    pub fn table_size_change(&mut self, table_idx: u32, delta: u32) {
+    pub fn table_size_change(&mut self, table_idx: u32, init: u32, delta: u32) {
         self.table_size_changes
-            .push(TraceTableSizeState { table_idx, delta });
+            .push(TraceTableSizeState { table_idx, init, delta });
     }
 }
