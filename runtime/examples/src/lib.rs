@@ -41,7 +41,7 @@ fn evm_block_number() {
 
 #[cfg(feature = "evm_verify_block_rlps")]
 fn evm_verify_block_rlps() {
-    evm_verify_block_rlps();
+    evm_verify_block_rlps_();
 }
 
 fn panic() {

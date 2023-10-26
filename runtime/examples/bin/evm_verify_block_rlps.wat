@@ -1,9 +1,8 @@
 (module
   (type (;0;) (func))
+  (import "env" "evm_verify_block_rlps" (func $evm_verify_block_rlps (type 0)))
   (func $main (type 0)
-    loop  ;; label = @1
-      br 0 (;@1;)
-    end)
+    call $evm_verify_block_rlps)
   (func $dummy (type 0))
   (func $__wasm_call_dtors (type 0)
     call $dummy
