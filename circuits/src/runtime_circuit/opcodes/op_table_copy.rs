@@ -191,13 +191,53 @@ mod test {
             Drop
             RefFunc(0)
             I32Const(6)
-            TableGrow(1)
+            TableGrow(2)
             Drop
             I32Const(1)
             I32Const(2)
             I32Const(3)
             TableCopy(0)
-            TableGet(1)
+            TableGet(2)
+        });
+    }
+
+    #[test]
+    fn table_copy_overlap() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(0) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(3)
+            I32Const(0) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(4)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(5)
+            I32Const(0) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(0)
         });
     }
 
