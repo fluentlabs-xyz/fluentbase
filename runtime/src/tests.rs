@@ -228,7 +228,7 @@ fn evm_verify_rlp_blocks_test() {
 
     let mut input_data: Vec<u8> = Vec::new();
     input_data.extend(&blk_a_encoded);
-    input_data.extend(&blk_b_encoded);
+    // input_data.extend(&blk_a_encoded);
 
     Runtime::run(rwasm_binary.as_slice(), input_data.as_slice()).unwrap();
 }

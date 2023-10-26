@@ -50,24 +50,25 @@ pub(crate) fn evm_rlp_block_a(
 }
 
 pub(crate) fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    // let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
-    // let block_txs_a =
-    // rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
+    let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
+    let block_txs_a = rlp::decode::<eth_types::block::Block>(&block_txs_a_rlp_endecoded).unwrap();
 
-    // println!("block_a_nubmer: {:?}", block_txs_a.header.number());
+    // let empty_vec: Vec<u8> = Vec::new();
+    // if block_txs_a_rlp_endecoded.to_vec().gt(&empty_vec.to_vec()) {
+    //     panic!("EMPTY");
+    // }
 
     // let block_txs_b_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockB as usize);
     // let block_txs_b =
     // rlp::decode::<eth_types::block::Block>(&block_txs_b_rlp_endecoded).unwrap();
 
-    // println!("block_a_nubmer: {:?}", block_txs_b.header.number());
+    // assert_eq!(block_txs_a_rlp_endecoded, block_txs_b_rlp_endecoded);
 
     // // initial verification on blocks:
     // let res = eth_types::block::verify_input_blocks(&block_txs_a, &block_txs_b);
     // if res.is_err() {
     //     let err = res.err().unwrap();
-    //     //return Err(eth_types::block::VerifyBlockError::ParentHashWrong);
-    //     // return Err(res.err());
+    //     //return Err(err.into());
     // }
 
     // let block_receipts_a_decoded = caller
@@ -94,118 +95,4 @@ pub(crate) fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Resul
     // // block_rlp.copy_from_slice(buff.as_slice());
     // // Ok(block_rlp.as_b as i32)
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        eth_types::{
-            block::Block,
-            header::{generate_random_header, generate_random_header_based_on_prev_block},
-        },
-        evm_verify_block_rlps,
-        tests::wat2rwasm,
-        Runtime,
-    };
-    use keccak_hash::H256;
-
-    #[test]
-    fn test_verify_block_rlp() {
-        // 1. generate block rlp and put read it with evm_rlp_block_a
-        let blk_a_header = generate_random_header(&123120);
-        let blk_a = Block {
-            header: blk_a_header,
-            transactions: vec![],
-            uncles: vec![],
-        };
-        let blk_a_encoded = rlp::encode(&blk_a);
-
-        // 2. current block
-        let blk_b_header = generate_random_header_based_on_prev_block(&123121, H256::random());
-        let blk_b = Block {
-            header: blk_b_header,
-            transactions: vec![],
-            uncles: vec![],
-        };
-        let blk_b_encoded = rlp::encode(&blk_b);
-
-        let rwasm_binary = wat2rwasm(&format!(
-            r#"
-    (module
-      (type (;0;) (func (param i32 i32 i32)))
-      (type (;1;) (func))
-      (type (;2;) (func (param i32 i32)))
-      (import "env" "_verify_rlp_block_a" (func $_verify_rlp_block_a (type 0)))
-      (import "env" "_evm_return" (func $_evm_return (type 2)))
-      (func $main (type 1)
-        i32.const 0
-        i32.const 12
-        i32.const 50
-        call $_evm_keccak256
-        i32.const 50
-        i32.const 32
-        call $_evm_return
-        )
-      (memory (;0;) 100)
-      (data (;0;) (i32.const 0) "{}")
-      (data (;0;) (i32.const 0) "{}")
-      (export "main" (func $main)))
-        "#,
-            543,
-            123,
-            /* blk_a_encoded.to_vec(),
-             * blk_b_encoded.to_vec(), */
-        ));
-
-        let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
-        println!("{:?}", result);
-        match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
-            Ok(answer) => {
-                assert_eq!(&answer, result.data().output().as_slice());
-            }
-            Err(e) => {
-                // If there's an error, you might want to handle it in some way.
-                // For this example, I'll just print the error.
-                println!("Error: {:?}", e);
-            }
-        }
-
-        // verify_block_transition() {
-
-        //     let rlp_block_a = sys_input(RlpBlockA);
-        //     let rlp_block_b = sys_input(RlpBlockB);
-
-        //     let block_a = decode_rlp(rlp_block_a);
-        //     let block_b = decode_rlp(rlp_block_b);
-
-        //     let block_state_leaves_b = rlp_decode(sys_input(BlockRlpStateLeavesB));
-        //     let block_txs_a = rlp_decode(sys_input(BlockTxsA));
-        //     let block_receipts_a = rlp_decode(sys_input(BlockReceiptsA));
-
-        //     // check root
-        //     zktrie_open(..initial trie...); // reset
-        //     for (i, raw_tx) in block_txs_a {
-        //       let tx = rlp_decode(raw_tx);
-        //       let receipt = exec_tx(tx);
-        //       assert(hash(receipt) == receipts[i]);
-        //     }
-        //     assert(block_a.root == zktrie_root());
-
-        //     // check tx hash
-        //     mpt_open(); // reset
-        //     for (i, tx) in &block_txs_a {
-        //       let key = rlp_encode(i);
-        //       mpt_update(key.ptr, key.len, tx.ptr, tx.len);
-        //     }
-        //     assert(block_a.tx_hash == mpt_root());
-
-        //     // check tx hash
-        //     mpt_open(); // reset
-        //     for (i, tx) in &block_receipts_a {
-        //       let key = rlp_encode(i);
-        //       mpt_update(key.ptr, key.len, tx.ptr, tx.len);
-        //     }
-        //     assert(block_a.receipt_hash == mpt_root());
-        //   }
-    }
 }
