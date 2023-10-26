@@ -41,15 +41,8 @@ fn evm_block_number() {
 
 #[cfg(feature = "evm_verify_rlp_blocks")]
 fn evm_verify_rlp_blocks() {
-    const BLOCK_A_OFFSET: i32 = 32;
-    const BLOCK_B_OFFSET: i32 = 32;
-    let mut input = [0u8; (BLOCK_A_OFFSET + BLOCK_B_OFFSET) as usize];
-
-    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
-
-    const EXPECTED_RES: i32 = 1;
-
-    let len = evm_verify_rlp_blocks_(input.as_mut_ptr(), 0, input.len() as u32);
+    let len = evm_verify_rlp_blocks_();
+    const EXPECTED_LEN: i32 = 0;
     if len != EXPECTED_LEN {
         panic!("output len!={EXPECTED_LEN:?}");
     }
