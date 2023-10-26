@@ -1,4 +1,4 @@
-FILES = greeting zktrie_open_test mpt_open_test panic rwasm evm wasi
+FILES = greeting evm_verify_block_rlps zktrie_open_test mpt_open_test panic rwasm evm wasi
 
 all: $(FILES)
 

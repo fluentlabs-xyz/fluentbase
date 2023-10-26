@@ -205,7 +205,7 @@ fn test_keccak256() {
 
 #[test]
 fn evm_verify_rlp_blocks_test() {
-    let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
+    let wasm_binary = include_bytes!("../examples/bin/evm_verify_block_rlps.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     // 1. generate block rlp and put read it with evm_rlp_block_a

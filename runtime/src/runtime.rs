@@ -400,7 +400,7 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "verify_rlp_blocks".to_string(),
+            "evm_verify_block_rlps".to_string(),
             SysFuncIdx::EVM_VERIFY_BLOCK_RLPS as u16,
             &[ValueType::I32; 1],
             &[ValueType::I32; 1],
@@ -546,7 +546,7 @@ impl Runtime {
 
         // inputs
         forward_call!(linker, store, "env", "evm_block_number", fn evm_block_number(data_offset: i32, data_len: i32, output_offset: i32) -> ());
-        forward_call!(linker, store, "env", "verify_rlp_blocks", fn evm_verify_rlp_blocks() -> ());
+        forward_call!(linker, store, "env", "evm_verify_block_rlps", fn evm_verify_block_rlps() -> ());
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {
