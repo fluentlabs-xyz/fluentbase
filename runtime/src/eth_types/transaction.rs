@@ -89,7 +89,7 @@ pub struct Transaction {
 /// Generate a dummy pre-eip155 tx in which
 /// (nonce=0, gas=0, gas_price=0, to=0, value=0, data="")
 /// using the dummy private key = 1
-pub fn get_dummy_tx() -> (TransactionRequest) {
+pub fn get_dummy_tx_request() -> (TransactionRequest) {
     let mut sk_be_scalar = [0u8; 32];
     sk_be_scalar[31] = 1_u8;
 
@@ -112,19 +112,17 @@ pub fn get_dummy_tx() -> (TransactionRequest) {
 
 /// Get the tx hash of the dummy tx (nonce=0, gas=0, gas_price=0, to=0, value=0,
 /// data="")
-pub fn get_dummy_tx_hash() -> H256 {
-    let tx = get_dummy_tx();
-
-    keccak(tx.rlp_unsigned())
+pub fn compute_dummy_tx_hash(tx_request: &TransactionRequest) -> H256 {
+    keccak(tx_request.rlp_unsigned())
 }
 
 impl Transaction {
     /// Return a fixed dummy pre-eip155 tx
     pub fn dummy(chain_id: u64) -> Self {
-        let dummy_tx = get_dummy_tx();
-        let dummy_tx_hash = get_dummy_tx_hash();
+        let dummy_tx_request = get_dummy_tx_request();
+        let dummy_tx_request_hash = compute_dummy_tx_hash(&dummy_tx_request);
         //  let rlp_signed = dummy_tx.rlp_signed(&dummy_sig).to_vec();
-        let rlp_unsigned = dummy_tx.rlp_unsigned().to_vec();
+        let rlp_unsigned = dummy_tx_request.rlp_unsigned().to_vec();
 
         Self {
             block_number: 0,
@@ -139,7 +137,7 @@ impl Transaction {
             // s: dummy_sig.s,
             // rlp_signed,
             rlp_unsigned,
-            hash: dummy_tx_hash,
+            hash: dummy_tx_request_hash,
             tx_type: PreEip155,
 
             ..Default::default()
