@@ -372,15 +372,19 @@ pub fn build_table_fill_rw_ops_with_args(
 
 pub fn build_table_copy_rw_ops(
     step: &mut ExecStep,
-    table_src: u32,
     table_dst: u32,
 ) -> Result<(), GadgetError> {
-    // pop 2 elems from stack
-    let start = build_stack_read_rw_ops(step, 0)?;
-    let range = build_stack_read_rw_ops(step, 1)?;
+    //let table_src = step.next().unwrap().opcode.aux_value().unwrap_or_default().as_u32();
+    let table_src = 1;
+    // pop 3 elems from stack
+    build_table_size_read_rw_ops(step, table_dst)?;
+    build_table_size_read_rw_ops(step, table_src)?;
+    let length = build_stack_read_rw_ops(step, 0)?;
+    let src_eidx = build_stack_read_rw_ops(step, 1)?;
+    let dst_eidx = build_stack_read_rw_ops(step, 2)?;
     // read copied data
-    let mut data = vec![0; range.as_u32() as usize];
-    for i in 0..range.as_usize() {
+    let mut data = vec![0; length.as_u32() as usize];
+    for i in 0..length.as_usize() {
         data[i] = step.read_table_elem(table_src, i as u32).unwrap().as_u32();
     }
     let copy_rw_counter = step.next_rw_counter();
@@ -390,7 +394,7 @@ pub fn build_table_copy_rw_ops(
             rw_counter: step.next_rw_counter(),
             is_write: false,
             call_id: step.call_id,
-            address: table_src as u64 * 1024 + i as u64,
+            address: table_src as u64 * 1024 + src_eidx.as_u64() + i as u64,
             value: *value as u64,
         });
     });
@@ -400,18 +404,18 @@ pub fn build_table_copy_rw_ops(
             rw_counter: step.next_rw_counter(),
             is_write: true,
             call_id: step.call_id,
-            address: table_dst as u64 * 1024 + start.as_u64() + i as u64,
+            address: table_dst as u64 * 1024 + dst_eidx.as_u64() + i as u64,
             value: *value as u64,
         });
     });
     // create copy row
     step.copy_rows.push(CopyRow {
         tag: CopyTableTag::CopyTable,
-        from_address: table_src * 1024,
-        to_address: table_dst * 1024 + start.as_u32(),
-        length: range.as_u32(),
+        from_address: table_src * 1024 + src_eidx.as_u32(),
+        to_address: table_dst * 1024 + dst_eidx.as_u32(),
+        length: length.as_u32(),
         rw_counter: copy_rw_counter,
-        data: vec![0; range.as_usize()],
+        data: vec![0; length.as_usize()],
     });
     Ok(())
 }

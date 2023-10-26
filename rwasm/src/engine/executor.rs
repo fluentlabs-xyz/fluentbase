@@ -1342,7 +1342,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
-        self.tracer.table_size_change(table_index.to_u32(), delta);
+        self.tracer.table_size_change(table_index.to_u32(), init.as_u32(), delta);
         self.try_next_instr()
     }
 
@@ -1409,6 +1409,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 // Query both tables and check if they are the same:
                 let dst = this.cache.get_table(this.ctx, dst);
                 let src = this.cache.get_table(this.ctx, src);
+                this.ctx
+                    .resolve_table(&dst)
+                    .get_untyped(dst_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
+                this.ctx
+                    .resolve_table(&src)
+                    .get_untyped(src_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
                 if Table::eq(&dst, &src) {
                     // Copy within the same table:
                     let table = this.ctx.resolve_table_mut(&dst);

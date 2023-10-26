@@ -162,9 +162,17 @@ impl ExecSteps {
             for table_size_change in trace.table_size_changes.iter() {
                 let size_addr = table_size_change.table_idx * 1024;
                 let zero = UntypedValue::from(0);
-                let old_size = global_table.get(&size_addr).or(Some(&zero)).unwrap();
+                let old_size = global_table.get(&size_addr).or(Some(&zero)).unwrap().clone();
                 let new_size = old_size.as_u32() + table_size_change.delta;
                 global_table.insert(size_addr, UntypedValue::from(new_size));
+                for i in old_size.as_u32()..new_size {
+                    let addr = size_addr + 1 + i;
+                    if !global_table.contains_key(&addr) {
+                       global_table.insert(addr, UntypedValue::from(table_size_change.init));
+                    } else {
+                        todo!("Value already exist in table that grow size, how to handle it ?");
+                    }
+                }
             }
             let mut step = ExecStep {
                 trace,
