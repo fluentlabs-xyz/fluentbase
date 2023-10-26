@@ -1,6 +1,9 @@
 (module
   (type (;0;) (func))
-  (func $main (type 0))
+  (func $main (type 0)
+    loop  ;; label = @1
+      br 0 (;@1;)
+    end)
   (func $dummy (type 0))
   (func $__wasm_call_dtors (type 0)
     call $dummy

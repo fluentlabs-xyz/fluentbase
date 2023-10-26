@@ -73,8 +73,8 @@ pub extern "C" fn main() {
     mpt_open_test();
     #[cfg(feature = "panic")]
     panic();
-    #[cfg(feature = "evm_verify_rlp_blocks")]
-    evm_verify_rlp_blocks();
+    #[cfg(feature = "evm_verify_block_rlps")]
+    evm_verify_block_rlps();
     #[cfg(feature = "rwasm")]
     crate::rwasm::rwasm();
     #[cfg(feature = "evm")]
