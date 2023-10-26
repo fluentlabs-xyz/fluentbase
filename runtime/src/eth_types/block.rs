@@ -14,18 +14,6 @@ pub enum VerifyBlockError {
     BlockNumbersNotConsistent = -3005,
 }
 
-// impl From<TrapCode> for VerifyBlockError {
-//     fn from(value: TrapCode) -> Self {
-//         match value {
-//             TrapCode::EmptyInput => VerifyBlockError::EmptyInput,
-//             // TrapCode::MemoryOutOfBounds => VerifyBlockError::PrevBlockHashWrong,
-//             // TrapCode::TableOutOfBounds => VerifyBlockError::CurrentBlockHashWrong,
-//             // TrapCode::IndirectCallToNull => VerifyBlockError::ParentHashWrong,
-//             // TrapCode::IntegerDivisionByZero => VerifyBlockError::BlockNumbersNotConsistent,
-//         }
-//     }
-// }
-
 impl Into<i32> for VerifyBlockError {
     fn into(self) -> i32 {
         self as i32
@@ -33,7 +21,7 @@ impl Into<i32> for VerifyBlockError {
 }
 
 /// Helper structure, used for encoding blocks.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Block {
     pub header: Header,
     pub transactions: Vec<transaction::Transaction>,
@@ -127,8 +115,7 @@ mod tests {
     #[test]
     fn verify_block_inputs_with_proper_data() {
         // 1. prev block
-        let prev_blk_header = generate_random_header(&123120);
-        let prev_blk_hash = prev_blk_header.hash();
+        let (prev_blk_header, prev_blk_hash) = generate_random_header(&123120);
         let prev_blk = Block {
             header: prev_blk_header,
             transactions: vec![],
@@ -157,8 +144,7 @@ mod tests {
     #[test]
     fn verify_block_inputs_with_wrong_prev_blk_num() {
         // 1. prev block
-        let prev_blk_header = generate_random_header(&123120);
-        let prev_blk_hash = prev_blk_header.hash();
+        let (prev_blk_header, prev_blk_hash) = generate_random_header(&123120);
         let prev_blk = Block {
             header: prev_blk_header,
             transactions: vec![],
@@ -187,7 +173,7 @@ mod tests {
     #[test]
     fn verify_block_inputs_with_wrong_prev_blk_hash() {
         // 1. prev block
-        let prev_blk_header = generate_random_header(&123120);
+        let (prev_blk_header, prev_blk_hash) = generate_random_header(&123120);
         let prev_blk = Block {
             header: prev_blk_header,
             transactions: vec![],

@@ -61,8 +61,8 @@ impl RuntimeContext {
         }
     }
 
-    pub fn with_input(mut self, input_data: &[u8]) -> Self {
-        self.input = vec![input_data.to_vec()];
+    pub fn with_input(mut self, input_data: &Vec<Vec<u8>>) -> Self {
+        self.input = input_data.to_vec();
         self
     }
 
@@ -402,14 +402,17 @@ impl Runtime {
             "env".to_string(),
             "evm_verify_block_rlps".to_string(),
             SysFuncIdx::EVM_VERIFY_BLOCK_RLPS as u16,
-            &[ValueType::I32; 1],
-            &[ValueType::I32; 1],
+            &[ValueType::I32; 0],
+            &[ValueType::I32; 0],
         ));
 
         import_linker
     }
 
-    pub fn run(rwasm_binary: &[u8], input_data: &[u8]) -> Result<ExecutionResult, RuntimeError> {
+    pub fn run(
+        rwasm_binary: &[u8],
+        input_data: &Vec<Vec<u8>>,
+    ) -> Result<ExecutionResult, RuntimeError> {
         let runtime_context = RuntimeContext::new(rwasm_binary).with_input(input_data);
         let import_linker = Self::new_linker();
         Self::run_with_context(runtime_context, &import_linker)

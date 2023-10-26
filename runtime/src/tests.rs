@@ -54,14 +54,15 @@ fn test_simple() {
   (export "main" (func $main)))
     "#,
     );
-    Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+    Runtime::run(rwasm_binary.as_slice(), &Vec::new()).unwrap();
 }
 
 #[test]
 fn test_greeting() {
     let wasm_binary = include_bytes!("../examples/bin/greeting.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let output = Runtime::run(rwasm_binary.as_slice(), &[100, 20, 3]).unwrap();
+    let input_data: Vec<Vec<u8>> = vec![[100, 20, 3].to_vec()];
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
     assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
@@ -74,7 +75,6 @@ fn zktrie_open_test() {
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_data = vec![];
-
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
     // assert_eq!(output.data().output().clone(), vec![]);
 }
@@ -84,8 +84,7 @@ fn mpt_open_test() {
     let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
-    let input_data = [];
-
+    let input_data: Vec<Vec<u8>> = Vec::new();
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
     // assert_eq!(output.data().output().clone(), vec![]);
 }
@@ -110,7 +109,7 @@ fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {
 fn test_panic() {
     let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let result = Runtime::run(rwasm_binary.as_slice(), &[]);
+    let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new());
     assert_trap_i32_exit(result, Trap::i32_exit(71));
 }
 
@@ -119,7 +118,7 @@ fn test_panic() {
 fn test_translator() {
     let wasm_binary = include_bytes!("../examples/bin/rwasm.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+    let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new()).unwrap();
     println!("{:?}", result.data().output().clone());
 }
 
@@ -189,7 +188,7 @@ fn test_keccak256() {
     "#,
     );
 
-    let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+    let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new()).unwrap();
     println!("{:?}", result);
     match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
         Ok(answer) => {
@@ -209,26 +208,27 @@ fn evm_verify_rlp_blocks_test() {
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     // 1. generate block rlp and put read it with evm_rlp_block_a
-    let blk_a_header = generate_random_header(&123120);
+    let (blk_a_header, blk_a_hash) = generate_random_header(&123120);
     let blk_a = Block {
         header: blk_a_header,
         transactions: vec![],
         uncles: vec![],
     };
-    let blk_a_encoded = rlp::encode(&blk_a);
+
+    let blk_a_encoded = rlp::encode(&blk_a).to_vec();
 
     // 2. current block
-    let blk_b_header = generate_random_header_based_on_prev_block(&123121, H256::random());
+    let blk_b_header = generate_random_header_based_on_prev_block(&123121, blk_a_hash);
     let blk_b = Block {
         header: blk_b_header,
         transactions: vec![],
         uncles: vec![],
     };
-    let blk_b_encoded = rlp::encode(&blk_b);
+    let blk_b_encoded = rlp::encode(&blk_b).to_vec();
 
-    let mut input_data: Vec<u8> = Vec::new();
-    input_data.extend(&blk_a_encoded);
-    // input_data.extend(&blk_a_encoded);
+    let mut input_data: Vec<Vec<u8>> = Vec::new();
+    input_data.push(blk_a_encoded);
+    input_data.push(blk_b_encoded);
 
-    Runtime::run(rwasm_binary.as_slice(), input_data.as_slice()).unwrap();
+    Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
 }

@@ -392,8 +392,8 @@ impl Encodable for Header {
     }
 }
 
-pub(crate) fn generate_random_header(height: &u64) -> Header {
-    Header {
+pub(crate) fn generate_random_header(height: &u64) -> (Header, H256) {
+    let header = Header {
         parent_hash: H256::random(),
         uncles_hash: H256::random(),
         author: H160::random(),
@@ -411,6 +411,10 @@ pub(crate) fn generate_random_header(height: &u64) -> Header {
         hash: RefCell::new(None),
         bare_hash: RefCell::new(None),
     }
+    .clone();
+    let header_clone = header.clone();
+
+    (header, header_clone.hash())
 }
 
 pub(crate) fn generate_random_header_based_on_prev_block(
@@ -446,7 +450,7 @@ mod tests {
 
     #[test]
     fn decode_encode_header() {
-        let header = generate_random_header(&123120);
+        let (header, _): (Header, H256) = generate_random_header(&123120);
 
         let encoded_header = rlp::encode(&header);
         let header_to_compare = rlp::decode::<Header>(&encoded_header).unwrap();
