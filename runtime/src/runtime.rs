@@ -390,6 +390,22 @@ impl Runtime {
             &[ValueType::I32; 1],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "evm_block_number".to_string(),
+            SysFuncIdx::EVM_BLOCK_NUMBER as u16,
+            &[ValueType::I32; 1],
+            &[ValueType::I32; 1],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "verify_rlp_blocks".to_string(),
+            SysFuncIdx::EVM_VERIFY_BLOCK_RLPS as u16,
+            &[ValueType::I32; 1],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -527,6 +543,10 @@ impl Runtime {
         forward_call!(linker, store, "env", "mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
+
+        // inputs
+        forward_call!(linker, store, "env", "evm_block_number", fn evm_block_number(data_offset: i32, data_len: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "verify_rlp_blocks", fn evm_verify_rlp_blocks() -> ());
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

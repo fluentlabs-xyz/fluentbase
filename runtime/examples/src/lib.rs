@@ -2,7 +2,14 @@
 
 extern crate alloc;
 
-use fluentbase_sdk::{mpt_open_, sys_read, sys_write, zktrie_open_};
+use fluentbase_sdk::{
+    evm_block_number_,
+    evm_verify_rlp_blocks_,
+    mpt_open_,
+    sys_read,
+    sys_write,
+    zktrie_open_,
+};
 
 #[cfg(feature = "evm")]
 mod evm;
@@ -18,6 +25,34 @@ fn greeting() {
     let sum = input.iter().fold(0u32, |r, v| r + *v as u32);
     let sum_bytes = sum.to_be_bytes();
     sys_write(sum_bytes.as_ptr() as u32, sum_bytes.len() as u32);
+}
+
+#[cfg(feature = "evm_block_number")]
+fn evm_block_number() {
+    let mut input = [0u8; 11];
+    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
+    const EXPECTED_LEN: i32 = 32;
+    const OUTPUT_OFFSET: i32 = 0;
+    let len = evm_block_number_(input.as_mut_ptr() as i32, input.len() as i32, OUTPUT_OFFSET);
+    if len != EXPECTED_LEN {
+        panic!("output len!={EXPECTED_LEN:?}");
+    }
+}
+
+#[cfg(feature = "evm_verify_rlp_blocks")]
+fn evm_verify_rlp_blocks() {
+    const BLOCK_A_OFFSET: i32 = 32;
+    const BLOCK_B_OFFSET: i32 = 32;
+    let mut input = [0u8; (BLOCK_A_OFFSET + BLOCK_B_OFFSET) as usize];
+
+    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
+
+    const EXPECTED_RES: i32 = 1;
+
+    let len = evm_verify_rlp_blocks_(input.as_mut_ptr(), 0, input.len() as u32);
+    if len != EXPECTED_LEN {
+        panic!("output len!={EXPECTED_LEN:?}");
+    }
 }
 
 fn panic() {
