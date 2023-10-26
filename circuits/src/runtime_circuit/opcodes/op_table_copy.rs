@@ -8,8 +8,7 @@ use crate::{
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
     },
-    rw_builder::copy_row::CopyTableTag,
-    rw_builder::rw_row::RwTableContextTag,
+    rw_builder::{copy_row::CopyTableTag, rw_row::RwTableContextTag},
     util::Field,
 };
 use fluentbase_runtime::ExitCode;
@@ -53,8 +52,10 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         cb.range_check_1024(src_ti.current());
         cb.range_check_1024(cb.query_rwasm_value());
 
-        let last_point_dst = size_dst.current() - (dst_eidx.current() + length.current()) - 1.expr();
-        let last_point_src = size_src.current() - (src_eidx.current() + length.current()) - 1.expr();
+        let last_point_dst =
+            size_dst.current() - (dst_eidx.current() + length.current()) - 1.expr();
+        let last_point_src =
+            size_src.current() - (src_eidx.current() + length.current()) - 1.expr();
         // 1024 - 1024 - 1 + 2049 is minimum value.
         // 1 or more is valid + 2048, so less than 2049 in error.
         // less than 2049 is out of valid range, so we checking it.
@@ -64,12 +65,13 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         let lt_gadget_dst = cb.lt_gadget(threshold_dst, RANGE_THRESHOLD.expr());
         let lt_gadget_src = cb.lt_gadget(threshold_src, RANGE_THRESHOLD.expr());
 
-        let error_case = || 1.expr() - (1.expr() - lt_gadget_dst.expr()) * (1.expr() - lt_gadget_src.expr());
+        let error_case =
+            || 1.expr() - (1.expr() - lt_gadget_dst.expr()) * (1.expr() - lt_gadget_src.expr());
 
         // So in case of exit code causing error, pc delta must be different.
         // To solve this problem `configure_state_transition` is defined with disabled constraint.
         cb.condition(1.expr() - error_case(), |cb| {
-            cb.next_pc_delta((9*2).expr());
+            cb.next_pc_delta((9 * 2).expr());
         });
 
         cb.condition(error_case(), |cb| {
@@ -130,10 +132,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         offset: usize,
         trace: &ExecStep,
     ) -> Result<(), GadgetError> {
-
         let dst_ti = trace.instr().aux_value().unwrap_or_default().as_u32();
-        //let src_ti = trace.next().unwrap().opcode.aux_value().unwrap_or_default().as_u32();
-        let src_ti = 1;
+        let src_ti = trace.curr().next_table_idx.unwrap().to_u32();
         println!("DEBUG DST_TI {}, SRC_TI {}", dst_ti, src_ti);
 
         let length = trace.curr_nth_stack_value(0)?;
@@ -142,18 +142,24 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         let size_src = trace.read_table_size(src_ti);
         let size_dst = trace.read_table_size(dst_ti);
 
-        self.dst_eidx.assign(region, offset, F::from(dst_eidx.to_bits()));
-        self.src_eidx.assign(region, offset, F::from(src_eidx.to_bits()));
-        self.length.assign(region, offset, F::from(length.to_bits()));
-        self.size_src.assign(region, offset, F::from(size_src as u64));
-        self.size_dst.assign(region, offset, F::from(size_dst as u64));
+        self.dst_eidx
+            .assign(region, offset, F::from(dst_eidx.to_bits()));
+        self.src_eidx
+            .assign(region, offset, F::from(src_eidx.to_bits()));
+        self.length
+            .assign(region, offset, F::from(length.to_bits()));
+        self.size_src
+            .assign(region, offset, F::from(size_src as u64));
+        self.size_dst
+            .assign(region, offset, F::from(size_dst as u64));
         self.src_ti.assign(region, offset, F::from(src_ti as u64));
 
         self.lt_gadget_dst.assign(
             region,
             offset,
             F::from(
-                (size_dst as i64 - (dst_eidx.to_bits() + length.to_bits()) as i64 - 1 + RANGE_THRESHOLD as i64) as u64,
+                (size_dst as i64 - (dst_eidx.to_bits() + length.to_bits()) as i64 - 1
+                    + RANGE_THRESHOLD as i64) as u64,
             ),
             F::from(RANGE_THRESHOLD as u64),
         );
@@ -162,7 +168,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
             region,
             offset,
             F::from(
-                (size_src as i64 - (src_eidx.to_bits() + length.to_bits()) as i64 - 1 + RANGE_THRESHOLD as i64) as u64,
+                (size_src as i64 - (src_eidx.to_bits() + length.to_bits()) as i64 - 1
+                    + RANGE_THRESHOLD as i64) as u64,
             ),
             F::from(RANGE_THRESHOLD as u64),
         );
@@ -231,6 +238,4 @@ mod test {
             TableGet(1)
         });
     }
-
-
 }
