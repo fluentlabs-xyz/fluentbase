@@ -375,7 +375,7 @@ pub fn build_table_copy_rw_ops(
     table_dst: u32,
 ) -> Result<(), GadgetError> {
     //let table_src = step.next().unwrap().opcode.aux_value().unwrap_or_default().as_u32();
-    let table_src = 1;
+    let table_src = step.curr().next_table_idx.unwrap().to_u32();
     // pop 3 elems from stack
     build_table_size_read_rw_ops(step, table_dst)?;
     build_table_size_read_rw_ops(step, table_src)?;
