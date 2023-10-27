@@ -153,6 +153,25 @@ mod test {
     }
 
     #[test]
+    fn table_fill_after_set() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(4)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            I32Const(2)
+            TableFill(0)
+        });
+    }
+
+    #[test]
     fn table_fill_out_of_bounds() {
         test_ok(instruction_set! {
             RefFunc(0)
@@ -184,7 +203,35 @@ mod test {
         });
     }
 
+    #[test]
+    fn table_fill_after_set_two_times() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(4)
+            TableGrow(0)
+            Drop
 
+            I32Const(1)
+            I32Const(4) // TODO: RefFunc(4)
+            TableSet(0)
 
+            I32Const(2)
+            I32Const(5) // TODO: RefFunc(5)
+            TableSet(0)
 
+            I32Const(1)
+            I32Const(3) // TODO: RefFunc(3)
+            I32Const(2)
+            TableFill(0)
+
+            I32Const(2)
+            I32Const(6) // TODO: RefFunc(6)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(7) // TODO: RefFunc(7)
+            I32Const(2)
+            TableFill(0)
+        });
+    }
 }
