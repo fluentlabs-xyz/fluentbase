@@ -202,7 +202,137 @@ mod test {
     }
 
     #[test]
-    fn table_copy_overlap() {
+    fn table_copy_set_first() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(2)
+            Drop
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(2)
+            I32Const(3)
+            TableCopy(0)
+            TableGet(2)
+        });
+    }
+
+    #[test]
+    fn table_copy_set_first_out_of_bound() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(2)
+            Drop
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(2)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
+    fn table_copy_set_second() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(1)
+            Drop
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(1)
+
+            I32Const(2)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2)
+            I32Const(3)
+            TableCopy(0)
+            TableGet(1)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
+    fn table_copy_set_second_out_of_bounds() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(1)
+            Drop
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(1)
+
+            I32Const(2)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(1)
+        });
+    }
+
+    #[test]
+    fn table_copy_overlap_zeros() {
         test_ok(instruction_set! {
             RefFunc(0)
             I32Const(6)
@@ -214,7 +344,7 @@ mod test {
             TableSet(0)
 
             I32Const(1)
-            I32Const(0) // TODO: RefFunc(1)
+            I32Const(0) // TODO: RefFunc(0)
             TableSet(0)
 
             I32Const(2)
@@ -222,7 +352,7 @@ mod test {
             TableSet(0)
 
             I32Const(3)
-            I32Const(0) // TODO: RefFunc(1)
+            I32Const(0) // TODO: RefFunc(0)
             TableSet(0)
 
             I32Const(4)
@@ -230,7 +360,130 @@ mod test {
             TableSet(0)
 
             I32Const(5)
-            I32Const(0) // TODO: RefFunc(1)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(0)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
+    fn table_copy_overlap_same_idx() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(3)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(4)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(5)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(0)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
+    fn table_copy_overlap_pat() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(3)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(4)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(5)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(2)
+            I32Const(4)
+            TableCopy(0)
+            TableGet(0)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
+    fn table_copy_overlap_seq() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(0) // TODO: RefFunc(0)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(0)
+
+            I32Const(3)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(4)
+            I32Const(4) // TODO: RefFunc(4)
+            TableSet(0)
+
+            I32Const(5)
+            I32Const(5) // TODO: RefFunc(5)
             TableSet(0)
 
             I32Const(0)
