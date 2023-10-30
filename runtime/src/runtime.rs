@@ -4,7 +4,7 @@ use crate::{
     ExitCode,
     SysFuncIdx,
 };
-use fluentbase_rwasm::{common::{Trap, ValueType}, engine::Tracer, rwasm::{ImportFunc, ImportLinker, ReducedModule}, AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, Linker, Module, Store, Instance, InstancePre};
+use fluentbase_rwasm::{common::{Trap, ValueType}, engine::Tracer, rwasm::{ImportFunc, ImportLinker, ReducedModule}, AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, Linker, Module, Store, Instance, InstancePre, FuncType};
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
@@ -83,6 +83,7 @@ impl Runtime {
         rwasm_binary: &[u8],
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
+        main_type: FuncType,
     ) -> Result<Self, Error> {
         let mut config = Config::default();
         let fuel_enabled = true;
@@ -93,7 +94,11 @@ impl Runtime {
         let engine = Engine::new(&config);
 
         let reduced_module = ReducedModule::new(rwasm_binary).map_err(Into::<Error>::into)?;
-        let module = reduced_module.to_module(&engine, import_linker);
+
+        let mut module_builder =
+            reduced_module.to_module_builder(&engine, &import_linker, main_type.clone());
+
+        let module = module_builder.finish();
         let linker = Linker::<RuntimeContext>::new(&engine);
         let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
@@ -378,8 +383,9 @@ impl Runtime {
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
         catch_trap: bool,
+
     ) -> Result<ExecutionResult, Error> {
-        let mut res = Runtime::new_with_context(   rwasm_binary,runtime_context, import_linker)?;
+        let mut res = Runtime::new_with_context(   rwasm_binary,runtime_context, import_linker, FuncType::new([], []))?;
         let result = res
             .linker
             .instantiate(&mut res.store, &res.module)

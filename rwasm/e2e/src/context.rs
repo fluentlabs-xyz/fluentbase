@@ -1,8 +1,8 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
-    common::{Trap, ValueType, F32, F64},
-    engine::bytecode::Instruction,
+    common::{Trap, UntypedValue, ValueType, F32, F64},
+    engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
     rwasm::{
         Compiler,
         DefaultImportHandler,
@@ -10,12 +10,16 @@ use fluentbase_rwasm::{
         ImportFunc,
         ImportLinker,
         ReducedModule,
+        RouterInstructions,
     },
+    value::WithType,
     Caller,
     Config,
     Engine,
     Extern,
+    ExternType,
     Func,
+    FuncType,
     Global,
     Instance,
     Linker,
@@ -57,7 +61,13 @@ pub struct TestContext<'a> {
 
     binaries: HashMap<String, Vec<u8>>,
 
-    main_router: HashMap<String, u32>
+    main_router: HashMap<String, MainFunction>,
+}
+
+#[derive(Debug)]
+struct MainFunction {
+    pub fn_index: u32,
+    pub fn_type: FuncType,
 }
 
 const DEFAULT_MODULE_NAME: &'static str = "main_module";
@@ -107,6 +117,39 @@ impl<'a> TestContext<'a> {
             },
         );
 
+        let sys_input = Func::wrap(
+            &mut store,
+            |mut caller: Caller<'_, DefaultImportHandler>| -> Result<u64, Trap> {
+                caller
+                    .data_mut()
+                    .next_input()
+                    .map(|i| i.as_u64())
+                    .ok_or(Trap::new("Input vector is empty"))
+            },
+        );
+
+        let sys_output = Func::wrap(
+            &mut store,
+            |mut caller: Caller<'_, DefaultImportHandler>, output: i64| -> Result<(), Trap> {
+                caller.data_mut().add_result(UntypedValue::from(output));
+                Ok(())
+            },
+        );
+
+        let sys_input_len = Func::wrap(
+            &mut store,
+            |mut caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
+                Ok(caller.data().input.len() as u32)
+            },
+        );
+
+        let sys_output_len = Func::wrap(
+            &mut store,
+            |caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
+                Ok(caller.data().output_len() - caller.data().output().len() as u32)
+            },
+        );
+
         linker.define("spectest", "memory", default_memory).unwrap();
         linker.define("spectest", "table", default_table).unwrap();
         linker.define("spectest", "global_i32", global_i32).unwrap();
@@ -126,6 +169,17 @@ impl<'a> TestContext<'a> {
             .unwrap();
         linker.define("env", "_sys_state", sys_state).unwrap();
 
+        linker.define("spectest", "_sys_input", sys_input).unwrap();
+        linker
+            .define("spectest", "_sys_output", sys_output)
+            .unwrap();
+        linker
+            .define("spectest", "_sys_input_len", sys_input_len)
+            .unwrap();
+        linker
+            .define("spectest", "_sys_output_len", sys_output_len)
+            .unwrap();
+
         TestContext {
             engine,
             linker,
@@ -142,8 +196,11 @@ impl<'a> TestContext<'a> {
     }
 
     pub fn set_state_by_name(&mut self, func_name: &str) -> Result<(), TestError> {
-        let state = self.main_router.get(func_name).ok_or(TestError::MainFunctionNotFound)?;
-        self.store.data_mut().state = *state;
+        let state = self
+            .main_router
+            .get(func_name)
+            .ok_or(TestError::MainFunctionNotFound)?;
+        self.store.data_mut().state = state.fn_index;
 
         Ok(())
     }
@@ -227,10 +284,36 @@ impl TestContext<'_> {
             .unwrap_or(DEFAULT_MODULE_NAME);
         config.consume_fuel(false);
         let module = Module::new(&self.engine, wasm_binary.as_slice())?;
-        let exports = module.exports().enumerate().map(|(i, export)| {
-            self.main_router.insert(export.name().to_string(), i as u32);
-            FuncOrExport::Export(export.name().to_string())
-        }).collect::<Vec<_>>();
+
+        for elem in module.exports() {
+            self.binaries
+                .insert(elem.name().to_string(), wasm_binary.clone());
+        }
+
+        let exports = module
+            .exports()
+            .filter_map(|export_type| match export_type.ty().clone() {
+                ExternType::Func(func) => Some((export_type.name().to_string(), func)),
+                _ => None,
+            })
+            .enumerate()
+            .map(|(i, (name, func_type))| {
+                self.main_router.insert(
+                    name.clone(),
+                    MainFunction {
+                        fn_index: i as u32,
+                        fn_type: func_type,
+                    },
+                );
+                FuncOrExport::Export(name)
+            })
+            .collect::<Vec<_>>();
+
+        const SYS_STATE: u32 = 0xA002;
+        const SYS_INPUT: u32 = 0xF001;
+        const SYS_OUTPUT: u32 = 0xF002;
+        const SYS_INPUT_LEN: u32 = 0xF003;
+        const SYS_OUTPUT_LEN: u32 = 0xF004;
 
         let mut import_linker = ImportLinker::default();
         import_linker.insert_function(ImportFunc::new_env(
@@ -238,23 +321,68 @@ impl TestContext<'_> {
             "_sys_state".to_string(),
             SYS_STATE as u16,
             &[],
-            &[ValueType::I32; 1],
+            &[ValueType::I32],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "_sys_input".to_string(),
+            SYS_INPUT as u16,
+            &[],
+            &[ValueType::I64],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "_sys_output".to_string(),
+            SYS_OUTPUT as u16,
+            &[ValueType::I64],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "_sys_input_len".to_string(),
+            SYS_INPUT_LEN as u16,
+            &[],
+            &[ValueType::I32],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "_sys_output_len".to_string(),
+            SYS_OUTPUT_LEN as u16,
+            &[],
+            &[ValueType::I32],
         ));
         let mut compiler =
             Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
-        const SYS_STATE: u32 = 0xA002;
-        compiler.translate_with_state(
-            Some(FuncOrExport::StateRouter(
-                exports,
-                Instruction::Call((SYS_STATE).into() )
-            )),
-            true,
-        ).unwrap();
 
+        compiler
+            .translate_with_state(
+                Some(FuncOrExport::StateRouter(
+                    exports,
+                    RouterInstructions {
+                        state_ix: Instruction::Call((SYS_STATE).into()),
+                        input_ix: vec![
+                            Instruction::Call((SYS_INPUT_LEN).into()),
+                            Instruction::BrIfEqz(BranchOffset::from(3)),
+                            Instruction::Call((SYS_INPUT).into()),
+                            Instruction::Br(BranchOffset::from(-3)),
+                        ],
+                        output_ix: vec![
+                            Instruction::Call((SYS_OUTPUT_LEN).into()),
+                            Instruction::BrIfEqz(BranchOffset::from(3)),
+                            Instruction::Call((SYS_OUTPUT).into()),
+                            Instruction::Br(BranchOffset::from(-3)),
+                        ],
+                    },
+                )),
+                true,
+            )
+            .unwrap();
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
-        let module =
-            reduced_module.to_module(&self.engine, &import_linker);
+        let mut module_builder =
+            reduced_module.to_module_builder(&self.engine, &import_linker, FuncType::new([], []));
+
+        let module = module_builder.finish();
 
         self.store.data_mut().state = 1000;
         let instance = self
@@ -417,8 +545,8 @@ impl TestContext<'_> {
         &mut self,
         module_name: Option<&str>,
         func_name: &str,
-        args: &[Value],
-    ) -> Result<&[Value], TestError> {
+        args: Vec<Value>,
+    ) -> Result<Vec<Value>, TestError> {
         let instance = self
             .instances
             .get(module_name.unwrap_or(DEFAULT_MODULE_NAME))
@@ -428,12 +556,29 @@ impl TestContext<'_> {
             .get_export(&self.store, "main")
             .and_then(Extern::into_func)
             .unwrap();
-        println!("testing {} with args {:?}", func_name, args);
-        let len_results = func.ty(&self.store).results().len();
+        let func_ty = &self.main_router.get(func_name).unwrap().fn_type;
+
+        println!(
+            "testing {} with args {:?}, len_res: {:?}",
+            func_name,
+            args,
+            func.ty(&self.store).results()
+        );
         self.results.clear();
-        self.results.resize(len_results, Value::I32(0));
-        func.call(&mut self.store, args, &mut self.results)?;
-        Ok(&self.results)
+        self.store.data_mut().input = args.into_iter().rev().map(|v| v.into()).collect();
+        self.store
+            .data_mut()
+            .clear_ouput(func_ty.results().len() as u32);
+        func.call(&mut self.store, &[], &mut self.results)?;
+        Ok(self
+            .store
+            .data_mut()
+            .output()
+            .iter()
+            .rev()
+            .zip(func_ty.results())
+            .map(|(res, tp)| res.with_type(*tp))
+            .collect())
     }
 
     /// Returns the current value of the [`Global`] identifier by the given `module_name` and

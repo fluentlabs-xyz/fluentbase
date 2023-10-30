@@ -1,4 +1,8 @@
-use crate::{common::ValueType, module::ImportName, FuncType};
+use crate::{
+    common::{UntypedValue, ValueType},
+    module::ImportName,
+    FuncType,
+};
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 pub trait ImportHandler {
@@ -12,9 +16,10 @@ pub trait ImportHandler {
 
 #[derive(Default, Debug)]
 pub struct DefaultImportHandler {
-    input: Vec<u8>,
+    pub input: Vec<UntypedValue>,
     exit_code: u32,
-    output: Vec<u8>,
+    output: Vec<UntypedValue>,
+    output_len: u32,
     pub state: u32,
 }
 
@@ -30,19 +35,36 @@ impl ImportHandler for DefaultImportHandler {
 }
 
 impl DefaultImportHandler {
-    pub fn new(input: Vec<u8>) -> Self {
+    pub fn new(input: Vec<UntypedValue>) -> Self {
         Self {
             input,
             ..Default::default()
         }
     }
 
+    pub fn next_input(&mut self) -> Option<UntypedValue> {
+        self.input.pop()
+    }
+
     pub fn exit_code(&self) -> u32 {
         self.exit_code
     }
 
-    pub fn output(&self) -> &Vec<u8> {
+    pub fn output(&self) -> &Vec<UntypedValue> {
         &self.output
+    }
+
+    pub fn output_len(&self) -> u32 {
+        self.output_len
+    }
+
+    pub fn clear_ouput(&mut self, new_output_len: u32) {
+        self.output = vec![];
+        self.output_len = new_output_len;
+    }
+
+    pub fn add_result(&mut self, result: UntypedValue) {
+        self.output.push(result);
     }
 }
 

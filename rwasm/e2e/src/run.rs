@@ -59,7 +59,7 @@ pub fn run_wasm_spec_test(name: &str, config: Config) {
 }
 
 fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> Result<()> {
-    for directive in wast.directives {
+    'outer: for directive in wast.directives {
         let span = directive.span();
         test_context.profile().bump_directives();
         match directive {
@@ -82,8 +82,8 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
             } => {
                 println!("AsserReturn: {:?}", exec);
                 test_context.profile().bump_assert_return();
-                let results =
-                    execute_wast_execute_with_state(test_context, span, exec).unwrap_or_else(|error| {
+                let results = execute_wast_execute_with_state(test_context, span, exec)
+                    .unwrap_or_else(|error| {
                         panic!(
                             "{}: encountered unexpected failure to execute `AssertReturn`: {}",
                             test_context.spanned(span),
@@ -92,7 +92,76 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                     });
                 assert_results(test_context, span, &results, &expected);
             }
-            _ => ()
+            WastDirective::Invoke(wast_invoke) => {
+                let span = wast_invoke.span;
+                println!("Invoke: {:?}", wast_invoke);
+                test_context.profile().bump_invoke();
+                execute_wast_invoke(test_context, span, wast_invoke, true).unwrap_or_else(
+                    |error| {
+                        panic!(
+                            "{}: failed to invoke `.wast` directive: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    },
+                );
+            }
+            WastDirective::Register { span, name, module } => {
+                test_context.profile().bump_register();
+                let module_name = module.map(|id| id.name());
+                let instance = test_context
+                    .instance_by_name_or_last(module_name)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{}: failed to load module: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    });
+                test_context.register_instance(name, instance);
+            }
+            WastDirective::AssertInvalid {
+                span,
+                module,
+                message,
+            } => {
+                test_context.profile().bump_assert_invalid();
+                let module = match extract_module(module) {
+                    Some(module) => module,
+                    None => continue 'outer,
+                };
+                module_compilation_fails(test_context, span, module, message);
+            }
+            WastDirective::AssertMalformed {
+                span,
+                module: QuoteWat::Wat(Wat::Module(module)),
+                message,
+            } => {
+                test_context.profile().bump_assert_malformed();
+                module_compilation_fails(test_context, span, module, message);
+            }
+            WastDirective::AssertMalformed { .. } => {
+                test_context.profile().bump_assert_malformed();
+            }
+            WastDirective::AssertTrap {
+                span,
+                exec,
+                message,
+            } => {
+                test_context.profile().bump_assert_trap();
+                match execute_wast_execute_with_state(test_context, span, exec) {
+                    Ok(results) => panic!(
+                        "{}: expected to trap with message '{}' but succeeded with: {:?}",
+                        test_context.spanned(span),
+                        message,
+                        results
+                    ),
+                    Err(error) => assert_trap(test_context, span, error, message),
+                }
+            }
+            some => {
+                println!("Parse dir: {:?}", some);
+            }
         }
     }
 
@@ -156,13 +225,15 @@ fn execute_directives(wast: Wast, test_context: &mut TestContext) -> Result<()> 
             WastDirective::Invoke(wast_invoke) => {
                 let span = wast_invoke.span;
                 test_context.profile().bump_invoke();
-                execute_wast_invoke(test_context, span, wast_invoke, false).unwrap_or_else(|error| {
-                    panic!(
-                        "{}: failed to invoke `.wast` directive: {}",
-                        test_context.spanned(span),
-                        error
-                    )
-                });
+                execute_wast_invoke(test_context, span, wast_invoke, false).unwrap_or_else(
+                    |error| {
+                        panic!(
+                            "{}: failed to invoke `.wast` directive: {}",
+                            test_context.spanned(span),
+                            error
+                        )
+                    },
+                );
             }
             WastDirective::AssertTrap {
                 span,
@@ -446,9 +517,7 @@ fn execute_wast_invoke(
         args.push(value);
     }
     if with_state {
-        context
-            .invoke_with_state(module_name, field_name, &args)
-            .map(|results| results.to_vec())
+        context.invoke_with_state(module_name, field_name, args)
     } else {
         context
             .invoke(module_name, field_name, &args)

@@ -60,8 +60,7 @@ pub trait TryTruncateInto<T, E> {
     /// # Errors
     ///
     /// - If the input float value is NaN (not a number).
-    /// - If the input float value cannot be represented using the truncated
-    ///   integer type.
+    /// - If the input float value cannot be represented using the truncated integer type.
     fn try_truncate_into(self) -> Result<T, E>;
 }
 
@@ -737,8 +736,9 @@ macro_rules! impl_float {
             }
             #[inline]
             fn min(self, other: Self) -> Self {
-                // The implementation strictly adheres to the mandated behavior for the Wasm specification.
-                // Note: In other contexts this API is also known as: `nan_min`.
+                // The implementation strictly adheres to the mandated behavior for the Wasm
+                // specification. Note: In other contexts this API is also known as:
+                // `nan_min`.
                 match (self.is_nan(), other.is_nan()) {
                     (true, false) => self,
                     (false, true) => other,
@@ -753,8 +753,9 @@ macro_rules! impl_float {
             }
             #[inline]
             fn max(self, other: Self) -> Self {
-                // The implementation strictly adheres to the mandated behavior for the Wasm specification.
-                // Note: In other contexts this API is also known as: `nan_max`.
+                // The implementation strictly adheres to the mandated behavior for the Wasm
+                // specification. Note: In other contexts this API is also known as:
+                // `nan_max`.
                 match (self.is_nan(), other.is_nan()) {
                     (true, false) => self,
                     (false, true) => other,

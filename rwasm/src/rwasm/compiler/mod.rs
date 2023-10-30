@@ -73,8 +73,16 @@ struct BrTableStatus {
 pub enum FuncOrExport {
     Export(String),
     Func(u32),
-    StateRouter(Vec<FuncOrExport>, Instruction),
+    StateRouter(Vec<FuncOrExport>, RouterInstructions),
 }
+
+#[derive(Debug)]
+pub struct RouterInstructions {
+    pub state_ix: Instruction,
+    pub input_ix: Vec<Instruction>,
+    pub output_ix: Vec<Instruction>,
+}
+
 
 impl Default for FuncOrExport {
     fn default() -> Self {
@@ -139,7 +147,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_router(&self, main_index: FuncOrExport) -> Result<InstructionSet, CompilerError> {
+    fn translate_router(&self, main_index: FuncOrExport, router_offset: u32) -> Result<InstructionSet, CompilerError> {
         let mut router_opcodes = InstructionSet::new();
         let resolve_export_index = |name| -> Result<u32, CompilerError> {
             let main_index = self
@@ -158,7 +166,13 @@ impl<'linker> Compiler<'linker> {
                 let main_index = resolve_export_index(name.as_str())?;
                 router_opcodes.op_call_internal(main_index - num_imports);
             }
-            FuncOrExport::StateRouter(states, check_instr) => {
+            FuncOrExport::StateRouter(states, RouterInstructions {
+                state_ix: check_instr,
+                input_ix,
+                output_ix
+            }
+            ) => {
+                router_opcodes.extend(input_ix);
                 for (state_value, state) in states.iter().enumerate() {
                     let func_index = match state {
                         FuncOrExport::Export(name) => resolve_export_index(name)?,
@@ -170,8 +184,11 @@ impl<'linker> Compiler<'linker> {
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
-                    router_opcodes.op_br_if_eqz(2);
+                    router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32);
+                    router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2);
                     router_opcodes.op_call_internal(func_index);
+                    router_opcodes.extend(output_ix.clone());
+                    router_opcodes.op_br_indirect(0);
                 }
 
                 const INIT_PRELUDE_VALUE: i32 = 1000;
@@ -240,7 +257,7 @@ impl<'linker> Compiler<'linker> {
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
         // translate router into separate instruction set
-        let router_opcodes = self.translate_router(main_index)?;
+        let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
         // inject main function call with return
         let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
@@ -263,7 +280,7 @@ impl<'linker> Compiler<'linker> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
         self.function_beginning.insert(0, 0);
-        let router_opcodes = self.translate_router(main_index)?;
+        let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
 
         let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
