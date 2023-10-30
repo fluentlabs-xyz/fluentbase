@@ -75,7 +75,7 @@ lazy_static! {
 }
 
 type TrieId = i32;
-const TRIE_ID_DEFAULT: i32 = 1;
+pub(crate) const TRIE_ID_DEFAULT: i32 = 1;
 thread_local! {
     static DB: RefCell<ZkMemoryDb> = RefCell::new(ZkMemoryDb::new());
     static LAST_TRIE_ID: RefCell<TrieId> = RefCell::new(1);
@@ -110,6 +110,10 @@ pub(crate) fn zktrie_get_trie(id: &TrieId) -> Result<Rc<RefCell<ZkTrie>>, Trap> 
         }
         Err(Trap::new("not found"))
     })
+}
+
+pub(crate) fn zktrie_get_root(id: &TrieId) -> Result<Hash, Trap> {
+    Ok(zktrie_get_trie(id)?.borrow().root())
 }
 
 fn get_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<AccountData> {
