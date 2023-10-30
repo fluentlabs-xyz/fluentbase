@@ -90,17 +90,17 @@ define_spec_tests! {
     let config = make_config();
     let runner = run::run_wasm_spec_test;
 
-    fn wasm_address("address");
+    // fn wasm_address("address");
     // fn wasm_align("align");
-    // fn wasm_binary_leb128("binary-leb128");
+    // // fn wasm_binary_leb128("binary-leb128");
     // fn wasm_binary("binary");
     // fn wasm_block("block");
     // fn wasm_br("br");
     // fn wasm_br_if("br_if");
     // fn wasm_br_table("br_table");
-    // fn wasm_bulk("bulk");
+    // // fn wasm_bulk("bulk");
     // fn wasm_call("call");
-    // fn wasm_call_indirect("call_indirect");
+    fn wasm_call_indirect("call_indirect");
     // fn wasm_extended_const_data("proposals/extended-const/data");
     // fn wasm_extended_const_elem("proposals/extended-const/elem");
     // fn wasm_extended_const_global("proposals/extended-const/global");
@@ -115,10 +115,10 @@ define_spec_tests! {
     // fn wasm_endianness("endianness");
     // fn wasm_exports("exports");
     // fn wasm_f32("f32");
-    // fn wasm_f32_bitwise("f32_bitwise");
+    // // fn wasm_f32_bitwise("f32_bitwise");
     // fn wasm_f32_cmp("f32_cmp");
     // fn wasm_f64("f64");
-    // fn wasm_f64_bitwise("f64_bitwise");
+    // // fn wasm_f64_bitwise("f64_bitwise");
     // fn wasm_f64_cmp("f64_cmp");
     // fn wasm_fac("fac");
     // fn wasm_float_exprs("float_exprs");
@@ -144,35 +144,45 @@ define_spec_tests! {
     // fn wasm_local_set("local_set");
     // fn wasm_local_tee("local_tee");
     // fn wasm_loop("loop");
-    // fn wasm_memory("memory");
-    // fn wasm_memory_copy("memory_copy");
-    // fn wasm_memory_fill("memory_fill");
-    // fn wasm_memory_grow("memory_grow");
-    // fn wasm_memory_init("memory_init");
+    //
+    // fn wasm_memory("memory"); //Rerun function
+    // fn wasm_memory_copy("memory_copy"); // Fn name: "memory0" not found
+    // // fn wasm_memory_fill("memory_fill"); //Rerun function
+    // fn wasm_memory_grow("memory_grow"); //Rerun function
+    // fn wasm_memory_init("memory_init"); //NotSupported("passive mode is not supported")
+    //
     // fn wasm_memory_redundancy("memory_redundancy");
-    // fn wasm_memory_size("memory_size");
-    // fn wasm_memory_trap("memory_trap");
-    // fn wasm_names("names");
-    // fn wasm_nop("nop");
-    // fn wasm_ref_func("ref_func");
-    // fn wasm_ref_is_null("ref_is_null");
+    //
+    // fn wasm_memory_size("memory_size"); //Rerun function
+    // fn wasm_memory_trap("memory_trap"); //Rerun function
+    // // fn wasm_names("names"); // called `Result::unwrap()` on an `Err` value: UnknownImport(ImportName { module: "spectest", field: "print_i32" })
+    // fn wasm_nop("nop"); // Memory Grow now enough pages
+    //
+    // fn wasm_ref_func("ref_func"); //NotSupported("only funcref type is supported for tables")
+    // fn wasm_ref_is_null("ref_is_null"); //NotSupported("only funcref type is supported for tables")
+    //
     // fn wasm_ref_null("ref_null");
     // fn wasm_return("return");
-    // fn wasm_select("select");
-    // fn wasm_skip_stack_guard_page("skip-stack-guard-page");
-    // fn wasm_stack("stack");
-    // fn wasm_start("start");
+    // fn wasm_select("select"); // call indirect
+    // fn wasm_skip_stack_guard_page("skip-stack-guard-page"); // stack
+    // fn wasm_stack("stack"); // Global function await
+    // fn wasm_start("start"); // Global function await
+    //
     // fn wasm_store("store");
-    // fn wasm_switch("switch");
+    //
+    // fn wasm_switch("switch"); // (i64.const -5) -> Instr: I64Const(UntypedValue { bits: 4294967291 })
+
     // fn wasm_table_sub("table-sub");
     // fn wasm_table("table");
-    // fn wasm_table_copy("table_copy");
-    // fn wasm_table_fill("table_fill");
-    // fn wasm_table_get("table_get");
-    // fn wasm_table_grow("table_grow");
-    // fn wasm_table_init("table_init");
-    // fn wasm_table_set("table_set");
-    // fn wasm_table_size("table_size");
+    //
+    // // fn wasm_table_copy("table_copy"); // testsuite/table_copy.wast:45:1: the directive trapped as expected but with an unexpected message
+    // fn wasm_table_fill("table_fill"); //Rerun
+    // // fn wasm_table_get("table_get"); // Rerun
+    // // fn wasm_table_grow("table_grow"); // Rerun
+    // // fn wasm_table_init("table_init"); // No linker
+    // fn wasm_table_set("table_set"); // Rerun
+    // // fn wasm_table_size("table_size"); // Rerun
+    //
     // fn wasm_token("token");
     // fn wasm_traps("traps");
     // fn wasm_type("type");

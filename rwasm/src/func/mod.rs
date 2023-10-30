@@ -22,10 +22,9 @@ use super::{
     StoreContext,
     Stored,
 };
-use crate::{common::Trap, engine::ResumableCall, Engine, Error, Value};
+use crate::{arena::ArenaIndex, common::Trap, engine::ResumableCall, Engine, Error, Value};
 use alloc::{boxed::Box, sync::Arc};
 use core::{fmt, fmt::Debug, num::NonZeroU32};
-use crate::arena::ArenaIndex;
 
 /// A raw index to a function entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -307,27 +306,27 @@ impl Func {
 
     /// Creates a new [`Func`] with the given arguments.
     ///
-    /// This is typically used to create a host-defined function to pass as an import to a Wasm module.
+    /// This is typically used to create a host-defined function to pass as an import to a Wasm
+    /// module.
     ///
-    /// - `ty`: the signature that the given closure adheres to,
-    ///         used to indicate what the inputs and outputs are.
-    /// - `func`: the native code invoked whenever this Func will be called.
-    ///           The closure is provided a [`Caller`] as its first argument
-    ///           which allows it to query information about the [`Instance`]
-    ///           that is assocaited to the call.
+    /// - `ty`: the signature that the given closure adheres to, used to indicate what the inputs
+    ///   and outputs are.
+    /// - `func`: the native code invoked whenever this Func will be called. The closure is provided
+    ///   a [`Caller`] as its first argument which allows it to query information about the
+    ///   [`Instance`] that is assocaited to the call.
     ///
     /// # Note
     ///
-    /// - The given [`FuncType`] `ty` must match the parameters and results otherwise
-    ///   the resulting host [`Func`] might trap during execution.
-    /// - It is the responsibility of the caller of [`Func::new`] to guarantee that
-    ///   the correct amount and types of results are written into the results buffer
-    ///   from the `func` closure. If an incorrect amount of results or types of results
-    ///   is written into the buffer then the remaining computation may fail in unexpected
-    ///   ways. This footgun can be avoided by using the typed [`Func::wrap`] method instead.
-    /// - Prefer using [`Func::wrap`] over this method if possible since [`Func`] instances
-    ///   created using this constructor have runtime overhead for every invokation that
-    ///   can be avoided by using [`Func::wrap`].
+    /// - The given [`FuncType`] `ty` must match the parameters and results otherwise the resulting
+    ///   host [`Func`] might trap during execution.
+    /// - It is the responsibility of the caller of [`Func::new`] to guarantee that the correct
+    ///   amount and types of results are written into the results buffer from the `func` closure.
+    ///   If an incorrect amount of results or types of results is written into the buffer then the
+    ///   remaining computation may fail in unexpected ways. This footgun can be avoided by using
+    ///   the typed [`Func::wrap`] method instead.
+    /// - Prefer using [`Func::wrap`] over this method if possible since [`Func`] instances created
+    ///   using this constructor have runtime overhead for every invokation that can be avoided by
+    ///   using [`Func::wrap`].
     pub fn new<T>(
         mut ctx: impl AsContextMut<UserState = T>,
         ty: FuncType,
@@ -383,12 +382,12 @@ impl Func {
     /// # Errors
     ///
     /// - If the function returned a [`Trap`].
-    /// - If the types of the `inputs` do not match the expected types for the
+    /// - If the types of the `inputs` do not match the expected types for the function signature of
+    ///   `self`.
+    /// - If the number of input values does not match the expected number of inputs required by the
     ///   function signature of `self`.
-    /// - If the number of input values does not match the expected number of
-    ///   inputs required by the function signature of `self`.
-    /// - If the number of output values does not match the expected number of
-    ///   outputs required by the function signature of `self`.
+    /// - If the number of output values does not match the expected number of outputs required by
+    ///   the function signature of `self`.
     pub fn call<T>(
         &self,
         mut ctx: impl AsContextMut<UserState = T>,
@@ -423,12 +422,12 @@ impl Func {
     /// # Errors
     ///
     /// - If the function returned a Wasm [`Trap`].
-    /// - If the types of the `inputs` do not match the expected types for the
+    /// - If the types of the `inputs` do not match the expected types for the function signature of
+    ///   `self`.
+    /// - If the number of input values does not match the expected number of inputs required by the
     ///   function signature of `self`.
-    /// - If the number of input values does not match the expected number of
-    ///   inputs required by the function signature of `self`.
-    /// - If the number of output values does not match the expected number of
-    ///   outputs required by the function signature of `self`.
+    /// - If the number of output values does not match the expected number of outputs required by
+    ///   the function signature of `self`.
     pub fn call_resumable<T>(
         &self,
         mut ctx: impl AsContextMut<UserState = T>,

@@ -1,5 +1,5 @@
 use super::InstantiationError;
-use crate::{module::FuncIdx, AsContextMut, Error, Func, Instance, InstanceEntityBuilder};
+use crate::{module::FuncIdx, AsContextMut, Error, Func, Instance, InstanceEntityBuilder, Value};
 
 /// A partially instantiated [`Instance`] where the `start` function has not yet been executed.
 ///
@@ -41,6 +41,10 @@ impl InstancePre {
     ///
     /// If the `start` function is invalid albeit successful validation.
     pub fn start(self, mut context: impl AsContextMut) -> Result<Instance, Error> {
+       self.start_with_param(context, &[], &mut [])
+    }
+
+    pub fn start_with_param(self, mut context: impl AsContextMut, inputs: &[Value], outputs: &mut [Value]) -> Result<Instance, Error> {
         let opt_start_index = self.start_fn();
         context
             .as_context_mut()
@@ -54,7 +58,7 @@ impl InstancePre {
                 .unwrap_or_else(|| {
                     panic!("encountered invalid start function after validation: {start_index}")
                 });
-            start_func.call(context.as_context_mut(), &[], &mut [])?
+            start_func.call(context.as_context_mut(), inputs, outputs)?
         }
         Ok(self.handle)
     }

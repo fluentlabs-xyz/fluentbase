@@ -75,11 +75,13 @@ impl FuncType {
         self.params_results.split_at(self.len_params)
     }
 
-    /// Returns `Ok` if the number and types of items in `params` matches as expected by the [`FuncType`].
+    /// Returns `Ok` if the number and types of items in `params` matches as expected by the
+    /// [`FuncType`].
     ///
     /// # Errors
     ///
-    /// - If the number of items in `params` does not match the number of parameters of the function type.
+    /// - If the number of items in `params` does not match the number of parameters of the function
+    ///   type.
     /// - If any type of an item in `params` does not match the expected type of the function type.
     pub(crate) fn match_params<T>(&self, params: &[T]) -> Result<(), FuncError>
     where
@@ -88,13 +90,19 @@ impl FuncType {
         if self.params().len() != params.len() {
             return Err(FuncError::MismatchingParameterLen);
         }
-        if self.params().iter().copied().ne(params.iter().map(<T as Ty>::ty)) {
+        if self
+            .params()
+            .iter()
+            .copied()
+            .ne(params.iter().map(<T as Ty>::ty))
+        {
             return Err(FuncError::MismatchingParameterType);
         }
         Ok(())
     }
 
-    /// Returns `Ok` if the number and types of items in `results` matches as expected by the [`FuncType`].
+    /// Returns `Ok` if the number and types of items in `results` matches as expected by the
+    /// [`FuncType`].
     ///
     /// # Note
     ///
@@ -102,7 +110,8 @@ impl FuncType {
     ///
     /// # Errors
     ///
-    /// - If the number of items in `results` does not match the number of results of the function type.
+    /// - If the number of items in `results` does not match the number of results of the function
+    ///   type.
     /// - If any type of an item in `results` does not match the expected type of the function type.
     pub(crate) fn match_results<T>(&self, results: &[T], check_type: bool) -> Result<(), FuncError>
     where
@@ -111,7 +120,13 @@ impl FuncType {
         if self.results().len() != results.len() {
             return Err(FuncError::MismatchingResultLen);
         }
-        if check_type && self.results().iter().copied().ne(results.iter().map(<T as Ty>::ty)) {
+        if check_type
+            && self
+                .results()
+                .iter()
+                .copied()
+                .ne(results.iter().map(<T as Ty>::ty))
+        {
             return Err(FuncError::MismatchingResultType);
         }
         Ok(())
@@ -126,7 +141,8 @@ impl FuncType {
     ///
     /// # Panics
     ///
-    /// If the number of items in `outputs` does not match the number of results of the [`FuncType`].
+    /// If the number of items in `outputs` does not match the number of results of the
+    /// [`FuncType`].
     pub(crate) fn prepare_outputs(&self, outputs: &mut [Value]) {
         assert_eq!(
             self.results().len(),
@@ -185,7 +201,12 @@ mod tests {
             &[ValueType::F64][..],
             &[ValueType::I32, ValueType::I32][..],
             &[ValueType::I32, ValueType::I32, ValueType::I32][..],
-            &[ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32][..],
+            &[
+                ValueType::I32,
+                ValueType::I32,
+                ValueType::I32,
+                ValueType::I32,
+            ][..],
             &[
                 ValueType::I32,
                 ValueType::I32,
@@ -196,7 +217,12 @@ mod tests {
                 ValueType::I32,
                 ValueType::I32,
             ][..],
-            &[ValueType::I32, ValueType::I64, ValueType::F32, ValueType::F64][..],
+            &[
+                ValueType::I32,
+                ValueType::I64,
+                ValueType::F32,
+                ValueType::F64,
+            ][..],
         ];
         for params in types {
             for results in types {

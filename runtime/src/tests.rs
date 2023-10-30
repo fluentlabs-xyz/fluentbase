@@ -1,9 +1,9 @@
 use crate::{runtime, runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
-use fluentbase_rwasm::{
-    common::Trap,
-    engine::bytecode::Instruction,
-    rwasm::{Compiler, FuncOrExport, ImportLinker},
-};
+use fluentbase_rwasm::{common::Trap, engine::bytecode::Instruction, FuncType, rwasm::{Compiler, FuncOrExport, ImportLinker}, Value};
+use fluentbase_rwasm::common::ValueType;
+use fluentbase_rwasm::engine::bytecode::AddressOffset;
+use fluentbase_rwasm::engine::DropKeep;
+use fluentbase_rwasm::rwasm::RouterInstructions;
 
 fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -181,10 +181,14 @@ fn test_state() {
         .translate_with_state(
             Some(FuncOrExport::StateRouter(
                 vec![
-                    FuncOrExport::Export("main".into_string()),
-                    FuncOrExport::Export("deploy".into_string()),
+                    FuncOrExport::Export("main".to_string()),
+                    FuncOrExport::Export("deploy".to_string()),
                 ],
-                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                RouterInstructions {
+                    state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                    input_ix: vec![],
+                    output_ix: vec![],
+                },
             )),
             true,
         )
@@ -195,6 +199,7 @@ fn test_state() {
         rwasm_bytecode.as_slice(),
         RuntimeContext::new(&[], 1000),
         &import_linker,
+        FuncType::new([], [])
     )
     .unwrap();
 
@@ -215,4 +220,73 @@ fn test_state() {
     runtime.set_state(0);
 
     start_func.call(&mut runtime.store, &[], &mut []).unwrap();
+}
+
+#[test]
+fn test_input_output() {
+    let wasm_binary = wat::parse_str(
+        r#"
+(module
+  (func $main (param $rhs i32) (result i32)
+    local.get $rhs
+    i32.const 36
+    i32.add
+    )
+  (export "main" (func $main)))
+    "#,
+    )
+        .unwrap();
+    let import_linker = Runtime::new_linker();
+    let mut compiler =
+        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+    compiler
+        .translate_with_state(
+            Some(FuncOrExport::StateRouter(
+                vec![
+                    FuncOrExport::Export("main".to_string()),
+                ],
+                RouterInstructions {
+                    state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                    input_ix: vec![
+                        Instruction::i32_const(10),
+                        Instruction::MemoryGrow,
+                        Instruction::Drop,
+                        Instruction::i32_const(0),
+                        Instruction::i32_const(0),
+                        Instruction::i32_const(8),
+                        Instruction::Call((SysFuncIdx::SYS_READ as u32).into()),
+                        Instruction::i32_const(0),
+                        Instruction::I64Load(AddressOffset::from(0)),
+                    ],
+                    output_ix: vec![
+                        Instruction::local_get(1).unwrap(),
+                        Instruction::i32_const(0),
+                        Instruction::local_set(2).unwrap(),
+                        Instruction::I64Store(AddressOffset::from(0)),
+                        Instruction::i32_const(0),
+                        Instruction::i32_const(8),
+                        Instruction::Call((SysFuncIdx::SYS_WRITE as u32).into()),
+                    ],
+                },
+            )),
+            true,
+        )
+        .unwrap();
+    let rwasm_bytecode = compiler.finalize().unwrap();
+
+    let mut runtime = Runtime::new_with_context(
+        rwasm_bytecode.as_slice(),
+        RuntimeContext::new(&[64,0,0,0,0,0,0,0], 0),
+        &import_linker,
+        FuncType::new([], [])
+    )
+        .unwrap();
+
+    let pre = runtime.init_pre_instance().unwrap();
+
+    let start_func = pre.get_start_func(&mut runtime.store).unwrap();
+
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
+
+    assert_eq!(runtime.store.data().output, [100, 0, 0, 0, 0, 0, 0, 0]);
 }
