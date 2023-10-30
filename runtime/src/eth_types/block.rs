@@ -1,8 +1,10 @@
+// use super::header::Header;
 use crate::eth_types::{header, transaction};
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethers::types::Bytes;
 use header::{Header, Seal};
 use rlp::{Decodable, DecoderError, Encodable, RlpStream, *};
+use serde::{Deserialize, Serialize};
 use std::{cmp, collections::HashSet, sync::Arc};
 
 #[derive(Debug, Copy, Clone)]
@@ -21,21 +23,18 @@ impl Into<i32> for VerifyBlockError {
 }
 
 /// Helper structure, used for encoding blocks.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub(crate) struct Block {
     pub header: Header,
     pub transactions: Vec<transaction::Transaction>,
     pub uncles: Vec<Header>,
 }
 
-impl Encodable for Block {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(3);
-        s.append(&self.header);
-        s.append_list(&self.transactions);
-        s.append_list(&self.uncles);
-    }
-}
+// #[derive(Clone, Serialize, Deserialize)]
+// pub(crate) struct BlockX {
+//     pub header: HeaderX,
+//     pub transactions: Vec<transaction::Transaction>,
+// }
 
 impl Block {
     /// Get the RLP-encoding of the block with or without the seal.
@@ -60,6 +59,15 @@ impl Block {
     }
 }
 
+impl Encodable for Block {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(3);
+        s.append(&self.header);
+        s.append_list(&self.transactions);
+        s.append_list(&self.uncles);
+    }
+}
+
 impl Decodable for Block {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         if rlp.as_raw().len() != rlp.payload_info()?.total() {
@@ -76,6 +84,7 @@ impl Decodable for Block {
     }
 }
 
+// TODO
 pub(crate) fn verify_input_blocks(
     prev_blk: &Block,
     cur_blk: &Block,
@@ -173,7 +182,7 @@ mod tests {
     #[test]
     fn verify_block_inputs_with_wrong_prev_blk_hash() {
         // 1. prev block
-        let (prev_blk_header, prev_blk_hash) = generate_random_header(&123120);
+        let (prev_blk_header, _) = generate_random_header(&123120);
         let prev_blk = Block {
             header: prev_blk_header,
             transactions: vec![],
