@@ -1,9 +1,9 @@
 use crate::eth_types::tx_types::TxType::PreEip155;
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H160, H256, U256, U64};
 use ethers_core::{
     k256::ecdsa::SigningKey,
     types::{
-        transaction::eip2718::TypedTransaction,
+        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
         Bytes,
         Eip1559TransactionRequest,
         Eip2930TransactionRequest,
@@ -14,56 +14,73 @@ use ethers_core::{
 };
 use keccak_hash::keccak;
 use rlp::{self, DecoderError, Encodable, RlpStream};
+use serde::{Deserialize, Serialize};
 pub type Word = U256;
 
 use super::{gas_utils::tx_data_gas_cost, tx_types::TxType};
 use std::{cmp::Ordering, collections::BTreeMap};
 
 /// Transaction in a witness block
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transaction {
-    /// The block number in which this tx is included in
-    pub block_number: u64,
-    /// The transaction identifier in the block
-    pub id: usize,
+    /// Chain ID as per EIP-155.
+    #[serde(rename = "chainId")]
+    pub chain_id: U64,
+    /// Block hash. None when pending.
+    #[serde(rename = "blockHash")]
+    pub block_hash: Option<H256>,
+    /// Block number. None when pending.
+    #[serde(rename = "blockNumber")]
+    pub block_number: Option<U64>,
+    #[serde(rename = "transactionIndex")]
+    pub transaction_index: U64,
     /// The hash of the transaction
     pub hash: H256,
     /// The type of the transaction
-    pub tx_type: TxType,
+    #[serde(rename = "type")]
+    pub tx_type: U64,
     /// The sender account nonce of the transaction
-    pub nonce: u64,
+    pub nonce: U256,
     /// The gas limit of the transaction
-    pub gas: u64,
+    pub gas: U256,
     /// The gas price
-    pub gas_price: Word,
-    /// The caller address
-    pub caller_address: Address,
+    #[serde(rename = "gasPrice")]
+    pub gas_price: U256,
+    //pub gas_price: Word,
+    pub from: Address,
     /// The callee address
-    pub callee_address: Option<Address>,
-    /// Whether it's a create transaction
-    pub is_create: bool,
+    pub to: Option<Address>,
+    // /// Whether it's a create transaction
+    // pub is_create: bool,
     /// The ether amount of the transaction
     pub value: Word,
+    #[serde(rename = "input")]
     /// The call data
-    pub call_data: Vec<u8>,
+    pub call_data: Bytes,
+    #[serde(skip)]
     /// The call data length
     pub call_data_length: usize,
+    #[serde(skip)]
     /// The gas cost for transaction call data
-    pub call_data_gas_cost: u64,
+    pub call_data_gas_cost: U256,
+    #[serde(skip)]
     /// The gas cost for rlp-encoded bytes of unsigned tx
-    pub tx_data_gas_cost: u64,
-    /// Chain ID as per EIP-155.
-    pub chain_id: u64,
+    pub tx_data_gas_cost: U256,
+    #[serde(skip)]
     /// Rlp-encoded bytes of unsigned tx
     pub rlp_unsigned: Vec<u8>,
+    #[serde(skip)]
     /// Rlp-encoded bytes of signed tx
     pub rlp_signed: Vec<u8>,
     /// "v" value of the transaction signature
-    pub v: u64,
+    pub v: U64,
     /// "r" value of the transaction signature
     pub r: Word,
     /// "s" value of the transaction signature
     pub s: Word,
+
+    #[serde(rename = "accessList", default)]
+    pub access_list: AccessList,
     //     / The calls made in the transaction
     //     / @TODO
     //     pub calls: Vec<Call>,
@@ -118,27 +135,25 @@ pub fn compute_dummy_tx_hash(tx_request: &TransactionRequest) -> H256 {
 
 impl Transaction {
     /// Return a fixed dummy pre-eip155 tx
-    pub fn dummy(chain_id: u64) -> Self {
+    pub fn dummy(chain_id: U64) -> Self {
         let dummy_tx_request = get_dummy_tx_request();
         let dummy_tx_request_hash = compute_dummy_tx_hash(&dummy_tx_request);
         //  let rlp_signed = dummy_tx.rlp_signed(&dummy_sig).to_vec();
         let rlp_unsigned = dummy_tx_request.rlp_unsigned().to_vec();
 
         Self {
-            block_number: 0,
-            id: 0, // need to be changed to correct value
-            caller_address: Address::zero(),
-            callee_address: Some(Address::zero()),
-            is_create: false, // callee_address != None
+            transaction_index: U64::default(),
+            from: Address::zero(),
+            to: Some(Address::zero()),
             chain_id,
-            tx_data_gas_cost: 0, // TODO
+            tx_data_gas_cost: U256::default(),
             // v: dummy_sig.v,
             // r: dummy_sig.r,
             // s: dummy_sig.s,
             // rlp_signed,
             rlp_unsigned,
             hash: dummy_tx_request_hash,
-            tx_type: PreEip155,
+            tx_type: U64::default(),
 
             ..Default::default()
         }
@@ -146,12 +161,12 @@ impl Transaction {
 
     #[cfg(test)]
     pub(crate) fn new_from_rlp_bytes(
-        tx_type: TxType,
+        tx_type: U64,
         signed_bytes: Vec<u8>,
         unsigned_bytes: Vec<u8>,
     ) -> Self {
         Self {
-            id: 1,
+            transaction_index: 1.into(),
             tx_type,
             rlp_signed: signed_bytes,
             rlp_unsigned: unsigned_bytes,
@@ -160,9 +175,9 @@ impl Transaction {
     }
 
     #[cfg(test)]
-    pub(crate) fn new_from_rlp_signed_bytes(tx_type: TxType, bytes: Vec<u8>) -> Self {
+    pub(crate) fn new_from_rlp_signed_bytes(tx_type: U64, bytes: Vec<u8>) -> Self {
         Self {
-            id: 1,
+            transaction_index: 1.into(),
             tx_type,
             rlp_signed: bytes,
             ..Default::default()
@@ -170,13 +185,42 @@ impl Transaction {
     }
 
     #[cfg(test)]
-    pub(crate) fn new_from_rlp_unsigned_bytes(tx_type: TxType, bytes: Vec<u8>) -> Self {
+    pub(crate) fn new_from_rlp_unsigned_bytes(tx_type: U64, bytes: Vec<u8>) -> Self {
         Self {
-            id: 1,
+            transaction_index: 1.into(),
             tx_type,
             rlp_unsigned: bytes,
             ..Default::default()
         }
+    }
+
+    /// Gets the unsigned transaction's RLP encoding
+    pub fn rlp(&self) -> Bytes {
+        let mut rlp = RlpStream::new();
+        rlp.begin_list(9);
+        self.rlp_base(&mut rlp);
+        rlp.out().freeze().into()
+    }
+
+    pub(crate) fn rlp_base(&self, rlp: &mut RlpStream) {
+        rlp.append(&self.chain_id);
+        rlp.append(&self.nonce);
+        rlp.append(&self.gas);
+        // rlp.append(&self.max_priority_fee_per_gas);
+        // rlp_opt(rlp, &self.max_fee_per_gas);
+        rlp.append(&self.to);
+        rlp.append(&self.value);
+        // TODO
+        // rlp.append(&self.call_data.into());
+        rlp.append(&self.access_list);
+    }
+}
+
+pub(super) fn rlp_opt<T: rlp::Encodable>(rlp: &mut rlp::RlpStream, opt: &Option<T>) {
+    if let Some(inner) = opt {
+        rlp.append(inner);
+    } else {
+        rlp.append(&"");
     }
 }
 
@@ -186,6 +230,12 @@ impl rlp::Encodable for Transaction {
     }
 }
 
+// impl rlp::Encodable for Transaction {
+//     fn rlp_append(&self, s: &mut RlpStream) {
+//         self.rlp_append_sealed_transaction(s)
+//     }
+// }
+
 impl rlp::Decodable for Transaction {
     fn decode(d: &rlp::Rlp) -> Result<Self, DecoderError> {
         if d.item_count()? != 9 {
@@ -194,6 +244,7 @@ impl rlp::Decodable for Transaction {
 
         let hash = H256::zero();
         Ok(Transaction {
+            block_hash: d.val_at(0)?, // TODO
             nonce: d.val_at(0)?,
             gas_price: d.val_at(1)?,
             gas: d.val_at(2)?,
@@ -205,11 +256,10 @@ impl rlp::Decodable for Transaction {
             s: d.val_at(8)?,
             hash,
             block_number: todo!(),
-            id: todo!(),
+            transaction_index: todo!(),
             tx_type: todo!(),
-            caller_address: todo!(),
-            callee_address: todo!(),
-            is_create: todo!(),
+            from: todo!(),
+            to: todo!(),
             call_data: todo!(),
             call_data_length: todo!(),
             call_data_gas_cost: todo!(),
@@ -217,6 +267,7 @@ impl rlp::Decodable for Transaction {
             chain_id: todo!(),
             rlp_unsigned: todo!(),
             rlp_signed: todo!(),
+            access_list: todo!(),
         })
     }
 }

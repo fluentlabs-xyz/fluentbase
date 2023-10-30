@@ -1,4 +1,5 @@
 pub(crate) mod block;
+pub(crate) mod bytes;
 pub(crate) mod gas_utils;
 pub(crate) mod header;
 pub(crate) mod proof;

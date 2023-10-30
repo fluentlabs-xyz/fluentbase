@@ -8,12 +8,12 @@ use ethers_core::types::{
     TransactionRequest,
     H256,
 };
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 use strum_macros::EnumIter;
 
 /// Tx type
-#[derive(Default, Debug, Copy, Clone, EnumIter, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, EnumIter, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TxType {
     /// EIP 155 tx
     #[default]

@@ -1,6 +1,6 @@
 use crate::{
     eth_types::{
-        block::Block,
+        block::{self, Block},
         header::{generate_random_header, generate_random_header_based_on_prev_block},
     },
     runtime::Runtime,
@@ -15,6 +15,7 @@ use fluentbase_rwasm::{
     rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
 use keccak_hash::H256;
+use std::{env, fs::File, io::Read};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -203,7 +204,7 @@ fn test_keccak256() {
 }
 
 #[test]
-fn evm_verify_rlp_blocks_test() {
+fn test_evm_verify_block_rlps_without_transactions() {
     let wasm_binary = include_bytes!("../examples/bin/evm_verify_block_rlps.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
@@ -214,7 +215,6 @@ fn evm_verify_rlp_blocks_test() {
         transactions: vec![],
         uncles: vec![],
     };
-
     let blk_a_encoded = rlp::encode(&blk_a).to_vec();
 
     // 2. current block
@@ -231,4 +231,54 @@ fn evm_verify_rlp_blocks_test() {
     input_data.push(blk_b_encoded);
 
     Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
+}
+
+#[test]
+fn test_evm_verify_block_receipts_with_signed_transactions() {
+    let wasm_binary = include_bytes!("../examples/bin/evm_verify_block_rlps.wasm"); // TODO
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+
+    // read block_receipt_a.json
+    let mut block_receipt_a_json = String::new();
+    File::open("src/test_data/block_receipt_a.json")
+        .unwrap()
+        .read_to_string(&mut block_receipt_a_json)
+        .unwrap();
+
+    let block_init: block::Block =
+        serde_json::from_str::<block::Block>(block_receipt_a_json.as_str()).unwrap();
+    let block_a = block_init.clone();
+    serde_json::to_value(block_a.clone()).unwrap();
+
+    println!("ENCODED: {:?}", block_a.header);
+
+    let blk_a_encoded = rlp::encode(&block_a).to_vec();
+
+    //println!("ENCODED: {:?}", blk_a_encoded);
+
+    // let block_txs_a = rlp::decode::<block::Block>(&blk_a_encoded).unwrap();
+    // assert_eq!(blk_a_encoded, rlp::encode(&block_txs_a).to_vec());
+
+    // // read block_receipt_b.json
+    // let mut block_receipt_b_json = String::new();
+    // File::open("src/test_data/block_receipt_b.json")
+    //     .unwrap()
+    //     .read_to_string(&mut block_receipt_b_json)
+    //     .unwrap();
+
+    // let mut input_data: Vec<Vec<u8>> = Vec::new();
+    // for _ in 0..9 {
+    //     input_data.push(vec![]);
+    // }
+    // // input_data.push(blk_a_encoded); // 10
+    // // input_data.push(blk_b_encoded); // 11
+
+    // // let block_init =
+    // // serde_json::from_str::<block::BlockX>(block_receipt_b_json.as_str()).unwrap();
+    // // let block_b = block_init.clone();
+    // // serde_json::to_value(block_b).unwrap();
+
+    // // println!("HEADER: {:?}", block_b.header);
+
+    // Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
 }
