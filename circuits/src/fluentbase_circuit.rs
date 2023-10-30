@@ -115,7 +115,7 @@ impl<'tracer, F: Field> FluentbaseCircuit<'tracer, F> {
             bytecode: UnrolledInstructionSet::new(execution_result.bytecode().as_slice()),
             tracer: Some(execution_result.tracer()),
             public_input: UnrolledPublicInput::new(
-                execution_result.data().input(),
+                execution_result.data().input(0),
                 execution_result.data().output(),
                 execution_result.data().exit_code(),
             ),
