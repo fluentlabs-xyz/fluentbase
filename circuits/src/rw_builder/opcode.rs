@@ -172,10 +172,41 @@ pub fn build_table_size_write_rw_ops(
     Ok(())
 }
 
+pub fn build_table_get_rw_ops(
+    step: &mut ExecStep,
+    table_idx: u32,
+) -> Result<(), GadgetError> {
+    let table_size = step.read_table_size(table_idx);
+    let elem_index = step.curr_nth_stack_value(0)?;
+    let addr = step.curr_nth_stack_addr(0)?;
+    step.rw_rows.push(RwRow::Stack {
+        rw_counter: step.next_rw_counter(),
+        is_write: false,
+        call_id: step.call_id,
+        stack_pointer: addr as usize,
+        value: elem_index,
+    });
+    if elem_index < table_size.into() {
+        let addr = step.next_nth_stack_addr(0)?;
+        let value = step.next_nth_stack_value(0)?;
+        build_table_elem_read_rw_ops(step, table_idx)?;
+        step.rw_rows.push(RwRow::Stack {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            stack_pointer: addr as usize,
+            value,
+        });
+    }
+    build_table_size_read_rw_ops(step, table_idx)?;
+    Ok(())
+}
+
 pub fn build_table_elem_read_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
+
     let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
     let value = step.next_nth_stack_value(0)?;
@@ -479,19 +510,6 @@ pub fn build_generic_rw_ops(step: &mut ExecStep, rw_ops: Vec<RwOp>) -> Result<()
             }
             RwOp::TableElemWrite(table_idx) => {
                 build_table_elem_write_rw_ops(step, table_idx)?;
-            }
-
-            RwOp::TableElemReadAndStackWrite(table_idx, local_depth) => {
-                println!("DEBUG A");
-                let table_size = step.read_table_size(table_idx);
-                println!("DEBUG B");
-                let elem_index = step.curr_nth_stack_value(0)?;
-                println!("DEBUG TS EI {:#?} {:#?}", table_size, elem_index);
-                if elem_index < table_size.into() {
-                    build_stack_read_rw_ops(step, stack_reads + local_depth as usize)?;
-                    stack_reads += 1;
-                    build_table_size_read_rw_ops(step, table_idx)?;
-                }
             }
             _ => unreachable!("rw ops mapper is not implemented {:?}", rw_op),
         }

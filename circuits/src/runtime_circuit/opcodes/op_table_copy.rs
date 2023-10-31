@@ -312,18 +312,6 @@ mod test {
             Drop
 
             I32Const(0)
-            I32Const(0) // TODO: RefFunc(3)
-            TableSet(0)
-
-            I32Const(1)
-            I32Const(0) // TODO: RefFunc(2)
-            TableSet(0)
-
-            I32Const(2)
-            I32Const(0) // TODO: RefFunc(1)
-            TableSet(0)
-
-            I32Const(0)
             I32Const(3) // TODO: RefFunc(3)
             TableSet(1)
 
@@ -334,6 +322,18 @@ mod test {
             I32Const(2)
             I32Const(1) // TODO: RefFunc(1)
             TableSet(1)
+
+            I32Const(0)
+            TableGet(0)
+            Drop
+
+            I32Const(1)
+            TableGet(0)
+            Drop
+
+            I32Const(2)
+            TableGet(0)
+            Drop
 
             I32Const(1)
             I32Const(2)
