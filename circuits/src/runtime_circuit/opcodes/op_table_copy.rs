@@ -300,6 +300,51 @@ mod test {
 
     // TODO: fix problem with test.
     #[test]
+    fn table_copy_set_second_with_set_zero() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(1)
+            Drop
+
+            I32Const(0)
+            I32Const(0) // TODO: RefFunc(3)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(0) // TODO: RefFunc(2)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(0) // TODO: RefFunc(1)
+            TableSet(0)
+
+            I32Const(0)
+            I32Const(3) // TODO: RefFunc(3)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2) // TODO: RefFunc(2)
+            TableSet(1)
+
+            I32Const(2)
+            I32Const(1) // TODO: RefFunc(1)
+            TableSet(1)
+
+            I32Const(1)
+            I32Const(2)
+            I32Const(3)
+            TableCopy(0)
+            TableGet(1)
+        });
+    }
+
+    // TODO: fix problem with test.
+    #[test]
     fn table_copy_set_second_out_of_bounds() {
         test_ok(instruction_set! {
             RefFunc(0)
