@@ -77,6 +77,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
             size.current(),
             None,
         );
+
         Self {
             elem_index,
             value,
@@ -137,13 +138,38 @@ mod test {
             TableGrow(0)
             Drop
             I32Const(0)
-            I32Const(0)
-            RefFunc(0)
+            I32Const(2) // RefFunc(2)
             TableSet(0)
             I32Const(0)
             TableGet(0)
             Drop
+        });
+    }
+
+    #[test]
+    fn table_get_multi() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
             Drop
+
+            I32Const(0)
+            I32Const(2) // RefFunc(2)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(3) // RefFunc(2)
+            TableSet(0)
+
+            I32Const(1)
+            TableGet(0)
+            Drop
+
+            I32Const(0)
+            TableGet(0)
+            Drop
+
         });
     }
 
