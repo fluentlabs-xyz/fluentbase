@@ -157,4 +157,44 @@ mod test {
             TableSet(0)
         });
     }
+
+    #[test]
+    fn table_set_multiple() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+
+            I32Const(0)
+            I32Const(1) // RefFunc(1)
+            TableSet(0)
+
+            I32Const(1)
+            I32Const(2) // RefFunc(2)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(3) // RefFunc(3)
+            TableSet(0)
+
+            I32Const(3)
+            I32Const(4) // RefFunc(4)
+            TableSet(0)
+
+            I32Const(4)
+            I32Const(5) // RefFunc(5)
+            TableSet(0)
+
+            I32Const(5)
+            I32Const(6) // RefFunc(6)
+            TableSet(0)
+
+            I32Const(2)
+            I32Const(7) // RefFunc(7)
+            TableSet(0)
+
+        });
+    }
+
 }
