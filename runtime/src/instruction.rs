@@ -204,6 +204,22 @@ pub(crate) fn rwasm_transact(
     Ok(execution_result.data().exit_code)
 }
 
+pub(crate) fn rwasm_compile(
+    mut caller: Caller<'_, RuntimeContext>,
+    input_offset: i32,
+    input_len: i32,
+    output_offset: i32,
+    output_len: i32,
+) -> Result<i32, Trap> {
+    let import_linker = Runtime::new_linker();
+    let mut compiler =
+        Compiler::new_with_linker(inputs.init_code.as_ref(), Some(&import_linker)).unwrap();
+    // TODO: "add error handling"
+    let rwasm_bytecode = compiler.finalize().unwrap();
+    // TODO: "copy rwasm bytecode into memory with error checks"
+    Ok(0)
+}
+
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     caller.data_mut().exit_code = ExitCode::ExecutionHalted as i32;
     Err(ExitCode::ExecutionHalted.into())
