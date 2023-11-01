@@ -406,6 +406,14 @@ impl Runtime {
             &[ValueType::I32; 0],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "rwasm_compile".to_string(),
+            SysFuncIdx::RWASM_COMPILE_WITH_LINKER as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -550,6 +558,9 @@ impl Runtime {
         // inputs
         forward_call!(linker, store, "env", "evm_block_number", fn evm_block_number(data_offset: i32, data_len: i32, output_offset: i32) -> ());
         forward_call!(linker, store, "env", "evm_verify_block_rlps", fn evm_verify_block_rlps() -> ());
+
+        // rwasm
+        forward_call!(linker, store, "env", "rwasm_compile", fn rwasm_compile(input_offset: i32, input_len: i32, output_offset: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

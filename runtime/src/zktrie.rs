@@ -1,6 +1,5 @@
 use crate::{
     instruction::exported_memory_vec,
-    zktrie_helpers::account_data_from_bytes,
     RuntimeContext,
 };
 use fluentbase_rwasm::{common::Trap, Caller};

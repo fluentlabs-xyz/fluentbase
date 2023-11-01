@@ -127,6 +127,9 @@ extern "C" {
     // EVM Inputs
     fn evm_block_number(output_offset: i32);
     fn evm_verify_block_rlps();
+
+    // rwasm
+    fn rwasm_compile(input_offset: i32, input_len: i32, output_offset: i32) -> i32;
 }
 
 #[inline(always)]
@@ -261,4 +264,9 @@ pub fn evm_block_number_(output_offset: i32) {
 #[inline(always)]
 pub fn evm_verify_block_rlps_() {
     unsafe { evm_verify_block_rlps() }
+}
+
+#[inline(always)]
+pub fn rwasm_compile_wrapper(input_offset: i32, input_len: i32, output_offset: i32) -> i32 {
+    unsafe { rwasm_compile(input_offset, input_len, output_offset) }
 }
