@@ -1,8 +1,13 @@
 // use super::header::Header;
-use crate::eth_types::{header, transaction};
+use crate::{
+    eth_typ::transactions::*,
+    eth_types::{header, transaction},
+};
+use ethereum::{util::ordered_trie_root, EnvelopedDecodable, EnvelopedEncodable, PartialHeader};
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethers::types::Bytes;
 use header::{Header, Seal};
+use keccak_hash::keccak;
 use rlp::{Decodable, DecoderError, Encodable, RlpStream, *};
 use serde::{Deserialize, Serialize};
 use std::{cmp, collections::HashSet, sync::Arc};
@@ -30,11 +35,88 @@ pub(crate) struct Block {
     pub uncles: Vec<Header>,
 }
 
-// #[derive(Clone, Serialize, Deserialize)]
-// pub(crate) struct BlockX {
-//     pub header: HeaderX,
-//     pub transactions: Vec<transaction::Transaction>,
-// }
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct BlockX<T> {
+    pub header: Header,
+    pub transactions: Vec<T>,
+    pub uncles: Vec<Header>,
+}
+
+impl<T: EnvelopedEncodable> Encodable for BlockX<T> {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(3);
+        s.append(&self.header);
+        s.append_list::<Vec<u8>, _>(
+            &self
+                .transactions
+                .iter()
+                .map(|tx| EnvelopedEncodable::encode(tx).to_vec())
+                .collect::<Vec<_>>(),
+        );
+    }
+}
+
+impl<T: EnvelopedDecodable> Decodable for BlockX<T> {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        Ok(Self {
+            header: rlp.val_at(0)?,
+            transactions: rlp
+                .list_at::<Vec<u8>>(1)?
+                .into_iter()
+                .map(|raw_tx| {
+                    EnvelopedDecodable::decode(&raw_tx)
+                        .map_err(|_| DecoderError::Custom("decode enveloped transaction failed"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            uncles: rlp.list_at(2)?,
+        })
+    }
+}
+
+impl<T: EnvelopedEncodable> BlockX<T> {
+    pub fn new(partial_header: PartialHeader, transactions: Vec<T>, uncles: Vec<Header>) -> Self {
+        // let ommers_hash = H256::from_slice(keccak(&rlp::encode_list(&uncles)[..]).as_bytes());
+        // let transactions_root = ordered_trie_root(
+        //     transactions
+        //         .iter()
+        //         .map(|r| EnvelopedEncodable::encode(r).freeze()),
+        // );
+
+        Self {
+            header: Header::new(),
+            transactions,
+            uncles,
+        }
+    }
+}
+
+pub type BlockV0 = BlockX<TransactionV0>;
+pub type BlockV1 = BlockX<TransactionV1>;
+pub type BlockV2 = BlockX<TransactionV2>;
+pub type BlockAny = BlockX<TransactionAny>;
+
+impl<T> From<BlockV0> for BlockX<T>
+where
+    T: From<TransactionV0> + From<TransactionV1>,
+{
+    fn from(t: BlockV0) -> Self {
+        Self {
+            header: t.header,
+            transactions: t.transactions.into_iter().map(|t| t.into()).collect(),
+            uncles: t.uncles,
+        }
+    }
+}
+
+impl From<BlockV1> for BlockV2 {
+    fn from(t: BlockV1) -> Self {
+        Self {
+            header: t.header,
+            transactions: t.transactions.into_iter().map(|t| t.into()).collect(),
+            uncles: t.uncles,
+        }
+    }
+}
 
 impl Block {
     /// Get the RLP-encoding of the block with or without the seal.
@@ -61,25 +143,25 @@ impl Block {
 
 impl Encodable for Block {
     fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(3);
+        s.begin_list(1);
         s.append(&self.header);
-        s.append_list(&self.transactions);
-        s.append_list(&self.uncles);
+        // s.append_list(&self.transactions);
+        // s.append_list(&self.uncles);
     }
 }
 
 impl Decodable for Block {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        if rlp.as_raw().len() != rlp.payload_info()?.total() {
-            return Err(DecoderError::RlpIsTooBig);
-        }
-        if rlp.item_count()? != 3 {
-            return Err(DecoderError::RlpIncorrectListLen);
-        }
+        // if rlp.as_raw().len() != rlp.payload_info()?.total() {
+        //     return Err(DecoderError::RlpIsTooBig);
+        // }
+        // if rlp.item_count()? != 3 {
+        //     return Err(DecoderError::RlpIncorrectListLen);
+        // }
         Ok(Block {
             header: rlp.val_at(0)?,
-            transactions: rlp.list_at(1)?,
-            uncles: rlp.list_at(2)?,
+            transactions: vec![],
+            uncles: vec![],
         })
     }
 }

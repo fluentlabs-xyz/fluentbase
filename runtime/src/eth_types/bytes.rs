@@ -1,3 +1,4 @@
+use rlp::{Decodable, DecoderError, Encodable};
 use serde::{
     de::{Error, Unexpected, Visitor},
     Deserialize,
@@ -41,6 +42,21 @@ impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let serialized = format!("0x{}", hex::encode(&self.0));
         f.debug_tuple("Bytes").field(&serialized).finish()
+    }
+}
+
+impl Encodable for Bytes {
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
+        // println!("IS LIST(Encodable): {:?}", self.rlp_bytes());
+        // println!("IS LIST(Encodable): {:?}", self.0.to_vec());
+        s.append(&self.rlp_bytes());
+    }
+}
+
+impl Decodable for Bytes {
+    fn decode(d: &rlp::Rlp) -> Result<Self, DecoderError> {
+        // println!("IS LIST(Decodable): {:?}", d.li(0));
+        Ok(Bytes(d.as_raw().to_vec()))
     }
 }
 
