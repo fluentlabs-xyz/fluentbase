@@ -1,9 +1,11 @@
 use super::bytes::Bytes;
 use crate::hash::{keccak, KECCAK_EMPTY_LIST_RLP, KECCAK_NULL_RLP};
 use ethereum_types::{Address, Bloom, H160, H256, U256, U64};
+use hex::FromHexError;
 use rlp::*;
-use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{borrow::BorrowMut, cell::RefCell, cmp};
+use thiserror::Error;
 
 /// Semantic boolean for when a seal/signature is included.
 pub enum Seal {
@@ -12,48 +14,6 @@ pub enum Seal {
     /// The seal/signature is not included.
     Without,
 }
-
-// #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub(crate) struct Header {
-//     /// Parent hash.
-//     parent_hash: H256,
-//     /// Block timestamp.
-//     timestamp: U64,
-//     /// Block number.
-//     number: U64,
-
-//     #[serde(rename = "miner")]
-//     author: Address,
-//     /// Transactions root.
-//     transactions_root: H256,
-
-//     #[serde(rename = "sha3Uncles")]
-//     uncles_hash: H256,
-//     /// Block extra data.
-//     extra_data: H256,
-
-//     /// State root.
-//     state_root: H256,
-//     /// Block receipts root.
-//     receipts_root: H256,
-//     /// Block bloom.
-//     logs_bloom: Bloom,
-//     /// Gas used for contracts execution.
-//     gas_used: U256,
-//     /// Block gas limit.
-//     gas_limit: U256,
-
-//     /// Block difficulty.
-//     difficulty: U256,
-//     /// Vector of post-RLP-encoded fields.
-//     // seal: Vec<Bystes>,
-
-//     /// The memoized hash of the RLP representation *including* the seal fields.
-//     hash: RefCell<Option<H256>>,
-//     /// The memoized hash of the RLP representation *without* the seal fields.
-//     bare_hash: RefCell<Option<H256>>,
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +24,7 @@ pub(crate) struct Header {
     uncle_hash: H256,
 
     #[serde(rename = "miner")]
-    coin_base: Address,
+    coinbase: Address,
 
     /// State root.
     state_root: H256,
@@ -89,17 +49,81 @@ pub(crate) struct Header {
     /// Block timestamp.
     timestamp: U64,
 
-    /// Block extra data
-    extra_data: Bytes,
+    #[serde(serialize_with = "se_hex")]
+    #[serde(deserialize_with = "de_hex_to_vec_u8")]
+    extra_data: Vec<u8>,
 
     nonce: U256,
-    // /// Vector of post-RLP-encoded fields.
+    /// Vector of post-RLP-encoded fields.
     // seal: Vec<Bytes>,
     mix_hash: H256,
-    // /// The memoized hash of the RLP representation *including* the seal fields.
-    // hash: RefCell<Option<H256>>,
+    /// The memoized hash of the RLP representation *including* the seal fields.
+    #[serde(skip)]
+    hash: RefCell<Option<H256>>,
     // /// The memoized hash of the RLP representation *without* the seal fields.
     // bare_hash: RefCell<Option<H256>>,
+}
+
+/// Encode hex with 0x prefix
+pub fn hex_encode<T: AsRef<[u8]>>(data: T) -> String {
+    format!("0x{}", hex::encode(data))
+}
+
+/// An error from a byte utils operation.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ByteUtilsError {
+    #[error("Hex string starts with {first_two}, expected 0x")]
+    WrongPrefix { first_two: String },
+
+    #[error("Unable to decode hex string {data} due to {source}")]
+    HexDecode { source: FromHexError, data: String },
+
+    #[error("Hex string is '{data}', expected to start with 0x")]
+    NoPrefix { data: String },
+}
+
+/// Decode hex with 0x prefix
+pub fn hex_decode(data: &str) -> Result<Vec<u8>, ByteUtilsError> {
+    let first_two = data.get(..2).ok_or_else(|| ByteUtilsError::NoPrefix {
+        data: data.to_string(),
+    })?;
+
+    if first_two != "0x" {
+        return Err(ByteUtilsError::WrongPrefix {
+            first_two: first_two.to_string(),
+        });
+    }
+
+    let post_prefix = data.get(2..).unwrap_or("");
+
+    hex::decode(post_prefix).map_err(|e| ByteUtilsError::HexDecode {
+        source: e,
+        data: data.to_string(),
+    })
+}
+
+fn se_hex<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&hex_encode(value))
+}
+
+fn de_hex_to_vec_u8<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let result: String = Deserialize::deserialize(deserializer)?;
+    hex_decode(&result).map_err(serde::de::Error::custom)
+}
+
+fn de_hex_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let result: String = Deserialize::deserialize(deserializer)?;
+    let result = result.trim_start_matches("0x");
+    u64::from_str_radix(result, 16).map_err(serde::de::Error::custom)
 }
 
 impl PartialEq for Header {
@@ -107,7 +131,7 @@ impl PartialEq for Header {
         self.parent_hash == c.parent_hash
             && self.timestamp == c.timestamp
             && self.number == c.number
-            && self.coin_base == c.coin_base
+            && self.coinbase == c.coinbase
             && self.transactions_root == c.transactions_root
             && self.uncle_hash == c.uncle_hash
             && self.extra_data == c.extra_data
@@ -117,7 +141,6 @@ impl PartialEq for Header {
             && self.gas_used == c.gas_used
             && self.gas_limit == c.gas_limit
             && self.difficulty == c.difficulty
-        // && self.seal == c.seal
     }
 }
 
@@ -130,7 +153,7 @@ impl Default for Header {
 
             transactions_root: KECCAK_NULL_RLP,
             uncle_hash: KECCAK_EMPTY_LIST_RLP,
-            extra_data: Bytes::default(),
+            extra_data: vec![],
 
             state_root: KECCAK_NULL_RLP,
             receipts_root: KECCAK_NULL_RLP,
@@ -139,11 +162,10 @@ impl Default for Header {
             gas_limit: U256::default(),
 
             difficulty: U256::default(),
-            // hash: RefCell::new(None),
-            //  bare_hash: RefCell::new(None),
-            coin_base: H160::default(),
+            coinbase: H160::default(),
             nonce: U256::default(),
             mix_hash: H256::default(),
+            hash: RefCell::new(Some(H256::default())),
         }
     }
 }
@@ -167,19 +189,15 @@ impl Header {
         self.number
     }
     /// Get the author field of the header.
-    pub fn coin_base(&self) -> &Address {
-        &self.coin_base
+    pub fn coinbase(&self) -> &Address {
+        &self.coinbase
     }
 
     /// Get the extra data field of the header.
-    pub fn extra_data(&self) -> &Bytes {
-        &self.extra_data
+    pub fn extra_data(&self) {
+        let xx = hex::encode(&self.extra_data);
+        println!("{:?}", xx.as_str())
     }
-    // /// Get a mutable reference to extra_data
-    // pub fn extra_data_mut(&mut self) -> &mut Bytes {
-    //     self.note_dirty();
-    //     &mut self.extra_data
-    // }
 
     /// Get the state root field of the header.
     pub fn state_root(&self) -> &H256 {
@@ -214,10 +232,6 @@ impl Header {
     pub fn difficulty(&self) -> &U256 {
         &self.difficulty
     }
-    // /// Get the seal field of the header.
-    // pub fn seal(&self) -> &[Bytes] {
-    //     &self.seal
-    // }
 
     // /// Get the seal field with RLP-decoded values as bytes.
     // pub fn decode_seal<'a, T: ::std::iter::FromIterator<&'a [u8]>>(
@@ -270,14 +284,13 @@ impl Header {
         self.number = a;
         self.note_dirty();
     }
-    /// Set the coin_base(miner) field of the header.
+    /// Set the coinbase(miner) field of the header.
     pub fn set_miner(&mut self, a: Address) {
-        if a != self.coin_base {
-            self.coin_base = a;
+        if a != self.coinbase {
+            self.coinbase = a;
             self.note_dirty();
         }
     }
-
     // /// Set the extra data field of the header.
     // pub fn set_extra_data(&mut self, a: Bytes) {
     //     if a != self.extra_data {
@@ -285,7 +298,6 @@ impl Header {
     //         self.note_dirty();
     //     }
     // }
-
     /// Set the gas used field of the header.
     pub fn set_gas_used(&mut self, a: U256) {
         self.gas_used = a;
@@ -296,30 +308,27 @@ impl Header {
         self.gas_limit = a;
         self.note_dirty();
     }
-
     /// Set the difficulty field of the header.
     pub fn set_difficulty(&mut self, a: U256) {
         self.difficulty = a;
         self.note_dirty();
     }
-    /// Set the seal field of the header.
-    // pub fn set_seal(&mut self, a: Vec<Bytes>) {
-    //     //      self.seal = a;
-    //     self.note_dirty();
-    // }
-
     /// Get the hash of this header (keccak of the RLP).
     pub fn hash(&self) -> H256 {
-        let mut hash = self.hash();
-        // match &mut *hash {
-        //     &mut Some(ref h) => h.clone(),
-        //     // hash @ &mut None => {
-        //     //     let h = self.rlp_keccak(Seal::With);
-        //     //     *hash = Some(h.clone());
-        //     //     h
-        //     // }
-        // }
-        H256::default()
+        let mut hash = self.hash.borrow_mut();
+        match &mut *hash {
+            &mut Some(ref h) => h.clone(),
+            hash @ &mut None => {
+                let h = self.rlp_sha3(Seal::Without);
+                *hash = Some(h.clone());
+                h
+            }
+        }
+    }
+
+    /// Get the SHA3 (Keccak) of this header, optionally `with_seal`.
+    pub fn rlp_sha3(&self, with_seal: Seal) -> H256 {
+        keccak(self.rlp(with_seal).0)
     }
 
     // /// Get the hash of the header excluding the seal
@@ -338,22 +347,43 @@ impl Header {
 
     /// Note that some fields have changed. Resets the memoised hash.
     pub fn note_dirty(&self) {
-        // *self.hash.borrow_mut() = None;
-        //*self.ha.borrow_mut() = None;
+        //*self.hash = Some(H256::default());
+        *self.hash.borrow_mut() = None;
     }
 
     // TODO: make these functions traity
     /// Place this header into an RLP stream `s`, optionally `with_seal`.
     pub fn stream_rlp(&self, s: &mut RlpStream, with_seal: Seal) {
-        s.begin_list(
-            13 + match with_seal {
-                // Seal::With => self.seal.len(),
-                _ => 0,
-            },
-        );
+        println!("IS LIST(Encodable): {:?}", self.extra_data.to_vec());
+
+        // s.begin_list(10);
+        // // parent_hash
+        // s.append(&self.parent_hash.as_ref());
+        // // coinbase
+        // s.append(&self.coinbase.as_ref());
+        // // root
+        // s.append(&self.state_root.as_ref());
+        // // tx_hash
+        // s.append(&self.transactions_root.as_ref());
+        // // receipt_hash
+        // s.append(&self.receipts_root.as_ref());
+        // // bloom
+        // s.append(&self.logs_bloom.as_ref());
+        // // number
+        // s.append(&self.number);
+        // // gas_used
+        // s.append(&self.gas_used);
+        // // time
+        // s.append(&self.timestamp);
+        // // extra
+        // s.append(&self.extra_data);
+        // s.append(&self.nonce);
+
+        // ///
+        s.begin_list(15);
         s.append(&self.parent_hash);
         s.append(&self.uncle_hash);
-        s.append(&self.coin_base);
+        s.append(&self.coinbase);
         s.append(&self.state_root);
         s.append(&self.transactions_root);
         s.append(&self.receipts_root);
@@ -363,59 +393,52 @@ impl Header {
         s.append(&self.gas_limit);
         s.append(&self.gas_used);
         s.append(&self.timestamp);
-        s.append(&self.extra_data.0);
-        if let Seal::With = with_seal {
-            // for b in &self.seal {
-            //     s.append_raw(b, 1);
-            // }
-        }
+        s.append(&self.extra_data);
+        s.append(&self.mix_hash);
+        s.append(&self.nonce);
     }
 
     /// Get the RLP of this header, optionally `with_seal`.
     pub fn rlp(&self, with_seal: Seal) -> Bytes {
-        // let mut s = RlpStream::new();
-        // self.stream_rlp(&mut s, with_seal);
-        // s.out().into()
-        Bytes::default()
+        let mut s = RlpStream::new();
+        self.stream_rlp(&mut s, with_seal);
+        s.out().into()
     }
 
-    // /// Get the SHA3 (Keccak) of this header, optionally `with_seal`.
-    // pub fn rlp_keccak(&self, with_seal: Seal) -> H256 {
-    //     keccak(self.rlp(with_seal))
-    // }
+    /// Get the SHA3 (Keccak) of this header, optionally `with_seal`.
+    pub fn rlp_keccak(&self, with_seal: Seal) -> H256 {
+        //   keccak(self.rlp(with_seal))
+        keccak("1")
+    }
+}
 
-    // /// Returns the rlp length of the Header body, _not including_ trailing EIP155 fields or the
-    // /// rlp list header
-    // /// To get the length including the rlp list header, refer to the Encodable implementation.
-    // pub(crate) fn header_payload_length(&self) -> usize {
-    //     let mut length = 0;
-    //     length += self.parent_hash.as_bytes().len();
-    //     length += self.state_root.as_bytes().len();
-    //     length += self.transactions_root.as_bytes().len();
-    //     length += self.receipts_root.as_bytes().len();
-    //     length += self.logs_bloom.as_bytes().len();
-    //     length += self.difficulty.as_bytes().len();
-    //     length += 64;
-    //     length += self.gas_limit.length += self.gas_used.as_bytes().len();
-    //     length += self.timestamp.as_bytes().len();
-    //     length += self.extra_data.as_mut_slice().len();
-    //     length += self.mix_hash.as_bytes().len();
-    //     length += self.nonce.as_bytes().len();
-    //     length += self
-    //         .base_fee_per_gas
-    //         .map(|fee| fee.length())
-    //         .unwrap_or_default();
-
-    //     length
-    // }
+impl Encodable for Header {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(15);
+        s.append(&self.parent_hash);
+        s.append(&self.uncle_hash);
+        s.append(&self.coinbase);
+        s.append(&self.state_root);
+        s.append(&self.transactions_root);
+        s.append(&self.receipts_root);
+        s.append(&self.logs_bloom);
+        s.append(&self.difficulty);
+        s.append(&self.number);
+        s.append(&self.gas_limit);
+        s.append(&self.gas_used);
+        s.append(&self.timestamp);
+        s.append(&self.extra_data);
+        s.append(&self.nonce);
+        s.append(&self.mix_hash);
+    }
 }
 
 impl Decodable for Header {
     fn decode(r: &rlp::Rlp) -> Result<Self, DecoderError> {
-        let mut blockheader = Header {
+        Ok(Header {
             parent_hash: r.val_at(0)?,
             uncle_hash: r.val_at(1)?,
-            coin_base: r.val_at(2)?,
+            coinbase: r.val_at(2)?,
             state_root: r.val_at(3)?,
             transactions_root: r.val_at(4)?,
             receipts_root: r.val_at(5)?,
@@ -427,32 +450,18 @@ impl Decodable for Header {
             timestamp: cmp::min(r.val_at::<U256>(11)?, u64::max_value().into())
                 .as_u64()
                 .into(),
-            extra_data: todo!(),
+            extra_data: r.val_at(12)?,
             nonce: r.val_at(13)?,
             mix_hash: r.val_at(14)?,
-            //  seal: vec![],
-            // hash: RefCell::new(Some(keccak(r.as_raw()))),
-            // bare_hash: RefCell::new(None),
-        };
-
-        // for i in 13..r.item_count()? {
-        //     blockheader.seal.push(r.at(i)?.as_raw().to_vec())
-        // }
-
-        Ok(blockheader)
-    }
-}
-
-impl Encodable for Header {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        self.stream_rlp(s, Seal::With);
+            hash: RefCell::new(Some(keccak(r.as_raw()))),
+        })
     }
 }
 
 pub(crate) fn generate_random_header(height: &u64) -> (Header, H256) {
     let header = Header {
         parent_hash: H256::random(),
-        coin_base: H160::random(),
+        coinbase: H160::random(),
         state_root: H256::random(),
         transactions_root: H256::random(),
         receipts_root: H256::random(),
@@ -462,10 +471,11 @@ pub(crate) fn generate_random_header(height: &u64) -> (Header, H256) {
         gas_limit: U256::from_dec_str("1").unwrap(),
         gas_used: U256::from_dec_str("1").unwrap(),
         timestamp: 1.into(),
-        extra_data: Bytes::default(),
+        extra_data: vec![],
         uncle_hash: H256::default(),
         nonce: 1.into(),
         mix_hash: H256::default(),
+        hash: RefCell::new(Some(H256::default())),
     }
     .clone();
     let header_clone = header.clone();
@@ -480,7 +490,7 @@ pub(crate) fn generate_random_header_based_on_prev_block(
     Header {
         parent_hash: init_parrent_hash,
         uncle_hash: H256::random(),
-        coin_base: H160::random(),
+        coinbase: H160::random(),
         state_root: H256::random(),
         transactions_root: H256::random(),
         receipts_root: H256::random(),
@@ -490,9 +500,10 @@ pub(crate) fn generate_random_header_based_on_prev_block(
         gas_limit: U256::from_dec_str("1").unwrap(),
         gas_used: U256::from_dec_str("1").unwrap(),
         timestamp: 2.into(),
-        extra_data: Bytes::default(),
+        extra_data: vec![],
         nonce: 2.into(),
         mix_hash: H256::default(),
+        hash: RefCell::new(Some(H256::default())),
     }
 }
 

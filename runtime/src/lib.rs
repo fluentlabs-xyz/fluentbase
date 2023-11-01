@@ -12,6 +12,7 @@ pub use runtime::*;
 pub use types::*;
 
 mod crypto;
+mod eth_typ;
 mod eth_types;
 mod evm;
 mod hash;
