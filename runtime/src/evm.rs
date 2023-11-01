@@ -2,9 +2,11 @@ use crate::{
     eth_types::*,
     instruction::{exported_memory_slice, exported_memory_vec},
     sys_input,
+    zktrie_get_root,
     zktrie_get_trie,
     zktrie_open,
     RuntimeContext,
+    TRIE_ID_DEFAULT,
 };
 use fluentbase_rwasm::{common::Trap, Caller};
 use keccak_hash::keccak;
@@ -95,10 +97,10 @@ pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> R
         panic!("EMPTY INPUT");
     }
 
-    zktrie_open(caller).unwrap();
+    zktrie_open(caller)?;
     // zktrie_get_nonce(caller, key_offset, key_len, output_offset)
 
-    let trie_root = zktrie_get_trie(&0).unwrap();
+    let trie_root = zktrie_get_root(&TRIE_ID_DEFAULT)?;
 
     // initial verification on transactions:
     // let res = verify_input_blocks(&block_txs_a, &block_txs_b);
