@@ -560,7 +560,7 @@ impl Runtime {
         forward_call!(linker, store, "env", "evm_verify_block_rlps", fn evm_verify_block_rlps() -> ());
 
         // rwasm
-        forward_call!(linker, store, "env", "rwasm_compile", fn rwasm_compile(input_offset: i32, input_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {
