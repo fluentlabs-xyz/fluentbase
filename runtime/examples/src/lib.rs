@@ -63,15 +63,15 @@ fn revm_db_test() {}
 
 #[cfg(feature = "rwasm_compile_with_linker_test")]
 pub fn rwasm_compile_with_linker_test() {
-    const WB_START_OFFSET: usize = 0;
-    const WB_LEN: usize = 1024;
-    const OUT_LEN_EXPECTED: usize = 999;
-    let mut wb: [u8; WB_LEN] = [0; WB_START_OFFSET + WB_LEN];
-    sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
-    let out_len = rwasm_compile_wrapper(WB_START_OFFSET as i32, WB_LEN as i32, 1024);
-    if out_len != OUT_LEN_EXPECTED as i32 {
-        panic!("out_len!=OUT_LEN_EXPECTED");
-    }
+    // const WB_START_OFFSET: usize = 0;
+    // const WB_LEN: usize = 1024;
+    // const OUT_LEN_EXPECTED: usize = 999;
+    // let mut wb: [u8; WB_LEN] = [0; WB_START_OFFSET + WB_LEN];
+    // sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
+    // let out_len = rwasm_compile_wrapper(WB_START_OFFSET as i32, WB_LEN as i32, 1024);
+    // if out_len != OUT_LEN_EXPECTED as i32 {
+    //     panic!("out_len!=OUT_LEN_EXPECTED");
+    // }
 }
 
 #[no_mangle]

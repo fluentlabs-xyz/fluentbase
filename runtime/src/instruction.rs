@@ -201,7 +201,10 @@ pub(crate) fn rwasm_transact(
     }
     caller.write_memory(output_offset as usize, output.as_slice());
     // put exit code on stack
-    Ok(execution_result.data().exit_code)
+    if execution_result.data().exit_code < 0 {
+        return Ok(execution_result.data().exit_code);
+    }
+    Ok(output.len() as i32)
 }
 
 pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {

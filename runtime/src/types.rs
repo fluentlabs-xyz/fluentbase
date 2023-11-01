@@ -10,6 +10,7 @@ pub enum ExitCode {
     NotSupportedCall = -1003,
     TransactError = -1004,
     TransactOutputOverflow = -1005,
+    RwasmCompileOutputOverflow = -1006,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
