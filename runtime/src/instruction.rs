@@ -1,6 +1,7 @@
 pub use crate::{crypto::*, evm::*, mpt::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
+use fluentbase_rwasm::rwasm::Compiler;
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
@@ -212,8 +213,9 @@ pub(crate) fn rwasm_compile(
     output_len: i32,
 ) -> Result<i32, Trap> {
     let import_linker = Runtime::new_linker();
+    let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
     let mut compiler =
-        Compiler::new_with_linker(inputs.init_code.as_ref(), Some(&import_linker)).unwrap();
+        Compiler::new_with_linker(input.as_ref(), Some(&import_linker)).unwrap();
     // TODO: "add error handling"
     let rwasm_bytecode = compiler.finalize().unwrap();
     // TODO: "copy rwasm bytecode into memory with error checks"
