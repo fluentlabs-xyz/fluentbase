@@ -124,6 +124,15 @@ fn test_translator() {
 }
 
 #[test]
+fn rwasm_compile_with_linker_test() {
+    let wasm_binary = include_bytes!("../examples/bin/rwasm_compile_with_linker_test.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let input = Vec::new();
+    let result = Runtime::run(rwasm_binary.as_slice(), &input).unwrap();
+    println!("{:?}", result.data().output().clone());
+}
+
+#[test]
 fn test_state() {
     let wasm_binary = wat::parse_str(
         r#"

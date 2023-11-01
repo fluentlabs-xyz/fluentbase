@@ -27,6 +27,7 @@ mod tests;
 mod types;
 mod zktrie;
 mod zktrie_helpers;
+mod rwasm;
 
 #[derive(Debug)]
 pub enum RuntimeError {
