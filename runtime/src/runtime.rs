@@ -4,7 +4,23 @@ use crate::{
     ExitCode,
     SysFuncIdx,
 };
-use fluentbase_rwasm::{common::{Trap, ValueType}, engine::Tracer, rwasm::{ImportFunc, ImportLinker, ReducedModule}, AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, Linker, Module, Store, Instance, InstancePre, FuncType};
+use fluentbase_rwasm::{
+    common::{Trap, ValueType},
+    engine::Tracer,
+    rwasm::{ImportFunc, ImportLinker, ReducedModule},
+    AsContextMut,
+    Caller,
+    Config,
+    Engine,
+    FuelConsumptionMode,
+    Func,
+    FuncType,
+    Instance,
+    InstancePre,
+    Linker,
+    Module,
+    Store,
+};
 
 #[derive(Default, Debug, Clone)]
 pub struct RuntimeContext {
@@ -78,7 +94,6 @@ pub struct Runtime {
 }
 
 impl Runtime {
-
     pub fn new_with_context(
         rwasm_binary: &[u8],
         runtime_context: RuntimeContext,
@@ -383,9 +398,13 @@ impl Runtime {
         runtime_context: RuntimeContext,
         import_linker: &ImportLinker,
         catch_trap: bool,
-
     ) -> Result<ExecutionResult, Error> {
-        let mut res = Runtime::new_with_context(   rwasm_binary,runtime_context, import_linker, FuncType::new([], []))?;
+        let mut res = Runtime::new_with_context(
+            rwasm_binary,
+            runtime_context,
+            import_linker,
+            FuncType::new([], []),
+        )?;
         let result = res
             .linker
             .instantiate(&mut res.store, &res.module)
@@ -441,5 +460,4 @@ impl Runtime {
             .instantiate(&mut self.store, &self.module)
             .map_err(Into::<Error>::into)?)
     }
-
 }

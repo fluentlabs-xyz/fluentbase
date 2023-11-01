@@ -266,6 +266,7 @@ impl InstructionSet {
     impl_opcode!(op_consume_fuel, ConsumeFuel(BlockFuel));
     impl_opcode!(op_return, Return, DropKeep::none());
     impl_opcode!(op_br_indirect, BrIndirect(BranchOffset));
+    impl_opcode!(op_type_check, TypeCheck(SignatureIdx));
 
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));

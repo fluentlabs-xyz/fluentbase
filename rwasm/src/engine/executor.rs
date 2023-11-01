@@ -22,6 +22,7 @@ use crate::{
         stack::{CallStack, ValueStackPtr},
         tracer::Tracer,
         DropKeep,
+        EngineIdx,
         FuncFrame,
         ValueStack,
     },
@@ -38,6 +39,7 @@ use crate::{
 };
 use alloc::string::String;
 use core::cmp::{self};
+use num_traits::ToPrimitive;
 
 /// The outcome of a Wasm execution.
 ///
@@ -241,15 +243,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
-            // println!(
-            //     "{:?} {:?}",
-            //     instr,
-            //     self.value_stack
-            //         .dump_stack(self.sp)
-            //         .iter()
-            //         .map(|v| v.as_u64())
-            //         .collect::<Vec<_>>()
-            // );
+            // let dump = self.value_stack.dump_stack(self.sp);
+            // if dump.len() < 20 {
+            //     println!(
+            //         "{:?} {:?}",
+            //         instr,
+            //         dump.iter().map(|v| v.as_u64()).collect::<Vec<_>>()
+            //     );
+            // }
 
             // handle pre-instruction state
             let has_default_memory = {
@@ -282,7 +283,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::LocalSet(local_depth) => self.visit_local_set(local_depth),
                 Instr::LocalTee(local_depth) => self.visit_local_tee(local_depth),
                 Instr::Br(offset) => self.visit_br(offset),
-                Instr::BrIndirect(offset) => self.visit_br_indirect(offset),
+                Instr::BrIndirect(offset) => self.visit_br_indirect(offset)?,
+                Instr::TypeCheck(sig_idx) => self.visit_type_check(sig_idx)?,
                 Instr::BrIfEqz(offset) => self.visit_br_if_eqz(offset),
                 Instr::BrIfNez(offset) => self.visit_br_if_nez(offset),
                 Instr::BrAdjust(offset) => self.visit_br_adjust(offset),
@@ -1077,14 +1079,33 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
-    fn visit_br_indirect(&mut self, offset: BranchOffset) {
+    fn visit_br_indirect(&mut self, offset: BranchOffset) -> Result<(), TrapCode> {
         assert_eq!(offset.to_i32(), 0);
         let return_pointer = self.sp.pop_as::<i32>();
         // let return_pointer = self.sp.nth_back(offset.to_i32() as usize);
         // let drop_keep = DropKeep::new(1, offset.to_i32() as usize).unwrap();
         // self.sp.drop_keep(drop_keep);
+
+        return_pointer
+            .ne(&0)
+            .then_some(())
+            .ok_or(TrapCode::IndirectCallToNull)?;
+
         let offset = return_pointer as i32 - self.ip.pc() as i32;
         self.branch_to(offset.into());
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn visit_type_check(&mut self, sig_idx: SignatureIdx) -> Result<(), TrapCode> {
+        let call_sig_idx = self.sp.pop().as_i32();
+        if sig_idx.to_u32() != call_sig_idx as u32 {
+            return Err(TrapCode::BadSignature).map_err(Into::into);
+        }
+        self.next_instr();
+
+        Ok(())
     }
 
     #[inline(always)]
