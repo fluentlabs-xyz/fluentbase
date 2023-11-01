@@ -1,9 +1,14 @@
 use crate::{runtime, runtime::Runtime, Error, RuntimeContext, SysFuncIdx, HASH_SCHEME_DONE};
-use fluentbase_rwasm::{common::Trap, engine::bytecode::Instruction, FuncType, rwasm::{Compiler, FuncOrExport, ImportLinker}, Value};
-use fluentbase_rwasm::common::ValueType;
-use fluentbase_rwasm::engine::bytecode::AddressOffset;
-use fluentbase_rwasm::engine::DropKeep;
-use fluentbase_rwasm::rwasm::RouterInstructions;
+use fluentbase_rwasm::{
+    common::{Trap, TrapCode, ValueType},
+    engine::{
+        bytecode::{AddressOffset, Instruction},
+        DropKeep,
+    },
+    rwasm::{Compiler, FuncOrExport, ImportLinker, RouterInstructions},
+    FuncType,
+    Value,
+};
 
 fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -177,6 +182,7 @@ fn test_state() {
     let import_linker = Runtime::new_linker();
     let mut compiler =
         Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+
     compiler
         .translate_with_state(
             Some(FuncOrExport::StateRouter(
@@ -199,7 +205,7 @@ fn test_state() {
         rwasm_bytecode.as_slice(),
         RuntimeContext::new(&[], 1000),
         &import_linker,
-        FuncType::new([], [])
+        FuncType::new([], []),
     )
     .unwrap();
 
@@ -235,16 +241,14 @@ fn test_input_output() {
   (export "main" (func $main)))
     "#,
     )
-        .unwrap();
+    .unwrap();
     let import_linker = Runtime::new_linker();
     let mut compiler =
         Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
     compiler
         .translate_with_state(
             Some(FuncOrExport::StateRouter(
-                vec![
-                    FuncOrExport::Export("main".to_string()),
-                ],
+                vec![FuncOrExport::Export("main".to_string())],
                 RouterInstructions {
                     state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
                     input_ix: vec![
@@ -276,11 +280,11 @@ fn test_input_output() {
 
     let mut runtime = Runtime::new_with_context(
         rwasm_bytecode.as_slice(),
-        RuntimeContext::new(&[64,0,0,0,0,0,0,0], 0),
+        RuntimeContext::new(&[64, 0, 0, 0, 0, 0, 0, 0], 0),
         &import_linker,
-        FuncType::new([], [])
+        FuncType::new([], []),
     )
-        .unwrap();
+    .unwrap();
 
     let pre = runtime.init_pre_instance().unwrap();
 
@@ -289,4 +293,69 @@ fn test_input_output() {
     start_func.call(&mut runtime.store, &[], &mut []).unwrap();
 
     assert_eq!(runtime.store.data().output, [100, 0, 0, 0, 0, 0, 0, 0]);
+}
+
+#[test]
+fn test_wrong_indirect_type() {
+    let wasm_binary = wat::parse_str(
+        r#"
+(module
+
+    (type $right (func (param i32) (result i32)))
+    (type $wrong (func (param i64) (result i64)))
+
+    (func $const-i32 (type $right) (local.get 0))
+    (func $id-i64 (type $wrong) (local.get 0))
+
+    (table funcref
+        (elem
+          $const-i32 $id-i64
+        )
+    )
+
+    (func (export "main")
+        (call_indirect (type $wrong) (i64.const 0xffffffffff) (i32.const 0))
+        (drop)
+    ))
+    "#,
+    )
+    .unwrap();
+    let import_linker = Runtime::new_linker();
+    let mut compiler =
+        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+
+    compiler
+        .translate_with_state(
+            Some(FuncOrExport::StateRouter(
+                vec![FuncOrExport::Export("main".to_string())],
+                RouterInstructions {
+                    state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                    input_ix: vec![],
+                    output_ix: vec![],
+                },
+            )),
+            true,
+        )
+        .unwrap();
+    let rwasm_bytecode = compiler.finalize().unwrap();
+
+    let mut runtime = Runtime::new_with_context(
+        rwasm_bytecode.as_slice(),
+        RuntimeContext::new(&[1, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0], 1000),
+        &import_linker,
+        FuncType::new([], []),
+    )
+    .unwrap();
+
+    let pre = runtime.init_pre_instance().unwrap();
+
+    let start_func = pre.get_start_func(&mut runtime.store).unwrap();
+
+    start_func.call(&mut runtime.store, &[], &mut []).unwrap();
+
+    runtime.set_state(0);
+
+    let res = start_func.call(&mut runtime.store, &[], &mut []);
+
+    assert!(res.is_err());
 }

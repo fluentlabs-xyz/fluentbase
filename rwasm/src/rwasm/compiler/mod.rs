@@ -83,7 +83,6 @@ pub struct RouterInstructions {
     pub output_ix: Vec<Instruction>,
 }
 
-
 impl Default for FuncOrExport {
     fn default() -> Self {
         Self::Export("main".to_string())
@@ -147,7 +146,11 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_router(&self, main_index: FuncOrExport, router_offset: u32) -> Result<InstructionSet, CompilerError> {
+    fn translate_router(
+        &self,
+        main_index: FuncOrExport,
+        router_offset: u32,
+    ) -> Result<InstructionSet, CompilerError> {
         let mut router_opcodes = InstructionSet::new();
         let resolve_export_index = |name| -> Result<u32, CompilerError> {
             let main_index = self
@@ -161,16 +164,19 @@ impl<'linker> Compiler<'linker> {
         };
         // find main entrypoint (it must starts with `main` keyword)
         let num_imports = self.module.imports.len_funcs as u32;
+
         match main_index {
             FuncOrExport::Export(name) => {
                 let main_index = resolve_export_index(name.as_str())?;
                 router_opcodes.op_call_internal(main_index - num_imports);
             }
-            FuncOrExport::StateRouter(states, RouterInstructions {
-                state_ix: check_instr,
-                input_ix,
-                output_ix
-            }
+            FuncOrExport::StateRouter(
+                states,
+                RouterInstructions {
+                    state_ix: check_instr,
+                    input_ix,
+                    output_ix,
+                },
             ) => {
                 router_opcodes.extend(input_ix);
                 for (state_value, state) in states.iter().enumerate() {
@@ -184,8 +190,12 @@ impl<'linker> Compiler<'linker> {
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
-                    router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32);
-                    router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2);
+                    router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32 + 1);
+                    router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2 + 1);
+
+                    let call_func_type = self.module.funcs[func_index as usize];
+                    router_opcodes.op_i32_const(call_func_type.type_idx().into_usize() as u32);
+
                     router_opcodes.op_call_internal(func_index);
                     router_opcodes.extend(output_ix.clone());
                     router_opcodes.op_br_indirect(0);
@@ -426,10 +436,14 @@ impl<'linker> Compiler<'linker> {
             return Ok(());
         }
         let func_type = self.module.funcs[fn_index as usize];
+
+        let sig_index = func_type.type_idx();
         let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
+        self.code_section
+            .op_type_check(sig_index.into_usize() as u32);
         self.swap_stack_parameters(num_inputs.len() as u32);
 
         let func_body = self
@@ -625,7 +639,7 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br_indirect(0);
             }
             WI::CallInternal(func_idx) => {
-                let target = self.code_section.len() + 2;
+                let target = self.code_section.len() + 2 + 1;
                 // we use this constant to remember ref func offset w/o moving function indices
                 // self.function_beginning
                 //     .insert(REF_FUNC_FUNCTION_OFFSET + target, target);
@@ -633,16 +647,29 @@ impl<'linker> Compiler<'linker> {
                 //     .op_ref_func(REF_FUNC_FUNCTION_OFFSET + target - 1);
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32;
+
+                let call_func_type = self.module.funcs[fn_index as usize];
+
+                self.code_section
+                    .op_i32_const(call_func_type.type_idx().into_usize() as u32);
+
                 self.code_section.op_call_internal(fn_index);
                 // self.code_section.op_drop();
             }
-            WI::CallIndirect(_) => {
+            WI::CallIndirect(sig_index) => {
                 let table_idx = Self::extract_table(instr_ptr);
                 opcode_count += 1;
-                let target = self.code_section.len() + 3 + 4;
+                let target = self.code_section.len() + 3 + 4 + 1 + 4;
 
                 self.code_section.op_table_get(table_idx);
                 self.code_section.op_i32_const(target);
+                self.swap_stack_parameters(1);
+
+                let sig_index = self.module.func_types[sig_index.to_u32() as usize].type_idx();
+
+                self.code_section
+                    .op_i32_const(sig_index.into_usize() as u32);
+
                 self.swap_stack_parameters(1);
                 self.code_section.op_br_indirect(0);
             }

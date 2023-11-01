@@ -4,6 +4,8 @@ pub use self::{
 };
 use super::{AsContext, AsContextMut, Stored};
 use crate::{
+    arena::ArenaIndex,
+    common::{TrapCode, UntypedValue, ValueType},
     engine::executor::EntityGrowError,
     module::FuncIdx,
     store::ResourceLimiterRef,
@@ -14,8 +16,6 @@ use crate::{
 };
 use alloc::vec::Vec;
 use core::cmp::max;
-use crate::arena::ArenaIndex;
-use crate::common::{TrapCode, UntypedValue, ValueType};
 
 mod element;
 mod error;

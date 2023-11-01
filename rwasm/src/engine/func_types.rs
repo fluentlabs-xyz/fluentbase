@@ -1,6 +1,8 @@
-use crate::arena::{ArenaIndex, DedupArena, GuardedEntity};
 use super::{EngineIdx, Guarded};
-use crate::FuncType;
+use crate::{
+    arena::{ArenaIndex, DedupArena, GuardedEntity},
+    FuncType,
+};
 
 /// A raw index to a function signature entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -27,13 +29,13 @@ impl ArenaIndex for DedupFuncTypeIdx {
 ///
 /// - Comparison for equality is as fast as an integer value comparison.
 ///     - With this we can speed up indirect calls in the engine.
-/// - Requires a lot less memory footprint to be stored somewhere compared
-///   to a full fledged [`FuncType`].
+/// - Requires a lot less memory footprint to be stored somewhere compared to a full fledged
+///   [`FuncType`].
 ///
 /// Disadvantages compared to non-deduplicated [`FuncType`] are:
 ///
-/// - Requires another indirection to acquire information such as parameter
-///   or result types of the underlying [`FuncType`].
+/// - Requires another indirection to acquire information such as parameter or result types of the
+///   underlying [`FuncType`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct DedupFuncType(GuardedEntity<EngineIdx, DedupFuncTypeIdx>);
@@ -47,6 +49,10 @@ impl DedupFuncType {
     /// Returns the underlying stored representation.
     pub(super) fn into_inner(self) -> GuardedEntity<EngineIdx, DedupFuncTypeIdx> {
         self.0
+    }
+
+    pub fn type_idx(self) -> DedupFuncTypeIdx {
+        self.0.entity_index_unsafe()
     }
 }
 

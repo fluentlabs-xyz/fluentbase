@@ -47,6 +47,7 @@ pub enum Instruction {
     /// An unconditional branch.
     Br(BranchOffset),
     BrIndirect(BranchOffset),
+    TypeCheck(SignatureIdx),
     /// Branches if the top-most stack value is equal to zero.
     BrIfEqz(BranchOffset),
     /// Branches if the top-most stack value is _not_ equal to zero.

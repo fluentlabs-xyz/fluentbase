@@ -1510,6 +1510,10 @@ impl UntypedValue {
         self.to_bits() as u32
     }
 
+    pub fn as_i32(self) -> i32 {
+        self.to_bits() as i32
+    }
+
     pub fn as_u64(self) -> u64 {
         self.to_bits()
     }
