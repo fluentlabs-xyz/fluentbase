@@ -2,14 +2,7 @@
 
 extern crate alloc;
 
-use fluentbase_sdk::{
-    evm_block_number_,
-    evm_verify_block_rlps_,
-    mpt_open_,
-    sys_read,
-    sys_write,
-    zktrie_open_,
-};
+use fluentbase_sdk::{mpt_open_, rwasm_compile, sys_read, sys_write, zktrie_open_};
 
 #[cfg(feature = "evm")]
 mod evm;
@@ -48,12 +41,6 @@ fn panic() {
     panic!("its time to panic");
 }
 
-pub const HASHLEN: usize = 32;
-pub const FIELDSIZE: usize = 32;
-pub const ACCOUNTFIELDS: usize = 5;
-pub const ACCOUNTSIZE: usize = FIELDSIZE * ACCOUNTFIELDS;
-const ROOTSIZE: usize = FIELDSIZE;
-const KEYSIZE: usize = 20;
 #[cfg(feature = "zktrie_open_test")]
 fn zktrie_open_test() {
     zktrie_open_();
@@ -61,6 +48,26 @@ fn zktrie_open_test() {
 #[cfg(feature = "mpt_open_test")]
 fn mpt_open_test() {
     mpt_open_();
+}
+
+#[cfg(feature = "revm_db_test")]
+fn revm_db_test() {}
+
+#[cfg(feature = "rwasm_compile_with_linker_test")]
+pub fn rwasm_compile_with_linker_test() {
+    use alloc::vec;
+
+    let mut env = revm_primitives::Env::default();
+    const WB_START_OFFSET: usize = 0;
+    const WB_LEN: usize = 628;
+    const OUT_LEN_EXPECTED: usize = 954;
+    let mut wb = [0u8; WB_START_OFFSET + WB_LEN];
+    sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
+    let mut output = [0u8; OUT_LEN_EXPECTED];
+    let out_len = rwasm_compile(&wb, &mut output);
+    if out_len != OUT_LEN_EXPECTED as i32 {
+        panic!("out_len!=OUT_LEN_EXPECTED");
+    }
 }
 
 #[no_mangle]
@@ -77,6 +84,8 @@ pub extern "C" fn main() {
     evm_verify_block_rlps();
     #[cfg(feature = "rwasm")]
     crate::rwasm::rwasm();
+    #[cfg(feature = "rwasm_compile_with_linker_test")]
+    rwasm_compile_with_linker_test();
     #[cfg(feature = "evm")]
     crate::evm::evm();
     #[cfg(feature = "wasi")]
