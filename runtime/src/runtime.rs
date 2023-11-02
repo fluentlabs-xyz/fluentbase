@@ -530,6 +530,7 @@ impl Runtime {
         forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32);
         // rwasm
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+        forward_call!(linker, store, "env", "_rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
         // evm (orphaned)
         forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
@@ -558,9 +559,6 @@ impl Runtime {
         // inputs
         forward_call!(linker, store, "env", "evm_block_number", fn evm_block_number(data_offset: i32, data_len: i32, output_offset: i32) -> ());
         forward_call!(linker, store, "env", "evm_verify_block_rlps", fn evm_verify_block_rlps() -> ());
-
-        // rwasm
-        forward_call!(linker, store, "env", "rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {
