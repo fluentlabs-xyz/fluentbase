@@ -1980,10 +1980,6 @@ name = "fluentbase-core"
 version = "0.1.0"
 
 [[package]]
-name = "fluentbase-modules"
-version = "0.1.0"
-
-[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2076,6 +2072,17 @@ dependencies = [
  "byteorder",
  "fixed-bigint",
  "wee_alloc",
+]
+
+[[package]]
+name = "fluentbase-stf"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-rwasm",
+ "fluentbase-sdk 0.1.0",
+ "revm",
+ "revm-interpreter",
+ "revm-primitives",
 ]
 
 [[package]]
