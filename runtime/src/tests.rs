@@ -255,17 +255,26 @@ fn test_evm_verify_block_receipts_with_signed_transactions() {
     let block_init: block::Block =
         serde_json::from_str::<block::Block>(block_receipt_a_json.as_str()).unwrap();
     let block_a = block_init.clone();
-    println!("HEADER: {:?}", block_a.header);
-    serde_json::to_value(block_a.clone()).unwrap();
+    println!("TRANSACTIONS_BEFORE: {:?}", block_a.transactions);
 
-    println!("ENCODED11: {:?}\n\n", block_a.header.hash());
+    serde_json::to_value(block_a.clone()).unwrap();
 
     let blk_a_encoded = rlp::encode(&block_a).to_vec();
 
-    //println!("ENCODED: {:?}", blk_a_encoded);
+    // println!("INPUT BEFORE: {:?}", block_a.transactions[0].get_input());
+    println!("HASH: {:?}", block_a.transactions[0].hash());
+
+    return;
 
     let block_txs_a = rlp::decode::<block::Block>(&blk_a_encoded).unwrap();
-    println!("ENCODED22: {:?}", block_txs_a.header);
+    println!("TRANSACTIONS_AFTER: {:?}", block_txs_a.transactions);
+    // println!(
+    //     "INPUT BEFORE: {:?}",
+    //     block_txs_a.transactions[0].get_input()
+    // );
+
+    println!("HASH: {:?}", block_txs_a.transactions[0].hash());
+
     // panic!()
     // assert_eq!(blk_a_encoded, rlp::encode(&block_txs_a).to_vec());
 
