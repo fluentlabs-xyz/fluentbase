@@ -22,7 +22,7 @@ use core::ops::Deref;
 
 mod drop_keep;
 
-#[derive(Debug)]
+#[derive(Debug, )]
 pub enum CompilerError {
     ModuleError(crate::Error),
     MissingEntrypoint,
@@ -34,6 +34,23 @@ pub enum CompilerError {
     UnknownImport(ImportName),
     MemoryUsageTooBig,
     DropKeepOutOfBounds,
+}
+
+impl Into<i32> for CompilerError {
+    fn into(self) -> i32 {
+        match self {
+            CompilerError::ModuleError(_) => -1,
+            CompilerError::MissingEntrypoint => -2,
+            CompilerError::MissingFunction => -3,
+            CompilerError::NotSupported(_) => -4,
+            CompilerError::OutOfBuffer => -5,
+            CompilerError::BinaryFormat(_) => -6,
+            CompilerError::NotSupportedImport => -7,
+            CompilerError::UnknownImport(_) => -8,
+            CompilerError::MemoryUsageTooBig => -9,
+            CompilerError::DropKeepOutOfBounds => -10,
+        }
+    }
 }
 
 pub trait Translator {

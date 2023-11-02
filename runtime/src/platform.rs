@@ -60,6 +60,8 @@ pub enum SysFuncIdx {
 
     EVM_BLOCK_NUMBER = 0xF001,
     EVM_VERIFY_BLOCK_RLPS = 0xF002,
+
+    RWASM_COMPILE_WITH_LINKER = 0xF101,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

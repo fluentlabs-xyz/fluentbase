@@ -4,6 +4,7 @@ extern "C" {
     fn _sys_halt(code: u32);
     fn _sys_read(target: *mut u8, offset: u32, length: u32);
     fn _sys_write(offset: u32, length: u32);
+
     fn _evm_stop();
     fn _evm_return(offset: *const u8, size: u32);
     fn _evm_keccak256(offset: *const u8, size: u32, dest: *mut u8);
@@ -124,9 +125,25 @@ extern "C" {
     pub fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn mpt_get_root(output_offset: i32) -> i32;
 
+    // rwasm
+    fn _rwasm_compile(
+        input_ptr: *const u8,
+        input_len: i32,
+        output_ptr: *mut u8,
+        output_len: i32,
+    ) -> i32;
+    fn _rwasm_transact(
+        code_offset: i32,
+        code_len: i32,
+        input_offset: i32,
+        input_len: i32,
+        output_offset: i32,
+        output_len: i32,
+    ) -> i32;
+
     // EVM Inputs
-    fn evm_block_number(output_offset: i32);
-    fn evm_verify_block_rlps();
+    // fn evm_block_number(output_offset: i32);
+    // fn evm_verify_block_rlps();
 }
 
 #[inline(always)]
@@ -251,14 +268,35 @@ pub fn mpt_get_root_(output_offset: i32) -> i32 {
     unsafe { mpt_get_root(output_offset) }
 }
 
-// INPUTs
-
 #[inline(always)]
-pub fn evm_block_number_(output_offset: i32) {
-    unsafe { evm_block_number(output_offset) }
+pub fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
+    unsafe {
+        _rwasm_compile(
+            input.as_ptr(),
+            input.len() as i32,
+            output.as_mut_ptr(),
+            output.len() as i32,
+        )
+    }
 }
 
 #[inline(always)]
-pub fn evm_verify_block_rlps_() {
-    unsafe { evm_verify_block_rlps() }
+pub fn rwasm_transact(
+    code_offset: i32,
+    code_len: i32,
+    input_offset: i32,
+    input_len: i32,
+    output_offset: i32,
+    output_len: i32,
+) -> i32 {
+    unsafe {
+        _rwasm_transact(
+            code_offset,
+            code_len,
+            input_offset,
+            input_len,
+            output_offset,
+            output_len,
+        )
+    }
 }

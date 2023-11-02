@@ -248,6 +248,13 @@ impl Runtime {
             &[ValueType::I32; 6],
             &[ValueType::I32; 1],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_rwasm_compile".to_string(),
+            SysFuncIdx::RWASM_COMPILE_WITH_LINKER as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
         // EVM sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -522,6 +529,7 @@ impl Runtime {
         forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32);
         // rwasm
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+        forward_call!(linker, store, "env", "_rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
         // evm (orphaned)
         forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
