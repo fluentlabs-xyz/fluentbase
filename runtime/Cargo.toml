@@ -24,6 +24,8 @@ ethers="2.0.10"
 serde = "1"
 serde_json = "1"
 strum = "0.25.0"
+hex-literal = "0.4.1"
+bytes = "1.5.0"
 halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
 strum_macros = "0.25.2"
 wasi = "0.11.0"
@@ -34,6 +36,7 @@ poseidon = { git = "https://github.com/scroll-tech/poseidon" }
 #memorydb = {version = "0.3.0", default-features = false}
 #ethereum-types = "0.4"
 #plain_hasher = "0.2.3"
+thiserror = "1.0.40"
 keccak-hash = "0.10.0"
 #keccak-hasher = "0.1.0"
 #hashdb = "0.3.0"

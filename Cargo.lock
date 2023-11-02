@@ -1987,6 +1987,7 @@ version = "0.1.0"
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "eth_trie",
  "ethereum",
  "ethereum-types 0.14.1",
@@ -1995,6 +1996,7 @@ dependencies = [
  "fluentbase-rwasm",
  "halo2curves",
  "hex",
+ "hex-literal",
  "keccak-hash",
  "lazy_static",
  "parity-scale-codec 3.6.4",
@@ -2004,6 +2006,7 @@ dependencies = [
  "serde_json",
  "strum 0.25.0",
  "strum_macros 0.25.2",
+ "thiserror",
  "tiny-keccak",
  "tokio",
  "wasi 0.11.0+wasi-snapshot-preview1",

@@ -3,19 +3,26 @@ use crate::{
         block::{self, Block},
         header::{generate_random_header, generate_random_header_based_on_prev_block},
     },
+    fetch_nonce,
+    get_account_data,
     runtime::Runtime,
+    set_account_data,
+    zktrie_get_trie,
+    zktrie_helpers::account_data_from_bytes,
     RuntimeContext,
     RuntimeError,
     SysFuncIdx,
     HASH_SCHEME_DONE,
 };
+use eth_trie::DB;
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport, ImportLinker},
 };
 use keccak_hash::H256;
-use std::{env, fs::File, io::Read};
+use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc};
+use zktrie::{AccountData, StoreData, ZkTrie, FIELDSIZE};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
@@ -266,15 +273,27 @@ fn test_evm_verify_block_receipts_with_signed_transactions() {
     let block_init: block::Block =
         serde_json::from_str::<block::Block>(block_receipt_a_json.as_str()).unwrap();
     let block_a = block_init.clone();
-    serde_json::to_value(block_a.clone()).unwrap();
+    println!("TRANSACTIONS_BEFORE: {:?}", block_a.transactions);
 
-    println!("ENCODED: {:?}", block_a.header);
+    serde_json::to_value(block_a.clone()).unwrap();
 
     let blk_a_encoded = rlp::encode(&block_a).to_vec();
 
-    //println!("ENCODED: {:?}", blk_a_encoded);
+    // println!("INPUT BEFORE: {:?}", block_a.transactions[0].get_input());
+    println!("HASH: {:?}", block_a.transactions[0].hash());
 
-    // let block_txs_a = rlp::decode::<block::Block>(&blk_a_encoded).unwrap();
+    return;
+
+    let block_txs_a = rlp::decode::<block::Block>(&blk_a_encoded).unwrap();
+    println!("TRANSACTIONS_AFTER: {:?}", block_txs_a.transactions);
+    // println!(
+    //     "INPUT BEFORE: {:?}",
+    //     block_txs_a.transactions[0].get_input()
+    // );
+
+    println!("HASH: {:?}", block_txs_a.transactions[0].hash());
+
+    // panic!()
     // assert_eq!(blk_a_encoded, rlp::encode(&block_txs_a).to_vec());
 
     // // read block_receipt_b.json
@@ -299,4 +318,50 @@ fn test_evm_verify_block_receipts_with_signed_transactions() {
     // // println!("HEADER: {:?}", block_b.header);
 
     // Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
+}
+
+#[test]
+fn test_evm_verify_account_state_data() {
+    let default_id = &1;
+    let key = &[0];
+
+    // OPEN
+    let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let input_data = vec![];
+    Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
+
+    let nonce_code: StoreData =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000011")
+            .unwrap()
+            .as_slice()
+            .try_into()
+            .unwrap();
+    let balance: StoreData =
+        hex::decode("01ffffffffffffffffffffffffffffffffffffffffffd5a5fa65e20465da88bf")
+            .unwrap()
+            .as_slice()
+            .try_into()
+            .unwrap();
+    let code_hash: StoreData =
+        hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+            .unwrap()
+            .as_slice()
+            .try_into()
+            .unwrap();
+
+    let zktr = zktrie_get_trie(default_id).unwrap().clone();
+    let zk_trie = zktr.as_ref().borrow_mut();
+
+    let store: StoreData =
+        hex::decode("1c5a77d9fa7ef466951b2f01f724bca3a5820b63000000000000000000000000")
+            .unwrap()
+            .as_slice()
+            .try_into()
+            .unwrap();
+
+    let newacc: AccountData = [nonce_code, balance, [0; FIELDSIZE], code_hash, store];
+
+    println!("ACCOUNT DATA: {:?}", newacc);
+    return;
 }

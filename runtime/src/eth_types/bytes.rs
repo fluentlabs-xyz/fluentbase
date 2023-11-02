@@ -1,3 +1,5 @@
+use hex::FromHexError;
+use rlp::{Decodable, DecoderError, Encodable};
 use serde::{
     de::{Error, Unexpected, Visitor},
     Deserialize,
@@ -6,6 +8,7 @@ use serde::{
     Serializer,
 };
 use std::fmt;
+use thiserror::Error;
 
 /// Raw bytes wrapper
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
@@ -42,6 +45,83 @@ impl fmt::Debug for Bytes {
         let serialized = format!("0x{}", hex::encode(&self.0));
         f.debug_tuple("Bytes").field(&serialized).finish()
     }
+}
+
+impl Encodable for Bytes {
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
+        // println!("IS LIST(Encodable): {:?}", self.rlp_bytes());
+        // println!("IS LIST(Encodable): {:?}", self.0.to_vec());
+        s.append(&self.rlp_bytes());
+    }
+}
+
+impl Decodable for Bytes {
+    fn decode(d: &rlp::Rlp) -> Result<Self, DecoderError> {
+        // println!("IS LIST(Decodable): {:?}", d.li(0));
+        Ok(Bytes(d.as_raw().to_vec()))
+    }
+}
+
+/// Encode hex with 0x prefix
+pub(crate) fn hex_encode<T: AsRef<[u8]>>(data: T) -> String {
+    format!("0x{}", hex::encode(data))
+}
+
+/// An error from a byte utils operation.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ByteUtilsError {
+    #[error("Hex string starts with {first_two}, expected 0x")]
+    WrongPrefix { first_two: String },
+
+    #[error("Unable to decode hex string {data} due to {source}")]
+    HexDecode { source: FromHexError, data: String },
+
+    #[error("Hex string is '{data}', expected to start with 0x")]
+    NoPrefix { data: String },
+}
+
+/// Decode hex with 0x prefix
+pub(crate) fn hex_decode(data: &str) -> Result<Vec<u8>, ByteUtilsError> {
+    let first_two = data.get(..2).ok_or_else(|| ByteUtilsError::NoPrefix {
+        data: data.to_string(),
+    })?;
+
+    if first_two != "0x" {
+        return Err(ByteUtilsError::WrongPrefix {
+            first_two: first_two.to_string(),
+        });
+    }
+
+    let post_prefix = data.get(2..).unwrap_or("");
+
+    hex::decode(post_prefix).map_err(|e| ByteUtilsError::HexDecode {
+        source: e,
+        data: data.to_string(),
+    })
+}
+
+pub(crate) fn se_hex<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&hex_encode(value))
+}
+
+pub fn de_hex_to_vec_u8<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let result: String = Deserialize::deserialize(deserializer)?;
+    hex_decode(&result).map_err(serde::de::Error::custom)
+}
+
+pub fn de_hex_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let result: String = Deserialize::deserialize(deserializer)?;
+    let result = result.trim_start_matches("0x");
+    u64::from_str_radix(result, 16).map_err(serde::de::Error::custom)
 }
 
 struct BytesVisitor;

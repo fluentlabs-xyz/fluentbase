@@ -5,6 +5,7 @@ use crate::{
     zktrie_get_root,
     zktrie_get_trie,
     zktrie_open,
+    zktrie_update_balance,
     RuntimeContext,
     TRIE_ID_DEFAULT,
 };
@@ -97,8 +98,13 @@ pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> R
         panic!("EMPTY INPUT");
     }
 
+    // new state:
+
+    // B_a -> B_b
+
     zktrie_open(caller)?;
     // zktrie_get_nonce(caller, key_offset, key_len, output_offset)
+    // zktrie_update_balance(caller, key_offset, key_len, value_offset, value_len)
 
     let trie_root = zktrie_get_root(&TRIE_ID_DEFAULT)?;
 
