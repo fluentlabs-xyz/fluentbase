@@ -122,7 +122,7 @@ impl Block {
     /// Get the RLP-encoding of the block with or without the seal.
     pub fn rlp_bytes(&self, seal: Seal) -> Bytes {
         let mut block_rlp = RlpStream::new_list(3);
-        self.header.stream_rlp(&mut block_rlp, seal);
+        self.header.stream_rlp(&mut block_rlp);
         block_rlp.append_list(&self.transactions);
         block_rlp.append_list(&self.uncles);
         Bytes(block_rlp.out().into())
@@ -143,25 +143,25 @@ impl Block {
 
 impl Encodable for Block {
     fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(1);
+        s.begin_list(3);
         s.append(&self.header);
-        // s.append_list(&self.transactions);
-        // s.append_list(&self.uncles);
+        s.append_list(&self.transactions);
+        s.append_list(&self.uncles);
     }
 }
 
 impl Decodable for Block {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-        // if rlp.as_raw().len() != rlp.payload_info()?.total() {
-        //     return Err(DecoderError::RlpIsTooBig);
-        // }
-        // if rlp.item_count()? != 3 {
-        //     return Err(DecoderError::RlpIncorrectListLen);
-        // }
+        if rlp.as_raw().len() != rlp.payload_info()?.total() {
+            return Err(DecoderError::RlpIsTooBig);
+        }
+        if rlp.item_count()? != 3 {
+            return Err(DecoderError::RlpIncorrectListLen);
+        }
         Ok(Block {
             header: rlp.val_at(0)?,
-            transactions: vec![],
-            uncles: vec![],
+            transactions: rlp.list_at(1)?,
+            uncles: rlp.list_at(2)?,
         })
     }
 }

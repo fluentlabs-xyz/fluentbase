@@ -1,4 +1,4 @@
-use super::bytes::Bytes;
+use super::bytes::{de_hex_to_vec_u8, se_hex, Bytes};
 use crate::hash::{keccak, KECCAK_EMPTY_LIST_RLP, KECCAK_NULL_RLP};
 use ethereum_types::{Address, Bloom, H160, H256, U256, U64};
 use hex::FromHexError;
@@ -58,72 +58,10 @@ pub(crate) struct Header {
     // seal: Vec<Bytes>,
     mix_hash: H256,
     /// The memoized hash of the RLP representation *including* the seal fields.
-    #[serde(skip)]
     hash: RefCell<Option<H256>>,
-    // /// The memoized hash of the RLP representation *without* the seal fields.
-    // bare_hash: RefCell<Option<H256>>,
-}
-
-/// Encode hex with 0x prefix
-pub fn hex_encode<T: AsRef<[u8]>>(data: T) -> String {
-    format!("0x{}", hex::encode(data))
-}
-
-/// An error from a byte utils operation.
-#[derive(Clone, Debug, Error, PartialEq)]
-pub enum ByteUtilsError {
-    #[error("Hex string starts with {first_two}, expected 0x")]
-    WrongPrefix { first_two: String },
-
-    #[error("Unable to decode hex string {data} due to {source}")]
-    HexDecode { source: FromHexError, data: String },
-
-    #[error("Hex string is '{data}', expected to start with 0x")]
-    NoPrefix { data: String },
-}
-
-/// Decode hex with 0x prefix
-pub fn hex_decode(data: &str) -> Result<Vec<u8>, ByteUtilsError> {
-    let first_two = data.get(..2).ok_or_else(|| ByteUtilsError::NoPrefix {
-        data: data.to_string(),
-    })?;
-
-    if first_two != "0x" {
-        return Err(ByteUtilsError::WrongPrefix {
-            first_two: first_two.to_string(),
-        });
-    }
-
-    let post_prefix = data.get(2..).unwrap_or("");
-
-    hex::decode(post_prefix).map_err(|e| ByteUtilsError::HexDecode {
-        source: e,
-        data: data.to_string(),
-    })
-}
-
-fn se_hex<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&hex_encode(value))
-}
-
-fn de_hex_to_vec_u8<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let result: String = Deserialize::deserialize(deserializer)?;
-    hex_decode(&result).map_err(serde::de::Error::custom)
-}
-
-fn de_hex_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let result: String = Deserialize::deserialize(deserializer)?;
-    let result = result.trim_start_matches("0x");
-    u64::from_str_radix(result, 16).map_err(serde::de::Error::custom)
+    /// The memoized hash of the RLP representation *without* the seal fields.
+    #[serde(skip)]
+    bare_hash: RefCell<Option<H256>>,
 }
 
 impl PartialEq for Header {
@@ -166,6 +104,7 @@ impl Default for Header {
             nonce: U256::default(),
             mix_hash: H256::default(),
             hash: RefCell::new(Some(H256::default())),
+            bare_hash: RefCell::new(Some(H256::default())),
         }
     }
 }
@@ -331,55 +270,13 @@ impl Header {
         keccak(self.rlp(with_seal).0)
     }
 
-    // /// Get the hash of the header excluding the seal
-    // pub fn bare_hash(&self) -> H256 {
-    //     let mut hash = self.bare_hash.borrow_mut();
-    //     // match &mut *hash {
-    //     //     &mut Some(ref h) => h.clone(),
-    //     //     // hash @ &mut None => {
-    //     //     //     let h = self.rlp_keccak(Seal::Without);
-    //     //     //     *hash = Some(h.clone());
-    //     //     //     h
-    //     //     // }
-    //     // }
-    //     H256::default()
-    // }
-
     /// Note that some fields have changed. Resets the memoised hash.
     pub fn note_dirty(&self) {
         //*self.hash = Some(H256::default());
         *self.hash.borrow_mut() = None;
     }
 
-    // TODO: make these functions traity
-    /// Place this header into an RLP stream `s`, optionally `with_seal`.
-    pub fn stream_rlp(&self, s: &mut RlpStream, with_seal: Seal) {
-        println!("IS LIST(Encodable): {:?}", self.extra_data.to_vec());
-
-        // s.begin_list(10);
-        // // parent_hash
-        // s.append(&self.parent_hash.as_ref());
-        // // coinbase
-        // s.append(&self.coinbase.as_ref());
-        // // root
-        // s.append(&self.state_root.as_ref());
-        // // tx_hash
-        // s.append(&self.transactions_root.as_ref());
-        // // receipt_hash
-        // s.append(&self.receipts_root.as_ref());
-        // // bloom
-        // s.append(&self.logs_bloom.as_ref());
-        // // number
-        // s.append(&self.number);
-        // // gas_used
-        // s.append(&self.gas_used);
-        // // time
-        // s.append(&self.timestamp);
-        // // extra
-        // s.append(&self.extra_data);
-        // s.append(&self.nonce);
-
-        // ///
+    pub fn stream_rlp(&self, s: &mut RlpStream) {
         s.begin_list(15);
         s.append(&self.parent_hash);
         s.append(&self.uncle_hash);
@@ -401,14 +298,8 @@ impl Header {
     /// Get the RLP of this header, optionally `with_seal`.
     pub fn rlp(&self, with_seal: Seal) -> Bytes {
         let mut s = RlpStream::new();
-        self.stream_rlp(&mut s, with_seal);
+        self.stream_rlp(&mut s);
         s.out().into()
-    }
-
-    /// Get the SHA3 (Keccak) of this header, optionally `with_seal`.
-    pub fn rlp_keccak(&self, with_seal: Seal) -> H256 {
-        //   keccak(self.rlp(with_seal))
-        keccak("1")
     }
 }
 
@@ -454,6 +345,7 @@ impl Decodable for Header {
             nonce: r.val_at(13)?,
             mix_hash: r.val_at(14)?,
             hash: RefCell::new(Some(keccak(r.as_raw()))),
+            bare_hash: RefCell::new(Some(keccak(r.as_raw()))),
         })
     }
 }
@@ -476,6 +368,7 @@ pub(crate) fn generate_random_header(height: &u64) -> (Header, H256) {
         nonce: 1.into(),
         mix_hash: H256::default(),
         hash: RefCell::new(Some(H256::default())),
+        bare_hash: RefCell::new(Some(H256::default())),
     }
     .clone();
     let header_clone = header.clone();
@@ -504,6 +397,7 @@ pub(crate) fn generate_random_header_based_on_prev_block(
         nonce: 2.into(),
         mix_hash: H256::default(),
         hash: RefCell::new(Some(H256::default())),
+        bare_hash: RefCell::new(Some(H256::default())),
     }
 }
 
