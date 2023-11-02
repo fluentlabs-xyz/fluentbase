@@ -3,10 +3,10 @@
 extern crate alloc;
 
 use fluentbase_sdk::{
-    evm_block_number_,
-    evm_verify_block_rlps_,
+    // evm_block_number_,
+    // evm_verify_block_rlps_,
     mpt_open_,
-    rwasm_compile_wrapper,
+    rwasm_compile,
     sys_read,
     sys_write,
     zktrie_open_,
