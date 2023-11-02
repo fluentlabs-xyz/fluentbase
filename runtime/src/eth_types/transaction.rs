@@ -4,7 +4,6 @@ use ethers_core::{
     k256::ecdsa::SigningKey,
     types::{
         transaction::{eip2718::TypedTransaction, eip2930::AccessList},
-        Bytes,
         Eip1559TransactionRequest,
         Eip2930TransactionRequest,
         NameOrAddress,
@@ -13,12 +12,26 @@ use ethers_core::{
     },
 };
 use keccak_hash::keccak;
-use rlp::{self, DecoderError, Encodable, RlpStream};
+use rlp::{self, Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde::{Deserialize, Serialize};
 pub type Word = U256;
 
-use super::{gas_utils::tx_data_gas_cost, tx_types::TxType};
+use super::{
+    bytes::{de_hex_to_vec_u8, se_hex, Bytes},
+    gas_utils::tx_data_gas_cost,
+    tx_types::TxType,
+};
 use std::{cmp::Ordering, collections::BTreeMap};
+
+// Number of tx fields before signing
+#[cfg(not(feature = "celo"))]
+const UNSIGNED_TX_FIELDS: usize = 6;
+// Celo has 3 additional fields
+#[cfg(feature = "celo")]
+const UNSIGNED_TX_FIELDS: usize = 9;
+
+// Unsigned fields + signature [r s v]
+const SIGNED_TX_FIELDS: usize = UNSIGNED_TX_FIELDS + 3;
 
 /// Transaction in a witness block
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,9 +67,11 @@ pub struct Transaction {
     // pub is_create: bool,
     /// The ether amount of the transaction
     pub value: Word,
+
     #[serde(rename = "input")]
-    /// The call data
-    pub call_data: Bytes,
+    #[serde(serialize_with = "se_hex")]
+    #[serde(deserialize_with = "de_hex_to_vec_u8")]
+    pub call_data: Vec<u8>,
     #[serde(skip)]
     /// The call data length
     pub call_data_length: usize,
@@ -88,21 +103,6 @@ pub struct Transaction {
     //   /  pub steps: Vec<ExecStep>,
 }
 
-// impl From<&Transaction> for TransactionRequest {
-//     fn from(tx: &Transaction) -> TransactionRequest {
-//         TransactionRequest {
-//             from: Some(tx.from),
-//             to: tx.to.map(NameOrAddress::Address),
-//             gas: Some(tx.gas_limit),
-//             gas_price: Some(tx.gas_price),
-//             value: Some(tx.value),
-//             data: Some(tx.call_data.clone()),
-//             nonce: Some(tx.nonce),
-//             ..Default::default()
-//         }
-//     }
-// }
-
 /// Generate a dummy pre-eip155 tx in which
 /// (nonce=0, gas=0, gas_price=0, to=0, value=0, data="")
 /// using the dummy private key = 1
@@ -119,7 +119,7 @@ pub fn get_dummy_tx_request() -> (TransactionRequest) {
         .gas_price(U256::zero())
         .to(Address::zero())
         .value(U256::zero())
-        .data(Bytes::default());
+        .data(Bytes::default().0);
     let sighash: H256 = keccak(tx.rlp_unsigned()).into();
 
     // TODO add signing
@@ -194,25 +194,62 @@ impl Transaction {
         }
     }
 
-    /// Gets the unsigned transaction's RLP encoding
+    pub fn hash(&self) -> H256 {
+        keccak(self.rlp().0)
+    }
+
     pub fn rlp(&self) -> Bytes {
         let mut rlp = RlpStream::new();
-        rlp.begin_list(9);
-        self.rlp_base(&mut rlp);
+        rlp.begin_list(SIGNED_TX_FIELDS);
+        rlp.append(&self.nonce);
+        rlp.append(&self.gas_price);
+        rlp.append(&self.gas);
+
+        rlp_opt(&mut rlp, &self.to);
+        rlp.append(&self.value);
+        rlp.append(&self.call_data);
+        rlp.append(&self.v);
+        rlp.append(&self.r);
+        rlp.append(&self.s);
+
         rlp.out().freeze().into()
     }
 
+    pub fn get_input(&self) {
+        let xx = hex::encode(&self.call_data);
+        println!(" ------------ ------ ------ ------  {:?}", xx.as_str());
+    }
+
+    /// Gets the unsigned transaction's RLP encoding
+    pub fn rlp_unsigned(&self) -> Bytes {
+        let mut rlp = RlpStream::new();
+        rlp.begin_list(6);
+        self.rlp_base(&mut rlp);
+        rlp.out().into()
+    }
+
+    /// Produces the RLP encoding of the transaction with the provided signature
+    pub fn rlp_signed(&self) -> Bytes {
+        let mut rlp = RlpStream::new();
+        rlp.begin_list(9);
+
+        self.rlp_base(&mut rlp);
+
+        // append the signature
+        rlp.append(&self.v);
+        rlp.append(&self.r);
+        rlp.append(&self.s);
+        rlp.out().into()
+    }
+
+    /// LegacyTxType
     pub(crate) fn rlp_base(&self, rlp: &mut RlpStream) {
-        rlp.append(&self.chain_id);
         rlp.append(&self.nonce);
+        rlp.append(&self.gas_price);
         rlp.append(&self.gas);
-        // rlp.append(&self.max_priority_fee_per_gas);
-        // rlp_opt(rlp, &self.max_fee_per_gas);
         rlp.append(&self.to);
         rlp.append(&self.value);
-        // TODO
-        // rlp.append(&self.call_data.into());
-        rlp.append(&self.access_list);
+        rlp.append(&self.call_data);
     }
 }
 
@@ -224,109 +261,57 @@ pub(super) fn rlp_opt<T: rlp::Encodable>(rlp: &mut rlp::RlpStream, opt: &Option<
     }
 }
 
-impl rlp::Encodable for Transaction {
+impl Encodable for Transaction {
     fn rlp_append(&self, s: &mut RlpStream) {
-        self.rlp_append(s)
+        s.begin_list(17);
+        s.append(&self.chain_id);
+        s.append(&self.block_hash);
+        s.append(&self.block_number);
+        s.append(&self.transaction_index);
+        s.append(&self.hash);
+        s.append(&self.tx_type);
+        s.append(&self.nonce);
+        s.append(&self.gas);
+        s.append(&self.gas_price);
+        s.append(&self.from);
+        s.append(&self.to);
+        s.append(&self.value);
+        s.append(&self.call_data);
+        s.append(&self.v);
+        s.append(&self.r);
+        s.append(&self.s);
+        s.append(&self.access_list);
     }
 }
 
-// impl rlp::Encodable for Transaction {
-//     fn rlp_append(&self, s: &mut RlpStream) {
-//         self.rlp_append_sealed_transaction(s)
-//     }
-// }
-
-impl rlp::Decodable for Transaction {
-    fn decode(d: &rlp::Rlp) -> Result<Self, DecoderError> {
-        if d.item_count()? != 9 {
-            return Err(DecoderError::RlpIncorrectListLen);
-        }
-
-        let hash = H256::zero();
+impl Decodable for Transaction {
+    fn decode(r: &Rlp) -> Result<Self, DecoderError> {
         Ok(Transaction {
-            block_hash: d.val_at(0)?, // TODO
-            nonce: d.val_at(0)?,
-            gas_price: d.val_at(1)?,
-            gas: d.val_at(2)?,
-            //action: d.val_at(3)?,
-            value: d.val_at(4)?,
-
-            v: d.val_at(6)?,
-            r: d.val_at(7)?,
-            s: d.val_at(8)?,
-            hash,
-            block_number: todo!(),
-            transaction_index: todo!(),
-            tx_type: todo!(),
-            from: todo!(),
-            to: todo!(),
-            call_data: todo!(),
-            call_data_length: todo!(),
-            call_data_gas_cost: todo!(),
-            tx_data_gas_cost: todo!(),
-            chain_id: todo!(),
-            rlp_unsigned: todo!(),
-            rlp_signed: todo!(),
-            access_list: todo!(),
+            chain_id: r.val_at(0)?,
+            block_hash: r.val_at(1)?,
+            block_number: r.val_at(2)?,
+            transaction_index: r.val_at(3)?,
+            hash: r.val_at(4)?,
+            tx_type: r.val_at(5)?,
+            nonce: r.val_at(6)?,
+            gas: r.val_at(7)?,
+            gas_price: r.val_at(8)?,
+            from: r.val_at(9)?,
+            to: r.val_at(10)?,
+            value: r.val_at(11)?,
+            call_data: r.val_at(12)?,
+            call_data_length: 0,
+            call_data_gas_cost: U256::zero(),
+            tx_data_gas_cost: U256::zero(),
+            rlp_unsigned: Vec::new(),
+            rlp_signed: Vec::new(),
+            v: r.val_at(13)?,
+            r: r.val_at(14)?,
+            s: r.val_at(15)?,
+            access_list: r.val_at(16)?,
         })
     }
 }
-
-// impl From<MockTransaction> for Transaction {
-//     fn from(mock_tx: MockTransaction) -> Self {
-//         let is_create = mock_tx.to.is_none();
-//         let sig = Signature {
-//             r: mock_tx.r.expect("tx expected to be signed"),
-//             s: mock_tx.s.expect("tx expected to be signed"),
-//             v: mock_tx.v.expect("tx expected to be signed").as_u64(),
-//         };
-//         let (rlp_unsigned, rlp_signed) = {
-//             let mut legacy_tx = TransactionRequest::new()
-//                 .from(mock_tx.from.address())
-//                 .nonce(mock_tx.nonce)
-//                 .gas_price(mock_tx.gas_price)
-//                 .gas(mock_tx.gas)
-//                 .value(mock_tx.value)
-//                 .data(mock_tx.input.clone())
-//                 .chain_id(mock_tx.chain_id);
-//             if !is_create {
-//                 legacy_tx = legacy_tx.to(mock_tx.to.as_ref().map(|to| to.address()).unwrap());
-//             }
-
-//             let unsigned = legacy_tx.rlp().to_vec();
-//             let signed = legacy_tx.rlp_signed(&sig).to_vec();
-
-//             (unsigned, signed)
-//         };
-//         Self {
-//             block_number: 1,
-//             id: mock_tx.transaction_index.as_usize(),
-//             hash: mock_tx.hash.unwrap_or_default(),
-//             tx_type: TxType::Eip155,
-//             nonce: mock_tx.nonce.as_u64(),
-//             gas: mock_tx.gas.as_u64(),
-//             gas_price: mock_tx.gas_price,
-//             caller_address: mock_tx.from.address(),
-//             callee_address: mock_tx.to.as_ref().map(|to| to.address()),
-//             is_create,
-//             value: mock_tx.value,
-//             call_data: mock_tx.input.to_vec(),
-//             call_data_length: mock_tx.input.len(),
-//             call_data_gas_cost: tx_data_gas_cost(&mock_tx.input),
-//             tx_data_gas_cost: tx_data_gas_cost(&rlp_signed),
-//             chain_id: mock_tx.chain_id,
-//             rlp_unsigned,
-//             rlp_signed,
-//             v: sig.v,
-//             r: sig.r,
-//             s: sig.s,
-//             l1_fee: Default::default(),
-//             l1_fee_committed: Default::default(),
-//             calls: vec![],
-//             steps: vec![],
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

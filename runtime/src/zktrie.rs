@@ -100,6 +100,28 @@ pub(crate) fn zktrie_open(mut caller: Caller<'_, RuntimeContext>) -> Result<(), 
     })
 }
 
+pub(crate) fn new_zktrie(
+    mut caller: Caller<'_, RuntimeContext>,
+) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
+    DB.with(|db| {
+        let root_zero: Hash = [0; FIELDSIZE];
+        let zk_trie: ZkTrie = db
+            .borrow_mut()
+            .new_trie(&root_zero)
+            .ok_or(Trap::new("failed to init new trie"))?;
+        // let trie_id;
+        // trie_id = LAST_TRIE_ID.take();
+        // if trie_id != TRIE_ID_DEFAULT {
+        //     return Err(Trap::new("only 1 trie allowed"));
+        // }
+
+        // TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(zk_trie))));
+
+        //  Ok(Some(zk_trie.try_into().clone()));
+        Err(Trap::new("not found"))
+    })
+}
+
 pub(crate) fn zktrie_get_trie(id: &TrieId) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
     TRIES.with(|t| {
         let tries = t.take();
@@ -115,12 +137,27 @@ pub(crate) fn zktrie_get_root(id: &TrieId) -> Result<Hash, Trap> {
     Ok(zktrie_get_trie(id)?.borrow().root())
 }
 
-fn get_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<AccountData> {
+pub(crate) fn get_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<AccountData> {
     let acc_data = trie.get_account(&key);
     if let Some(ad) = acc_data {
         return Some(ad);
     }
     return None;
+}
+
+pub(crate) fn set_account_data(id: &TrieId, key: &[u8], acc_fields: &AccountData) {
+    TRIES.with(|t| {
+        let tries = t.take();
+        let v = tries.get(id).clone();
+        if let Some(t) = v {
+            let trie = t.clone();
+            // Clone the Rc
+            let rc_clone = Rc::clone(&trie);
+
+            let mut zk_trie = rc_clone.borrow_mut();
+            zk_trie.update_account(&key, acc_fields).unwrap();
+        }
+    })
 }
 
 fn get_store_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<StoreData> {
@@ -187,10 +224,10 @@ macro_rules! impl_get {
     };
 }
 
-fn update_nonce(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
+pub fn update_nonce(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[0] = *v;
 }
-fn fetch_nonce(data: &AccountData) -> [u8; FIELDSIZE] {
+pub fn fetch_nonce(data: &AccountData) -> [u8; FIELDSIZE] {
     data[0]
 }
 
