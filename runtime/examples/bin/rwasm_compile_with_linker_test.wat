@@ -19,66 +19,66 @@
   (func $main (type 6)
     (local i32)
     global.get $__stack_pointer
-    i32.const 2048
+    i32.const 1616
     i32.sub
     local.tee 0
     global.set $__stack_pointer
     local.get 0
-    i32.const 1
+    i32.const 10
     i32.add
     i32.const 0
-    i32.const 1024
+    i32.const 628
     call $memset
     drop
     local.get 0
-    i32.const 1
+    i32.const 10
     i32.add
     i32.const 0
-    i32.const 1024
+    i32.const 628
     call $_sys_read
     local.get 0
-    i32.const 1025
+    i32.const 638
     i32.add
     i32.const 0
-    i32.const 999
+    i32.const 954
     call $memset
     drop
     block  ;; label = @1
       local.get 0
-      i32.const 1
+      i32.const 10
       i32.add
-      i32.const 1024
+      i32.const 628
       local.get 0
-      i32.const 1025
+      i32.const 638
       i32.add
-      i32.const 999
+      i32.const 954
       call $_rwasm_compile
-      i32.const 999
+      i32.const 954
       i32.eq
       br_if 0 (;@1;)
       local.get 0
-      i32.const 2036
+      i32.const 1604
       i32.add
       i64.const 0
       i64.store align=4
       local.get 0
       i32.const 1
-      i32.store offset=2028
+      i32.store offset=1596
       local.get 0
       i32.const 1048604
-      i32.store offset=2024
+      i32.store offset=1592
       local.get 0
       i32.const 1049200
-      i32.store offset=2032
+      i32.store offset=1600
       local.get 0
-      i32.const 2024
+      i32.const 1592
       i32.add
       i32.const 1048640
       call $_ZN4core9panicking9panic_fmt17ha2268ae9e34aea9cE
       unreachable
     end
     local.get 0
-    i32.const 2048
+    i32.const 1616
     i32.add
     global.set $__stack_pointer)
   (func $_ZN4core9panicking9panic_fmt17ha2268ae9e34aea9cE (type 2) (param i32 i32)
@@ -5249,7 +5249,7 @@
     local.get 0
     i64.const -563095782484689164
     i64.store)
-  (func $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$9write_str17h25883f76d3a8154fE.110 (type 0) (param i32 i32 i32) (result i32)
+  (func $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$9write_str17h25883f76d3a8154fE.521 (type 0) (param i32 i32 i32) (result i32)
     (local i32)
     block  ;; label = @1
       local.get 0
@@ -5283,7 +5283,7 @@
     i32.add
     i32.store offset=8
     i32.const 0)
-  (func $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$10write_char17h0391e78f17c49c50E.111 (type 1) (param i32 i32) (result i32)
+  (func $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$10write_char17h0391e78f17c49c50E.522 (type 1) (param i32 i32) (result i32)
     (local i32 i32)
     global.get $__stack_pointer
     i32.const 16
@@ -12548,6 +12548,6 @@
   (global $__stack_pointer (mut i32) (i32.const 1048576))
   (export "memory" (memory 0))
   (export "main" (func $main.command_export))
-  (elem (;0;) (i32.const 1) func $_ZN4core3fmt3num3imp52_$LT$impl$u20$core..fmt..Display$u20$for$u20$u32$GT$3fmt17hc829be1377c70f6eE $_ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h4672913953f7c5cfE $_ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17h210c1e4d06e9eb10E $_ZN59_$LT$core..fmt..Arguments$u20$as$u20$core..fmt..Display$GT$3fmt17h7847c1c8ee978492E $_ZN4core3ops8function6FnOnce9call_once17hb6bd2d32ebecb4fcE $_ZN91_$LT$std..sys_common..backtrace.._print..DisplayBacktrace$u20$as$u20$core..fmt..Display$GT$3fmt17h3dbad14dfc3210b0E $_ZN73_$LT$core..panic..panic_info..PanicInfo$u20$as$u20$core..fmt..Display$GT$3fmt17h9717a6654a44b48eE $_ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17hb4e760be9f3e2596E $_ZN4core3ptr29drop_in_place$LT$$LP$$RP$$GT$17h0fe881d47a3ec068E $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17h00c2491abc6ec87fE $_ZN4core3ptr120drop_in_place$LT$$LP$$RF$std..ffi..os_str..OsString$C$$RF$core..option..Option$LT$std..ffi..os_str..OsString$GT$$RP$$GT$17hda3327eb1fe4219eE $_ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hecaaf21d24766107E $_ZN4core3ptr42drop_in_place$LT$alloc..string..String$GT$17h0f4f6fa3e04878e2E $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$9write_str17h25883f76d3a8154fE.110 $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$10write_char17h0391e78f17c49c50E.111 $_ZN4core3fmt5Write9write_fmt17hff11a87865b039eaE $_ZN4core3ptr88drop_in_place$LT$std..io..Write..write_fmt..Adapter$LT$alloc..vec..Vec$LT$u8$GT$$GT$$GT$17h733a1dcf8a4162c6E $_ZN80_$LT$std..io..Write..write_fmt..Adapter$LT$T$GT$$u20$as$u20$core..fmt..Write$GT$9write_str17h26d20d28b8b4b647E $_ZN4core3fmt5Write10write_char17h56dd354b8ab9420dE $_ZN4core3fmt5Write9write_fmt17hcac150b2bd67be8aE $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17ha227f017151f2327E $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17h38547c8f0f826b3dE $_ZN99_$LT$std..panicking..begin_panic_handler..StaticStrPayload$u20$as$u20$core..panic..PanicPayload$GT$8take_box17he1072a62d0638f3bE $_ZN99_$LT$std..panicking..begin_panic_handler..StaticStrPayload$u20$as$u20$core..panic..PanicPayload$GT$3get17h87e57d1d76f5b13eE $_ZN4core3ptr77drop_in_place$LT$std..panicking..begin_panic_handler..FormatStringPayload$GT$17hbec90b344b91c3bbE $_ZN102_$LT$std..panicking..begin_panic_handler..FormatStringPayload$u20$as$u20$core..panic..PanicPayload$GT$8take_box17he6b7a9b055720e39E $_ZN102_$LT$std..panicking..begin_panic_handler..FormatStringPayload$u20$as$u20$core..panic..PanicPayload$GT$3get17hc040099e44a5ba93E)
-  (data $.rodata (i32.const 1048576) "out_len!=OUT_LEN_EXPECTED\00\00\00\00\00\10\00\19\00\00\00runtime/examples/src/lib.rs\00$\00\10\00\1b\00\00\00D\00\00\00\09\00\00\00library/alloc/src/raw_vec.rscapacity overflow\00\00\00l\00\10\00\11\00\00\00P\00\10\00\1c\00\00\00\17\02\00\00\05\00\00\00:\00\00\00p\02\10\00\00\00\00\00\98\00\10\00\01\00\00\00\98\00\10\00\01\00\00\00panicked at \09\00\00\00\00\00\00\00\01\00\00\00\0a\00\00\00==assertion `left  right` failed\0a  left: \0a right: \00\00\d2\00\10\00\10\00\00\00\e2\00\10\00\17\00\00\00\f9\00\10\00\09\00\00\00 right` failed: \0a  left: \00\00\00\d2\00\10\00\10\00\00\00\1c\01\10\00\10\00\00\00,\01\10\00\09\00\00\00\f9\00\10\00\09\00\00\0000010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899falsetruerange start index  out of range for slice of length \00\00\00)\02\10\00\12\00\00\00;\02\10\00\22\00\00\00reentrant init\00\00p\02\10\00\0e\00\00\00/rustc/608e9682f0a6482903de8d3332770104a0ad943c/library/core/src/cell/once.rs\00\00\00\88\02\10\00M\00\00\00\d9\00\00\00B\00\00\00\00\00\00\00\0b\00\00\00\04\00\00\00\04\00\00\00\0c\00\00\00called `Option::unwrap()` on a `None` valueinternal error: entered unreachable code\00\0d\00\00\00\0c\00\00\00\04\00\00\00\0e\00\00\00\0f\00\00\00\10\00\00\00\11\00\00\00\0c\00\00\00\04\00\00\00\12\00\00\00\13\00\00\00\14\00\00\00\0alibrary/std/src/thread/mod.rsfailed to generate unique thread ID: bitspace exhausted\00\00\00\9e\03\10\007\00\00\00\81\03\10\00\1d\00\00\00\9c\04\00\00\0d\00\00\00RUST_BACKTRACE\00\00p\02\10\00\00\00\00\00library/std/src/io/mod.rsfailed to write whole buffer\00\00\00!\04\10\00\1c\00\00\00\17\00\00\00\08\04\10\00\19\00\00\00^\06\00\00$\00\00\00formatter error\00\5c\04\10\00\0f\00\00\00(\00\00\00library/std/src/panic.rsx\04\10\00\18\00\00\00\f5\00\00\00\12\00\00\00fullcannot recursively acquire mutex\a4\04\10\00 \00\00\00library/std/src/sys/wasi/../unsupported/locks/mutex.rs\00\00\cc\04\10\006\00\00\00\14\00\00\00\09\00\00\00stack backtrace:\0a\00\00\00\14\05\10\00\11\00\00\00note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.\0a0\05\10\00X\00\00\00memory allocation of  bytes failed\0a\00\90\05\10\00\15\00\00\00\a5\05\10\00\0e\00\00\00library/std/src/panicking.rsBox<dyn Any><unnamed>thread '' panicked at :\0a\00\00\00\f5\05\10\00\08\00\00\00\fd\05\10\00\0e\00\00\00\0b\06\10\00\02\00\00\00\80\03\10\00\01\00\00\00note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\0a\00\000\06\10\00N\00\00\00\c4\05\10\00\1c\00\00\00T\02\00\00\1e\00\00\00\0d\00\00\00\0c\00\00\00\04\00\00\00\15\00\00\00\0b\00\00\00\08\00\00\00\04\00\00\00\16\00\00\00\0b\00\00\00\08\00\00\00\04\00\00\00\17\00\00\00\18\00\00\00\19\00\00\00\10\00\00\00\04\00\00\00\1a\00\00\00\1b\00\00\00\09\00\00\00\00\00\00\00\01\00\00\00\0a\00\00\00\0apanicked after panic::always_abort(), aborting.\0a\00\00\00p\02\10\00\00\00\00\00\f0\06\10\001\00\00\00thread panicked while processing panic. aborting.\0a\00\004\07\10\002\00\00\00thread caused non-unwinding panic. aborting.\0a\00\00\00p\07\10\00-\00\00\00fatal runtime error: rwlock locked for writing\0a\00\a8\07\10\00/\00\00\00/\00")
+  (elem (;0;) (i32.const 1) func $_ZN4core3fmt3num3imp52_$LT$impl$u20$core..fmt..Display$u20$for$u20$u32$GT$3fmt17hc829be1377c70f6eE $_ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h4672913953f7c5cfE $_ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17h210c1e4d06e9eb10E $_ZN59_$LT$core..fmt..Arguments$u20$as$u20$core..fmt..Display$GT$3fmt17h7847c1c8ee978492E $_ZN4core3ops8function6FnOnce9call_once17hb6bd2d32ebecb4fcE $_ZN91_$LT$std..sys_common..backtrace.._print..DisplayBacktrace$u20$as$u20$core..fmt..Display$GT$3fmt17h3dbad14dfc3210b0E $_ZN73_$LT$core..panic..panic_info..PanicInfo$u20$as$u20$core..fmt..Display$GT$3fmt17h9717a6654a44b48eE $_ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17hb4e760be9f3e2596E $_ZN4core3ptr29drop_in_place$LT$$LP$$RP$$GT$17h0fe881d47a3ec068E $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17h00c2491abc6ec87fE $_ZN4core3ptr120drop_in_place$LT$$LP$$RF$std..ffi..os_str..OsString$C$$RF$core..option..Option$LT$std..ffi..os_str..OsString$GT$$RP$$GT$17hda3327eb1fe4219eE $_ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hecaaf21d24766107E $_ZN4core3ptr42drop_in_place$LT$alloc..string..String$GT$17h0f4f6fa3e04878e2E $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$9write_str17h25883f76d3a8154fE.521 $_ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$10write_char17h0391e78f17c49c50E.522 $_ZN4core3fmt5Write9write_fmt17hff11a87865b039eaE $_ZN4core3ptr88drop_in_place$LT$std..io..Write..write_fmt..Adapter$LT$alloc..vec..Vec$LT$u8$GT$$GT$$GT$17h733a1dcf8a4162c6E $_ZN80_$LT$std..io..Write..write_fmt..Adapter$LT$T$GT$$u20$as$u20$core..fmt..Write$GT$9write_str17h26d20d28b8b4b647E $_ZN4core3fmt5Write10write_char17h56dd354b8ab9420dE $_ZN4core3fmt5Write9write_fmt17hcac150b2bd67be8aE $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17ha227f017151f2327E $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17h38547c8f0f826b3dE $_ZN99_$LT$std..panicking..begin_panic_handler..StaticStrPayload$u20$as$u20$core..panic..PanicPayload$GT$8take_box17he1072a62d0638f3bE $_ZN99_$LT$std..panicking..begin_panic_handler..StaticStrPayload$u20$as$u20$core..panic..PanicPayload$GT$3get17h87e57d1d76f5b13eE $_ZN4core3ptr77drop_in_place$LT$std..panicking..begin_panic_handler..FormatStringPayload$GT$17hbec90b344b91c3bbE $_ZN102_$LT$std..panicking..begin_panic_handler..FormatStringPayload$u20$as$u20$core..panic..PanicPayload$GT$8take_box17he6b7a9b055720e39E $_ZN102_$LT$std..panicking..begin_panic_handler..FormatStringPayload$u20$as$u20$core..panic..PanicPayload$GT$3get17hc040099e44a5ba93E)
+  (data $.rodata (i32.const 1048576) "out_len!=OUT_LEN_EXPECTED\00\00\00\00\00\10\00\19\00\00\00runtime/examples/src/lib.rs\00$\00\10\00\1b\00\00\00E\00\00\00\09\00\00\00library/alloc/src/raw_vec.rscapacity overflow\00\00\00l\00\10\00\11\00\00\00P\00\10\00\1c\00\00\00\17\02\00\00\05\00\00\00:\00\00\00p\02\10\00\00\00\00\00\98\00\10\00\01\00\00\00\98\00\10\00\01\00\00\00panicked at \09\00\00\00\00\00\00\00\01\00\00\00\0a\00\00\00==assertion `left  right` failed\0a  left: \0a right: \00\00\d2\00\10\00\10\00\00\00\e2\00\10\00\17\00\00\00\f9\00\10\00\09\00\00\00 right` failed: \0a  left: \00\00\00\d2\00\10\00\10\00\00\00\1c\01\10\00\10\00\00\00,\01\10\00\09\00\00\00\f9\00\10\00\09\00\00\0000010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899falsetruerange start index  out of range for slice of length \00\00\00)\02\10\00\12\00\00\00;\02\10\00\22\00\00\00reentrant init\00\00p\02\10\00\0e\00\00\00/rustc/608e9682f0a6482903de8d3332770104a0ad943c/library/core/src/cell/once.rs\00\00\00\88\02\10\00M\00\00\00\d9\00\00\00B\00\00\00\00\00\00\00\0b\00\00\00\04\00\00\00\04\00\00\00\0c\00\00\00called `Option::unwrap()` on a `None` valueinternal error: entered unreachable code\00\0d\00\00\00\0c\00\00\00\04\00\00\00\0e\00\00\00\0f\00\00\00\10\00\00\00\11\00\00\00\0c\00\00\00\04\00\00\00\12\00\00\00\13\00\00\00\14\00\00\00\0alibrary/std/src/thread/mod.rsfailed to generate unique thread ID: bitspace exhausted\00\00\00\9e\03\10\007\00\00\00\81\03\10\00\1d\00\00\00\9c\04\00\00\0d\00\00\00RUST_BACKTRACE\00\00p\02\10\00\00\00\00\00library/std/src/io/mod.rsfailed to write whole buffer\00\00\00!\04\10\00\1c\00\00\00\17\00\00\00\08\04\10\00\19\00\00\00^\06\00\00$\00\00\00formatter error\00\5c\04\10\00\0f\00\00\00(\00\00\00library/std/src/panic.rsx\04\10\00\18\00\00\00\f5\00\00\00\12\00\00\00fullcannot recursively acquire mutex\a4\04\10\00 \00\00\00library/std/src/sys/wasi/../unsupported/locks/mutex.rs\00\00\cc\04\10\006\00\00\00\14\00\00\00\09\00\00\00stack backtrace:\0a\00\00\00\14\05\10\00\11\00\00\00note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.\0a0\05\10\00X\00\00\00memory allocation of  bytes failed\0a\00\90\05\10\00\15\00\00\00\a5\05\10\00\0e\00\00\00library/std/src/panicking.rsBox<dyn Any><unnamed>thread '' panicked at :\0a\00\00\00\f5\05\10\00\08\00\00\00\fd\05\10\00\0e\00\00\00\0b\06\10\00\02\00\00\00\80\03\10\00\01\00\00\00note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\0a\00\000\06\10\00N\00\00\00\c4\05\10\00\1c\00\00\00T\02\00\00\1e\00\00\00\0d\00\00\00\0c\00\00\00\04\00\00\00\15\00\00\00\0b\00\00\00\08\00\00\00\04\00\00\00\16\00\00\00\0b\00\00\00\08\00\00\00\04\00\00\00\17\00\00\00\18\00\00\00\19\00\00\00\10\00\00\00\04\00\00\00\1a\00\00\00\1b\00\00\00\09\00\00\00\00\00\00\00\01\00\00\00\0a\00\00\00\0apanicked after panic::always_abort(), aborting.\0a\00\00\00p\02\10\00\00\00\00\00\f0\06\10\001\00\00\00thread panicked while processing panic. aborting.\0a\00\004\07\10\002\00\00\00thread caused non-unwinding panic. aborting.\0a\00\00\00p\07\10\00-\00\00\00fatal runtime error: rwlock locked for writing\0a\00\a8\07\10\00/\00\00\00/\00")
   (data $.data (i32.const 1050596) "\01\00\00\00\e0\07\10\00\ff\ff\ff\ff"))
