@@ -2068,7 +2068,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions#b58324862c2bf79d7f9f43b075b5768aa8657aee"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions#53a12862d9ddbbb2565dfc76e1599296ba2026d7"
 dependencies = [
  "byteorder",
  "fixed-bigint",
@@ -4123,7 +4123,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#171146a6f419d237d838d6ca4e31563aac5e0213"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#99ae41f0e571cd1b67c3d54475fc561352bee904"
 dependencies = [
  "auto_impl",
  "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions)",
@@ -4135,7 +4135,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#171146a6f419d237d838d6ca4e31563aac5e0213"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#99ae41f0e571cd1b67c3d54475fc561352bee904"
 dependencies = [
  "derive_more",
  "enumn",
@@ -4146,7 +4146,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#171146a6f419d237d838d6ca4e31563aac5e0213"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#99ae41f0e571cd1b67c3d54475fc561352bee904"
 dependencies = [
  "hex",
  "k256 0.13.1",
@@ -4162,7 +4162,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#171146a6f419d237d838d6ca4e31563aac5e0213"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#99ae41f0e571cd1b67c3d54475fc561352bee904"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",

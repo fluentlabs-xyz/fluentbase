@@ -248,6 +248,13 @@ impl Runtime {
             &[ValueType::I32; 6],
             &[ValueType::I32; 1],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_rwasm_compile".to_string(),
+            SysFuncIdx::RWASM_COMPILE_WITH_LINKER as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
         // EVM sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -404,14 +411,6 @@ impl Runtime {
             SysFuncIdx::EVM_VERIFY_BLOCK_RLPS as u16,
             &[ValueType::I32; 0],
             &[ValueType::I32; 0],
-        ));
-
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "rwasm_compile".to_string(),
-            SysFuncIdx::RWASM_COMPILE_WITH_LINKER as u16,
-            &[ValueType::I32; 3],
-            &[ValueType::I32; 1],
         ));
 
         import_linker

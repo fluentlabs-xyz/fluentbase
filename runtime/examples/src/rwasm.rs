@@ -1,5 +1,5 @@
 use fluentbase_rwasm::rwasm::Compiler;
-use fluentbase_sdk::{evm_return_slice, sys_read, rwasm_compile_wrapper};
+use fluentbase_sdk::{evm_return_slice, rwasm_compile, sys_read};
 
 pub fn rwasm() {
     let mut wasm_bytecode: [u8; 1024] = [0; 1024];

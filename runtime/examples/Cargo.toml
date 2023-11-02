@@ -12,6 +12,9 @@ fluentbase-rwasm = { path = "../../rwasm", default-features = false }
 revm = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false, features=["sdk"] }
 revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
+#revm = { path="../../../revm-rwasm", branch="devel", default-features=false, features=["sdk"] }
+#revm-interpreter = { path="../../../revm-rwasm", branch="devel", default-features=false }
+#revm-primitives = { path="../../../revm-rwasm", branch="devel", default-features=false }
 
 [lib]
 crate-type = ["cdylib"]
