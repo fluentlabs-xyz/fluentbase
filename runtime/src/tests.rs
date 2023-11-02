@@ -127,9 +127,10 @@ fn test_translator() {
 fn rwasm_compile_with_linker_test() {
     let wasm_binary = include_bytes!("../examples/bin/rwasm_compile_with_linker_test.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let input = Vec::new();
+    let input = vec![vec![1,2,3]];
     let result = Runtime::run(rwasm_binary.as_slice(), &input).unwrap();
     println!("{:?}", result.data().output().clone());
+    assert_eq!(result.data().output().clone(), Vec::<u8>::new());
 }
 
 #[test]

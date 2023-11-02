@@ -9,5 +9,6 @@ rwasm/spec/target
 **/fuzz/artifacts/
 
 /.idea
+.vscode
 .DS_Store
 libzktrie.so
