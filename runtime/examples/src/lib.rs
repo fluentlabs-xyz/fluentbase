@@ -57,9 +57,10 @@ fn revm_db_test() {}
 pub fn rwasm_compile_with_linker_test() {
     use alloc::vec;
 
+    let mut env = revm_primitives::Env::default();
     const WB_START_OFFSET: usize = 0;
-    const WB_LEN: usize = 1024;
-    const OUT_LEN_EXPECTED: usize = 999;
+    const WB_LEN: usize = 628;
+    const OUT_LEN_EXPECTED: usize = 954;
     let mut wb = [0u8; WB_START_OFFSET + WB_LEN];
     sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
     let mut output = [0u8; OUT_LEN_EXPECTED];
