@@ -1766,7 +1766,7 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Result<(), TranslationError> {
-        match i32::try_from(value) {
+        match i64::try_from(value) {
             Ok(value) => self.translate_if_reachable(|builder| {
                 // Case: The constant value is small enough that we can apply
                 //       a small value optimization and use a more efficient
