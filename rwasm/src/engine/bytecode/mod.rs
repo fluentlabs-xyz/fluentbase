@@ -182,6 +182,10 @@ pub enum Instruction {
     MemoryFill,
     MemoryCopy,
     MemoryInit(DataSegmentIdx),
+    DataStore8(DataSegmentIdx),
+    DataStore16(DataSegmentIdx),
+    DataStore32(DataSegmentIdx),
+    DataStore64(DataSegmentIdx),
     DataDrop(DataSegmentIdx),
     TableSize(TableIdx),
     TableGrow(TableIdx),
@@ -209,6 +213,7 @@ pub enum Instruction {
     /// [`Instruction::TableGet`] which stores a [`TableIdx`]
     /// that refers to the table to be initialized.
     TableInit(ElementSegmentIdx),
+    ElemStore(ElementSegmentIdx),
     ElemDrop(ElementSegmentIdx),
     RefFunc(FuncIdx),
     /// A 32/64-bit constant value.
@@ -404,6 +409,205 @@ impl Instruction {
         Ok(Self::ConsumeFuel(block_fuel))
     }
 
+    pub fn is_supported(&self) -> bool {
+        match self {
+            Instruction::LocalGet(_)
+            | Instruction::LocalSet(_)
+            | Instruction::LocalTee(_)
+            | Instruction::Br(_)
+            | Instruction::BrIndirect(_)
+            | Instruction::BrIfEqz(_)
+            | Instruction::BrIfNez(_)
+            | Instruction::Unreachable
+            | Instruction::ConsumeFuel(_)
+            | Instruction::Return(_)
+            | Instruction::ReturnIfNez(_)
+            | Instruction::Call(_)
+            | Instruction::Drop
+            | Instruction::Select
+            | Instruction::GlobalGet(_)
+            | Instruction::GlobalSet(_)
+            | Instruction::I32Load(_)
+            | Instruction::I64Load(_)
+            | Instruction::F32Load(_)
+            | Instruction::F64Load(_)
+            | Instruction::I32Load8S(_)
+            | Instruction::I32Load8U(_)
+            | Instruction::I32Load16S(_)
+            | Instruction::I32Load16U(_)
+            | Instruction::I64Load8S(_)
+            | Instruction::I64Load8U(_)
+            | Instruction::I64Load16S(_)
+            | Instruction::I64Load16U(_)
+            | Instruction::I64Load32S(_)
+            | Instruction::I64Load32U(_)
+            | Instruction::I32Store(_)
+            | Instruction::I64Store(_)
+            | Instruction::F32Store(_)
+            | Instruction::F64Store(_)
+            | Instruction::I32Store8(_)
+            | Instruction::I32Store16(_)
+            | Instruction::I64Store8(_)
+            | Instruction::I64Store16(_)
+            | Instruction::I64Store32(_)
+            | Instruction::MemorySize
+            | Instruction::MemoryGrow
+            | Instruction::MemoryFill
+            | Instruction::MemoryCopy
+            | Instruction::MemoryInit(_)
+            | Instruction::DataStore8(_)
+            | Instruction::DataStore16(_)
+            | Instruction::DataStore32(_)
+            | Instruction::DataStore64(_)
+            | Instruction::DataDrop(_)
+            | Instruction::TableSize(_)
+            | Instruction::TableGrow(_)
+            | Instruction::TableFill(_)
+            | Instruction::TableGet(_)
+            | Instruction::TableSet(_)
+            | Instruction::TableCopy(_)
+            | Instruction::TableInit(_)
+            | Instruction::ElemStore(_)
+            | Instruction::ElemDrop(_)
+            | Instruction::RefFunc(_)
+            | Instruction::I32Const(_)
+            | Instruction::I64Const(_)
+            | Instruction::I32Eqz
+            | Instruction::I32Eq
+            | Instruction::I32Ne
+            | Instruction::I32LtS
+            | Instruction::I32LtU
+            | Instruction::I32GtS
+            | Instruction::I32GtU
+            | Instruction::I32LeS
+            | Instruction::I32LeU
+            | Instruction::I32GeS
+            | Instruction::I32GeU
+            | Instruction::I64Eqz
+            | Instruction::I64Eq
+            | Instruction::I64Ne
+            | Instruction::I64LtS
+            | Instruction::I64LtU
+            | Instruction::I64GtS
+            | Instruction::I64GtU
+            | Instruction::I64LeS
+            | Instruction::I64LeU
+            | Instruction::I64GeS
+            | Instruction::I64GeU
+            | Instruction::F32Eq
+            | Instruction::F32Ne
+            | Instruction::F32Lt
+            | Instruction::F32Gt
+            | Instruction::F32Le
+            | Instruction::F32Ge
+            | Instruction::F64Eq
+            | Instruction::F64Ne
+            | Instruction::F64Lt
+            | Instruction::F64Gt
+            | Instruction::F64Le
+            | Instruction::F64Ge
+            | Instruction::I32Clz
+            | Instruction::I32Ctz
+            | Instruction::I32Popcnt
+            | Instruction::I32Add
+            | Instruction::I32Sub
+            | Instruction::I32Mul
+            | Instruction::I32DivS
+            | Instruction::I32DivU
+            | Instruction::I32RemS
+            | Instruction::I32RemU
+            | Instruction::I32And
+            | Instruction::I32Or
+            | Instruction::I32Xor
+            | Instruction::I32Shl
+            | Instruction::I32ShrS
+            | Instruction::I32ShrU
+            | Instruction::I32Rotl
+            | Instruction::I32Rotr
+            | Instruction::I64Clz
+            | Instruction::I64Ctz
+            | Instruction::I64Popcnt
+            | Instruction::I64Add
+            | Instruction::I64Sub
+            | Instruction::I64Mul
+            | Instruction::I64DivS
+            | Instruction::I64DivU
+            | Instruction::I64RemS
+            | Instruction::I64RemU
+            | Instruction::I64And
+            | Instruction::I64Or
+            | Instruction::I64Xor
+            | Instruction::I64Shl
+            | Instruction::I64ShrS
+            | Instruction::I64ShrU
+            | Instruction::I64Rotl
+            | Instruction::I64Rotr
+            | Instruction::F32Abs
+            | Instruction::F32Neg
+            | Instruction::F32Ceil
+            | Instruction::F32Floor
+            | Instruction::F32Trunc
+            | Instruction::F32Nearest
+            | Instruction::F32Sqrt
+            | Instruction::F32Add
+            | Instruction::F32Sub
+            | Instruction::F32Mul
+            | Instruction::F32Div
+            | Instruction::F32Min
+            | Instruction::F32Max
+            | Instruction::F32Copysign
+            | Instruction::F64Abs
+            | Instruction::F64Neg
+            | Instruction::F64Ceil
+            | Instruction::F64Floor
+            | Instruction::F64Trunc
+            | Instruction::F64Nearest
+            | Instruction::F64Sqrt
+            | Instruction::F64Add
+            | Instruction::F64Sub
+            | Instruction::F64Mul
+            | Instruction::F64Div
+            | Instruction::F64Min
+            | Instruction::F64Max
+            | Instruction::F64Copysign
+            | Instruction::I32WrapI64
+            | Instruction::I32TruncF32S
+            | Instruction::I32TruncF32U
+            | Instruction::I32TruncF64S
+            | Instruction::I32TruncF64U
+            | Instruction::I64ExtendI32S
+            | Instruction::I64ExtendI32U
+            | Instruction::I64TruncF32S
+            | Instruction::I64TruncF32U
+            | Instruction::I64TruncF64S
+            | Instruction::I64TruncF64U
+            | Instruction::F32ConvertI32S
+            | Instruction::F32ConvertI32U
+            | Instruction::F32ConvertI64S
+            | Instruction::F32ConvertI64U
+            | Instruction::F32DemoteF64
+            | Instruction::F64ConvertI32S
+            | Instruction::F64ConvertI32U
+            | Instruction::F64ConvertI64S
+            | Instruction::F64ConvertI64U
+            | Instruction::F64PromoteF32
+            | Instruction::I32Extend8S
+            | Instruction::I32Extend16S
+            | Instruction::I64Extend8S
+            | Instruction::I64Extend16S
+            | Instruction::I64Extend32S
+            | Instruction::I32TruncSatF32S
+            | Instruction::I32TruncSatF32U
+            | Instruction::I32TruncSatF64S
+            | Instruction::I32TruncSatF64U
+            | Instruction::I64TruncSatF32S
+            | Instruction::I64TruncSatF32U
+            | Instruction::I64TruncSatF64S
+            | Instruction::I64TruncSatF64U => true,
+            _ => false,
+        }
+    }
+
     /// Increases the fuel consumption of the [`ConsumeFuel`] instruction by `delta`.
     ///
     /// # Panics
@@ -415,7 +619,7 @@ impl Instruction {
     pub fn bump_fuel_consumption(&mut self, delta: u64) -> Result<(), TranslationError> {
         match self {
             Self::ConsumeFuel(block_fuel) => block_fuel.bump_by(delta),
-            instr => panic!("expected Instruction::ConsumeFuel but found: {instr:?}"),
+            instr => panic!("expected Instruction::ConsumeFuel but found: {:?}", instr),
         }
     }
 }
