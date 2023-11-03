@@ -414,7 +414,7 @@ pub fn build_table_copy_rw_ops(
     // read copied data
     let mut data = vec![0; length.as_u32() as usize];
     for i in 0..length.as_usize() {
-        data[i] = step.read_table_elem(table_src, i as u32).unwrap().as_u32();
+        data[i] = step.read_table_elem(table_src, src_eidx.as_u64() as u32 + i as u32).unwrap().as_u32();
     }
     let copy_rw_counter = step.next_rw_counter();
     // read result to the table
