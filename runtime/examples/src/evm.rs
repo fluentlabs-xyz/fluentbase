@@ -43,7 +43,7 @@ impl Database for TestDb {
     }
 }
 
-pub fn evm() {
+pub fn main() {
     let env = Env {
         cfg: CfgEnv::default(),
         block: BlockEnv::default(),

@@ -1,4 +1,4 @@
-pub use crate::{crypto::*, evm::*, mpt::*, rwasm::*, zktrie::*};
+pub use crate::{crypto::*, evm::*, mpt::*, rwasm::*, secp256k1::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
 use fluentbase_rwasm::{common::Trap, rwasm::Compiler, AsContextMut, Caller, Extern, Memory};
 
@@ -177,17 +177,34 @@ pub(crate) fn wasi_args_get(
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
 
-pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    caller.data_mut().exit_code = ExitCode::ExecutionHalted as i32;
-    Err(ExitCode::ExecutionHalted.into())
-}
-
-pub(crate) fn evm_return(
+pub(crate) fn rwasm_transact(
     mut caller: Caller<'_, RuntimeContext>,
-    offset: u32,
-    length: u32,
-) -> Result<(), Trap> {
-    let memory = exported_memory_vec(&mut caller, offset as usize, length as usize);
-    caller.data_mut().extend_return_data(memory.as_slice());
-    Ok(())
+    code_offset: i32,
+    code_len: i32,
+    input_offset: i32,
+    input_len: i32,
+    output_offset: i32,
+    output_len: i32,
+) -> Result<i32, Trap> {
+    let bytecode = exported_memory_vec(&mut caller, code_offset as usize, code_len as usize);
+    let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
+    // TODO: "we probably need custom linker here with reduced host calls number"
+    // TODO: "make sure there is no panic inside runtime"
+    let res = Runtime::run(bytecode.as_slice(), &vec![input]);
+    if res.is_err() {
+        return Err(ExitCode::TransactError.into());
+    }
+    let execution_result = res.unwrap();
+    // caller
+    //     .as_context_mut()
+    //     .tracer_mut()
+    //     .merge_nested_call(execution_result.tracer());
+    // copy output into memory
+    let output = execution_result.data().output();
+    if output.len() > output_len as usize {
+        return Err(ExitCode::TransactOutputOverflow.into());
+    }
+    caller.write_memory(output_offset as usize, output.as_slice());
+    // put exit code on stack
+    Ok(execution_result.data().exit_code)
 }

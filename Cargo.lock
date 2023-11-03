@@ -1980,19 +1980,32 @@ name = "fluentbase-core"
 version = "0.1.0"
 
 [[package]]
+name = "fluentbase-poseidon"
+version = "0.1.0"
+dependencies = [
+ "bitvec 1.0.1",
+ "halo2curves",
+ "lazy_static",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon?branch=main)",
+]
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
+ "bitvec 1.0.1",
  "bytes",
  "eth_trie",
  "ethereum",
  "ethereum-types 0.14.1",
  "ethers",
  "ethers-core 2.0.10",
+ "fluentbase-poseidon",
  "fluentbase-rwasm",
  "halo2curves",
  "hex",
  "hex-literal",
+ "k256 0.13.1",
  "keccak-hash",
  "lazy_static",
  "parity-scale-codec 3.6.4",
@@ -2000,6 +2013,7 @@ dependencies = [
  "rlp",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.25.0",
  "strum_macros 0.25.2",
  "thiserror",
@@ -2020,6 +2034,7 @@ dependencies = [
  "revm",
  "revm-interpreter",
  "revm-primitives",
+ "wat",
 ]
 
 [[package]]
@@ -3745,6 +3760,16 @@ dependencies = [
 [[package]]
 name = "poseidon"
 version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon?branch=main#0b9965fbcd9e03559088b8f68489592286bc55e0"
+dependencies = [
+ "group 0.12.1",
+ "halo2curves",
+ "subtle",
+]
+
+[[package]]
+name = "poseidon"
+version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
 dependencies = [
  "group 0.12.1",
@@ -4688,9 +4713,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.7"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479fb9d862239e610720565ca91403019f2f00410f1864c5aa7479b950a76ed8"
+checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if 1.0.0",
  "cpufeatures",

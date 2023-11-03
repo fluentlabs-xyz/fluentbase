@@ -29,14 +29,14 @@ impl Into<i32> for VerifyBlockError {
 
 /// Helper structure, used for encoding blocks.
 #[derive(Default, Clone, Serialize, Deserialize)]
-pub(crate) struct Block {
+pub struct Block {
     pub header: Header,
     pub transactions: Vec<transaction::Transaction>,
     pub uncles: Vec<Header>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct BlockX<T> {
+pub struct BlockX<T> {
     pub header: Header,
     pub transactions: Vec<T>,
     pub uncles: Vec<Header>,

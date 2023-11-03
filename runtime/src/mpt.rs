@@ -15,7 +15,7 @@ thread_local! {
 }
 
 pub(crate) fn mpt_open(
-    mut caller: Caller<'_, RuntimeContext>,
+    _caller: Caller<'_, RuntimeContext>,
     // rlp_offset: i32,
     // rlp_len: i32,
 ) -> Result<(), Trap> {

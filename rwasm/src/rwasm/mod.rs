@@ -80,11 +80,13 @@ mod tests {
             )
             .unwrap();
         // run start entrypoint
-        linker
+        let instance = linker
             .instantiate(&mut store, &module)
             .unwrap()
             .start(&mut store)
             .unwrap();
+        let main_func = instance.get_func(&mut store, "main").unwrap();
+        main_func.call(&mut store, &[], &mut []).unwrap();
         store.data().clone()
     }
 
@@ -271,6 +273,44 @@ mod tests {
                     Instruction::I32Const(0.into()),
                 )),
             },
+        );
+    }
+
+    #[test]
+    fn test_passive_data_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (type (;0;) (func))
+      (func (;0;) (type 0)
+        return
+        )
+      (memory (;0;) 17)
+      (export "main" (func 0))
+      (data "Hello, World"))
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_passive_elem_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (table 1 anyfunc)
+      (func $main
+        return
+        )
+      (func $f1 (result i32)
+       i32.const 42
+       )
+      (func $f2 (result i32)
+       i32.const 100
+       )
+      (elem func $f1)
+      (elem func $f2)
+      (export "main" (func $main)))
+        "#,
         );
     }
 }

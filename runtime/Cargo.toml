@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm" }
+fluentbase-poseidon = { path = "../poseidon" }
 lazy_static = "1.4.0"
 tiny-keccak = { version = "2.0", features = ["sha3"] }
 tokio = { version = "1.33", features = ["full"] }
@@ -38,9 +39,12 @@ poseidon = { git = "https://github.com/scroll-tech/poseidon" }
 #plain_hasher = "0.2.3"
 thiserror = "1.0.40"
 keccak-hash = "0.10.0"
-#keccak-hasher = "0.1.0"
-#hashdb = "0.3.0"
-#tiny-keccak = "1.5.0"
-#heapsize = {version = "0.4.2"}
 eth_trie = "0.3.0"
 rlp = "0.5.2"
+bitvec = "1"
+k256 = "0.13.1"
+sha2 = "0.10.8"
+
+[dev-dependencies]
+wat = "1.0.69"
+hex-literal = "0.4.1"

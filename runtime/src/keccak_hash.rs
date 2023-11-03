@@ -1,17 +1,17 @@
 #[cfg(test)]
-mod tests {
+mod keccak_tests {
     extern crate alloc;
 
     use alloc::{vec, vec::Vec};
     use keccak_hash::{keccak, write_keccak, H256, KECCAK_EMPTY};
 
     #[test]
-    fn keccak_empty() {
+    fn empty() {
         assert_eq!(keccak([0u8; 0]), KECCAK_EMPTY);
     }
 
     #[test]
-    fn write_keccak_with_content() {
+    fn with_content() {
         let data: Vec<u8> = From::from("hello world");
         let expected = vec![
             0x47, 0x17, 0x32, 0x85, 0xa8, 0xd7, 0x34, 0x1e, 0x5e, 0x97, 0x2f, 0xc6, 0x77, 0x28,

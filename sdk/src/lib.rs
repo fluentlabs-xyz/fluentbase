@@ -1,23 +1,24 @@
 #![feature(lang_items)]
 // #![no_std]
-
+//
 // #[cfg(not(feature = "std"))]
 // extern crate wee_alloc;
-
+//
 // #[cfg(not(feature = "std"))]
 // #[global_allocator]
 // static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
+//
 // #[cfg(not(feature = "std"))]
 // #[panic_handler]
 // #[inline(always)]
 // fn panic(info: &core::panic::PanicInfo) -> ! {
 //     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-//         evm_return_raw(panic_message.as_ptr(), panic_message.len() as u32);
+//         sys_write(panic_message.as_ptr() as u32, panic_message.len() as u32);
 //     }
 //     sys_panic();
 //     loop {}
 // }
+//
 mod binding;
 pub use binding::*;
 

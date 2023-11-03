@@ -26,7 +26,7 @@ use crate::{
         ValueStack,
     },
     func::FuncEntity,
-    module::DEFAULT_MEMORY_INDEX,
+    module::{ConstExpr, DEFAULT_MEMORY_INDEX},
     store::ResourceLimiterRef,
     table::TableEntity,
     FuelConsumptionMode,
@@ -346,6 +346,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::MemoryFill => self.visit_memory_fill()?,
                 Instr::MemoryCopy => self.visit_memory_copy()?,
                 Instr::MemoryInit(segment) => self.visit_memory_init(segment)?,
+                Instr::DataStore8(segment) => self.visit_data_store(segment, 1),
+                Instr::DataStore16(segment) => self.visit_data_store(segment, 2),
+                Instr::DataStore32(segment) => self.visit_data_store(segment, 4),
+                Instr::DataStore64(segment) => self.visit_data_store(segment, 8),
                 Instr::DataDrop(segment) => self.visit_data_drop(segment),
                 Instr::TableSize(table) => self.visit_table_size(table),
                 Instr::TableGrow(table) => self.visit_table_grow(table, &mut *resource_limiter)?,
@@ -354,6 +358,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::TableSet(table) => self.visit_table_set(table)?,
                 Instr::TableCopy(dst) => self.visit_table_copy(dst)?,
                 Instr::TableInit(elem) => self.visit_table_init(elem)?,
+                Instr::ElemStore(segment) => self.visit_element_store(segment),
                 Instr::ElemDrop(segment) => self.visit_element_drop(segment),
                 Instr::RefFunc(func_index) => self.visit_ref_func(func_index),
                 Instr::I32Const(value) => self.visit_untyped_const(value),
@@ -948,13 +953,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     ///   actual instruction where the [`TableIdx`] paremeter belongs to.
     /// - This is required for some instructions that do not fit into a single instruction word and
     ///   store a [`TableIdx`] value in another instruction word.
-    fn fetch_table_idx(&self, offset: usize) -> TableIdx {
+    fn fetch_table_idx(&mut self, offset: usize) -> TableIdx {
         let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
-        match addr.get() {
+        let table_idx = match addr.get() {
             Instruction::TableGet(table_idx) => *table_idx,
             _ => unreachable!("expected TableGet instruction word at this point"),
-        }
+        };
+        self.tracer.remember_next_table(table_idx);
+        table_idx
     }
 
     #[inline(always)]
@@ -1303,6 +1310,26 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     }
 
     #[inline(always)]
+    fn visit_data_store(&mut self, segment_index: DataSegmentIdx, size: usize) {
+        // get offset and value from stack
+        let v = self.sp.pop();
+        let le_bytes = match size {
+            8 => v.as_u64().to_le_bytes().to_vec(),
+            4 => v.as_u32().to_le_bytes().to_vec(),
+            2 => v.as_u16().to_le_bytes().to_vec(),
+            1 => vec![v.as_u32() as u8],
+            _ => unreachable!("unknown size"),
+        };
+        let segment = self
+            .cache
+            .get_data_segment(self.ctx, segment_index.to_u32());
+        self.ctx
+            .resolve_data_segment_mut(&segment)
+            .add_bytes(le_bytes.as_slice());
+        self.next_instr()
+    }
+
+    #[inline(always)]
     fn visit_data_drop(&mut self, segment_index: DataSegmentIdx) {
         let segment = self
             .cache
@@ -1342,7 +1369,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
-        self.tracer.table_size_change(table_index.to_u32(), delta);
+        self.tracer
+            .table_size_change(table_index.to_u32(), init.as_u32(), delta);
         self.try_next_instr()
     }
 
@@ -1356,6 +1384,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             |costs| costs.fuel_for_elements(u64::from(len)),
             |this| {
                 let table = this.cache.get_table(this.ctx, table_index);
+                this.ctx
+                    .resolve_table(&table)
+                    .get_untyped(dst + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
                 this.ctx
                     .resolve_table_mut(&table)
                     .fill_untyped(dst, val, len)?;
@@ -1405,6 +1437,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 // Query both tables and check if they are the same:
                 let dst = this.cache.get_table(this.ctx, dst);
                 let src = this.cache.get_table(this.ctx, src);
+                this.ctx
+                    .resolve_table(&dst)
+                    .get_untyped(dst_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
+                this.ctx
+                    .resolve_table(&src)
+                    .get_untyped(src_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
                 if Table::eq(&dst, &src) {
                     // Copy within the same table:
                     let table = this.ctx.resolve_table_mut(&dst);
@@ -1443,6 +1483,17 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             },
         )?;
         self.try_next_instr_at(2)
+    }
+
+    #[inline(always)]
+    fn visit_element_store(&mut self, elem_index: ElementSegmentIdx) {
+        // get offset and value from stack
+        let v = self.sp.pop();
+        let segment = self.cache.get_element_segment(self.ctx, elem_index);
+        self.ctx
+            .resolve_element_segment_mut(&segment)
+            .add_item(ConstExpr::new_funcref(v.as_u32()));
+        self.next_instr()
     }
 
     #[inline(always)]
