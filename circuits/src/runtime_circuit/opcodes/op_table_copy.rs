@@ -263,7 +263,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second() {
         test_ok(instruction_set! {
@@ -296,7 +295,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second_with_set_zero() {
         test_ok(instruction_set! {
@@ -341,7 +339,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second_out_of_bounds() {
         test_ok(instruction_set! {
@@ -494,8 +491,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
-    // ERROR: non-first access reads don't change value.
     #[test]
     fn table_copy_overlap_seq() {
         test_ok(instruction_set! {
