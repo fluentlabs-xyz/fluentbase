@@ -46,7 +46,8 @@ impl Debug for ValueStack {
 
 impl PartialEq for ValueStack {
     fn eq(&self, other: &Self) -> bool {
-        self.stack_ptr == other.stack_ptr && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
+        self.stack_ptr == other.stack_ptr
+            && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
     }
 }
 
@@ -101,6 +102,10 @@ impl ValueStack {
         sp.offset_from(base) as usize
     }
 
+    pub fn is_stack_overflowed(&mut self, sp: ValueStackPtr) -> bool {
+        self.stack_len(sp) > self.maximum_len
+    }
+
     pub fn dump_stack(&mut self, sp: ValueStackPtr) -> Vec<UntypedValue> {
         let size = self.stack_len(sp);
         self.entries[0..size].to_vec()
@@ -134,11 +139,15 @@ impl ValueStack {
     /// - If the `initial_len` is zero.
     /// - If the `initial_len` is greater than `maximum_len`.
     pub fn new(initial_len: usize, maximum_len: usize) -> Self {
-        assert!(initial_len > 0, "cannot initialize the value stack with zero length",);
+        assert!(
+            initial_len > 0,
+            "cannot initialize the value stack with zero length",
+        );
         assert!(
             initial_len <= maximum_len,
             "initial value stack length is greater than maximum value stack length",
         );
+        println!("Init len: {}, max:  {}", initial_len, maximum_len);
         let entries = vec![UntypedValue::default(); initial_len];
         Self {
             entries,
@@ -249,7 +258,8 @@ impl ValueStack {
             // Note: By extending with the new length we effectively double
             // the current value stack length and add the additional flat amount
             // on top. This avoids too many frequent reallocations.
-            self.entries.extend(iter::repeat(UntypedValue::default()).take(new_len));
+            self.entries
+                .extend(iter::repeat(UntypedValue::default()).take(new_len));
         }
         Ok(())
     }

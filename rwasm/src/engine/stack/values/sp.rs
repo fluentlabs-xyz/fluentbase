@@ -134,11 +134,10 @@ impl ValueStackPtr {
     ///
     /// # Note
     ///
-    /// - This operation heavily relies on the prior validation of
-    ///   the executed WebAssembly bytecode for correctness.
-    /// - Especially the stack-depth analysis during compilation with
-    ///   a manual stack extension before function call prevents this
-    ///   procedure from panicking.
+    /// - This operation heavily relies on the prior validation of the executed WebAssembly bytecode
+    ///   for correctness.
+    /// - Especially the stack-depth analysis during compilation with a manual stack extension
+    ///   before function call prevents this procedure from panicking.
     ///
     /// [`ValueStack`]: super::ValueStack
     #[inline]
@@ -153,11 +152,10 @@ impl ValueStackPtr {
     ///
     /// # Note
     ///
-    /// - This operation heavily relies on the prior validation of
-    ///   the executed WebAssembly bytecode for correctness.
-    /// - Especially the stack-depth analysis during compilation with
-    ///   a manual stack extension before function call prevents this
-    ///   procedure from panicking.
+    /// - This operation heavily relies on the prior validation of the executed WebAssembly bytecode
+    ///   for correctness.
+    /// - Especially the stack-depth analysis during compilation with a manual stack extension
+    ///   before function call prevents this procedure from panicking.
     ///
     /// [`ValueStack`]: super::ValueStack
     #[inline]
