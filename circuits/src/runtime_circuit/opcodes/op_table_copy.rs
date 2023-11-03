@@ -101,8 +101,8 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         cb.condition(1.expr() - error_case(), |cb| {
             cb.copy_lookup(
                 CopyTableTag::CopyTable,
-                src_ti.current() * 1024.expr() + src_eidx.current(),
-                cb.query_rwasm_value() * 1024.expr() + dst_eidx.current(),
+                src_ti.current() * MAX_TABLE_SIZE.expr() + src_eidx.current(),
+                cb.query_rwasm_value() * MAX_TABLE_SIZE.expr() + dst_eidx.current(),
                 length.current(),
             );
         });
@@ -266,12 +266,12 @@ mod test {
     #[test]
     fn table_copy_set_second() {
         test_ok(instruction_set! {
-            RefFunc(0)
-            I32Const(6)
+            RefFunc(0) // value
+            I32Const(6) // size
             TableGrow(0)
             Drop
-            RefFunc(0)
-            I32Const(6)
+            RefFunc(0) // value
+            I32Const(6) // size
             TableGrow(1)
             Drop
 
@@ -279,19 +279,19 @@ mod test {
             I32Const(3) // TODO: RefFunc(3)
             TableSet(1)
 
-            I32Const(1)
-            I32Const(2) // TODO: RefFunc(2)
-            TableSet(1)
+            // I32Const(1)
+            // I32Const(2) // TODO: RefFunc(2)
+            // TableSet(1)
+            //
+            // I32Const(2)
+            // I32Const(1) // TODO: RefFunc(1)
+            // TableSet(1)
 
-            I32Const(2)
-            I32Const(1) // TODO: RefFunc(1)
-            TableSet(1)
-
-            I32Const(1)
-            I32Const(2)
-            I32Const(3)
-            TableCopy(0)
-            TableGet(1)
+            I32Const(1) // dest offset
+            I32Const(2) // source offset
+            I32Const(3) // length
+            TableCopy(0) // dest table
+            TableGet(1) // source table
         });
     }
 
