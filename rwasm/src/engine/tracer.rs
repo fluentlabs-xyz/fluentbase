@@ -4,8 +4,10 @@ use crate::{
     Extern,
 };
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
-use core::fmt::{Debug, Formatter};
-use std::mem::take;
+use core::{
+    fmt::{Debug, Formatter},
+    mem::take,
+};
 
 #[derive(Debug, Clone)]
 pub struct TracerMemoryState {

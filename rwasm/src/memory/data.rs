@@ -1,5 +1,5 @@
 use crate::{arena::ArenaIndex, module, store::Stored, AsContextMut};
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 /// A raw index to a data segment entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

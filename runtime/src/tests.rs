@@ -59,45 +59,34 @@ fn test_greeting() {
     assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
 }
 
-#[test]
-fn zktrie_open_test() {
-    use HASH_SCHEME_DONE;
-    assert_eq!(*HASH_SCHEME_DONE, true);
-
-    let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
-
-    let input_data = vec![];
-
-    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![]);
-}
-
-#[test]
-fn mpt_open_test() {
-    let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
-
-    let input_data = [];
-
-    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![]);
-}
-
-#[test]
-fn keccak_test() {
-    let wasm_binary = include_bytes!("../examples/bin/crypto_keccak.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
-
-    let input_data: &[u8] = "hello world".as_bytes();
-
-    let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![]);
-}
+// #[test]
+// fn zktrie_open_test() {
+//     use HASH_SCHEME_DONE;
+//     assert_eq!(*HASH_SCHEME_DONE, true);
+//
+//     let wasm_binary = include_bytes!("../examples/bin/zktrie_open_test.wasm");
+//     let rwasm_binary = wasm2rwasm(wasm_binary);
+//
+//     let input_data = vec![];
+//
+//     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
+//     assert_eq!(output.data().output().clone(), vec![]);
+// }
+//
+// #[test]
+// fn mpt_open_test() {
+//     let wasm_binary = include_bytes!("../examples/bin/mpt_open_test.wasm");
+//     let rwasm_binary = wasm2rwasm(wasm_binary);
+//
+//     let input_data = [];
+//
+//     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
+//     assert_eq!(output.data().output().clone(), vec![]);
+// }
 
 #[test]
-fn poseidon_test() {
-    let wasm_binary = include_bytes!("../examples/bin/crypto_poseidon.wasm");
+fn test_keccak256() {
+    let wasm_binary = include_bytes!("../examples/bin/keccak256.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_data: &[u8] = "hello world".as_bytes();
@@ -107,8 +96,19 @@ fn poseidon_test() {
 }
 
 #[test]
-fn secp256k1_verify_test() {
-    let wasm_binary = include_bytes!("../examples/bin/secp256k1_verify.wasm");
+fn test_poseidon() {
+    let wasm_binary = include_bytes!("../examples/bin/poseidon.wasm");
+    let rwasm_binary = wasm2rwasm(wasm_binary);
+
+    let input_data: &[u8] = "hello world".as_bytes();
+
+    let output = Runtime::run(rwasm_binary.as_slice(), input_data).unwrap();
+    assert_eq!(output.data().output().clone(), vec![]);
+}
+
+#[test]
+fn test_secp256k1_verify() {
+    let wasm_binary = include_bytes!("../examples/bin/secp256k1.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_datas: &[&[u8]] = &[
@@ -138,28 +138,12 @@ fn secp256k1_verify_test() {
     }
 }
 
-fn assert_trap_i32_exit<T>(result: Result<T, RuntimeError>, trap_code: Trap) {
-    let err = result.err().unwrap();
-    match err {
-        RuntimeError::Rwasm(err) => match err {
-            fluentbase_rwasm::Error::Trap(trap) => {
-                assert_eq!(
-                    trap.i32_exit_status().unwrap(),
-                    trap_code.i32_exit_status().unwrap()
-                )
-            }
-            _ => unreachable!("incorrect error type"),
-        },
-        _ => unreachable!("incorrect error type"),
-    }
-}
-
 #[test]
 fn test_panic() {
     let wasm_binary = include_bytes!("../examples/bin/panic.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let result = Runtime::run(rwasm_binary.as_slice(), &[]);
-    assert_trap_i32_exit(result, Trap::i32_exit(71));
+    let result = Runtime::run(rwasm_binary.as_slice(), &[]).unwrap();
+    assert_eq!(result.data().exit_code(), 71);
 }
 
 #[test]

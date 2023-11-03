@@ -3,7 +3,7 @@
   (type (;1;) (func (param i32 i32)))
   (type (;2;) (func))
   (import "env" "_sys_read" (func $_sys_read (type 0)))
-  (import "env" "_evm_return" (func $_evm_return (type 1)))
+  (import "env" "_sys_write" (func $_sys_write (type 1)))
   (func $main (type 2)
     (local i32 i32 i32)
     global.get $__stack_pointer
@@ -72,7 +72,7 @@
     i32.const 12
     i32.add
     i32.const 4
-    call $_evm_return
+    call $_sys_write
     local.get 0
     i32.const 16
     i32.add

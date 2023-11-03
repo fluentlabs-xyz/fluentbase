@@ -20,19 +20,3 @@ enum EvmInputSpec {
     // BlockHashA = 11,
     // add more private inputs
 }
-
-pub(crate) fn evm_block_number(
-    mut caller: Caller<'_, RuntimeContext>,
-    ptr: u32,
-) -> Result<(), Trap> {
-    // let buff = caller.data().input(EvmInputSpec::BlockNumberA as usize);
-    // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
-    // block.copy_from_slice(buff.as_slice());
-    Ok(())
-}
-
-pub(crate) fn evm_block_hash(mut caller: Caller<'_, RuntimeContext>, ptr: u32) {
-    // let buff = caller.data().input(EvmInputSpec::BlockHashA as usize);
-    // let block = exported_memory_slice(&mut caller, ptr as usize, 8);
-    // block.copy_from_slice(buff.as_slice());
-}

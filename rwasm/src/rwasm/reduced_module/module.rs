@@ -14,10 +14,9 @@ use crate::{
     Module,
 };
 use alloc::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
 };
-use std::collections::HashSet;
 
 pub struct ReducedModule {
     pub(crate) instruction_set: InstructionSet,
@@ -130,8 +129,8 @@ impl ReducedModule {
             code_section.metas.clone().unwrap(),
         );
         // push segments
-        let mut data_segments = HashSet::new();
-        let mut elem_segmenets = HashSet::new();
+        let mut data_segments = BTreeSet::new();
+        let mut elem_segments = BTreeSet::new();
 
         for instr in code_section.instr.iter() {
             match instr {
@@ -142,7 +141,7 @@ impl ReducedModule {
                     data_segments.insert(seg.to_u32());
                 }
                 Instruction::ElemStore(seg) => {
-                    elem_segmenets.insert(seg.to_u32());
+                    elem_segments.insert(seg.to_u32());
                 }
                 _ => continue,
             }
@@ -154,8 +153,8 @@ impl ReducedModule {
             });
         }
 
-        if !elem_segmenets.is_empty() {
-            (0..=elem_segmenets.len()).for_each(|_| {
+        if !elem_segments.is_empty() {
+            (0..=elem_segments.len()).for_each(|_| {
                 builder.push_passive_elem_segment();
             })
         }
