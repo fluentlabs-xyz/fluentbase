@@ -18,7 +18,6 @@ use crate::{
             op_bin::OpBinGadget,
             op_bitwise::OpBitwiseGadget,
             op_break::OpBreakGadget,
-            op_call::OpCallGadget,
             op_const::OpConstGadget,
             op_consume_fuel::OpConsumeFuel,
             op_conversion::OpConversionGadget,
@@ -78,7 +77,6 @@ pub struct RuntimeCircuitConfig<F: Field> {
     consume_fuel_gadget: ExecutionContextGadget<F, OpConsumeFuel<F>>,
     bin_gadget: ExecutionContextGadget<F, OpBinGadget<F>>,
     break_gadget: ExecutionContextGadget<F, OpBreakGadget<F>>,
-    call_gadget: ExecutionContextGadget<F, OpCallGadget<F>>,
     const_gadget: ExecutionContextGadget<F, OpConstGadget<F>>,
     reffunc_gadget: ExecutionContextGadget<F, OpRefFuncGadget<F>>,
     conversion_gadget: ExecutionContextGadget<F, OpConversionGadget<F>>,
@@ -167,7 +165,6 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             consume_fuel_gadget: configure_gadget!(),
             bin_gadget: configure_gadget!(),
             break_gadget: configure_gadget!(),
-            call_gadget: configure_gadget!(),
             const_gadget: configure_gadget!(),
             reffunc_gadget: configure_gadget!(),
             conversion_gadget: configure_gadget!(),
@@ -280,7 +277,6 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_BREAK => {
                 self.break_gadget.assign(region, offset, step, rw_counter)
             }
-            ExecutionState::WASM_CALL => self.call_gadget.assign(region, offset, step, rw_counter),
             ExecutionState::WASM_CALL_HOST(system_call) => {
                 self.assign_sys_call(region, offset, step, rw_counter, system_call)
             }

@@ -172,10 +172,7 @@ pub fn build_table_size_write_rw_ops(
     Ok(())
 }
 
-pub fn build_table_get_rw_ops(
-    step: &mut ExecStep,
-    table_idx: u32,
-) -> Result<(), GadgetError> {
+pub fn build_table_get_rw_ops(step: &mut ExecStep, table_idx: u32) -> Result<(), GadgetError> {
     let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
     let addr = step.curr_nth_stack_addr(0)?;
@@ -206,7 +203,6 @@ pub fn build_table_elem_read_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
-
     //let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
     let value = step.next_nth_stack_value(0)?;
@@ -274,7 +270,7 @@ pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
         to_address: dest.as_u32(),
         length: len.as_u32(),
         rw_counter: copy_rw_counter,
-        data: vec![0; len.as_usize()],
+        data: data.iter().map(|v| *v as u32).collect(),
     });
     Ok(())
 }
@@ -399,10 +395,7 @@ pub fn build_table_fill_rw_ops_with_args(
     Ok(())
 }
 
-pub fn build_table_copy_rw_ops(
-    step: &mut ExecStep,
-    table_dst: u32,
-) -> Result<(), GadgetError> {
+pub fn build_table_copy_rw_ops(step: &mut ExecStep, table_dst: u32) -> Result<(), GadgetError> {
     //let table_src = step.next().unwrap().opcode.aux_value().unwrap_or_default().as_u32();
     let table_src = step.curr().next_table_idx.unwrap().to_u32();
     // pop 3 elems from stack
@@ -414,7 +407,10 @@ pub fn build_table_copy_rw_ops(
     // read copied data
     let mut data = vec![0; length.as_u32() as usize];
     for i in 0..length.as_usize() {
-        data[i] = step.read_table_elem(table_src, src_eidx.as_u64() as u32 + i as u32).unwrap().as_u32();
+        data[i] = step
+            .read_table_elem(table_src, src_eidx.as_u64() as u32 + i as u32)
+            .unwrap()
+            .as_u32();
     }
     let copy_rw_counter = step.next_rw_counter();
     // read result to the table
