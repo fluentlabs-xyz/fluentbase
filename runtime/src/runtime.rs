@@ -518,7 +518,7 @@ impl Runtime {
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
-        forward_call!(linker, store, "env", "_sys_input", fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_sys_input", fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32);
         forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
         // wasi
         forward_call!(linker, store, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
