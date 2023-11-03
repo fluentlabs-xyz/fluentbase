@@ -1,13 +1,12 @@
 use crate::{
     instruction::exported_memory_vec,
-    poseidon_impl::hash::Hashable,
     zktrie_helpers::account_data_from_bytes,
     RuntimeContext,
 };
+use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use lazy_static::lazy_static;
-use poseidon::Poseidon;
 use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
@@ -87,7 +86,7 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn zktrie_open(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+pub(crate) fn zktrie_open(_caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     DB.with(|db| {
         let root_zero: Hash = [0; FIELDSIZE];
         let zk_trie: ZkTrie = db

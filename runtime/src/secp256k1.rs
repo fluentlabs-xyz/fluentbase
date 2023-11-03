@@ -1,13 +1,12 @@
 extern crate alloc;
 
-use crate::{poseidon_hash::poseidon_hash, poseidon_impl::hash::Hashable};
 use alloc::{vec, vec::Vec};
+use fluentbase_poseidon::Hashable;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     EncodedPoint,
 };
-use poseidon::Poseidon;
 use sha2::{Digest, Sha256};
 
 pub fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) -> bool {
@@ -16,19 +15,12 @@ pub fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]
     let recid1 = recid & 0b10 > 0;
     let recid = RecoveryId::new(recid0, recid1);
     let pk = VerifyingKey::recover_from_prehash(digest, &sig, recid).unwrap();
-
     let pk_computed = EncodedPoint::from(&pk);
-
-    // println!(
-    //     "pk_expected {:?} pk_computed {:?}",
-    //     pk_expected,
-    //     pk_computed.as_bytes()
-    // );
     return pk_expected == pk_computed.as_bytes();
 }
 
 #[cfg(test)]
-mod poseidon_tests {
+mod secp256k1_tests {
     extern crate alloc;
 
     use crate::secp256k1::secp256k1_verify;

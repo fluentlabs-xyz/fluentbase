@@ -1,10 +1,5 @@
-use crate::{
-    instruction::exported_memory_vec,
-    poseidon_hash::poseidon_hash,
-    poseidon_impl::hash::Hashable,
-    secp256k1_verify,
-    RuntimeContext,
-};
+use crate::{instruction::exported_memory_vec, secp256k1_verify, RuntimeContext};
+use fluentbase_poseidon::{poseidon_hash, Hashable};
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use keccak_hash::write_keccak;
