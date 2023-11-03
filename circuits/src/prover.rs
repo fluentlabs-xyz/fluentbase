@@ -150,7 +150,6 @@ mod tests {
     use halo2_proofs::plonk::{keygen_pk, keygen_vk};
 
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
-        use fluentbase_runtime::{ExitCode, RuntimeError};
         let rwasm_binary: Vec<u8> = bytecode.into();
         let import_linker = Runtime::new_linker();
         let result =

@@ -12,7 +12,7 @@ use crate::{
 };
 use fluentbase_runtime::ExitCode;
 use halo2_proofs::circuit::Region;
-use std::{marker::PhantomData, ops::Neg};
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpTableSetGadget<F: Field> {
@@ -100,7 +100,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableSetGadget<F> {
         }
     }
 
-    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
+    fn configure_state_transition(_cb: &mut OpConstraintBuilder<F>) {
         //cb.next_pc_delta(9.expr());
     }
 
