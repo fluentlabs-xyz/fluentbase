@@ -181,7 +181,7 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
             }
-            Instruction::TableGet(table_idx) => {
+            Instruction::TableGet(_) => {
                 panic!("custom function is used");
             }
             Instruction::TableSet(table_idx) => {
