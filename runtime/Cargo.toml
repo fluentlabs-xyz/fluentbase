@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+poseidon = {git = "https://github.com/scroll-tech/poseidon", branch = "main"}
 fluentbase-rwasm = { path = "../rwasm" }
 lazy_static = "1.4.0"
 strum = "0.25.0"
@@ -18,15 +19,13 @@ strum_macros = "0.25.2"
 wasi = "0.11.0"
 wat = "1.0.69"
 zktrie = { git = "https://github.com/scroll-tech/zktrie.git", tag="v0.6.0" }
-poseidon = { git = "https://github.com/scroll-tech/poseidon" }
-#patricia-trie = "0.3.0"
-#memorydb = {version = "0.3.0", default-features = false}
-#ethereum-types = "0.4"
-#plain_hasher = "0.2.3"
 keccak-hash = "0.10.0"
-#keccak-hasher = "0.1.0"
-#hashdb = "0.3.0"
-#tiny-keccak = "1.5.0"
-#heapsize = {version = "0.4.2"}
 eth_trie = "0.3.0"
 rlp = "0.5.2"
+bitvec = "1"
+k256 = "0.13.1"
+sha2 = "0.10.8"
+
+[dev-dependencies]
+wat = "1.0.69"
+hex-literal = "0.4.1"

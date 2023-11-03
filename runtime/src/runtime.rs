@@ -389,6 +389,38 @@ impl Runtime {
             &[ValueType::I32; 1],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_keccak".to_string(),
+            SysFuncIdx::CRYPTO_KECCAK as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_poseidon".to_string(),
+            SysFuncIdx::CRYPTO_POSEIDON as u16,
+            &[ValueType::I32; 3],
+            &[ValueType::I32; 1],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_poseidon_with_domain".to_string(),
+            SysFuncIdx::CRYPTO_POSEIDON_WITH_DOMAIN as u16,
+            &[ValueType::I32; 4],
+            &[ValueType::I32; 1],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "crypto_secp256k1_verify".to_string(),
+            SysFuncIdx::CRYPTO_SECP256K1_VERIFY as u16,
+            &[ValueType::I32; 7],
+            &[ValueType::I32; 1],
+        ));
+
         import_linker
     }
 
@@ -505,6 +537,8 @@ impl Runtime {
         // evm (orphaned)
         forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
         forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_evm_block_number", fn evm_block_number(ptr: u32) -> ());
+
         // zktrie
         forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open() -> ());
         forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
@@ -519,11 +553,18 @@ impl Runtime {
         forward_call!(linker, store, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+
         // mpt
         forward_call!(linker, store, "env", "mpt_open", fn mpt_open() -> ());
         forward_call!(linker, store, "env", "mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
+
+        // crypto
+        forward_call!(linker, store, "env", "crypto_keccak", fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "crypto_poseidon_with_domain", fn crypto_poseidon_with_domain(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "crypto_secp256k1_verify", fn crypto_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, recid: i32, pk_expected: i32, pk_expected_len: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {
