@@ -20,8 +20,6 @@ mod macros;
 mod mpt;
 mod mpt_helpers;
 mod platform;
-mod poseidon_hash;
-mod poseidon_impl;
 mod runtime;
 mod secp256k1;
 #[cfg(test)]

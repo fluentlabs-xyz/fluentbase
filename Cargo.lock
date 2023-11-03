@@ -1524,18 +1524,28 @@ name = "fluentbase-modules"
 version = "0.1.0"
 
 [[package]]
+name = "fluentbase-poseidon"
+version = "0.1.0"
+dependencies = [
+ "bitvec 1.0.1",
+ "halo2curves",
+ "lazy_static",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon?branch=main)",
+]
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "bitvec 1.0.1",
  "eth_trie",
+ "fluentbase-poseidon",
  "fluentbase-rwasm",
  "halo2curves",
  "hex-literal",
  "k256 0.13.1",
  "keccak-hash",
  "lazy_static",
- "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon?branch=main)",
  "rlp",
  "sha2",
  "strum 0.25.0",

@@ -1,4 +1,4 @@
-use super::super::primitives::{Mds as MdsT, P128Pow5T3Constants};
+use super::super::{Mds as MdsT, P128Pow5T3Constants};
 
 /// This is the base "hashable" type requirement for septidon
 pub trait CachedConstants: P128Pow5T3Constants {
@@ -14,7 +14,7 @@ pub type Mds<F> = MdsT<F, 3>;
 
 mod bn254 {
     use super::{CachedConstants, Mds};
-    use crate::poseidon_impl::poseidon::primitives::{P128Pow5T3Compact, Spec};
+    use crate::{P128Pow5T3Compact, Spec};
     use halo2curves::bn256::Fr as F;
     use lazy_static::lazy_static;
     lazy_static! {

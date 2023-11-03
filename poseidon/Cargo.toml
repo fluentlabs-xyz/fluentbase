@@ -1,0 +1,18 @@
+[package]
+name = "fluentbase-poseidon"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+poseidon = {git = "https://github.com/scroll-tech/poseidon", branch = "main"}
+lazy_static = "1.4.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+bitvec = "1"
+
+[dev-dependencies]

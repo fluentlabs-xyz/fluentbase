@@ -1,7 +1,7 @@
 use super::{grain::Grain, Mds};
 use halo2curves::FieldExt;
 
-pub(super) fn generate_mds<F: FieldExt, const T: usize>(
+pub(crate) fn generate_mds<F: FieldExt, const T: usize>(
     grain: &mut Grain<F>,
     mut select: usize,
 ) -> (Mds<F, T>, Mds<F, T>) {

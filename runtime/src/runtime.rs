@@ -437,7 +437,7 @@ impl Runtime {
         import_linker: &ImportLinker,
     ) -> Result<ExecutionResult, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
-        let mut runtime = Self::new(runtime_context.clone(), import_linker);
+        let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
             runtime_context.exit_code = Self::catch_trap(runtime.err().unwrap());
             return Ok(ExecutionResult {

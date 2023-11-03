@@ -1,18 +1,11 @@
 //! The hash circuit base on poseidon.
 
-use crate::poseidon_impl::poseidon::primitives::{
-    ConstantLengthIden3,
-    Domain,
-    Hash,
-    Spec,
-    VariableLengthIden3,
-};
+use crate::primitives::{ConstantLengthIden3, Domain, Hash, Spec, VariableLengthIden3};
 pub use chip_short::*;
 use halo2curves::bn256::Fr;
-use std::fmt::Debug as DebugT;
 
 mod chip_short {
-    use crate::poseidon_impl::poseidon::{primitives::P128Pow5T3Compact, CachedConstants};
+    use crate::{primitives::P128Pow5T3Compact, CachedConstants};
 
     /// The specified base hashable trait
     pub trait Hashablebase: CachedConstants {}

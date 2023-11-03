@@ -1,5 +1,11 @@
-use halo2curves::{bn256::Fr, group::ff::PrimeField};
+pub mod hash;
+pub use hash::*;
+mod primitives;
+pub use primitives::*;
+mod septidon;
+use halo2curves::bn256::Fr;
 use poseidon::Poseidon;
+pub use septidon::*;
 
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
@@ -24,10 +30,8 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
 mod poseidon_tests {
     extern crate alloc;
 
-    use crate::{poseidon_hash::poseidon_hash, poseidon_impl::hash::Hashable};
-    use alloc::{vec, vec::Vec};
+    use crate::{poseidon_hash, Hashable};
     use halo2curves::{bn256::Fr, group::ff::PrimeField};
-    use poseidon::Poseidon;
 
     #[test]
     fn empty() {
