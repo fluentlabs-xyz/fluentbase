@@ -1,6 +1,6 @@
 use crate::{
     arena::ArenaIndex,
-    common::{UntypedValue, ValueType},
+    common::{Pages, UntypedValue, ValueType},
     engine::{
         bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
@@ -530,8 +530,24 @@ impl<'linker> Compiler<'linker> {
                     injection_instructions: vec![],
                     instr_countdown: target.to_usize() as u32 * 2,
                 });
-                // println!("Add table status: {:?}", self.br_table_status);
                 self.code_section.push(*instr_ptr.get());
+            }
+            WI::MemoryGrow => {
+                assert!(!self.module.memories.is_empty(), "memory must be provided");
+                let max_pages = self.module.memories[0]
+                    .maximum_pages()
+                    .unwrap_or(Pages::max())
+                    .into_inner();
+                self.code_section.op_local_get(1);
+                self.code_section.op_memory_size();
+                self.code_section.op_i32_add();
+                self.code_section.op_i32_const(max_pages);
+                self.code_section.op_i32_ge_s();
+                self.code_section.op_br_if_nez(3);
+                self.code_section.op_drop();
+                self.code_section.op_i32_const(u32::MAX);
+                self.code_section.op_br(2);
+                self.code_section.op_memory_grow();
             }
             // WI::LocalGet(local_depth) => {
             //     self.code_section

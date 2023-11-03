@@ -235,6 +235,14 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         self.stack_lookup(Query::one(), self.state_transition.stack_pointer(), value);
     }
 
+    // TODO: think how to do it better.
+    pub fn draft_shift(&mut self, rw_shift: u64, pointer_shift: u64) {
+        self.state_transition.rw_counter_offset =
+            self.state_transition.rw_counter_offset.clone() + rw_shift.expr() * self.base.resolve_condition().0;
+        self.state_transition.stack_pointer_offset =
+            self.state_transition.stack_pointer_offset.clone() + pointer_shift.expr() * self.base.resolve_condition().0;
+    }
+
     pub fn stack_pop(&mut self, value: Query<F>) {
         self.stack_lookup(Query::zero(), self.state_transition.stack_pointer(), value);
         self.state_transition.stack_pointer_offset =
