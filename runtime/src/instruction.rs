@@ -203,18 +203,3 @@ pub(crate) fn rwasm_transact(
     // put exit code on stack
     Ok(execution_result.data().exit_code)
 }
-
-pub(crate) fn evm_stop(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    caller.data_mut().exit_code = ExitCode::ExecutionHalted as i32;
-    Err(ExitCode::ExecutionHalted.into())
-}
-
-pub(crate) fn evm_return(
-    mut caller: Caller<'_, RuntimeContext>,
-    offset: u32,
-    length: u32,
-) -> Result<(), Trap> {
-    let memory = exported_memory_vec(&mut caller, offset as usize, length as usize);
-    caller.data_mut().extend_return_data(memory.as_slice());
-    Ok(())
-}

@@ -7,7 +7,7 @@ use crate::{
     AsContext,
     AsContextMut,
 };
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 /// A raw index to a element segment entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -160,7 +160,7 @@ pub struct Runtime {
 impl Runtime {
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
-        // Fluentbase sys calls
+        // sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_halt".to_string(),
@@ -247,26 +247,10 @@ impl Runtime {
             &[ValueType::I32; 6],
             &[ValueType::I32; 1],
         ));
-        // EVM sys calls
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_evm_stop".to_string(),
-            SysFuncIdx::EVM_STOP as u16,
-            &[ValueType::I32; 0],
-            &[],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_evm_return".to_string(),
-            SysFuncIdx::EVM_RETURN as u16,
-            &[ValueType::I32; 2],
-            &[],
-        ));
-
         // zktrie
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_open".to_string(),
+            "_zktrie_open".to_string(),
             SysFuncIdx::ZKTRIE_OPEN as u16,
             &[ValueType::I32; 0],
             &[ValueType::I32; 0],
@@ -274,35 +258,35 @@ impl Runtime {
         // account updates
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_nonce".to_string(),
+            "_zktrie_update_nonce".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_NONCE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_balance".to_string(),
+            "_zktrie_update_balance".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_BALANCE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_storage_root".to_string(),
+            "_zktrie_update_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORAGE_ROOT as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_code_hash".to_string(),
+            "_zktrie_update_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_HASH as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_code_size".to_string(),
+            "_zktrie_update_code_size".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_SIZE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
@@ -310,35 +294,35 @@ impl Runtime {
         // account gets
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_nonce".to_string(),
+            "_zktrie_get_nonce".to_string(),
             SysFuncIdx::ZKTRIE_GET_NONCE as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_balance".to_string(),
+            "_zktrie_get_balance".to_string(),
             SysFuncIdx::ZKTRIE_GET_BALANCE as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_storage_root".to_string(),
+            "_zktrie_get_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORAGE_ROOT as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_code_hash".to_string(),
+            "_zktrie_get_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_HASH as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_code_size".to_string(),
+            "_zktrie_get_code_size".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_SIZE as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
@@ -346,7 +330,7 @@ impl Runtime {
         // store updates
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_update_store".to_string(),
+            "_zktrie_update_store".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
@@ -354,7 +338,7 @@ impl Runtime {
         // store gets
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "zktrie_get_store".to_string(),
+            "_zktrie_get_store".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORE as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
@@ -362,28 +346,28 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "mpt_open".to_string(),
+            "_mpt_open".to_string(),
             SysFuncIdx::MPT_OPEN as u16,
             &[ValueType::I32; 0],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "mpt_update".to_string(),
+            "_mpt_update".to_string(),
             SysFuncIdx::MPT_UPDATE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "mpt_get".to_string(),
+            "_mpt_get".to_string(),
             SysFuncIdx::MPT_GET as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "mpt_get_root".to_string(),
+            "_mpt_get_root".to_string(),
             SysFuncIdx::MPT_GET_ROOT as u16,
             &[ValueType::I32; 1],
             &[ValueType::I32; 1],
@@ -391,7 +375,7 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "crypto_keccak".to_string(),
+            "_crypto_keccak256".to_string(),
             SysFuncIdx::CRYPTO_KECCAK as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
@@ -399,7 +383,7 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "crypto_poseidon".to_string(),
+            "_crypto_poseidon".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
@@ -407,7 +391,7 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "crypto_poseidon_with_domain".to_string(),
+            "_crypto_poseidon2".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON_WITH_DOMAIN as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 1],
@@ -415,7 +399,7 @@ impl Runtime {
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "crypto_secp256k1_verify".to_string(),
+            "_crypto_secp256k1_verify".to_string(),
             SysFuncIdx::CRYPTO_SECP256K1_VERIFY as u16,
             &[ValueType::I32; 7],
             &[ValueType::I32; 1],
@@ -539,37 +523,33 @@ impl Runtime {
         forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32);
         // rwasm
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
-        // evm (orphaned)
-        forward_call!(linker, store, "env", "_evm_stop", fn evm_stop() -> ());
-        forward_call!(linker, store, "env", "_evm_return", fn evm_return(offset: u32, length: u32) -> ());
-        forward_call!(linker, store, "env", "_evm_block_number", fn evm_block_number(ptr: u32) -> ());
 
         // zktrie
-        forward_call!(linker, store, "env", "zktrie_open", fn zktrie_open() -> ());
-        forward_call!(linker, store, "env", "zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "zktrie_update_balance", fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "zktrie_update_storage_root", fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "zktrie_update_code_hash", fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "zktrie_update_code_size", fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_open", fn zktrie_open() -> ());
+        forward_call!(linker, store, "env", "_zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_update_balance", fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_update_storage_root", fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_update_code_hash", fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_update_code_size", fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
 
         // mpt
-        forward_call!(linker, store, "env", "mpt_open", fn mpt_open() -> ());
-        forward_call!(linker, store, "env", "mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
+        forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
+        forward_call!(linker, store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
 
         // crypto
-        forward_call!(linker, store, "env", "crypto_keccak", fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "crypto_poseidon_with_domain", fn crypto_poseidon_with_domain(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "crypto_secp256k1_verify", fn crypto_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, recid: i32, pk_expected: i32, pk_expected_len: i32) -> i32);
+        forward_call!(linker, store, "env", "_crypto_keccak256", fn crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_crypto_poseidon2", fn crypto_poseidon2(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
+        forward_call!(linker, store, "env", "_crypto_secp256k1_verify", fn crypto_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, recid: i32, pk_expected: i32, pk_expected_len: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

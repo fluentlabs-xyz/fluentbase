@@ -24,8 +24,7 @@ use crate::{
     Mutability,
     TableType,
 };
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use std::sync::Arc;
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 
 /// A builder for a WebAssembly [`Module`].
 #[derive(Debug)]

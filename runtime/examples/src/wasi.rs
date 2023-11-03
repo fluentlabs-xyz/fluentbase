@@ -1,1 +1,1 @@
-pub fn wasi() {}
+pub fn main() {}

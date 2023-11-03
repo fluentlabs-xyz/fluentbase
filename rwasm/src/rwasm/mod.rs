@@ -80,11 +80,13 @@ mod tests {
             )
             .unwrap();
         // run start entrypoint
-        linker
+        let instance = linker
             .instantiate(&mut store, &module)
             .unwrap()
             .start(&mut store)
             .unwrap();
+        let main_func = instance.get_func(&mut store, "main").unwrap();
+        main_func.call(&mut store, &[], &mut []).unwrap();
         store.data().clone()
     }
 
