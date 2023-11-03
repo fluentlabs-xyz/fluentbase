@@ -103,6 +103,8 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 let span = wast_invoke.span;
                 println!("Invoke: {:?}", wast_invoke);
                 test_context.profile().bump_invoke();
+
+                test_context.set_state_by_name(wast_invoke.name)?;
                 execute_wast_invoke(test_context, span, wast_invoke, true).unwrap_or_else(
                     |error| {
                         panic!(
@@ -180,6 +182,7 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 message,
             } => {
                 test_context.profile().bump_assert_exhaustion();
+                test_context.set_state_by_name(call.name)?;
                 match execute_wast_invoke(test_context, span, call, true) {
                     Ok(results) => {
                         panic!(
