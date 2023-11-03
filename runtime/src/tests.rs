@@ -12,7 +12,7 @@ use crate::{
     RuntimeContext,
     RuntimeError,
     SysFuncIdx,
-    HASH_SCHEME_DONE,
+    HASH_SCHEME_DONE, TRIE_ID_DEFAULT,
 };
 use eth_trie::DB;
 use fluentbase_rwasm::{
@@ -350,7 +350,7 @@ fn test_evm_verify_account_state_data() {
             .try_into()
             .unwrap();
 
-    let zktr = zktrie_get_trie(default_id).unwrap().clone();
+    let zktr = zktrie_get_trie(&TRIE_ID_DEFAULT).unwrap().clone();
     let zk_trie = zktr.as_ref().borrow_mut();
 
     let store: StoreData =
