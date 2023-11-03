@@ -273,4 +273,42 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn test_passive_data_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (type (;0;) (func))
+      (func (;0;) (type 0)
+        return
+        )
+      (memory (;0;) 17)
+      (export "main" (func 0))
+      (data "Hello, World"))
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_passive_elem_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (table 1 anyfunc)
+      (func $main
+        return
+        )
+      (func $f1 (result i32)
+       i32.const 42
+       )
+      (func $f2 (result i32)
+       i32.const 100
+       )
+      (elem func $f1)
+      (elem func $f2)
+      (export "main" (func $main)))
+        "#,
+        );
+    }
 }

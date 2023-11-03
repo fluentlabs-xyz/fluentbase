@@ -7,9 +7,9 @@ use alloc::sync::Arc;
 #[derive(Debug)]
 pub struct DataSegment {
     /// The kind of the data segment.
-    kind: DataSegmentKind,
+    pub(crate) kind: DataSegmentKind,
     /// The bytes of the data segment.
-    bytes: Arc<[u8]>,
+    pub(crate) bytes: Arc<[u8]>,
 }
 
 /// The kind of a Wasm module [`DataSegment`].
