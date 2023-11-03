@@ -1,5 +1,4 @@
 use crate::{
-    bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
     exec_step::MAX_TABLE_SIZE,
     gadgets::lt::LtGadget,
@@ -13,7 +12,6 @@ use crate::{
     util::Field,
 };
 use fluentbase_runtime::ExitCode;
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
@@ -96,7 +94,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableFillGadget<F> {
         }
     }
 
-    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
+    fn configure_state_transition(_cb: &mut OpConstraintBuilder<F>) {
         //cb.next_pc_delta(9.expr());
     }
 
