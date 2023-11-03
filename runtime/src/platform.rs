@@ -52,8 +52,8 @@ pub enum SysFuncIdx {
 
     CRYPTO_KECCAK = 0xE001,
     CRYPTO_POSEIDON = 0xE002,
-
-    SECP256K1_VERIFY = 0xEA03,
+    CRYPTO_POSEIDON_WITH_DOMAIN = 0xE003,
+    CRYPTO_SECP256K1_VERIFY = 0xE004,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

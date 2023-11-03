@@ -123,6 +123,24 @@ extern "C" {
     pub fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
     pub fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn mpt_get_root(output_offset: i32) -> i32;
+
+    pub fn crypto_keccak(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
+    pub fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
+    pub fn crypto_poseidon_with_domain(
+        fa_offset: i32,
+        fb_offset: i32,
+        fdomain_offset: i32,
+        output_offset: i32,
+    ) -> i32;
+    pub fn crypto_secp256k1_verify(
+        digest: i32,
+        digest_len: i32,
+        sig: i32,
+        sig_len: i32,
+        recid: i32,
+        pk_expected: i32,
+        pk_expected_len: i32,
+    ) -> i32;
 }
 
 #[inline(always)]
@@ -240,4 +258,47 @@ pub fn mpt_get_(key_offset: i32, key_len: i32, output_offset: i32) -> i32 {
 #[inline(always)]
 pub fn mpt_get_root_(output_offset: i32) -> i32 {
     unsafe { mpt_get_root(output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_keccak_(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
+    unsafe { crypto_keccak(data_offset, data_len, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_poseidon_(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
+    unsafe { crypto_poseidon(data_offset, data_len, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_poseidon_with_domain_(
+    fa_offset: i32,
+    fb_offset: i32,
+    fdomain_offset: i32,
+    output_offset: i32,
+) -> i32 {
+    unsafe { crypto_poseidon_with_domain(fa_offset, fb_offset, fdomain_offset, output_offset) }
+}
+
+#[inline(always)]
+pub fn crypto_secp256k1_verify_(
+    digest: i32,
+    digest_len: i32,
+    sig: i32,
+    sig_len: i32,
+    recid: i32,
+    pk_expected: i32,
+    pk_expected_len: i32,
+) -> i32 {
+    unsafe {
+        crypto_secp256k1_verify(
+            digest,
+            digest_len,
+            sig,
+            sig_len,
+            recid,
+            pk_expected,
+            pk_expected_len,
+        )
+    }
 }

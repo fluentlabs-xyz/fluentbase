@@ -1,5 +1,6 @@
 use crate::{
     instruction::exported_memory_vec,
+    poseidon_impl::hash::Hashable,
     zktrie_helpers::account_data_from_bytes,
     RuntimeContext,
 };
@@ -47,17 +48,21 @@ extern "C" fn hash_scheme(
         return FILED_ERROR_READ.as_ptr().cast();
     };
     let fdomain = Fr::from_bytes(&domain);
-    let _fdomain = if fdomain.is_some().into() {
+    let fdomain = if fdomain.is_some().into() {
         fdomain.unwrap()
     } else {
         return FILED_ERROR_READ.as_ptr().cast();
     };
 
-    let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
-    hasher.update(&[fa, fb]);
-    let h = hasher.squeeze();
-
+    let hasher = Fr::hasher();
+    let h = hasher.hash([fa, fb], fdomain);
     let repr_h = h.to_repr();
+
+    // let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
+    // hasher.update(&[fa, fb]);
+    // let h = hasher.squeeze();
+    // let repr_h = h.to_repr();
+
     if repr_h.len() == 32 {
         out.copy_from_slice(repr_h.as_ref());
         std::ptr::null()
