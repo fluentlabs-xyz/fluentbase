@@ -18,7 +18,15 @@ pub struct ElementSegment {
 /// The items of an [`ElementSegment`].
 #[derive(Debug, Clone)]
 pub struct ElementSegmentItems {
-    exprs: Arc<[ConstExpr]>,
+    pub(crate) exprs: Arc<[ConstExpr]>,
+}
+
+impl Default for ElementSegmentItems {
+    fn default() -> Self {
+        Self {
+            exprs: Arc::new([]),
+        }
+    }
 }
 
 impl ElementSegmentItems {
@@ -46,6 +54,10 @@ impl ElementSegmentItems {
                 .map(ConstExpr::new)
                 .collect::<Arc<[_]>>(),
         };
+        Self { exprs }
+    }
+
+    pub fn from_items(exprs: Arc<[ConstExpr]>) -> Self {
         Self { exprs }
     }
 

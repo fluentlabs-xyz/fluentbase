@@ -3,6 +3,7 @@ members = [
     "circuits",
     "core",
     "fluent-stf",
+    "poseidon",
     "runtime",
     "runtime/examples",
     "rwasm",

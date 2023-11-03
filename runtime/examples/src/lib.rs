@@ -1,52 +1,27 @@
 #![no_std]
-
 extern crate alloc;
 
 use fluentbase_sdk::{mpt_open_, rwasm_compile, sys_read, sys_write, zktrie_open_};
 
 #[cfg(feature = "evm")]
 mod evm;
+#[cfg(feature = "greeting")]
+mod greeting;
+#[cfg(feature = "keccak256")]
+mod keccak256;
+#[cfg(feature = "poseidon")]
+mod poseidon;
 #[cfg(feature = "rwasm")]
 mod rwasm;
+#[cfg(feature = "secp256k1")]
+mod secp256k1;
 #[cfg(feature = "wasi")]
 mod wasi;
 
-#[cfg(feature = "greeting")]
-fn greeting() {
-    let mut input: [u8; 3] = [0; 3];
-    sys_read(input.as_mut_ptr(), 0, 3);
-    let sum = input.iter().fold(0u32, |r, v| r + *v as u32);
-    let sum_bytes = sum.to_be_bytes();
-    sys_write(sum_bytes.as_ptr() as u32, sum_bytes.len() as u32);
-}
-
-#[cfg(feature = "evm_block_number")]
-fn evm_block_number() {
-    let mut input = [0u8; 11];
-    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
-    const EXPECTED_LEN: i32 = 32;
-    const OUTPUT_OFFSET: i32 = 0;
-    let len = evm_block_number_(input.as_mut_ptr() as i32, input.len() as i32, OUTPUT_OFFSET);
-    if len != EXPECTED_LEN {
-        panic!("output len!={EXPECTED_LEN:?}");
-    }
-}
-
+#[cfg(feature = "panic")]
 fn panic() {
     panic!("its time to panic");
 }
-
-#[cfg(feature = "zktrie_open_test")]
-fn zktrie_open_test() {
-    zktrie_open_();
-}
-#[cfg(feature = "mpt_open_test")]
-fn mpt_open_test() {
-    mpt_open_();
-}
-
-#[cfg(feature = "revm_db_test")]
-fn revm_db_test() {}
 
 #[cfg(feature = "rwasm_compile_with_linker_test")]
 pub fn rwasm_compile_with_linker_test() {
@@ -65,21 +40,23 @@ pub fn rwasm_compile_with_linker_test() {
 #[no_mangle]
 pub extern "C" fn main() {
     #[cfg(feature = "greeting")]
-    greeting();
-    #[cfg(feature = "zktrie_open_test")]
-    zktrie_open_test();
-    #[cfg(feature = "mpt_open_test")]
-    mpt_open_test();
+    greeting::main();
+    #[cfg(feature = "keccak256")]
+    keccak256::main();
+    #[cfg(feature = "poseidon")]
+    poseidon::main();
+    #[cfg(feature = "secp256k1")]
+    secp256k1::main();
     #[cfg(feature = "panic")]
     panic();
     #[cfg(feature = "evm_verify_block_rlps")]
     evm_verify_block_rlps();
     #[cfg(feature = "rwasm")]
-    crate::rwasm::rwasm();
+    rwasm::main();
     #[cfg(feature = "rwasm_compile_with_linker_test")]
     rwasm_compile_with_linker_test();
     #[cfg(feature = "evm")]
-    crate::evm::evm();
+    evm::main();
     #[cfg(feature = "wasi")]
-    crate::wasi::wasi();
+    wasi::main();
 }

@@ -31,6 +31,8 @@ pub enum RwOp {
     TableSizeWrite(u32),
     TableElemRead(u32),
     TableElemWrite(u32),
+    DataWrite(u32),
+    DataRead(u32),
 }
 
 impl Instruction {
@@ -163,6 +165,13 @@ impl Instruction {
                 // unreachable!("not implemented here")
             }
             Instruction::MemoryInit(_) => {}
+            Instruction::DataStore8(seg)
+            | Instruction::DataStore16(seg)
+            | Instruction::DataStore32(seg)
+            | Instruction::DataStore64(seg) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::DataWrite(seg.to_u32()))
+            }
             Instruction::DataDrop(_) => {}
 
             Instruction::TableSize(table_idx) => {
@@ -175,15 +184,14 @@ impl Instruction {
                 stack_ops.push(RwOp::TableSizeWrite(table_idx.to_u32()));
                 stack_ops.push(RwOp::StackWrite(0));
             }
-            Instruction::TableFill(_) => {
+            Instruction::TableFill(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::TableSizeRead(table_idx.to_u32()));
             }
-            Instruction::TableGet(_table_idx) => {
-                stack_ops.push(RwOp::StackRead(0));
-                //stack_ops.push(RwOp::TableElemRead(table_idx.to_u32()));
-                stack_ops.push(RwOp::StackWrite(0));
+            Instruction::TableGet(_) => {
+                panic!("custom function is used");
             }
             Instruction::TableSet(table_idx) => {
                 stack_ops.push(RwOp::StackRead(0));
@@ -194,10 +202,14 @@ impl Instruction {
             Instruction::TableCopy(_) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackRead(0));
-                stack_ops.push(RwOp::StackWrite(0));
+                stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::TableInit(_) => {}
 
+            Instruction::ElemStore(seg) => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::TableElemWrite(seg.to_u32()))
+            }
             Instruction::ElemDrop(_) => {}
             Instruction::RefFunc(_) => {
                 stack_ops.push(RwOp::StackWrite(0));

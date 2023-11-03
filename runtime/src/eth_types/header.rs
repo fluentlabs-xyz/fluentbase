@@ -17,7 +17,7 @@ pub enum Seal {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Header {
+pub struct Header {
     /// Parent hash.
     parent_hash: H256,
     #[serde(rename = "sha3Uncles")]

@@ -106,7 +106,7 @@ pub struct Transaction {
 /// Generate a dummy pre-eip155 tx in which
 /// (nonce=0, gas=0, gas_price=0, to=0, value=0, data="")
 /// using the dummy private key = 1
-pub fn get_dummy_tx_request() -> (TransactionRequest) {
+pub fn get_dummy_tx_request() -> TransactionRequest {
     let mut sk_be_scalar = [0u8; 32];
     sk_be_scalar[31] = 1_u8;
 

@@ -2,10 +2,10 @@ use crate::{
     instruction::exported_memory_vec,
     RuntimeContext,
 };
+use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use lazy_static::lazy_static;
-use poseidon::Poseidon;
 use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
@@ -46,17 +46,21 @@ extern "C" fn hash_scheme(
         return FILED_ERROR_READ.as_ptr().cast();
     };
     let fdomain = Fr::from_bytes(&domain);
-    let _fdomain = if fdomain.is_some().into() {
+    let fdomain = if fdomain.is_some().into() {
         fdomain.unwrap()
     } else {
         return FILED_ERROR_READ.as_ptr().cast();
     };
 
-    let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
-    hasher.update(&[fa, fb]);
-    let h = hasher.squeeze();
-
+    let hasher = Fr::hasher();
+    let h = hasher.hash([fa, fb], fdomain);
     let repr_h = h.to_repr();
+
+    // let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
+    // hasher.update(&[fa, fb]);
+    // let h = hasher.squeeze();
+    // let repr_h = h.to_repr();
+
     if repr_h.len() == 32 {
         out.copy_from_slice(repr_h.as_ref());
         std::ptr::null()
@@ -81,7 +85,7 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn zktrie_open(mut caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+pub(crate) fn zktrie_open(_caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     DB.with(|db| {
         let root_zero: Hash = [0; FIELDSIZE];
         let zk_trie: ZkTrie = db
