@@ -122,7 +122,8 @@ impl InstructionSet {
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
         if total_pages > N_MAX_MEMORY_PAGES {
             return false;
-        } else if total_pages > self.init_memory_pages {
+        }
+        if total_pages > self.init_memory_pages {
             self.op_i32_const(total_pages - self.init_memory_pages);
             self.op_memory_grow();
             self.op_drop();
