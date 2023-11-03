@@ -87,7 +87,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableGetGadget<F> {
         }
     }
 
-    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
+    fn configure_state_transition(_cb: &mut OpConstraintBuilder<F>) {
         //cb.next_pc_delta(9.expr());
     }
 

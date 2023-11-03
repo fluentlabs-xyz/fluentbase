@@ -207,7 +207,7 @@ pub fn build_table_elem_read_rw_ops(
     table_idx: u32,
 ) -> Result<(), GadgetError> {
 
-    let table_size = step.read_table_size(table_idx);
+    //let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
     let value = step.next_nth_stack_value(0)?;
     step.rw_rows.push(RwRow::Table {
@@ -373,7 +373,6 @@ pub fn build_table_fill_rw_ops_with_args(
     value: u32,
     start: u32,
 ) -> Result<(), GadgetError> {
-    println!("DEBUG BUILD VALUE {:#?}", value);
     build_table_size_read_rw_ops(step, table_index)?;
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();
@@ -396,7 +395,6 @@ pub fn build_table_fill_rw_ops_with_args(
         rw_counter: fill_rw_counter,
         data: vec![value; range as usize],
     };
-    println!("DEBUG ROW {:#?}, TAG {}", row, row.tag as u32);
     step.copy_rows.push(row);
     Ok(())
 }
@@ -446,7 +444,7 @@ pub fn build_table_copy_rw_ops(
         to_address: table_dst * 1024 + dst_eidx.as_u32(),
         length: length.as_u32(),
         rw_counter: copy_rw_counter,
-        data: vec![0; length.as_usize()],
+        data: data.into_iter().collect(),
     });
     Ok(())
 }
