@@ -211,7 +211,7 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_br_indirect(0);
             }
             FuncOrExport::Func(index) => {
-                router_opcodes.op_call_internal(index - num_imports);
+                router_opcodes.op_call_internal(index);
             }
         }
         Ok(router_opcodes)
@@ -753,7 +753,7 @@ impl<'linker> Compiler<'linker> {
             // println!("byte ix: {}", bytecode.instr[i]);
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
-                    let func_idx = func.to_u32() + 1 + self.module.imports.len_funcs as u32;
+                    let func_idx = func.to_u32() + 1;
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
                         self.function_beginning[&func_idx] as i32 - i as i32,
                     ));
