@@ -1,5 +1,4 @@
 use crate::{
-    bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
     exec_step::MAX_TABLE_SIZE,
     gadgets::lt::LtGadget,
@@ -12,7 +11,6 @@ use crate::{
     util::Field,
 };
 use fluentbase_runtime::ExitCode;
-use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 
@@ -122,7 +120,7 @@ impl<F: Field> ExecutionGadget<F> for OpTableCopyGadget<F> {
         }
     }
 
-    fn configure_state_transition(cb: &mut OpConstraintBuilder<F>) {
+    fn configure_state_transition(_cb: &mut OpConstraintBuilder<F>) {
         //cb.next_pc_delta((9*2).expr());
     }
 
@@ -265,7 +263,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second() {
         test_ok(instruction_set! {
@@ -298,7 +295,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second_with_set_zero() {
         test_ok(instruction_set! {
@@ -324,15 +320,15 @@ mod test {
             TableSet(1)
 
             I32Const(0)
-            TableGet(0)
+            TableGet(1)
             Drop
 
             I32Const(1)
-            TableGet(0)
+            TableGet(1)
             Drop
 
             I32Const(2)
-            TableGet(0)
+            TableGet(1)
             Drop
 
             I32Const(1)
@@ -343,7 +339,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_set_second_out_of_bounds() {
         test_ok(instruction_set! {
@@ -416,7 +411,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_overlap_same_idx() {
         test_ok(instruction_set! {
@@ -457,7 +451,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_overlap_pat() {
         test_ok(instruction_set! {
@@ -498,7 +491,6 @@ mod test {
         });
     }
 
-    // TODO: fix problem with test.
     #[test]
     fn table_copy_overlap_seq() {
         test_ok(instruction_set! {
