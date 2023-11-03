@@ -155,7 +155,8 @@ mod tests {
         let result =
             Runtime::run_with_context(RuntimeContext::new(rwasm_binary.as_slice()), &import_linker)
                 .unwrap();
-        let circuit = FluentbaseCircuit::from_execution_result(&result);
+        let exit_code = result.data().exit_code();
+        let circuit = FluentbaseCircuit::from_execution_result_with_exit_code(&result, exit_code);
         let degree: u32 = 17;
         let general_params = get_general_params(degree);
         let key = {

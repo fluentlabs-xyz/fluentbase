@@ -953,13 +953,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     ///   actual instruction where the [`TableIdx`] paremeter belongs to.
     /// - This is required for some instructions that do not fit into a single instruction word and
     ///   store a [`TableIdx`] value in another instruction word.
-    fn fetch_table_idx(&self, offset: usize) -> TableIdx {
+    fn fetch_table_idx(&mut self, offset: usize) -> TableIdx {
         let mut addr: InstructionPtr = self.ip;
         addr.add(offset);
-        match addr.get() {
+        let table_idx = match addr.get() {
             Instruction::TableGet(table_idx) => *table_idx,
             _ => unreachable!("expected TableGet instruction word at this point"),
-        }
+        };
+        self.tracer.remember_next_table(table_idx);
+        table_idx
     }
 
     #[inline(always)]
@@ -1367,7 +1369,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             Err(EntityGrowError::TrapCode(trap_code)) => return Err(trap_code),
         };
         self.sp.push_as(result);
-        self.tracer.table_size_change(table_index.to_u32(), delta);
+        self.tracer
+            .table_size_change(table_index.to_u32(), init.as_u32(), delta);
         self.try_next_instr()
     }
 
@@ -1381,6 +1384,10 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             |costs| costs.fuel_for_elements(u64::from(len)),
             |this| {
                 let table = this.cache.get_table(this.ctx, table_index);
+                this.ctx
+                    .resolve_table(&table)
+                    .get_untyped(dst + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
                 this.ctx
                     .resolve_table_mut(&table)
                     .fill_untyped(dst, val, len)?;
@@ -1430,6 +1437,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 // Query both tables and check if they are the same:
                 let dst = this.cache.get_table(this.ctx, dst);
                 let src = this.cache.get_table(this.ctx, src);
+                this.ctx
+                    .resolve_table(&dst)
+                    .get_untyped(dst_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
+                this.ctx
+                    .resolve_table(&src)
+                    .get_untyped(src_index + len)
+                    .ok_or(TrapCode::TableOutOfBounds)?;
                 if Table::eq(&dst, &src) {
                     // Copy within the same table:
                     let table = this.ctx.resolve_table_mut(&dst);
