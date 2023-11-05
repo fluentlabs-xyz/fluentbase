@@ -205,6 +205,11 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
             }
             Instruction::TableInit(_) => {}
+            Instruction::F32Add => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
 
             Instruction::ElemStore(seg) => {
                 stack_ops.push(RwOp::StackRead(0));

@@ -28,6 +28,7 @@ pub enum ExecutionState {
     WASM_TABLE_GET,
     WASM_TABLE_COPY,
     WASM_TABLE_INIT,
+    WASM_F32_ADD,
     WASM_BITWISE,
     WASM_EXTEND,
     WASM_MEMORY_COPY,
@@ -77,6 +78,7 @@ impl ExecutionState {
             ExecutionState::WASM_CONSUME_FUEL => 32,
             ExecutionState::WASM_SHIFT => 33,
             ExecutionState::WASM_RETURN => 34,
+            ExecutionState::WASM_F32_ADD => 35,
         }
     }
 
@@ -192,6 +194,7 @@ impl ExecutionState {
             Self::WASM_TABLE_GET => vec![Instruction::TableGet(Default::default())],
             Self::WASM_TABLE_COPY => vec![Instruction::TableCopy(Default::default())],
             Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
+            Self::WASM_F32_ADD => vec![Instruction::F32Add],
             Self::WASM_STORE => vec![
                 Instruction::I32Store(Default::default()),
                 Instruction::I32Store8(Default::default()),
