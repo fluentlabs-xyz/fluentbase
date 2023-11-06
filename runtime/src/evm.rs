@@ -1,13 +1,8 @@
 use crate::{
     eth_types::*,
     instruction::{exported_memory_slice, exported_memory_vec},
-    sys_input,
-    zktrie_get_root,
-    zktrie_get_trie,
-    zktrie_open,
-    zktrie_update_balance,
-    RuntimeContext,
-    TRIE_ID_DEFAULT,
+    mpt_open, mpt_update, sys_input, zktrie_get_root, zktrie_get_trie, zktrie_open,
+    zktrie_update_balance, RuntimeContext, TRIE_ID_DEFAULT,
 };
 use fluentbase_rwasm::{common::Trap, Caller};
 use keccak_hash::keccak;
@@ -102,7 +97,9 @@ pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> R
 
     // B_a -> B_b
 
-    zktrie_open(caller)?;
+    mpt_open(caller)?;
+
+    // mpt_update(caller, key_offset, key_len, value_offset, value_len).unwrap();
     // zktrie_get_nonce(caller, key_offset, key_len, output_offset)
     // zktrie_update_balance(caller, key_offset, key_len, value_offset, value_len)
 
