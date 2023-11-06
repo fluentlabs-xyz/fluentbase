@@ -1,5 +1,6 @@
 // #![feature(local_key_cell_methods)]
 #![feature(slice_group_by)]
+#![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;
@@ -13,12 +14,7 @@ pub use runtime::*;
 pub use types::*;
 
 mod crypto;
-mod eth_typ;
-mod eth_types;
-mod evm;
-mod hash;
 mod instruction;
-mod keccak_hash;
 mod macros;
 mod mpt;
 mod mpt_helpers;
@@ -30,7 +26,6 @@ mod secp256k1;
 mod tests;
 mod types;
 mod zktrie;
-mod zktrie_helpers;
 
 #[derive(Debug)]
 pub enum RuntimeError {

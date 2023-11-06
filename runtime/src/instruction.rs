@@ -1,6 +1,6 @@
-pub use crate::{crypto::*, evm::*, mpt::*, rwasm::*, secp256k1::*, zktrie::*};
+pub use crate::{crypto::*, mpt::*, rwasm::*, secp256k1::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
-use fluentbase_rwasm::{common::Trap, rwasm::Compiler, AsContextMut, Caller, Extern, Memory};
+use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller

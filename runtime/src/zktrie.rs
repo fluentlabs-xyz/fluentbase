@@ -12,8 +12,20 @@ use zktrie::{AccountData, Hash, StoreData, ZkMemoryDb, ZkTrie, ACCOUNTSIZE, FIEL
 
 pub const KEYSIZE: usize = 20;
 pub type KeyData = [u8; KEYSIZE];
+
 static FILED_ERROR_READ: &str = "invalid input field";
 static FILED_ERROR_OUT: &str = "output field fail";
+
+pub(crate) fn account_data_from_bytes(data: &[u8]) -> Result<AccountData, Trap> {
+    if data.len() != ACCOUNTSIZE {
+        return Err(Trap::new("account data bad len"));
+    }
+    let mut ad: AccountData = Default::default();
+    for (i, b) in data.iter().enumerate() {
+        ad[i / FIELDSIZE][i % FIELDSIZE] = *b;
+    }
+    Ok(ad)
+}
 
 extern "C" fn hash_scheme(
     a: *const u8,

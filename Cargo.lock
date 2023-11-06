@@ -248,6 +248,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dfdb4953a096c551ce9ace855a604d702e6e62d77fac690575ae347571717f5"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1993,6 +2002,7 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bitvec 1.0.1",
  "bytes",
  "eth_trie",
@@ -2093,11 +2103,39 @@ dependencies = [
 name = "fluentbase-stf"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "bitvec 1.0.1",
+ "bytes",
+ "eth_trie",
+ "ethereum",
+ "ethereum-types 0.14.1",
+ "ethers",
+ "ethers-core 2.0.10",
+ "fluentbase-poseidon",
+ "fluentbase-runtime",
  "fluentbase-rwasm",
  "fluentbase-sdk 0.1.0",
- "revm",
- "revm-interpreter",
- "revm-primitives",
+ "halo2curves",
+ "hex",
+ "hex-literal",
+ "k256 0.13.1",
+ "keccak-hash",
+ "lazy_static",
+ "parity-scale-codec 3.6.4",
+ "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
+ "rlp",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strum 0.25.0",
+ "strum_macros 0.25.2",
+ "thiserror",
+ "tiny-keccak",
+ "tokio",
+ "wasi 0.11.0+wasi-snapshot-preview1",
+ "wat",
+ "web3",
+ "zktrie",
 ]
 
 [[package]]

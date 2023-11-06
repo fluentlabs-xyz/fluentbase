@@ -1,5 +1,4 @@
 use crate::{
-    evm::*,
     macros::{forward_call, forward_call_args},
     ExitCode,
     RuntimeError,
@@ -384,7 +383,7 @@ impl Runtime {
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_crypto_keccak256".to_string(),
-            SysFuncIdx::CRYPTO_KECCAK as u16,
+            SysFuncIdx::CRYPTO_KECCAK256 as u16,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -400,7 +399,7 @@ impl Runtime {
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_crypto_poseidon2".to_string(),
-            SysFuncIdx::CRYPTO_POSEIDON_WITH_DOMAIN as u16,
+            SysFuncIdx::CRYPTO_POSEIDON2 as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 1],
         ));

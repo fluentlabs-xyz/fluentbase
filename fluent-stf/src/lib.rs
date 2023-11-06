@@ -1,18 +1,11 @@
-#![no_std]
+use fluentbase_sdk::sys_input;
+use std::vec;
 
-extern crate alloc;
-
-use alloc::vec;
-use fluentbase_sdk::{
-    mpt_open_,
-    rwasm_compile,
-    sys_input,
-    sys_read,
-    sys_write,
-    wasi_args_get,
-    wasi_args_sizes_get,
-    zktrie_open_,
-};
+mod eth_typ;
+mod eth_types;
+pub mod evm;
+mod hash;
+mod tests;
 
 enum EvmInputSpec {
     RlpBlockA = 0,
@@ -46,7 +39,8 @@ pub extern "C" fn main() {
             0,
         );
         let rlp_block_a = &mem[0..rlp_block_a_len as usize];
-        let rlp_block_a = &mem[rlp_block_a_len as usize..(rlp_block_a_len + rlp_block_b_len) as usize];
+        let rlp_block_a =
+            &mem[rlp_block_a_len as usize..(rlp_block_a_len + rlp_block_b_len) as usize];
 
         // let block_a = decode_rlp(rlp_block_a);
         // let block_b = decode_rlp(rlp_block_b);
