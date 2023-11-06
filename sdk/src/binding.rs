@@ -4,6 +4,7 @@ extern "C" {
     fn _sys_halt(code: u32);
     fn _sys_read(target: *mut u8, offset: u32, length: u32);
     fn _sys_write(offset: u32, length: u32);
+    fn _sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32;
 
     fn _evm_stop();
     fn _evm_return(offset: *const u8, size: u32);
@@ -141,6 +142,9 @@ extern "C" {
         output_len: i32,
     ) -> i32;
 
+    pub fn wasi_args_sizes_get(argc_ptr: i32, argv_ptr: i32) -> i32;
+    pub fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32;
+
     // EVM Inputs
     // fn evm_block_number(output_offset: i32);
     // fn evm_verify_block_rlps();
@@ -154,6 +158,11 @@ pub fn sys_read(target: *mut u8, offset: u32, len: u32) {
 #[inline(always)]
 pub fn sys_write(offset: u32, len: u32) {
     unsafe { _sys_write(offset, len) }
+}
+
+#[inline(always)]
+pub fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32 {
+    unsafe { _sys_input(index, target, offset, length) }
 }
 
 #[inline(always)]

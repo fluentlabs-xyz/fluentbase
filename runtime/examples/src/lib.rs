@@ -32,11 +32,6 @@ fn evm_block_number() {
     }
 }
 
-#[cfg(feature = "evm_verify_block_rlps")]
-fn evm_verify_block_rlps() {
-    evm_verify_block_rlps_();
-}
-
 fn panic() {
     panic!("its time to panic");
 }
@@ -55,9 +50,6 @@ fn revm_db_test() {}
 
 #[cfg(feature = "rwasm_compile_with_linker_test")]
 pub fn rwasm_compile_with_linker_test() {
-    use alloc::vec;
-
-    let mut env = revm_primitives::Env::default();
     const WB_START_OFFSET: usize = 0;
     const WB_LEN: usize = 628;
     const OUT_LEN_EXPECTED: usize = 954;

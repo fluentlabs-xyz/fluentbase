@@ -1989,10 +1989,6 @@ name = "fluentbase-core"
 version = "0.1.0"
 
 [[package]]
-name = "fluentbase-modules"
-version = "0.1.0"
-
-[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2081,11 +2077,22 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions#0aaf83669f0ec29ccb8a443bf8f6f1208a5002aa"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions#0f5b1f088302fe1bdbe816842cc0597f6ba4716a"
 dependencies = [
  "byteorder",
  "fixed-bigint",
  "wee_alloc",
+]
+
+[[package]]
+name = "fluentbase-stf"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-rwasm",
+ "fluentbase-sdk 0.1.0",
+ "revm",
+ "revm-interpreter",
+ "revm-primitives",
 ]
 
 [[package]]
@@ -4136,7 +4143,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9059b05fdb468d0e57e25f02ac6f6976b193ac9e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
 dependencies = [
  "auto_impl",
  "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions)",
@@ -4148,7 +4155,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9059b05fdb468d0e57e25f02ac6f6976b193ac9e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
 dependencies = [
  "derive_more",
  "enumn",
@@ -4159,7 +4166,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9059b05fdb468d0e57e25f02ac6f6976b193ac9e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
 dependencies = [
  "hex",
  "k256 0.13.1",
@@ -4175,7 +4182,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9059b05fdb468d0e57e25f02ac6f6976b193ac9e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",

@@ -2,7 +2,7 @@
 members = [
     "circuits",
     "core",
-    "modules",
+    "fluent-stf",
     "runtime",
     "runtime/examples",
     "rwasm",

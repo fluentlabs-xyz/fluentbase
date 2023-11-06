@@ -5,11 +5,18 @@ use crate::{
         header::{generate_random_header, generate_random_header_based_on_prev_block},
         receipt,
     },
-    fetch_nonce, get_account_data, init_sh,
+    fetch_nonce,
+    get_account_data,
+    init_sh,
     runtime::Runtime,
-    set_account_data, zktrie_get_balance, zktrie_get_trie,
+    set_account_data,
+    zktrie_get_balance,
+    zktrie_get_trie,
     zktrie_helpers::account_data_from_bytes,
-    RuntimeContext, RuntimeError, SysFuncIdx, HASH_SCHEME_DONE,
+    RuntimeContext,
+    RuntimeError,
+    SysFuncIdx,
+    HASH_SCHEME_DONE,
 };
 use eth_trie::DB;
 use fluentbase_rwasm::{
