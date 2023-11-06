@@ -1,7 +1,4 @@
-use crate::{
-    instruction::exported_memory_vec,
-    RuntimeContext,
-};
+use crate::{instruction::exported_memory_vec, RuntimeContext};
 use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
@@ -75,6 +72,10 @@ lazy_static! {
         zktrie::init_hash_scheme(hash_scheme);
         true
     };
+}
+
+pub(crate) fn init_sh() {
+    zktrie::init_hash_scheme(hash_scheme);
 }
 
 type TrieId = i32;

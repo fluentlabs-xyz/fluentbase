@@ -1,4 +1,4 @@
-#![feature(local_key_cell_methods)]
+// #![feature(local_key_cell_methods)]
 #![feature(slice_group_by)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
@@ -24,13 +24,13 @@ mod mpt;
 mod mpt_helpers;
 mod platform;
 mod runtime;
+mod rwasm;
 mod secp256k1;
 #[cfg(test)]
 mod tests;
 mod types;
 mod zktrie;
 mod zktrie_helpers;
-mod rwasm;
 
 #[derive(Debug)]
 pub enum RuntimeError {
