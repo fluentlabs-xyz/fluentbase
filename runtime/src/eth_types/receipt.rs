@@ -1,69 +1,98 @@
-use ethereum_types::{Address, Bloom, H256, U256};
-use ethers::types::Log;
+use bytes::BytesMut;
+use ethereum::{EnvelopedDecodable, EnvelopedDecoderError, EnvelopedEncodable};
+// use ethereum::Log;
+use super::bytes::{de_hex_to_vec_u8, se_hex, Bytes};
+use ethereum_types::{Address, Bloom, H256, U256, U64};
 use rlp::*;
+use serde::{Deserialize, Serialize};
 
-/// EVM log's receipt.
-#[derive(Clone, Debug, Default)]
+// Type              uint8  `json:"type,omitempty"`
+// PostState         []byte `json:"root"`
+// Status            uint64 `json:"status"`
+// CumulativeGasUsed uint64 `json:"cumulativeGasUsed" gencodec:"required"`
+// Bloom             Bloom  `json:"logsBloom"         gencodec:"required"`
+// Logs              []*Log `json:"logs"              gencodec:"required"`
+// #[serde(rename_all = "camelCase")]
+#[derive(
+    Clone, Debug, PartialEq, Eq, rlp::RlpEncodable, rlp::RlpDecodable, Serialize, Deserialize,
+)]
+#[cfg_attr(
+    feature = "with-codec",
+    derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
+)]
+// #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Log {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    #[serde(serialize_with = "se_hex")]
+    #[serde(deserialize_with = "de_hex_to_vec_u8")]
+    data: Vec<u8>,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, rlp::RlpEncodable, rlp::RlpDecodable, Serialize, Deserialize,
+)]
+#[cfg_attr(
+    feature = "with-codec",
+    derive(codec::Encode, codec::Decode, scale_info::TypeInfo)
+)]
 pub struct Receipt {
-    pub id: usize,
-    pub status: u8,
-    pub cumulative_gas_used: u64,
+    pub status: U64,
+    #[serde(rename = "cumulativeGasUsed")]
+    pub cumulative_gas_used: U64,
+    #[serde(rename = "logsBloom")]
     pub bloom: Bloom,
     pub logs: Vec<Log>,
 }
 
-impl Receipt {
-    pub fn new(
-        state_root: Option<H256>,
-        quota_used: U256,
-        logs: Vec<Log>,
-        account_nonce: U256,
-        transaction_hash: H256,
-    ) -> Receipt {
-        Receipt {
-            //     bloom: logs.iter().fold(Bloom::default(), |b, l| b | l()),
-            id: todo!(),
-            status: todo!(),
-            cumulative_gas_used: todo!(),
-            bloom: todo!(),
-            logs,
-        }
+impl EnvelopedEncodable for Receipt {
+    fn type_id(&self) -> Option<u8> {
+        None
+    }
+    fn encode_payload(&self) -> BytesMut {
+        rlp::encode(self)
     }
 }
 
-impl Encodable for Receipt {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        s.begin_list(4);
-        s.append(&self.status);
-        s.append(&self.cumulative_gas_used);
-        s.append(&self.bloom);
-        s.begin_list(self.logs.len());
-        for log in self.logs.iter() {
-            s.begin_list(3);
-            s.append(&log.address);
-            s.append_list(&log.topics);
-            s.append(&log.data.0);
-        }
+impl EnvelopedDecodable for Receipt {
+    type PayloadDecoderError = DecoderError;
+
+    fn decode(bytes: &[u8]) -> Result<Self, EnvelopedDecoderError<Self::PayloadDecoderError>> {
+        Ok(rlp::decode(bytes)?)
     }
 }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReceiptX {
+    pub status: U64,
+    #[serde(rename = "cumulativeGasUsed")]
+    pub cumulative_gas_used: U64,
+    #[serde(rename = "logsBloom")]
+    pub bloom: Bloom,
+    pub logs: Vec<Log>,
+}
+
+impl Receipt {}
+
+// impl Encodable for Receipt {
+//     fn rlp_append(&self, stream: &mut RlpStream) {
+//         stream.begin_list(4);
+//         stream.append(&self.status);
+//         stream.append(&self.cumulative_gas_used);
+//         stream.append(&self.bloom);
+//         stream.append_list(&self.logs);
+//     }
+// }
 
 // impl Decodable for Receipt {
-//     // fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
-//     //     if rlp.as_raw().len() != rlp.payload_info()?.total() {
-//     //         return Err(DecoderError::RlpIsTooBig);
-//     //     }
-
-//     //     // if rlp.item_count()? != 5 {
-//     //     //     return Err(DecoderError::RlpIncorrectListLen);
-//     //     // }
-//     //     // Ok(Receipt {
-//     //     //     status: rlp.val_at(0)?,
-//     //     //     cumulative_gas_used: rlp.val_at(1)?,
-//     //     //     bloom: rlp.val_at(2)?,
-//     //     //     logs: rlp.list_at(3),
-//     //     //     id: todo!(),
-//     //     // })
-//     // }
+//     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+//         let result = Receipt {
+//             status: rlp.val_at(0)?,
+//             cumulative_gas_used: rlp.val_at(1)?,
+//             bloom: rlp.val_at(2)?,
+//             logs: rlp.list_at(3)?,
+//         };
+//         Ok(result)
+//     }
 // }
 
 #[cfg(test)]

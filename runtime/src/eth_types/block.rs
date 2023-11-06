@@ -90,34 +90,6 @@ impl<T: EnvelopedEncodable> BlockX<T> {
     }
 }
 
-pub type BlockV0 = BlockX<TransactionV0>;
-pub type BlockV1 = BlockX<TransactionV1>;
-pub type BlockV2 = BlockX<TransactionV2>;
-pub type BlockAny = BlockX<TransactionAny>;
-
-impl<T> From<BlockV0> for BlockX<T>
-where
-    T: From<TransactionV0> + From<TransactionV1>,
-{
-    fn from(t: BlockV0) -> Self {
-        Self {
-            header: t.header,
-            transactions: t.transactions.into_iter().map(|t| t.into()).collect(),
-            uncles: t.uncles,
-        }
-    }
-}
-
-impl From<BlockV1> for BlockV2 {
-    fn from(t: BlockV1) -> Self {
-        Self {
-            header: t.header,
-            transactions: t.transactions.into_iter().map(|t| t.into()).collect(),
-            uncles: t.uncles,
-        }
-    }
-}
-
 impl Block {
     /// Get the RLP-encoding of the block with or without the seal.
     pub fn rlp_bytes(&self, seal: Seal) -> Bytes {
