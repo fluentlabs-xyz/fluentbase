@@ -1,4 +1,4 @@
-#![feature(lang_items)]
+// #![feature(lang_items)]
 // #![no_std]
 
 // #[cfg(not(feature = "std"))]
