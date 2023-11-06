@@ -265,6 +265,24 @@ mod test {
     }
 
     #[test]
+    fn test_f32_add_interfere() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025) // 0_00100101__0000000_00000000_00100101, 8.07797129917e-28
+            I32Const(0x0d39001a) // 0_00011010__0111001_00000000_00011010, 5.66994998142e-31
+                                 //            ^                    ^^^^^
+                                 //            extra bit            shifted out (number 26)
+                                 //                                 so our `dif` is 26
+                                 //                                 this is less than 2^11, so it is really shifted out
+            F32Add
+            // Out   0x12801745     0_00100101__0000000_00010111_01000101, 8.0836720518e-28
+            //                                             ^
+            //                                             extra bit in result, shifted by 11
+            //                                             exp: 37 - 26 = 11
+            Drop
+        });
+    }
+
+    #[test]
     fn test_f32_add_doubling() {
         test_ok(instruction_set! {
             I32Const(0x12800025)
