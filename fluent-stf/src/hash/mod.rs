@@ -1,7 +1,4 @@
-extern crate ethereum_types;
-extern crate tiny_keccak;
 pub use ethereum_types::H256;
-use std::io;
 use tiny_keccak::{Hasher, Keccak};
 
 /// Get the KECCAK (i.e. Keccak) hash of the empty bytes string.

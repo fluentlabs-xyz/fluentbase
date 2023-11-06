@@ -5,6 +5,7 @@ mod eth_typ;
 mod eth_types;
 pub mod evm;
 mod hash;
+#[cfg(test)]
 mod tests;
 
 enum EvmInputSpec {
