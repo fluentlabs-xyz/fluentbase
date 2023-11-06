@@ -154,9 +154,9 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_raw = rhs.to_bits() as u32;
         let out_raw = out.to_bits() as u32;
 
-        let lhs_sign = (lhs_raw as u64 >> 63) == 1;
-        let rhs_sign = (rhs_raw as u64 >> 63) == 1;
-        let out_sign = (out_raw as u64 >> 63) == 1;
+        let lhs_sign = (lhs_raw as u64 >> 31) == 1;
+        let rhs_sign = (rhs_raw as u64 >> 31) == 1;
+        let out_sign = (out_raw as u64 >> 31) == 1;
 
         let lhs_exp = (lhs_raw >> 23) & 0xff;
         let rhs_exp = (rhs_raw >> 23) & 0xff;
@@ -247,12 +247,40 @@ mod test {
     }
 
     #[test]
-    fn test_f32_add_doubling() {
+    fn test_f32_add_partial_shift_out() {
         test_ok(instruction_set! {
             I32Const(0x12800025) // 0_00100101__0000000_00000000_00100101, 8.07797129917e-28
+            I32Const(0x0d38001a) // 0_00011010__0111000_00000000_00011010, 5.66994998142e-31
+                                 //            ^                    ^^^^^
+                                 //            extra bit            shifted out (number 26)
+                                 //                                 so our `dif` is 26
+                                 //                                 this is less than 2^11, so it is really shifted out
+            F32Add
+            // Out   0x12801725     0_00100101__0000000_00010111_00100101, 8.08364123692e-28
+            //                                             ^
+            //                                             extra bit in result, shifted by 11
+            //                                             exp: 37 - 26 = 11
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_doubling() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
             I32Const(0x12800025)
             F32Add
-            // Out   0x13000025     0_00100110__0000000_00000000_00100101, 1.61559425983e-27
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_doubling_neg() {
+        test_ok(instruction_set! {
+            I32Const(0x92800025_u64) // 1_00100101__0000000_00000000_00100101, -8.07797129917e-28
+            I32Const(0x92800025_u64)
+            F32Add
+            // Out   0x93000025         1_00100110__0000000_00000000_00100101, -1.61559425983e-27
             Drop
         });
     }
