@@ -1,7 +1,6 @@
+use super::bytes::{de_hex_to_vec_u8, se_hex, Bytes};
 use bytes::BytesMut;
 use ethereum::{EnvelopedDecodable, EnvelopedDecoderError, EnvelopedEncodable};
-// use ethereum::Log;
-use super::bytes::{de_hex_to_vec_u8, se_hex, Bytes};
 use ethereum_types::{Address, Bloom, H256, U256, U64};
 use rlp::*;
 use serde::{Deserialize, Serialize};
@@ -61,15 +60,16 @@ impl EnvelopedDecodable for Receipt {
         Ok(rlp::decode(bytes)?)
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ReceiptX {
-    pub status: U64,
-    #[serde(rename = "cumulativeGasUsed")]
-    pub cumulative_gas_used: U64,
-    #[serde(rename = "logsBloom")]
-    pub bloom: Bloom,
-    pub logs: Vec<Log>,
-}
+
+// #[derive(Clone, Serialize, Deserialize)]
+// pub struct ReceiptX {
+//     pub status: U64,
+//     #[serde(rename = "cumulativeGasUsed")]
+//     pub cumulative_gas_used: U64,
+//     #[serde(rename = "logsBloom")]
+//     pub bloom: Bloom,
+//     pub logs: Vec<Log>,
+// }
 
 impl Receipt {}
 
@@ -98,7 +98,34 @@ impl Receipt {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::from_str;
+    use std::{fs::File, io::Read};
     //use crate::log::Log;
+
+    #[test]
+    fn test_decode_external_rlp() {
+        let mut encoded_receipts_json = String::new();
+        File::open("src/test_data/receipts_encoded.json")
+            .unwrap()
+            .read_to_string(&mut encoded_receipts_json)
+            .unwrap();
+
+        let json_value: serde_json::Value = serde_json::from_str(&encoded_receipts_json).unwrap();
+        let receipts = json_value["receipts"].as_array().unwrap();
+
+        for receipt_json in receipts.iter() {
+            let receipt_bytes = serde_json::to_vec(&receipt_json).unwrap();
+            // let receipt: receipt::Receipt = from_str::<receipt::Receipt>(&receipt_str).unwrap();
+
+            let decoded_receipt = rlp::decode::<Receipt>(&receipt_bytes).unwrap();
+            let clone_rex = decoded_receipt.clone();
+            // verify fields
+
+            println!("{:?}", clone_rex.logs);
+
+            // let receipt_bytes = rlp::encode(&receipt).to_vec();
+        }
+    }
 
     // #[test]
     // fn test_no_state_root() {
