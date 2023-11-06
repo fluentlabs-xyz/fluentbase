@@ -383,6 +383,42 @@ fn test_evm_verify_account_state_data() {
 fn test_mpt_receipts_root() {
     use eth_trie::Trie;
 
+    let mut receipts_json = String::new();
+    File::open("src/test_data/receipts_encoded.json")
+        .unwrap()
+        .read_to_string(&mut receipts_json)
+        .unwrap();
+
+    let json_value: serde_json::Value = serde_json::from_str(&receipts_json).unwrap();
+    let receipts = json_value["receipts"].as_array().unwrap();
+
+    // MPT
+    let db = eth_trie::MemoryDB::new(false);
+    let mut trie = eth_trie::EthTrie::new(Arc::new(db));
+
+    for (i, receipt_json) in receipts.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        println!("RECEIPT: {:?}", receipt_json);
+
+        let receipt_bytes = serde_json::to_vec(&receipt_json).unwrap();
+        let path = rlp::encode(&i).freeze().to_vec();
+        trie.insert(&path, &receipt_bytes).unwrap();
+    }
+    let receipt_json = &receipts[0];
+    let i: usize = 0;
+    let receipt_bytes = serde_json::to_vec(&receipt_json).unwrap();
+    let path = rlp::encode(&i).freeze().to_vec();
+    trie.insert(&path, &receipt_bytes).unwrap();
+
+    println!("ROOT: {:?}", trie.root_hash().unwrap());
+}
+
+#[test]
+fn test_mpt_receipts_decoding() {
+    use eth_trie::Trie;
+
     // let mut receipt_json = String::new();
     // File::open("src/test_data/single_receipt.json")
     //     .unwrap()
