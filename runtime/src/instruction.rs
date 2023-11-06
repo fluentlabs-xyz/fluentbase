@@ -56,7 +56,7 @@ pub(crate) fn sys_read(
     target: u32,
     offset: u32,
     length: u32,
-) -> Result<(), Trap> {
+) -> Result<u32, Trap> {
     let input = caller.data().input(0).clone();
     if offset + length > input.len() as u32 {
         return Err(ExitCode::MemoryOutOfBounds.into());
@@ -65,7 +65,7 @@ pub(crate) fn sys_read(
         target as usize,
         &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
     );
-    Ok(())
+    Ok(input.len() as u32)
 }
 
 pub(crate) fn sys_input(

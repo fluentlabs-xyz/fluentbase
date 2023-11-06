@@ -25,8 +25,10 @@ impl TestingContext {
     }
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
-        let execution_result =
-            Runtime::run(self.rwasm_bytecode.as_slice(), self.input_data.as_slice())?;
+        let execution_result = Runtime::run(
+            self.rwasm_bytecode.as_slice(),
+            &vec![self.input_data.clone()],
+        )?;
         self.execution_result = Some(execution_result);
         Ok(())
     }

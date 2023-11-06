@@ -14,7 +14,7 @@ resolver = "2"
 
 [workspace.package]
 authors = [
-    "Dmitry Savonin <dmitry@wasm0.io>",
+    "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
 repository = "https://github.com/wasm0/fuentbase"
 edition = "2021"

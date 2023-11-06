@@ -187,7 +187,7 @@ impl Runtime {
             "_sys_read".to_string(),
             SysFuncIdx::SYS_READ as u16,
             &[ValueType::I32; 3],
-            &[],
+            &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -537,7 +537,7 @@ impl Runtime {
         // sys
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
-        forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> ());
+        forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> u32);
         forward_call!(linker, store, "env", "_sys_input", fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32);
         forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
         // wasi

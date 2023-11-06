@@ -153,7 +153,7 @@ mod tests {
         let rwasm_binary: Vec<u8> = bytecode.into();
         let import_linker = Runtime::new_linker();
         let result = Runtime::run_with_context(
-            RuntimeContext::new(rwasm_binary.as_slice()).with_input(&[]),
+            RuntimeContext::new(rwasm_binary.as_slice()).with_input(&vec![vec![]]),
             &import_linker,
         )
         .unwrap();
