@@ -3,7 +3,7 @@ use crate::{HALT_CODE_EXIT, HALT_CODE_PANIC};
 extern "C" {
     // sys
     fn _sys_halt(code: u32);
-    fn _sys_read(target: *mut u8, offset: u32, length: u32);
+    fn _sys_read(target: *mut u8, offset: u32, length: u32) -> u32;
     fn _sys_write(offset: u32, length: u32);
     fn _sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32;
     // rwasm
@@ -66,7 +66,7 @@ extern "C" {
 }
 
 #[inline(always)]
-pub fn sys_read(target: *mut u8, offset: u32, len: u32) {
+pub fn sys_read(target: *mut u8, offset: u32, len: u32) -> u32 {
     unsafe { _sys_read(target, offset, len) }
 }
 
@@ -78,11 +78,6 @@ pub fn sys_write(offset: u32, len: u32) {
 #[inline(always)]
 pub fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32 {
     unsafe { _sys_input(index, target, offset, length) }
-}
-
-#[inline(always)]
-pub fn sys_read_slice(target: &mut [u8], offset: u32) {
-    unsafe { _sys_read(target.as_mut_ptr(), offset, target.len() as u32) }
 }
 
 #[inline(always)]
