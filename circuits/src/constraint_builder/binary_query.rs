@@ -23,6 +23,14 @@ impl<F: Field> BinaryQuery<F> {
         !((!self).and(!other))
     }
 
+    pub fn xor(self, other: Self) -> Self {
+        self.clone().or(other.clone()).and(!self.and(other))
+    }
+
+    pub fn xnor(self, other: Self) -> Self {
+        !self.xor(other)
+    }
+
     pub fn condition(self, constraint: Query<F>) -> Query<F> {
         self.0 * constraint
     }
