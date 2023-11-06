@@ -1,8 +1,7 @@
 [workspace]
 members = [
     "circuits",
-    "core",
-    "fluent-stf",
+    "fluent",
     "poseidon",
     "runtime",
     "runtime/examples",
