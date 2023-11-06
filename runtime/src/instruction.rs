@@ -1,7 +1,6 @@
 pub use crate::{crypto::*, evm::*, mpt::*, rwasm::*, zktrie::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
-use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
-use fluentbase_rwasm::rwasm::Compiler;
+use fluentbase_rwasm::{common::Trap, rwasm::Compiler, AsContextMut, Caller, Extern, Memory};
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
@@ -75,8 +74,13 @@ pub(crate) fn sys_input(
     target: u32,
     offset: u32,
     length: u32,
-) -> Result<(), Trap> {
+) -> Result<i32, Trap> {
     let input = caller.data().input(index as usize).clone();
+    let length = if length == 0 {
+        input.len() as u32
+    } else {
+        length
+    };
     if offset + length > input.len() as u32 {
         return Err(ExitCode::MemoryOutOfBounds.into());
     }
@@ -84,7 +88,7 @@ pub(crate) fn sys_input(
         target as usize,
         &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
     );
-    Ok(())
+    Ok(length as i32)
 }
 
 pub(crate) fn sys_write(

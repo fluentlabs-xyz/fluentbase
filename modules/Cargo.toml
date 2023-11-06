@@ -1,5 +1,0 @@
-[package]
-name = "fluentbase-modules"
-description = "Fluentbase SDK"
-version = "0.1.0"
-edition = "2021"
