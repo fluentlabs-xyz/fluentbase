@@ -17,9 +17,6 @@ use crate::constraint_builder::SelectorColumn;
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpF32AddGadget<F: Field> {
-    lhs: AdviceColumn,
-    rhs: AdviceColumn,
-    out: AdviceColumn,
     lhs_sign: SelectorColumn,
     rhs_sign: SelectorColumn,
     out_sign: SelectorColumn,
@@ -38,10 +35,6 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_F32_ADD;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
-        let lhs = cb.query_cell();
-        let rhs = cb.query_cell();
-        let out = cb.query_cell();
-
         let lhs_sign = cb.query_selector();
         let rhs_sign = cb.query_selector();
         let out_sign = cb.query_selector();
@@ -68,14 +61,22 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         cb.range_check7(rhs_limbs[2].current());
         cb.range_check7(out_limbs[2].current());
 
-        cb.stack_pop(lhs.current());
-        cb.stack_pop(rhs.current());
-        cb.stack_push(out.current());
+        cb.stack_pop(
+            rhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + rhs_exp.current() * 0x800000.expr() +
+            rhs_limbs[2].current() * 0x10000.expr() + rhs_limbs[1].current() * 0x100.expr() + rhs_limbs[0].current()
+        );
+
+        cb.stack_pop(
+            lhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + lhs_exp.current() * 0x800000.expr() +
+            lhs_limbs[2].current() * 0x10000.expr() + lhs_limbs[1].current() * 0x100.expr() + lhs_limbs[0].current()
+        );
+
+        cb.stack_push(
+            out_sign.current().select(0x80000000_u32.expr(), 0.expr()) + out_exp.current() * 0x800000.expr() +
+            out_limbs[2].current() * 0x10000.expr() + out_limbs[1].current() * 0x100.expr() + out_limbs[0].current()
+        );
 
         Self {
-            lhs,
-            rhs,
-            out,
             lhs_sign,
             rhs_sign,
             out_sign,
@@ -98,10 +99,37 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let lhs = trace.curr_nth_stack_value(1)?;
         let rhs = trace.curr_nth_stack_value(0)?;
         let out = trace.next_nth_stack_value(0)?;
-        self.lhs.assign(region, offset, F::from(lhs.to_bits() as u64));
-        self.rhs.assign(region, offset, F::from(rhs.to_bits() as u64));
-        self.out.assign(region, offset, F::from(out.to_bits() as u64));
-        println!("DEBUG OUT {}", out.to_bits() as u32);
+
+        let lhs_raw = lhs.to_bits() as u32;
+        let rhs_raw = rhs.to_bits() as u32;
+        let out_raw = out.to_bits() as u32;
+
+        let lhs_sign = (lhs_raw as u64 >> 63) == 1;
+        let rhs_sign = (rhs_raw as u64 >> 63) == 1;
+        let out_sign = (out_raw as u64 >> 63) == 1;
+
+        let lhs_exp = (lhs_raw >> 23) & 0xff;
+        let rhs_exp = (rhs_raw >> 23) & 0xff;
+        let out_exp = (out_raw >> 23) & 0xff;
+
+        let lhs_limbs = [lhs_raw & 0xff, (lhs_raw >> 8) & 0xff, (lhs_raw >> 16) & 0x7f];
+        let rhs_limbs = [rhs_raw & 0xff, (rhs_raw >> 8) & 0xff, (rhs_raw >> 16) & 0x7f];
+        let out_limbs = [out_raw & 0xff, (out_raw >> 8) & 0xff, (out_raw >> 16) & 0x7f];
+
+        self.lhs_sign.assign(region, offset, lhs_sign);
+        self.rhs_sign.assign(region, offset, rhs_sign);
+        self.out_sign.assign(region, offset, out_sign);
+
+        self.lhs_exp.assign(region, offset, F::from(lhs_exp as u64));
+        self.rhs_exp.assign(region, offset, F::from(rhs_exp as u64));
+        self.out_exp.assign(region, offset, F::from(out_exp as u64));
+
+        for i in 0..=2 {
+            self.lhs_limbs[i].assign(region, offset, F::from(lhs_limbs[i] as u64));
+            self.rhs_limbs[i].assign(region, offset, F::from(rhs_limbs[i] as u64));
+            self.out_limbs[i].assign(region, offset, F::from(out_limbs[i] as u64));
+        }
+
         Ok(())
     }
 }
