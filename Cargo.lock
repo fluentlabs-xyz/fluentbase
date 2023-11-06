@@ -1985,10 +1985,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-core"
-version = "0.1.0"
-
-[[package]]
 name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
