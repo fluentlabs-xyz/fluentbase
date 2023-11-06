@@ -1,10 +1,7 @@
-use crate::{
-    eth_types::*,
-    instruction::{exported_memory_slice, exported_memory_vec},
-    mpt_open, mpt_update, sys_input, zktrie_get_root, zktrie_get_trie, zktrie_open,
-    zktrie_update_balance, RuntimeContext, TRIE_ID_DEFAULT,
-};
+use crate::eth_types::{block, transaction};
+use fluentbase_runtime::RuntimeContext;
 use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_sdk::mpt_open;
 use keccak_hash::keccak;
 
 enum EvmInputSpec {
@@ -22,31 +19,14 @@ enum EvmInputSpec {
     // add more private inputs
 }
 
-pub(crate) fn evm_block_number(
-    mut caller: Caller<'_, RuntimeContext>,
-    data_offset: i32,
-    data_len: i32,
-    output_offset: i32,
-) -> Result<(), Trap> {
-    // let buff = caller.data().input(EvmInputSpec::BlockNumberA as usize);
-    let block_num = exported_memory_vec(&mut caller, data_offset as usize, data_len as usize);
-    //block_data.copy_from_slice(buff.as_slice());
-    caller.write_memory(output_offset as usize, block_num.as_slice());
-
-    Ok(())
-}
-
-pub(crate) fn evm_rlp_block_a(
-    mut caller: Caller<'_, RuntimeContext>,
-    ptr: u32,
-) -> Result<(), Trap> {
+pub fn evm_rlp_block_a(mut caller: Caller<'_, RuntimeContext>, ptr: u32) -> Result<(), Trap> {
     let buff = caller.data().input(EvmInputSpec::RlpBlockA as usize);
     // let block_rlp = exported_memory_slice(&mut caller, ptr as usize, 8);
     // block_rlp.copy_from_slice(buff.as_slice());
     Ok(())
 }
 
-pub(crate) fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+pub fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
     let empty_vec: Vec<u8> = Vec::new();
     // reading a block_a
     let block_txs_a_rlp_endecoded = caller.data().input(EvmInputSpec::RlpBlockA as usize);
@@ -73,8 +53,8 @@ pub(crate) fn evm_verify_block_rlps(caller: Caller<'_, RuntimeContext>) -> Resul
     Ok(())
 }
 
-pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
-    let block_txs_a_rlp_endecoded = caller.data().input.clone();
+pub fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+    let block_txs_a_rlp_endecoded = caller.data().input(0).clone();
 
     let block_txs_a_rlp_endecoded_x = caller
         .data()
@@ -88,8 +68,7 @@ pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> R
     let transaction_b =
         rlp::decode::<transaction::Transaction>(&block_txs_b_rlp_endecoded_x).unwrap();
 
-    let empty_vec: Vec<u8> = Vec::new();
-    if block_txs_a_rlp_endecoded[0].eq(&empty_vec) {
+    if block_txs_a_rlp_endecoded.is_empty() {
         panic!("EMPTY INPUT");
     }
 
@@ -97,13 +76,13 @@ pub(crate) fn evm_verify_block_receipts(caller: Caller<'_, RuntimeContext>) -> R
 
     // B_a -> B_b
 
-    mpt_open(caller)?;
+    // mpt_open()?;
 
     // mpt_update(caller, key_offset, key_len, value_offset, value_len).unwrap();
     // zktrie_get_nonce(caller, key_offset, key_len, output_offset)
     // zktrie_update_balance(caller, key_offset, key_len, value_offset, value_len)
 
-    let trie_root = zktrie_get_root(&TRIE_ID_DEFAULT)?;
+    // let trie_root = zktrie_get_root(&TRIE_ID_DEFAULT)?;
 
     // initial verification on transactions:
     // let res = verify_input_blocks(&block_txs_a, &block_txs_b);

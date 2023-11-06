@@ -1,17 +1,53 @@
 [package]
 name = "fluentbase-stf"
 version = "0.1.0"
-edition = "2021"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { path = "../sdk", default-features = false }
-fluentbase-rwasm = { path = "../rwasm", default-features = false }
-#revm = { version = "3.3.0", default-features = false }
-#revm-primitives = { version = "1.1.2", default-features = false }
-#revm-interpreter = { version = "1.1.2", default-features = false }
-revm = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false, features=["sdk"] }
-revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
-revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
+fluentbase-rwasm = { path = "../rwasm" }
+fluentbase-poseidon = { path = "../poseidon" }
+fluentbase-sdk = { path = "../sdk" }
+fluentbase-runtime = { path = "../runtime" }
+lazy_static = "1.4.0"
+tiny-keccak = { version = "2.0", features = ["sha3"] }
+tokio = { version = "1.33", features = ["full"] }
+ethereum-types = "0.14.1"
+ethers-core = "2.0.7"
+hex = "0.4.3"
+codec = { package = "parity-scale-codec", version = "3.1.5", default-features = false, features = [ "derive" ] }
+web3 = "0.19.0"
+ethereum = "0.14.0"
+ethers="2.0.10"
+serde = "1"
+serde_json = "1"
+strum = "0.25.0"
+bincode = "1.3.3"
+hex-literal = "0.4.1"
+bytes = "1.5.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+strum_macros = "0.25.2"
+wasi = "0.11.0"
+wat = "1.0.69"
+zktrie = { git = "https://github.com/scroll-tech/zktrie.git", tag="v0.6.0" }
+poseidon = { git = "https://github.com/scroll-tech/poseidon" }
+#patricia-trie = "0.3.0"
+#memorydb = {version = "0.3.0", default-features = false}
+#ethereum-types = "0.4"
+#plain_hasher = "0.2.3"
+thiserror = "1.0.40"
+keccak-hash = "0.10.0"
+eth_trie = "0.3.0"
+rlp = "0.5.2"
+bitvec = "1"
+k256 = "0.13.1"
+sha2 = "0.10.8"
 
-[lib]
-crate-type = ["cdylib"]
+[dev-dependencies]
+wat = "1.0.69"
+hex-literal = "0.4.1"
