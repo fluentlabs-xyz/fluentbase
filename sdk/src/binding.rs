@@ -201,7 +201,7 @@ pub fn crypto_poseidon2(
 }
 
 #[inline(always)]
-pub fn crypto_secp256k1_verify(
+pub fn ecc_secp256k1_verify(
     digest: *const u8,
     digest_len: usize,
     sig: *const u8,
@@ -224,7 +224,7 @@ pub fn crypto_secp256k1_verify(
 }
 
 #[inline(always)]
-pub fn crypto_secp256k1_recover(
+pub fn ecc_secp256k1_recover(
     digest: *const u8,
     digest_len: usize,
     signature: *const u8,

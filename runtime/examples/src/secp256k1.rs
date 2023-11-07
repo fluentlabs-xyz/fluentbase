@@ -1,4 +1,4 @@
-use fluentbase_sdk::{crypto_secp256k1_verify, sys_read};
+use fluentbase_sdk::{ecc_secp256k1_verify, sys_read};
 
 pub fn main() {
     const DIGEST_OFFSET: i32 = 0;
@@ -14,7 +14,7 @@ pub fn main() {
     sys_read(input.as_mut_ptr(), 0, input.len() as u32);
     const EXPECTED_RES: i32 = 1;
 
-    let res = crypto_secp256k1_verify(
+    let res = ecc_secp256k1_verify(
         input.as_ptr(),
         DIGEST_LEN as usize,
         input.as_ptr().wrapping_add(SIG_OFFSET as usize),
