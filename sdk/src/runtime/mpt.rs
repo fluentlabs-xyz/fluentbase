@@ -4,7 +4,7 @@ pub fn mpt_open() {
 }
 
 #[inline(always)]
-pub fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) {
+pub fn mpt_update(key: &[u8], value: &[u8]) {
     todo!("not implemented yet")
 }
 
