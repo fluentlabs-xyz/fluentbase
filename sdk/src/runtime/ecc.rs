@@ -37,47 +37,51 @@ mod test {
 
     struct RecoveryTestVector {
         pk: [u8; 33],
-        msg: &'static [u8],
+        message: &'static [u8],
         sig: [u8; 64],
         recid: RecoveryId,
-        recid2: usize,
     }
 
     const RECOVERY_TEST_VECTORS: &[RecoveryTestVector] = &[
         // Recovery ID 0
         RecoveryTestVector {
             pk: hex!("021a7a569e91dbf60581509c7fc946d1003b60c7dee85299538db6353538d59574"),
-            msg: b"example message",
+            message: b"example message",
             sig: hex!(
                 "ce53abb3721bafc561408ce8ff99c909f7f0b18a2f788649d6470162ab1aa0323971edc523a6d6453f3fb6128d318d9db1a5ff3386feb1047d9816e780039d52"
             ),
             recid: RecoveryId::new(false, false),
-            recid2: 0,
         },
         // Recovery ID 1
         RecoveryTestVector {
             pk: hex!("036d6caac248af96f6afa7f904f550253a0f3ef3f5aa2fe6838a95b216691468e2"),
-            msg: b"example message",
+            message: b"example message",
             sig: hex!(
                 "46c05b6368a44b8810d79859441d819b8e7cdc8bfd371e35c53196f4bcacdb5135c7facce2a97b95eacba8a586d87b7958aaf8368ab29cee481f76e871dbd9cb"
             ),
             recid: RecoveryId::new(true, false),
-            recid2: 1,
         },
     ];
 
     #[test]
-    fn public_key_recovery() {
+    fn public_key_verify() {
         for vector in RECOVERY_TEST_VECTORS {
-            let digest = Sha256::new_with_prefix(vector.msg).finalize();
-            let mut params_vec: Vec<u8> = vec![];
-            params_vec.extend(&digest);
-            params_vec.extend(&vector.sig);
-            params_vec.push(vector.recid2 as u8);
-            params_vec.extend(&vector.pk);
+            let digest = Sha256::new_with_prefix(vector.message).finalize();
+            // verify signature
             let res =
-                SDK::ecc_secp256k1_verify(&digest, &vector.sig, &vector.pk, vector.recid2 as u8);
+                SDK::ecc_secp256k1_verify(&digest, &vector.sig, &vector.pk, vector.recid.to_byte());
             assert_eq!(res, true);
+            // recover pk
+            let mut output_pk = [0u8; 33];
+            let res = SDK::ecc_secp256k1_recover(
+                &digest,
+                &vector.sig,
+                &mut output_pk,
+                vector.recid.to_byte(),
+            );
+            assert_eq!(res, true);
+            // make sure pk matches
+            assert_eq!(output_pk, vector.pk);
         }
     }
 }
