@@ -11,8 +11,15 @@ pub fn mpt_open() {
 }
 
 #[inline(always)]
-pub fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) {
-    unsafe { _mpt_update(key_offset, key_len, value_offset, value_len) }
+pub fn mpt_update(key: &[u8], value: &[u8]) {
+    unsafe {
+        _mpt_update(
+            key.as_ptr() as i32,
+            key.len() as i32,
+            value.as_ptr() as i32,
+            value.len() as i32,
+        )
+    }
 }
 
 #[inline(always)]
