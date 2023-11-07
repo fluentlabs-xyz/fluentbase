@@ -250,7 +250,7 @@ impl Runtime {
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_rwasm_compile".to_string(),
-            SysFuncIdx::RWASM_COMPILE_WITH_LINKER as u16,
+            SysFuncIdx::RWASM_COMPILE as u16,
             &[ValueType::I32; 4],
             &[ValueType::I32; 1],
         ));
@@ -379,53 +379,42 @@ impl Runtime {
             &[ValueType::I32; 1],
             &[ValueType::I32; 1],
         ));
-
+        // crypto
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_crypto_keccak256".to_string(),
             SysFuncIdx::CRYPTO_KECCAK256 as u16,
             &[ValueType::I32; 3],
-            &[ValueType::I32; 1],
+            &[],
         ));
-
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_crypto_poseidon".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON as u16,
             &[ValueType::I32; 3],
-            &[ValueType::I32; 1],
+            &[],
         ));
-
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_crypto_poseidon2".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON2 as u16,
             &[ValueType::I32; 4],
-            &[ValueType::I32; 1],
+            &[],
         ));
-
+        // ecc functions
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "_crypto_secp256k1_verify".to_string(),
-            SysFuncIdx::CRYPTO_SECP256K1_VERIFY as u16,
+            "_ecc_secp256k1_verify".to_string(),
+            SysFuncIdx::ECC_SECP256K1_VERIFY as u16,
             &[ValueType::I32; 7],
             &[ValueType::I32; 1],
         ));
-
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
-            "evm_block_number".to_string(),
-            SysFuncIdx::EVM_BLOCK_NUMBER as u16,
+            "_ecc_secp256k1_recover".to_string(),
+            SysFuncIdx::ECC_SECP256K1_RECOVER as u16,
+            &[ValueType::I32; 7],
             &[ValueType::I32; 1],
-            &[ValueType::I32; 1],
-        ));
-
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "evm_verify_block_rlps".to_string(),
-            SysFuncIdx::EVM_VERIFY_BLOCK_RLPS as u16,
-            &[ValueType::I32; 0],
-            &[ValueType::I32; 0],
         ));
 
         import_linker
@@ -564,18 +553,18 @@ impl Runtime {
         forward_call!(linker, store, "env", "_zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "_zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "_zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-
         // mpt
         forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
         forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
         forward_call!(linker, store, "env", "_mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
-
         // crypto
-        forward_call!(linker, store, "env", "_crypto_keccak256", fn crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_crypto_poseidon2", fn crypto_poseidon2(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_crypto_secp256k1_verify", fn crypto_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, recid: i32, pk_expected: i32, pk_expected_len: i32) -> i32);
+        forward_call!(linker, store, "env", "_crypto_keccak256", fn crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "_crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> ());
+        forward_call!(linker, store, "env", "_crypto_poseidon2", fn crypto_poseidon2(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> ());
+        // ecc
+        forward_call!(linker, store, "env", "_ecc_secp256k1_verify", fn ecc_secp256k1_verify(digest: i32, digest_len: i32, sig: i32, sig_len: i32, pk_expected: i32, pk_expected_len: i32, rec_id: i32) -> i32);
+        forward_call!(linker, store, "env", "_ecc_secp256k1_recover", fn ecc_secp256k1_recover(signature: i32, signature_len: i32, digest: i32, digest_len: i32, output: i32, output_len: i32, rec_id: i32) -> i32);
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

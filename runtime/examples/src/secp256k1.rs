@@ -14,15 +14,14 @@ pub fn main() {
     sys_read(input.as_mut_ptr(), 0, input.len() as u32);
     const EXPECTED_RES: i32 = 1;
 
-    let input_ptr = input.as_mut_ptr() as i32;
     let res = crypto_secp256k1_verify(
-        input_ptr + DIGEST_OFFSET,
-        DIGEST_LEN,
-        input_ptr + SIG_OFFSET,
-        SIG_LEN,
+        input.as_ptr(),
+        DIGEST_LEN as usize,
+        input.as_ptr().wrapping_add(SIG_OFFSET as usize),
+        SIG_LEN as usize,
+        input.as_ptr().wrapping_add(PK_EXPECTED_OFFSET as usize),
+        PK_EXPECTED_LEN as usize,
         input[RECID_OFFSET as usize] as i32,
-        input_ptr + PK_EXPECTED_OFFSET,
-        PK_EXPECTED_LEN,
     );
     if res != EXPECTED_RES {
         panic!("res!={EXPECTED_RES:?}");

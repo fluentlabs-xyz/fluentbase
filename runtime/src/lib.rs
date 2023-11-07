@@ -14,6 +14,7 @@ pub use runtime::*;
 pub use types::*;
 
 mod crypto;
+mod ecc;
 mod instruction;
 mod macros;
 mod mpt;
@@ -21,7 +22,6 @@ mod mpt_helpers;
 mod platform;
 mod runtime;
 mod rwasm;
-mod secp256k1;
 #[cfg(test)]
 mod tests;
 mod types;

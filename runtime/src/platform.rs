@@ -32,7 +32,6 @@ pub enum SysFuncIdx {
     EVM_KECCAK256 = 0xEE03,
     EVM_CALLVALUE = 0xEE08,
     EVM_CALLDATALOAD = 0xEE09,
-
     // zktrie functions
     ZKTRIE_OPEN = 0xDD01,
     ZKTRIE_UPDATE_NONCE = 0xDD02,
@@ -47,21 +46,17 @@ pub enum SysFuncIdx {
     ZKTRIE_GET_CODE_SIZE = 0xDD0B,
     ZKTRIE_UPDATE_STORE = 0xDD0C,
     ZKTRIE_GET_STORE = 0xDD0D,
-
+    // mpt trie
     MPT_OPEN = 0xDF01,
     MPT_UPDATE = 0xDF02,
     MPT_GET = 0xDF03,
     MPT_GET_ROOT = 0xDF04,
-
+    // crypto/ecc
     CRYPTO_KECCAK256 = 0xE001,
     CRYPTO_POSEIDON = 0xE002,
     CRYPTO_POSEIDON2 = 0xE003,
-    CRYPTO_SECP256K1_VERIFY = 0xE004,
-
-    EVM_BLOCK_NUMBER = 0xF001,
-    EVM_VERIFY_BLOCK_RLPS = 0xF002,
-
-    RWASM_COMPILE_WITH_LINKER = 0xF101,
+    ECC_SECP256K1_VERIFY = 0xE104,
+    ECC_SECP256K1_RECOVER = 0xE105,
 }
 
 impl From<FuncIdx> for SysFuncIdx {
