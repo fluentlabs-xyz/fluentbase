@@ -1,27 +1,30 @@
+use crate::{EccPlatformSDK, SDK};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     EncodedPoint,
 };
 
-pub fn ecc_secp256k1_verify(digest: &[u8], sig: &[u8], pk_expected: &[u8], rec_id: u8) -> bool {
-    let sig = Signature::from_slice(sig).unwrap();
-    let pk = VerifyingKey::recover_from_prehash(
-        digest,
-        &sig,
-        RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0),
-    )
-    .unwrap();
-    let pk_computed = EncodedPoint::from(&pk);
-    pk_expected == pk_computed.as_bytes()
-}
+impl EccPlatformSDK for SDK {
+    fn ecc_secp256k1_verify(digest: &[u8], sig: &[u8], pk_expected: &[u8], rec_id: u8) -> bool {
+        let sig = Signature::from_slice(sig).unwrap();
+        let pk = VerifyingKey::recover_from_prehash(
+            digest,
+            &sig,
+            RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0),
+        )
+        .unwrap();
+        let pk_computed = EncodedPoint::from(&pk);
+        pk_expected == pk_computed.as_bytes()
+    }
 
-pub fn ecc_secp256k1_recover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: i32) -> bool {
-    let sig = Signature::from_slice(sig).unwrap();
-    let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
-    let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id).unwrap();
-    let pk_computed = EncodedPoint::from(&pk);
-    output.copy_from_slice(pk_computed.as_bytes());
-    true
+    fn ecc_secp256k1_recover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) -> bool {
+        let sig = Signature::from_slice(sig).unwrap();
+        let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
+        let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id).unwrap();
+        let pk_computed = EncodedPoint::from(&pk);
+        output.copy_from_slice(pk_computed.as_bytes());
+        true
+    }
 }
 
 #[cfg(test)]
@@ -72,7 +75,8 @@ mod test {
             params_vec.extend(&vector.sig);
             params_vec.push(vector.recid2 as u8);
             params_vec.extend(&vector.pk);
-            let res = ecc_secp256k1_verify(&digest, &vector.sig, &vector.pk, vector.recid2 as u8);
+            let res =
+                SDK::ecc_secp256k1_verify(&digest, &vector.sig, &vector.pk, vector.recid2 as u8);
             assert_eq!(res, true);
         }
     }

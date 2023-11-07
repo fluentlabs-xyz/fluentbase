@@ -1,8 +1,6 @@
 #![no_std]
 extern crate alloc;
 
-use fluentbase_sdk::{rwasm_compile, sys_read};
-
 #[cfg(feature = "greeting")]
 mod greeting;
 #[cfg(feature = "keccak256")]
@@ -23,13 +21,14 @@ fn panic() {
 
 #[cfg(feature = "rwasm_compile_with_linker_test")]
 pub fn rwasm_compile_with_linker_test() {
+    use fluentbase_sdk::{RwasmPlatformSDK, SysPlatformSDK, SDK};
     const WB_START_OFFSET: usize = 0;
     const WB_LEN: usize = 628;
     const OUT_LEN_EXPECTED: usize = 954;
     let mut wb = [0u8; WB_START_OFFSET + WB_LEN];
-    sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
+    SDK::sys_read(wb.as_mut_ptr(), WB_START_OFFSET as u32, WB_LEN as u32);
     let mut output = [0u8; OUT_LEN_EXPECTED];
-    let out_len = rwasm_compile(&wb, &mut output);
+    let out_len = SDK::rwasm_compile(&wb, &mut output);
     if out_len != OUT_LEN_EXPECTED as i32 {
         panic!("out_len!=OUT_LEN_EXPECTED");
     }

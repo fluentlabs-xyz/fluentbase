@@ -1,6 +1,6 @@
-use fluentbase_sdk::sys_write;
+use fluentbase_sdk::{SysPlatformSDK, SDK};
 
 pub fn main() {
     let str = "Hello, World";
-    sys_write(str.as_ptr() as u32, str.len() as u32);
+    SDK::sys_write_slice(str.as_bytes());
 }

@@ -1,4 +1,4 @@
-FILES = greeting secp256k1 keccak256 poseidon rwasm evm
+FILES = greeting secp256k1 keccak256 poseidon rwasm
 
 all: $(FILES)
 
