@@ -8,6 +8,7 @@ edition = "2021"
 fluentbase-rwasm = { path = "../rwasm", optional = true }
 fluentbase-runtime = { path = "../runtime", optional = true }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
+eth_trie = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -19,4 +20,4 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:k256"]
+runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:k256", "dep:eth_trie"]
