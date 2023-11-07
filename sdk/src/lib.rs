@@ -23,7 +23,12 @@ pub trait EccPlatformSDK {
     fn ecc_secp256k1_recover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) -> bool;
 }
 
-pub trait MptPlatformSDK {}
+pub trait MptPlatformSDK {
+    fn mpt_open();
+    fn mpt_update(key: &[u8], value: &[u8]);
+    fn mpt_get(key: &[u8], output: &mut [u8]) -> i32;
+    fn mpt_root(output: &mut [u8]) -> i32;
+}
 
 pub trait RwasmPlatformSDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32;
@@ -36,7 +41,21 @@ pub trait SysPlatformSDK {
     fn sys_halt(exit_code: i32);
 }
 
-pub trait ZktriePlatformSDK {}
+pub trait ZktriePlatformSDK {
+    fn zktrie_open();
+    fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32);
+    fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32);
+    fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32);
+    fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32);
+    fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32);
+    fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32);
+    fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32);
+}
 
 // #[cfg(not(feature = "std"))]
 // #[panic_handler]
