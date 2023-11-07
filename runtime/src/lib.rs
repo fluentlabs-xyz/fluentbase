@@ -1,6 +1,3 @@
-// #![feature(local_key_cell_methods)]
-#![feature(slice_group_by)]
-#![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;

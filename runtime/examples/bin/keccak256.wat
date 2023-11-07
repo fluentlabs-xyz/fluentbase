@@ -4,6 +4,7 @@
   (type (;2;) (func))
   (import "env" "_sys_read" (func $_sys_read (type 0)))
   (import "env" "_crypto_keccak256" (func $_crypto_keccak256 (type 1)))
+  (func $deploy (type 2))
   (func $main (type 2)
     (local i32)
     global.get $__stack_pointer
@@ -54,6 +55,9 @@
   (func $__wasm_call_dtors (type 2)
     call $dummy
     call $dummy)
+  (func $deploy.command_export (type 2)
+    call $deploy
+    call $__wasm_call_dtors)
   (func $main.command_export (type 2)
     call $main
     call $__wasm_call_dtors)
@@ -61,4 +65,5 @@
   (memory (;0;) 16)
   (global $__stack_pointer (mut i32) (i32.const 1048576))
   (export "memory" (memory 0))
+  (export "deploy" (func $deploy.command_export))
   (export "main" (func $main.command_export)))
