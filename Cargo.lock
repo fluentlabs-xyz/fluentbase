@@ -2037,6 +2037,10 @@ name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
  "fluentbase-rwasm",
+ "hex",
+ "hex-literal",
+ "k256 0.13.1",
+ "sha2",
 ]
 
 [[package]]

@@ -6,15 +6,16 @@ edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm", optional = true }
+k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+hex = "0.4.3"
+sha2 = "0.10.8"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-runtime = ["dep:fluentbase-rwasm"]
-
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#strip = true
+runtime = ["dep:fluentbase-rwasm", "dep:k256"]

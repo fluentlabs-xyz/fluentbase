@@ -9,7 +9,6 @@ use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     EncodedPoint,
 };
-use sha2::{Digest, Sha256};
 
 fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) -> bool {
     let sig = Signature::try_from(sig).unwrap();
