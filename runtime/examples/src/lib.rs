@@ -1,8 +1,8 @@
 #![no_std]
 extern crate alloc;
 
-#[cfg(feature = "evm")]
-mod evm;
+use fluentbase_sdk::{rwasm_compile, sys_read};
+
 #[cfg(feature = "greeting")]
 mod greeting;
 #[cfg(feature = "keccak256")]
@@ -47,14 +47,10 @@ pub extern "C" fn main() {
     secp256k1::main();
     #[cfg(feature = "panic")]
     panic();
-    #[cfg(feature = "evm_verify_block_rlps")]
-    evm_verify_block_rlps();
     #[cfg(feature = "rwasm")]
     rwasm::main();
     #[cfg(feature = "rwasm_compile_with_linker_test")]
     rwasm_compile_with_linker_test();
-    #[cfg(feature = "evm")]
-    evm::main();
     #[cfg(feature = "wasi")]
     wasi::main();
 }
