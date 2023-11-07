@@ -46,22 +46,32 @@ extern "C" {
     pub fn _mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn _mpt_get_root(output_offset: i32) -> i32;
     // crypto
-    fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8) -> i32;
-    fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8) -> i32;
+    fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
+    fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
     fn _crypto_poseidon2(
         fa_offset: *const u8,
         fb_offset: *const u8,
         domain_offset: *const u8,
         output_offset: *mut u8,
-    ) -> i32;
-    fn _crypto_secp256k1_verify(
-        digest: i32,
+    );
+    // ecc
+    fn _ecc_secp256k1_verify(
+        digest: *const u8,
         digest_len: i32,
-        sig: i32,
-        sig_len: i32,
-        recid: i32,
-        pk_expected: i32,
+        signature: *const u8,
+        signature_len: i32,
+        pk_expected: *const u8,
         pk_expected_len: i32,
+        rec_id: i32,
+    ) -> i32;
+    fn _ecc_secp256k1_recover(
+        digest: *const u8,
+        digest_len: i32,
+        signature: *const u8,
+        signature_len: i32,
+        output: *mut u8,
+        output_len: i32,
+        rec_id: i32,
     ) -> i32;
 }
 
@@ -171,12 +181,12 @@ pub fn mpt_get_root(output_offset: i32) -> i32 {
 }
 
 #[inline(always)]
-pub fn crypto_keccak256(data: &[u8], output: &mut [u8]) -> i32 {
+pub fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
     unsafe { _crypto_keccak256(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
 }
 
 #[inline(always)]
-pub fn crypto_poseidon(data: &[u8], output: &mut [u8]) -> i32 {
+pub fn crypto_poseidon(data: &[u8], output: &mut [u8]) {
     unsafe { _crypto_poseidon(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
 }
 
@@ -186,29 +196,52 @@ pub fn crypto_poseidon2(
     fb_offset: *const u8,
     domain_offset: *const u8,
     output_offset: *mut u8,
-) -> i32 {
+) {
     unsafe { _crypto_poseidon2(fa_offset, fb_offset, domain_offset, output_offset) }
 }
 
 #[inline(always)]
 pub fn crypto_secp256k1_verify(
-    digest: i32,
-    digest_len: i32,
-    sig: i32,
-    sig_len: i32,
-    recid: i32,
-    pk_expected: i32,
-    pk_expected_len: i32,
+    digest: *const u8,
+    digest_len: usize,
+    sig: *const u8,
+    sig_len: usize,
+    pk_expected: *const u8,
+    pk_expected_len: usize,
+    rec_id: i32,
 ) -> i32 {
     unsafe {
-        _crypto_secp256k1_verify(
+        _ecc_secp256k1_verify(
             digest,
-            digest_len,
+            digest_len as i32,
             sig,
-            sig_len,
-            recid,
+            sig_len as i32,
             pk_expected,
-            pk_expected_len,
+            pk_expected_len as i32,
+            rec_id,
+        )
+    }
+}
+
+#[inline(always)]
+pub fn crypto_secp256k1_recover(
+    digest: *const u8,
+    digest_len: usize,
+    signature: *const u8,
+    signature_len: usize,
+    output: *mut u8,
+    output_len: usize,
+    rec_id: i32,
+) -> i32 {
+    unsafe {
+        _ecc_secp256k1_recover(
+            digest,
+            digest_len as i32,
+            signature,
+            signature_len as i32,
+            output,
+            output_len as i32,
+            rec_id,
         )
     }
 }

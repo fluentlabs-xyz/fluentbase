@@ -1,7 +1,9 @@
 extern crate alloc;
 
+use crate::{exported_memory_slice, exported_memory_vec, ExitCode, Runtime, RuntimeContext};
 use alloc::{vec, vec::Vec};
 use fluentbase_poseidon::Hashable;
+use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
@@ -9,7 +11,7 @@ use k256::{
 };
 use sha2::{Digest, Sha256};
 
-pub fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) -> bool {
+fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) -> bool {
     let sig = Signature::try_from(sig).unwrap();
     let recid0 = recid & 0b1 > 0;
     let recid1 = recid & 0b10 > 0;
@@ -19,11 +21,57 @@ pub fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]
     return pk_expected == pk_computed.as_bytes();
 }
 
+pub(crate) fn ecc_secp256k1_verify(
+    mut caller: Caller<'_, RuntimeContext>,
+    digest: i32,
+    digest_len: i32,
+    signature: i32,
+    signature_len: i32,
+    pk_expected: i32,
+    pk_expected_len: i32,
+    rec_id: i32,
+) -> Result<i32, Trap> {
+    let digest_data = exported_memory_vec(&mut caller, digest as usize, digest_len as usize);
+    let signature_data =
+        exported_memory_vec(&mut caller, signature as usize, signature_len as usize);
+    let pk_expected_data =
+        exported_memory_vec(&mut caller, pk_expected as usize, pk_expected_len as usize);
+    let is_ok = secp256k1_verify(
+        &digest_data,
+        &signature_data,
+        rec_id as u8,
+        &pk_expected_data,
+    );
+    Ok(is_ok as i32)
+}
+
+pub(crate) fn ecc_secp256k1_recover(
+    mut caller: Caller<'_, RuntimeContext>,
+    digest: i32,
+    digest_len: i32,
+    signature: i32,
+    signature_len: i32,
+    output: i32,
+    output_len: i32,
+    rec_id: i32,
+) -> Result<i32, Trap> {
+    let signature_data =
+        exported_memory_vec(&mut caller, signature as usize, signature_len as usize);
+    let digest_data = exported_memory_vec(&mut caller, digest as usize, digest_len as usize);
+    let sig = Signature::from_slice(signature_data.as_slice()).unwrap();
+    let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
+    let pk = VerifyingKey::recover_from_prehash(digest_data.as_slice(), &sig, rec_id).unwrap();
+    let pk_computed = EncodedPoint::from(&pk);
+    let output = exported_memory_slice(&mut caller, output as usize, output_len as usize);
+    output.copy_from_slice(pk_computed.as_bytes());
+    Ok(0i32)
+}
+
 #[cfg(test)]
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::secp256k1::secp256k1_verify;
+    use crate::ecc::secp256k1_verify;
     use hex_literal::hex;
     use k256::ecdsa::RecoveryId;
     use sha2::{Digest, Sha256};
