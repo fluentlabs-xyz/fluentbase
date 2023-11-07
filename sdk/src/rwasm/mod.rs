@@ -4,5 +4,3 @@ mod mpt;
 mod rwasm;
 mod sys;
 mod zktrie;
-
-pub struct SDK;

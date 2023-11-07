@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { path = "../rwasm", optional = true }
+fluentbase-runtime = { path = "../runtime", optional = true }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
 
 [dev-dependencies]
@@ -17,5 +18,5 @@ sha2 = "0.10.8"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["runtime"]
-runtime = ["dep:fluentbase-rwasm", "dep:k256"]
+default = []
+runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:k256"]

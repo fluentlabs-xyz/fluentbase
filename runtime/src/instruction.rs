@@ -57,7 +57,7 @@ pub(crate) fn sys_read(
     offset: u32,
     length: u32,
 ) -> Result<u32, Trap> {
-    let input = caller.data().input(0).clone();
+    let input = caller.data().input().clone();
     if offset + length > input.len() as u32 {
         return Err(ExitCode::MemoryOutOfBounds.into());
     }
@@ -66,29 +66,6 @@ pub(crate) fn sys_read(
         &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
     );
     Ok(input.len() as u32)
-}
-
-pub(crate) fn sys_input(
-    mut caller: Caller<'_, RuntimeContext>,
-    index: u32,
-    target: u32,
-    offset: u32,
-    length: u32,
-) -> Result<i32, Trap> {
-    let input = caller.data().input(index as usize).clone();
-    let length = if length == 0 {
-        input.len() as u32
-    } else {
-        length
-    };
-    if offset + length > input.len() as u32 {
-        return Err(ExitCode::MemoryOutOfBounds.into());
-    }
-    caller.write_memory(
-        target as usize,
-        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
-    );
-    Ok(length as i32)
 }
 
 pub(crate) fn sys_write(
@@ -166,9 +143,9 @@ pub(crate) fn wasi_args_get(
     let argv_ptrs = exported_memory_slice(&mut caller, argv_ptrs_ptr as usize, (argc * 4) as usize);
     let mut ptr_sum = argv_buff_ptr;
     for (i, it) in input.iter().enumerate() {
-        let ptr_le = ptr_sum.to_le_bytes();
-        argv_ptrs[i..].copy_from_slice(&ptr_le);
-        ptr_sum += it.len() as i32;
+        // let ptr_le = ptr_sum.to_le_bytes();
+        // argv_ptrs[i..].copy_from_slice(&ptr_le);
+        // ptr_sum += it.len() as i32;
     }
     // copy argv buffer
     let argv_buff = exported_memory_slice(&mut caller, argv_buff_ptr as usize, argv as usize);
@@ -185,12 +162,13 @@ pub(crate) fn rwasm_transact(
     input_len: i32,
     output_offset: i32,
     output_len: i32,
+    state: i32,
 ) -> Result<i32, Trap> {
     let bytecode = exported_memory_vec(&mut caller, code_offset as usize, code_len as usize);
     let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
     // TODO: "we probably need custom linker here with reduced host calls number"
     // TODO: "make sure there is no panic inside runtime"
-    let res = Runtime::run(bytecode.as_slice(), &vec![input]);
+    let res = Runtime::run(bytecode.as_slice(), &input);
     if res.is_err() {
         return Err(ExitCode::TransactError.into());
     }
