@@ -48,3 +48,9 @@ impl Into<Trap> for ExitCode {
         Trap::i32_exit(self as i32)
     }
 }
+
+impl Into<i32> for ExitCode {
+    fn into(self) -> i32 {
+        self as i32
+    }
+}

@@ -43,7 +43,7 @@ pub(crate) fn rwasm_transact(
     let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
     // TODO: "we probably need custom linker here with reduced host calls number"
     // TODO: "make sure there is no panic inside runtime"
-    let res = Runtime::run(bytecode.as_slice(), &vec![input.to_vec()]);
+    let res = Runtime::run(bytecode.as_slice(), &input);
     if res.is_err() {
         return Err(ExitCode::TransactError.into());
     }

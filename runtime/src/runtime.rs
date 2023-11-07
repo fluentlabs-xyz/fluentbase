@@ -1,27 +1,13 @@
 use crate::{
     macros::{forward_call, forward_call_args},
-    ExitCode,
-    RuntimeError,
-    SysFuncIdx,
-    RECURSIVE_MAX_DEPTH,
-    STACK_MAX_HEIGHT,
+    ExitCode, RuntimeError, SysFuncIdx, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
     common::{Trap, ValueType},
     engine::Tracer,
     rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
-    AsContextMut,
-    Caller,
-    Config,
-    Engine,
-    FuelConsumptionMode,
-    Func,
-    FuncType,
-    Instance,
-    Linker,
-    Module,
-    StackLimits,
-    Store,
+    AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, FuncType, Instance, Linker,
+    Module, StackLimits, Store,
 };
 use std::mem::take;
 
@@ -32,7 +18,7 @@ pub struct RuntimeContext {
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
     pub(crate) catch_trap: bool,
-    pub(crate) input: Vec<Vec<u8>>,
+    pub(crate) input: Vec<u8>,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
@@ -60,8 +46,8 @@ impl RuntimeContext {
         }
     }
 
-    pub fn with_input(mut self, input_data: &Vec<Vec<u8>>) -> Self {
-        self.input = input_data.to_vec();
+    pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
+        self.input = input_data;
         self
     }
 
@@ -88,9 +74,8 @@ impl RuntimeContext {
         self.exit_code
     }
 
-    pub fn input(&self, argc: usize) -> &Vec<u8> {
-        // TODO: "add overflow check here"
-        self.input.get(argc).as_ref().unwrap()
+    pub fn input(&self) -> &Vec<u8> {
+        self.input.as_ref()
     }
 
     pub fn input_count(&self) -> u32 {
@@ -98,14 +83,11 @@ impl RuntimeContext {
     }
 
     pub fn input_size(&self) -> u32 {
-        self.input.iter().map(|v| v.len() as u32).sum::<u32>()
+        self.input.len() as u32
     }
 
     pub fn argv_buffer(&self) -> Vec<u8> {
-        self.input.iter().fold(Vec::new(), |mut a, b| {
-            a.extend(b);
-            a
-        })
+        self.input().clone()
     }
 
     pub fn output(&self) -> &Vec<u8> {
@@ -189,13 +171,6 @@ impl Runtime {
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_input".to_string(),
-            SysFuncIdx::SYS_INPUT as u16,
-            &[ValueType::I32; 4],
-            &[],
-        ));
         // WASI sys calls
         import_linker.insert_function(ImportFunc::new_env(
             "wasi_snapshot_preview1".to_string(),
@@ -244,7 +219,7 @@ impl Runtime {
             "env".to_string(),
             "_rwasm_transact".to_string(),
             SysFuncIdx::RWASM_TRANSACT as u16,
-            &[ValueType::I32; 6],
+            &[ValueType::I32; 7],
             &[ValueType::I32; 1],
         ));
         import_linker.insert_function(ImportFunc::new_env(
@@ -420,12 +395,9 @@ impl Runtime {
         import_linker
     }
 
-    pub fn run(
-        rwasm_binary: &[u8],
-        input_data: &Vec<Vec<u8>>,
-    ) -> Result<ExecutionResult, RuntimeError> {
+    pub fn run(rwasm_binary: &[u8], input_data: &Vec<u8>) -> Result<ExecutionResult, RuntimeError> {
         let runtime_context = RuntimeContext::new(rwasm_binary)
-            .with_input(input_data)
+            .with_input(input_data.clone())
             .with_catch_trap(true);
         let import_linker = Self::new_linker();
         Self::run_with_context(runtime_context, &import_linker)
@@ -527,7 +499,6 @@ impl Runtime {
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> u32);
-        forward_call!(linker, store, "env", "_sys_input", fn sys_input(index: u32, target: u32, offset: u32, length: u32) -> i32);
         forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
         // wasi
         forward_call!(linker, store, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
@@ -537,7 +508,7 @@ impl Runtime {
         forward_call!(linker, store, "wasi_snapshot_preview1", "args_sizes_get", fn wasi_args_sizes_get(argc_ptr: i32, argv_ptr: i32) -> i32);
         forward_call!(linker, store, "wasi_snapshot_preview1", "args_get", fn wasi_args_get(argv_ptrs_ptr: i32, argv_buff_ptr: i32) -> i32);
         // rwasm
-        forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32) -> i32);
+        forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32, state: i32) -> i32);
         forward_call!(linker, store, "env", "_rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
         // zktrie
         forward_call!(linker, store, "env", "_zktrie_open", fn zktrie_open() -> ());
