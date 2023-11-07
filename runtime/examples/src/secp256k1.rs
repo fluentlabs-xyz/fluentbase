@@ -1,29 +1,26 @@
-use fluentbase_sdk::{ecc_secp256k1_verify, sys_read};
+use fluentbase_sdk::{EccPlatformSDK, SysPlatformSDK, SDK};
 
 pub fn main() {
-    const DIGEST_OFFSET: i32 = 0;
-    const DIGEST_LEN: i32 = 32;
-    const SIG_OFFSET: i32 = DIGEST_OFFSET + DIGEST_LEN;
-    const SIG_LEN: i32 = 64;
-    const RECID_OFFSET: i32 = SIG_OFFSET + SIG_LEN;
-    const RECID_LEN: i32 = 1;
-    const PK_EXPECTED_OFFSET: i32 = RECID_OFFSET + RECID_LEN;
-    const PK_EXPECTED_LEN: i32 = 33;
+    const DIGEST_OFFSET: usize = 0;
+    const DIGEST_LEN: usize = 32;
+    const SIG_OFFSET: usize = DIGEST_OFFSET + DIGEST_LEN;
+    const SIG_LEN: usize = 64;
+    const REC_ID_OFFSET: usize = SIG_OFFSET + SIG_LEN;
+    const REC_ID_LEN: usize = 1;
+    const PK_EXPECTED_OFFSET: usize = REC_ID_OFFSET + REC_ID_LEN;
+    const PK_EXPECTED_LEN: usize = 33;
 
-    let mut input = [0u8; (DIGEST_LEN + SIG_LEN + RECID_LEN + PK_EXPECTED_LEN) as usize];
-    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
-    const EXPECTED_RES: i32 = 1;
+    let mut digest = [0u8; DIGEST_LEN];
+    SDK::sys_read_slice(&mut digest, DIGEST_OFFSET as u32);
+    let mut sig = [0u8; SIG_LEN];
+    SDK::sys_read_slice(&mut sig, SIG_OFFSET as u32);
+    let mut rec_id = [0u8; REC_ID_LEN];
+    SDK::sys_read_slice(&mut rec_id, REC_ID_OFFSET as u32);
+    let mut pk_expected = [0u8; PK_EXPECTED_LEN];
+    SDK::sys_read_slice(&mut pk_expected, PK_EXPECTED_OFFSET as u32);
 
-    let res = ecc_secp256k1_verify(
-        input.as_ptr(),
-        DIGEST_LEN as usize,
-        input.as_ptr().wrapping_add(SIG_OFFSET as usize),
-        SIG_LEN as usize,
-        input.as_ptr().wrapping_add(PK_EXPECTED_OFFSET as usize),
-        PK_EXPECTED_LEN as usize,
-        input[RECID_OFFSET as usize] as i32,
-    );
-    if res != EXPECTED_RES {
-        panic!("res!={EXPECTED_RES:?}");
+    let res = SDK::ecc_secp256k1_verify(&digest, &sig, &pk_expected, rec_id[0]);
+    if !res {
+        unreachable!("verification failed")
     }
 }

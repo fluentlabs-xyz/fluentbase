@@ -1,8 +1,8 @@
-use fluentbase_sdk::{crypto_poseidon, sys_read};
+use fluentbase_sdk::{CryptoPlatformSDK, SysPlatformSDK, SDK};
 
 pub fn main() {
     let mut input = [0u8; 11]; // "hello world"
-    sys_read(input.as_mut_ptr(), 0, input.len() as u32);
+    SDK::sys_read_slice(&mut input, 0);
     let mut output = [0u8; 32];
-    crypto_poseidon(&input, &mut output);
+    SDK::crypto_poseidon(&input, &mut output);
 }
