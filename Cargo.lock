@@ -2088,7 +2088,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions#0f5b1f088302fe1bdbe816842cc0597f6ba4716a"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#595bd5a1d449e2c9deaa4ff4f5558cd5c66bb55b"
 dependencies = [
  "byteorder",
  "fixed-bigint",
@@ -4180,10 +4180,10 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.3.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#b8e0389ca010fc8ad01bfb4df2a632159b749044"
 dependencies = [
  "auto_impl",
- "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=evm-instructions)",
+ "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
  "revm-interpreter",
  "revm-precompile",
  "wat",
@@ -4192,7 +4192,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#b8e0389ca010fc8ad01bfb4df2a632159b749044"
 dependencies = [
  "derive_more",
  "enumn",
@@ -4203,7 +4203,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.3"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#b8e0389ca010fc8ad01bfb4df2a632159b749044"
 dependencies = [
  "hex",
  "k256 0.13.1",
@@ -4219,7 +4219,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.1.2"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#cae6c2437b5a305dae51d0fdf246dee852ee0d38"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#b8e0389ca010fc8ad01bfb4df2a632159b749044"
 dependencies = [
  "auto_impl",
  "bitflags 2.4.0",
