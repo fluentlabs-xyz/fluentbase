@@ -46,15 +46,15 @@ extern "C" {
     pub fn _mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32;
     pub fn _mpt_get_root(output_offset: i32) -> i32;
     // crypto
-    pub fn _crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
-    pub fn _crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> i32;
-    pub fn _crypto_poseidon2(
-        fa_offset: i32,
-        fb_offset: i32,
-        fdomain_offset: i32,
-        output_offset: i32,
+    fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8) -> i32;
+    fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8) -> i32;
+    fn _crypto_poseidon2(
+        fa_offset: *const u8,
+        fb_offset: *const u8,
+        domain_offset: *const u8,
+        output_offset: *mut u8,
     ) -> i32;
-    pub fn _crypto_secp256k1_verify(
+    fn _crypto_secp256k1_verify(
         digest: i32,
         digest_len: i32,
         sig: i32,
@@ -171,29 +171,23 @@ pub fn mpt_get_root(output_offset: i32) -> i32 {
 }
 
 #[inline(always)]
-pub fn crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> i32 {
-    unsafe { _crypto_keccak256(data_offset, data_len, output_offset) }
+pub fn crypto_keccak256(data: &[u8], output: &mut [u8]) -> i32 {
+    unsafe { _crypto_keccak256(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
 }
 
 #[inline(always)]
 pub fn crypto_poseidon(data: &[u8], output: &mut [u8]) -> i32 {
-    unsafe {
-        _crypto_poseidon(
-            data.as_ptr() as i32,
-            data.len() as i32,
-            output.as_mut_ptr() as i32,
-        )
-    }
+    unsafe { _crypto_poseidon(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
 }
 
 #[inline(always)]
 pub fn crypto_poseidon2(
-    fa_offset: i32,
-    fb_offset: i32,
-    fdomain_offset: i32,
-    output_offset: i32,
+    fa_offset: *const u8,
+    fb_offset: *const u8,
+    domain_offset: *const u8,
+    output_offset: *mut u8,
 ) -> i32 {
-    unsafe { _crypto_poseidon2(fa_offset, fb_offset, fdomain_offset, output_offset) }
+    unsafe { _crypto_poseidon2(fa_offset, fb_offset, domain_offset, output_offset) }
 }
 
 #[inline(always)]
