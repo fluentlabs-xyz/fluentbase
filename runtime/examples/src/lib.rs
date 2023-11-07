@@ -36,6 +36,9 @@ pub fn rwasm_compile_with_linker_test() {
 }
 
 #[no_mangle]
+pub extern "C" fn deploy() {}
+
+#[no_mangle]
 pub extern "C" fn main() {
     #[cfg(feature = "greeting")]
     greeting::main();
