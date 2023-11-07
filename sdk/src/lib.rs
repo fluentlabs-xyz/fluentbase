@@ -1,29 +1,25 @@
-// #![feature(lang_items)]
 // #![no_std]
-//
-// #[cfg(not(feature = "std"))]
-// extern crate wee_alloc;
-//
-// #[cfg(not(feature = "std"))]
-// #[global_allocator]
-// static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-//
+
+#[cfg(feature = "runtime")]
+mod runtime;
+#[cfg(not(feature = "runtime"))]
+mod rwasm;
+
+#[cfg(feature = "runtime")]
+pub use runtime::*;
+#[cfg(not(feature = "runtime"))]
+pub use rwasm::*;
+
 // #[cfg(not(feature = "std"))]
 // #[panic_handler]
 // #[inline(always)]
 // fn panic(info: &core::panic::PanicInfo) -> ! {
-//     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-//         sys_write(panic_message.as_ptr() as u32, panic_message.len() as u32);
-//     }
-//     sys_panic();
+//     // if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
+//     //     sys_write(panic_message.as_ptr() as u32, panic_message.len() as u32);
+//     // }
+//     // sys_panic();
 //     loop {}
 // }
-//
-mod binding;
-pub use binding::*;
-
-const HALT_CODE_EXIT: u32 = 0;
-const HALT_CODE_PANIC: u32 = 1;
 
 // #[cfg(not(feature = "std"))]
 // #[lang = "eh_personality"]

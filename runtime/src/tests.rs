@@ -1,15 +1,6 @@
 use crate::{
-    fetch_nonce,
-    get_account_data,
-    init_sh,
-    runtime::Runtime,
-    set_account_data,
-    zktrie_get_balance,
-    zktrie_get_trie,
-    RuntimeContext,
-    RuntimeError,
-    SysFuncIdx,
-    HASH_SCHEME_DONE,
+    fetch_nonce, get_account_data, init_sh, runtime::Runtime, set_account_data, zktrie_get_balance,
+    zktrie_get_trie, RuntimeContext, RuntimeError, SysFuncIdx, HASH_SCHEME_DONE,
 };
 use eth_trie::DB;
 use fluentbase_rwasm::{
@@ -73,9 +64,11 @@ mod ttt {
 fn test_greeting() {
     let wasm_binary = include_bytes!("../examples/bin/greeting.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
-    let input_data: Vec<Vec<u8>> = vec![[100, 20, 3].to_vec()];
-    let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-    assert_eq!(output.data().output().clone(), vec![0, 0, 0, 123]);
+    let output = Runtime::run(rwasm_binary.as_slice(), &vec![]).unwrap();
+    assert_eq!(
+        output.data().output().clone(),
+        "Hello, World".as_bytes().to_vec()
+    );
 }
 
 // #[test]
