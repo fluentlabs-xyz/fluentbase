@@ -1,5 +1,5 @@
 (module
-  (type (;0;) (func (param i32 i32 i32)))
+  (type (;0;) (func (param i32 i32 i32) (result i32)))
   (type (;1;) (func (param i32 i32)))
   (type (;2;) (func))
   (import "env" "_sys_read" (func $_sys_read (type 0)))
@@ -27,6 +27,7 @@
     i32.const 0
     i32.const 3
     call $_sys_read
+    drop
     i32.const 0
     local.set 2
     loop  ;; label = @1

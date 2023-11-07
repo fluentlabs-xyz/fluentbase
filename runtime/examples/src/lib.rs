@@ -1,8 +1,6 @@
 #![no_std]
 extern crate alloc;
 
-use fluentbase_sdk::{mpt_open_, rwasm_compile, sys_read, sys_write, zktrie_open_};
-
 #[cfg(feature = "evm")]
 mod evm;
 #[cfg(feature = "greeting")]
