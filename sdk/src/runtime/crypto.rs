@@ -50,7 +50,7 @@ impl CryptoPlatformSDK for SDK {
 }
 
 #[cfg(test)]
-mod keccak_tests {
+mod test {
     extern crate alloc;
 
     use alloc::{vec, vec::Vec};

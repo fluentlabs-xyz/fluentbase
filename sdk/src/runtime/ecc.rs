@@ -1,7 +1,8 @@
 use crate::{EccPlatformSDK, SDK};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
-    EncodedPoint,
+    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
+    EncodedPoint, PublicKey,
 };
 
 impl EccPlatformSDK for SDK {
@@ -22,7 +23,9 @@ impl EccPlatformSDK for SDK {
         let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
         let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id).unwrap();
         let pk_computed = EncodedPoint::from(&pk);
-        output.copy_from_slice(pk_computed.as_bytes());
+        let public_key = PublicKey::from_encoded_point(&pk_computed).unwrap();
+        let pk_uncompressed = public_key.to_encoded_point(false);
+        output.copy_from_slice(pk_uncompressed.as_bytes());
         true
     }
 }
