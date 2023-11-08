@@ -1,5 +1,6 @@
 // #![no_std]
 
+#[cfg(feature = "runtime")]
 use fluentbase_runtime::FIELDSIZE;
 
 #[cfg(feature = "runtime")]
@@ -45,18 +46,18 @@ pub trait SysPlatformSDK {
 
 pub trait ZktriePlatformSDK {
     fn zktrie_open();
-    fn zktrie_update_nonce(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_update_balance(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_update_storage_root(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_update_code_hash(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_update_code_size(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_get_nonce(key: &[u8]) -> &[u8; FIELDSIZE];
-    fn zktrie_get_balance(key: &[u8]) -> &[u8; FIELDSIZE];
-    fn zktrie_get_storage_root(key: &[u8]) -> &[u8; FIELDSIZE];
-    fn zktrie_get_code_hash(key: &[u8]) -> &[u8; FIELDSIZE];
-    fn zktrie_get_code_size(key: &[u8]) -> &[u8; FIELDSIZE];
-    fn zktrie_update_store(key: &[u8], value: &[u8; FIELDSIZE]);
-    fn zktrie_get_store(key: &[u8]) -> &[u8; FIELDSIZE];
+    fn zktrie_update_nonce(key: &[u8], value: &[u8; 32]);
+    fn zktrie_update_balance(key: &[u8], value: &[u8; 32]);
+    fn zktrie_update_storage_root(key: &[u8], value: &[u8; 32]);
+    fn zktrie_update_code_hash(key: &[u8], value: &[u8; 32]);
+    fn zktrie_update_code_size(key: &[u8], value: &[u8; 32]);
+    fn zktrie_get_nonce(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_balance(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_storage_root(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_code_hash(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_code_size(key: &[u8]) -> &[u8; 32];
+    fn zktrie_update_store(key: &[u8], value: &[u8; 32]);
+    fn zktrie_get_store(key: &[u8]) -> &[u8; 32];
 }
 
 // #[cfg(not(feature = "std"))]

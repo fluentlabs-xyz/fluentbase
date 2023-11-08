@@ -47,9 +47,9 @@ fn test_evm_verify_block_rlps_without_transactions() {
     };
     let blk_b_encoded = rlp::encode(&blk_b).to_vec();
 
-    let mut input_data: Vec<Vec<u8>> = Vec::new();
-    input_data.push(blk_a_encoded);
-    input_data.push(blk_b_encoded);
+    let mut input_data: Vec<u8> = Vec::new();
+    input_data.extend(blk_a_encoded);
+    input_data.extend(blk_b_encoded);
 
     Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
 }
