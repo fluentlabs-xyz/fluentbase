@@ -15,9 +15,8 @@ impl RwasmPlatformSDK for SDK {
             .unwrap();
         let rwasm_bytecode = compiler.finalize().unwrap();
         if rwasm_bytecode.len() <= output.len() {
-            output.copy_from_slice(rwasm_bytecode.as_slice());
-        } else {
-            output.copy_from_slice(&rwasm_bytecode.as_slice()[0..output.len()]);
+            let len = rwasm_bytecode.len();
+            output[0..len].copy_from_slice(rwasm_bytecode.as_slice());
         }
         rwasm_bytecode.len() as i32
     }
@@ -40,5 +39,18 @@ impl RwasmPlatformSDK for SDK {
         }
         output.copy_from_slice(execution_output.as_slice());
         execution_result.data().exit_code()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::RwasmPlatformSDK;
+    use crate::SDK;
+
+    #[test]
+    fn test_greeting() {
+        let wasm_binary = include_bytes!("../../../runtime/examples/bin/greeting.wasm");
+        let mut output = vec![0u8; 1024 * 1024];
+        SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
     }
 }
