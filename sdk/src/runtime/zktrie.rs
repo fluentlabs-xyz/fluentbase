@@ -4,9 +4,10 @@ use fluentbase_runtime::{
     fetch_balance, fetch_code_hash, fetch_code_size, fetch_nonce, fetch_storage_root, fetch_store,
     get_account_data, get_store_data, update_balance, update_code_hash, update_code_size,
     update_nonce, update_storage_root, update_store, Hash, ZkMemoryDb, ZkTrie, FIELDSIZE,
+    HASH_SCHEME_DONE,
 };
 use std::cell::RefCell;
-assert_eq!(HASH_SCHEME_DONE, true);
+assert_eq!(*HASH_SCHEME_DONE, true);
 
 thread_local! {
     static TRIE: RefCell<ZkTrie> = RefCell::new(ZkMemoryDb::new().new_trie(&[0; FIELDSIZE]).unwrap());
