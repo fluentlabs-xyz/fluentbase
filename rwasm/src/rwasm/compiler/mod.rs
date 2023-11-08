@@ -13,16 +13,14 @@ use crate::{
         instruction_set::InstructionSet,
         ImportLinker,
     },
-    Config,
-    Engine,
-    Module,
+    Config, Engine, Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
 
 mod drop_keep;
 
-#[derive(Debug, )]
+#[derive(Debug)]
 pub enum CompilerError {
     ModuleError(crate::Error),
     MissingEntrypoint,
@@ -174,7 +172,11 @@ impl<'linker> Compiler<'linker> {
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
                     router_opcodes.op_br_if_nez(2);
-                    router_opcodes.op_call_internal(func_index);
+                    if func_index < num_imports {
+                        router_opcodes.op_call(func_index);
+                    } else {
+                        router_opcodes.op_call_internal(func_index - num_imports);
+                    }
                 }
             }
             FuncOrExport::Func(index) => {
