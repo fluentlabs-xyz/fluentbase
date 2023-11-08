@@ -90,39 +90,67 @@ impl ZktriePlatformSDK for SDK {
     }
 
     #[inline(always)]
-    fn zktrie_get_nonce(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
-        unsafe { _zktrie_get_nonce(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32) }
-        out
-    }
-
-    #[inline(always)]
-    fn zktrie_get_balance(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
-        unsafe { _zktrie_get_balance(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32) }
-        out
-    }
-
-    #[inline(always)]
-    fn zktrie_get_storage_root(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
+    fn zktrie_get_nonce(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
         unsafe {
-            _zktrie_get_storage_root(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32)
+            _zktrie_get_nonce(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
         }
         out
     }
 
     #[inline(always)]
-    fn zktrie_get_code_hash(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
-        unsafe { _zktrie_get_code_hash(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32) }
+    fn zktrie_get_balance(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        unsafe {
+            _zktrie_get_balance(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
+        }
         out
     }
 
     #[inline(always)]
-    fn zktrie_get_code_size(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
-        unsafe { _zktrie_get_code_size(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32) }
+    fn zktrie_get_storage_root(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        unsafe {
+            _zktrie_get_storage_root(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn zktrie_get_code_hash(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        unsafe {
+            _zktrie_get_code_hash(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn zktrie_get_code_size(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        unsafe {
+            _zktrie_get_code_size(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
+        }
         out
     }
 
@@ -139,9 +167,15 @@ impl ZktriePlatformSDK for SDK {
     }
 
     #[inline(always)]
-    fn zktrie_get_store(key: &[u8]) -> &[u8; 32] {
-        let mut out = &[0u8; 32];
-        unsafe { _zktrie_get_store(key.as_ptr() as i32, key.len() as i32, out.as_ptr() as i32) }
+    fn zktrie_get_store(key: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        unsafe {
+            _zktrie_get_store(
+                key.as_ptr() as i32,
+                key.len() as i32,
+                out.as_mut_ptr() as i32,
+            )
+        }
         out
     }
 }

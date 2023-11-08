@@ -51,13 +51,13 @@ pub trait ZktriePlatformSDK {
     fn zktrie_update_storage_root(key: &[u8], value: &[u8; 32]);
     fn zktrie_update_code_hash(key: &[u8], value: &[u8; 32]);
     fn zktrie_update_code_size(key: &[u8], value: &[u8; 32]);
-    fn zktrie_get_nonce(key: &[u8]) -> &[u8; 32];
-    fn zktrie_get_balance(key: &[u8]) -> &[u8; 32];
-    fn zktrie_get_storage_root(key: &[u8]) -> &[u8; 32];
-    fn zktrie_get_code_hash(key: &[u8]) -> &[u8; 32];
-    fn zktrie_get_code_size(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_nonce(key: &[u8]) -> [u8; 32];
+    fn zktrie_get_balance(key: &[u8]) -> [u8; 32];
+    fn zktrie_get_storage_root(key: &[u8]) -> [u8; 32];
+    fn zktrie_get_code_hash(key: &[u8]) -> [u8; 32];
+    fn zktrie_get_code_size(key: &[u8]) -> [u8; 32];
     fn zktrie_update_store(key: &[u8], value: &[u8; 32]);
-    fn zktrie_get_store(key: &[u8]) -> &[u8; 32];
+    fn zktrie_get_store(key: &[u8]) -> [u8; 32];
 }
 
 // #[cfg(not(feature = "std"))]
