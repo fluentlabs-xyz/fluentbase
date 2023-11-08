@@ -102,8 +102,8 @@ fn test_keccak256_example() {
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_data: &[u8] = "hello world".as_bytes();
-    let output = Runtime::run(rwasm_binary.as_slice(), &vec![input_data.to_vec()]).unwrap();
-    // assert_eq!(output.data().output().clone(), vec![]);
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
+    assert_eq!(output.data().output().clone(), Vec::<u8>::new());
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn test_poseidon() {
 
     let input_data: &[u8] = "hello world".as_bytes();
 
-    let output = Runtime::run(rwasm_binary.as_slice(), &vec![input_data.to_vec()]).unwrap();
+    let output = Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
     assert_eq!(output.data().output().clone(), Vec::<u8>::new());
 }
 
@@ -144,7 +144,7 @@ fn test_secp256k1_verify() {
     ];
 
     for input_data in input_datas {
-        let output = Runtime::run(rwasm_binary.as_slice(), &vec![input_data.to_vec()]).unwrap();
+        let output = Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
         assert_eq!(output.data().output().clone(), Vec::<u8>::new());
     }
 }
@@ -178,7 +178,7 @@ fn rwasm_compile_with_linker_test() {
     //     "rwasm_binary_compile_res_len {}",
     //     rwasm_binary_compile_res_len.len()
     // );
-    let input = vec![wasm_binary_to_compile.to_vec()];
+    let input = wasm_binary_to_compile.to_vec();
     let result = Runtime::run(rwasm_binary_to_execute.as_slice(), &input).unwrap();
     println!("{:?}", result.data().output().clone());
     assert_eq!(result.data().output().clone(), Vec::<u8>::new());
