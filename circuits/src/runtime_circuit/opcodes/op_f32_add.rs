@@ -57,7 +57,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
         let pow2 = cb.query_cell();
 
-        let lhs_sign_bit: Query<F> = lhs_sign.current().into();
+        let lhs_sign_bit = || -> Query<F> { lhs_sign.current().into() };
 
         cb.range_check8(lhs_exp_ge.current().select(lhs_exp.current() - rhs_exp.current(), 0.expr()));
 
@@ -108,16 +108,18 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         // Same sign case.
         cb.condition(lhs_sign.current().xnor(rhs_sign.current()).into(), |cb| {
             let growing_exp = || out_exp.current() - first_exp();
+            let flip_sign = || 1.expr() - lhs_sign_bit() * 2.expr();
+            let grow = || (growing_exp() + 1.expr());
             cb.require_boolean("is sign is same, `exp` can grow by zero or one", growing_exp());
             // If `out_exp` is growing, than second mant must satisfy.
             // Second mantissa for check is already truncated.
-            let second_mant_for_check = || (out_mant() * (growing_exp() + 1.expr()) - first_mant()) * pow2.current();
+            let second_mant_for_check = || (out_mant() * grow() - growing_exp() * flip_sign() - first_mant()) * pow2.current();
             cb.fixed_lookup(FixedTableTag::Pow2, [
                 first_exp() - second_exp(),
                 pow2.current(),
                 0.expr(),
             ]);
-            let dif = || (second_mant() - second_mant_for_check()) * (1.expr() - lhs_sign_bit * 2.expr());
+            let dif = || (second_mant() - second_mant_for_check()) * flip_sign();
             let lt_gadget = cb.lt_gadget(pow2.current(), dif());
             cb.require_zero("rest of mantissa must be shifted out of bits", lt_gadget.expr());
             opt_lt_gadget = Some(lt_gadget);
@@ -168,6 +170,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_limbs = [rhs_raw & 0xff, (rhs_raw >> 8) & 0xff, ((rhs_raw >> 16) & 0x7f) | 0x80];
         let out_limbs = [out_raw & 0xff, (out_raw >> 8) & 0xff, ((out_raw >> 16) & 0x7f) | 0x80];
 
+        //let lhs_exp_ge = false; //lhs_exp >= rhs_exp;
         let lhs_exp_ge = lhs_exp >= rhs_exp;
         self.lhs_exp_ge.assign(region, offset, lhs_exp_ge);
 
@@ -199,14 +202,23 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let first_mant = if lhs_exp_ge { lhs_mant } else { rhs_mant };
         let second_mant = if lhs_exp_ge { rhs_mant } else { lhs_mant };
 
+        println!("FIRST_MANT {}", first_mant);
+        println!("SECOND_MANT {}", second_mant);
+        println!("OUT_MANT {}", out_mant);
+
         if lhs_sign == rhs_sign {
             let growing_exp = out_exp - first_exp;
             assert!(growing_exp >= 0 && growing_exp <= 1);
             let to_shift = first_exp - second_exp;
             let pow2 = 1 << to_shift;
             self.pow2.assign(region, offset, F::from(pow2 as u64));
-            let second_mant_for_check = (out_mant * (growing_exp as i64 + 1_i64) - first_mant) * pow2 as i64;
-            let dif = (second_mant - second_mant_for_check) * (1_i64 - lhs_sign as i64 * 2_i64);
+            let grow = growing_exp as i64 + 1_i64;
+            let flip_sign = 1_i64 - lhs_sign as i64 * 2_i64;
+            let second_mant_for_check = (out_mant * grow - growing_exp as i64 * flip_sign - first_mant) * pow2 as i64;
+            let dif = (second_mant - second_mant_for_check) * flip_sign;
+            println!("OUT_MANT GROW {}", out_mant * (growing_exp as i64 + 1_i64));
+            println!("SMFC {}", second_mant_for_check);
+            println!("GROWING_EXP {}", growing_exp);
             println!("POW2 {}", pow2);
             println!("DIF {}", dif);
             self.lt_gadget.as_ref().unwrap().assign(
@@ -283,6 +295,16 @@ mod test {
     }
 
     #[test]
+    fn test_f32_add_interfere_order() {
+        test_ok(instruction_set! {
+            I32Const(0x0d39001a)
+            I32Const(0x12800025)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
     fn test_f32_add_doubling() {
         test_ok(instruction_set! {
             I32Const(0x12800025)
@@ -302,5 +324,56 @@ mod test {
             Drop
         });
     }
+
+    #[test]
+    fn test_f32_add_growing_exp_order_first() {
+        test_ok(instruction_set! {
+            I32Const(0x12800026)
+            I32Const(0x12800025)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_growing_exp_order_second() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
+            I32Const(0x12800026)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_neg_growing_exp_order_first() {
+        test_ok(instruction_set! {
+            I32Const(0x92800025_u64)
+            I32Const(0x92800026_u64)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_neg_growing_exp_order_second() {
+        test_ok(instruction_set! {
+            I32Const(0x92800026_u64)
+            I32Const(0x92800025_u64)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_neg_growing_exp_order_second_and_bigger() {
+        test_ok(instruction_set! {
+            I32Const(0x92800126_u64)
+            I32Const(0x92800025_u64)
+            F32Add
+            Drop
+        });
+    }
+
 
 }
