@@ -2037,11 +2037,14 @@ name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
  "eth_trie",
+ "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-rwasm",
+ "halo2curves",
  "hex",
  "hex-literal",
  "k256 0.13.1",
+ "keccak-hash",
  "sha2",
 ]
 
