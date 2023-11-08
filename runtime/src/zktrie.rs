@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     rc::Rc,
 };
-use zktrie::{AccountData, Hash, StoreData, ZkMemoryDb, ZkTrie, ACCOUNTSIZE, FIELDSIZE};
+pub use zktrie::{AccountData, Hash, StoreData, ZkMemoryDb, ZkTrie, ACCOUNTSIZE, FIELDSIZE};
 
 pub const KEYSIZE: usize = 20;
 pub type KeyData = [u8; KEYSIZE];
@@ -117,27 +117,27 @@ pub(crate) fn zktrie_open(_caller: Caller<'_, RuntimeContext>) -> Result<(), Tra
     })
 }
 
-pub(crate) fn new_zktrie(
-    mut caller: Caller<'_, RuntimeContext>,
-) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
-    DB.with(|db| {
-        let root_zero: Hash = [0; FIELDSIZE];
-        let zk_trie: ZkTrie = db
-            .borrow_mut()
-            .new_trie(&root_zero)
-            .ok_or(Trap::new("failed to init new trie"))?;
-        // let trie_id;
-        // trie_id = LAST_TRIE_ID.take();
-        // if trie_id != TRIE_ID_DEFAULT {
-        //     return Err(Trap::new("only 1 trie allowed"));
-        // }
+// pub(crate) fn new_zktrie(
+//     mut caller: Caller<'_, RuntimeContext>,
+// ) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
+//     DB.with(|db| {
+//         let root_zero: Hash = [0; FIELDSIZE];
+//         let zk_trie: ZkTrie = db
+//             .borrow_mut()
+//             .new_trie(&root_zero)
+//             .ok_or(Trap::new("failed to init new trie"))?;
+//         // let trie_id;
+//         // trie_id = LAST_TRIE_ID.take();
+//         // if trie_id != TRIE_ID_DEFAULT {
+//         //     return Err(Trap::new("only 1 trie allowed"));
+//         // }
 
-        // TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(zk_trie))));
+//         // TRIES.with_borrow_mut(|m| m.insert(trie_id, Rc::new(RefCell::new(zk_trie))));
 
-        //  Ok(Some(zk_trie.try_into().clone()));
-        Err(Trap::new("not found"))
-    })
-}
+//         //  Ok(Some(zk_trie.try_into().clone()));
+//         Err(Trap::new("not found"))
+//     })
+// }
 
 pub(crate) fn zktrie_get_trie(id: &TrieId) -> Result<Rc<RefCell<ZkTrie>>, Trap> {
     TRIES.with(|t| {
@@ -154,7 +154,7 @@ pub(crate) fn zktrie_get_root(id: &TrieId) -> Result<Hash, Trap> {
     Ok(zktrie_get_trie(id)?.borrow().root())
 }
 
-pub(crate) fn get_account_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<AccountData> {
+pub fn get_account_data(key: &[u8], trie: &ZkTrie) -> Option<AccountData> {
     let acc_data = trie.get_account(&key);
     if let Some(ad) = acc_data {
         return Some(ad);
@@ -177,7 +177,7 @@ pub(crate) fn set_account_data(id: &TrieId, key: &[u8], acc_fields: &AccountData
     })
 }
 
-fn get_store_data(key: &[u8], trie: RefMut<ZkTrie>) -> Option<StoreData> {
+pub fn get_store_data(key: &[u8], trie: &ZkTrie) -> Option<StoreData> {
     let acc_data = trie.get_store(&key);
     if let Some(ad) = acc_data {
         return Some(ad);
@@ -198,7 +198,7 @@ macro_rules! impl_update {
             let value = exported_memory_vec(&mut caller, value_offset as usize, value_len as usize);
 
             let trie = zktrie_get_trie(&TRIE_ID_DEFAULT)?;
-            let data = $data_extractor(&key, trie.borrow_mut());
+            let data = $data_extractor(&key, &trie.borrow());
             let mut data = data.unwrap_or(Default::default());
             let mut field_array: [u8; FIELDSIZE] = [0; FIELDSIZE];
             // be or le?
@@ -228,7 +228,7 @@ macro_rules! impl_get {
             let key = exported_memory_vec(&mut caller, key_offset as usize, key_len as usize);
 
             let trie = zktrie_get_trie(&TRIE_ID_DEFAULT)?;
-            let data = $data_extractor(&key, trie.borrow_mut());
+            let data = $data_extractor(&key, &trie.borrow());
             if !data.is_some() {
                 return Err(Trap::new(format!("failed to get value")));
             }
@@ -248,38 +248,38 @@ pub fn fetch_nonce(data: &AccountData) -> [u8; FIELDSIZE] {
     data[0]
 }
 
-fn update_balance(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
+pub fn update_balance(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[1] = *v;
 }
-fn fetch_balance(data: &AccountData) -> [u8; FIELDSIZE] {
+pub fn fetch_balance(data: &AccountData) -> [u8; FIELDSIZE] {
     data[1]
 }
 
-fn update_storage_root(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
+pub fn update_storage_root(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[2] = *v;
 }
-fn fetch_storage_root(data: &AccountData) -> [u8; FIELDSIZE] {
+pub fn fetch_storage_root(data: &AccountData) -> [u8; FIELDSIZE] {
     data[2]
 }
 
-fn update_code_hash(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
+pub fn update_code_hash(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[3] = *v;
 }
-fn fetch_code_hash(data: &AccountData) -> [u8; FIELDSIZE] {
+pub fn fetch_code_hash(data: &AccountData) -> [u8; FIELDSIZE] {
     data[3]
 }
 
-fn update_code_size(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
+pub fn update_code_size(data: &mut AccountData, v: &[u8; FIELDSIZE]) {
     data[4] = *v;
 }
-fn fetch_code_size(data: &AccountData) -> [u8; FIELDSIZE] {
+pub fn fetch_code_size(data: &AccountData) -> [u8; FIELDSIZE] {
     data[4]
 }
 
-fn update_store(data: &mut StoreData, v: &[u8; FIELDSIZE]) {
+pub fn update_store(data: &mut StoreData, v: &[u8; FIELDSIZE]) {
     *data = *v;
 }
-fn fetch_store(data: &StoreData) -> [u8; FIELDSIZE] {
+pub fn fetch_store(data: &StoreData) -> [u8; FIELDSIZE] {
     *data
 }
 
