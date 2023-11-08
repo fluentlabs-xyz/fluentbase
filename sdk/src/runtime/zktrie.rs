@@ -7,7 +7,6 @@ use fluentbase_runtime::{
     HASH_SCHEME_DONE,
 };
 use std::cell::RefCell;
-assert_eq!(*HASH_SCHEME_DONE, true);
 
 thread_local! {
     static TRIE: RefCell<ZkTrie> = RefCell::new(ZkMemoryDb::new().new_trie(&[0; FIELDSIZE]).unwrap());
@@ -15,6 +14,10 @@ thread_local! {
 
 impl ZktriePlatformSDK for SDK {
     fn zktrie_open() {
+        if *HASH_SCHEME_DONE != true {
+            panic!("hash scheme must be initialized")
+        }
+
         let mut db = ZkMemoryDb::new();
         let root_zero: Hash = [0; FIELDSIZE];
         let zk_trie: ZkTrie = db.new_trie(&root_zero).expect("failed to init new zk trie");
