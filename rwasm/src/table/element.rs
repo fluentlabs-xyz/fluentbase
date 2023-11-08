@@ -4,8 +4,7 @@ use crate::{
     module,
     module::{ConstExpr, ElementSegmentItems},
     store::Stored,
-    AsContext,
-    AsContextMut,
+    AsContext, AsContextMut,
 };
 use alloc::sync::Arc;
 
@@ -142,7 +141,7 @@ impl ElementSegmentEntity {
         let mut new_items = self
             .items
             .as_ref()
-            .map(|v| v.items().clone())
+            .map(|v| v.items())
             .unwrap_or_default()
             .to_vec();
         new_items.push(expr);

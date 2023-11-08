@@ -1,25 +1,11 @@
 use crate::{ZktriePlatformSDK, SDK};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use fluentbase_runtime::{
-    fetch_balance,
-    fetch_code_size,
-    fetch_nonce,
-    fetch_storage_root,
-    fetch_store,
-    get_account_data,
-    get_store_data,
-    update_balance,
-    update_code_hash,
-    update_code_size,
-    update_nonce,
-    update_storage_root,
-    update_store,
-    Hash,
-    ZkMemoryDb,
-    ZkTrie,
-    FIELDSIZE,
+    fetch_balance, fetch_code_hash, fetch_code_size, fetch_nonce, fetch_storage_root, fetch_store,
+    get_account_data, get_store_data, update_balance, update_code_hash, update_code_size,
+    update_nonce, update_storage_root, update_store, Hash, ZkMemoryDb, ZkTrie, FIELDSIZE,
 };
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 assert_eq!(HASH_SCHEME_DONE, true);
 
 thread_local! {
@@ -94,43 +80,48 @@ impl ZktriePlatformSDK for SDK {
         });
     }
 
-    fn zktrie_get_nonce(key: &[u8]) -> &[u8; FIELDSIZE] {
+    fn zktrie_get_nonce(key: &[u8]) -> [u8; FIELDSIZE] {
         TRIE.with_borrow_mut(|trie| {
             let data = get_account_data(&key, trie).expect(&format!("failed to get account data"));
 
             let data = fetch_nonce(&data);
-            &data
+            data
         })
     }
 
-    fn zktrie_get_balance(key: &[u8]) -> &[u8; FIELDSIZE] {
+    fn zktrie_get_balance(key: &[u8]) -> [u8; FIELDSIZE] {
         TRIE.with_borrow_mut(|trie| {
             let data = get_account_data(&key, trie).expect(&format!("failed to get account data"));
 
             let data = fetch_balance(&data);
-            &data
+            data
         })
     }
 
-    fn zktrie_get_storage_root(key: &[u8]) -> &[u8; FIELDSIZE] {
+    fn zktrie_get_storage_root(key: &[u8]) -> [u8; FIELDSIZE] {
         TRIE.with_borrow_mut(|trie| {
             let data = get_account_data(&key, trie).expect(&format!("failed to get account data"));
 
             let data = fetch_storage_root(&data);
-            &data
+            data
         })
     }
 
-    fn zktrie_get_code_hash(key: &[u8]) -> &[u8; FIELDSIZE] {
-        todo!("not implemented yet")
+    fn zktrie_get_code_hash(key: &[u8]) -> [u8; FIELDSIZE] {
+        TRIE.with_borrow_mut(|trie| {
+            let data = get_account_data(&key, trie).expect(&format!("failed to get account data"));
+
+            let data = fetch_code_hash(&data);
+            data
+        })
     }
 
-    fn zktrie_get_code_size(key: &[u8]) -> &[u8; FIELDSIZE] {
+    fn zktrie_get_code_size(key: &[u8]) -> [u8; FIELDSIZE] {
         TRIE.with_borrow_mut(|trie| {
             let data = get_account_data(&key, trie).expect(&format!("failed to get account data"));
 
             let data = fetch_code_size(&data);
-            &data
+            data
         })
     }
 
@@ -146,12 +137,12 @@ impl ZktriePlatformSDK for SDK {
         });
     }
 
-    fn zktrie_get_store(key: &[u8]) -> &[u8; FIELDSIZE] {
+    fn zktrie_get_store(key: &[u8]) -> [u8; FIELDSIZE] {
         TRIE.with_borrow_mut(|trie| {
             let data = get_store_data(&key, trie).expect(&format!("failed to get account data"));
 
             let data = fetch_store(&data);
-            &data
+            data
         })
     }
 }
