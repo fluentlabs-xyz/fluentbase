@@ -13,10 +13,10 @@ pub trait CryptoPlatformSDK {
     fn crypto_keccak256(data: &[u8], output: &mut [u8]);
     fn crypto_poseidon(data: &[u8], output: &mut [u8]);
     fn crypto_poseidon2(
-        fa_offset: *const u8,
-        fb_offset: *const u8,
-        domain_offset: *const u8,
-        output_offset: *mut u8,
+        fa_data: &[u8; 32],
+        fb_data: &[u8; 32],
+        fdomain_data: &[u8; 32],
+        output: &mut [u8],
     );
 }
 
