@@ -49,7 +49,7 @@ mod test {
 
     #[test]
     fn test_greeting() {
-        let wasm_binary = include_bytes!("../../../runtime/examples/bin/greeting.wasm");
+        let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
         let mut output = vec![0u8; 1024 * 1024];
         SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
     }
