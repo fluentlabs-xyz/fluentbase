@@ -16,7 +16,7 @@ pub trait CryptoPlatformSDK {
     fn crypto_poseidon2(
         fa_data: &[u8; 32],
         fb_data: &[u8; 32],
-        fdomain_data: &[u8; 32],
+        domain_data: &[u8; 32],
         output: &mut [u8],
     );
 }

@@ -17,7 +17,7 @@ impl CryptoPlatformSDK for SDK {
     fn crypto_poseidon2(
         fa_data: &[u8; 32],
         fb_data: &[u8; 32],
-        fdomain_data: &[u8; 32],
+        domain_data: &[u8; 32],
         output: &mut [u8],
     ) {
         let fa = Fr::from_bytes(fa_data);
@@ -34,7 +34,7 @@ impl CryptoPlatformSDK for SDK {
         //     return Err(Trap::new(format!("failed to get fb param")));
         // };
 
-        let fdomain = Fr::from_bytes(&fdomain_data);
+        let fdomain = Fr::from_bytes(&domain_data);
         let fdomain = fdomain.unwrap();
         //     fdomain.unwrap()
         // } else {
