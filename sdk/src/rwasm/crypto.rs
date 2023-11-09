@@ -23,14 +23,14 @@ impl CryptoPlatformSDK for SDK {
     fn crypto_poseidon2(
         fa_data: &[u8; 32],
         fb_data: &[u8; 32],
-        fdomain_data: &[u8; 32],
+        domain_data: &[u8; 32],
         output: &mut [u8],
     ) {
         unsafe {
             _crypto_poseidon2(
                 fa_data.as_ptr(),
                 fb_data.as_ptr(),
-                fdomain_data.as_ptr(),
+                domain_data.as_ptr(),
                 output.as_mut_ptr(),
             )
         }

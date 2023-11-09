@@ -2033,6 +2033,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-rwasm-evm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "fluentbase-rwasm",
+ "wast 62.0.1",
+ "wat",
+]
+
+[[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [

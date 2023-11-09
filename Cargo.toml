@@ -1,12 +1,13 @@
 [workspace]
 members = [
     "circuits",
+    "examples",
     "fluent",
     "poseidon",
     "runtime",
-    "runtime/examples",
     "rwasm",
     "rwasm/e2e",
+    "rwasm/evm",
     "sdk",
 ]
 exclude = []
