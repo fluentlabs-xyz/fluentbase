@@ -15,6 +15,7 @@ extern "C" {
         output_offset: *mut u8,
         output_len: i32,
         state: i32,
+        fuel_limit: i32,
     ) -> i32;
 }
 
@@ -32,7 +33,13 @@ impl RwasmPlatformSDK for SDK {
     }
 
     #[inline(always)]
-    fn rwasm_transact(bytecode: &[u8], input: &[u8], output: &mut [u8], state: u32) -> i32 {
+    fn rwasm_transact(
+        bytecode: &[u8],
+        input: &[u8],
+        output: &mut [u8],
+        state: u32,
+        fuel_limit: u32,
+    ) -> i32 {
         unsafe {
             _rwasm_transact(
                 bytecode.as_ptr(),
@@ -42,6 +49,7 @@ impl RwasmPlatformSDK for SDK {
                 output.as_mut_ptr(),
                 output.len() as i32,
                 state as i32,
+                fuel_limit as u32,
             )
         }
     }
