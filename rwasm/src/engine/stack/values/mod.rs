@@ -147,7 +147,6 @@ impl ValueStack {
             initial_len <= maximum_len,
             "initial value stack length is greater than maximum value stack length",
         );
-        println!("Init len: {}, max:  {}", initial_len, maximum_len);
         let entries = vec![UntypedValue::default(); initial_len];
         Self {
             entries,

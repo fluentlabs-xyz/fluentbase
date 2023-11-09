@@ -30,6 +30,7 @@ use crate::{
     module::DEFAULT_MEMORY_INDEX,
     store::ResourceLimiterRef,
     table::TableEntity,
+    Error::Trap,
     FuelConsumptionMode,
     Func,
     FuncRef,

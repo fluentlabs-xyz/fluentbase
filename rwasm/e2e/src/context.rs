@@ -13,6 +13,7 @@ use fluentbase_rwasm::{
         RouterInstructions,
     },
     value::WithType,
+    AsContext,
     Caller,
     Config,
     Engine,
@@ -21,6 +22,7 @@ use fluentbase_rwasm::{
     Func,
     FuncType,
     Global,
+    ImportType,
     Instance,
     Linker,
     Memory,
@@ -48,6 +50,9 @@ pub struct TestContext<'a> {
     modules: Vec<Module>,
     /// The list of all instantiated modules.
     instances: HashMap<String, Instance>,
+
+    last_exports: Option<Vec<String>>,
+
     /// The last touched module instance.
     last_instance: Option<Instance>,
     /// Profiling during the Wasm spec test run.
@@ -69,6 +74,19 @@ struct MainFunction {
     pub fn_index: u32,
     pub fn_type: FuncType,
 }
+
+const SYS_STATE: u32 = 0xA002;
+const SYS_INPUT: u32 = 0xF001;
+const SYS_OUTPUT: u32 = 0xF002;
+const SYS_INPUT_LEN: u32 = 0xF003;
+const SYS_OUTPUT_LEN: u32 = 0xF004;
+
+const SYS_PRINT_I32: u32 = 0xF005;
+const SYS_PRINT_I64: u32 = 0xF006;
+const SYS_PRINT_F32: u32 = 0xF007;
+const SYS_PRINT_F64: u32 = 0xF008;
+const SYS_PRINT_I32_F32: u32 = 0xF009;
+const SYS_PRINT_F64_F64: u32 = 0xF010;
 
 const DEFAULT_MODULE_NAME: &'static str = "main_module";
 impl<'a> TestContext<'a> {
@@ -92,22 +110,22 @@ impl<'a> TestContext<'a> {
             println!("print");
         });
         let print_i32 = Func::wrap(&mut store, |value: i32| {
-            println!("print: {value}");
+            println!("print_i32: {value}");
         });
         let print_i64 = Func::wrap(&mut store, |value: i64| {
-            println!("print: {value}");
+            println!("print_i64: {value}");
         });
         let print_f32 = Func::wrap(&mut store, |value: F32| {
-            println!("print: {value:?}");
+            println!("print_f32: {value:?}");
         });
         let print_f64 = Func::wrap(&mut store, |value: F64| {
-            println!("print: {value:?}");
+            println!("print_f64: {value:?}");
         });
         let print_i32_f32 = Func::wrap(&mut store, |v0: i32, v1: F32| {
-            println!("print: {v0:?} {v1:?}");
+            println!("print_i32_f32: {v0:?} {v1:?}");
         });
         let print_f64_f64 = Func::wrap(&mut store, |v0: F64, v1: F64| {
-            println!("print: {v0:?} {v1:?}");
+            println!("print_f64_f64: {v0:?} {v1:?}");
         });
 
         let sys_state = Func::wrap(
@@ -186,6 +204,7 @@ impl<'a> TestContext<'a> {
             store,
             modules: Vec::new(),
             instances: HashMap::new(),
+            last_exports: None,
             last_instance: None,
             profile: TestProfile::default(),
             results: Vec::new(),
@@ -266,6 +285,23 @@ impl TestContext<'_> {
         Ok(())
     }
 
+    pub fn compile_and_instantiate_from_wasm(
+        &mut self,
+        wasm_binary: Vec<u8>,
+    ) -> Result<(), TestError> {
+        let mut config = Config::default();
+        config.consume_fuel(false);
+        let engine = Engine::new(&config);
+        let module2 = Module::new(&engine, wasm_binary.as_slice())?;
+        for elem in module2.exports() {
+            let instance = self.compile_and_instantiate_method(&wasm_binary, elem.name())?;
+            self.binaries
+                .insert(elem.name().to_string(), wasm_binary.clone());
+            self.instances.insert(elem.name().to_string(), instance);
+        }
+        Ok(())
+    }
+
     pub fn compile_and_instantiate_with_router(
         &mut self,
         mut module: wast::core::Module,
@@ -278,17 +314,51 @@ impl TestContext<'_> {
             )
         });
         let mut config = Config::default();
+        config.wasm_tail_call(true);
         let name = module
             .name
             .map(|name| name.name)
             .unwrap_or(DEFAULT_MODULE_NAME);
         config.consume_fuel(false);
+
         let module = Module::new(&self.engine, wasm_binary.as_slice())?;
 
-        for elem in module.exports() {
-            self.binaries
-                .insert(elem.name().to_string(), wasm_binary.clone());
+        let mut import_linker = ImportLinker::default();
+        let mut import_index = 0xF101;
+        for import in module
+            .imports()
+            .filter(|import| import.module().ne("spectest"))
+        {
+            if let ExternType::Func(func_type) = import.ty() {
+                import_linker.insert_function(ImportFunc::new_env(
+                    import.module().to_string(),
+                    import.name().to_string(),
+                    import_index,
+                    &func_type.params(),
+                    &func_type.results(),
+                ));
+                import_index += 1;
+                let exports = self
+                    .instances
+                    .get(format!("{}:{}", import.module(), import.name()).as_str())
+                    .unwrap()
+                    .exports(&self.store)
+                    .collect::<Vec<_>>();
+                if self
+                    .linker
+                    .get(self.store.as_context(), import.module(), import.name())
+                    .is_none()
+                {
+                    self.linker.define(
+                        import.module(),
+                        import.name(),
+                        exports[0].clone().into_func().unwrap(),
+                    )?;
+                }
+            }
         }
+
+        let mut exports_names = None;
 
         let exports = module
             .exports()
@@ -305,17 +375,21 @@ impl TestContext<'_> {
                         fn_type: func_type,
                     },
                 );
+                match exports_names.as_mut() {
+                    None => {
+                        exports_names = Some(vec![name.clone()]);
+                    }
+                    Some(names) => {
+                        names.push(name.clone());
+                    }
+                }
+                self.binaries.insert(name.clone(), wasm_binary.clone());
+
                 FuncOrExport::Export(name)
             })
             .collect::<Vec<_>>();
+        self.last_exports = exports_names;
 
-        const SYS_STATE: u32 = 0xA002;
-        const SYS_INPUT: u32 = 0xF001;
-        const SYS_OUTPUT: u32 = 0xF002;
-        const SYS_INPUT_LEN: u32 = 0xF003;
-        const SYS_OUTPUT_LEN: u32 = 0xF004;
-
-        let mut import_linker = ImportLinker::default();
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
             "_sys_state".to_string(),
@@ -351,6 +425,55 @@ impl TestContext<'_> {
             &[],
             &[ValueType::I32],
         ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i32".to_string(),
+            SYS_PRINT_I32 as u16,
+            &[ValueType::I32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i64".to_string(),
+            SYS_PRINT_I64 as u16,
+            &[ValueType::I64],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f32".to_string(),
+            SYS_PRINT_F32 as u16,
+            &[ValueType::F32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f64".to_string(),
+            SYS_PRINT_F64 as u16,
+            &[ValueType::F64],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i32_f32".to_string(),
+            SYS_PRINT_I32_F32 as u16,
+            &[ValueType::I32, ValueType::F32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f64_f64".to_string(),
+            SYS_PRINT_F64_F64 as u16,
+            &[ValueType::F64, ValueType::F64],
+            &[],
+        ));
+
         let mut compiler =
             Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
 
@@ -409,8 +532,58 @@ impl TestContext<'_> {
             .exports()
             .find(|export| export.name() == fn_name)
             .unwrap();
-        let import_linker = ImportLinker::default();
-        let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
+        let mut import_linker = ImportLinker::default();
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i32".to_string(),
+            SYS_PRINT_I32 as u16,
+            &[ValueType::I32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i64".to_string(),
+            SYS_PRINT_I64 as u16,
+            &[ValueType::I64],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f32".to_string(),
+            SYS_PRINT_F32 as u16,
+            &[ValueType::F32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f64".to_string(),
+            SYS_PRINT_F64 as u16,
+            &[ValueType::F64],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_i32_f32".to_string(),
+            SYS_PRINT_I32_F32 as u16,
+            &[ValueType::I32, ValueType::F32],
+            &[],
+        ));
+
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print_f64_f64".to_string(),
+            SYS_PRINT_F64_F64 as u16,
+            &[ValueType::F64, ValueType::F64],
+            &[],
+        ));
+
+        let mut compiler =
+            Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
         compiler
             .translate(Some(FuncOrExport::Func(
                 elem.index().into_func_idx().unwrap(),
@@ -504,6 +677,26 @@ impl TestContext<'_> {
         self.last_instance = Some(instance);
     }
 
+    pub fn compile_exports_module(&mut self) -> Result<Vec<(String, Instance)>, TestError> {
+        if self.last_exports.is_none() {
+            return Ok(vec![]);
+        }
+
+        self.last_exports
+            .as_ref()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|last_export| {
+                let wasm_binary = self.binaries.get(&last_export).unwrap().clone();
+                self.compile_and_instantiate_method(&wasm_binary, &last_export)
+                    .map(|instance| (last_export, instance))
+            })
+            .collect()
+    }
+
     /// Invokes the [`Func`] identified by `func_name` in [`Instance`] identified by `module_name`.
     ///
     /// If no [`Instance`] under `module_name` is found then invoke [`Func`] on the last
@@ -559,8 +752,9 @@ impl TestContext<'_> {
         let func_ty = &self.main_router.get(func_name).unwrap().fn_type;
 
         println!(
-            "testing {} with args {:?}, len_res: {:?}",
+            "testing {} func ty: {:?}, with args {:?}, len_res: {:?}",
             func_name,
+            func_ty,
             args,
             func.ty(&self.store).results()
         );
