@@ -1,7 +1,4 @@
-use crate::{
-    fetch_nonce, get_account_data, init_sh, runtime::Runtime, set_account_data, zktrie_get_balance,
-    zktrie_get_trie, RuntimeContext, RuntimeError, SysFuncIdx, HASH_SCHEME_DONE,
-};
+use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
 use fluentbase_rwasm::{
     common::Trap,
@@ -11,7 +8,6 @@ use fluentbase_rwasm::{
 use keccak_hash::H256;
 use serde_json::from_str;
 use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync::Arc};
-use zktrie::{AccountData, StoreData, ZkTrie, FIELDSIZE};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
