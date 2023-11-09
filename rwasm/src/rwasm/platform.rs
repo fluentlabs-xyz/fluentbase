@@ -131,11 +131,11 @@ impl ImportLinker {
     pub fn insert_function(&mut self, import_func: ImportFunc) {
         assert!(
             !self.func_by_index.contains_key(&import_func.index),
-            "already persist"
+            "already persist index"
         );
         assert!(
             !self.func_by_name.contains_key(&import_func.import_name()),
-            "already persist"
+            "already persist name"
         );
         self.func_by_index
             .insert(import_func.index, import_func.clone());

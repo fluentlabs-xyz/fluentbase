@@ -115,19 +115,29 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                     },
                 );
             }
-            WastDirective::Register { span, name, module } => {
+            WastDirective::Register {
+                span,
+                name: export_module_name,
+                module,
+            } => {
                 test_context.profile().bump_register();
-                let module_name = module.map(|id| id.name());
-                let instance = test_context
-                    .instance_by_name_or_last(module_name)
+                let origin_module_name = module.map(|id| id.name());
+                let instances = test_context
+                    .compile_exports_module()
                     .unwrap_or_else(|error| {
                         panic!(
-                            "{}: failed to load module: {}",
+                            "{}: failed to compile export module: {}",
                             test_context.spanned(span),
                             error
                         )
                     });
-                test_context.register_instance(name, instance);
+
+                for (func_name, instance) in instances {
+                    test_context.register_instance(
+                        format!("{}:{}", export_module_name, func_name).as_str(),
+                        instance,
+                    );
+                }
             }
             WastDirective::AssertInvalid {
                 span,

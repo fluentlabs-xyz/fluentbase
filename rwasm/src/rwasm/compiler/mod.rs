@@ -100,6 +100,8 @@ impl<'linker> Compiler<'linker> {
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
         config.consume_fuel(false);
+        config.wasm_tail_call(true);
+
         let engine = Engine::new(&config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
@@ -224,10 +226,14 @@ impl<'linker> Compiler<'linker> {
             self.function_beginning
                 .insert(func_idx + 1, beginning_offset);
 
-            let func = self.module.funcs[func_idx as usize];
-            let func_type = self.engine.resolve_func_type(&func, Clone::clone);
+            let func_type = self.module.funcs[func_idx as usize];
+            let sig_index = func_type.type_idx();
+            let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
             let num_inputs = func_type.params();
             let num_outputs = func_type.results();
+
+            self.code_section
+                .op_type_check(sig_index.into_usize() as u32);
             self.swap_stack_parameters(num_inputs.len() as u32);
             self.translate_host_call(func_idx as u32)?;
             if num_outputs.len() > 0 {
@@ -429,6 +435,21 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
+    fn swap_target(&mut self, param_num: u32) {
+        if param_num == 0 {
+            return;
+        }
+        self.code_section.op_local_get(param_num + 1);
+        for i in (0..=param_num).rev() {
+            if i != 0 {
+                self.code_section.op_local_get(i + 1);
+                self.code_section.op_local_set(i + 2);
+            } else {
+                self.code_section.op_local_set(i + 1);
+            }
+        }
+    }
+
     fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
@@ -571,10 +592,11 @@ impl<'linker> Compiler<'linker> {
     ) -> Result<(), CompilerError> {
         use Instruction as WI;
         let injection_begin = self.code_section.len();
-        let mut opcode_count = 1;
+        let mut opcode_count_origin = 1;
+
         match *instr_ptr.get() {
             WI::BrAdjust(branch_offset) => {
-                opcode_count += 1;
+                opcode_count_origin += 1;
                 if self.br_table_status.is_some() {
                     self.translate_br_table(instr_ptr, Some(branch_offset))?;
                 } else {
@@ -587,7 +609,7 @@ impl<'linker> Compiler<'linker> {
             //     let jump_dest = (offset as i32 + branch_offset.to_i32()) as u32;
             // }
             WI::BrAdjustIfNez(branch_offset) => {
-                opcode_count += 1;
+                opcode_count_origin += 1;
                 let br_if_offset = self.code_section.len();
                 self.code_section.op_br_if_eqz(0);
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
@@ -600,24 +622,59 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_return();
             }
             WI::ReturnCallInternal(func_idx) => {
-                opcode_count += 1;
-                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                opcode_count_origin += 1;
+
                 let fn_index = func_idx.into_usize() as u32;
-                self.code_section.op_return_call_internal(fn_index);
-                self.code_section.op_return();
+
+                let call_func_type = self.module.funcs[fn_index as usize];
+                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let num_inputs = func_type.params();
+
+                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+
+                self.swap_target(num_inputs.len() as u32);
+
+                self.code_section
+                    .op_i32_const(call_func_type.type_idx().into_usize() as u32);
+                self.code_section.op_call_internal(func_idx);
             }
-            WI::ReturnCall(_func) => {
-                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                // self.code_section.op_call(func);
-                // self.code_section.op_return();
+            WI::ReturnCall(func) => {
+                self.code_section.op_unreachable();
+                Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
+                self.code_section.op_call(func);
+                self.code_section.op_return();
                 unreachable!("wait, should it call translate host call?");
             }
-            WI::ReturnCallIndirect(_) => {
-                // Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
-                // let table_idx = Self::extract_table(instr_ptr);
-                // self.code_section.op_return_call_indirect(table_idx);
-                // self.code_section.op_return();
-                unreachable!("check this")
+            WI::ReturnCallIndirect(sig_index) => {
+                self.code_section.op_i32_const(888);
+                self.code_section.op_drop();
+
+                let drop_keep = Self::extract_drop_keep(instr_ptr);
+                let call_func_type = self.module.func_types[sig_index.to_u32() as usize];
+                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let num_inputs = func_type.params();
+
+                let table_idx = Self::extract_table(instr_ptr);
+                opcode_count_origin += 2;
+                // let target = self.code_section.len() + 3 + 4 + 1 + 4;
+
+                self.code_section.op_table_get(table_idx);
+
+                DropKeep::new(drop_keep.drop() as usize, drop_keep.keep() as usize + 1)
+                    .unwrap()
+                    .translate(&mut self.code_section)?;
+
+                self.swap_target(1 + num_inputs.len() as u32);
+
+                self.swap_stack_parameters(1);
+
+                let sig_index = call_func_type.type_idx();
+
+                self.code_section
+                    .op_i32_const(sig_index.into_usize() as u32);
+
+                self.swap_stack_parameters(1);
+                self.code_section.op_br_indirect(0);
             }
             WI::Return(drop_keep) => {
                 if self.br_table_status.is_some() {
@@ -658,7 +715,7 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallIndirect(sig_index) => {
                 let table_idx = Self::extract_table(instr_ptr);
-                opcode_count += 1;
+                opcode_count_origin += 1;
                 let target = self.code_section.len() + 3 + 4 + 1 + 4;
 
                 self.code_section.op_table_get(table_idx);
@@ -705,11 +762,11 @@ impl<'linker> Compiler<'linker> {
             }
         };
         let injection_end = self.code_section.len();
-        if injection_end - injection_begin > opcode_count as u32 {
+        if injection_end - injection_begin > opcode_count_origin as u32 {
             self.injection_segments.push(Injection {
                 begin: injection_begin as i32,
                 end: injection_end as i32,
-                origin_len: opcode_count,
+                origin_len: opcode_count_origin,
             });
         }
 

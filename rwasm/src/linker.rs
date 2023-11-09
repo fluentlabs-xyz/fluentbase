@@ -120,7 +120,8 @@ impl LinkerError {
         }
     }
 
-    /// Create a new [`LinkerError`] for when a [`TableType`] `ty` unexpectedly is not a subtype of `other`.
+    /// Create a new [`LinkerError`] for when a [`TableType`] `ty` unexpectedly is not a subtype of
+    /// `other`.
     fn table_type_mismatch(name: &ImportName, ty: &TableType, other: &TableType) -> Self {
         Self::InvalidTableSubtype {
             name: name.clone(),
@@ -129,7 +130,8 @@ impl LinkerError {
         }
     }
 
-    /// Create a new [`LinkerError`] for when a [`MemoryType`] `ty` unexpectedly is not a subtype of `other`.
+    /// Create a new [`LinkerError`] for when a [`MemoryType`] `ty` unexpectedly is not a subtype of
+    /// `other`.
     fn invalid_memory_subtype(name: &ImportName, ty: &MemoryType, other: &MemoryType) -> Self {
         Self::InvalidMemorySubtype {
             name: name.clone(),
@@ -344,8 +346,7 @@ impl<T> Definition<T> {
     ///
     /// # Note
     ///
-    /// - This allocates a new [`Func`] on the `ctx` if it is a [`Linker`]
-    ///   defined host function.
+    /// - This allocates a new [`Func`] on the `ctx` if it is a [`Linker`] defined host function.
     /// - This unifies handling of [`Definition::Extern(Extern::Func)`] and
     ///   [`Definition::HostFunc`].
     pub fn as_func(&self, mut ctx: impl AsContextMut<UserState = T>) -> Option<Func> {
@@ -747,10 +748,8 @@ impl<T> Linker<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::ValueType;
-
     use super::*;
-    use crate::Store;
+    use crate::{common::ValueType, Store};
 
     struct HostState {
         a: i32,
