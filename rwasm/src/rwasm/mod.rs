@@ -2,11 +2,14 @@
 
 pub mod binary_format;
 mod compiler;
+mod consts;
 mod instruction_set;
 mod platform;
 mod reduced_module;
 
-pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, reduced_module::*};
+pub use self::{
+    binary_format::*, compiler::*, consts::*, instruction_set::*, platform::*, reduced_module::*,
+};
 
 #[cfg(test)]
 mod tests {
@@ -14,21 +17,14 @@ mod tests {
         common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
-            compiler::Compiler,
-            platform::ImportLinker,
-            reduced_module::ReducedModule,
-            FuncOrExport,
-            ImportFunc,
+            compiler::Compiler, platform::ImportLinker, reduced_module::ReducedModule,
+            FuncOrExport, ImportFunc,
         },
-        AsContextMut,
-        Caller,
-        Config,
-        Engine,
-        Func,
-        Linker,
-        Store,
+        AsContextMut, Caller, Config, Engine, Func, Linker, Store,
     };
     use alloc::string::ToString;
+
+    use super::_SYS_HALT_FUEL_AMOUNT;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -52,6 +48,7 @@ mod tests {
             "env".to_string(),
             "_sys_halt".to_string(),
             10,
+            _SYS_HALT_FUEL_AMOUNT,
             &[ValueType::I32],
             &[],
         ));
@@ -80,11 +77,13 @@ mod tests {
             )
             .unwrap();
         // run start entrypoint
-        linker
+        let instance = linker
             .instantiate(&mut store, &module)
             .unwrap()
             .start(&mut store)
             .unwrap();
+        let main_func = instance.get_func(&mut store, "main").unwrap();
+        main_func.call(&mut store, &[], &mut []).unwrap();
         store.data().clone()
     }
 
@@ -271,6 +270,44 @@ mod tests {
                     Instruction::I32Const(0.into()),
                 )),
             },
+        );
+    }
+
+    #[test]
+    fn test_passive_data_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (type (;0;) (func))
+      (func (;0;) (type 0)
+        return
+        )
+      (memory (;0;) 17)
+      (export "main" (func 0))
+      (data "Hello, World"))
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_passive_elem_section() {
+        execute_binary_default(
+            r#"
+    (module
+      (table 1 anyfunc)
+      (func $main
+        return
+        )
+      (func $f1 (result i32)
+       i32.const 42
+       )
+      (func $f2 (result i32)
+       i32.const 100
+       )
+      (elem func $f1)
+      (elem func $f2)
+      (export "main" (func $main)))
+        "#,
         );
     }
 }

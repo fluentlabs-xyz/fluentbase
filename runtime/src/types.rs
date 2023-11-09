@@ -1,23 +1,28 @@
 use fluentbase_rwasm::common::{Trap, TrapCode};
 
+pub const STACK_MAX_HEIGHT: usize = 1024;
+pub const RECURSIVE_MAX_DEPTH: usize = 1024;
+
 #[derive(Debug, Copy, Clone)]
 pub enum ExitCode {
-    EvmStop = -1001,
-    MemoryOutOfBounds = -1002,
+    // fluentbase error codes
+    ExecutionHalted = -1001,
     NotSupportedCall = -1003,
     TransactError = -1004,
     TransactOutputOverflow = -1005,
-    UnreachableCodeReached = -1006,
-    TableOutOfBounds = -1007,
-    IndirectCallToNull = -1008,
-    IntegerDivisionByZero = -1009,
-    IntegerOverflow = -1010,
-    BadConversionToInteger = -1011,
-    StackOverflow = -1012,
-    BadSignature = -1013,
-    OutOfFuel = -1014,
-    GrowthOperationLimited = -1015,
-    UnknownError = -1016,
+    // trap error codes
+    UnreachableCodeReached = -2006,
+    MemoryOutOfBounds = -2007,
+    TableOutOfBounds = -2008,
+    IndirectCallToNull = -2009,
+    IntegerDivisionByZero = -2010,
+    IntegerOverflow = -2011,
+    BadConversionToInteger = -2012,
+    StackOverflow = -2013,
+    BadSignature = -2014,
+    OutOfFuel = -2015,
+    GrowthOperationLimited = -2016,
+    UnknownError = -2017,
 }
 
 impl From<TrapCode> for ExitCode {
@@ -41,5 +46,11 @@ impl From<TrapCode> for ExitCode {
 impl Into<Trap> for ExitCode {
     fn into(self) -> Trap {
         Trap::i32_exit(self as i32)
+    }
+}
+
+impl Into<i32> for ExitCode {
+    fn into(self) -> i32 {
+        self as i32
     }
 }

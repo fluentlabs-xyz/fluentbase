@@ -14,7 +14,7 @@ use crate::{
     Module,
 };
 use alloc::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
 };
 
@@ -129,6 +129,36 @@ impl ReducedModule {
             code_section.instr.clone(),
             code_section.metas.clone().unwrap(),
         );
+        // push segments
+        let mut data_segments = BTreeSet::new();
+        let mut elem_segments = BTreeSet::new();
+
+        for instr in code_section.instr.iter() {
+            match instr {
+                Instruction::DataStore8(seg)
+                | Instruction::DataStore16(seg)
+                | Instruction::DataStore32(seg)
+                | Instruction::DataStore64(seg) => {
+                    data_segments.insert(seg.to_u32());
+                }
+                Instruction::ElemStore(seg) => {
+                    elem_segments.insert(seg.to_u32());
+                }
+                _ => continue,
+            }
+        }
+        if !data_segments.is_empty() {
+            let max_data_segment = data_segments.iter().max().copied().unwrap_or_default() as usize;
+            (0..=max_data_segment).for_each(|_| {
+                builder.push_passive_data_segment();
+            });
+        }
+
+        if !elem_segments.is_empty() {
+            (0..=elem_segments.len()).for_each(|_| {
+                builder.push_passive_elem_segment();
+            })
+        }
         // allocate default memory
         builder
             .push_default_memory(0, Some(N_MAX_MEMORY_PAGES))
@@ -138,7 +168,7 @@ impl ReducedModule {
             .unwrap();
         // set 0 function as an entrypoint (it goes right after import section)
         let main_index = import_mapping.len() as u32;
-        builder.set_start(FuncIdx::from(main_index));
+        //builder.set_start(FuncIdx::from(main_index));
         builder
             .push_export(
                 "main".to_string().into_boxed_str(),

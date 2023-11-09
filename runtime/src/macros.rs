@@ -20,15 +20,21 @@ macro_rules! forward_call_args {
     ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty]) => {
         crate::instruction::$func($caller, $a1, $a2, $a3, $a4, $a5, $a6)
     };
+    ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty]) => {
+        crate::instruction::$func($caller, $a1, $a2, $a3, $a4, $a5, $a6, $a7)
+    };
+    ($func:ident, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty, $a8:ident :$t8:ty]) => {
+        crate::instruction::$func($caller, $a1, $a2, $a3, $a4, $a5, $a6, $a7, $a8)
+    };
 }
 
 macro_rules! forward_call {
-    ($res:tt, $module:literal, $name:literal, fn $func:ident($($t:tt)*) -> $out:ty) => {
-        $res.linker.define(
+    ($linker:tt, $store:tt, $module:literal, $name:literal, fn $func:ident($($t:tt)*) -> $out:ty) => {
+        $linker.define(
             $module,
             $name,
             Func::wrap(
-                $res.store.as_context_mut(),
+                $store.as_context_mut(),
                 |caller: Caller<'_, RuntimeContext>, $($t)*| -> Result<$out, Trap> {
                     return forward_call_args! { $func, caller, [$($t)*] };
                 })

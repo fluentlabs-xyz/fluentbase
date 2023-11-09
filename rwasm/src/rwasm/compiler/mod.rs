@@ -1,6 +1,6 @@
 use crate::{
     arena::ArenaIndex,
-    common::{UntypedValue, ValueType},
+    common::{Pages, UntypedValue, ValueType},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -13,9 +13,7 @@ use crate::{
         instruction_set::InstructionSet,
         ImportLinker,
     },
-    Config,
-    Engine,
-    Module,
+    Config, Engine, Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
@@ -34,6 +32,23 @@ pub enum CompilerError {
     UnknownImport(ImportName),
     MemoryUsageTooBig,
     DropKeepOutOfBounds,
+}
+
+impl Into<i32> for CompilerError {
+    fn into(self) -> i32 {
+        match self {
+            CompilerError::ModuleError(_) => -1,
+            CompilerError::MissingEntrypoint => -2,
+            CompilerError::MissingFunction => -3,
+            CompilerError::NotSupported(_) => -4,
+            CompilerError::OutOfBuffer => -5,
+            CompilerError::BinaryFormat(_) => -6,
+            CompilerError::NotSupportedImport => -7,
+            CompilerError::UnknownImport(_) => -8,
+            CompilerError::MemoryUsageTooBig => -9,
+            CompilerError::DropKeepOutOfBounds => -10,
+        }
+    }
 }
 
 pub trait Translator {
@@ -99,7 +114,7 @@ impl<'linker> Compiler<'linker> {
         import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(false);
+        config.consume_fuel(true);
         config.wasm_tail_call(true);
 
         let engine = Engine::new(&config);
@@ -272,6 +287,7 @@ impl<'linker> Compiler<'linker> {
         }
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
+        self.translate_data()?;
         // translate router into separate instruction set
         let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
         // inject main function call with return
@@ -330,7 +346,9 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn read_memory_segment(memory: &DataSegment) -> Result<(UntypedValue, &[u8]), CompilerError> {
+    fn read_memory_segment(
+        memory: &DataSegment,
+    ) -> Result<(UntypedValue, &[u8], bool), CompilerError> {
         match memory.kind() {
             DataSegmentKind::Active(seg) => {
                 let data_offset = seg
@@ -340,11 +358,9 @@ impl<'linker> Compiler<'linker> {
                 if seg.memory_index().into_u32() != 0 {
                     return Err(CompilerError::NotSupported("not zero index"));
                 }
-                Ok((data_offset, memory.bytes()))
+                Ok((data_offset, memory.bytes(), true))
             }
-            DataSegmentKind::Passive => {
-                Err(CompilerError::NotSupported("passive mode is not supported"))
-            }
+            DataSegmentKind::Passive => Ok((0.into(), memory.bytes(), false)),
         }
     }
 
@@ -353,9 +369,17 @@ impl<'linker> Compiler<'linker> {
             self.code_section
                 .add_memory_pages(memory.initial_pages().into_inner());
         }
+        Ok(())
+    }
+
+    fn translate_data(&mut self) -> Result<(), CompilerError> {
         for memory in self.module.data_segments.iter() {
-            let (offset, bytes) = Self::read_memory_segment(memory)?;
-            self.code_section.add_memory(offset.to_bits() as u32, bytes);
+            let (offset, bytes, is_active) = Self::read_memory_segment(memory)?;
+            if is_active {
+                self.code_section.add_memory(offset.to_bits() as u32, bytes);
+            } else {
+                self.code_section.add_data(bytes);
+            }
         }
         Ok(())
     }
@@ -392,35 +416,44 @@ impl<'linker> Compiler<'linker> {
         self.code_section.op_i64_const(table.minimum() as usize);
         self.code_section.op_table_grow(table_index);
         self.code_section.op_drop();
-        for e in self.module.element_segments.iter() {
-            let aes = match &e.kind {
-                ElementSegmentKind::Passive | ElementSegmentKind::Declared => None,
-                ElementSegmentKind::Active(aes) => Some(aes),
-            };
-            if aes
-                .filter(|aes| aes.table_index().into_u32() != table_index)
-                .is_some()
-            {
-                continue;
-            }
+        for (i, e) in self.module.element_segments.iter().enumerate() {
             if e.ty != ValueType::FuncRef {
                 return Err(CompilerError::NotSupported(
                     "only funcref type is supported for element segments",
                 ));
             }
-            if let Some(aes) = aes {
-                let dest_offset = self.translate_const_expr(aes.offset())?;
-                for (index, item) in e.items.items().iter().enumerate() {
-                    self.code_section
-                        .op_i32_const(dest_offset.as_u32() + index as u32);
-                    if let Some(value) = item.eval_const() {
-                        self.code_section.op_i64_const(value);
-                    } else if let Some(value) = item.funcref() {
-                        self.code_section.op_ref_func(value.into_u32());
-                    }
-                    self.code_section.op_table_set(table_index);
+            match &e.kind {
+                ElementSegmentKind::Declared => {
+                    return Err(CompilerError::NotSupported(
+                        "declared mode for element segments is not supported",
+                    ))
                 }
-            }
+                ElementSegmentKind::Passive => {
+                    for (_, item) in e.items.items().iter().enumerate() {
+                        if let Some(value) = item.funcref() {
+                            self.code_section.op_i32_const(value.into_u32());
+                            self.code_section.op_elem_store(i as u32);
+                        }
+                    }
+                }
+                ElementSegmentKind::Active(aes) => {
+                    if aes.table_index().into_u32() != table_index {
+                        continue;
+                    }
+                    let dest_offset = self.translate_const_expr(aes.offset())?;
+                    for (index, item) in e.items.items().iter().enumerate() {
+                        self.code_section
+                            .op_i32_const(dest_offset.as_u32() + index as u32);
+                        if let Some(value) = item.eval_const() {
+                            self.code_section.op_i64_const(value);
+                        } else if let Some(value) = item.funcref() {
+                            self.code_section.op_ref_func(value.into_u32());
+                        }
+                        self.code_section.op_table_set(table_index);
+                    }
+                }
+                _ => {}
+            };
         }
         Ok(())
     }
@@ -742,8 +775,24 @@ impl<'linker> Compiler<'linker> {
                     injection_instructions: vec![],
                     instr_countdown: target.to_usize() as u32 * 2,
                 });
-                // println!("Add table status: {:?}", self.br_table_status);
                 self.code_section.push(*instr_ptr.get());
+            }
+            WI::MemoryGrow => {
+                assert!(!self.module.memories.is_empty(), "memory must be provided");
+                let max_pages = self.module.memories[0]
+                    .maximum_pages()
+                    .unwrap_or(Pages::max())
+                    .into_inner();
+                self.code_section.op_local_get(1);
+                self.code_section.op_memory_size();
+                self.code_section.op_i32_add();
+                self.code_section.op_i32_const(max_pages);
+                self.code_section.op_i32_ge_s();
+                self.code_section.op_br_if_nez(3);
+                self.code_section.op_drop();
+                self.code_section.op_i32_const(u32::MAX);
+                self.code_section.op_br(2);
+                self.code_section.op_memory_grow();
             }
             // WI::LocalGet(local_depth) => {
             //     self.code_section
@@ -774,7 +823,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn resolve_host_call(&mut self, fn_index: u32) -> Result<u32, CompilerError> {
+    fn resolve_host_call(&mut self, fn_index: u32) -> Result<(u32, u32), CompilerError> {
         let imports = self.module.imports.items.deref();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
@@ -784,18 +833,20 @@ impl<'linker> Compiler<'linker> {
             Imported::Func(import_name) => import_name,
             _ => return Err(CompilerError::NotSupportedImport),
         };
-        let import_index = self
+        let import_index_and_fuel_amount = self
             .import_linker
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?
             .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        Ok(*import_index)
+        Ok(*import_index_and_fuel_amount)
     }
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
-        let import_index = self.resolve_host_call(fn_index)?;
-        self.code_section.op_call(import_index);
+        let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
+        self.code_section
+            .op_consume_fuel(import_index_and_fuel_amount.1);
+        self.code_section.op_call(import_index_and_fuel_amount.0);
         Ok(())
     }
 

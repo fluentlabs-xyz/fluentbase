@@ -8,7 +8,6 @@ use strum_macros::EnumIter;
 pub enum ExecutionState {
     WASM_BIN,
     WASM_BREAK,
-    WASM_CALL,
     WASM_CALL_HOST(SysFuncIdx),
     WASM_CONST,
     WASM_REFFUNC,
@@ -47,7 +46,6 @@ impl ExecutionState {
         match self {
             ExecutionState::WASM_BIN => 1,
             ExecutionState::WASM_BREAK => 2,
-            ExecutionState::WASM_CALL => 3,
             ExecutionState::WASM_CALL_HOST(id) => 0x040000u64 + *id as u64,
             ExecutionState::WASM_CONST => 5,
             ExecutionState::WASM_CONVERSION => 6,
@@ -128,19 +126,13 @@ impl ExecutionState {
             ],
             Self::WASM_BREAK => vec![
                 Instruction::Br(Default::default()),
+                Instruction::BrIndirect(Default::default()),
                 Instruction::BrIfEqz(Default::default()),
                 Instruction::BrIfNez(Default::default()),
-                Instruction::BrAdjust(Default::default()),
-                Instruction::BrAdjustIfNez(Default::default()),
             ],
-            Self::WASM_CALL => vec![
-                Instruction::ReturnCallInternal(Default::default()),
-                Instruction::CallInternal(Default::default()),
-            ],
-            Self::WASM_CALL_HOST(SysFuncIdx::UNKNOWN) => vec![
-                Instruction::ReturnCall(Default::default()),
-                Instruction::Call(Default::default()),
-            ],
+            Self::WASM_CALL_HOST(SysFuncIdx::UNKNOWN) => {
+                vec![Instruction::Call(Default::default())]
+            }
             Self::WASM_CONST => vec![
                 Instruction::I32Const(Default::default()),
                 Instruction::I64Const(Default::default()),

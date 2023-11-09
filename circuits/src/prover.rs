@@ -142,7 +142,7 @@ fn test_actual<C: Circuit<Fr>>(
 mod tests {
     use super::*;
     use crate::fluentbase_circuit::FluentbaseCircuit;
-    use fluentbase_runtime::Runtime;
+    use fluentbase_runtime::{Runtime, RuntimeContext};
     use fluentbase_rwasm::{
         instruction_set,
         rwasm::{Compiler, ImportLinker, InstructionSet},
@@ -152,10 +152,14 @@ mod tests {
     fn gen_proof_verify(bytecode: impl Into<Vec<u8>>) -> u64 {
         let rwasm_binary: Vec<u8> = bytecode.into();
         let import_linker = Runtime::new_linker();
-        let result =
-            Runtime::run_with_input(rwasm_binary.as_slice(), &[], &import_linker, true).unwrap();
-        let circuit = FluentbaseCircuit::from_execution_result(&result);
-        let degree: u32 = 17;
+        let result = Runtime::run_with_context(
+            RuntimeContext::new(rwasm_binary.as_slice()).with_input(&vec![vec![]]),
+            &import_linker,
+        )
+        .unwrap();
+        let exit_code = result.data().exit_code();
+        let circuit = FluentbaseCircuit::from_execution_result_with_exit_code(&result, exit_code);
+        let degree: u32 = 15;
         let general_params = get_general_params(degree);
         let key = {
             let verifying_key =
@@ -164,7 +168,8 @@ mod tests {
                 .expect("keygen_pk should not fail");
             key.clone()
         };
-        let elapsed = test_actual(circuit, vec![vec![Fr::zero()]], key, degree);
+        let instance = vec![Fr::from(exit_code as u64), Fr::from(0), Fr::from(0)];
+        let elapsed = test_actual(circuit, vec![instance], key, degree);
         println!("elapsed time (gen/proof/verify): {}ms", elapsed);
         elapsed
     }

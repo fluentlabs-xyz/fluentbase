@@ -290,6 +290,7 @@ pub enum TrapCode {
     /// desire on the part of the embedder to trap the interpreter rather than
     /// merely fail the growth operation.
     GrowthOperationLimited,
+    //  EmptyInput,
 }
 
 impl TrapCode {
@@ -304,8 +305,8 @@ impl TrapCode {
             Self::UnreachableCodeReached => "wasm `unreachable` instruction executed",
             Self::MemoryOutOfBounds => "out of bounds memory access",
             Self::TableOutOfBounds => "undefined element: out of bounds table access",
-            Self::IndirectCallToNull => "uninitialized element 2", /* TODO: fixme, remove the
-                                                                     * trailing " 2" again */
+            Self::IndirectCallToNull => "uninitialized element 2", /* TODO: fixme, remove the */
+            // trailing " 2" again
             Self::IntegerDivisionByZero => "integer divide by zero",
             Self::IntegerOverflow => "integer overflow",
             Self::BadConversionToInteger => "invalid conversion to integer",
@@ -313,6 +314,8 @@ impl TrapCode {
             Self::BadSignature => "indirect call type mismatch",
             Self::OutOfFuel => "all fuel consumed by WebAssembly",
             Self::GrowthOperationLimited => "growth operation limited",
+            // evm inputs
+            // Self::EmptyInput => "input is empty",
         }
     }
 }

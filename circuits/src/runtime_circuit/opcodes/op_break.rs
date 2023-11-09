@@ -66,20 +66,6 @@ impl<F: Field> ExecutionGadget<F> for OpBreakGadget<F> {
                 cb.condition(is_not_zero, |cb| cb.next_pc_jump(cb.query_rwasm_value()));
             },
         );
-        cb.if_rwasm_opcode(
-            is_br_adjust.current(),
-            Instruction::BrAdjust(Default::default()),
-            |cb| cb.next_pc_jump(cb.query_rwasm_value()),
-        );
-        cb.if_rwasm_opcode(
-            is_br_adjust_if_nez.current(),
-            Instruction::BrAdjustIfNez(Default::default()),
-            |cb| {
-                cb.stack_pop(value.current());
-                let is_not_zero = value.current() * value_inv.current();
-                cb.condition(is_not_zero, |cb| cb.next_pc_jump(cb.query_rwasm_value()));
-            },
-        );
 
         Self {
             is_br,
