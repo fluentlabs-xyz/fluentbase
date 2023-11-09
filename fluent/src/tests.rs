@@ -51,7 +51,7 @@ fn test_evm_verify_block_rlps_without_transactions() {
     input_data.extend(blk_a_encoded);
     input_data.extend(blk_b_encoded);
 
-    Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec()).unwrap();
+    Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
 }
 
 #[test]

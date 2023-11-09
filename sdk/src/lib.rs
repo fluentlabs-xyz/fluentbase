@@ -35,7 +35,13 @@ pub trait MptPlatformSDK {
 
 pub trait RwasmPlatformSDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32;
-    fn rwasm_transact(bytecode: &[u8], input: &[u8], output: &mut [u8], state: u32) -> i32;
+    fn rwasm_transact(
+        bytecode: &[u8],
+        input: &[u8],
+        output: &mut [u8],
+        state: u32,
+        fuel_limit: u32,
+    ) -> i32;
 }
 
 pub trait SysPlatformSDK {

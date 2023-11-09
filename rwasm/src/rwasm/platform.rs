@@ -59,14 +59,21 @@ pub struct ImportFunc {
     import_name: ImportFuncName,
     index: u32,
     func_type: FuncType,
+    fuel_amount: u32,
 }
 
 impl ImportFunc {
-    pub fn new(import_name: ImportFuncName, index: u32, func_type: FuncType) -> Self {
+    pub fn new(
+        import_name: ImportFuncName,
+        index: u32,
+        func_type: FuncType,
+        fuel_amount: u32,
+    ) -> Self {
         Self {
             import_name,
             index,
             func_type,
+            fuel_amount,
         }
     }
 
@@ -74,6 +81,7 @@ impl ImportFunc {
         module_name: String,
         fn_name: String,
         index: u16,
+        fuel_amount: u32,
         input: &'a [ValueType],
         output: &'a [ValueType],
     ) -> Self {
@@ -82,6 +90,7 @@ impl ImportFunc {
             ImportFuncName(module_name, fn_name),
             index as u32,
             func_type,
+            fuel_amount,
         )
     }
 
@@ -101,7 +110,7 @@ impl ImportFunc {
 #[derive(Default)]
 pub struct ImportLinker {
     func_by_index: BTreeMap<u32, ImportFunc>,
-    func_by_name: BTreeMap<ImportName, u32>,
+    func_by_name: BTreeMap<ImportName, (u32, u32)>,
 }
 
 impl ImportLinker {
@@ -116,15 +125,17 @@ impl ImportLinker {
         );
         self.func_by_index
             .insert(import_func.index, import_func.clone());
-        self.func_by_name
-            .insert(import_func.import_name(), import_func.index);
+        self.func_by_name.insert(
+            import_func.import_name(),
+            (import_func.index, import_func.fuel_amount),
+        );
     }
 
     pub fn resolve_by_index(&self, index: u32) -> Option<&ImportFunc> {
         self.func_by_index.get(&index)
     }
 
-    pub fn index_mapping(&self) -> &BTreeMap<ImportName, u32> {
+    pub fn index_mapping(&self) -> &BTreeMap<ImportName, (u32, u32)> {
         &self.func_by_name
     }
 }

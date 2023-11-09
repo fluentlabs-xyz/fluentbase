@@ -107,7 +107,7 @@ impl<'linker> Compiler<'linker> {
         import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(false);
+        config.consume_fuel(true);
         let engine = Engine::new(&config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
@@ -597,7 +597,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn resolve_host_call(&mut self, fn_index: u32) -> Result<u32, CompilerError> {
+    fn resolve_host_call(&mut self, fn_index: u32) -> Result<(u32, u32), CompilerError> {
         let imports = self.module.imports.items.deref();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
@@ -607,18 +607,19 @@ impl<'linker> Compiler<'linker> {
             Imported::Func(import_name) => import_name,
             _ => return Err(CompilerError::NotSupportedImport),
         };
-        let import_index = self
+        let import_index_and_fuel_amount = self
             .import_linker
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?
             .index_mapping()
             .get(import_name)
             .ok_or(CompilerError::UnknownImport(import_name.clone()))?;
-        Ok(*import_index)
+        Ok(*import_index_and_fuel_amount)
     }
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
-        let import_index = self.resolve_host_call(fn_index)?;
-        self.code_section.op_call(import_index);
+        let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
+        self.code_section.op_consume_fuel(import_index_and_fuel_amount.1);
+        self.code_section.op_call(import_index_and_fuel_amount.0);
         Ok(())
     }
 
