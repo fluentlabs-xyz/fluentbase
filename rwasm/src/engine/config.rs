@@ -1,6 +1,6 @@
 use super::{stack::StackLimits, DropKeep};
-use core::{mem::size_of, num::NonZeroU64};
 use crate::common::UntypedValue;
+use core::{mem::size_of, num::NonZeroU64};
 use wasmparser::WasmFeatures;
 
 /// The default amount of stacks kept in the cache at most.
@@ -254,7 +254,7 @@ impl Config {
     /// Enable or disable the [`sign-extension`] Wasm proposal for the [`Config`].
     ///
     /// # Note
-    ///
+    ///memory_bytes_per_fuel
     /// Enabled by default.
     ///
     /// [`sign-extension`]: https://github.com/WebAssembly/sign-extension-ops

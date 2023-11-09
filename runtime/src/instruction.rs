@@ -163,12 +163,13 @@ pub(crate) fn rwasm_transact(
     output_offset: i32,
     output_len: i32,
     state: i32,
+    fuel_limit: i32,
 ) -> Result<i32, Trap> {
     let bytecode = exported_memory_vec(&mut caller, code_offset as usize, code_len as usize);
     let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
     // TODO: "we probably need custom linker here with reduced host calls number"
     // TODO: "make sure there is no panic inside runtime"
-    let res = Runtime::run(bytecode.as_slice(), &input);
+    let res = Runtime::run(bytecode.as_slice(), &input, fuel_limit as u32);
     if res.is_err() {
         return Err(ExitCode::TransactError.into());
     }
