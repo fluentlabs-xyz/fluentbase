@@ -31,6 +31,7 @@ pub enum FixedTableTag {
     BitwiseXor,
     Pow2,
     Pow2UpTo10,
+    Pow2SaturateTo24,
     OpRel,
     PopCnt,
     Clz,
@@ -103,6 +104,14 @@ impl FixedTableTag {
                     tag,
                     F::from(value),
                     F::from_u128(1_u128 << value),
+                    F::zero(),
+                ]
+            })),
+            Self::Pow2SaturateTo24 => Box::new((0..=256).map(move |value| {
+                [
+                    tag,
+                    F::from(value),
+                    F::from_u128(1_u128 << value.min(24)),
                     F::zero(),
                 ]
             })),

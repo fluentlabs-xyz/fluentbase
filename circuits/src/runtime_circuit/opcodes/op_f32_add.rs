@@ -1,7 +1,7 @@
 use crate::{
     bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
-    gadgets::lt::LtGadget,
+    gadgets::{lt::LtGadget, is_zero::IsZeroConfig},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -17,7 +17,7 @@ use std::marker::PhantomData;
 use crate::constraint_builder::SelectorColumn;
 use crate::constraint_builder::Query;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct OpF32AddGadget<F: Field> {
     lhs_exp_ge: SelectorColumn,
     lhs_sign: SelectorColumn,
@@ -31,7 +31,8 @@ pub(crate) struct OpF32AddGadget<F: Field> {
     out_limbs: [AdviceColumn; 3],
     pow2: AdviceColumn,
     // 24 bits to compare for addition, that is simpler than multiplication.
-    lt_gadget: Option<LtGadget<F, 3>>,
+    lt_gadget: Option<LtGadget<F, 4>>,
+    is_zero_config: Option<IsZeroConfig<F>>,
     _pd: PhantomData<F>,
 }
 
@@ -104,17 +105,20 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let second_mant = || lhs_exp_ge.current().select(rhs_mant(), lhs_mant());
 
         let mut opt_lt_gadget = None;
+        let mut opt_is_zero_config = None;
 
         // Same sign case.
         cb.condition(lhs_sign.current().xnor(rhs_sign.current()).into(), |cb| {
-            let growing_exp = || out_exp.current() - first_exp();
+            let is_zero_config = cb.is_zero_gadget(lhs_exp.current() + rhs_exp.current() + out_exp.current() - (255*3).expr());
+            let out_exp_fix = || is_zero_config.clone().current().select(256.expr(), out_exp.current());
+            let growing_exp = || out_exp_fix() - first_exp();
             let flip_sign = || 1.expr() - lhs_sign_bit() * 2.expr();
             let grow = || (growing_exp() + 1.expr());
             cb.require_boolean("is sign is same, `exp` can grow by zero or one", growing_exp());
             // If `out_exp` is growing, than second mant must satisfy.
             // Second mantissa for check is already truncated.
             let second_mant_for_check = || (out_mant() * grow() - growing_exp() * flip_sign() - first_mant()) * pow2.current();
-            cb.fixed_lookup(FixedTableTag::Pow2, [
+            cb.fixed_lookup(FixedTableTag::Pow2SaturateTo24, [
                 first_exp() - second_exp(),
                 pow2.current(),
                 0.expr(),
@@ -123,6 +127,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             let lt_gadget = cb.lt_gadget(pow2.current(), dif());
             cb.require_zero("rest of mantissa must be shifted out of bits", lt_gadget.expr());
             opt_lt_gadget = Some(lt_gadget);
+            opt_is_zero_config = Some(is_zero_config);
         });
 
         Self {
@@ -138,6 +143,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             out_limbs,
             pow2,
             lt_gadget: opt_lt_gadget,
+            is_zero_config: opt_is_zero_config,
             _pd: Default::default(),
         }
     }
@@ -202,20 +208,24 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let first_mant = if lhs_exp_ge { lhs_mant } else { rhs_mant };
         let second_mant = if lhs_exp_ge { rhs_mant } else { lhs_mant };
 
+        println!("FIRST_EXP {}", first_exp);
+        println!("SECOND_EXP {}", second_exp);
         println!("FIRST_MANT {}", first_mant);
         println!("SECOND_MANT {}", second_mant);
         println!("OUT_MANT {}", out_mant);
 
         if lhs_sign == rhs_sign {
-            let growing_exp = out_exp - first_exp;
+            let out_exp_fix = if lhs_exp == 255 && rhs_exp == 255 && out_exp == 255 { 256 } else { out_exp };
+            let growing_exp = out_exp_fix - first_exp;
             assert!(growing_exp >= 0 && growing_exp <= 1);
-            let to_shift = first_exp - second_exp;
+            let to_shift = (first_exp - second_exp).min(24);
             let pow2 = 1 << to_shift;
             self.pow2.assign(region, offset, F::from(pow2 as u64));
             let grow = growing_exp as i64 + 1_i64;
             let flip_sign = 1_i64 - lhs_sign as i64 * 2_i64;
             let second_mant_for_check = (out_mant * grow - growing_exp as i64 * flip_sign - first_mant) * pow2 as i64;
             let dif = (second_mant - second_mant_for_check) * flip_sign;
+            println!("TO_SHIFT {}", to_shift);
             println!("OUT_MANT GROW {}", out_mant * (growing_exp as i64 + 1_i64));
             println!("SMFC {}", second_mant_for_check);
             println!("GROWING_EXP {}", growing_exp);
@@ -226,6 +236,11 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
                 offset,
                 F::from(pow2 as u64),
                 F::from(dif as u64),
+            );
+            self.is_zero_config.as_ref().unwrap().assign(
+                region,
+                offset,
+                F::from(rhs_exp as u64 + rhs_exp as u64 + out_exp as u64) - F::from(255_u64*3_u64),
             );
         }
 
@@ -370,6 +385,67 @@ mod test {
         test_ok(instruction_set! {
             I32Const(0x92800126_u64)
             I32Const(0x92800025_u64)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_smallest_normalized_rhs() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
+            I32Const(0x00800000)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_smallest_normalized_lhs() {
+        test_ok(instruction_set! {
+            I32Const(0x00800000)
+            I32Const(0x12800025)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_exp_127_rhs() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
+            I32Const(0x7f000000)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_inf_rhs() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
+            I32Const(0x7f800000)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_inf_doublind() {
+        test_ok(instruction_set! {
+            I32Const(0x7f800000)
+            I32Const(0x7f800000)
+            F32Add
+            Drop
+        });
+    }
+
+    // TODO: fix this.
+    #[test]
+    fn test_f32_add_nan_rhs() {
+        test_ok(instruction_set! {
+            I32Const(0x12800025)
+            I32Const(0x7f800015)
             F32Add
             Drop
         });
