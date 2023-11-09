@@ -10,7 +10,8 @@ use crate::{module::FuncIdx, AsContextMut, Error, Func, Instance, InstanceEntity
 /// process with regard to this need.
 #[derive(Debug)]
 pub struct InstancePre {
-    handle: Instance,
+    // TODO: how to solve problem without pub ?
+    pub handle: Instance,
     builder: InstanceEntityBuilder,
 }
 

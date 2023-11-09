@@ -172,10 +172,38 @@ pub fn build_table_size_write_rw_ops(
     Ok(())
 }
 
+pub fn build_table_get_rw_ops(step: &mut ExecStep, table_idx: u32) -> Result<(), GadgetError> {
+    let table_size = step.read_table_size(table_idx);
+    let elem_index = step.curr_nth_stack_value(0)?;
+    let addr = step.curr_nth_stack_addr(0)?;
+    step.rw_rows.push(RwRow::Stack {
+        rw_counter: step.next_rw_counter(),
+        is_write: false,
+        call_id: step.call_id,
+        stack_pointer: addr as usize,
+        value: elem_index,
+    });
+    if elem_index < table_size.into() {
+        let addr = step.next_nth_stack_addr(0)?;
+        let value = step.next_nth_stack_value(0)?;
+        build_table_elem_read_rw_ops(step, table_idx)?;
+        step.rw_rows.push(RwRow::Stack {
+            rw_counter: step.next_rw_counter(),
+            is_write: true,
+            call_id: step.call_id,
+            stack_pointer: addr as usize,
+            value,
+        });
+    }
+    build_table_size_read_rw_ops(step, table_idx)?;
+    Ok(())
+}
+
 pub fn build_table_elem_read_rw_ops(
     step: &mut ExecStep,
     table_idx: u32,
 ) -> Result<(), GadgetError> {
+    //let table_size = step.read_table_size(table_idx);
     let elem_index = step.curr_nth_stack_value(0)?;
     let value = step.next_nth_stack_value(0)?;
     step.rw_rows.push(RwRow::Table {
@@ -242,7 +270,7 @@ pub fn build_memory_copy_rw_ops(step: &mut ExecStep) -> Result<(), GadgetError> 
         to_address: dest.as_u32(),
         length: len.as_u32(),
         rw_counter: copy_rw_counter,
-        data: vec![0; len.as_usize()],
+        data: data.iter().map(|v| *v as u32).collect(),
     });
     Ok(())
 }
@@ -341,7 +369,7 @@ pub fn build_table_fill_rw_ops_with_args(
     value: u32,
     start: u32,
 ) -> Result<(), GadgetError> {
-    println!("DEBUG BUILD VALUE {:#?}", value);
+    build_table_size_read_rw_ops(step, table_index)?;
     // remember rw counter before fill
     let fill_rw_counter = step.next_rw_counter();
     // read result to the table
@@ -363,23 +391,26 @@ pub fn build_table_fill_rw_ops_with_args(
         rw_counter: fill_rw_counter,
         data: vec![value; range as usize],
     };
-    println!("DEBUG ROW {:#?}, TAG {}", row, row.tag as u32);
     step.copy_rows.push(row);
     Ok(())
 }
 
-pub fn build_table_copy_rw_ops(
-    step: &mut ExecStep,
-    table_src: u32,
-    table_dst: u32,
-) -> Result<(), GadgetError> {
-    // pop 2 elems from stack
-    let start = build_stack_read_rw_ops(step, 0)?;
-    let range = build_stack_read_rw_ops(step, 1)?;
+pub fn build_table_copy_rw_ops(step: &mut ExecStep, table_dst: u32) -> Result<(), GadgetError> {
+    //let table_src = step.next().unwrap().opcode.aux_value().unwrap_or_default().as_u32();
+    let table_src = step.curr().next_table_idx.unwrap().to_u32();
+    // pop 3 elems from stack
+    build_table_size_read_rw_ops(step, table_dst)?;
+    build_table_size_read_rw_ops(step, table_src)?;
+    let length = build_stack_read_rw_ops(step, 0)?;
+    let src_eidx = build_stack_read_rw_ops(step, 1)?;
+    let dst_eidx = build_stack_read_rw_ops(step, 2)?;
     // read copied data
-    let mut data = vec![0; range.as_u32() as usize];
-    for i in 0..range.as_usize() {
-        data[i] = step.read_table_elem(table_src, i as u32).unwrap().as_u32();
+    let mut data = vec![0; length.as_u32() as usize];
+    for i in 0..length.as_usize() {
+        data[i] = step
+            .read_table_elem(table_src, src_eidx.as_u64() as u32 + i as u32)
+            .unwrap()
+            .as_u32();
     }
     let copy_rw_counter = step.next_rw_counter();
     // read result to the table
@@ -388,7 +419,7 @@ pub fn build_table_copy_rw_ops(
             rw_counter: step.next_rw_counter(),
             is_write: false,
             call_id: step.call_id,
-            address: table_src as u64 * 1024 + i as u64,
+            address: table_src as u64 * 1024 + src_eidx.as_u64() + i as u64,
             value: *value as u64,
         });
     });
@@ -398,18 +429,18 @@ pub fn build_table_copy_rw_ops(
             rw_counter: step.next_rw_counter(),
             is_write: true,
             call_id: step.call_id,
-            address: table_dst as u64 * 1024 + start.as_u64() + i as u64,
+            address: table_dst as u64 * 1024 + dst_eidx.as_u64() + i as u64,
             value: *value as u64,
         });
     });
     // create copy row
     step.copy_rows.push(CopyRow {
         tag: CopyTableTag::CopyTable,
-        from_address: table_src * 1024,
-        to_address: table_dst * 1024 + start.as_u32(),
-        length: range.as_u32(),
+        from_address: table_src * 1024 + src_eidx.as_u32(),
+        to_address: table_dst * 1024 + dst_eidx.as_u32(),
+        length: length.as_u32(),
         rw_counter: copy_rw_counter,
-        data: vec![0; range.as_usize()],
+        data: data.into_iter().collect(),
     });
     Ok(())
 }

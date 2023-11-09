@@ -1,10 +1,13 @@
 use crate::{
     common::UntypedValue,
-    engine::bytecode::{InstrMeta, Instruction},
+    engine::bytecode::{InstrMeta, Instruction, TableIdx},
     Extern,
 };
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
-use core::fmt::{Debug, Formatter};
+use core::{
+    fmt::{Debug, Formatter},
+    mem::take,
+};
 
 #[derive(Debug, Clone)]
 pub struct TracerMemoryState {
@@ -23,6 +26,7 @@ pub struct TraceTableState {
 #[derive(Debug, Clone)]
 pub struct TraceTableSizeState {
     pub table_idx: u32,
+    pub init: u32,
     pub delta: u32,
 }
 
@@ -34,6 +38,7 @@ pub struct TracerInstrState {
     pub table_changes: Vec<TraceTableState>,
     pub table_size_changes: Vec<TraceTableSizeState>,
     pub stack: Vec<UntypedValue>,
+    pub next_table_idx: Option<TableIdx>,
     pub source_pc: u32,
     pub code: u16,
     pub memory_size: u32,
@@ -42,7 +47,7 @@ pub struct TracerInstrState {
     pub call_id: u32,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct TracerFunctionMeta {
     pub fn_index: u32,
     pub max_stack_height: u32,
@@ -50,13 +55,13 @@ pub struct TracerFunctionMeta {
     pub fn_name: String,
 }
 
-#[derive(Debug)]
+#[derive(Default, Clone)]
 pub struct TracerGlobalVariable {
     pub index: u32,
     pub value: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Tracer {
     pub global_memory: Vec<TracerMemoryState>,
     pub logs: Vec<TracerInstrState>,
@@ -121,9 +126,9 @@ impl Tracer {
         memory_size: u32,
         consumed_fuel: u64,
     ) {
-        let memory_changes = core::mem::take(&mut self.memory_changes);
-        let table_changes = core::mem::take(&mut self.table_changes);
-        let table_size_changes = core::mem::take(&mut self.table_size_changes);
+        let memory_changes = take(&mut self.memory_changes);
+        let table_changes = take(&mut self.table_changes);
+        let table_size_changes = take(&mut self.table_size_changes);
         let opcode_state = TracerInstrState {
             program_counter,
             opcode,
@@ -131,6 +136,7 @@ impl Tracer {
             table_changes,
             table_size_changes,
             stack,
+            next_table_idx: None,
             source_pc: meta.offset() as u32,
             code: meta.opcode(),
             memory_size,
@@ -138,8 +144,13 @@ impl Tracer {
             consumed_fuel,
             call_id: 0,
         };
-        // println!("{:?} stack = {:?}", opcode_state.opcode, opcode_state.stack);
         self.logs.push(opcode_state.clone());
+    }
+
+    pub fn remember_next_table(&mut self, table_idx: TableIdx) {
+        self.logs.last_mut().map(|v| {
+            v.next_table_idx = Some(table_idx);
+        });
     }
 
     pub fn function_call(
@@ -181,9 +192,10 @@ impl Tracer {
         });
     }
 
-    pub fn table_size_change(&mut self, table_idx: u32, delta: u32) {
+    pub fn table_size_change(&mut self, table_idx: u32, init: u32, delta: u32) {
         self.table_size_changes.push(TraceTableSizeState {
             table_idx,
+            init,
             delta,
         });
     }

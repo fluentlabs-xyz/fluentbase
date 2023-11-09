@@ -115,9 +115,21 @@ impl<'tracer, F: Field> FluentbaseCircuit<'tracer, F> {
             bytecode: UnrolledInstructionSet::new(execution_result.bytecode().as_slice()),
             tracer: Some(execution_result.tracer()),
             public_input: UnrolledPublicInput::new(
-                execution_result.data().input(),
+                execution_result.data().input(0),
                 execution_result.data().output(),
                 execution_result.data().exit_code(),
+            ),
+        }
+    }
+
+    pub fn from_execution_result_with_exit_code(execution_result: &'tracer ExecutionResult, exit_code: i32) -> Self {
+        Self {
+            bytecode: UnrolledInstructionSet::new(execution_result.bytecode().as_slice()),
+            tracer: Some(execution_result.tracer()),
+            public_input: UnrolledPublicInput::new(
+                execution_result.data().input(0),
+                execution_result.data().output(),
+                exit_code,
             ),
         }
     }

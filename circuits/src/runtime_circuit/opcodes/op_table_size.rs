@@ -73,4 +73,43 @@ mod test {
             Drop
         });
     }
+
+    #[test]
+    fn table_size_with_grow() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            TableSize(0)
+            Drop
+        });
+    }
+
+    #[test]
+    fn table_size_multi() {
+        test_ok(instruction_set! {
+            RefFunc(0)
+            I32Const(6)
+            TableGrow(0)
+            Drop
+            TableSize(0)
+            Drop
+
+            RefFunc(0)
+            I32Const(3)
+            TableGrow(0)
+            Drop
+            TableSize(0)
+            Drop
+
+            RefFunc(0)
+            I32Const(2)
+            TableGrow(0)
+            Drop
+            TableSize(0)
+            Drop
+        });
+    }
+
 }

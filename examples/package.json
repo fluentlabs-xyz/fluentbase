@@ -1,0 +1,9 @@
+{
+  "name": "examples",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "web3": "^3.0.0"
+  }
+}

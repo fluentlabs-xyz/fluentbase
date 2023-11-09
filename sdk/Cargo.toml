@@ -5,14 +5,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-byteorder = { version = "1.4.3", default-features = false }
-fixed-bigint = "0.1.9"
-wee_alloc = "0.4.5"
+fluentbase-rwasm = { path = "../rwasm", optional = true }
+fluentbase-runtime = { path = "../runtime", optional = true }
+fluentbase-poseidon = { path = "../poseidon", optional = true }
+k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
+eth_trie = { version = "0.3.0", optional = true }
+keccak-hash = "0.10.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+hex = "0.4.3"
+sha2 = "0.10.8"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-#[profile.release]
-#lto = true
-#opt-level = 'z'
-#strip = true
+[features]
+default = ["runtime"]
+runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:k256", "dep:eth_trie", "dep:fluentbase-poseidon"]

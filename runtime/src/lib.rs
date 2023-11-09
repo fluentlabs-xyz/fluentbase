@@ -1,9 +1,8 @@
-#![feature(local_key_cell_methods)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;
 
-pub use crate::zktrie::*;
+// pub use crate::zktrie::*;
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
 pub use instruction::*;
 pub use macros::*;
@@ -11,23 +10,27 @@ pub use platform::*;
 pub use runtime::*;
 pub use types::*;
 
+mod crypto;
+mod ecc;
 mod instruction;
 mod macros;
+mod mpt;
+mod mpt_helpers;
 mod platform;
 mod runtime;
+mod rwasm;
 #[cfg(test)]
 mod tests;
 mod types;
-mod zktrie;
-mod zktrie_helpers;
+// mod zktrie;
 
 #[derive(Debug)]
-pub enum Error {
+pub enum RuntimeError {
     ReducedModule(ReducedModuleError),
     Rwasm(fluentbase_rwasm::Error),
 }
 
-impl From<ReducedModuleError> for Error {
+impl From<ReducedModuleError> for RuntimeError {
     fn from(value: ReducedModuleError) -> Self {
         Self::ReducedModule(value)
     }
@@ -35,7 +38,7 @@ impl From<ReducedModuleError> for Error {
 
 macro_rules! rwasm_error {
     ($error_type:path) => {
-        impl From<$error_type> for Error {
+        impl From<$error_type> for RuntimeError {
             fn from(value: $error_type) -> Self {
                 Self::Rwasm(value.into())
             }
@@ -49,7 +52,7 @@ rwasm_error!(fluentbase_rwasm::table::TableError);
 rwasm_error!(fluentbase_rwasm::linker::LinkerError);
 rwasm_error!(fluentbase_rwasm::module::ModuleError);
 
-impl From<fluentbase_rwasm::Error> for Error {
+impl From<fluentbase_rwasm::Error> for RuntimeError {
     fn from(value: fluentbase_rwasm::Error) -> Self {
         Self::Rwasm(value)
     }
