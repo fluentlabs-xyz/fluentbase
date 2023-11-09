@@ -21,14 +21,19 @@ impl RwasmPlatformSDK for SDK {
         rwasm_bytecode.len() as i32
     }
 
-    fn rwasm_transact(bytecode: &[u8], input: &[u8], output: &mut [u8], state: u32) -> i32 {
+    fn rwasm_transact(
+        bytecode: &[u8],
+        input: &[u8],
+        output: &mut [u8],
+        state: u32,
+        fuel_limit: u32,
+    ) -> i32 {
         let import_linker = Runtime::new_linker();
-        let result = Runtime::run_with_context(
-            RuntimeContext::new(bytecode)
-                .with_input(input.to_vec())
-                .with_state(state),
-            &import_linker,
-        );
+        let mut ctx = RuntimeContext::new(bytecode)
+            .with_input(input.to_vec())
+            .with_state(state)
+            .with_fuel_limit(fuel_limit);
+        let result = Runtime::run_with_context(ctx, &import_linker);
         if result.is_err() {
             return ExitCode::TransactError.into();
         }
