@@ -29,7 +29,7 @@ impl RwasmPlatformSDK for SDK {
         fuel_limit: u32,
     ) -> i32 {
         let import_linker = Runtime::new_linker();
-        let mut ctx = RuntimeContext::new(bytecode)
+        let ctx = RuntimeContext::new(bytecode)
             .with_input(input.to_vec())
             .with_state(state)
             .with_fuel_limit(fuel_limit);
@@ -42,7 +42,8 @@ impl RwasmPlatformSDK for SDK {
         if execution_output.len() > output.len() {
             return ExitCode::TransactOutputOverflow.into();
         }
-        output.copy_from_slice(execution_output.as_slice());
+        let len = execution_output.len();
+        output[0..len].copy_from_slice(execution_output.as_slice());
         execution_result.data().exit_code()
     }
 }
@@ -54,7 +55,7 @@ mod test {
 
     #[test]
     fn test_greeting() {
-        let wasm_binary = include_bytes!("../../../runtime/examples/bin/greeting.wasm");
+        let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
         let mut output = vec![0u8; 1024 * 1024];
         SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
     }
