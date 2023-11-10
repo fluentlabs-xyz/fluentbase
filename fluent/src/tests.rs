@@ -7,7 +7,7 @@ use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::Compiler;
 use serde_json::from_str;
 use std::{fs::File, io::Read, string::String, sync::Arc, vec, vec::Vec};
-use zktrie::{AccountData, StoreData, FIELDSIZE};
+// use zktrie::{AccountData, StoreData, FIELDSIZE};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
@@ -127,24 +127,24 @@ fn test_evm_verify_account_state_data() {
     // let input_data = vec![];
     // Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
 
-    let nonce_code: StoreData =
-        hex::decode("0000000000000000000000000000000000000000000000000000000000000011")
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap();
-    let balance: StoreData =
-        hex::decode("01ffffffffffffffffffffffffffffffffffffffffffd5a5fa65e20465da88bf")
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap();
-    let code_hash: StoreData =
-        hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap();
+    // let nonce_code: StoreData =
+    //     hex::decode("0000000000000000000000000000000000000000000000000000000000000011")
+    //         .unwrap()
+    //         .as_slice()
+    //         .try_into()
+    //         .unwrap();
+    // let balance: StoreData =
+    //     hex::decode("01ffffffffffffffffffffffffffffffffffffffffffd5a5fa65e20465da88bf")
+    //         .unwrap()
+    //         .as_slice()
+    //         .try_into()
+    //         .unwrap();
+    // let code_hash: StoreData =
+    //     hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+    //         .unwrap()
+    //         .as_slice()
+    //         .try_into()
+    //         .unwrap();
 
     // let zktr = zktrie_get_trie(default_id).unwrap().clone();
     // let mut zk_trie = zktr.as_ref().borrow_mut();
