@@ -1,38 +1,16 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
+use fluentbase_rwasm::rwasm::_UNKNOWN;
 use fluentbase_rwasm::{
     common::{Trap, UntypedValue, ValueType, F32, F64},
     engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
     rwasm::{
-        Compiler,
-        DefaultImportHandler,
-        FuncOrExport,
-        ImportFunc,
-        ImportLinker,
-        ReducedModule,
+        Compiler, DefaultImportHandler, FuncOrExport, ImportFunc, ImportLinker, ReducedModule,
         RouterInstructions,
     },
     value::WithType,
-    AsContext,
-    Caller,
-    Config,
-    Engine,
-    Extern,
-    ExternType,
-    Func,
-    FuncType,
-    Global,
-    ImportType,
-    Instance,
-    Linker,
-    Memory,
-    MemoryType,
-    Module,
-    Mutability,
-    Store,
-    Table,
-    TableType,
-    Value,
+    AsContext, Caller, Config, Engine, Extern, ExternType, Func, FuncType, Global, ImportType,
+    Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType, Value,
 };
 use std::collections::HashMap;
 use wast::token::{Id, Span};
@@ -334,6 +312,7 @@ impl TestContext<'_> {
                     import.module().to_string(),
                     import.name().to_string(),
                     import_index,
+                    _UNKNOWN,
                     &func_type.params(),
                     &func_type.results(),
                 ));
@@ -394,6 +373,7 @@ impl TestContext<'_> {
             "env".to_string(),
             "_sys_state".to_string(),
             SYS_STATE as u16,
+            _UNKNOWN,
             &[],
             &[ValueType::I32],
         ));
@@ -401,6 +381,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "_sys_input".to_string(),
             SYS_INPUT as u16,
+            _UNKNOWN,
             &[],
             &[ValueType::I64],
         ));
@@ -408,6 +389,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "_sys_output".to_string(),
             SYS_OUTPUT as u16,
+            _UNKNOWN,
             &[ValueType::I64],
             &[],
         ));
@@ -415,6 +397,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "_sys_input_len".to_string(),
             SYS_INPUT_LEN as u16,
+            _UNKNOWN,
             &[],
             &[ValueType::I32],
         ));
@@ -422,6 +405,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "_sys_output_len".to_string(),
             SYS_OUTPUT_LEN as u16,
+            _UNKNOWN,
             &[],
             &[ValueType::I32],
         ));
@@ -430,6 +414,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32".to_string(),
             SYS_PRINT_I32 as u16,
+            _UNKNOWN,
             &[ValueType::I32],
             &[],
         ));
@@ -438,6 +423,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i64".to_string(),
             SYS_PRINT_I64 as u16,
+            _UNKNOWN,
             &[ValueType::I64],
             &[],
         ));
@@ -446,6 +432,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f32".to_string(),
             SYS_PRINT_F32 as u16,
+            _UNKNOWN,
             &[ValueType::F32],
             &[],
         ));
@@ -454,6 +441,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64".to_string(),
             SYS_PRINT_F64 as u16,
+            _UNKNOWN,
             &[ValueType::F64],
             &[],
         ));
@@ -462,6 +450,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32_f32".to_string(),
             SYS_PRINT_I32_F32 as u16,
+            _UNKNOWN,
             &[ValueType::I32, ValueType::F32],
             &[],
         ));
@@ -470,12 +459,14 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64_f64".to_string(),
             SYS_PRINT_F64_F64 as u16,
+            _UNKNOWN,
             &[ValueType::F64, ValueType::F64],
             &[],
         ));
 
         let mut compiler =
-            Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+            Compiler::new_with_fuel_consume(wasm_binary.as_slice(), Some(&import_linker), false)
+                .unwrap();
 
         compiler
             .translate_with_state(
@@ -538,6 +529,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32".to_string(),
             SYS_PRINT_I32 as u16,
+            _UNKNOWN,
             &[ValueType::I32],
             &[],
         ));
@@ -546,6 +538,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i64".to_string(),
             SYS_PRINT_I64 as u16,
+            _UNKNOWN,
             &[ValueType::I64],
             &[],
         ));
@@ -554,6 +547,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f32".to_string(),
             SYS_PRINT_F32 as u16,
+            _UNKNOWN,
             &[ValueType::F32],
             &[],
         ));
@@ -562,6 +556,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64".to_string(),
             SYS_PRINT_F64 as u16,
+            _UNKNOWN,
             &[ValueType::F64],
             &[],
         ));
@@ -570,6 +565,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32_f32".to_string(),
             SYS_PRINT_I32_F32 as u16,
+            _UNKNOWN,
             &[ValueType::I32, ValueType::F32],
             &[],
         ));
@@ -578,6 +574,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64_f64".to_string(),
             SYS_PRINT_F64_F64 as u16,
+            _UNKNOWN,
             &[ValueType::F64, ValueType::F64],
             &[],
         ));

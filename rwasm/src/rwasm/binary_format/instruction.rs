@@ -1,3 +1,4 @@
+use crate::engine::ConstRef;
 use crate::{
     common::UntypedValue,
     engine::{
@@ -313,8 +314,8 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0x3b => Instruction::ElemDrop(ElementSegmentIdx::read_binary(sink)?),
             0x3c => Instruction::RefFunc(FuncIdx::read_binary(sink)?),
             // i32/i64 Instruction family
-            0x3f => Instruction::I32Const(UntypedValue::read_binary(sink)?),
-            0x40 => Instruction::I64Const(UntypedValue::read_binary(sink)?),
+            0x3d => Instruction::I32Const(UntypedValue::read_binary(sink)?),
+            0x3e => Instruction::I64Const(UntypedValue::read_binary(sink)?),
             0x41 => Instruction::ConstRef(ConstRef::read_binary(sink)?),
             0x42 => Instruction::I32Eqz,
             0x43 => Instruction::I32Eq,
