@@ -340,6 +340,7 @@ impl<'linker> Compiler<'linker> {
         }
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
+        self.translate_data()?;
         // translate router into separate instruction set
         // inject main function call with return
         self.code_section.op_br_indirect(0);
