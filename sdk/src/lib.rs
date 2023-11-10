@@ -1,9 +1,6 @@
 // #![no_std]
 
 #[cfg(feature = "runtime")]
-use fluentbase_runtime::FIELDSIZE;
-
-#[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(not(feature = "runtime"))]
 mod rwasm;

@@ -11,13 +11,13 @@ pub fn main() {
     const PK_EXPECTED_LEN: usize = 33;
 
     let mut digest = [0u8; DIGEST_LEN];
-    SDK::sys_read_slice(&mut digest, DIGEST_OFFSET as u32);
+    SDK::sys_read(&mut digest, DIGEST_OFFSET as u32);
     let mut sig = [0u8; SIG_LEN];
-    SDK::sys_read_slice(&mut sig, SIG_OFFSET as u32);
+    SDK::sys_read(&mut sig, SIG_OFFSET as u32);
     let mut rec_id = [0u8; REC_ID_LEN];
-    SDK::sys_read_slice(&mut rec_id, REC_ID_OFFSET as u32);
+    SDK::sys_read(&mut rec_id, REC_ID_OFFSET as u32);
     let mut pk_expected = [0u8; PK_EXPECTED_LEN];
-    SDK::sys_read_slice(&mut pk_expected, PK_EXPECTED_OFFSET as u32);
+    SDK::sys_read(&mut pk_expected, PK_EXPECTED_OFFSET as u32);
 
     let res = SDK::ecc_secp256k1_verify(&digest, &sig, &pk_expected, rec_id[0]);
     if !res {
