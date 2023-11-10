@@ -12,7 +12,7 @@ use crate::{
     },
     exec_step::MAX_TABLE_SIZE,
     fixed_table::FixedTableTag,
-    gadgets::{is_zero::IsZeroConfig, lt::LtGadget},
+    gadgets::{is_zero::IsZeroConfig, lt::LtGadget, is_f32_exp::IsF32ExpConfig},
     lookup_table::{
         BitwiseCheckLookup,
         CopyLookup,
@@ -184,6 +184,10 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
 
     pub fn is_zero_gadget(&mut self, value: Query<F>) -> IsZeroConfig<F> {
         IsZeroConfig::configure(self.cs, &mut self.base, value)
+    }
+
+    pub fn query_f32_exp(&mut self) -> IsF32ExpConfig<F> {
+        IsF32ExpConfig::configure(self.cs, &mut self.base)
     }
 
     pub fn lt_gadget<const N_BYTES: usize>(

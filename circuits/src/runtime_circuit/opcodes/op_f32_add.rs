@@ -1,7 +1,7 @@
 use crate::{
     bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
-    gadgets::{lt::LtGadget, is_zero::IsZeroConfig},
+    gadgets::{lt::LtGadget, is_zero::IsZeroConfig, is_f32_exp::IsF32ExpConfig},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
@@ -23,9 +23,9 @@ pub(crate) struct OpF32AddGadget<F: Field> {
     lhs_sign: SelectorColumn,
     rhs_sign: SelectorColumn,
     out_sign: SelectorColumn,
-    lhs_exp: AdviceColumn,
-    rhs_exp: AdviceColumn,
-    out_exp: AdviceColumn,
+    lhs_exp: IsF32ExpConfig<F>,
+    rhs_exp: IsF32ExpConfig<F>,
+    out_exp: IsF32ExpConfig<F>,
     lhs_limbs: [AdviceColumn; 3],
     rhs_limbs: [AdviceColumn; 3],
     out_limbs: [AdviceColumn; 3],
@@ -48,9 +48,9 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_sign = cb.query_selector();
         let out_sign = cb.query_selector();
 
-        let lhs_exp = cb.query_cell();
-        let rhs_exp = cb.query_cell();
-        let out_exp = cb.query_cell();
+        let lhs_exp = cb.query_f32_exp();
+        let rhs_exp = cb.query_f32_exp();
+        let out_exp = cb.query_f32_exp();
 
         let lhs_limbs = [cb.query_cell(), cb.query_cell(), cb.query_cell()];
         let rhs_limbs = [cb.query_cell(), cb.query_cell(), cb.query_cell()];
@@ -106,6 +106,19 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
         let mut opt_lt_gadget = None;
         let mut opt_is_zero_config = None;
+
+        // Exps is checked to be bytes, so we get negative in any case if exp is not indicate nan or inf.
+        // So finally we adding negatives, and it is imposible to wrap modulo.
+        // Consequence is than we can add zero to indicate success.
+        // let inf_or_nan_arg_exp_case_zero = ||
+        //  (lhs_exp.current() - 255.expr()) * (rhs_exp.current() - 255.expr()) + (out_exp.current() - 255.expr());
+
+        cb.condition(lhs_exp.is_inf_or_nan().or(rhs_exp.is_inf_or_nan()).into(), |cb| {
+            let out_inf_or_nan: Query<F> = out_exp.is_inf_or_nan().into();
+            cb.require_zero("if any argument is inf or nan, than result must be inf of nan",
+               1.expr() - out_inf_or_nan,
+            );
+        });
 
         // Same sign case.
         cb.condition(lhs_sign.current().xnor(rhs_sign.current()).into(), |cb| {
