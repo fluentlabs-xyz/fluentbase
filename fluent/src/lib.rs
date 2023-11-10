@@ -1,6 +1,3 @@
-use fluentbase_sdk::sys_input;
-use std::vec;
-
 mod eth_typ;
 mod eth_types;
 pub mod evm;
@@ -26,22 +23,22 @@ enum EvmInputSpec {
 // #[no_mangle]
 pub extern "C" fn main() {
     fn verify_block_transition() {
-        let mut mem = vec![0u8; 1024 * 1024];
-        let rlp_block_a_len = sys_input(
-            EvmInputSpec::RlpBlockA as u32,
-            mem.as_mut_ptr() as u32,
-            0,
-            0,
-        );
-        let rlp_block_b_len = sys_input(
-            EvmInputSpec::RlpBlockB as u32,
-            mem.as_mut_ptr() as u32,
-            rlp_block_a_len as u32,
-            0,
-        );
-        let rlp_block_a = &mem[0..rlp_block_a_len as usize];
-        let rlp_block_a =
-            &mem[rlp_block_a_len as usize..(rlp_block_a_len + rlp_block_b_len) as usize];
+        // let mut mem = vec![0u8; 1024 * 1024];
+        // let rlp_block_a_len = sys_input(
+        //     EvmInputSpec::RlpBlockA as u32,
+        //     mem.as_mut_ptr() as u32,
+        //     0,
+        //     0,
+        // );
+        // let rlp_block_b_len = sys_input(
+        //     EvmInputSpec::RlpBlockB as u32,
+        //     mem.as_mut_ptr() as u32,
+        //     rlp_block_a_len as u32,
+        //     0,
+        // );
+        // let rlp_block_a = &mem[0..rlp_block_a_len as usize];
+        // let rlp_block_a =
+        //     &mem[rlp_block_a_len as usize..(rlp_block_a_len + rlp_block_b_len) as usize];
 
         // let block_a = decode_rlp(rlp_block_a);
         // let block_b = decode_rlp(rlp_block_b);
