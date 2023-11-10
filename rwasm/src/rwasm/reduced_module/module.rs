@@ -9,9 +9,7 @@ use crate::{
             types::{ReducedModuleError, N_MAX_MEMORY_PAGES},
         },
     },
-    Engine,
-    FuncType,
-    Module,
+    Engine, FuncType, Module,
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -168,7 +166,7 @@ impl ReducedModule {
             .unwrap();
         // set 0 function as an entrypoint (it goes right after import section)
         let main_index = import_mapping.len() as u32;
-        //builder.set_start(FuncIdx::from(main_index));
+        builder.set_start(FuncIdx::from(main_index));
         builder
             .push_export(
                 "main".to_string().into_boxed_str(),

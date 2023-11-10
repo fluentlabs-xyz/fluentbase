@@ -113,8 +113,16 @@ impl<'linker> Compiler<'linker> {
         wasm_binary: &[u8],
         import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
+        Self::new_with_fuel_consume(wasm_binary, import_linker, true)
+    }
+
+    pub fn new_with_fuel_consume(
+        wasm_binary: &[u8],
+        import_linker: Option<&'linker ImportLinker>,
+        fuel_consume: bool,
+    ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(true);
+        config.consume_fuel(fuel_consume);
         config.wasm_tail_call(true);
 
         let engine = Engine::new(&config);
