@@ -26,7 +26,7 @@ fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
 
 #[test]
 fn test_evm_verify_block_rlps_without_transactions() {
-    let wasm_binary = include_bytes!("../../runtime/examples/bin/evm_verify_block_rlps.wasm");
+    let wasm_binary = include_bytes!("../../examples/bin/evm_verify_block_rlps.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     // 1. generate block rlp and put read it with evm_rlp_block_a
@@ -56,7 +56,7 @@ fn test_evm_verify_block_rlps_without_transactions() {
 
 #[test]
 fn test_evm_verify_block_receipts_with_signed_transactions() {
-    let wasm_binary = include_bytes!("../../runtime/examples/bin/evm_verify_block_rlps.wasm"); // TODO
+    let wasm_binary = include_bytes!("../../examples/bin/evm_verify_block_rlps.wasm"); // TODO
     let rwasm_binary = wasm2rwasm(wasm_binary);
 
     // read block_receipt_a.json
