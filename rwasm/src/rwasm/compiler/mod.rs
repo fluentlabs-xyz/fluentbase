@@ -797,7 +797,7 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_i32_add();
                 self.code_section.op_i32_const(max_pages);
                 self.code_section.op_i32_ge_s();
-                self.code_section.op_br_if_nez(3);
+                self.code_section.op_br_if_eqz(4);
                 self.code_section.op_drop();
                 self.code_section.op_i32_const(u32::MAX);
                 self.code_section.op_br(2);
