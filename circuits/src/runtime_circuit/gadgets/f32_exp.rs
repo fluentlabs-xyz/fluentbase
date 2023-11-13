@@ -1,35 +1,39 @@
 use crate::{
-    constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query},
+    constraint_builder::{AdviceColumn, BinaryQuery, ConstraintBuilder, Query, ToExpr},
     util::Field,
 };
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 use std::fmt::Debug;
+use crate::runtime_circuit::constraint_builder::OpConstraintBuilder;
 
 #[derive(Clone)]
-pub struct IsF32ExpConfig<F: Field> {
+pub struct F32ExpConfig<F: Field> {
     pub value: AdviceColumn,
     pub denorm_case_inv: AdviceColumn,
     pub inf_case_inv: AdviceColumn,
     pub _marker: std::marker::PhantomData<F>,
 }
 
-impl<F: Field> IsF32ExpConfig<F> {
+impl<F: Field> F32ExpConfig<F> {
 
     pub fn current(&self) -> Query<F> {
         self.value.current()
     }
 
     pub fn is_norm(&self) -> BinaryQuery<F> {
-        BinaryQuery(Query::one() - self.value.current() * self.denorm_case_inv.current()
-                                 - self.value.current() * self.inf_case_inv.current())
+        BinaryQuery(
+            self.value.current() * self.denorm_case_inv.current()
+            + (self.value.current() - 255.expr()) * self.inf_case_inv.current()
+            - Query::one()
+        )
     }
 
     pub fn is_denorm(&self) -> BinaryQuery<F> {
-        BinaryQuery(self.value.current() * self.denorm_case_inv.current())
+        BinaryQuery(Query::one() - self.value.current() * self.denorm_case_inv.current())
     }
 
     pub fn is_inf_or_nan(&self) -> BinaryQuery<F> {
-        BinaryQuery(self.value.current() * self.inf_case_inv.current())
+        BinaryQuery(Query::one() - (self.value.current() - 255.expr()) * self.inf_case_inv.current())
     }
 
     pub fn assign<T: Copy + TryInto<F>>(&self, region: &mut Region<'_, F>, offset: usize, value: T)
@@ -54,12 +58,13 @@ impl<F: Field> IsF32ExpConfig<F> {
     }
 
     pub fn configure(
-        cs: &mut ConstraintSystem<F>,
-        cb: &mut ConstraintBuilder<F>,
+        ocb: &mut OpConstraintBuilder<F>,
     ) -> Self {
-        let value = AdviceColumn(cs.advice_column());
-        let denorm_case_inv = AdviceColumn(cs.advice_column());
-        let inf_case_inv = AdviceColumn(cs.advice_column());
+        let value = ocb.query_cell();
+        let denorm_case_inv = ocb.query_cell();
+        let inf_case_inv = ocb.query_cell();
+        ocb.range_check8(value.current());
+        let cb = &mut ocb.base;
         // TODO: also perform range check.
         cb.assert_zero(
             "value can be 0, 255, or between",

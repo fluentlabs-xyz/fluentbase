@@ -1,11 +1,13 @@
 use crate::{
     bail_illegal_opcode,
     constraint_builder::{AdviceColumn, ToExpr},
-    gadgets::{lt::LtGadget, is_zero::IsZeroConfig, is_f32_exp::IsF32ExpConfig},
+    gadgets::{lt::LtGadget, is_zero::IsZeroConfig},
     runtime_circuit::{
         constraint_builder::OpConstraintBuilder,
         execution_state::ExecutionState,
         opcodes::{ExecStep, ExecutionGadget, GadgetError},
+        gadgets::f32_exp::F32ExpConfig,
+        gadgets::f32_mantissa::F32MantissaConfig,
     },
     rw_builder::rw_row::RwTableContextTag,
     util::Field,
@@ -23,16 +25,15 @@ pub(crate) struct OpF32AddGadget<F: Field> {
     lhs_sign: SelectorColumn,
     rhs_sign: SelectorColumn,
     out_sign: SelectorColumn,
-    lhs_exp: IsF32ExpConfig<F>,
-    rhs_exp: IsF32ExpConfig<F>,
-    out_exp: IsF32ExpConfig<F>,
-    lhs_limbs: [AdviceColumn; 3],
-    rhs_limbs: [AdviceColumn; 3],
-    out_limbs: [AdviceColumn; 3],
+    lhs_exp: F32ExpConfig<F>,
+    rhs_exp: F32ExpConfig<F>,
+    out_exp: F32ExpConfig<F>,
+    lhs_mant: F32MantissaConfig<F>,
+    rhs_mant: F32MantissaConfig<F>,
+    out_mant: F32MantissaConfig<F>,
     pow2: AdviceColumn,
     // 24 bits to compare for addition, that is simpler than multiplication.
     lt_gadget: Option<LtGadget<F, 4>>,
-    is_zero_config: Option<IsZeroConfig<F>>,
     _pd: PhantomData<F>,
 }
 
@@ -52,9 +53,9 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_exp = cb.query_f32_exp();
         let out_exp = cb.query_f32_exp();
 
-        let lhs_limbs = [cb.query_cell(), cb.query_cell(), cb.query_cell()];
-        let rhs_limbs = [cb.query_cell(), cb.query_cell(), cb.query_cell()];
-        let out_limbs = [cb.query_cell(), cb.query_cell(), cb.query_cell()];
+        let lhs_mant = cb.query_f32_mantissa();
+        let rhs_mant = cb.query_f32_mantissa();
+        let out_mant = cb.query_f32_mantissa();
 
         let pow2 = cb.query_cell();
 
@@ -62,50 +63,32 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
         cb.range_check8(lhs_exp_ge.current().select(lhs_exp.current() - rhs_exp.current(), 0.expr()));
 
-        cb.range_check8(lhs_exp.current());
-        cb.range_check8(rhs_exp.current());
-        cb.range_check8(out_exp.current());
-
-        for i in 0..2 {
-            cb.range_check8(lhs_limbs[i].current());
-            cb.range_check8(rhs_limbs[i].current());
-            cb.range_check8(out_limbs[i].current());
-        }
-
-        cb.range_check7(lhs_limbs[2].current() - 0x80.expr());
-        cb.range_check7(rhs_limbs[2].current() - 0x80.expr());
-        cb.range_check7(out_limbs[2].current() - 0x80.expr());
-
         cb.stack_pop(
-            rhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + rhs_exp.current() * 0x800000.expr() +
-            (rhs_limbs[2].current() - 0x80.expr()) * 0x10000.expr() + rhs_limbs[1].current() * 0x100.expr() + rhs_limbs[0].current()
+            rhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + rhs_exp.current() * 0x800000.expr() + rhs_mant.raw_part()
         );
 
         cb.stack_pop(
-            lhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + lhs_exp.current() * 0x800000.expr() +
-            (lhs_limbs[2].current() - 0x80.expr()) * 0x10000.expr() + lhs_limbs[1].current() * 0x100.expr() + lhs_limbs[0].current()
+            lhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + lhs_exp.current() * 0x800000.expr() + lhs_mant.raw_part()
         );
 
         cb.stack_push(
-            out_sign.current().select(0x80000000_u32.expr(), 0.expr()) + out_exp.current() * 0x800000.expr() +
-            (out_limbs[2].current() - 0x80.expr()) * 0x10000.expr() + out_limbs[1].current() * 0x100.expr() + out_limbs[0].current()
+            out_sign.current().select(0x80000000_u32.expr(), 0.expr()) + out_exp.current() * 0x800000.expr() + out_mant.raw_part()
         );
 
         // Halo field is used to represent nagative values.
-        let lhs_mant_abs = || lhs_limbs[2].current() * 0x10000.expr() + lhs_limbs[1].current() * 0x100.expr() + lhs_limbs[0].current();
-        let lhs_mant = || lhs_sign.current().select(0.expr() - lhs_mant_abs(), lhs_mant_abs());
-        let rhs_mant_abs = || rhs_limbs[2].current() * 0x10000.expr() + rhs_limbs[1].current() * 0x100.expr() + rhs_limbs[0].current();
-        let rhs_mant = || rhs_sign.current().select(0.expr() - rhs_mant_abs(), rhs_mant_abs());
-        let out_mant_abs = || out_limbs[2].current() * 0x10000.expr() + out_limbs[1].current() * 0x100.expr() + out_limbs[0].current();
-        let out_mant = || out_sign.current().select(0.expr() - out_mant_abs(), out_mant_abs());
+        let lhs_mant_abs = || lhs_mant.absolute();
+        let lhs_mant_f = || lhs_sign.current().select(0.expr() - lhs_mant_abs(), lhs_mant_abs());
+        let rhs_mant_abs = || rhs_mant.absolute();
+        let rhs_mant_f = || rhs_sign.current().select(0.expr() - rhs_mant_abs(), rhs_mant_abs());
+        let out_mant_abs = || out_mant.absolute();
+        let out_mant_f = || out_sign.current().select(0.expr() - out_mant_abs(), out_mant_abs());
 
         let first_exp = || lhs_exp_ge.current().select(lhs_exp.current(), rhs_exp.current());
         let second_exp = || lhs_exp_ge.current().select(rhs_exp.current(), lhs_exp.current());
-        let first_mant = || lhs_exp_ge.current().select(lhs_mant(), rhs_mant());
-        let second_mant = || lhs_exp_ge.current().select(rhs_mant(), lhs_mant());
+        let first_mant = || lhs_exp_ge.current().select(lhs_mant_f(), rhs_mant_f());
+        let second_mant = || lhs_exp_ge.current().select(rhs_mant_f(), lhs_mant_f());
 
         let mut opt_lt_gadget = None;
-        let mut opt_is_zero_config = None;
 
         // Exps is checked to be bytes, so we get negative in any case if exp is not indicate nan or inf.
         // So finally we adding negatives, and it is imposible to wrap modulo.
@@ -122,15 +105,15 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
         // Same sign case.
         cb.condition(lhs_sign.current().xnor(rhs_sign.current()).into(), |cb| {
-            let is_zero_config = cb.is_zero_gadget(lhs_exp.current() + rhs_exp.current() + out_exp.current() - (255*3).expr());
-            let out_exp_fix = || is_zero_config.clone().current().select(256.expr(), out_exp.current());
+            let is_inf = || lhs_exp.is_inf_or_nan().and(rhs_exp.is_inf_or_nan()).and(out_exp.is_inf_or_nan());
+            let out_exp_fix = || is_inf().select(256.expr(), out_exp.current());
             let growing_exp = || out_exp_fix() - first_exp();
             let flip_sign = || 1.expr() - lhs_sign_bit() * 2.expr();
             let grow = || (growing_exp() + 1.expr());
             cb.require_boolean("is sign is same, `exp` can grow by zero or one", growing_exp());
             // If `out_exp` is growing, than second mant must satisfy.
             // Second mantissa for check is already truncated.
-            let second_mant_for_check = || (out_mant() * grow() - growing_exp() * flip_sign() - first_mant()) * pow2.current();
+            let second_mant_for_check = || (out_mant_f() * grow() - growing_exp() * flip_sign() - first_mant()) * pow2.current();
             cb.fixed_lookup(FixedTableTag::Pow2SaturateTo24, [
                 first_exp() - second_exp(),
                 pow2.current(),
@@ -140,7 +123,6 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             let lt_gadget = cb.lt_gadget(pow2.current(), dif());
             cb.require_zero("rest of mantissa must be shifted out of bits", lt_gadget.expr());
             opt_lt_gadget = Some(lt_gadget);
-            opt_is_zero_config = Some(is_zero_config);
         });
 
         Self {
@@ -151,12 +133,11 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             lhs_exp,
             rhs_exp,
             out_exp,
-            lhs_limbs,
-            rhs_limbs,
-            out_limbs,
+            lhs_mant,
+            rhs_mant,
+            out_mant,
             pow2,
             lt_gadget: opt_lt_gadget,
-            is_zero_config: opt_is_zero_config,
             _pd: Default::default(),
         }
     }
@@ -183,12 +164,6 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_exp = (rhs_raw >> 23) & 0xff;
         let out_exp = (out_raw >> 23) & 0xff;
 
-        // Here in last limb, extra bit is added, bit number 24 in mantissa that always one.
-        // TODO: case with un normalized form.
-        let lhs_limbs = [lhs_raw & 0xff, (lhs_raw >> 8) & 0xff, ((lhs_raw >> 16) & 0x7f) | 0x80];
-        let rhs_limbs = [rhs_raw & 0xff, (rhs_raw >> 8) & 0xff, ((rhs_raw >> 16) & 0x7f) | 0x80];
-        let out_limbs = [out_raw & 0xff, (out_raw >> 8) & 0xff, ((out_raw >> 16) & 0x7f) | 0x80];
-
         //let lhs_exp_ge = false; //lhs_exp >= rhs_exp;
         let lhs_exp_ge = lhs_exp >= rhs_exp;
         self.lhs_exp_ge.assign(region, offset, lhs_exp_ge);
@@ -201,15 +176,9 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         self.rhs_exp.assign(region, offset, F::from(rhs_exp as u64));
         self.out_exp.assign(region, offset, F::from(out_exp as u64));
 
-        for i in 0..=2 {
-            self.lhs_limbs[i].assign(region, offset, F::from(lhs_limbs[i] as u64));
-            self.rhs_limbs[i].assign(region, offset, F::from(rhs_limbs[i] as u64));
-            self.out_limbs[i].assign(region, offset, F::from(out_limbs[i] as u64));
-        }
-
-        let lhs_mant_abs = (lhs_raw & 0x7fffff) | 0x800000;
-        let rhs_mant_abs = (rhs_raw & 0x7fffff) | 0x800000;
-        let out_mant_abs = (out_raw & 0x7fffff) | 0x800000;
+        let lhs_mant_abs = self.lhs_mant.assign_from_raw(region, offset, lhs_raw);
+        let rhs_mant_abs = self.rhs_mant.assign_from_raw(region, offset, rhs_raw);
+        let out_mant_abs = self.out_mant.assign_from_raw(region, offset, out_raw);
 
         let lhs_mant = if lhs_sign { -(lhs_mant_abs as i64) } else { lhs_mant_abs as i64 };
         let rhs_mant = if rhs_sign { -(rhs_mant_abs as i64) } else { rhs_mant_abs as i64 };
@@ -249,11 +218,6 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
                 offset,
                 F::from(pow2 as u64),
                 F::from(dif as u64),
-            );
-            self.is_zero_config.as_ref().unwrap().assign(
-                region,
-                offset,
-                F::from(rhs_exp as u64 + rhs_exp as u64 + out_exp as u64) - F::from(255_u64*3_u64),
             );
         }
 

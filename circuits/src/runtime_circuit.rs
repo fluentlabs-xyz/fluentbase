@@ -9,5 +9,6 @@ mod responsible_opcode;
 #[cfg(test)]
 mod testing;
 mod utils;
+mod gadgets;
 
 pub use circuit::RuntimeCircuitConfig;

@@ -12,7 +12,7 @@ use crate::{
     },
     exec_step::MAX_TABLE_SIZE,
     fixed_table::FixedTableTag,
-    gadgets::{is_zero::IsZeroConfig, lt::LtGadget, is_f32_exp::IsF32ExpConfig},
+    gadgets::{is_zero::IsZeroConfig, lt::LtGadget},
     lookup_table::{
         BitwiseCheckLookup,
         CopyLookup,
@@ -31,6 +31,8 @@ use crate::{
     },
     util::Field,
 };
+use super::gadgets::f32_exp::F32ExpConfig;
+use super::gadgets::f32_mantissa::F32MantissaConfig;
 use fluentbase_rwasm::engine::bytecode::Instruction;
 use halo2_proofs::{circuit::Region, plonk::ConstraintSystem};
 
@@ -186,8 +188,12 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         IsZeroConfig::configure(self.cs, &mut self.base, value)
     }
 
-    pub fn query_f32_exp(&mut self) -> IsF32ExpConfig<F> {
-        IsF32ExpConfig::configure(self.cs, &mut self.base)
+    pub fn query_f32_exp(&mut self) -> F32ExpConfig<F> {
+        F32ExpConfig::configure(self)
+    }
+
+    pub fn query_f32_mantissa(&mut self) -> F32MantissaConfig<F> {
+        F32MantissaConfig::configure(self)
     }
 
     pub fn lt_gadget<const N_BYTES: usize>(
