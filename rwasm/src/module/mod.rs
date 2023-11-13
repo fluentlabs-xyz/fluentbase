@@ -37,13 +37,7 @@ use self::{
 };
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
-    Engine,
-    Error,
-    ExternType,
-    FuncType,
-    GlobalType,
-    MemoryType,
-    TableType,
+    Engine, Error, ExternType, FuncType, GlobalType, MemoryType, TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 use core::{iter, slice::Iter as SliceIter};
