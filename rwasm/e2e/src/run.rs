@@ -3,24 +3,14 @@ use anyhow::Result;
 use fluentbase_rwasm::{
     common::{F32, F64},
     rwasm::DefaultImportHandler,
-    Config,
-    ExternRef,
-    FuncRef,
-    Store,
-    Value,
+    Config, ExternRef, FuncRef, Store, Value,
 };
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
     lexer::Lexer,
     parser::ParseBuffer,
     token::Span,
-    QuoteWat,
-    Wast,
-    WastDirective,
-    WastExecute,
-    WastInvoke,
-    WastRet,
-    Wat,
+    QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
 /// Runs the Wasm test spec identified by the given name.
@@ -543,9 +533,9 @@ fn execute_wast_execute_with_state(
             context.set_state_by_name(invoke.name)?;
             execute_wast_invoke(context, span, invoke, true).map_err(Into::into)
         }
-        WastExecute::Wat(Wat::Module(module)) => {
-            context.compile_and_instantiate(module).map(|_| Vec::new())
-        }
+        WastExecute::Wat(Wat::Module(module)) => context
+            .compile_and_instantiate_with_router(module)
+            .map(|_| Vec::new()),
         WastExecute::Wat(Wat::Component(_)) => {
             // Wasmi currently does not support the Wasm component model.
             Ok(vec![])

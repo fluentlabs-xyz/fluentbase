@@ -285,6 +285,10 @@ impl Module {
         }
     }
 
+    pub fn get_start_fn(&self) -> Option<FuncIdx> {
+        self.start
+    }
+
     /// Initializes the [`Instance`] tables with the Wasm element segments of the [`Module`].
     fn initialize_table_elements(
         &self,

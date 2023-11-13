@@ -10,9 +10,7 @@ use crate::{
     module::FuncIdx,
     store::ResourceLimiterRef,
     value::WithType,
-    Func,
-    FuncRef,
-    Value,
+    Func, FuncRef, Value,
 };
 use alloc::vec::Vec;
 use core::cmp::max;

@@ -65,6 +65,7 @@ const SYS_PRINT_F32: u32 = 0xF007;
 const SYS_PRINT_F64: u32 = 0xF008;
 const SYS_PRINT_I32_F32: u32 = 0xF009;
 const SYS_PRINT_F64_F64: u32 = 0xF010;
+const SYS_PRINT: u32 = 0xF011;
 
 const DEFAULT_MODULE_NAME: &'static str = "main_module";
 impl<'a> TestContext<'a> {
@@ -339,21 +340,23 @@ impl TestContext<'_> {
 
         let mut exports_names = None;
 
-        let exports = module
+        let start_fn = module.get_start_fn();
+        let mut router_index = 0;
+        let mut exports = module
             .exports()
             .filter_map(|export_type| match export_type.ty().clone() {
                 ExternType::Func(func) => Some((export_type.name().to_string(), func)),
                 _ => None,
             })
-            .enumerate()
-            .map(|(i, (name, func_type))| {
+            .map(|(name, func_type)| {
                 self.main_router.insert(
                     name.clone(),
                     MainFunction {
-                        fn_index: i as u32,
+                        fn_index: router_index,
                         fn_type: func_type,
                     },
                 );
+                router_index += 1;
                 match exports_names.as_mut() {
                     None => {
                         exports_names = Some(vec![name.clone()]);
@@ -368,6 +371,17 @@ impl TestContext<'_> {
             })
             .collect::<Vec<_>>();
         self.last_exports = exports_names;
+
+        if let Some(start_fn) = start_fn {
+            exports.push(FuncOrExport::Func(start_fn.into_u32()));
+            self.main_router.insert(
+                "main".to_string(),
+                MainFunction {
+                    fn_index: router_index,
+                    fn_type: FuncType::new(vec![], vec![]),
+                },
+            );
+        }
 
         import_linker.insert_function(ImportFunc::new_env(
             "env".to_string(),
@@ -464,6 +478,15 @@ impl TestContext<'_> {
             &[],
         ));
 
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print".to_string(),
+            SYS_PRINT as u16,
+            _UNKNOWN,
+            &[],
+            &[],
+        ));
+
         let mut compiler =
             Compiler::new_with_fuel_consume(wasm_binary.as_slice(), Some(&import_linker), false)
                 .unwrap();
@@ -503,8 +526,19 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
-
         self.instances.insert(name.to_string(), instance);
+
+        if start_fn.is_some() {
+            let router = self
+                .main_router
+                .iter()
+                .find(|r| r.0 == "main")
+                .expect("Main function idx not contain in state router");
+            let func_name = router.0.clone();
+            let func_index = router.1;
+            self.store.data_mut().state = func_index.fn_index;
+            self.invoke_with_state(Some(name), func_name.as_str(), vec![])?;
+        }
 
         Ok(())
     }
@@ -576,6 +610,14 @@ impl TestContext<'_> {
             SYS_PRINT_F64_F64 as u16,
             _UNKNOWN,
             &[ValueType::F64, ValueType::F64],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "spectest".to_string(),
+            "print".to_string(),
+            SYS_PRINT as u16,
+            _UNKNOWN,
+            &[],
             &[],
         ));
 
