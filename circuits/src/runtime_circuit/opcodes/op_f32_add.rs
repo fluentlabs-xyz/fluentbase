@@ -18,10 +18,12 @@ use halo2_proofs::circuit::Region;
 use std::marker::PhantomData;
 use crate::constraint_builder::SelectorColumn;
 use crate::constraint_builder::Query;
+use std::ops::Not;
 
 #[derive(Clone)]
 pub(crate) struct OpF32AddGadget<F: Field> {
     lhs_exp_ge: SelectorColumn,
+    out_exp_ge: SelectorColumn,
     lhs_sign: SelectorColumn,
     rhs_sign: SelectorColumn,
     out_sign: SelectorColumn,
@@ -44,6 +46,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
         let lhs_exp_ge = cb.query_selector();
+        let out_exp_ge = cb.query_selector();
 
         let lhs_sign = cb.query_selector();
         let rhs_sign = cb.query_selector();
@@ -62,6 +65,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let lhs_sign_bit = || -> Query<F> { lhs_sign.current().into() };
 
         cb.range_check8(lhs_exp_ge.current().select(lhs_exp.current() - rhs_exp.current(), 0.expr()));
+        //cb.range_check8(out_exp_ge.current().select(out_exp.current() - rhs_exp.current(), 0.expr()));
 
         cb.stack_pop(
             rhs_sign.current().select(0x80000000_u32.expr(), 0.expr()) + rhs_exp.current() * 0x800000.expr() + rhs_mant.raw_part()
@@ -103,8 +107,16 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             );
         });
 
+        let is_nan = || lhs_exp.is_inf_or_nan().and(lhs_mant.is_zero().not()).or(rhs_exp.is_inf_or_nan().and(rhs_mant.is_zero().not()));
+
+        cb.condition(is_nan().into(), |cb| {
+            cb.require_zero("if arg is nan, than out must be nan, so out_mant must not be zero",
+                out_mant.is_zero().into()
+            );
+        });
+
         // Same sign case.
-        cb.condition(lhs_sign.current().xnor(rhs_sign.current()).into(), |cb| {
+        cb.condition(is_nan().not().and(lhs_sign.current().xnor(rhs_sign.current())).into(), |cb| {
             let is_inf = || lhs_exp.is_inf_or_nan().and(rhs_exp.is_inf_or_nan()).and(out_exp.is_inf_or_nan());
             let out_exp_fix = || is_inf().select(256.expr(), out_exp.current());
             let growing_exp = || out_exp_fix() - first_exp();
@@ -127,6 +139,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
 
         Self {
             lhs_exp_ge,
+            out_exp_ge,
             lhs_sign,
             rhs_sign,
             out_sign,
@@ -164,7 +177,6 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let rhs_exp = (rhs_raw >> 23) & 0xff;
         let out_exp = (out_raw >> 23) & 0xff;
 
-        //let lhs_exp_ge = false; //lhs_exp >= rhs_exp;
         let lhs_exp_ge = lhs_exp >= rhs_exp;
         self.lhs_exp_ge.assign(region, offset, lhs_exp_ge);
 
@@ -176,13 +188,16 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         self.rhs_exp.assign(region, offset, F::from(rhs_exp as u64));
         self.out_exp.assign(region, offset, F::from(out_exp as u64));
 
-        let lhs_mant_abs = self.lhs_mant.assign_from_raw(region, offset, lhs_raw);
-        let rhs_mant_abs = self.rhs_mant.assign_from_raw(region, offset, rhs_raw);
-        let out_mant_abs = self.out_mant.assign_from_raw(region, offset, out_raw);
+        let (lhs_mant_raw, lhs_mant_abs) = self.lhs_mant.assign_from_raw(region, offset, lhs_raw);
+        let (rhs_mant_raw, rhs_mant_abs) = self.rhs_mant.assign_from_raw(region, offset, rhs_raw);
+        let (out_mant_raw, out_mant_abs) = self.out_mant.assign_from_raw(region, offset, out_raw);
 
         let lhs_mant = if lhs_sign { -(lhs_mant_abs as i64) } else { lhs_mant_abs as i64 };
         let rhs_mant = if rhs_sign { -(rhs_mant_abs as i64) } else { rhs_mant_abs as i64 };
         let out_mant = if out_sign { -(out_mant_abs as i64) } else { out_mant_abs as i64 };
+
+        let first_sign = if lhs_exp_ge { lhs_sign } else { rhs_sign };
+        let second_sign = if lhs_exp_ge { rhs_sign } else { lhs_sign };
 
         let first_exp = if lhs_exp_ge { lhs_exp } else { rhs_exp };
         let second_exp = if lhs_exp_ge { rhs_exp } else { lhs_exp };
@@ -190,13 +205,30 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
         let first_mant = if lhs_exp_ge { lhs_mant } else { rhs_mant };
         let second_mant = if lhs_exp_ge { rhs_mant } else { lhs_mant };
 
-        println!("FIRST_EXP {}", first_exp);
+        let out_exp_ge = out_exp >= second_exp;
+        self.out_exp_ge.assign(region, offset, out_exp_ge);
+
+        let beta_exp = if out_exp_ge { out_exp } else { second_exp };
+        let beta_mant = if out_exp_ge { out_mant } else { second_mant };
+
+        let gamma_sign = if out_exp_ge { second_sign } else { out_sign };
+        let gamma_exp = if out_exp_ge { second_exp } else { out_exp };
+        let gamma_mant = if out_exp_ge { second_mant } else { out_mant };
+
+        println!("\nFIRST_EXP {}", first_exp);
         println!("SECOND_EXP {}", second_exp);
+        println!("BETA_EXP {}", beta_exp);
+        println!("GAMMA_EXP {}", gamma_exp);
         println!("FIRST_MANT {}", first_mant);
         println!("SECOND_MANT {}", second_mant);
+        println!("BETA_MANT {}", beta_mant);
+        println!("GAMMA_MANT {}", gamma_mant);
         println!("OUT_MANT {}", out_mant);
 
-        if lhs_sign == rhs_sign {
+        let is_nan = (lhs_exp == 255 && lhs_mant_raw != 0) || (rhs_exp == 255 && rhs_mant_raw != 0);
+
+        if !is_nan && lhs_sign == rhs_sign {
+
             let out_exp_fix = if lhs_exp == 255 && rhs_exp == 255 && out_exp == 255 { 256 } else { out_exp };
             let growing_exp = out_exp_fix - first_exp;
             assert!(growing_exp >= 0 && growing_exp <= 1);
@@ -210,6 +242,32 @@ impl<F: Field> ExecutionGadget<F> for OpF32AddGadget<F> {
             println!("TO_SHIFT {}", to_shift);
             println!("OUT_MANT GROW {}", out_mant * (growing_exp as i64 + 1_i64));
             println!("SMFC {}", second_mant_for_check);
+            println!("GROWING_EXP {}", growing_exp);
+            println!("POW2 {}", pow2);
+            println!("DIF {}", dif);
+            self.lt_gadget.as_ref().unwrap().assign(
+                region,
+                offset,
+                F::from(pow2 as u64),
+                F::from(dif as u64),
+            );
+
+        }
+
+        if !is_nan && lhs_sign != rhs_sign {
+            let first_exp_fix = if lhs_exp == 255 && rhs_exp == 255 && out_exp == 255 { 256 } else { first_exp };
+            let growing_exp = first_exp_fix - beta_exp;
+            assert!(growing_exp >= 0 && growing_exp <= 1);
+            let to_shift = (beta_exp - gamma_exp).min(24);
+            let pow2 = 1 << to_shift;
+            self.pow2.assign(region, offset, F::from(pow2 as u64));
+            let grow = growing_exp as i64 + 1_i64;
+            let flip_sign = 1_i64 - gamma_sign as i64 * 2_i64;
+            let gamma_mant_for_check = (first_mant * grow - growing_exp as i64 * flip_sign + beta_mant) * pow2 as i64;
+            let dif = (gamma_mant - gamma_mant_for_check) * flip_sign;
+            println!("TO_SHIFT {}", to_shift);
+            println!("FIRST_MANT GROW {}", first_mant * (growing_exp as i64 + 1_i64));
+            println!("GMFC {}", gamma_mant_for_check);
             println!("GROWING_EXP {}", growing_exp);
             println!("POW2 {}", pow2);
             println!("DIF {}", dif);
@@ -313,6 +371,26 @@ mod test {
             I32Const(0x92800025_u64)
             F32Add
             // Out   0x93000025         1_00100110__0000000_00000000_00100101, -1.61559425983e-27
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_doubling_neg_first_out_pos() {
+        test_ok(instruction_set! {
+            I32Const(0x92800025_u64)
+            I32Const(0x12800026_u64)
+            F32Add
+            Drop
+        });
+    }
+
+    #[test]
+    fn test_f32_add_doubling_neg_first_out_neg() {
+        test_ok(instruction_set! {
+            I32Const(0x92800026_u64)
+            I32Const(0x12800025_u64)
+            F32Add
             Drop
         });
     }
