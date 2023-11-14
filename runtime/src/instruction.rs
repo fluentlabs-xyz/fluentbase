@@ -1,6 +1,7 @@
 pub use crate::{crypto::*, ecc::*, mpt::*, rwasm::*};
 use crate::{runtime::RuntimeContext, ExitCode, Runtime};
-use fluentbase_rwasm::{common::Trap, AsContextMut, Caller, Extern, Memory};
+use fluentbase_rwasm::{AsContextMut, Caller, Extern, Memory};
+use fluentbase_rwasm_core::common::Trap;
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller

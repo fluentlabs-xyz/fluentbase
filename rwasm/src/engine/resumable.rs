@@ -9,7 +9,7 @@ use crate::{
     WasmResults,
 };
 use core::{fmt, marker::PhantomData, mem::replace, ops::Deref};
-use crate::common::Trap;
+use fluentbase_rwasm_core::common::Trap;
 
 /// Returned by [`Engine`] methods for calling a function in a resumable way.
 ///

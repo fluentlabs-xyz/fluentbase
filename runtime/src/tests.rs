@@ -1,10 +1,10 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
 use fluentbase_rwasm::{
-    common::Trap,
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport},
 };
+use fluentbase_rwasm_core::common::Trap;
 use keccak_hash::H256;
 use serde_json::from_str;
 use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync::Arc};

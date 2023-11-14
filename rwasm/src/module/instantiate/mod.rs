@@ -10,23 +10,10 @@ use crate::{
     func::WasmFuncEntity,
     memory::{DataSegment, MemoryError},
     value::WithType,
-    AsContext,
-    AsContextMut,
-    ElementSegment,
-    Error,
-    Extern,
-    ExternType,
-    FuncRef,
-    FuncType,
-    Global,
-    Instance,
-    InstanceEntity,
-    InstanceEntityBuilder,
-    Memory,
-    Table,
-    Value,
+    AsContext, AsContextMut, ElementSegment, Error, Extern, ExternType, FuncRef, FuncType, Global,
+    Instance, InstanceEntity, InstanceEntityBuilder, Memory, Table, Value,
 };
-use crate::common::{Trap, UntypedValue};
+use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
 impl Module {
     /// Instantiates a new [`Instance`] from the given compiled [`Module`].

@@ -1,5 +1,5 @@
 use super::Func;
-use crate::common::UntypedValue;
+use fluentbase_rwasm_core::common::UntypedValue;
 
 /// A nullable [`Func`] reference.
 #[derive(Debug, Default, Copy, Clone)]

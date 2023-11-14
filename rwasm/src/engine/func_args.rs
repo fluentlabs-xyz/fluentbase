@@ -2,7 +2,7 @@
 
 use crate::{value::WithType, Value};
 use core::cmp;
-use crate::common::{DecodeUntypedSlice, EncodeUntypedSlice, UntypedError, UntypedValue};
+use fluentbase_rwasm_core::common::{DecodeUntypedSlice, EncodeUntypedSlice, UntypedError, UntypedValue};
 
 /// Used to decode host function parameters.
 #[derive(Debug)]

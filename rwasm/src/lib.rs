@@ -92,7 +92,6 @@ extern crate std as alloc;
 mod foreach_tuple;
 
 pub mod arena;
-pub mod common;
 pub mod engine;
 pub mod error;
 pub mod externref;

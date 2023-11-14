@@ -1,6 +1,6 @@
 use super::TableType;
-use crate::common::ValueType;
 use core::{fmt, fmt::Display};
+use fluentbase_rwasm_core::common::ValueType;
 
 /// Errors that may occur upon operating with table entities.
 #[derive(Debug)]

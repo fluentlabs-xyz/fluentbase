@@ -3,7 +3,6 @@ use crate::{
     ExitCode, RuntimeError, SysFuncIdx, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
-    common::{Trap, ValueType},
     engine::Tracer,
     rwasm::{
         ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError,
@@ -25,6 +24,7 @@ use fluentbase_rwasm::{
     AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, FuncType, Instance, Linker,
     Module, StackLimits, Store,
 };
+use fluentbase_rwasm_core::common::{Trap, ValueType};
 use std::mem::take;
 
 #[derive(Debug, Clone)]

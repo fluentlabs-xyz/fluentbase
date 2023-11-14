@@ -7,14 +7,10 @@
 //! [`s1vm`]: https://github.com/Neopallium/s1vm
 
 use super::FuncIdx;
-use crate::{
-    common::{UntypedValue, F32, F64},
-    ExternRef,
-    FuncRef,
-    Value,
-};
+use crate::{ExternRef, FuncRef, Value};
 use alloc::boxed::Box;
 use core::fmt;
+use fluentbase_rwasm_core::common::{UntypedValue, F32, F64};
 use smallvec::SmallVec;
 
 /// Types that allow evluation given an evaluation context.

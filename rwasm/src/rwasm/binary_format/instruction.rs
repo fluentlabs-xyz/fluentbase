@@ -1,28 +1,18 @@
 use crate::{
-    common::UntypedValue,
     engine::{
         bytecode::{
-            AddressOffset,
-            BlockFuel,
-            BranchOffset,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            Instruction,
-            LocalDepth,
-            TableIdx,
+            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
+            ElementSegmentIdx, FuncIdx, GlobalIdx, Instruction, LocalDepth, TableIdx,
         },
         DropKeep,
     },
     rwasm::binary_format::{
         reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-        BinaryFormat,
-        BinaryFormatError,
+        BinaryFormat, BinaryFormatError,
     },
 };
 use alloc::vec::Vec;
+use fluentbase_rwasm_core::common::UntypedValue;
 
 impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
