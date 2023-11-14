@@ -1,29 +1,17 @@
 use crate::{
-    common::UntypedValue,
     engine::{
         bytecode::{
-            AddressOffset,
-            BlockFuel,
-            BranchOffset,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            InstrMeta,
-            Instruction,
-            LocalDepth,
-            SignatureIdx,
-            TableIdx,
+            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
+            ElementSegmentIdx, FuncIdx, GlobalIdx, InstrMeta, Instruction, LocalDepth,
+            SignatureIdx, TableIdx,
         },
-        CompiledFunc,
-        ConstRef,
-        DropKeep,
+        CompiledFunc, ConstRef, DropKeep,
     },
     rwasm::{BinaryFormat, BinaryFormatWriter, N_BYTES_PER_MEMORY_PAGE, N_MAX_MEMORY_PAGES},
 };
 use alloc::{slice::SliceIndex, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_rwasm_core::common::UntypedValue;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct InstructionSet {

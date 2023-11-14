@@ -1,18 +1,11 @@
-use fluentbase_rwasm::rwasm::InstructionSet;
+extern crate alloc;
 
-#[derive(Default)]
-struct EvmCompiler<'a> {
-    evm_bytecode: &'a [u8],
-    code_section: InstructionSet,
-}
+pub(crate) const USE_GAS: bool = !cfg!(feature = "no_gas_measuring");
 
-impl<'a> EvmCompiler<'a> {
-    pub fn new(evm_bytecode: &'a [u8]) -> Self {
-        Self {
-            evm_bytecode,
-            ..Default::default()
-        }
-    }
+pub mod compiler;
 
-    pub fn translate(&mut self) {}
-}
+pub mod primitives;
+pub mod interpreter;
+pub mod macros;
+#[cfg(test)]
+mod compiler_tests;

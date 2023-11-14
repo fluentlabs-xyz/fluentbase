@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use crate::common::HostError;
 use alloc::{boxed::Box, string::String};
 use core::fmt::{self, Display};

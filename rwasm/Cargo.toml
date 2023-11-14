@@ -1,11 +1,12 @@
 [package]
 name = "fluentbase-rwasm"
 version = "0.30.0"
-documentation = "https://docs.rs/wasmi/"
-description = "WebAssembly interpreter"
+documentation = ""
+description = "rwasm"
 edition = "2021"
 
 [dependencies]
+fluentbase-rwasm-core = {path = "./core"}
 wasmparser = { version = "0.100.1", package = "wasmparser-nostd", default-features = false }
 spin = { version = "0.9", default-features = false, features = [
     "mutex",

@@ -29,7 +29,7 @@ fn create_module(config: &Config, bytes: &[u8]) -> Module {
 /// Contains some utility methods to construct instructions simpler.
 mod instr {
     use super::Instruction;
-    use crate::common::UntypedValue;
+    use fluentbase_rwasm_core::common::UntypedValue;
     use crate::engine::bytecode::BlockFuel;
 
     /// Creates a new [`Instruction::LocalGet`] with the `local_depth`.

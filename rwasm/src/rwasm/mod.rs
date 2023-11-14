@@ -14,7 +14,6 @@ pub use self::{
 #[cfg(test)]
 mod tests {
     use crate::{
-        common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
             compiler::Compiler, platform::ImportLinker, reduced_module::ReducedModule,
@@ -23,6 +22,7 @@ mod tests {
         AsContextMut, Caller, Config, Engine, Func, Linker, Store,
     };
     use alloc::string::ToString;
+    use fluentbase_rwasm_core::common::ValueType;
 
     use super::_SYS_HALT_FUEL_AMOUNT;
 

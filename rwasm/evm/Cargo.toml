@@ -1,11 +1,57 @@
 [package]
-name = "fluentbase-rwasm-evm"
+name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { path = ".." }
+fluentbase-rwasm-core = { path = "../core" }
 byteorder = "1.4.3"
 wat = "1.0.66"
 anyhow = "1.0.71"
 wast = "62.0.0"
+
+alloy-primitives = { version = "0.4", default-features = false, features = [
+    "rlp",
+] }
+alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
+hashbrown = "0.14"
+auto_impl = "1.1"
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+bitflags = { version = "2.4.1", default-features = false }
+
+# For setting the CfgEnv KZGSettings. Enabled by c-kzg flag.
+c-kzg = { version = "0.4.0", default-features = false, optional = true }
+once_cell = { version = "1.18", default-features = false, optional = true }
+
+# utility
+enumn = "0.1"
+derive_more = { version = "0.99", optional = true }
+
+# optional
+#serde = { version = "1.0", features = ["derive", "rc"], optional = true }
+
+[build-dependencies]
+hex = "0.4"
+
+[features]
+default = ["std"]
+std = [
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "hex/std",
+    "bitvec/std",
+    "bitflags/std",
+]
+#serde = [
+#    "dep:serde",
+#    "alloy-primitives/serde",
+#    "hex/serde",
+#    "hashbrown/serde",
+#    "bitvec/serde",
+#    "bitflags/serde",
+#]
+arbitrary = ["std", "alloy-primitives/arbitrary", "bitflags/arbitrary"]
+
+optimism = []
+

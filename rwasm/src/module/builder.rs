@@ -12,8 +12,9 @@ use super::{
     ImportName,
     Module,
 };
+use fluentbase_rwasm_core::
+common::ValueType;
 use crate::{
-    common::ValueType,
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
     module::{DataSegmentKind, ElementSegmentItems, ElementSegmentKind},

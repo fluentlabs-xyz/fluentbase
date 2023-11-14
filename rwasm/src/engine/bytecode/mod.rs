@@ -8,24 +8,13 @@ mod stack_height;
 mod tests;
 
 pub use self::utils::{
-    AddressOffset,
-    BlockFuel,
-    BranchOffset,
-    BranchTableTargets,
-    DataSegmentIdx,
-    DropKeep,
-    DropKeepError,
-    ElementSegmentIdx,
-    FuncIdx,
-    GlobalIdx,
-    LocalDepth,
-    SignatureIdx,
-    TableIdx,
+    AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx, DropKeep,
+    DropKeepError, ElementSegmentIdx, FuncIdx, GlobalIdx, LocalDepth, SignatureIdx, TableIdx,
 };
 use super::{const_pool::ConstRef, CompiledFunc, TranslationError};
-use crate::common::{UntypedValue, F32};
 use alloc::{fmt, vec::Vec};
 use core::fmt::{Debug, Formatter};
+use fluentbase_rwasm_core::common::{UntypedValue, F32};
 pub use stack_height::RwOp;
 #[cfg(feature = "std")]
 use strum_macros::EnumIter;
