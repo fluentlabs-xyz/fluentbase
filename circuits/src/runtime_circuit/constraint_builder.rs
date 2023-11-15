@@ -192,8 +192,8 @@ impl<'cs, 'st, 'dcm, F: Field> OpConstraintBuilder<'cs, 'st, 'dcm, F> {
         F32ExpConfig::configure(self)
     }
 
-    pub fn query_f32_mantissa(&mut self) -> F32MantissaConfig<F> {
-        F32MantissaConfig::configure(self)
+    pub fn query_f32_mantissa(&mut self, is_extra_bit: Query<F>) -> F32MantissaConfig<F> {
+        F32MantissaConfig::configure(self, is_extra_bit)
     }
 
     pub fn lt_gadget<const N_BYTES: usize>(

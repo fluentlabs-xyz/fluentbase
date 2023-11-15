@@ -36,6 +36,10 @@ impl<F: Field> F32ExpConfig<F> {
         BinaryQuery(Query::one() - (self.value.current() - 255.expr()) * self.inf_case_inv.current())
     }
 
+    pub fn is_extra_bit_set(&self) -> BinaryQuery<F> {
+        BinaryQuery(self.value.current() * self.denorm_case_inv.current())
+    }
+
     pub fn assign<T: Copy + TryInto<F>>(&self, region: &mut Region<'_, F>, offset: usize, value: T)
     where
         <T as TryInto<F>>::Error: Debug,
