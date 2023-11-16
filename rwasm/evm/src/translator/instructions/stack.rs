@@ -36,7 +36,7 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
     let data_padded = data_padded.unwrap();
 
     let instruction_set = host.instruction_set();
-    for bytes in iterate_over_wasm_i64_chunks(&data_padded) {
+    for bytes in iterate_over_wasm_i64_chunks(&data_padded).rev() {
         let v = i64::from_be_bytes(bytes.try_into().unwrap());
         instruction_set.op_i64_const(v);
     }
@@ -48,7 +48,6 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
 pub fn dup<const N: usize, H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     debug!("op:DUP{}", N);
     let instruction_set = host.instruction_set();
-    // we duplicate keeping in direct order for consuming purposes
     for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
         instruction_set.op_local_get((WASM_I64_IN_EVM_WORD_COUNT * N) as u32);
     }
