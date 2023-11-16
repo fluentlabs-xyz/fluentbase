@@ -1,8 +1,11 @@
 use core::slice::Chunks;
 
 pub const EVM_WORD_BYTES: usize = 32;
-pub const WASM_I64_BYTES: usize = 8;
-pub const WASM_I64_IN_EVM_WORD_COUNT: usize = 4;
+pub const WASM_I64_BITS: usize = 64;
+pub const WASM_I64_BYTES: usize = WASM_I64_BITS / 8;
+pub const WASM_I64_IN_EVM_WORD_COUNT: usize = EVM_WORD_BYTES / WASM_I64_BYTES;
+pub const WASM_I64_HIGH_32_BIT_MASK: usize = 0xffffffff00000000;
+pub const WASM_I64_LOW_32_BIT_MASK: usize = 0xffffffff;
 
 pub fn align_to_evm_word_array(
     data: &[u8],
