@@ -140,28 +140,24 @@ impl SuccessOrHalt {
 impl From<InstructionResult> for SuccessOrHalt {
     fn from(result: InstructionResult) -> Self {
         match result {
-            InstructionResult::Continue => Self::InternalContinue, // used only in interpreter loop
+            InstructionResult::Continue => Self::InternalContinue, // used only in translator loop
             InstructionResult::Stop => Self::Success(Eval::Stop),
             InstructionResult::Return => Self::Success(Eval::Return),
             InstructionResult::SelfDestruct => Self::Success(Eval::SelfDestruct),
             InstructionResult::Revert => Self::Revert,
             InstructionResult::CallTooDeep => Self::Halt(Halt::CallTooDeep), // not gonna happen for first call
             InstructionResult::OutOfFund => Self::Halt(Halt::OutOfFund), // Check for first call is done separately.
-            InstructionResult::OutOfGas => Self::Halt(Halt::OutOfGas(
-                OutOfGasError::BasicOutOfGas,
-            )),
+            InstructionResult::OutOfGas => Self::Halt(Halt::OutOfGas(OutOfGasError::BasicOutOfGas)),
             InstructionResult::MemoryLimitOOG => {
                 Self::Halt(Halt::OutOfGas(OutOfGasError::MemoryLimit))
             }
-            InstructionResult::MemoryOOG => {
-                Self::Halt(Halt::OutOfGas(OutOfGasError::Memory))
-            }
+            InstructionResult::MemoryOOG => Self::Halt(Halt::OutOfGas(OutOfGasError::Memory)),
             InstructionResult::PrecompileOOG => {
                 Self::Halt(Halt::OutOfGas(OutOfGasError::Precompile))
             }
-            InstructionResult::InvalidOperandOOG => Self::Halt(Halt::OutOfGas(
-                OutOfGasError::InvalidOperand,
-            )),
+            InstructionResult::InvalidOperandOOG => {
+                Self::Halt(Halt::OutOfGas(OutOfGasError::InvalidOperand))
+            }
             InstructionResult::OpcodeNotFound => Self::Halt(Halt::OpcodeNotFound),
             InstructionResult::CallNotAllowedInsideStatic => {
                 Self::Halt(Halt::CallNotAllowedInsideStatic)

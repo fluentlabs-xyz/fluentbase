@@ -1,9 +1,9 @@
 pub mod host_impl;
 
-use crate::interpreter::inner_models::{CreateInputs, SelfDestructResult};
-use crate::interpreter::instruction_result::InstructionResult;
 use crate::primitives::Bytecode;
 use crate::primitives::{Address, Bytes, B256, U256};
+use crate::translator::inner_models::{CreateInputs, SelfDestructResult};
+use crate::translator::instruction_result::InstructionResult;
 use alloc::vec::Vec;
 use fluentbase_rwasm::rwasm::InstructionSet;
 
@@ -55,14 +55,14 @@ pub trait Host {
         &mut self,
         // input: &mut CallInputs,
         // shared_memory: &mut SharedMemory,
-    ) -> (InstructionResult /*, Gas*/, Bytes);
+    ) -> (InstructionResult, Bytes);
 
     /// Invoke a create operation.
     fn create(
         &mut self,
         inputs: &mut CreateInputs,
         // shared_memory: &mut SharedMemory,
-    ) -> (InstructionResult, Option<Address> /*, Gas*/, Bytes);
+    ) -> (InstructionResult, Option<Address>, Bytes);
 
     /// Mark `address` to be deleted, with funds transferred to `target`.
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult>;
