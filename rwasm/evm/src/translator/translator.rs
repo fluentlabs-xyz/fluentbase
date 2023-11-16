@@ -1,11 +1,9 @@
 pub mod analysis;
 pub mod contract;
-mod stack;
 
-use crate::interpreter::host::Host;
-use crate::interpreter::instruction_result::InstructionResult;
-use crate::interpreter::interpreter::contract::Contract;
-use crate::interpreter::interpreter::stack::Stack;
+use crate::translator::host::Host;
+use crate::translator::instruction_result::InstructionResult;
+use crate::translator::translator::contract::Contract;
 pub use analysis::BytecodeLocked;
 use std::marker::PhantomData;
 
@@ -28,12 +26,6 @@ pub struct Translator<'a> {
     /// The execution control flag. If this is not set to `Continue`, the interpreter will stop
     /// execution.
     pub instruction_result: InstructionResult,
-    /// The gas state.
-    // pub gas: Gas,
-    /// Shared memory.
-    // pub shared_memory: &'a mut SharedMemory,
-    /// Stack.
-    pub stack: Stack,
     /// The return data buffer for internal calls.
     pub return_data_buffer: Bytes,
     /// The offset into `self.memory` of the return data.
@@ -43,29 +35,19 @@ pub struct Translator<'a> {
     /// The length of the return data.
     pub return_len: usize,
     /// Whether the interpreter is in "staticcall" mode, meaning no state changes can happen.
-    // pub is_static: bool,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Translator<'a> {
     /// Create new interpreter
-    pub fn new(
-        contract: Box<Contract>,
-        // gas_limit: u64,
-        // is_static: bool,
-        // shared_memory: &'a mut SharedMemory,
-    ) -> Self {
+    pub fn new(contract: Box<Contract>) -> Self {
         Self {
             instruction_pointer: contract.bytecode.as_ptr(),
             contract,
-            // gas: Gas::new(gas_limit),
             instruction_result: InstructionResult::Continue,
-            // is_static,
             return_data_buffer: Bytes::new(),
             return_len: 0,
             return_offset: 0,
-            // shared_memory,
-            stack: Stack::new(),
             _lifetime: Default::default(),
         }
     }
@@ -81,18 +63,6 @@ impl<'a> Translator<'a> {
     pub fn contract(&self) -> &Contract {
         &self.contract
     }
-
-    /// Returns a reference to the interpreter's gas state.
-    // #[inline]
-    // pub fn gas(&self) -> &Gas {
-    //     &self.gas
-    // }
-
-    /// Returns a reference to the interpreter's stack.
-    // #[inline]
-    // pub fn stack(&self) -> &Stack {
-    //     &self.stack
-    // }
 
     /// Returns the current program counter.
     #[inline]
@@ -114,9 +84,6 @@ impl<'a> Translator<'a> {
         // Get current opcode.
         let opcode = unsafe { *self.instruction_pointer };
 
-        // Safety: In analysis we are doing padding of bytecode so that we are sure that last
-        // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
-        // it will do noop and just stop execution of this contract
         self.instruction_pointer_inc(1);
 
         // execute instruction.
@@ -124,6 +91,9 @@ impl<'a> Translator<'a> {
     }
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {
+        // Safety: In analysis we are doing padding of bytecode so that we are sure that last
+        // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
+        // it will do noop and just stop execution of this contract
         self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset as isize) };
     }
 
@@ -141,21 +111,4 @@ impl<'a> Translator<'a> {
         }
         self.instruction_result
     }
-
-    // /// Returns a copy of the interpreter's return value, if any.
-    // #[inline]
-    // pub fn return_value(&self) -> Bytes {
-    //     self.return_value_slice().to_vec().into()
-    // }
-
-    // /// Returns a reference to the interpreter's return value, if any.
-    // #[inline]
-    // pub fn return_value_slice(&self) -> &[u8] {
-    //     if self.return_len == 0 {
-    //         &[]
-    //     } else {
-    //         self.shared_memory
-    //             .slice(self.return_offset, self.return_len)
-    //     }
-    // }
 }

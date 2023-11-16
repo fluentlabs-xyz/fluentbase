@@ -1,25 +1,22 @@
-use crate::interpreter::host::Host;
-use crate::interpreter::inner_models::{CreateInputs, SelfDestructResult};
-use crate::interpreter::instruction_result::InstructionResult;
 use crate::primitives::{Address, B256, KECCAK_EMPTY};
 use crate::primitives::{Bytecode, Bytes, HashMap, U256};
+use crate::translator::host::Host;
+use crate::translator::inner_models::{CreateInputs, SelfDestructResult};
+use crate::translator::instruction_result::InstructionResult;
 use alloc::vec::Vec;
 use fluentbase_rwasm::rwasm::InstructionSet;
 
 /// A dummy [Host] implementation.
 #[derive(Debug, PartialEq)]
 pub struct HostImpl<'a> {
-    // pub env: Env,
-    // pub storage: HashMap<U256, U256>,
     pub transient_storage: HashMap<U256, U256>,
-    // pub log: Vec<Log>,
     instruction_set: &'a mut InstructionSet,
 }
 
 impl<'a> HostImpl<'a> {
     /// Create a new dummy host with the given [`Env`].
     #[inline]
-    pub fn new(/*env: Env*/ instruction_set: &'a mut InstructionSet) -> Self {
+    pub fn new(instruction_set: &'a mut InstructionSet) -> Self {
         Self {
             // env,
             instruction_set,
@@ -61,13 +58,6 @@ impl<'a> Host for HostImpl<'a> {
 
     #[inline]
     fn sload(&mut self, __address: Address, index: U256) -> Option<(U256, bool)> {
-        // match self.storage.entry(index) {
-        //     Entry::Occupied(entry) => Some((*entry.get(), false)),
-        //     Entry::Vacant(entry) => {
-        //         entry.insert(U256::ZERO);
-        //         Some((U256::ZERO, true))
-        //     }
-        // }
         None
     }
 
@@ -78,15 +68,6 @@ impl<'a> Host for HostImpl<'a> {
         index: U256,
         value: U256,
     ) -> Option<(U256, U256, U256, bool)> {
-        // let (present, is_cold) = match self.storage.entry(index) {
-        //     Entry::Occupied(mut entry) => (entry.insert(value), false),
-        //     Entry::Vacant(entry) => {
-        //         entry.insert(value);
-        //         (U256::ZERO, true)
-        //     }
-        // };
-
-        // Some((U256::ZERO, present, value, is_cold))
         Some((U256::ZERO, U256::ZERO, U256::ZERO, false))
     }
 
@@ -104,34 +85,23 @@ impl<'a> Host for HostImpl<'a> {
     }
 
     #[inline]
-    fn log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {
-        // self.log.push(Log {
-        //     address,
-        //     topics,
-        //     data,
-        // })
-    }
+    fn log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {}
 
     #[inline]
-    fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
-        panic!("Selfdestruct is not supported")
+    fn call(&mut self) -> (InstructionResult, Bytes) {
+        panic!("Call is not supported")
     }
 
     #[inline]
     fn create(
         &mut self,
         _inputs: &mut CreateInputs,
-        // _shared_memory: &mut SharedMemory,
-    ) -> (InstructionResult, Option<Address> /*, Gas*/, Bytes) {
+    ) -> (InstructionResult, Option<Address>, Bytes) {
         panic!("Create is not supported for this host")
     }
 
     #[inline]
-    fn call(
-        &mut self,
-        // _input: &mut CallInputs,
-        // _shared_memory: &mut SharedMemory,
-    ) -> (InstructionResult /*, Gas*/, Bytes) {
-        panic!("Call is not supported")
+    fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
+        panic!("Selfdestruct is not supported")
     }
 }

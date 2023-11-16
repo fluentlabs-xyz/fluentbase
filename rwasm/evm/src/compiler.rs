@@ -2,12 +2,12 @@ use alloy_primitives::Bytes;
 
 use fluentbase_rwasm::rwasm::InstructionSet;
 
-use crate::interpreter::host::host_impl::HostImpl;
-use crate::interpreter::instruction_result::InstructionResult;
-use crate::interpreter::instructions::opcode::make_instruction_table;
-use crate::interpreter::interpreter::contract::Contract;
-use crate::interpreter::interpreter::Translator;
 use crate::primitives::Bytecode;
+use crate::translator::host::host_impl::HostImpl;
+use crate::translator::instruction_result::InstructionResult;
+use crate::translator::instructions::opcode::make_instruction_table;
+use crate::translator::translator::contract::Contract;
+use crate::translator::translator::Translator;
 
 #[derive(Default)]
 pub struct EvmCompiler<'a> {
@@ -24,7 +24,8 @@ impl<'a> EvmCompiler<'a> {
     }
 
     pub fn translate(&mut self) -> InstructionResult {
-        let evm_bytecode = Bytecode::new_raw(Bytes::copy_from_slice(self.evm_bytecode));
+        let evm_bytecode =
+            Bytecode::new_raw(Bytes::copy_from_slice(self.evm_bytecode)).to_checked();
 
         let contract = Box::new(Contract::new(evm_bytecode));
         let mut translator = Translator::new(contract);

@@ -1,12 +1,11 @@
-use crate::interpreter::instructions::opcode;
+use crate::debug_unreachable;
 use crate::primitives::{
     bitvec::prelude::{bitvec, BitVec, Lsb0},
     keccak256, Bytecode, BytecodeState, Bytes, JumpMap, B256, KECCAK_EMPTY,
 };
+use crate::translator::instructions::opcode;
 use alloc::sync::Arc;
 use core::fmt;
-use crate::debug_unreachable;
-
 
 /// Perform bytecode analysis.
 ///

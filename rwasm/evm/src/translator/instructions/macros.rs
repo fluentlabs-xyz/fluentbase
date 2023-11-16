@@ -1,7 +1,7 @@
 macro_rules! check_staticcall {
     ($interp:expr) => {
         if $interp.is_static {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StateChangeDuringStaticCall;
+            $interp.instruction_result = crate::translator::instruction_result::InstructionResult::StateChangeDuringStaticCall;
             return;
         }
     };
@@ -12,7 +12,7 @@ macro_rules! check {
         // TODO: Force const-eval on the condition with a `const {}` block once they are stable
 //         if !<SPEC as $crate::primitives::Spec>::enabled($crate::primitives::SpecId::$min) {
         {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::NotActivated;
+            $interp.instruction_result = crate::translator::instruction_result::InstructionResult::NotActivated;
             return;
         }
         // }
@@ -23,7 +23,8 @@ macro_rules! gas {
     ($interp:expr, $gas:expr) => {
         if crate::USE_GAS {
             if !$interp.gas.record_cost($gas) {
-                $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::OutOfGas;
+                $interp.instruction_result =
+                    crate::translator::instruction_result::InstructionResult::OutOfGas;
                 return;
             }
         }
@@ -44,7 +45,8 @@ macro_rules! gas_or_fail {
             match $gas {
                 Some(gas_used) => gas!($interp, gas_used),
                 None => {
-                    $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::OutOfGas;
+                    $interp.instruction_result =
+                        crate::translator::instruction_result::InstructionResult::OutOfGas;
                     return;
                 }
             }
@@ -55,11 +57,11 @@ macro_rules! gas_or_fail {
 macro_rules! shared_memory_resize {
     ($interp:expr, $offset:expr, $len:expr) => {
         // if let Some(new_size) =
-        //     crate::interpreter::next_multiple_of_32($offset.saturating_add($len))
+        //     crate::translator::next_multiple_of_32($offset.saturating_add($len))
         // {
         //     #[cfg(feature = "memory_limit")]
         //     if $interp.shared_memory.limit_reached(new_size) {
-        //         $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::MemoryLimitOOG;
+        //         $interp.instruction_result = crate::translator::instruction_result::InstructionResult::MemoryLimitOOG;
         //         return;
         //     }
         //
@@ -67,14 +69,14 @@ macro_rules! shared_memory_resize {
         //         if crate::USE_GAS {
         //             let num_bytes = new_size / 32;
         //             if !$interp.gas.record_memory(crate::gas::memory_gas(num_bytes)) {
-        //                 $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::MemoryLimitOOG;
+        //                 $interp.instruction_result = crate::translator::instruction_result::InstructionResult::MemoryLimitOOG;
         //                 return;
         //             }
         //         }
         //         $interp.shared_memory.resize(new_size);
         //     }
         // } else {
-        //     $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::MemoryOOG;
+        //     $interp.instruction_result = crate::translator::instruction_result::InstructionResult::MemoryOOG;
         //     return;
         // }
     };
@@ -83,7 +85,8 @@ macro_rules! shared_memory_resize {
 macro_rules! pop_address {
     ($interp:expr, $x1:ident) => {
         if $interp.stack.len() < 1 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -91,7 +94,8 @@ macro_rules! pop_address {
     };
     ($interp:expr, $x1:ident, $x2:ident) => {
         if $interp.stack.len() < 2 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -103,7 +107,8 @@ macro_rules! pop_address {
 macro_rules! pop {
     ($interp:expr, $x1:ident) => {
         if $interp.stack.len() < 1 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -111,7 +116,8 @@ macro_rules! pop {
     };
     ($interp:expr, $x1:ident, $x2:ident) => {
         if $interp.stack.len() < 2 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -119,7 +125,8 @@ macro_rules! pop {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident) => {
         if $interp.stack.len() < 3 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -128,7 +135,8 @@ macro_rules! pop {
 
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident, $x4:ident) => {
         if $interp.stack.len() < 4 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -139,7 +147,8 @@ macro_rules! pop {
 macro_rules! pop_top {
     ($interp:expr, $x1:ident) => {
         if $interp.stack.len() < 1 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -147,7 +156,8 @@ macro_rules! pop_top {
     };
     ($interp:expr, $x1:ident, $x2:ident) => {
         if $interp.stack.len() < 2 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -155,7 +165,8 @@ macro_rules! pop_top {
     };
     ($interp:expr, $x1:ident, $x2:ident, $x3:ident) => {
         if $interp.stack.len() < 3 {
-            $interp.instruction_result = crate::interpreter::instruction_result::InstructionResult::StackUnderflow;
+            $interp.instruction_result =
+                crate::translator::instruction_result::InstructionResult::StackUnderflow;
             return;
         }
         // Safety: Length is checked above.
@@ -206,7 +217,11 @@ macro_rules! as_usize_saturated {
 
 macro_rules! as_usize_or_fail {
     ($interp:expr, $v:expr) => {
-        as_usize_or_fail!($interp, $v, crate::interpreter::instruction_result::InstructionResult::InvalidOperandOOG)
+        as_usize_or_fail!(
+            $interp,
+            $v,
+            crate::translator::instruction_result::InstructionResult::InvalidOperandOOG
+        )
     };
 
     ($interp:expr, $v:expr, $reason:expr) => {{
