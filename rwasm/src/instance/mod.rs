@@ -1,25 +1,11 @@
 pub(crate) use self::builder::InstanceEntityBuilder;
 pub use self::exports::{Export, ExportsIter, Extern, ExternType};
 use super::{
-    engine::DedupFuncType,
-    AsContext,
-    Func,
-    Global,
-    Memory,
-    Module,
-    StoreContext,
-    Stored,
-    Table,
+    engine::DedupFuncType, AsContext, Func, Global, Memory, Module, StoreContext, Stored, Table,
 };
 use crate::{
-    arena::ArenaIndex,
-    func::FuncError,
-    memory::DataSegment,
-    ElementSegment,
-    Error,
-    TypedFunc,
-    WasmParams,
-    WasmResults,
+    arena::ArenaIndex, func::FuncError, memory::DataSegment, ElementSegment, Error, TypedFunc,
+    WasmParams, WasmResults,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 
