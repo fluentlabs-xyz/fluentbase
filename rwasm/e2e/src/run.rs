@@ -14,8 +14,9 @@ use wast::{
 };
 
 /// Runs the Wasm test spec identified by the given name.
-pub fn run_wasm_spec_test(name: &str, config: Config) {
+pub fn run_wasm_spec_test(name: &str, mut config: Config) {
     let test = TestDescriptor::new(name);
+    config.consume_fuel(false);
     let mut context = TestContext::new(&test, config);
 
     let mut lexer = Lexer::new(test.file());

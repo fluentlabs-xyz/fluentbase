@@ -161,6 +161,10 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
+    pub fn set_global_start_index(&mut self, idx: u32) {
+        self.global_start_index = idx;
+    }
+
     pub fn translate_with_state(
         &mut self,
         main_index: Option<FuncOrExport>,
@@ -192,28 +196,30 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
+    fn resolve_export_index(&self, name: &str) -> Result<u32, CompilerError> {
+        let main_index = self
+            .module
+            .exports
+            .get(name)
+            .ok_or(CompilerError::MissingEntrypoint)?
+            .into_func_idx()
+            .ok_or(CompilerError::MissingEntrypoint)?;
+        Ok(main_index)
+    }
+
     fn translate_router(
-        &self,
+        &mut self,
         main_index: FuncOrExport,
         router_offset: u32,
     ) -> Result<InstructionSet, CompilerError> {
         let mut router_opcodes = InstructionSet::new();
-        let resolve_export_index = |name| -> Result<u32, CompilerError> {
-            let main_index = self
-                .module
-                .exports
-                .get(name)
-                .ok_or(CompilerError::MissingEntrypoint)?
-                .into_func_idx()
-                .ok_or(CompilerError::MissingEntrypoint)?;
-            Ok(main_index)
-        };
+
         // find main entrypoint (it must starts with `main` keyword)
         let num_imports = self.module.imports.len_funcs as u32;
 
         match main_index {
             FuncOrExport::Export(name) => {
-                let main_index = resolve_export_index(name.as_str())?;
+                let main_index = self.resolve_export_index(name.as_str())?;
                 router_opcodes.op_call_internal(main_index - num_imports);
             }
             FuncOrExport::StateRouter(
@@ -227,7 +233,7 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.extend(input_ix);
                 for (state_value, state) in states.iter().enumerate() {
                     let func_index = match state {
-                        FuncOrExport::Export(name) => resolve_export_index(name)?,
+                        FuncOrExport::Export(name) => self.resolve_export_index(name)?,
                         FuncOrExport::Func(index) => *index,
                         _ => unreachable!("not supported router state ({:?})", state),
                     };
@@ -420,16 +426,28 @@ impl<'linker> Compiler<'linker> {
 
     fn translate_global(&mut self, global_index: u32) -> Result<(), CompilerError> {
         let len_imported = self.module.imports.len_globals;
-        let globals = &self.module.globals[len_imported..];
+
+        let globals = &self.module.globals;
         assert!(global_index < globals.len() as u32);
-        let global_inits = &self.module.globals_init;
-        assert!(global_index < global_inits.len() as u32);
-        let global_expr = &global_inits[global_index as usize];
-        if let Some(value) = global_expr.eval_const() {
-            self.code_section.op_i64_const(value);
-        } else if let Some(value) = global_expr.funcref() {
-            self.code_section.op_ref_func(value.into_u32());
+
+        if global_index < len_imported as u32 {
+            self.code_section
+                .op_call(self.global_start_index + global_index);
+        } else {
+            let global_inits = &self.module.globals_init;
+            assert!(global_index as usize - len_imported < global_inits.len());
+
+            let global_expr = &global_inits[global_index as usize - len_imported];
+
+            if let Some(value) = global_expr.eval_const() {
+                self.code_section.op_i64_const(value);
+            } else if let Some(value) = global_expr.funcref() {
+                self.code_section.op_ref_func(value.into_u32());
+            } else if let Some(index) = global_expr.global() {
+                self.code_section.op_global_get(index.into_u32());
+            }
         }
+
         self.code_section.op_global_set(global_index);
         Ok(())
     }
@@ -517,21 +535,38 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
+    fn get_or_insert_check_idx(&mut self, func_type: FuncType) -> u32 {
+        let idx = self
+            .func_type_check_idx
+            .borrow()
+            .iter()
+            .enumerate()
+            .find_map(|(idx, fn_type)| fn_type.eq(&func_type).then_some(idx));
+        if let Some(idx) = idx {
+            idx as u32
+        } else {
+            self.func_type_check_idx.borrow_mut().push(func_type);
+            self.func_type_check_idx.borrow().len() as u32 - 1
+        }
+    }
+    // New func types: RefCell { value: [FuncType { params: [], results: [I32] }, FuncType { params: [I32], results: [I32] }, FuncType { params: [], results: [] }] }
     fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
         if fn_index < import_len as u32 {
             return Ok(());
         }
-        let func_type = self.module.funcs[fn_index as usize];
+        let dedup_func_type = self.module.funcs[fn_index as usize];
 
-        let sig_index = func_type.type_idx();
-        let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+        let func_type = self
+            .engine
+            .resolve_func_type(&dedup_func_type, Clone::clone);
+        let idx = self.get_or_insert_check_idx(func_type.clone());
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        self.code_section
-            .op_type_check(sig_index.into_usize() as u32);
+        self.code_section.op_type_check(idx);
+
         self.swap_stack_parameters(num_inputs.len() as u32);
 
         let func_body = self
@@ -539,6 +574,10 @@ impl<'linker> Compiler<'linker> {
             .compiled_funcs
             .get(fn_index as usize - import_len as usize)
             .ok_or(CompilerError::MissingFunction)?;
+        println!(
+            "Translate function : {}, func_type: {:?}, func_body: {:?}, dedup: {:?}",
+            fn_index, func_type, func_body, dedup_func_type
+        );
 
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
@@ -695,14 +734,14 @@ impl<'linker> Compiler<'linker> {
 
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let idx = self.get_or_insert_check_idx(func_type.clone());
                 let num_inputs = func_type.params();
 
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
 
                 self.swap_target(num_inputs.len() as u32);
 
-                self.code_section
-                    .op_i32_const(call_func_type.type_idx().into_usize() as u32);
+                self.code_section.op_i32_const(idx);
                 self.code_section.op_call_internal(func_idx);
             }
             WI::ReturnCall(func) => {
@@ -735,10 +774,8 @@ impl<'linker> Compiler<'linker> {
 
                 self.swap_stack_parameters(1);
 
-                let sig_index = call_func_type.type_idx();
-
-                self.code_section
-                    .op_i32_const(sig_index.into_usize() as u32);
+                let idx = self.get_or_insert_check_idx(func_type.clone());
+                self.code_section.op_i32_const(idx);
 
                 self.swap_stack_parameters(1);
                 self.code_section.op_br_indirect(0);
@@ -773,9 +810,9 @@ impl<'linker> Compiler<'linker> {
                 let fn_index = func_idx.into_usize() as u32;
 
                 let call_func_type = self.module.funcs[fn_index as usize];
-
-                self.code_section
-                    .op_i32_const(call_func_type.type_idx().into_usize() as u32);
+                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let idx = self.get_or_insert_check_idx(func_type.clone());
+                self.code_section.op_i32_const(idx);
 
                 self.code_section.op_call_internal(fn_index);
                 // self.code_section.op_drop();
@@ -789,10 +826,12 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_i32_const(target);
                 self.swap_stack_parameters(1);
 
-                let sig_index = self.module.func_types[sig_index.to_u32() as usize].type_idx();
-
-                self.code_section
-                    .op_i32_const(sig_index.into_usize() as u32);
+                let dedup_func_type = self.module.func_types[sig_index.to_u32() as usize];
+                let func_type = self
+                    .engine
+                    .resolve_func_type(&dedup_func_type, Clone::clone);
+                let idx = self.get_or_insert_check_idx(func_type.clone());
+                self.code_section.op_i32_const(idx);
 
                 self.swap_stack_parameters(1);
                 self.code_section.op_br_indirect(0);
@@ -858,7 +897,14 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn resolve_host_call(&mut self, fn_index: u32) -> Result<(u32, u32), CompilerError> {
-        let imports = self.module.imports.items.deref();
+        let imports = self
+            .module
+            .imports
+            .items
+            .deref()
+            .iter()
+            .filter(|import| matches!(import, Imported::Func(_)))
+            .collect::<Vec<_>>();
         if fn_index >= imports.len() as u32 {
             return Err(CompilerError::NotSupportedImport);
         }
