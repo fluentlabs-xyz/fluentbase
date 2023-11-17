@@ -1,15 +1,13 @@
+use log::debug;
+
 use crate::translator::host::Host;
 use crate::translator::instructions::utilities::{
-    add, assign_and_drop, drop_n, duplicate, extract_i64_part_of_evm_word, fetch_i64_part_as_i32,
-    split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
+    assign_to_stack_and_drop, duplicate_i64_part_of_evm_word, duplicate_stack_value,
+    fetch_i64_part_as_i32, split_i64_repr_of_i32_sum_into_overflow_and_normal_parts, wasm_add,
+    wasm_drop_n,
 };
 use crate::translator::translator::Translator;
-use crate::utilities::{
-    WASM_I64_BITS, WASM_I64_HIGH_32_BIT_MASK, WASM_I64_IN_EVM_WORD_COUNT, WASM_I64_LOW_32_BIT_MASK,
-};
-use fluentbase_rwasm::instruction_set;
-use fluentbase_rwasm::rwasm::InstructionSet;
-use log::debug;
+use crate::utilities::WASM_I64_IN_EVM_WORD_COUNT;
 
 pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     debug!("op:ADD");
@@ -21,7 +19,13 @@ pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
         let part_idx = subpart_idx / 2;
         let fetch_low_part = subpart_idx % 2 == 0;
         // extract i64 part of B evm
-        extract_i64_part_of_evm_word(instruction_set, &mut stack_pos_shift, part_idx, true);
+        duplicate_i64_part_of_evm_word(
+            instruction_set,
+            &mut stack_pos_shift,
+            part_idx,
+            true,
+            false,
+        );
         // stack: i64_part_of_B
 
         // extract low part of B
@@ -29,7 +33,13 @@ pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
         // stack: subpart_B
 
         // extract i64 part of A
-        extract_i64_part_of_evm_word(instruction_set, &mut stack_pos_shift, part_idx, false);
+        duplicate_i64_part_of_evm_word(
+            instruction_set,
+            &mut stack_pos_shift,
+            part_idx,
+            false,
+            false,
+        );
         // stack: i64_part_of_A subpart_B
 
         // extract low part of A
@@ -37,13 +47,13 @@ pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
         // stack: subpart_A subpart_B
 
         // sum low parts
-        add(instruction_set, &mut stack_pos_shift);
+        wasm_add(instruction_set, &mut stack_pos_shift);
         // stack: sum_of_subpart_A_and_subpart_B
 
         //
         if subpart_idx != 0 {
             // add overflow amount (which must be on stack) to the sum of parts
-            add(instruction_set, &mut stack_pos_shift);
+            wasm_add(instruction_set, &mut stack_pos_shift);
             // stack: sum_of_subpart_A_and_subpart_B_with_overflow_amount
         }
 
@@ -55,19 +65,19 @@ pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     }
 
     // drop last overflow value
-    drop_n(instruction_set, &mut stack_pos_shift, 1);
+    wasm_drop_n(instruction_set, &mut stack_pos_shift, 1);
 
     let mut stack_pos_shift = 0;
     const BASE: usize = WASM_I64_IN_EVM_WORD_COUNT * 2;
     for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
         let items_base_pos = BASE - i * 2;
         let assign_pos = BASE - i + 1;
-        duplicate(instruction_set, &mut stack_pos_shift, items_base_pos);
-        duplicate(instruction_set, &mut stack_pos_shift, items_base_pos - 1);
-        add(instruction_set, &mut stack_pos_shift);
-        assign_and_drop(instruction_set, &mut stack_pos_shift, assign_pos as u32);
+        duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos);
+        duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos - 1);
+        wasm_add(instruction_set, &mut stack_pos_shift);
+        assign_to_stack_and_drop(instruction_set, &mut stack_pos_shift, assign_pos);
     }
-    drop_n(
+    wasm_drop_n(
         instruction_set,
         &mut stack_pos_shift,
         WASM_I64_IN_EVM_WORD_COUNT,
