@@ -311,37 +311,49 @@ impl TestContext<'_> {
 
         let mut import_linker = ImportLinker::default();
         let mut import_index = 0xF101;
-        for import in module
-            .imports()
-            .filter(|import| import.module().ne("spectest"))
-        {
-            if let ExternType::Func(func_type) = import.ty() {
-                import_linker.insert_function(ImportFunc::new_env(
-                    import.module().to_string(),
-                    import.name().to_string(),
-                    import_index,
-                    _UNKNOWN,
-                    &func_type.params(),
-                    &func_type.results(),
-                ));
-                import_index += 1;
-                let exports = self
-                    .instances
-                    .get(format!("{}:{}", import.module(), import.name()).as_str())
-                    .unwrap()
-                    .exports(&self.store)
-                    .collect::<Vec<_>>();
-                if self
-                    .linker
-                    .get(self.store.as_context(), import.module(), import.name())
-                    .is_none()
-                {
-                    self.linker.define(
-                        import.module(),
-                        import.name(),
-                        exports[0].clone().into_func().unwrap(),
-                    )?;
+        let mut global_index = 0;
+        for import in module.imports() {
+            match import.ty() {
+                ExternType::Func(func_type) if import.module().ne("spectest") => {
+                    import_linker.insert_function(ImportFunc::new_env(
+                        import.module().to_string(),
+                        import.name().to_string(),
+                        import_index,
+                        _UNKNOWN,
+                        &func_type.params(),
+                        &func_type.results(),
+                    ));
+                    import_index += 1;
+                    let exports = self
+                        .instances
+                        .get(format!("{}:{}", import.module(), import.name()).as_str())
+                        .unwrap()
+                        .exports(&self.store)
+                        .collect::<Vec<_>>();
+                    if self
+                        .linker
+                        .get(self.store.as_context(), import.module(), import.name())
+                        .is_none()
+                    {
+                        self.linker.define(
+                            import.module(),
+                            import.name(),
+                            exports[0].clone().into_func().unwrap(),
+                        )?;
+                    }
                 }
+                ExternType::Global(global_type) => {
+                    import_linker.insert_function(ImportFunc::new_env(
+                        import.module().to_string(),
+                        import.name().to_string(),
+                        GLOBAL_START_INDEX as u16 + global_index,
+                        _UNKNOWN,
+                        &[],
+                        &[global_type.content()],
+                    ));
+                    global_index += 1;
+                }
+                _ => {}
             }
         }
 
@@ -502,6 +514,7 @@ impl TestContext<'_> {
         )
         .unwrap();
 
+        compiler.set_global_start_index(GLOBAL_START_INDEX);
         compiler
             .translate_with_state(
                 Some(FuncOrExport::StateRouter(

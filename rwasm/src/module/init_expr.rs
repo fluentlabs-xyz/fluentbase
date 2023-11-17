@@ -344,6 +344,13 @@ impl ConstExpr {
         None
     }
 
+    pub fn global(&self) -> Option<FuncIdx> {
+        if let Op::Global(op) = &self.op {
+            return Some(FuncIdx::from(op.global_index));
+        }
+        None
+    }
+
     /// Evaluates the [`ConstExpr`] in a constant evaluation context.
     ///
     /// # Note
