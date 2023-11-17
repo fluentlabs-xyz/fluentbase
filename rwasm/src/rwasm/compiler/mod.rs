@@ -13,10 +13,13 @@ use crate::{
         instruction_set::InstructionSet,
         ImportLinker,
     },
-    Config, Engine, Module,
+    Config, Engine, FuncType, Module,
 };
+use alloc::rc::Rc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 mod drop_keep;
 
@@ -67,6 +70,8 @@ pub struct Compiler<'linker> {
     is_translated: bool,
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
+    func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
+    global_start_index: u32,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -121,6 +126,20 @@ impl<'linker> Compiler<'linker> {
         import_linker: Option<&'linker ImportLinker>,
         fuel_consume: bool,
     ) -> Result<Self, CompilerError> {
+        Self::new_with_type_check_idx(
+            wasm_binary,
+            import_linker,
+            fuel_consume,
+            Rc::new(RefCell::new(vec![])),
+        )
+    }
+
+    pub fn new_with_type_check_idx(
+        wasm_binary: &[u8],
+        import_linker: Option<&'linker ImportLinker>,
+        fuel_consume: bool,
+        func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
+    ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
         config.consume_fuel(fuel_consume);
         config.wasm_tail_call(true);
@@ -137,6 +156,8 @@ impl<'linker> Compiler<'linker> {
             is_translated: false,
             injection_segments: vec![],
             br_table_status: None,
+            func_type_check_idx,
+            global_start_index: 0,
         })
     }
 
@@ -219,8 +240,9 @@ impl<'linker> Compiler<'linker> {
                     router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2 + 1);
 
                     let call_func_type = self.module.funcs[func_index as usize];
-                    router_opcodes.op_i32_const(call_func_type.type_idx().into_usize() as u32);
-
+                    let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                    let check_idx = self.get_or_insert_check_idx(func_type);
+                    router_opcodes.op_i32_const(check_idx);
                     router_opcodes.op_call_internal(func_index);
                     router_opcodes.extend(output_ix.clone());
                     router_opcodes.op_br_indirect(0);
@@ -236,6 +258,10 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_br_indirect(0);
             }
             FuncOrExport::Func(index) => {
+                let call_func_type = self.module.funcs[index as usize];
+                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let check_idx = self.get_or_insert_check_idx(func_type);
+                router_opcodes.op_i32_const(check_idx);
                 router_opcodes.op_call_internal(index);
             }
         }
@@ -250,13 +276,12 @@ impl<'linker> Compiler<'linker> {
                 .insert(func_idx + 1, beginning_offset);
 
             let func_type = self.module.funcs[func_idx as usize];
-            let sig_index = func_type.type_idx();
             let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
+            let idx = self.get_or_insert_check_idx(func_type.clone());
             let num_inputs = func_type.params();
             let num_outputs = func_type.results();
 
-            self.code_section
-                .op_type_check(sig_index.into_usize() as u32);
+            self.code_section.op_type_check(idx);
             self.swap_stack_parameters(num_inputs.len() as u32);
             self.translate_host_call(func_idx as u32)?;
             if num_outputs.len() > 0 {
