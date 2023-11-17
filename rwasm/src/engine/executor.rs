@@ -1442,14 +1442,24 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 // Query both tables and check if they are the same:
                 let dst = this.cache.get_table(this.ctx, dst);
                 let src = this.cache.get_table(this.ctx, src);
-                this.ctx
-                    .resolve_table(&dst)
-                    .get_untyped(dst_index + len)
-                    .ok_or(TrapCode::TableOutOfBounds)?;
-                this.ctx
-                    .resolve_table(&src)
-                    .get_untyped(src_index + len)
-                    .ok_or(TrapCode::TableOutOfBounds)?;
+                if len != 0 {
+                    this.ctx
+                        .resolve_table(&dst)
+                        .get_untyped(
+                            dst_index
+                                .checked_add(len - 1)
+                                .ok_or(TrapCode::TableOutOfBounds)?,
+                        )
+                        .ok_or(TrapCode::TableOutOfBounds)?;
+                    this.ctx
+                        .resolve_table(&src)
+                        .get_untyped(
+                            src_index
+                                .checked_add(len - 1)
+                                .ok_or(TrapCode::TableOutOfBounds)?,
+                        )
+                        .ok_or(TrapCode::TableOutOfBounds)?;
+                }
                 if Table::eq(&dst, &src) {
                     // Copy within the same table:
                     let table = this.ctx.resolve_table_mut(&dst);
