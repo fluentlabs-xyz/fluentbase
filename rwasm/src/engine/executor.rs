@@ -227,6 +227,13 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
+            // TODO: Need to add recursive check while call function
+            // TODO: Create more optimized check for stack overflowed
+            if self.value_stack.is_stack_overflowed(self.sp) {
+                println!("Stack overflowed");
+                return Err(TrapCode::StackOverflow.into());
+            }
+
             // let dump = self.value_stack.dump_stack(self.sp);
             // if dump.len() < 20 {
             //     println!(
