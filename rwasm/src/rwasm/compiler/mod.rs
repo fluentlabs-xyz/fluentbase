@@ -860,13 +860,32 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_memory_size();
                 self.code_section.op_i32_add();
                 self.code_section.op_i32_const(max_pages);
-                self.code_section.op_i32_ge_s();
+                self.code_section.op_i32_gt_s();
                 self.code_section.op_br_if_eqz(4);
                 self.code_section.op_drop();
                 self.code_section.op_i32_const(u32::MAX);
                 self.code_section.op_br(2);
                 self.code_section.op_memory_grow();
             }
+            WI::TableGrow(idx) => {
+                let table_type = self.module.tables[idx.to_u32() as usize];
+
+                let max_size = self.module.tables[idx.to_u32() as usize]
+                    .maximum()
+                    .unwrap_or(1024);
+                self.code_section.op_local_get(1);
+                self.code_section.op_table_size(idx);
+                self.code_section.op_i32_add();
+                self.code_section.op_i32_const(max_size);
+                self.code_section.op_i32_gt_s();
+                self.code_section.op_br_if_eqz(5);
+                self.code_section.op_drop();
+                self.code_section.op_drop();
+                self.code_section.op_i32_const(u32::MAX);
+                self.code_section.op_br(2);
+                self.code_section.op_table_grow(idx);
+            }
+
             // WI::LocalGet(local_depth) => {
             //     self.code_section
             //         .op_local_get(local_depth.to_usize() as u32 + 1);
