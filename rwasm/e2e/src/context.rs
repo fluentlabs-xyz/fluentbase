@@ -12,7 +12,9 @@ use fluentbase_rwasm::{
     AsContext, Caller, Config, Engine, Extern, ExternType, Func, FuncType, Global, ImportType,
     Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType, Value,
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use wast::token::{Id, Span};
 
 /// The context of a single Wasm test spec suite run.
@@ -45,6 +47,8 @@ pub struct TestContext<'a> {
     binaries: HashMap<String, Vec<u8>>,
 
     main_router: HashMap<String, MainFunction>,
+
+    func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
 }
 
 #[derive(Debug)]
@@ -66,6 +70,7 @@ const SYS_PRINT_F64: u32 = 0xF008;
 const SYS_PRINT_I32_F32: u32 = 0xF009;
 const SYS_PRINT_F64_F64: u32 = 0xF010;
 const SYS_PRINT: u32 = 0xF011;
+const GLOBAL_START_INDEX: u32 = 0xF100;
 
 const DEFAULT_MODULE_NAME: &'static str = "main_module";
 impl<'a> TestContext<'a> {
@@ -81,8 +86,8 @@ impl<'a> TestContext<'a> {
             Value::default(ValueType::FuncRef),
         )
         .unwrap();
-        let global_i32 = Global::new(&mut store, Value::I32(666), Mutability::Const);
-        let global_i64 = Global::new(&mut store, Value::I64(666), Mutability::Const);
+        let global_i32 = Func::wrap(&mut store, || -> i32 { 666 });
+        let global_i64 = Func::wrap(&mut store, || -> i64 { 666 });
         let global_f32 = Global::new(&mut store, Value::F32(666.0.into()), Mutability::Const);
         let global_f64 = Global::new(&mut store, Value::F64(666.0.into()), Mutability::Const);
         let print = Func::wrap(&mut store, || {
@@ -190,6 +195,7 @@ impl<'a> TestContext<'a> {
             descriptor,
             binaries: HashMap::new(),
             main_router: Default::default(),
+            func_type_check_idx: Rc::new(RefCell::new(vec![])),
         }
     }
 
@@ -487,9 +493,13 @@ impl TestContext<'_> {
             &[],
         ));
 
-        let mut compiler =
-            Compiler::new_with_fuel_consume(wasm_binary.as_slice(), Some(&import_linker), false)
-                .unwrap();
+        let mut compiler = Compiler::new_with_type_check_idx(
+            wasm_binary.as_slice(),
+            Some(&import_linker),
+            false,
+            self.func_type_check_idx.clone(),
+        )
+        .unwrap();
 
         compiler
             .translate_with_state(
@@ -621,8 +631,13 @@ impl TestContext<'_> {
             &[],
         ));
 
-        let mut compiler =
-            Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+        let mut compiler = Compiler::new_with_type_check_idx(
+            wasm_binary.as_slice(),
+            Some(&import_linker),
+            false,
+            self.func_type_check_idx.clone(),
+        )
+        .unwrap();
         compiler
             .translate(Some(FuncOrExport::Func(
                 elem.index().into_func_idx().unwrap(),

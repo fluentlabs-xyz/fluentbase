@@ -50,10 +50,6 @@ impl DedupFuncType {
     pub(super) fn into_inner(self) -> GuardedEntity<EngineIdx, DedupFuncTypeIdx> {
         self.0
     }
-
-    pub fn type_idx(self) -> DedupFuncTypeIdx {
-        self.0.entity_index_unsafe()
-    }
 }
 
 /// A [`FuncType`] registry that efficiently deduplicate stored function types.
