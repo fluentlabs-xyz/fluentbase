@@ -72,7 +72,6 @@ const SYS_PRINT_F64_F64: u32 = 0xF010;
 const SYS_PRINT: u32 = 0xF011;
 const GLOBAL_START_INDEX: u32 = 0xF100;
 
-const DEFAULT_MODULE_NAME: &'static str = "main_module";
 impl<'a> TestContext<'a> {
     /// Creates a new [`TestContext`] with the given [`TestDescriptor`].
     pub fn new(descriptor: &'a TestDescriptor, config: Config) -> Self {
@@ -266,6 +265,7 @@ impl TestContext<'_> {
             self.binaries
                 .insert(elem.name().to_string(), wasm_binary.clone());
             self.instances.insert(elem.name().to_string(), instance);
+            self.last_instance = Some(instance);
         }
         Ok(())
     }
@@ -283,6 +283,7 @@ impl TestContext<'_> {
             self.binaries
                 .insert(elem.name().to_string(), wasm_binary.clone());
             self.instances.insert(elem.name().to_string(), instance);
+            self.last_instance = Some(instance);
         }
         Ok(())
     }
@@ -303,7 +304,7 @@ impl TestContext<'_> {
         let name = module
             .name
             .map(|name| name.name)
-            .unwrap_or(DEFAULT_MODULE_NAME);
+            .or(module.id.map(|id| id.name()));
         config.consume_fuel(false);
 
         let module = Module::new(&self.engine, wasm_binary.as_slice())?;
@@ -536,7 +537,10 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
-        self.instances.insert(name.to_string(), instance);
+        if let Some(name) = name {
+            self.instances.insert(name.to_string(), instance);
+        }
+        self.last_instance = Some(instance);
 
         if start_fn.is_some() {
             let router = self
@@ -547,7 +551,7 @@ impl TestContext<'_> {
             let func_name = router.0.clone();
             let func_index = router.1;
             self.store.data_mut().state = func_index.fn_index;
-            self.invoke_with_state(Some(name), func_name.as_str(), vec![])?;
+            self.invoke_with_state(name, func_name.as_str(), vec![])?;
         }
 
         Ok(())
@@ -676,6 +680,7 @@ impl TestContext<'_> {
         self.modules.push(module);
         if let Some(module_name) = module_name {
             self.instances.insert(module_name.to_string(), instance);
+            self.last_instance = Some(instance);
             for export in instance.exports(&self.store) {
                 self.linker
                     .define(module_name, export.name(), export.into_extern())?;
@@ -716,6 +721,7 @@ impl TestContext<'_> {
             return;
         }
         self.instances.insert(name.to_string(), instance);
+        self.last_instance = Some(instance);
         for export in instance.exports(&self.store) {
             self.linker
                 .define(name, export.name(), export.clone().into_extern())
@@ -794,10 +800,12 @@ impl TestContext<'_> {
         func_name: &str,
         args: Vec<Value>,
     ) -> Result<Vec<Value>, TestError> {
-        let instance = self
-            .instances
-            .get(module_name.unwrap_or(DEFAULT_MODULE_NAME))
-            .unwrap();
+        let instance = if let Some(module_name) = module_name {
+            self.instances.get(module_name)
+        } else {
+            self.last_instance.as_ref()
+        }
+        .unwrap();
 
         let func = instance
             .get_export(&self.store, "main")
