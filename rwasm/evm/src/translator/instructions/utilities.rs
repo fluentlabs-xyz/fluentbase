@@ -3,7 +3,7 @@ use crate::utilities::{
 };
 use fluentbase_rwasm::rwasm::InstructionSet;
 
-pub fn duplicate(
+pub(super) fn duplicate_stack_value(
     instruction_set: &mut InstructionSet,
     stack_pos_shift: &mut i32,
     item_stack_pos: usize,
@@ -12,24 +12,36 @@ pub fn duplicate(
     *stack_pos_shift += 1;
 }
 
-pub fn evm_word_param_stack_pos(stack_pos_shift: i32, part_idx: usize, is_b_param: bool) -> usize {
-    WASM_I64_IN_EVM_WORD_COUNT * if is_b_param { 1 } else { 2 } - part_idx
-        + stack_pos_shift as usize
+pub(super) fn evm_word_param_stack_pos(
+    stack_pos_shift: i32,
+    part_idx: usize,
+    is_b_param: bool,
+    start_from_be: bool,
+) -> usize {
+    if start_from_be {
+        WASM_I64_IN_EVM_WORD_COUNT * if is_b_param { 0 } else { 1 }
+            + part_idx
+            + stack_pos_shift as usize
+    } else {
+        WASM_I64_IN_EVM_WORD_COUNT * if is_b_param { 1 } else { 2 } - part_idx
+            + stack_pos_shift as usize
+    }
 }
 
-pub fn extract_i64_part_of_evm_word(
+pub(super) fn duplicate_i64_part_of_evm_word(
     instruction_set: &mut InstructionSet,
     stack_pos_shift: &mut i32,
     part_idx: usize,
     is_b_param: bool,
+    start_from_left: bool,
 ) {
-    duplicate(
+    duplicate_stack_value(
         instruction_set,
         stack_pos_shift,
-        evm_word_param_stack_pos(*stack_pos_shift, part_idx, is_b_param),
+        evm_word_param_stack_pos(*stack_pos_shift, part_idx, is_b_param, start_from_left),
     );
 }
-pub fn i64_shift_part(
+pub(super) fn i64_shift_part(
     instruction_set: &mut InstructionSet,
     _stack_pos_shift: &mut i32,
     shift_low_high: bool,
@@ -45,7 +57,7 @@ pub fn i64_shift_part(
         // *stack_pos_shift -= 1;
     }
 }
-pub fn fetch_i64_part_as_i32(
+pub(super) fn fetch_i64_part_as_i32(
     instruction_set: &mut InstructionSet,
     stack_pos_shift: &mut i32,
     drop_high_part: bool,
@@ -63,35 +75,55 @@ pub fn fetch_i64_part_as_i32(
         i64_shift_part(instruction_set, stack_pos_shift, false);
     }
 }
-pub fn add(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
+pub(super) fn wasm_add(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
     instruction_set.op_i64_add();
     *stack_pos_shift -= 1;
 }
-pub fn drop_n(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32, count: usize) {
+pub(super) fn wasm_and(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
+    instruction_set.op_i64_and();
+    *stack_pos_shift -= 1;
+}
+pub(super) fn wasm_or(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
+    instruction_set.op_i64_or();
+    *stack_pos_shift -= 1;
+}
+pub(super) fn wasm_xor(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
+    instruction_set.op_i64_xor();
+    *stack_pos_shift -= 1;
+}
+pub(super) fn wasm_not(instruction_set: &mut InstructionSet, _stack_pos_shift: &mut i32) {
+    instruction_set.op_i64_const(-1);
+    instruction_set.op_i64_sub();
+}
+pub(super) fn wasm_drop_n(
+    instruction_set: &mut InstructionSet,
+    stack_pos_shift: &mut i32,
+    count: usize,
+) {
     for _ in 0..count {
         instruction_set.op_drop();
     }
     *stack_pos_shift -= count as i32;
 }
-pub fn assign_and_drop(
+pub(super) fn assign_to_stack_and_drop(
     instruction_set: &mut InstructionSet,
     stack_pos_shift: &mut i32,
-    assign_stack_pos: u32,
+    stack_pos: usize,
 ) {
-    instruction_set.op_local_set(assign_stack_pos);
+    instruction_set.op_local_set(stack_pos as u32);
     *stack_pos_shift -= 1;
 }
-pub fn split_i64_repr_of_i32_sum_into_overflow_and_normal_parts(
+pub(super) fn split_i64_repr_of_i32_sum_into_overflow_and_normal_parts(
     instruction_set: &mut InstructionSet,
     stack_pos_shift: &mut i32,
     do_upgrade_to_high_part: bool,
 ) {
     // split value onto overflow part (which is greater 0xffffffffff) and normal and them on stack so overflow part is on top
     // puts overflow value on top of the stack and normal value next to it
-    duplicate(instruction_set, stack_pos_shift, 1);
+    duplicate_stack_value(instruction_set, stack_pos_shift, 1);
     // extract overflow part
     fetch_i64_part_as_i32(instruction_set, stack_pos_shift, false);
-    duplicate(instruction_set, stack_pos_shift, 2);
+    duplicate_stack_value(instruction_set, stack_pos_shift, 2);
     // extract normal part
     fetch_i64_part_as_i32(instruction_set, stack_pos_shift, true);
     if do_upgrade_to_high_part {
