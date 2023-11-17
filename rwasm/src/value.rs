@@ -1,8 +1,6 @@
 use crate::{
     common::{UntypedValue, ValueType, F32, F64},
-    ExternRef,
-    Func,
-    FuncRef,
+    ExternRef, Func, FuncRef,
 };
 
 /// Untyped instances that allow to be typed.
