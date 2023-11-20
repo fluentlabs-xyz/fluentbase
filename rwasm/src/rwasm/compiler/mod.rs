@@ -93,6 +93,7 @@ struct BrTableStatus {
 pub enum FuncOrExport {
     Export(String),
     Func(u32),
+    Global(Instruction),
     StateRouter(Vec<FuncOrExport>, RouterInstructions),
 }
 
@@ -207,6 +208,21 @@ impl<'linker> Compiler<'linker> {
         Ok(main_index)
     }
 
+    fn resolve_func_index(&self, export: &FuncOrExport) -> Result<Option<u32>, CompilerError> {
+        match export {
+            FuncOrExport::Export(name) => Some(self.resolve_export_index(name)).transpose(),
+            FuncOrExport::Func(index) => Ok(Some(*index)),
+            _ => Ok(None),
+        }
+    }
+
+    fn resolve_global_ix(&self, export: &FuncOrExport) -> Option<Instruction> {
+        match export {
+            FuncOrExport::Global(ix) => Some(ix.clone()),
+            _ => None,
+        }
+    }
+
     fn translate_router(
         &mut self,
         main_index: FuncOrExport,
@@ -232,25 +248,32 @@ impl<'linker> Compiler<'linker> {
             ) => {
                 router_opcodes.extend(input_ix);
                 for (state_value, state) in states.iter().enumerate() {
-                    let func_index = match state {
-                        FuncOrExport::Export(name) => self.resolve_export_index(name)?,
-                        FuncOrExport::Func(index) => *index,
-                        _ => unreachable!("not supported router state ({:?})", state),
-                    };
                     // push current and second states on the stack
                     router_opcodes.push(check_instr);
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
-                    router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32 + 1);
-                    router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2 + 1);
 
-                    let call_func_type = self.module.funcs[func_index as usize];
-                    let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                    let check_idx = self.get_or_insert_check_idx(func_type);
-                    router_opcodes.op_i32_const(check_idx);
-                    router_opcodes.op_call_internal(func_index);
-                    router_opcodes.extend(output_ix.clone());
+                    if let Some(func_index) = self.resolve_func_index(state)? {
+                        router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32 + 1);
+                        router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2 + 1);
+
+                        let call_func_type = self.module.funcs[func_index as usize];
+                        let func_type =
+                            self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                        let check_idx = self.get_or_insert_check_idx(func_type);
+
+                        router_opcodes.op_i32_const(check_idx);
+                        router_opcodes.op_call_internal(func_index);
+                        router_opcodes.extend(output_ix.clone());
+                    } else if let Some(instruction) = self.resolve_global_ix(state) {
+                        router_opcodes.op_br_if_eqz(2_i32 + output_ix.len() as i32 + 1);
+                        router_opcodes.push(instruction);
+                        router_opcodes.extend(output_ix.clone());
+                    } else {
+                        unreachable!("not supported router state ({:?})", state)
+                    }
+
                     router_opcodes.op_br_indirect(0);
                 }
 
@@ -270,12 +293,16 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_i32_const(check_idx);
                 router_opcodes.op_call_internal(index);
             }
+            FuncOrExport::Global(instruction) => {
+                router_opcodes.push(instruction);
+            }
         }
         Ok(router_opcodes)
     }
 
     fn translate_imports_funcs(&mut self) -> Result<(), CompilerError> {
         let injection_start = self.code_section.len();
+
         for func_idx in 0..self.module.imports.len_funcs as u32 {
             let beginning_offset = self.code_section.len();
             self.function_beginning
