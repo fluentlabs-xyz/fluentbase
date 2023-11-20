@@ -215,6 +215,10 @@ impl Instruction {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::StackWrite(0));
             }
+            Instruction::F32Sqrt => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
             Instruction::ElemStore(seg) => {
                 stack_ops.push(RwOp::StackRead(0));
                 stack_ops.push(RwOp::TableElemWrite(seg.to_u32()))

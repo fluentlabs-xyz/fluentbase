@@ -30,6 +30,7 @@ pub enum ExecutionState {
     WASM_TABLE_INIT,
     WASM_F32_ADD,
     WASM_F32_MUL,
+    WASM_F32_SQRT,
     WASM_BITWISE,
     WASM_EXTEND,
     WASM_MEMORY_COPY,
@@ -81,6 +82,7 @@ impl ExecutionState {
             ExecutionState::WASM_RETURN => 34,
             ExecutionState::WASM_F32_ADD => 35,
             ExecutionState::WASM_F32_MUL => 36,
+            ExecutionState::WASM_F32_SQRT => 37,
         }
     }
 
@@ -198,6 +200,7 @@ impl ExecutionState {
             Self::WASM_TABLE_INIT => vec![Instruction::TableInit(Default::default())],
             Self::WASM_F32_ADD => vec![Instruction::F32Add],
             Self::WASM_F32_MUL => vec![Instruction::F32Mul],
+            Self::WASM_F32_SQRT => vec![Instruction::F32Sqrt],
             Self::WASM_STORE => vec![
                 Instruction::I32Store(Default::default()),
                 Instruction::I32Store8(Default::default()),

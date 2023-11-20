@@ -40,6 +40,7 @@ pub(crate) mod op_unary;
 pub(crate) mod op_unreachable;
 pub(crate) mod op_f32_add;
 pub(crate) mod op_f32_mul;
+pub(crate) mod op_f32_sqrt;
 
 #[macro_export]
 macro_rules! bail_illegal_opcode {
