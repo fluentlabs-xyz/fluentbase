@@ -17,6 +17,7 @@ bitvec = { version = "1", default-features = false, features = ["alloc"] }
 log = "0.4.20"
 env_logger = "0.10.1"
 ctor = "0.2.5"
+wat = "1.0.80"
 
 [build-dependencies]
 hex = "0.4"

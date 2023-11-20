@@ -107,7 +107,7 @@ impl<'linker> Compiler<'linker> {
         import_linker: Option<&'linker ImportLinker>,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(true);
+        config.consume_fuel(false);
         let engine = Engine::new(&config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
@@ -123,12 +123,18 @@ impl<'linker> Compiler<'linker> {
         })
     }
 
-    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
+    pub fn translate(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        translate_sections: bool,
+    ) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
         // first we must translate all sections, this is an entrypoint
-        self.translate_sections(main_index.unwrap_or_default())?;
+        if translate_sections {
+            self.translate_sections(main_index.unwrap_or_default())?;
+        }
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
@@ -624,9 +630,13 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
+    pub fn finalize(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        translate_sections: bool,
+    ) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(None)?;
+            self.translate(main_index, translate_sections)?;
         }
         let bytecode = &mut self.code_section;
 
@@ -662,7 +672,7 @@ impl<'linker> Compiler<'linker> {
                             }
                         }
                     };
-                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset));
                 }
                 Instruction::BrTable(target) => {
                     i += target.to_usize() * 2;

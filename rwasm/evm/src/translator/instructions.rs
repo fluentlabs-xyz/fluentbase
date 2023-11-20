@@ -1,7 +1,6 @@
 //! EVM opcode implementations.
 
 #[macro_use]
-mod macros;
 
 pub mod arithmetic;
 pub mod bitwise;

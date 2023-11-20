@@ -1,10 +1,8 @@
+use fluentbase_rwasm::{rwasm::Compiler, Caller};
+use fluentbase_rwasm_core::common::Trap;
+
 use crate::instruction::exported_memory_slice;
 use crate::{exported_memory_vec, ExitCode, Runtime, RuntimeContext};
-use fluentbase_rwasm_core::common::Trap;
-use fluentbase_rwasm::{
-    rwasm::{Compiler, CompilerError},
-    Caller,
-};
 
 pub(crate) fn rwasm_compile(
     mut caller: Caller<'_, RuntimeContext>,
@@ -18,7 +16,7 @@ pub(crate) fn rwasm_compile(
     // translate WASM binary to rWASM
     let import_linker = Runtime::new_linker();
     let mut compiler = Compiler::new_with_linker(input.as_ref(), Some(&import_linker)).unwrap();
-    let compile_res = compiler.finalize();
+    let compile_res = compiler.finalize(None, true);
     match compile_res {
         Ok(rwasm_bytecode) => {
             if rwasm_bytecode.len() <= output_len as usize {

@@ -10,7 +10,8 @@ use crate::translator::translator::Translator;
 use crate::utilities::WASM_I64_IN_EVM_WORD_COUNT;
 
 pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:ADD");
+    const OP: &str = "ADD";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     let mut stack_pos_shift = 0;
@@ -85,39 +86,48 @@ pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn wrapping_mul<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:MUL");
+    const OP: &str = "MUL";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn wrapping_sub<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SUB");
+    const OP: &str = "SUB";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:DIV");
+    const OP: &str = "DIV";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn sdiv<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SDIV");
+    const OP: &str = "SDIV";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn rem<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:REM");
+    const OP: &str = "REM";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn smod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SMOD");
+    const OP: &str = "SMOD";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn addmod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:ADDMOD");
+    const OP: &str = "ADDMOD";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn mulmod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:MULMOD");
+    const OP: &str = "MULMOD";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:EXP");
+    const OP: &str = "EXP";
+    panic!("op:{} not implemented", OP);
 }
 
 /// In the yellow paper `SIGNEXTEND` is defined to take two inputs, we will call them
@@ -136,5 +146,6 @@ pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 /// `b == 0` then the yellow paper says the output should start with all zeros, then end with
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
 pub fn signextend<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SIGNEXTEND");
+    const OP: &str = "SIGNEXTEND";
+    panic!("op:{} not implemented", OP);
 }

@@ -1,77 +1,88 @@
-use alloc::boxed::Box;
-
 use crate::translator::host::Host;
-use crate::translator::inner_models::{CallInputs, CallScheme, CreateInputs};
 use crate::translator::translator::Translator;
 
-pub fn balance<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
+pub fn balance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "BALANCE";
+    panic!("op:{} not implemented", OP);
+}
 
-/// EIP-1884: Repricing for trie-size-dependent opcodes
-pub fn selfbalance<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
+pub fn selfbalance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "SELFBALANCE";
+    panic!("op:{} not implemented", OP);
+}
 
-pub fn extcodesize<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn extcodesize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "EXTCODESIZE";
+    panic!("op:{} not implemented", OP);
 }
 
 /// EIP-1052: EXTCODEHASH opcode
-pub fn extcodehash<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn extcodehash<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "EXTCODEHASH";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn extcodecopy<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn extcodecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "EXTCODECOPY";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn blockhash<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn blockhash<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "BLOCKHASH";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn sload<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn sload<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "SLOAD";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn sstore<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn sstore<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "SSTORE";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn tstore<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn tstore<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "TSTORE";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn tload<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn tload<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "TLOAD";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn log<const N: usize, H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn log<const N: usize, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "LOG";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn selfdestruct<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn selfdestruct<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "SELFDESTRUCT";
+    panic!("op:{} not implemented", OP);
 }
 
-#[inline(never)]
-pub fn prepare_create_inputs<H: Host, const IS_CREATE2: bool>(
-    _translator: &mut Translator<'_>,
-    host: &mut H,
-    create_inputs: &mut Option<Box<CreateInputs>>,
-) {
+pub fn create<const IS_CREATE2: bool, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "CREATE";
+    panic!("op:{}(IS_CREATE2:{}) not implemented", OP, IS_CREATE2);
 }
 
-pub fn create<const IS_CREATE2: bool, H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
-
-pub fn call<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
-
-pub fn call_code<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
-
-pub fn delegate_call<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
-
-pub fn static_call<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {}
-
-#[inline(never)]
-fn prepare_call_inputs<H: Host>(
-    _translator: &mut Translator<'_>,
-    scheme: CallScheme,
-    host: &mut H,
-    result_len: &mut usize,
-    result_offset: &mut usize,
-    result_call_inputs: &mut Option<Box<CallInputs>>,
-) {
+pub fn call<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "CALL";
+    panic!("op:{} not implemented", OP);
 }
 
-pub fn call_inner<H: Host>(
-    scheme: CallScheme,
-    _translator: &mut Translator<'_>,
-    host: &mut H,
-) {
+pub fn call_code<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "CALL_CODE";
+    panic!("op:{} not implemented", OP);
+}
+
+pub fn delegate_call<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "DELEGATE_CALL";
+    panic!("op:{} not implemented", OP);
+}
+
+pub fn static_call<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "STATIC_CALL";
+    panic!("op:{} not implemented", OP);
 }

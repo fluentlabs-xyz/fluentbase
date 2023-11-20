@@ -60,7 +60,7 @@ macro_rules! opcodes {
             map
         };
 
-        /// Returns the instruction function for the given opcode and spec.
+        /// Returns the instruction function for the given opcode
         pub fn instruction<H: Host>(opcode: u8) -> Instruction<H> {
             match opcode {
                 $($name => $f,)*
@@ -194,7 +194,7 @@ opcodes! {
     0x5D => TSTORE   => host::tstore::<H>,
     0x5E => MCOPY    => memory::mcopy::<H>,
 
-    0x5F => PUSH0  => stack::push0::<H>,
+    0x5F => PUSH0  => stack::push::<0, H>,
     0x60 => PUSH1  => stack::push::<1, H>,
     0x61 => PUSH2  => stack::push::<2, H>,
     0x62 => PUSH3  => stack::push::<3, H>,
