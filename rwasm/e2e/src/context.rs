@@ -9,8 +9,9 @@ use fluentbase_rwasm::{
         RouterInstructions,
     },
     value::WithType,
-    AsContext, Caller, Config, Engine, Extern, ExternType, Func, FuncType, Global, ImportType,
-    Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType, Value,
+    AsContext, Caller, Config, Engine, Extern, ExternType, Func, FuncType, Global, GlobalType,
+    ImportType, Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType,
+    Value,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -361,34 +362,64 @@ impl TestContext<'_> {
 
         let start_fn = module.get_start_fn();
         let mut router_index = 0;
+
+        enum ExportRouter {
+            Func(FuncType),
+            Global((Instruction, GlobalType)),
+        }
+
         let mut exports = module
             .exports()
             .filter_map(|export_type| match export_type.ty().clone() {
-                ExternType::Func(func) => Some((export_type.name().to_string(), func)),
+                ExternType::Func(func) => {
+                    Some((export_type.name().to_string(), ExportRouter::Func(func)))
+                }
+                ExternType::Global(global) => {
+                    let instruction = module.get_global_init(export_type.index()).unwrap();
+                    println!("Export type: {:?}, ix: {:?}", export_type, instruction);
+                    Some((
+                        export_type.name().to_string(),
+                        ExportRouter::Global((instruction, global)),
+                    ))
+                }
                 _ => None,
             })
-            .map(|(name, func_type)| {
-                self.main_router.insert(
-                    name.clone(),
-                    MainFunction {
-                        fn_index: router_index,
-                        fn_type: func_type,
-                    },
-                );
-                router_index += 1;
-                match exports_names.as_mut() {
-                    None => {
-                        exports_names = Some(vec![name.clone()]);
+            .map(|(name, export_router)| match export_router {
+                ExportRouter::Func(func_type) => {
+                    self.main_router.insert(
+                        name.clone(),
+                        MainFunction {
+                            fn_index: router_index,
+                            fn_type: func_type,
+                        },
+                    );
+                    router_index += 1;
+                    match exports_names.as_mut() {
+                        None => {
+                            exports_names = Some(vec![name.clone()]);
+                        }
+                        Some(names) => {
+                            names.push(name.clone());
+                        }
                     }
-                    Some(names) => {
-                        names.push(name.clone());
-                    }
-                }
-                self.binaries.insert(name.clone(), wasm_binary.clone());
+                    self.binaries.insert(name.clone(), wasm_binary.clone());
 
-                FuncOrExport::Export(name)
+                    FuncOrExport::Export(name)
+                }
+                ExportRouter::Global((instruction, global_type)) => {
+                    self.main_router.insert(
+                        name.clone(),
+                        MainFunction {
+                            fn_index: router_index,
+                            fn_type: FuncType::new([], [global_type.content()]),
+                        },
+                    );
+                    router_index += 1;
+                    FuncOrExport::Global(instruction)
+                }
             })
             .collect::<Vec<_>>();
+
         self.last_exports = exports_names;
 
         if let Some(start_fn) = start_fn {

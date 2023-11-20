@@ -35,9 +35,12 @@ use self::{
     parser::parse,
     read::ReadError,
 };
+use crate::common::UntypedValue;
+use crate::engine::bytecode::Instruction;
+use crate::module::init_expr::{EmptyEvalContext, Eval, Op};
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
-    Engine, Error, ExternType, FuncType, GlobalType, MemoryType, TableType,
+    Engine, Error, Extern, ExternType, FuncType, GlobalType, MemoryType, TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 use core::{iter, slice::Iter as SliceIter};
@@ -311,6 +314,24 @@ impl Module {
                 ExternType::Global(global_type)
             }
         }
+    }
+
+    pub fn get_global_init(&self, idx: &ExternIdx) -> Option<Instruction> {
+        idx.into_global_idx().and_then(|idx| {
+            self.internal_globals().skip(idx as usize).next().and_then(
+                |(global_type, global_expr)| {
+                    if let Some(value) = global_expr.eval_const() {
+                        Some(Instruction::I64Const(value.into()))
+                    } else if let Some(value) = global_expr.funcref() {
+                        Some(Instruction::RefFunc(value.into_u32().into()))
+                    } else if let Some(index) = global_expr.global() {
+                        Some(Instruction::GlobalGet(index.into_u32().into()))
+                    } else {
+                        None
+                    }
+                },
+            )
+        })
     }
 }
 

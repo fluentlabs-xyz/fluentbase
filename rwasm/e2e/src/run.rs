@@ -541,9 +541,10 @@ fn execute_wast_execute_with_state(
             // Wasmi currently does not support the Wasm component model.
             Ok(vec![])
         }
-        WastExecute::Get { module, global } => context
-            .get_global(module, global)
-            .map(|result| vec![result]),
+        WastExecute::Get { module, global } => {
+            context.set_state_by_name(global)?;
+            context.invoke_with_state(module.map(|m| m.name()), global, vec![])
+        }
     }
 }
 

@@ -127,6 +127,13 @@ impl ExternIdx {
             _ => None,
         }
     }
+
+    pub fn into_global_idx(self) -> Option<u32> {
+        match self {
+            ExternIdx::Global(idx) => Some(idx.into_u32()),
+            _ => None,
+        }
+    }
 }
 
 /// An iterator over the exports of a [`Module`].
