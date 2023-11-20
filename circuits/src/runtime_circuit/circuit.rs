@@ -46,6 +46,7 @@ use crate::{
             op_unary::OpUnaryGadget,
             op_unreachable::OpUnreachableGadget,
             op_f32_add::OpF32AddGadget,
+            op_f32_mul::OpF32MulGadget,
             ExecStep,
         },
         platform::{
@@ -88,6 +89,7 @@ pub struct RuntimeCircuitConfig<F: Field> {
     unary_gadget: ExecutionContextGadget<F, OpUnaryGadget<F>>,
     test_gadget: ExecutionContextGadget<F, OpTestGadget<F>>,
     f32_add_gadget: ExecutionContextGadget<F, OpF32AddGadget<F>>,
+    f32_mul_gadget: ExecutionContextGadget<F, OpF32MulGadget<F>>,
     i32_store_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 4>>,
     i32_store8_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 1>>,
     i32_store16_gadget: ExecutionContextGadget<F, OpStoreGadget<F, 2>>,
@@ -177,6 +179,7 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
             f32_add_gadget: configure_gadget!(),
+            f32_mul_gadget: configure_gadget!(),
             i32_store_gadget: configure_gadget!(),
             i32_store8_gadget: configure_gadget!(),
             i32_store16_gadget: configure_gadget!(),
@@ -327,6 +330,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_F32_ADD => self
                 .f32_add_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_F32_MUL => self
+                .f32_mul_gadget
                 .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_BITWISE => {
                 self.bitwise_gadget.assign(region, offset, step, rw_counter)
