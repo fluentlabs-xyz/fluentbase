@@ -1,9 +1,13 @@
 use std::marker::PhantomData;
 
+use hashbrown::HashMap;
+
 pub use analysis::BytecodeLocked;
+use fluentbase_rwasm::rwasm::{Compiler, FuncOrExport, InstructionSet, ReducedModule};
 
 use crate::translator::host::Host;
 use crate::translator::instruction_result::InstructionResult;
+use crate::translator::instructions::opcode;
 use crate::translator::translator::contract::Contract;
 
 pub mod analysis;
@@ -14,17 +18,21 @@ pub struct Translator<'a> {
     pub contract: Box<Contract>,
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
+    opcode_to_rwasm_replacer: HashMap<u8, InstructionSet>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Translator<'a> {
     pub fn new(contract: Box<Contract>) -> Self {
-        Self {
+        let mut s = Self {
             instruction_pointer: contract.bytecode.as_ptr(),
             contract,
             instruction_result: InstructionResult::Continue,
+            opcode_to_rwasm_replacer: Default::default(),
             _lifetime: Default::default(),
-        }
+        };
+        s.init_opcode_snippets();
+        s
     }
 
     #[inline]
@@ -80,5 +88,33 @@ impl<'a> Translator<'a> {
             self.step(instruction_table, host);
         }
         self.instruction_result
+    }
+
+    fn init_opcode_snippets(&mut self) {
+        let mut initiate = |opcode: u8, wasm_binary: Vec<u8>| {
+            if self.opcode_to_rwasm_replacer.contains_key(&opcode) {
+                panic!("replacer for opcode '{}' already exists", &opcode);
+            }
+            let rwasm_binary = Compiler::new(&wasm_binary)
+                .unwrap()
+                .finalize(Some(FuncOrExport::Func(0)), false)
+                .unwrap();
+            let is = ReducedModule::new(&rwasm_binary)
+                .unwrap()
+                .bytecode()
+                .clone();
+            self.opcode_to_rwasm_replacer.insert(opcode, is);
+        };
+
+        [(opcode::SHL, "../rwasm-code-snippets/bin/bitwise_byte.wat")].map(|v| {
+            initiate(v.0, wat::parse_file(v.1).unwrap());
+        });
+    }
+
+    pub fn get_opcode_snippet(&mut self, opcode: u8) -> &InstructionSet {
+        if let Some(is) = self.opcode_to_rwasm_replacer.get(&opcode) {
+            return is;
+        }
+        panic!("unsupported opcode: {}", opcode);
     }
 }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod evm_to_rwasm_tests {
     use alloy_primitives::Bytes;
-    use log::{debug, info};
+    use log::debug;
 
     use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
 
@@ -39,7 +39,7 @@ mod evm_to_rwasm_tests {
             .instruction_set
             .write_binary(&mut buffer_writer)
             .unwrap();
-        debug!("wasm_bytecode_bytes_len: {}", rwasm_bytecode_bytes_len);
+        debug!("rwasm_bytecode_bytes_len: {}", rwasm_bytecode_bytes_len);
         let rwasm_bytecode_bytes = &buffer[0..rwasm_bytecode_bytes_len];
         debug!("rwasm bytecode bytes: {:?}", rwasm_bytecode_bytes);
 

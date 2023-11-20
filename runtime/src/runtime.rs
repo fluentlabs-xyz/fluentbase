@@ -1,7 +1,5 @@
-use crate::{
-    macros::{forward_call, forward_call_args},
-    ExitCode, RuntimeError, SysFuncIdx, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT,
-};
+use std::mem::take;
+
 use fluentbase_rwasm::{
     engine::Tracer,
     rwasm::{
@@ -25,7 +23,11 @@ use fluentbase_rwasm::{
     Module, StackLimits, Store,
 };
 use fluentbase_rwasm_core::common::{Trap, ValueType};
-use std::mem::take;
+
+use crate::{
+    macros::{forward_call, forward_call_args},
+    ExitCode, RuntimeError, SysFuncIdx, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT,
+};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeContext {

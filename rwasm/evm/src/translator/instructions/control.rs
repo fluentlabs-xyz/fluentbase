@@ -2,21 +2,35 @@ use crate::translator::host::Host;
 use crate::translator::instruction_result::InstructionResult;
 use crate::translator::translator::Translator;
 
-pub fn jump<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {}
+pub fn jump<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "JUMP";
+    panic!("op:{} not implemented", OP);
+}
 
-pub fn jumpi<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {}
+pub fn jumpi<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "JUMPI";
+    panic!("op:{} not implemented", OP);
+}
 
-pub fn jumpdest<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {}
+pub fn jumpdest<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "JUMPDEST";
+    panic!("op:{} not implemented", OP);
+}
 
-pub fn pc<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {}
+pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "PC";
+    panic!("op:{} not implemented", OP);
+}
 
-#[inline(always)]
-fn return_inner(_translator: &mut Translator<'_>, result: InstructionResult) {}
+pub fn ret<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "RET";
+    panic!("op:{} not implemented", OP);
+}
 
-pub fn ret<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {}
-
-/// EIP-140: REVERT instruction
-pub fn revert<H: Host /* , SPEC: Spec */>(translator: &mut Translator<'_>, _host: &mut H) {}
+pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "REVERT";
+    panic!("op:{} not implemented", OP);
+}
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     translator.instruction_result = InstructionResult::Stop;

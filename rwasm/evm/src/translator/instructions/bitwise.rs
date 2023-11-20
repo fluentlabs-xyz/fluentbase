@@ -1,3 +1,5 @@
+use fluentbase_rwasm::instruction_set;
+use fluentbase_rwasm::rwasm::InstructionSet;
 use log::debug;
 
 use crate::translator::host::Host;
@@ -8,27 +10,33 @@ use crate::translator::translator::Translator;
 use crate::utilities::WASM_I64_IN_EVM_WORD_COUNT;
 
 pub fn lt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:LT");
+    const OP: &str = "LT";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn gt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:GT");
+    const OP: &str = "GT";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn slt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SLT");
+    const OP: &str = "SLT";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn sgt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SGT");
+    const OP: &str = "SGT";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn eq<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:EQ");
+    const OP: &str = "EQ";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn iszero<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:ISZERO");
+    const OP: &str = "ISZERO";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     for _part_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
@@ -41,7 +49,8 @@ pub fn iszero<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn bitand<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:AND");
+    const OP: &str = "AND";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     let mut stack_post_shift = 0;
@@ -61,7 +70,8 @@ pub fn bitand<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn bitor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:OR");
+    const OP: &str = "OR";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     let mut stack_post_shift = 0;
@@ -73,7 +83,8 @@ pub fn bitor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn bitxor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:XOR");
+    const OP: &str = "XOR";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     let mut stack_post_shift = 0;
@@ -85,7 +96,8 @@ pub fn bitxor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn not<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    debug!("op:NOT");
+    const OP: &str = "NOT";
+    debug!("op:{}", OP);
     let instruction_set = host.instruction_set();
 
     let mut stack_post_shift = 0;
@@ -100,18 +112,28 @@ pub fn not<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     }
 }
 
-pub fn byte<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:BYTE");
+pub fn byte<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "BYTE";
+    debug!("op:{}", OP);
+    let instruction_set = host.instruction_set();
+    let co = translator.current_opcode();
+    let instruction_set_replace = translator.get_opcode_snippet(co);
+    instruction_set
+        .instr
+        .extend(instruction_set_replace.instr.iter());
 }
 
 pub fn shl<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SHL");
+    const OP: &str = "SHL";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn shr<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SHR");
+    const OP: &str = "SHR";
+    panic!("op:{} not implemented", OP);
 }
 
 pub fn sar<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    debug!("op:SAR");
+    const OP: &str = "SAR";
+    panic!("op:{} not implemented", OP);
 }
