@@ -43,7 +43,7 @@
               br 4 (;@1;)
             end
             local.get 1
-            local.get 5
+            local.get 7
             i64.and
             local.set 4
             br 3 (;@1;)
@@ -83,7 +83,7 @@
       i64.const 3
       i64.shl
       i64.shl
-      local.get 5
+      local.get 6
       i64.and
       local.set 4
     end
