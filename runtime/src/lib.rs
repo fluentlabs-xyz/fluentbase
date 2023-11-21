@@ -22,7 +22,7 @@ mod rwasm;
 #[cfg(test)]
 mod tests;
 mod types;
-// mod zktrie;
+mod zktrie;
 
 #[derive(Debug)]
 pub enum RuntimeError {
