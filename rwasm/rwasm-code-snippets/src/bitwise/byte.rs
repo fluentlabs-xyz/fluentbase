@@ -20,10 +20,10 @@ fn bitwise_byte(
         byte_value = b0 & (BYTE_MAX_VAL << shift);
     } else if a3 >= 16 {
         let shift = (a3 - 16) * 8;
-        byte_value = b0 & (BYTE_MAX_VAL << shift);
+        byte_value = b1 & (BYTE_MAX_VAL << shift);
     } else if a3 >= 8 {
         let shift = (a3 - 8) * 8;
-        byte_value = b0 & (BYTE_MAX_VAL << shift);
+        byte_value = b2 & (BYTE_MAX_VAL << shift);
     } else {
         let shift = a3 * 8;
         byte_value = b3 & (BYTE_MAX_VAL << shift)
