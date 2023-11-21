@@ -8,7 +8,7 @@ fn bitwise_sar(
     b1: u64,
     b2: u64,
     b3: u64,
-) -> (i64, i64, i64, i64) {
+) -> (u64, u64, u64, u64) {
     let b0_sign = b0 & 0x8000000000000000;
     if shift0 != 0 || shift1 != 0 || shift2 != 0 || shift3 > 255 {
         if b0_sign > 0 {

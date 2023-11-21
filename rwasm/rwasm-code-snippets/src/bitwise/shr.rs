@@ -1,14 +1,14 @@
 #[no_mangle]
 fn bitwise_shr(
-    shift0: i64,
-    shift1: i64,
-    shift2: i64,
-    shift3: i64,
-    b0: i64,
-    b1: i64,
-    b2: i64,
-    b3: i64,
-) -> (i64, i64, i64, i64) {
+    shift0: u64,
+    shift1: u64,
+    shift2: u64,
+    shift3: u64,
+    b0: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+) -> (u64, u64, u64, u64) {
     if shift0 != 0 || shift1 != 0 || shift2 != 0 || shift3 > 255 {
         return (0, 0, 0, 0);
     }

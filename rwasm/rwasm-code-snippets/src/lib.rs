@@ -6,6 +6,7 @@ extern crate alloc;
 extern crate std;
 extern crate wat;
 
+mod arithmetic;
 mod bitwise;
 
 #[cfg(feature = "fluentbase-runtime")]

@@ -8,7 +8,7 @@ fn bitwise_lt(
     b1: u64,
     b2: u64,
     b3: u64,
-) -> (i64, i64, i64, i64) {
+) -> (u64, u64, u64, u64) {
     let s0 = 0;
     let s1 = 0;
     let s2 = 0;

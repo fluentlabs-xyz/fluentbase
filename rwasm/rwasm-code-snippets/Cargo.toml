@@ -27,6 +27,7 @@ bitwise_lt = []
 bitwise_slt = []
 bitwise_sar = []
 bitwise_eq = []
+arithmetic_sub = []
 
 [dev-dependencies]
 wat = "1.0.77"
