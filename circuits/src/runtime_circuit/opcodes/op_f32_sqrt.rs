@@ -22,6 +22,7 @@ use std::ops::Not;
 
 #[derive(Clone)]
 pub(crate) struct OpF32SqrtGadget<F: Field> {
+    minor_point: SelectorColumn,
     arg_sign: SelectorColumn,
     out_sign: SelectorColumn,
     arg_exp: F32ExpConfig<F>,
@@ -38,6 +39,7 @@ impl<F: Field> ExecutionGadget<F> for OpF32SqrtGadget<F> {
     const EXECUTION_STATE: ExecutionState = ExecutionState::WASM_F32_SQRT;
 
     fn configure(cb: &mut OpConstraintBuilder<F>) -> Self {
+        let minor_point = cb.query_selector();
         let arg_sign = cb.query_selector();
         let out_sign = cb.query_selector();
 
@@ -48,6 +50,8 @@ impl<F: Field> ExecutionGadget<F> for OpF32SqrtGadget<F> {
         let out_mant = cb.query_f32_mantissa(out_exp.is_extra_bit_set().into());
 
         let arg_sign_bit = || -> Query<F> { arg_sign.current().into() };
+
+        cb.range_check7(minor_point.current().select(arg_exp.current(), arg_exp.current() - 127.expr()));
 
         cb.stack_pop(
             arg_sign.current().select(0x80000000_u32.expr(), 0.expr())
@@ -73,15 +77,21 @@ impl<F: Field> ExecutionGadget<F> for OpF32SqrtGadget<F> {
 
         let big_mult = || out_mant_abs() * out_mant_abs();
 
-        let lt_gadget = cb.lt_gadget(0x1000000.expr(), big_mult() - arg_mant_abs() * 0x1000000.expr() + 0x800000);
+        let factor = minor_point.current().select(0x1000000_u64.expr(), 0x800000.expr());
+
+        let lt_gadget = cb.lt_gadget(0x1000000.expr(), big_mult() - arg_mant_abs() * factor + 0x800000);
         cb.require_zero("rest of mantissa must be shifted out of bits", lt_gadget.expr());
         let opt_lt_gadget = Some(lt_gadget);
 
         cb.require_zero("increased out_exp and arg_exp must match",
-            out_exp.current() - (arg_exp.current() + 1.expr())
+            minor_point.current().select(
+                out_exp.current() - (arg_exp.current() + 1.expr()),
+                (out_exp.current() + 3.expr()) - arg_exp.current(),
+            )
         );
 
         Self {
+            minor_point,
             arg_sign,
             out_sign,
             arg_exp,
@@ -111,6 +121,10 @@ impl<F: Field> ExecutionGadget<F> for OpF32SqrtGadget<F> {
         let arg_exp = (arg_raw >> 23) & 0xff;
         let out_exp = (out_raw >> 23) & 0xff;
 
+        let minor_point = arg_exp < 127;
+
+        self.minor_point.assign(region, offset, minor_point);
+
         self.arg_sign.assign(region, offset, arg_sign);
         self.out_sign.assign(region, offset, out_sign);
 
@@ -120,17 +134,22 @@ impl<F: Field> ExecutionGadget<F> for OpF32SqrtGadget<F> {
         let (arg_mant_raw, arg_mant_abs) = self.arg_mant.assign_from_raw(region, offset, arg_raw);
         let (out_mant_raw, out_mant_abs) = self.out_mant.assign_from_raw(region, offset, out_raw);
 
+        let factor = if minor_point { 0x1000000_u64 } else { 0x800000 };
+
         let big_mult = out_mant_abs as u64 * out_mant_abs as u64;
+        println!("DEBUG minor_point {}", minor_point);
+        println!("DEBUG arg_exp {}", arg_exp);
+        println!("DEBUG out_exp {}", out_exp);
         println!("DEBUG out_mant_abs {}", out_mant_abs);
         println!("DEBUG bit_mult {}", big_mult);
         println!("DEBUG arg_mant_abs {}", arg_mant_abs);
-        println!("DEBUG DIF {}", big_mult as u64 - arg_mant_abs as u64 * 0x1000000_u64 + 0x800000);
+        println!("DEBUG DIF {}", big_mult as u64 - arg_mant_abs as u64 * factor + 0x800000);
 
         self.lt_gadget.as_ref().unwrap().assign(
                 region,
                 offset,
                 F::from(0x1000000 as u64),
-                F::from(big_mult as u64 - arg_mant_abs as u64 * 0x1000000_u64 + 0x800000),
+                F::from(big_mult as u64 - arg_mant_abs as u64 * factor + 0x800000),
         );
 
         Ok(())
