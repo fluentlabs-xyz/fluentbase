@@ -1,8 +1,6 @@
 extern crate alloc;
 extern crate core;
 
-pub(crate) const USE_GAS: bool = !cfg!(feature = "no_gas_measuring");
-
 pub mod compiler;
 
 #[cfg(test)]

@@ -91,11 +91,11 @@ impl<'a> Translator<'a> {
     }
 
     fn init_opcode_snippets(&mut self) {
-        let mut initiate = |opcode: u8, wasm_binary: Vec<u8>| {
+        let mut initiate = |opcode: u8, wasm_binary: &[u8]| {
             if self.opcode_to_rwasm_replacer.contains_key(&opcode) {
                 panic!("replacer for opcode '{}' already exists", &opcode);
             }
-            let rwasm_binary = Compiler::new(&wasm_binary)
+            let rwasm_binary = Compiler::new(wasm_binary)
                 .unwrap()
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
@@ -106,8 +106,20 @@ impl<'a> Translator<'a> {
             self.opcode_to_rwasm_replacer.insert(opcode, is);
         };
 
-        [(opcode::SHL, "../rwasm-code-snippets/bin/bitwise_byte.wat")].map(|v| {
-            initiate(v.0, wat::parse_file(v.1).unwrap());
+        [
+            (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
+            (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
+            (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
+            (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
+            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
+            (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
+            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
+            (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
+        ]
+        .map(|v| {
+            let bytecode = wat::parse_file(v.1).unwrap();
+            initiate(v.0, &bytecode);
         });
     }
 

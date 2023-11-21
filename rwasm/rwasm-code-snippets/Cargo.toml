@@ -20,6 +20,13 @@ default = []
 testing = ["fluentbase-runtime"]
 bitwise_byte = []
 bitwise_shl = []
+bitwise_shr = []
+bitwise_gt = []
+bitwise_sgt = []
+bitwise_lt = []
+bitwise_slt = []
+bitwise_sar = []
+bitwise_eq = []
 
 [dev-dependencies]
 wat = "1.0.77"
