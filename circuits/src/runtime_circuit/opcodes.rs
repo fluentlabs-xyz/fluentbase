@@ -6,7 +6,6 @@ use crate::{
 };
 use halo2_proofs::circuit::Region;
 
-// mod op_bin;
 pub(crate) mod op_bin;
 pub(crate) mod op_bitwise;
 pub(crate) mod op_break;
@@ -17,7 +16,9 @@ pub(crate) mod op_drop;
 pub(crate) mod op_extend;
 pub(crate) mod op_global;
 pub(crate) mod op_load;
-pub(crate) mod op_local;
+pub(crate) mod op_local_get;
+pub(crate) mod op_local_set;
+pub(crate) mod op_local_tee;
 pub(crate) mod op_memory_copy;
 pub(crate) mod op_memory_fill;
 pub(crate) mod op_memory_grow;

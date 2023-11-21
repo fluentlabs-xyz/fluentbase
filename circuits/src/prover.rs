@@ -153,7 +153,7 @@ mod tests {
         let rwasm_binary: Vec<u8> = bytecode.into();
         let import_linker = Runtime::new_linker();
         let result = Runtime::run_with_context(
-            RuntimeContext::new(rwasm_binary.as_slice()).with_input(&vec![vec![]]),
+            RuntimeContext::new(rwasm_binary.as_slice()).with_input(vec![]),
             &import_linker,
         )
         .unwrap();
@@ -194,14 +194,14 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    #[ignore]
-    fn test_greeting() {
-        let wasm_binary = include_bytes!("../../runtime/examples/bin/greeting.wasm");
-        let import_linker = Runtime::new_linker();
-        let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
-        gen_proof_verify(rwasm_binary);
-    }
+    // #[test]
+    // #[ignore]
+    // fn test_greeting() {
+    //     let wasm_binary = include_bytes!("../../runtime/examples/bin/greeting.wasm");
+    //     let import_linker = Runtime::new_linker();
+    //     let rwasm_binary = wasm2rwasm(wasm_binary, &import_linker);
+    //     gen_proof_verify(rwasm_binary);
+    // }
 
     #[test]
     #[ignore]

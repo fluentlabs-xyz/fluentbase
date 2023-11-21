@@ -6,7 +6,7 @@ use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr};
 pub(crate) fn test_ok_with_input(mut bytecode: InstructionSet, input: Vec<u8>) {
     bytecode.finalize(true);
     let bytecode: Vec<u8> = bytecode.into();
-    let execution_result = Runtime::run(bytecode.as_slice(), &vec![input]).unwrap();
+    let execution_result = Runtime::run(bytecode.as_slice(), &input, 1_000_000).unwrap();
     let exit_code = execution_result.data().exit_code();
     let circuit =
         FluentbaseCircuit::from_execution_result_with_exit_code(&execution_result, exit_code);
