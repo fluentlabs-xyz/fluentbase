@@ -1,37 +1,41 @@
-use fluentbase_rwasm::instruction_set;
-use fluentbase_rwasm::rwasm::InstructionSet;
 use log::debug;
 
 use crate::translator::host::Host;
 use crate::translator::instructions::utilities::{
-    assign_to_stack_and_drop, duplicate_stack_value, wasm_and, wasm_not, wasm_or, wasm_xor,
+    assign_to_stack_and_drop, duplicate_stack_value, replace_current_opcode_with_code_snippet,
+    wasm_and, wasm_not, wasm_or, wasm_xor,
 };
 use crate::translator::translator::Translator;
 use crate::utilities::WASM_I64_IN_EVM_WORD_COUNT;
 
-pub fn lt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn lt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "LT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn gt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn gt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn slt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn slt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn sgt<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn sgt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SGT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn eq<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn eq<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EQ";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
 pub fn iszero<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
@@ -115,25 +119,23 @@ pub fn not<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 pub fn byte<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BYTE";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-    let co = translator.current_opcode();
-    let instruction_set_replace = translator.get_opcode_snippet(co);
-    instruction_set
-        .instr
-        .extend(instruction_set_replace.instr.iter());
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn shl<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn shl<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHL";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn shr<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn shr<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHR";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
-pub fn sar<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn sar<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SAR";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }

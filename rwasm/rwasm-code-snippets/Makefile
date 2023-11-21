@@ -1,4 +1,4 @@
-FILES = bitwise_byte bitwise_shl
+FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar
 
 all: $(FILES)
 
@@ -11,8 +11,6 @@ $(FILES):
 	cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
 	mkdir -p bin
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
-	#cp ../../target/${TARGET}/release/fluentbase_rwasm_code_snippets.wasm ./bin/$@.wasm
-	#wasm2wat ./bin/$@.wasm > ./bin/$@.wat
 
 test:
 	 cargo test --features=testing --release all_tests -- --nocapture

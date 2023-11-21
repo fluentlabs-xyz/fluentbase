@@ -1,7 +1,21 @@
+use crate::translator::host::Host;
+use crate::translator::translator::Translator;
 use crate::utilities::{
     WASM_I64_BITS, WASM_I64_HIGH_32_BIT_MASK, WASM_I64_IN_EVM_WORD_COUNT, WASM_I64_LOW_32_BIT_MASK,
 };
 use fluentbase_rwasm::rwasm::InstructionSet;
+
+pub(super) fn replace_current_opcode_with_code_snippet(
+    translator: &mut Translator<'_>,
+    host: &mut dyn Host,
+) {
+    let instruction_set = host.instruction_set();
+    let opcode = translator.current_opcode();
+    let instruction_set_replace = translator.get_opcode_snippet(opcode);
+    instruction_set
+        .instr
+        .extend(instruction_set_replace.instr.iter());
+}
 
 pub(super) fn duplicate_stack_value(
     instruction_set: &mut InstructionSet,
