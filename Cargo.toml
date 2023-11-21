@@ -1,8 +1,6 @@
 [workspace]
 members = [
-    "circuits",
     "examples",
-    "fluent",
     "poseidon",
     "runtime",
     "rwasm",
