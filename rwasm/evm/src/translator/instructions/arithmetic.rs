@@ -105,8 +105,8 @@ pub fn sdiv<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn rem<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    const OP: &str = "REM";
+pub fn arithmetic_mod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+    const OP: &str = "MOD";
     panic!("op:{} not implemented", OP);
 }
 

@@ -14,63 +14,54 @@
           br_if 0 (;@3;)
           local.get 4
           i64.const 255
-          i64.gt_s
+          i64.gt_u
           br_if 0 (;@3;)
           local.get 4
           i64.const 191
-          i64.gt_s
+          i64.gt_u
           br_if 1 (;@2;)
           local.get 4
           i64.const 127
-          i64.gt_s
+          i64.gt_u
           br_if 2 (;@1;)
-          local.get 7
           i64.const 0
           local.get 4
           i64.sub
-          local.tee 1
-          i64.shr_s
-          local.get 6
-          local.get 4
-          i64.shl
-          i64.or
-          local.set 2
-          local.get 8
-          local.get 1
-          i64.shr_s
-          local.get 7
-          local.get 4
-          i64.shl
-          i64.or
-          local.set 3
-          local.get 8
-          local.get 4
-          i64.shl
-          local.set 8
+          local.set 1
           block  ;; label = @4
             local.get 4
             i64.const 63
-            i64.gt_s
+            i64.gt_u
             br_if 0 (;@4;)
             local.get 0
             local.get 8
+            local.get 4
+            i64.shl
             i64.store offset=24
             local.get 0
-            local.get 3
+            local.get 8
+            local.get 1
+            i64.shr_u
+            local.get 7
+            local.get 4
+            i64.shl
+            i64.or
             i64.store offset=16
             local.get 0
-            local.get 2
+            local.get 7
+            local.get 1
+            i64.shr_u
+            local.get 6
+            local.get 4
+            i64.shl
+            i64.or
             i64.store offset=8
             local.get 0
             local.get 6
             local.get 1
-            i64.const 63
-            i64.and
-            i64.shr_s
+            i64.shr_u
             local.get 5
             local.get 4
-            i64.const 63
-            i64.and
             i64.shl
             i64.or
             i64.store
@@ -81,12 +72,26 @@
           i64.store offset=24
           local.get 0
           local.get 8
+          local.get 4
+          i64.shl
           i64.store offset=16
           local.get 0
-          local.get 3
+          local.get 8
+          local.get 1
+          i64.shr_u
+          local.get 7
+          local.get 4
+          i64.shl
+          i64.or
           i64.store offset=8
           local.get 0
-          local.get 2
+          local.get 7
+          local.get 1
+          i64.shr_u
+          local.get 6
+          local.get 4
+          i64.shl
+          i64.or
           i64.store
           return
         end
@@ -148,7 +153,7 @@
     i64.const 0
     local.get 4
     i64.sub
-    i64.shr_s
+    i64.shr_u
     local.get 7
     local.get 4
     i64.shl

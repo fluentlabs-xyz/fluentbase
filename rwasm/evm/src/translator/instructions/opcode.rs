@@ -103,7 +103,7 @@ opcodes! {
     0x03 => SUB        => arithmetic::wrapping_sub,
     0x04 => DIV        => arithmetic::div,
     0x05 => SDIV       => arithmetic::sdiv,
-    0x06 => MOD        => arithmetic::rem,
+    0x06 => MOD        => arithmetic::arithmetic_mod,
     0x07 => SMOD       => arithmetic::smod,
     0x08 => ADDMOD     => arithmetic::addmod,
     0x09 => MULMOD     => arithmetic::mulmod,
