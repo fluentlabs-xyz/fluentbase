@@ -1,62 +1,36 @@
+use crate::runtime_circuit::opcodes::op_local_set::OpLocalSetGadget;
+use crate::runtime_circuit::opcodes::op_local_tee::OpLocalTeeGadget;
 use crate::{
     bail_illegal_opcode,
     constraint_builder::{dynamic_cell_manager::DynamicCellManager, AdviceColumn},
     exec_step::{ExecSteps, GadgetError},
     lookup_table::{
-        BitwiseCheckLookup,
-        CopyLookup,
-        FixedLookup,
-        PublicInputLookup,
-        RangeCheckLookup,
-        RwLookup,
+        BitwiseCheckLookup, CopyLookup, FixedLookup, PublicInputLookup, RangeCheckLookup, RwLookup,
         RwasmLookup,
     },
     runtime_circuit::{
         execution_gadget::ExecutionContextGadget,
         execution_state::ExecutionState,
         opcodes::{
-            op_bin::OpBinGadget,
-            op_bitwise::OpBitwiseGadget,
-            op_break::OpBreakGadget,
-            op_const::OpConstGadget,
-            op_consume_fuel::OpConsumeFuel,
-            op_conversion::OpConversionGadget,
-            op_drop::OpDropGadget,
-            op_extend::OpExtendGadget,
-            op_global::OpGlobalGadget,
-            op_load::OpLoadGadget,
-            op_local::OpLocalGadget,
-            op_memory_copy::OpMemoryCopyGadget,
-            op_memory_fill::OpMemoryFillGadget,
-            op_memory_grow::OpMemoryGrowGadget,
-            op_memory_init::OpMemoryInitGadget,
-            op_memory_size::OpMemorySizeGadget,
-            op_reffunc::OpRefFuncGadget,
-            op_return::OpReturnGadget,
-            op_select::OpSelectGadget,
-            op_shift::OpShiftGadget,
-            op_store::OpStoreGadget,
-            op_table_copy::OpTableCopyGadget,
-            op_table_fill::OpTableFillGadget,
-            op_table_get::OpTableGetGadget,
-            op_table_grow::OpTableGrowGadget,
-            op_table_set::OpTableSetGadget,
-            op_table_size::OpTableSizeGadget,
-            op_test::OpTestGadget,
-            op_unary::OpUnaryGadget,
-            op_unreachable::OpUnreachableGadget,
-            ExecStep,
+            op_bin::OpBinGadget, op_bitwise::OpBitwiseGadget, op_break::OpBreakGadget,
+            op_const::OpConstGadget, op_consume_fuel::OpConsumeFuel,
+            op_conversion::OpConversionGadget, op_drop::OpDropGadget, op_extend::OpExtendGadget,
+            op_global::OpGlobalGadget, op_load::OpLoadGadget, op_local_get::OpLocalGetGadget,
+            op_memory_copy::OpMemoryCopyGadget, op_memory_fill::OpMemoryFillGadget,
+            op_memory_grow::OpMemoryGrowGadget, op_memory_init::OpMemoryInitGadget,
+            op_memory_size::OpMemorySizeGadget, op_reffunc::OpRefFuncGadget,
+            op_return::OpReturnGadget, op_select::OpSelectGadget, op_shift::OpShiftGadget,
+            op_store::OpStoreGadget, op_table_copy::OpTableCopyGadget,
+            op_table_fill::OpTableFillGadget, op_table_get::OpTableGetGadget,
+            op_table_grow::OpTableGrowGadget, op_table_set::OpTableSetGadget,
+            op_table_size::OpTableSizeGadget, op_test::OpTestGadget, op_unary::OpUnaryGadget,
+            op_unreachable::OpUnreachableGadget, ExecStep,
         },
         platform::{
-            rwasm_transact::RwasmTransactGadget,
-            sys_halt::SysHaltGadget,
-            sys_read::SysReadGadget,
-            sys_write::SysWriteGadget,
-            wasi_args_get::WasiArgsGetGadget,
-            wasi_args_sizes_get::WasiArgsSizesGetGadget,
-            wasi_environ_get::WasiEnvironGetGadget,
-            wasi_environ_sizes_get::WasiEnvironSizesGetGadget,
-            wasi_fd_write::WasiFdWriteGadget,
+            rwasm_transact::RwasmTransactGadget, sys_halt::SysHaltGadget, sys_read::SysReadGadget,
+            sys_write::SysWriteGadget, wasi_args_get::WasiArgsGetGadget,
+            wasi_args_sizes_get::WasiArgsSizesGetGadget, wasi_environ_get::WasiEnvironGetGadget,
+            wasi_environ_sizes_get::WasiEnvironSizesGetGadget, wasi_fd_write::WasiFdWriteGadget,
             wasi_proc_exit::WasiProcExitGadget,
         },
         responsible_opcode::ResponsibleOpcodeTable,
@@ -82,7 +56,9 @@ pub struct RuntimeCircuitConfig<F: Field> {
     conversion_gadget: ExecutionContextGadget<F, OpConversionGadget<F>>,
     drop_gadget: ExecutionContextGadget<F, OpDropGadget<F>>,
     global_gadget: ExecutionContextGadget<F, OpGlobalGadget<F>>,
-    local_gadget: ExecutionContextGadget<F, OpLocalGadget<F>>,
+    local_get_gadget: ExecutionContextGadget<F, OpLocalGetGadget<F>>,
+    local_set_gadget: ExecutionContextGadget<F, OpLocalSetGadget<F>>,
+    local_tee_gadget: ExecutionContextGadget<F, OpLocalTeeGadget<F>>,
     select_gadget: ExecutionContextGadget<F, OpSelectGadget<F>>,
     unary_gadget: ExecutionContextGadget<F, OpUnaryGadget<F>>,
     test_gadget: ExecutionContextGadget<F, OpTestGadget<F>>,
@@ -170,7 +146,9 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             conversion_gadget: configure_gadget!(),
             drop_gadget: configure_gadget!(),
             global_gadget: configure_gadget!(),
-            local_gadget: configure_gadget!(),
+            local_get_gadget: configure_gadget!(),
+            local_set_gadget: configure_gadget!(),
+            local_tee_gadget: configure_gadget!(),
             select_gadget: configure_gadget!(),
             unary_gadget: configure_gadget!(),
             test_gadget: configure_gadget!(),
@@ -293,9 +271,15 @@ impl<F: Field> RuntimeCircuitConfig<F> {
             ExecutionState::WASM_GLOBAL => {
                 self.global_gadget.assign(region, offset, step, rw_counter)
             }
-            ExecutionState::WASM_LOCAL => {
-                self.local_gadget.assign(region, offset, step, rw_counter)
-            }
+            ExecutionState::WASM_LOCAL_GET => self
+                .local_get_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_LOCAL_SET => self
+                .local_set_gadget
+                .assign(region, offset, step, rw_counter),
+            ExecutionState::WASM_LOCAL_TEE => self
+                .local_tee_gadget
+                .assign(region, offset, step, rw_counter),
             ExecutionState::WASM_SELECT => {
                 self.select_gadget.assign(region, offset, step, rw_counter)
             }
