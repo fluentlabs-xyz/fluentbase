@@ -2088,6 +2088,7 @@ dependencies = [
  "bitvec 1.0.1",
  "ctor",
  "env_logger",
+ "fluentbase-runtime",
  "fluentbase-rwasm",
  "fluentbase-rwasm-core",
  "hashbrown 0.14.2",
