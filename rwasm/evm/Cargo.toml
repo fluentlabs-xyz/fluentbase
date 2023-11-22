@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 fluentbase-rwasm = { path = ".." }
 fluentbase-rwasm-core = { path = "../core" }
+fluentbase-runtime = { path = "../../runtime" }
 
 alloy-primitives = { version = "0.4", default-features = false, features = [
     "rlp",

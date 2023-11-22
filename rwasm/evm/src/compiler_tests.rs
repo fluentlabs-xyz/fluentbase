@@ -1,30 +1,22 @@
 #[cfg(test)]
 mod evm_to_rwasm_tests {
     use alloy_primitives::Bytes;
+    use fluentbase_runtime::Runtime;
     use log::debug;
 
-    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
+    use fluentbase_rwasm::rwasm::{
+        BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule,
+    };
 
     use crate::compiler::EvmCompiler;
     use crate::translator::instruction_result::InstructionResult;
+    use crate::translator::instructions::opcode::{EQ, PUSH0, PUSH1, PUSH4, PUSH8};
 
     #[test]
     fn simple_bytecode_test() {
-        // 0x01: ADD
-        // 0x50  POP
-        // 0x5F: PUSH0
-        // 0x60: PUSH1
-        // 0x61: PUSH2
-        // 0x62: PUSH3
-        // 0x63: PUSH4
-        // 0x64: PUSH5
-        // 0x65: PUSH6
-        // 0x66: PUSH7
-        // 0x67: PUSH8
-        // 0x68: PUSH9
-
-        let evm_bytecode_bytes: &[u8] =
-            &[0x5F, 0x60, 0x80, 0x60, 0x40, 0x67, 0, 0, 0, 0, 0, 0, 1, 246];
+        let evm_bytecode_bytes: &[u8] = &[
+            PUSH0, PUSH1, 0x80, PUSH1, 0x40, PUSH8, 0, 0, 0, 0, 0, 0, 1, 246,
+        ];
         let evm_bytecode_bytes = Bytes::from(evm_bytecode_bytes);
         debug!("evm_bytecode_bytes: {:x?}", evm_bytecode_bytes.as_ref());
 
@@ -46,5 +38,54 @@ mod evm_to_rwasm_tests {
         let mut rmodule = ReducedModule::new(rwasm_bytecode_bytes).unwrap();
         let rwasm_binary_trace = rmodule.trace_binary();
         debug!("rwasm_binary_trace: {:?}", &rwasm_binary_trace);
+    }
+
+    #[test]
+    fn eq_opcode_test() {
+        let evm_bytecode_bytes: &[u8] = &[
+            // EQ b a mem_offset
+            PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH4, 0, 0, 0, 0, EQ,
+        ];
+        let evm_binary = Bytes::from(evm_bytecode_bytes);
+        debug!(
+            "evm_binary (len {}) {:x?}",
+            evm_binary.len(),
+            evm_binary.as_ref(),
+        );
+
+        let mut compiler = EvmCompiler::new(evm_binary.as_ref());
+
+        let res = compiler.translate();
+        assert_eq!(res, InstructionResult::Stop);
+
+        let mut buffer = vec![0; 1024 * 1024];
+        let mut buffer_writer = BinaryFormatWriter::new(&mut buffer);
+
+        let mut preambule = InstructionSet::new();
+        preambule.op_i32_const(100);
+        preambule.op_memory_grow();
+        preambule.op_drop();
+        preambule.write_binary(&mut buffer_writer).unwrap();
+
+        compiler
+            .instruction_set
+            .write_binary(&mut buffer_writer)
+            .unwrap();
+        let rwasm_binary = &buffer_writer.to_vec();
+        debug!(
+            "rwasm_binary (len {}): {:?}",
+            rwasm_binary.len(),
+            rwasm_binary
+        );
+
+        let mut rmodule = ReducedModule::new(rwasm_binary).unwrap();
+        debug!("rmodule.trace_binary(): {:?}", rmodule.trace_binary());
+        let exec_result = Runtime::run(rwasm_binary, &Vec::new(), 10_000_000);
+        assert!(exec_result.is_ok());
+        let exec_result = exec_result.unwrap();
+        let tracer = exec_result.tracer();
+        let runtime_context = exec_result.data();
+        debug!("runtime_context.output(): {:x?}", runtime_context.output());
+        debug!("tracer.global_memory: {:x?}", tracer.global_memory);
     }
 }

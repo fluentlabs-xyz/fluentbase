@@ -1,20 +1,40 @@
+use std::mem;
+
+use fluentbase_rwasm::rwasm::InstructionSet;
+
 use crate::translator::host::Host;
+use crate::translator::instructions::opcode;
 use crate::translator::translator::Translator;
 use crate::utilities::{
     WASM_I64_BITS, WASM_I64_HIGH_32_BIT_MASK, WASM_I64_IN_EVM_WORD_COUNT, WASM_I64_LOW_32_BIT_MASK,
 };
-use fluentbase_rwasm::rwasm::InstructionSet;
 
 pub(super) fn replace_current_opcode_with_code_snippet(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
 ) {
     let instruction_set = host.instruction_set();
-    let opcode = translator.current_opcode();
-    let instruction_set_replace = translator.get_opcode_snippet(opcode);
+    let opcode = translator.opcode_prev();
+    let instruction_set_replace = translator.get_code_snippet(opcode);
+    //
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());
+    // result postprocessing based on opcode
+    const I64_STORE_OFFSET: usize = 0;
+    match opcode {
+        opcode::EQ => {
+            // output is 4 i64 params in memory by some offset
+            // strategy: get slices which represent i64  values and put them on stack as i64
+            for i in 0..4 {
+                instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
+                instruction_set.op_i64_load(0);
+            }
+        }
+        _ => {
+            panic!("no postprocessing defined for {} opcode", opcode)
+        }
+    }
 }
 
 pub(super) fn duplicate_stack_value(

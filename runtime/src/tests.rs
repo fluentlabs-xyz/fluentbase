@@ -1,5 +1,6 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
+use fluentbase_rwasm::rwasm::ReducedModule;
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport},
@@ -13,14 +14,14 @@ pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut compiler = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-    compiler.finalize().unwrap()
+    compiler.finalize(None, true).unwrap()
 }
 
 fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
     Compiler::new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))
         .unwrap()
-        .finalize()
+        .finalize(None, true)
         .unwrap()
 }
 
@@ -213,12 +214,15 @@ fn test_state() {
     let mut compiler =
         Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
-            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-        )))
+        .translate(
+            Some(FuncOrExport::StateRouter(
+                vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+            )),
+            true,
+        )
         .unwrap();
-    let rwasm_bytecode = compiler.finalize().unwrap();
+    let rwasm_bytecode = compiler.finalize(None, true).unwrap();
     Runtime::run_with_context(RuntimeContext::new(rwasm_bytecode), &import_linker).unwrap();
 }
 
@@ -247,6 +251,8 @@ fn test_keccak256() {
     "#,
     );
 
+    let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
+    println!("rmodule.trace_binary(): {:?}", rmodule.trace_binary());
     let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
     println!("{:?}", result);
     match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {

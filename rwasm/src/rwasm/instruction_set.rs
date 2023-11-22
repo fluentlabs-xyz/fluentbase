@@ -478,6 +478,14 @@ impl InstructionSet {
             metas.extend(o.metas.unwrap());
         }
     }
+
+    pub fn drop_tail(&mut self, count: usize) -> usize {
+        if self.instr.len() < count {
+            return 0;
+        }
+        self.instr = self.instr[0..(self.instr.len() - count)].to_vec();
+        count
+    }
 }
 
 #[macro_export]

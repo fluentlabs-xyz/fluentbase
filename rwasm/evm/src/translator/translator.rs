@@ -31,12 +31,17 @@ impl<'a> Translator<'a> {
             opcode_to_rwasm_replacer: Default::default(),
             _lifetime: Default::default(),
         };
-        s.init_opcode_snippets();
+        s.init_code_snippets();
         s
     }
 
     #[inline]
-    pub fn current_opcode(&self) -> u8 {
+    pub fn opcode_prev(&self) -> u8 {
+        unsafe { *(self.instruction_pointer.sub(1)) }
+    }
+
+    #[inline]
+    pub fn opcode_cur(&self) -> u8 {
         unsafe { *self.instruction_pointer }
     }
 
@@ -90,31 +95,43 @@ impl<'a> Translator<'a> {
         self.instruction_result
     }
 
-    fn init_opcode_snippets(&mut self) {
+    fn init_code_snippets(&mut self) {
         let mut initiate = |opcode: u8, wasm_binary: &[u8]| {
             if self.opcode_to_rwasm_replacer.contains_key(&opcode) {
-                panic!("replacer for opcode '{}' already exists", &opcode);
+                panic!(
+                    "code snippet replacer for opcode 0x{:x?} already exists (decimal: {})",
+                    opcode, opcode
+                );
             }
             let rwasm_binary = Compiler::new(wasm_binary)
                 .unwrap()
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
-            let is = ReducedModule::new(&rwasm_binary)
+            let mut instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
-            self.opcode_to_rwasm_replacer.insert(opcode, is);
+            // drop tail instructions "BrIndirect(BranchOffset(0)) + Unreachable"
+            const DROP_TAIL_INSTR_COUNT: usize = 2;
+            if instruction_set.drop_tail(DROP_TAIL_INSTR_COUNT) != DROP_TAIL_INSTR_COUNT {
+                panic!(
+                    "failed to post-process (remove redundant ops) code snippet replacer for opcode 0x{:x?} (decimal: {})",
+                    opcode, opcode
+                );
+            }
+            self.opcode_to_rwasm_replacer
+                .insert(opcode, instruction_set);
         };
 
         [
             (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
             (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
             (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
             (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
             (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
             (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
-            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
             (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
         ]
@@ -124,10 +141,15 @@ impl<'a> Translator<'a> {
         });
     }
 
-    pub fn get_opcode_snippet(&mut self, opcode: u8) -> &InstructionSet {
+    pub fn get_code_snippet(&mut self, opcode: u8) -> &InstructionSet {
         if let Some(is) = self.opcode_to_rwasm_replacer.get(&opcode) {
             return is;
         }
-        panic!("unsupported opcode: {}", opcode);
+        panic!(
+            "code snippet not found for opcode 0x{:x?} (decimal: {}) pc {}",
+            opcode,
+            opcode,
+            self.program_counter()
+        );
     }
 }
