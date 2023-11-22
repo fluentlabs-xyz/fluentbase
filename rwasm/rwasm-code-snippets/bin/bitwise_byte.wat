@@ -15,15 +15,15 @@
             br_if 0 (;@4;)
             local.get 4
             i64.const 31
-            i64.gt_s
+            i64.gt_u
             br_if 0 (;@4;)
             local.get 4
             i64.const 23
-            i64.gt_s
+            i64.gt_u
             br_if 1 (;@3;)
             local.get 4
             i64.const 15
-            i64.gt_s
+            i64.gt_u
             br_if 2 (;@2;)
             i64.const 255
             local.get 4
@@ -34,7 +34,7 @@
             block  ;; label = @5
               local.get 4
               i64.const 7
-              i64.gt_s
+              i64.gt_u
               br_if 0 (;@5;)
               local.get 1
               local.get 8
