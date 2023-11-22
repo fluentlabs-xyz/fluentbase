@@ -111,7 +111,7 @@ impl<'a> Translator<'a> {
                 .unwrap()
                 .bytecode()
                 .clone();
-            // drop tail instructions "BrIndirect(BranchOffset(0)) + Unreachable"
+            // drops tail instructions "BrIndirect(BranchOffset(0)) + Unreachable"
             const DROP_TAIL_INSTR_COUNT: usize = 2;
             if instruction_set.drop_tail(DROP_TAIL_INSTR_COUNT) != DROP_TAIL_INSTR_COUNT {
                 panic!(

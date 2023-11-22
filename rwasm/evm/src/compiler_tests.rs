@@ -13,7 +13,7 @@ mod evm_to_rwasm_tests {
     use crate::translator::instructions::opcode::{EQ, PUSH0, PUSH1, PUSH4, PUSH8};
 
     #[test]
-    fn simple_bytecode_test() {
+    fn simple_bytecode() {
         let evm_bytecode_bytes: &[u8] = &[
             PUSH0, PUSH1, 0x80, PUSH1, 0x40, PUSH8, 0, 0, 0, 0, 0, 0, 1, 246,
         ];
@@ -41,7 +41,7 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn eq_opcode_test() {
+    fn eq_opcode() {
         let evm_bytecode_bytes: &[u8] = &[
             // EQ b a mem_offset
             PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH4, 0, 0, 0, 0, EQ,
