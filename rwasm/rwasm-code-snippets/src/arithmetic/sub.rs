@@ -1,3 +1,5 @@
+use crate::consts::{U64_ALL_BITS_ARE_1, U64_MSB_IS_1};
+
 #[no_mangle]
 fn arithmetic_sub(
     a0: u64,
@@ -9,7 +11,7 @@ fn arithmetic_sub(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let a0_sign = a0 & 0x8000000000000000;
+    let a0_sign = a0 & U64_MSB_IS_1;
 
     let mut borrow = 0;
     let s0;
@@ -20,7 +22,7 @@ fn arithmetic_sub(
     if a3 >= b3 {
         s3 = a3 - b3;
     } else {
-        s3 = 0xffffffffffffffff - b3 + a3 + 1;
+        s3 = U64_ALL_BITS_ARE_1 - b3 + a3 + 1;
         borrow = 1;
     }
 
@@ -28,7 +30,7 @@ fn arithmetic_sub(
         s2 = a2 - b2 - borrow;
         borrow = 0;
     } else {
-        s2 = 0xffffffffffffffff - b2 + a2 + 1;
+        s2 = U64_ALL_BITS_ARE_1 - b2 + a2 + 1;
         borrow = 1;
     }
 
@@ -36,7 +38,7 @@ fn arithmetic_sub(
         s1 = a1 - b1 - borrow;
         borrow = 0;
     } else {
-        s1 = 0xffffffffffffffff - b1 + a1 + 1;
+        s1 = U64_ALL_BITS_ARE_1 - b1 + a1 + 1;
         borrow = 1;
     }
 
@@ -45,11 +47,11 @@ fn arithmetic_sub(
         // borrowed = 0;
     } else {
         if a0_sign > 0 {
-            s0 = 0xffffffffffffffff - b0 + a0 + 1;
+            s0 = U64_ALL_BITS_ARE_1 - b0 + a0 + 1;
             // borrowed = 1;
         } else {
             // TODO process overflow
-            s0 = 0x8000000000000000;
+            s0 = U64_MSB_IS_1;
         }
     }
 

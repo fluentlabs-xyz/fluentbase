@@ -8,6 +8,7 @@ extern crate wat;
 
 mod arithmetic;
 mod bitwise;
+pub(crate) mod consts;
 
 #[cfg(feature = "fluentbase-runtime")]
 mod all_tests {

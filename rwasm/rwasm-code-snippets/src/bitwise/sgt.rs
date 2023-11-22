@@ -1,3 +1,5 @@
+use crate::consts::U64_MSB_IS_1;
+
 #[no_mangle]
 fn bitwise_sgt(
     a0: u64,
@@ -9,8 +11,8 @@ fn bitwise_sgt(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let a_sign = a0 & 0x8000000000000000;
-    let b_sign = b0 & 0x8000000000000000;
+    let a_sign = a0 & U64_MSB_IS_1;
+    let b_sign = b0 & U64_MSB_IS_1;
 
     if a_sign > b_sign {
         return (0, 0, 0, 0);

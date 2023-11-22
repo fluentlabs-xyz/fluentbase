@@ -1,3 +1,5 @@
+use crate::consts::BYTE_MAX_VAL;
+
 #[no_mangle]
 fn bitwise_shr(
     shift0: u64,
@@ -9,7 +11,7 @@ fn bitwise_shr(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    if shift0 != 0 || shift1 != 0 || shift2 != 0 || shift3 > 255 {
+    if shift0 != 0 || shift1 != 0 || shift2 != 0 || shift3 > BYTE_MAX_VAL {
         return (0, 0, 0, 0);
     }
 
