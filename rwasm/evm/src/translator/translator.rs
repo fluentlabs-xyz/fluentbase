@@ -116,6 +116,7 @@ impl<'a> Translator<'a> {
             (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
             (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
+            (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();
