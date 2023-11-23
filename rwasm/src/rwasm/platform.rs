@@ -138,14 +138,15 @@ pub struct ImportLinker {
 
 impl ImportLinker {
     pub fn insert_function(&mut self, import_func: ImportFunc) {
-        assert!(
-            !self.func_by_index.contains_key(&import_func.index),
-            "already persist index"
-        );
-        assert!(
-            !self.func_by_name.contains_key(&import_func.import_name()),
-            "already persist name"
-        );
+        if self.func_by_index.contains_key(&import_func.index) {
+            println!("already persist index");
+            return;
+        }
+        if self.func_by_name.contains_key(&import_func.import_name()) {
+            println!("already persist name");
+            return;
+        }
+
         self.func_by_index
             .insert(import_func.index, import_func.clone());
         self.func_by_name.insert(

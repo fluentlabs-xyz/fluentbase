@@ -380,8 +380,7 @@ impl TableEntity {
             ValueType::FuncRef => {
                 // Initialize element interpreted as Wasm `funrefs`.
                 dst_items.iter_mut().zip(src_items).for_each(|(dst, src)| {
-                    let func_or_null = src.funcref().map(FuncIdx::into_u32).map(&get_func);
-                    *dst = FuncRef::new(func_or_null).into();
+                    *dst = src.funcref().unwrap().into_u32().into();
                 });
             }
             ValueType::ExternRef => {

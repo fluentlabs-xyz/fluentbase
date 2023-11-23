@@ -333,7 +333,6 @@ impl<'linker> Compiler<'linker> {
             origin_len: 0,
         });
 
-        println!("Translate imports: {:?}", self.code_section);
         Ok(())
     }
 
@@ -347,10 +346,8 @@ impl<'linker> Compiler<'linker> {
             self.translate_global(i as u32)?;
         }
         // translate table section (replace with grow/set table opcodes)
-        let total_tables = self.module.tables.len();
-        for i in 0..total_tables {
-            self.translate_table(i as u32)?;
-        }
+        self.translate_table()?;
+
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
         self.translate_data()?;
@@ -392,10 +389,7 @@ impl<'linker> Compiler<'linker> {
             self.translate_global(i as u32)?;
         }
         // translate table section (replace with grow/set table opcodes)
-        let total_tables = self.module.tables.len();
-        for i in 0..total_tables {
-            self.translate_table(i as u32)?;
-        }
+        self.translate_table()?;
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
         self.translate_data()?;
@@ -418,14 +412,14 @@ impl<'linker> Compiler<'linker> {
     ) -> Result<(UntypedValue, &[u8], bool), CompilerError> {
         match memory.kind() {
             DataSegmentKind::Active(seg) => {
-                let data_offset = seg
-                    .offset()
-                    .eval_const()
-                    .ok_or(CompilerError::NotSupported("can't eval offset"))?;
-                if seg.memory_index().into_u32() != 0 {
-                    return Err(CompilerError::NotSupported("not zero index"));
+                if let Some(data_offset) = seg.offset().eval_const() {
+                    if seg.memory_index().into_u32() != 0 {
+                        return Err(CompilerError::NotSupported("not zero index"));
+                    }
+                    Ok((data_offset, memory.bytes(), true))
+                } else {
+                    Err(CompilerError::NotSupported("can't eval offset"))
                 }
-                Ok((data_offset, memory.bytes(), true))
             }
             DataSegmentKind::Passive => Ok((0.into(), memory.bytes(), false)),
         }
@@ -440,12 +434,14 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_data(&mut self) -> Result<(), CompilerError> {
-        for memory in self.module.data_segments.iter() {
-            let (offset, bytes, is_active) = Self::read_memory_segment(memory)?;
-            if is_active {
-                self.code_section.add_memory(offset.to_bits() as u32, bytes);
-            } else {
-                self.code_section.add_data(bytes);
+        for (idx, memory) in self.module.data_segments.iter().enumerate() {
+            if let Ok((offset, bytes, is_active)) = Self::read_memory_segment(memory) {
+                if is_active {
+                    self.code_section
+                        .add_memory(offset.to_bits() as u32, bytes, idx);
+                } else {
+                    self.code_section.add_data(bytes, idx);
+                }
             }
         }
         Ok(())
@@ -486,15 +482,15 @@ impl<'linker> Compiler<'linker> {
         Ok(init_value)
     }
 
-    fn translate_table(&mut self, table_index: u32) -> Result<(), CompilerError> {
-        assert!(table_index < self.module.tables.len() as u32);
-        let table = &self.module.tables[table_index as usize];
+    fn translate_table(&mut self) -> Result<(), CompilerError> {
+        for (table_index, table) in self.module.tables.iter().enumerate() {
+            // don't use ref_func here due to the entrypoint section
+            self.code_section.op_i32_const(0);
+            self.code_section.op_i64_const(table.minimum() as usize);
+            self.code_section.op_table_grow(table_index as u32);
+            self.code_section.op_drop();
+        }
 
-        // don't use ref_func here due to the entrypoint section
-        self.code_section.op_i32_const(0);
-        self.code_section.op_i64_const(table.minimum() as usize);
-        self.code_section.op_table_grow(table_index);
-        self.code_section.op_drop();
         for (i, e) in self.module.element_segments.iter().enumerate() {
             if e.ty != ValueType::FuncRef {
                 return Err(CompilerError::NotSupported(
@@ -502,11 +498,7 @@ impl<'linker> Compiler<'linker> {
                 ));
             }
             match &e.kind {
-                ElementSegmentKind::Declared => {
-                    return Err(CompilerError::NotSupported(
-                        "declared mode for element segments is not supported",
-                    ))
-                }
+                ElementSegmentKind::Declared => return Ok(()),
                 ElementSegmentKind::Passive => {
                     for (_, item) in e.items.items().iter().enumerate() {
                         if let Some(value) = item.funcref() {
@@ -516,9 +508,6 @@ impl<'linker> Compiler<'linker> {
                     }
                 }
                 ElementSegmentKind::Active(aes) => {
-                    if aes.table_index().into_u32() != table_index {
-                        continue;
-                    }
                     let dest_offset = self.translate_const_expr(aes.offset())?;
                     for (index, item) in e.items.items().iter().enumerate() {
                         self.code_section
@@ -528,8 +517,11 @@ impl<'linker> Compiler<'linker> {
                         } else if let Some(value) = item.funcref() {
                             self.code_section.op_ref_func(value.into_u32());
                         }
-                        self.code_section.op_table_set(table_index);
+                        self.code_section.op_table_set(aes.table_index().into_u32());
                     }
+                    self.code_section.op_i32_const(0);
+                    self.code_section.op_elem_store(i as u32);
+                    self.code_section.op_elem_drop(i as u32);
                 }
                 _ => {}
             };
@@ -576,7 +568,7 @@ impl<'linker> Compiler<'linker> {
             self.func_type_check_idx.borrow().len() as u32 - 1
         }
     }
-    // New func types: RefCell { value: [FuncType { params: [], results: [I32] }, FuncType { params: [I32], results: [I32] }, FuncType { params: [], results: [] }] }
+
     fn translate_function(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_len = self.module.imports.len_funcs;
         // don't translate import functions because we can't translate them
@@ -601,10 +593,6 @@ impl<'linker> Compiler<'linker> {
             .compiled_funcs
             .get(fn_index as usize - import_len as usize)
             .ok_or(CompilerError::MissingFunction)?;
-        println!(
-            "Translate function : {}, func_type: {:?}, func_body: {:?}, dedup: {:?}",
-            fn_index, func_type, func_body, dedup_func_type
-        );
 
         // reserve stack for locals
         let len_locals = self.engine.num_locals(*func_body);
@@ -751,6 +739,14 @@ impl<'linker> Compiler<'linker> {
                     .get_mut(br_if_offset as usize)
                     .unwrap()
                     .update_branch_offset(BranchOffset::from(1 + drop_keep_len as i32));
+
+                // We increase break offset in negative case
+                // due to jump over BrAdjustIfNez opcode injection
+                let mut branch_offset = branch_offset.to_i32();
+                if branch_offset < 0 {
+                    branch_offset -= 3;
+                }
+
                 self.code_section.op_br(branch_offset);
                 self.code_section.op_return();
             }
@@ -970,8 +966,12 @@ impl<'linker> Compiler<'linker> {
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
-        self.code_section
-            .op_consume_fuel(import_index_and_fuel_amount.1);
+
+        if self.engine.config().get_fuel_consumption_mode().is_some() {
+            self.code_section
+                .op_consume_fuel(import_index_and_fuel_amount.1);
+        }
+
         self.code_section.op_call(import_index_and_fuel_amount.0);
         Ok(())
     }
@@ -984,7 +984,6 @@ impl<'linker> Compiler<'linker> {
 
         let mut i = 0;
         while i < bytecode.len() as usize {
-            // println!("byte ix: {}", bytecode.instr[i]);
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
                     let func_idx = func.to_u32() + 1;
@@ -1038,8 +1037,8 @@ impl<'linker> Compiler<'linker> {
             buffer_offset += buffer_size;
         }
 
-        for (i, code) in bytecode.instr.iter().enumerate() {
-            let mut code = code.clone();
+        for i in 0..bytecode.instr.len() {
+            let mut code = bytecode.instr[i].clone();
             let mut affected = false;
             match code {
                 Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
@@ -1061,6 +1060,19 @@ impl<'linker> Compiler<'linker> {
                     let state = &states[*func_offset as usize];
                     code.update_call_index(state.0);
                     affected = true;
+                }
+                Instruction::I32Const(func_idx)
+                    if i < bytecode.instr.len() - 1
+                        && matches!(bytecode.instr[i + 1], Instruction::ElemStore(_)) =>
+                {
+                    if self.function_beginning.len() > 1 || func_idx.as_u32() != 0 {
+                        let func_offset = self
+                            .function_beginning
+                            .get(&(func_idx.as_u32() + 1))
+                            .ok_or(CompilerError::MissingFunction)?;
+                        code = Instruction::I32Const((*func_offset).into());
+                        affected = true;
+                    }
                 }
                 _ => {}
             };

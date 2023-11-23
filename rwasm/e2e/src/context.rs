@@ -199,10 +199,19 @@ impl<'a> TestContext<'a> {
         }
     }
 
-    pub fn set_state_by_name(&mut self, func_name: &str) -> Result<(), TestError> {
+    pub fn set_state_by_name(
+        &mut self,
+        func_name: &str,
+        module: Option<Id>,
+    ) -> Result<(), TestError> {
+        let inport_name = match module {
+            Some(module) => format!("{}.{}", module.name(), func_name),
+            None => func_name.to_string(),
+        };
         let state = self
             .main_router
-            .get(func_name)
+            .get(&inport_name)
+            .or_else(|| self.main_router.get(func_name))
             .ok_or(TestError::MainFunctionNotFound)?;
         self.store.data_mut().state = state.fn_index;
 
@@ -328,7 +337,7 @@ impl TestContext<'_> {
                     let exports = self
                         .instances
                         .get(format!("{}:{}", import.module(), import.name()).as_str())
-                        .unwrap()
+                        .ok_or(TestError::NoModuleInstancesFound)?
                         .exports(&self.store)
                         .collect::<Vec<_>>();
                     if self
@@ -376,7 +385,6 @@ impl TestContext<'_> {
                 }
                 ExternType::Global(global) => {
                     let instruction = module.get_global_init(export_type.index()).unwrap();
-                    println!("Export type: {:?}, ix: {:?}", export_type, instruction);
                     Some((
                         export_type.name().to_string(),
                         ExportRouter::Global((instruction, global)),
@@ -568,7 +576,7 @@ impl TestContext<'_> {
                 )),
                 true,
             )
-            .unwrap();
+            .map_err(|err| TestError::Compiler(err))?;
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
         let mut module_builder =
