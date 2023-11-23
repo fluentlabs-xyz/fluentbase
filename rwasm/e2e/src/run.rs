@@ -5,6 +5,7 @@ use fluentbase_rwasm::{
     rwasm::DefaultImportHandler,
     Config, ExternRef, FuncRef, Store, Value,
 };
+use wast::token::Id;
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
     lexer::Lexer,
@@ -54,7 +55,6 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
         test_context.profile().bump_directives();
         match directive {
             WastDirective::Wat(QuoteWat::Wat(Wat::Module(module))) => {
-                println!("Wat: {:?}", module.name);
                 match test_context.compile_and_instantiate_with_router(module) {
                     Ok(instance) => instance,
                     Err(error) => panic!(
@@ -78,7 +78,6 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 exec,
                 results: expected,
             } => {
-                println!("AsserReturn: {:?}", exec);
                 test_context.profile().bump_assert_return();
                 let results = execute_wast_execute_with_state(test_context, span, exec)
                     .unwrap_or_else(|error| {
@@ -92,10 +91,9 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
             }
             WastDirective::Invoke(wast_invoke) => {
                 let span = wast_invoke.span;
-                println!("Invoke: {:?}", wast_invoke);
                 test_context.profile().bump_invoke();
 
-                test_context.set_state_by_name(wast_invoke.name)?;
+                test_context.set_state_by_name(wast_invoke.name, wast_invoke.module)?;
                 execute_wast_invoke(test_context, span, wast_invoke, true).unwrap_or_else(
                     |error| {
                         panic!(
@@ -183,7 +181,7 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 message,
             } => {
                 test_context.profile().bump_assert_exhaustion();
-                test_context.set_state_by_name(call.name)?;
+                test_context.set_state_by_name(call.name, call.module)?;
                 match execute_wast_invoke(test_context, span, call, true) {
                     Ok(results) => {
                         panic!(
@@ -202,7 +200,7 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 message,
             } => {
                 test_context.profile().bump_assert_unlinkable();
-                module_compilation_fails(test_context, span, module, message);
+                module_compilation_fails_with_router(test_context, span, module, message);
             }
             WastDirective::AssertUnlinkable { .. } => {
                 test_context.profile().bump_assert_unlinkable();
@@ -502,6 +500,21 @@ fn module_compilation_fails(
     );
 }
 
+fn module_compilation_fails_with_router(
+    context: &mut TestContext,
+    span: Span,
+    module: wast::core::Module,
+    expected_message: &str,
+) {
+    let result = context.compile_and_instantiate_with_router(module);
+    assert!(
+        result.is_err(),
+        "{}: succeeded to instantiate module but should have failed with: {}",
+        context.spanned(span),
+        expected_message
+    );
+}
+
 fn execute_wast_execute(
     context: &mut TestContext,
     span: Span,
@@ -531,7 +544,7 @@ fn execute_wast_execute_with_state(
 ) -> Result<Vec<Value>, TestError> {
     match execute {
         WastExecute::Invoke(invoke) => {
-            context.set_state_by_name(invoke.name)?;
+            context.set_state_by_name(invoke.name, invoke.module)?;
             execute_wast_invoke(context, span, invoke, true).map_err(Into::into)
         }
         WastExecute::Wat(Wat::Module(module)) => context
@@ -542,7 +555,7 @@ fn execute_wast_execute_with_state(
             Ok(vec![])
         }
         WastExecute::Get { module, global } => {
-            context.set_state_by_name(global)?;
+            context.set_state_by_name(global, module)?;
             context.invoke_with_state(module.map(|m| m.name()), global, vec![])
         }
     }

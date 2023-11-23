@@ -96,25 +96,22 @@ impl InstructionSet {
 
     pub fn add_memory_pages(&mut self, initial_pages: u32) {
         assert_eq!(self.init_memory_pages, 0);
-        self.op_i32_const(initial_pages);
-        self.op_memory_grow();
-        self.op_drop();
+        if initial_pages != 0 {
+            self.op_i32_const(initial_pages);
+            self.op_memory_grow();
+            self.op_drop();
+        }
         self.init_memory_pages = initial_pages;
         // we set here 0 because this memory is not used yet
         self.init_memory_size = 0;
     }
 
-    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8]) -> bool {
+    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8], segment_idx: usize) -> bool {
         // make sure we have enough allocated memory
         let new_size = self.init_memory_size + offset + bytes.len() as u32;
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
         if total_pages > N_MAX_MEMORY_PAGES {
             return false;
-        }
-        if total_pages > self.init_memory_pages {
-            self.op_i32_const(total_pages - self.init_memory_pages);
-            self.op_memory_grow();
-            self.op_drop();
         }
         self.init_memory_size += bytes.len() as u32;
         self.init_memory_pages = total_pages;
@@ -142,10 +139,14 @@ impl InstructionSet {
             }
             bytes = it.remainder();
         });
+        self.op_i64_const(0);
+        self.op_data_store8(segment_idx as u32);
+        self.op_data_drop(segment_idx as u32);
+
         return true;
     }
 
-    pub fn add_data(&mut self, mut bytes: &[u8]) {
+    pub fn add_data(&mut self, mut bytes: &[u8], segment_idx: usize) {
         // translate input bytes
         [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
             let mut it = bytes.chunks_exact(chunk_size);
@@ -159,10 +160,10 @@ impl InstructionSet {
                 };
                 self.op_i64_const(value);
                 match chunk_size {
-                    8 => self.op_data_store64(0u32),
-                    4 => self.op_data_store32(0u32),
-                    2 => self.op_data_store16(0u32),
-                    1 => self.op_data_store8(0u32),
+                    8 => self.op_data_store64(segment_idx as u32),
+                    4 => self.op_data_store32(segment_idx as u32),
+                    2 => self.op_data_store16(segment_idx as u32),
+                    1 => self.op_data_store8(segment_idx as u32),
                     _ => unreachable!("not supported chunk size: {}", chunk_size),
                 }
             }

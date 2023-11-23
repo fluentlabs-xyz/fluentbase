@@ -5,18 +5,17 @@
 //! implementation.
 
 #![warn(
-clippy::cast_lossless,
-clippy::missing_errors_doc,
-clippy::used_underscore_binding,
-clippy::redundant_closure_for_method_calls,
-clippy::type_repetition_in_bounds,
-clippy::inconsistent_struct_constructor,
-clippy::default_trait_access,
-clippy::map_unwrap_or,
-clippy::items_after_statements
+    clippy::cast_lossless,
+    clippy::missing_errors_doc,
+    clippy::used_underscore_binding,
+    clippy::redundant_closure_for_method_calls,
+    clippy::type_repetition_in_bounds,
+    clippy::inconsistent_struct_constructor,
+    clippy::default_trait_access,
+    clippy::map_unwrap_or,
+    clippy::items_after_statements
 )]
 #[allow(dead_code)]
-
 mod component_vec;
 mod dedup;
 mod guarded;
@@ -63,8 +62,8 @@ impl<Idx, T> Default for Arena<Idx, T> {
 }
 
 impl<Idx, T> PartialEq for Arena<Idx, T>
-    where
-        T: PartialEq,
+where
+    T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         self.entities.eq(&other.entities)
@@ -117,8 +116,8 @@ impl<Idx, T> Arena<Idx, T> {
 }
 
 impl<Idx, T> Arena<Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     /// Returns the next entity index.
     fn next_index(&self) -> Idx {
@@ -170,8 +169,8 @@ impl<Idx, T> Arena<Idx, T>
 
 impl<Idx, T> FromIterator<T> for Arena<Idx, T> {
     fn from_iter<I>(iter: I) -> Self
-        where
-            I: IntoIterator<Item = T>,
+    where
+        I: IntoIterator<Item = T>,
     {
         Self {
             entities: Vec::from_iter(iter),
@@ -181,8 +180,8 @@ impl<Idx, T> FromIterator<T> for Arena<Idx, T> {
 }
 
 impl<'a, Idx, T> IntoIterator for &'a Arena<Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     type Item = (Idx, &'a T);
     type IntoIter = Iter<'a, Idx, T>;
@@ -193,8 +192,8 @@ impl<'a, Idx, T> IntoIterator for &'a Arena<Idx, T>
 }
 
 impl<'a, Idx, T> IntoIterator for &'a mut Arena<Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     type Item = (Idx, &'a mut T);
     type IntoIter = IterMut<'a, Idx, T>;
@@ -212,8 +211,8 @@ pub struct Iter<'a, Idx, T> {
 }
 
 impl<'a, Idx, T> Iterator for Iter<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     type Item = (Idx, &'a T);
 
@@ -231,8 +230,8 @@ impl<'a, Idx, T> Iterator for Iter<'a, Idx, T>
 }
 
 impl<'a, Idx, T> DoubleEndedIterator for Iter<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -243,8 +242,8 @@ impl<'a, Idx, T> DoubleEndedIterator for Iter<'a, Idx, T>
 }
 
 impl<'a, Idx, T> ExactSizeIterator for Iter<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     fn len(&self) -> usize {
         self.iter.len()
@@ -259,8 +258,8 @@ pub struct IterMut<'a, Idx, T> {
 }
 
 impl<'a, Idx, T> Iterator for IterMut<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     type Item = (Idx, &'a mut T);
 
@@ -278,8 +277,8 @@ impl<'a, Idx, T> Iterator for IterMut<'a, Idx, T>
 }
 
 impl<'a, Idx, T> DoubleEndedIterator for IterMut<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -290,8 +289,8 @@ impl<'a, Idx, T> DoubleEndedIterator for IterMut<'a, Idx, T>
 }
 
 impl<'a, Idx, T> ExactSizeIterator for IterMut<'a, Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     #[inline]
     fn len(&self) -> usize {
@@ -307,8 +306,8 @@ impl<Idx, T> Arena<Idx, T> {
 }
 
 impl<Idx, T> Index<Idx> for Arena<Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     type Output = T;
 
@@ -320,8 +319,8 @@ impl<Idx, T> Index<Idx> for Arena<Idx, T>
 }
 
 impl<Idx, T> IndexMut<Idx> for Arena<Idx, T>
-    where
-        Idx: ArenaIndex,
+where
+    Idx: ArenaIndex,
 {
     #[inline]
     fn index_mut(&mut self, index: Idx) -> &mut Self::Output {
