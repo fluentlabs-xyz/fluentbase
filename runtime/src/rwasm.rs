@@ -15,7 +15,8 @@ pub(crate) fn rwasm_compile(
 
     // translate WASM binary to rWASM
     let import_linker = Runtime::new_linker();
-    let mut compiler = Compiler::new_with_linker(input.as_ref(), Some(&import_linker)).unwrap();
+    let mut compiler =
+        Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
     let compile_res = compiler.finalize(None, true);
     match compile_res {
         Ok(rwasm_bytecode) => {

@@ -20,7 +20,7 @@ mod evm_to_rwasm_tests {
         let evm_bytecode_bytes = Bytes::from(evm_bytecode_bytes);
         debug!("evm_bytecode_bytes: {:x?}", evm_bytecode_bytes.as_ref());
 
-        let mut compiler = EvmCompiler::new(evm_bytecode_bytes.as_ref());
+        let mut compiler = EvmCompiler::new(evm_bytecode_bytes.as_ref(), false);
 
         let res = compiler.translate();
         assert_eq!(res, InstructionResult::Stop);
@@ -53,7 +53,7 @@ mod evm_to_rwasm_tests {
             evm_binary.as_ref(),
         );
 
-        let mut compiler = EvmCompiler::new(evm_binary.as_ref());
+        let mut compiler = EvmCompiler::new(evm_binary.as_ref(), false);
 
         let res = compiler.translate();
         assert_eq!(res, InstructionResult::Stop);
@@ -61,11 +61,15 @@ mod evm_to_rwasm_tests {
         let mut buffer = vec![0; 1024 * 1024];
         let mut buffer_writer = BinaryFormatWriter::new(&mut buffer);
 
-        let mut preambule = InstructionSet::new();
-        preambule.op_i32_const(100);
-        preambule.op_memory_grow();
-        preambule.op_drop();
-        preambule.write_binary(&mut buffer_writer).unwrap();
+        let mut preamble = InstructionSet::new();
+        preamble.op_i32_const(100);
+        preamble.op_memory_grow();
+        preamble.op_drop();
+        preamble.write_binary(&mut buffer_writer).unwrap();
+
+        // let mut postamble = InstructionSet::new();
+        // postamble.op_br_indirect(0);
+        // postamble.write_binary(&mut buffer_writer).unwrap();
 
         compiler
             .instruction_set
@@ -79,13 +83,15 @@ mod evm_to_rwasm_tests {
         );
 
         let mut rmodule = ReducedModule::new(rwasm_binary).unwrap();
+        // rmodule.bytecode().op
         debug!("rmodule.trace_binary(): {:?}", rmodule.trace_binary());
-        let exec_result = Runtime::run(rwasm_binary, &Vec::new(), 10_000_000);
-        assert!(exec_result.is_ok());
-        let exec_result = exec_result.unwrap();
-        let tracer = exec_result.tracer();
-        let runtime_context = exec_result.data();
-        debug!("runtime_context.output(): {:x?}", runtime_context.output());
-        debug!("tracer.global_memory: {:x?}", tracer.global_memory);
+        let result = Runtime::run(rwasm_binary, &Vec::new(), 0);
+        assert!(result.is_ok());
+        let execution_result = result.unwrap();
+        println!(
+            "execution_result (exit_code {}): {:?}",
+            execution_result.data().exit_code(),
+            execution_result
+        );
     }
 }

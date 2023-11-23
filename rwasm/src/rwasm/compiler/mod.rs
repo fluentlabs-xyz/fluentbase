@@ -98,16 +98,17 @@ impl Default for FuncOrExport {
 }
 
 impl<'linker> Compiler<'linker> {
-    pub fn new(wasm_binary: &[u8]) -> Result<Self, CompilerError> {
-        Self::new_with_linker(wasm_binary, None)
+    pub fn new(wasm_binary: &[u8], consume_fuel: bool) -> Result<Self, CompilerError> {
+        Self::new_with_linker(wasm_binary, None, consume_fuel)
     }
 
     pub fn new_with_linker(
         wasm_binary: &[u8],
         import_linker: Option<&'linker ImportLinker>,
+        consume_fuel: bool,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(false);
+        config.consume_fuel(consume_fuel);
         let engine = Engine::new(&config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
@@ -624,8 +625,14 @@ impl<'linker> Compiler<'linker> {
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
         let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
-        self.code_section
-            .op_consume_fuel(import_index_and_fuel_amount.1);
+        self.engine
+            .config()
+            .get_fuel_consumption_mode()
+            .and_then(|mode| {
+                self.code_section
+                    .op_consume_fuel(import_index_and_fuel_amount.1);
+                Some(mode)
+            });
         self.code_section.op_call(import_index_and_fuel_amount.0);
         Ok(())
     }
