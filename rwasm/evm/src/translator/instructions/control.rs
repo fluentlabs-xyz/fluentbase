@@ -34,6 +34,7 @@ pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::Stop;
+    // host.instruction_set().op_br_indirect(0);
     host.instruction_set().op_unreachable();
 }
 

@@ -19,16 +19,18 @@ pub struct Translator<'a> {
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
     opcode_to_rwasm_replacer: HashMap<u8, InstructionSet>,
+    inject_fuel_consumption: bool,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Translator<'a> {
-    pub fn new(contract: Box<Contract>) -> Self {
+    pub fn new(contract: Box<Contract>, inject_fuel_consumption: bool) -> Self {
         let mut s = Self {
             instruction_pointer: contract.bytecode.as_ptr(),
             contract,
             instruction_result: InstructionResult::Continue,
             opcode_to_rwasm_replacer: Default::default(),
+            inject_fuel_consumption,
             _lifetime: Default::default(),
         };
         s.init_code_snippets();
@@ -103,7 +105,7 @@ impl<'a> Translator<'a> {
                     opcode, opcode
                 );
             }
-            let rwasm_binary = Compiler::new(wasm_binary)
+            let rwasm_binary = Compiler::new(wasm_binary, self.inject_fuel_consumption)
                 .unwrap()
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();

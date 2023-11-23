@@ -13,12 +13,14 @@ use crate::translator::translator::Translator;
 pub struct EvmCompiler<'a> {
     pub evm_bytecode: &'a [u8],
     pub instruction_set: InstructionSet,
+    inject_fuel_consumption: bool,
 }
 
 impl<'a> EvmCompiler<'a> {
-    pub fn new(evm_bytecode: &'a [u8]) -> Self {
+    pub fn new(evm_bytecode: &'a [u8], inject_fuel_consumption: bool) -> Self {
         Self {
             evm_bytecode,
+            inject_fuel_consumption,
             ..Default::default()
         }
     }
@@ -28,11 +30,15 @@ impl<'a> EvmCompiler<'a> {
             Bytecode::new_raw(Bytes::copy_from_slice(self.evm_bytecode)).to_checked();
 
         let contract = Box::new(Contract::new(evm_bytecode));
-        let mut translator = Translator::new(contract);
+        let mut translator = Translator::new(contract, self.inject_fuel_consumption);
 
         let mut host = HostImpl::new(&mut self.instruction_set);
         let instruction_table = make_instruction_table::<HostImpl>();
         let res = translator.run(&instruction_table, &mut host);
         res
+    }
+
+    pub fn inject_fuel_consumption(&mut self, inject_fuel_consumption: bool) {
+        self.inject_fuel_consumption = inject_fuel_consumption
     }
 }
