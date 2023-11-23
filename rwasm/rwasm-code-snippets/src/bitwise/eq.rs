@@ -7,7 +7,7 @@ fn bitwise_eq(// a0: i64,
     // b1: i64,
     // b2: i64,
     // b3: i64,
-) -> (i64, i64, i64, i64) {
+) -> i64 /*(i64, i64, i64, i64)*/ {
     // let s0 = 0;
     // let s1 = 0;
     // let s2 = 0;
@@ -19,5 +19,5 @@ fn bitwise_eq(// a0: i64,
     // }
 
     // return (s0, s1, s2, s3);
-    return (0, 0, 0, 0);
+    return 123;
 }

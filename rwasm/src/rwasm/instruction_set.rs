@@ -1,11 +1,23 @@
 use crate::{
     engine::{
         bytecode::{
-            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
-            ElementSegmentIdx, FuncIdx, GlobalIdx, InstrMeta, Instruction, LocalDepth,
-            SignatureIdx, TableIdx,
+            AddressOffset,
+            BlockFuel,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            InstrMeta,
+            Instruction,
+            LocalDepth,
+            SignatureIdx,
+            TableIdx,
         },
-        CompiledFunc, ConstRef, DropKeep,
+        CompiledFunc,
+        ConstRef,
+        DropKeep,
     },
     rwasm::{BinaryFormat, BinaryFormatWriter, N_BYTES_PER_MEMORY_PAGE, N_MAX_MEMORY_PAGES},
 };
@@ -485,6 +497,15 @@ impl InstructionSet {
         }
         self.instr = self.instr[0..(self.instr.len() - count)].to_vec();
         count
+    }
+
+    pub fn trace_binary(&self) -> String {
+        let mut result = String::new();
+        for opcode in self.instr.iter() {
+            let str = format!("{:?}\n", opcode);
+            result += str.as_str();
+        }
+        result
     }
 }
 

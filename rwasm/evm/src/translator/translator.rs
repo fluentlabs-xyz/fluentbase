@@ -1,14 +1,14 @@
-use std::marker::PhantomData;
-
-use hashbrown::HashMap;
-
+use crate::translator::{
+    host::Host,
+    instruction_result::InstructionResult,
+    instructions::opcode,
+    translator::contract::Contract,
+};
 pub use analysis::BytecodeLocked;
 use fluentbase_rwasm::rwasm::{Compiler, FuncOrExport, InstructionSet, ReducedModule};
-
-use crate::translator::host::Host;
-use crate::translator::instruction_result::InstructionResult;
-use crate::translator::instructions::opcode;
-use crate::translator::translator::contract::Contract;
+use hashbrown::HashMap;
+use log::debug;
+use std::marker::PhantomData;
 
 pub mod analysis;
 pub mod contract;
@@ -55,7 +55,8 @@ impl<'a> Translator<'a> {
     #[inline]
     pub fn program_counter(&self) -> usize {
         // SAFETY: `instruction_pointer` should be at an offset from the start of the bytecode.
-        // In practice this is always true unless a caller modifies the `instruction_pointer` field manually.
+        // In practice this is always true unless a caller modifies the `instruction_pointer` field
+        // manually.
         unsafe {
             self.instruction_pointer
                 .offset_from(self.contract.bytecode.as_ptr()) as usize
@@ -78,8 +79,8 @@ impl<'a> Translator<'a> {
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {
         // Safety: In analysis we are doing padding of bytecode so that we are sure that last
-        // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
-        // it will do noop and just stop execution of this contract
+        // byte instruction is STOP so we are safe to just increment program_counter bcs on last
+        // instruction it will do noop and just stop execution of this contract
         self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset as isize) };
     }
 
@@ -101,24 +102,24 @@ impl<'a> Translator<'a> {
         let mut initiate = |opcode: u8, wasm_binary: &[u8]| {
             if self.opcode_to_rwasm_replacer.contains_key(&opcode) {
                 panic!(
-                    "code snippet replacer for opcode 0x{:x?} already exists (decimal: {})",
+                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
                     opcode, opcode
                 );
             }
-            let rwasm_binary = Compiler::new(wasm_binary, self.inject_fuel_consumption)
-                .unwrap()
+            let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
+            compiler.translate_func_as_linear_code(true);
+            let rwasm_binary = compiler
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
             let mut instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
-            // drops tail instructions "BrIndirect(BranchOffset(0)) + Unreachable"
-            const DROP_TAIL_INSTR_COUNT: usize = 2;
-            if instruction_set.drop_tail(DROP_TAIL_INSTR_COUNT) != DROP_TAIL_INSTR_COUNT {
-                panic!(
-                    "failed to post-process (remove redundant ops) code snippet replacer for opcode 0x{:x?} (decimal: {})",
-                    opcode, opcode
+            if opcode == opcode::EQ {
+                debug!(
+                    "code snippet (opcode {:x?}): {}",
+                    opcode,
+                    instruction_set.trace_binary()
                 );
             }
             self.opcode_to_rwasm_replacer
@@ -126,16 +127,16 @@ impl<'a> Translator<'a> {
         };
 
         [
-            (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
-            (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
-            (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            // (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
+            // (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
+            // (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
             (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
-            (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
-            (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
-            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
-            (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
-            (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
-            (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
+            // (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
+            // (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
+            // (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
+            // (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
+            // (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
+            // (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();

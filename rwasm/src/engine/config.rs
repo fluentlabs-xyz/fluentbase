@@ -1,6 +1,6 @@
 use super::{stack::StackLimits, DropKeep};
-use fluentbase_rwasm_core::common::UntypedValue;
 use core::{mem::size_of, num::NonZeroU64};
+use fluentbase_rwasm_core::common::UntypedValue;
 use wasmparser::WasmFeatures;
 
 /// The default amount of stacks kept in the cache at most.
@@ -108,7 +108,8 @@ pub struct FuelCosts {
     pub store: u64,
     /// The fuel cost offset for `call` and `call_indirect` instructions.
     pub call: u64,
-    /// Determines how many moved stack values consume one fuel upon a branch or return instruction.
+    /// Determines how many moved stack values consume one fuel upon a branch or return
+    /// instruction.
     ///
     /// # Note
     ///
@@ -118,8 +119,8 @@ pub struct FuelCosts {
     ///
     /// # Note
     ///
-    /// - This is also applied to all function parameters since
-    ///   they are translated to local variable slots.
+    /// - This is also applied to all function parameters since they are translated to local
+    ///   variable slots.
     /// - If this is zero then processing function locals costs nothing.
     func_locals_per_fuel: u64,
     /// How many memory bytes can be processed per fuel in a `bulk-memory` instruction.
@@ -344,7 +345,8 @@ impl Config {
         self
     }
 
-    /// Configures whether `wasmi` will consume fuel during execution to either halt execution as desired.
+    /// Configures whether `wasmi` will consume fuel during execution to either halt execution as
+    /// desired.
     ///
     /// # Note
     ///
@@ -353,9 +355,10 @@ impl Config {
     /// a [`TrapCode::OutOfFuel`](crate::core::TrapCode::OutOfFuel) trap is raised.
     /// This way users can deterministically halt or yield the execution of WebAssembly code.
     ///
-    /// - Use [`Store::add_fuel`](crate::Store::add_fuel) to pour some fuel into the [`Store`] before
-    ///   executing some code as the [`Store`] start with no fuel.
-    /// - Use [`Caller::consume_fuel`](crate::Caller::consume_fuel) to charge costs for executed host functions.
+    /// - Use [`Store::add_fuel`](crate::Store::add_fuel) to pour some fuel into the [`Store`]
+    ///   before executing some code as the [`Store`] start with no fuel.
+    /// - Use [`Caller::consume_fuel`](crate::Caller::consume_fuel) to charge costs for executed
+    ///   host functions.
     ///
     /// Disabled by default.
     ///
@@ -369,7 +372,7 @@ impl Config {
     /// Returns `true` if the [`Config`] enables fuel consumption by the [`Engine`].
     ///
     /// [`Engine`]: crate::Engine
-    pub(crate) fn get_consume_fuel(&self) -> bool {
+    pub fn get_consume_fuel(&self) -> bool {
         self.consume_fuel
     }
 

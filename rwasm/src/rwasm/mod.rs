@@ -52,7 +52,8 @@ mod tests {
             &[ValueType::I32],
             &[],
         ));
-        let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
+        let mut translator =
+            Compiler::new_with_linker(&wasm_binary, Some(&import_linker), true).unwrap();
         translator.translate(run_config.entrypoint, true).unwrap();
         let binary = translator.finalize(None, true).unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();

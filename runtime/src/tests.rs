@@ -247,6 +247,9 @@ fn test_keccak256() {
     i32.const 12
     i32.const 50
     call $_evm_keccak256
+    i32.const 50
+    i32.const 32
+    call $_evm_return
     )
   (memory (;0;) 100)
   (data (;0;) (i32.const 0) "Hello, World")
@@ -265,7 +268,7 @@ fn test_keccak256() {
     );
     match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
         Ok(answer) => {
-            // assert_eq!(&answer, execution_result.data().output().as_slice());
+            assert_eq!(&answer, execution_result.data().output().as_slice());
         }
         Err(e) => {
             // If there's an error, you might want to handle it in some way.
