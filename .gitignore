@@ -12,3 +12,5 @@ rwasm/spec/target
 .vscode
 .DS_Store
 libzktrie.so
+
+/tmp/*
