@@ -69,7 +69,7 @@ pub struct Compiler<'linker> {
     is_translated: bool,
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
-    translate_func_as_linear_code: bool,
+    translate_func_as_inline: bool,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -124,12 +124,12 @@ impl<'linker> Compiler<'linker> {
             is_translated: false,
             injection_segments: vec![],
             br_table_status: None,
-            translate_func_as_linear_code: false,
+            translate_func_as_inline: false,
         })
     }
 
-    pub fn translate_func_as_linear_code(&mut self, v: bool) {
-        self.translate_func_as_linear_code = v;
+    pub fn translate_func_as_inline(&mut self, v: bool) {
+        self.translate_func_as_inline = v;
     }
 
     pub fn translate(
@@ -374,7 +374,7 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        if !self.translate_func_as_linear_code {
+        if !self.translate_func_as_inline {
             self.swap_stack_parameters(num_inputs.len() as u32);
         }
 
@@ -394,7 +394,7 @@ impl<'linker> Compiler<'linker> {
         while instr_ptr != instr_end {
             self.translate_opcode(&mut instr_ptr, 0)?;
         }
-        if !self.translate_func_as_linear_code {
+        if !self.translate_func_as_inline {
             self.code_section.op_unreachable();
         }
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
@@ -517,7 +517,7 @@ impl<'linker> Compiler<'linker> {
                 unreachable!("check this")
             }
             WI::Return(drop_keep) => {
-                if !self.translate_func_as_linear_code {
+                if !self.translate_func_as_inline {
                     DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
                     self.code_section.op_br_indirect(0);
                 }

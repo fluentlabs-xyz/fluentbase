@@ -38,13 +38,11 @@ mod evm_to_rwasm_tests {
             .instruction_set
             .write_binary(&mut binary_format_writer)
             .unwrap();
-        let rwasm_binary = &binary_format_writer.to_vec();
+        let rwasm_binary = binary_format_writer.to_vec();
 
-        let mut trace_binary = ReducedModule::new(&binary_format_writer.to_vec())
-            .unwrap()
-            .trace_binary();
-        println!("\nrmodule.trace_binary(): \n{}\n", trace_binary);
-        let mut rmodule = ReducedModule::new(rwasm_binary).unwrap();
+        println!("\nrwasm_binary.len(): {}", rwasm_binary.len());
+        let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
+        println!("\nrmodule.trace_binary(): \n{}\n", rmodule.trace_binary());
         // let import_linker = ImportLinker::default();
         // let config = Config::default();
         // let engine = Engine::new(&config);
@@ -57,7 +55,7 @@ mod evm_to_rwasm_tests {
             .bytecode()
             .write_binary(&mut binary_format_writer)
             .unwrap();
-        let result = Runtime::run(rwasm_binary, &Vec::new(), 0);
+        let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result = result.unwrap();
         debug!("\nlogs:");
@@ -112,13 +110,17 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn lt_opcode() {
-        let offset = 1;
-        let a0 = 1;
-        let b0 = 2;
+        let offset = 0;
+        let a0_0 = 1;
+        let a1_0 = 2;
+        let b0_0 = 2;
+        let b1_0 = 1;
+        // if a > b
         let evm_bytecode_bytes: Vec<u8> = vec![
-            // args: `mem_offset` a=1 b=0
+            // op: `mem_offset` a=1 b=0
             // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
-            PUSH1, offset, PUSH1, a0, PUSH1, b0, LT,
+            PUSH1, offset, PUSH9, a1_0, 0, 0, 0, 0, 0, 0, 0, a0_0, PUSH9, b1_0, 0, 0, 0, 0, 0, 0, 0,
+            b0_0, LT,
         ];
 
         test(&evm_bytecode_bytes);
@@ -129,7 +131,7 @@ mod evm_to_rwasm_tests {
         let offset = 0;
         let a0_0 = 1;
         let a1_0 = 2;
-        let b0_0 = 1;
+        let b0_0 = 2;
         let b1_0 = 1;
         // if a > b
         let evm_bytecode_bytes: Vec<u8> = vec![

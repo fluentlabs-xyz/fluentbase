@@ -1747,9 +1747,9 @@ dependencies = [
 
 [[package]]
 name = "gimli"
-version = "0.28.0"
+version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
+checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 
 [[package]]
 name = "glob"
@@ -4802,14 +4802,14 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "poseidon"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
-
-[[patch.unused]]
 name = "halo2_proofs"
 version = "0.2.0"
 source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5cf9a3726525810af41ef416e0292ec999b34030"
+
+[[patch.unused]]
+name = "poseidon"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
 
 [[patch.unused]]
 name = "ethers-core"
