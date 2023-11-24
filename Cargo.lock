@@ -2051,6 +2051,7 @@ dependencies = [
 name = "fluentbase-rwasm-code-snippets"
 version = "0.1.0"
 dependencies = [
+ "ethereum-types 0.14.1",
  "fluentbase-runtime",
  "fluentbase-rwasm",
  "hex",
