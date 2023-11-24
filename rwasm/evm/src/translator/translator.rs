@@ -111,17 +111,17 @@ impl<'a> Translator<'a> {
             let rwasm_binary = compiler
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
-            let mut instruction_set = ReducedModule::new(&rwasm_binary)
+            let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
-            if opcode == opcode::EQ {
+            if opcode == opcode::GT {
                 debug!(
-                    "code snippet (opcode {:x?}): {}",
+                    "\ncode snippet (opcode {}): \n{}\n",
                     opcode,
                     instruction_set.trace_binary()
                 );
-            }
+            };
             self.opcode_to_rwasm_replacer
                 .insert(opcode, instruction_set);
         };
@@ -130,10 +130,10 @@ impl<'a> Translator<'a> {
             // (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
             // (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
             // (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
-            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
+            // (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             // (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
             // (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
-            // (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
+            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
             // (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
             // (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
             // (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),

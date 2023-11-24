@@ -24,23 +24,33 @@ pub(super) fn replace_current_opcode_with_code_snippet(
     // result postprocessing based on opcode
     const I64_STORE_OFFSET: usize = 0;
     match opcode {
-        opcode::EQ => {
-            // output is 4 i64 params in memory by some offset
-            // strategy: get slices which represent i64  values and put them on stack as i64
-            // for i in 0..4 {
-            //     instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
-            //     instruction_set.op_i64_load(0);
-            // }
+        opcode::BYTE
+        | opcode::EQ
+        | opcode::GAS
+        | opcode::LT
+        | opcode::GT
+        | opcode::SAR
+        | opcode::SGT
+        | opcode::SHL
+        | opcode::SHR
+        | opcode::SLT => {
+            // input is 12 u64 params on stack (arg1, arg2, offset)
+            // output is 4 u64 params in memory by some offset
+            const INPUT_COUNT: usize = 12;
+            (0..INPUT_COUNT).for_each(|_| {
+                instruction_set.op_drop();
+            });
 
-            // TODO next lines are 4test
-            // instruction_set.op_drop();
-            // copy value on stack
-            instruction_set.op_local_get(1);
-            // set mem offset
-            instruction_set.op_i64_const(I64_STORE_OFFSET + 0 * mem::size_of::<i64>());
-            //
-            instruction_set.op_local_set(2);
-            instruction_set.op_i64_store(0);
+            // extract outputs
+            const OUTPUT_COUNT: usize = 4;
+            for i in 0..OUTPUT_COUNT {
+                instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
+                instruction_set.op_i64_load(0);
+            }
+            // TODO delete, 4tests
+            (0..OUTPUT_COUNT).for_each(|_| {
+                instruction_set.op_drop();
+            });
         }
         _ => {
             panic!("no postprocessing defined for {} opcode", opcode)
