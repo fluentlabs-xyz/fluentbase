@@ -107,7 +107,7 @@ impl<'a> Translator<'a> {
                 );
             }
             let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
-            compiler.translate_func_as_linear_code(true);
+            compiler.translate_func_as_inline(true);
             let rwasm_binary = compiler
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
@@ -117,9 +117,10 @@ impl<'a> Translator<'a> {
                 .clone();
             if opcode == opcode::GT {
                 debug!(
-                    "\ncode snippet (opcode {}): \n{}\n",
+                    "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
                     opcode,
-                    instruction_set.trace_binary()
+                    instruction_set.instr.len(),
+                    instruction_set.trace_binary(),
                 );
             };
             self.opcode_to_rwasm_replacer

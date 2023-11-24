@@ -9,15 +9,27 @@ fn bitwise_lt(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let s0 = 0;
-    let s1 = 0;
-    let s2 = 0;
-    let s3;
-    if a0 < b0 || a1 < b1 || a2 < b2 || a3 < b3 {
-        s3 = 1;
-    } else {
-        s3 = 0;
+    if a0 < b0 {
+        return (0, 0, 0, 1);
+    }
+    if a0 > b0 {
+        return (0, 0, 0, 0);
+    }
+    if a1 < b1 {
+        return (0, 0, 0, 1);
+    }
+    if a1 > b1 {
+        return (0, 0, 0, 0);
+    }
+    if a2 < b2 {
+        return (0, 0, 0, 1);
+    }
+    if a2 > b2 {
+        return (0, 0, 0, 0);
+    }
+    if a3 < b3 {
+        return (0, 0, 0, 1);
     }
 
-    return (s0, s1, s2, s3);
+    return (0, 0, 0, 0);
 }
