@@ -1,11 +1,12 @@
-use log::debug;
-
-use crate::translator::host::Host;
-use crate::translator::instruction_result::InstructionResult;
-use crate::translator::translator::Translator;
-use crate::utilities::{
-    align_to_evm_word_array, iterate_over_wasm_i64_chunks, WASM_I64_IN_EVM_WORD_COUNT,
+use crate::{
+    translator::{host::Host, instruction_result::InstructionResult, translator::Translator},
+    utilities::{
+        align_to_evm_word_array,
+        iterate_over_wasm_i64_chunks,
+        WASM_I64_IN_EVM_WORD_COUNT,
+    },
 };
+use log::debug;
 
 pub fn pop<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "PUSH";
@@ -36,7 +37,9 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         return;
     }
     let data_padded = data_padded.unwrap();
-    for bytes in iterate_over_wasm_i64_chunks(&data_padded).rev() {
+    for bytes in iterate_over_wasm_i64_chunks(&data_padded)
+    /* .rev() */
+    {
         let v = i64::from_be_bytes(bytes.try_into().unwrap());
         instruction_set.op_i64_const(v);
     }
@@ -58,7 +61,8 @@ pub fn swap<const N: usize, H: Host>(_translator: &mut Translator<'_>, host: &mu
     const OP: &str = "SWAP";
     debug!("op:{}{}", OP, N);
     let instruction_set = host.instruction_set();
-    // TODO to reduce computation we need swap function inside rwasm so we can decrease number of ops to x/2
+    // TODO to reduce computation we need swap function inside rwasm so we can decrease number of
+    // ops to x/2
     for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
         instruction_set.op_local_get((1 + i * 2) as u32);
     }
