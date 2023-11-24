@@ -1,5 +1,6 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
+use fluentbase_rwasm::rwasm::ReducedModule;
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
     rwasm::{Compiler, FuncOrExport},
@@ -9,19 +10,24 @@ use keccak_hash::H256;
 use serde_json::from_str;
 use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync::Arc};
 
-pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
+pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
-    let mut compiler = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-    compiler.finalize().unwrap()
+    let mut compiler =
+        Compiler::new_with_linker(&wasm_binary, Some(&import_linker), consume_fuel).unwrap();
+    compiler.finalize(None, true).unwrap()
 }
 
-fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
+fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     let import_linker = Runtime::new_linker();
-    Compiler::new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))
-        .unwrap()
-        .finalize()
-        .unwrap()
+    Compiler::new_with_linker(
+        &wasm_binary.to_vec(),
+        Some(&import_linker),
+        inject_fuel_consumption,
+    )
+    .unwrap()
+    .finalize(None, true)
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -51,6 +57,7 @@ mod tests {
   (global (;2;) i32 (i32.const 3))
   (export "main" (func $main)))
     "#,
+            true,
         );
         Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
     }
@@ -59,7 +66,7 @@ mod tests {
 #[test]
 fn test_greeting() {
     let wasm_binary = include_bytes!("../../examples/bin/greeting.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary, true);
     let output = Runtime::run(rwasm_binary.as_slice(), &vec![], 10_000_000).unwrap();
     assert_eq!(
         output.data().output().clone(),
@@ -95,7 +102,7 @@ fn test_greeting() {
 #[test]
 fn test_keccak256_example() {
     let wasm_binary = include_bytes!("../../examples/bin/keccak256.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary, true);
 
     let input_data: &[u8] = "hello world".as_bytes();
     let output = Runtime::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
@@ -105,7 +112,7 @@ fn test_keccak256_example() {
 #[test]
 fn test_poseidon() {
     let wasm_binary = include_bytes!("../../examples/bin/poseidon.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary, true);
 
     let input_data: &[u8] = "hello world".as_bytes();
 
@@ -116,7 +123,7 @@ fn test_poseidon() {
 #[test]
 fn test_secp256k1_verify() {
     let wasm_binary = include_bytes!("../../examples/bin/secp256k1.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary, true);
 
     let input_datas: &[&[u8]] = &[
         &[
@@ -149,7 +156,7 @@ fn test_secp256k1_verify() {
 #[test]
 fn test_panic() {
     let wasm_binary = include_bytes!("../../examples/bin/panic.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary, true);
     let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
     assert_eq!(result.data().exit_code(), 71);
 }
@@ -167,7 +174,7 @@ fn test_panic() {
 fn rwasm_compile_with_linker_test() {
     let wasm_binary_to_execute =
         include_bytes!("../../examples/bin/rwasm_compile_with_linker_test.wasm");
-    let rwasm_binary_to_execute = wasm2rwasm(wasm_binary_to_execute);
+    let rwasm_binary_to_execute = wasm2rwasm(wasm_binary_to_execute, true);
     let wasm_binary_to_compile = include_bytes!("../../examples/bin/greeting.wasm");
     // let rwasm_binary_compile_res_len = wasm2rwasm(wasm_binary_to_compile);
     // println!("wasm_binary_to_compile {}", wasm_binary_to_compile.len());
@@ -211,14 +218,17 @@ fn test_state() {
     .unwrap();
     let import_linker = Runtime::new_linker();
     let mut compiler =
-        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker), true).unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
-            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-        )))
+        .translate(
+            Some(FuncOrExport::StateRouter(
+                vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+            )),
+            true,
+        )
         .unwrap();
-    let rwasm_bytecode = compiler.finalize().unwrap();
+    let rwasm_bytecode = compiler.finalize(None, true).unwrap();
     Runtime::run_with_context(RuntimeContext::new(rwasm_bytecode), &import_linker).unwrap();
 }
 
@@ -245,13 +255,20 @@ fn test_keccak256() {
   (data (;0;) (i32.const 0) "Hello, World")
   (export "main" (func $main)))
     "#,
+        false,
     );
 
-    let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
-    println!("{:?}", result);
+    let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
+    println!("rmodule.trace_binary(): {:?}", rmodule.trace_binary());
+    let execution_result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
+    println!(
+        "execution_result (exit_code {}): {:?}",
+        execution_result.data().exit_code,
+        execution_result
+    );
     match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
         Ok(answer) => {
-            assert_eq!(&answer, result.data().output().as_slice());
+            assert_eq!(&answer, execution_result.data().output().as_slice());
         }
         Err(e) => {
             // If there's an error, you might want to handle it in some way.

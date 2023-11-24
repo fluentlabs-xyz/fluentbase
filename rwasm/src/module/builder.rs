@@ -12,8 +12,6 @@ use super::{
     ImportName,
     Module,
 };
-use fluentbase_rwasm_core::
-common::ValueType;
 use crate::{
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
@@ -26,6 +24,7 @@ use crate::{
     TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
+use fluentbase_rwasm_core::common::ValueType;
 
 /// A builder for a WebAssembly [`Module`].
 #[derive(Debug)]
