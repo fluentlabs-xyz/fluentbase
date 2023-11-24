@@ -8,6 +8,7 @@ fluentbase-rwasm = { path = ".." }
 fluentbase-runtime = { path = "../../runtime", optional = true }
 hex = "0.4.3"
 wat = "1.0.77"
+ethereum-types = "0.14.1"
 
 [lib]
 crate-type = ["cdylib"]
@@ -28,6 +29,8 @@ bitwise_slt = []
 bitwise_sar = []
 bitwise_eq = []
 arithmetic_sub = []
+arithmetic_mul = []
+arithmetic_div = []
 
 [dev-dependencies]
 wat = "1.0.77"
