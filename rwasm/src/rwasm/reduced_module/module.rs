@@ -184,11 +184,6 @@ impl ReducedModule {
     }
 
     pub fn trace_binary(&self) -> String {
-        let mut result = String::new();
-        for opcode in self.bytecode().instr.iter() {
-            let str = format!("{:?}\n", opcode);
-            result += str.as_str();
-        }
-        result
+        self.instruction_set.trace_binary()
     }
 }

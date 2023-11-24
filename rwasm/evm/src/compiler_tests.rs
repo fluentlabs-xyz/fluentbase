@@ -1,34 +1,31 @@
 #[cfg(test)]
 mod evm_to_rwasm_tests {
+    use crate::{
+        compiler::EvmCompiler,
+        translator::{
+            instruction_result::InstructionResult,
+            instructions::opcode::{EQ, PUSH0, PUSH1, PUSH4, PUSH8},
+        },
+    };
     use alloy_primitives::Bytes;
+    use fluentbase_runtime::Runtime;
+    use fluentbase_rwasm::{
+        rwasm::{BinaryFormat, BinaryFormatWriter, ImportLinker, InstructionSet, ReducedModule},
+        Config,
+        Engine,
+        FuncType,
+    };
     use log::debug;
 
-    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
-
-    use crate::compiler::EvmCompiler;
-    use crate::translator::instruction_result::InstructionResult;
-
     #[test]
-    fn simple_bytecode_test() {
-        // 0x01: ADD
-        // 0x50  POP
-        // 0x5F: PUSH0
-        // 0x60: PUSH1
-        // 0x61: PUSH2
-        // 0x62: PUSH3
-        // 0x63: PUSH4
-        // 0x64: PUSH5
-        // 0x65: PUSH6
-        // 0x66: PUSH7
-        // 0x67: PUSH8
-        // 0x68: PUSH9
-
-        let evm_bytecode_bytes: &[u8] =
-            &[0x5F, 0x60, 0x80, 0x60, 0x40, 0x67, 0, 0, 0, 0, 0, 0, 1, 246];
+    fn simple_bytecode() {
+        let evm_bytecode_bytes: &[u8] = &[
+            PUSH0, PUSH1, 0x80, PUSH1, 0x40, PUSH8, 0, 0, 0, 0, 0, 0, 1, 246,
+        ];
         let evm_bytecode_bytes = Bytes::from(evm_bytecode_bytes);
         debug!("evm_bytecode_bytes: {:x?}", evm_bytecode_bytes.as_ref());
 
-        let mut compiler = EvmCompiler::new(evm_bytecode_bytes.as_ref());
+        let mut compiler = EvmCompiler::new(evm_bytecode_bytes.as_ref(), false);
 
         let res = compiler.translate();
         assert_eq!(res, InstructionResult::Stop);
@@ -46,5 +43,81 @@ mod evm_to_rwasm_tests {
         let mut rmodule = ReducedModule::new(rwasm_bytecode_bytes).unwrap();
         let rwasm_binary_trace = rmodule.trace_binary();
         debug!("rwasm_binary_trace: {:?}", &rwasm_binary_trace);
+    }
+
+    #[test]
+    fn eq_opcode() {
+        let evm_bytecode_bytes: &[u8] = &[
+            // op: EQ mem_offset a b
+            //  PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH8, 0, 0, 0, 0, 0, 0, 0, 0, PUSH4, 0, 0, 0, 0,
+            EQ,
+        ];
+        let evm_binary = Bytes::from(evm_bytecode_bytes);
+        debug!(
+            "evm_binary (len {}) {:x?}",
+            evm_binary.len(),
+            evm_binary.as_ref(),
+        );
+
+        let mut compiler = EvmCompiler::new(evm_binary.as_ref(), false);
+
+        let res = compiler.translate();
+        assert_eq!(res, InstructionResult::Stop);
+        debug!(
+            "compiler.instruction_set.trace_binary(): {:?}",
+            compiler.instruction_set.trace_binary()
+        );
+
+        let mut buffer = vec![0; 1024 * 1024];
+        let mut binary_format_writer = BinaryFormatWriter::new(&mut buffer);
+
+        let mut preamble = InstructionSet::new();
+        preamble.op_i32_const(100);
+        preamble.op_memory_grow();
+        preamble.op_drop();
+        preamble.write_binary(&mut binary_format_writer).unwrap();
+
+        // let mut postamble = InstructionSet::new();
+        // postamble.op_i32_const(15);
+        // postamble.op_br(3);
+        // compiler.instruction_set.extend(postamble);
+
+        compiler
+            .instruction_set
+            .write_binary(&mut binary_format_writer)
+            .unwrap();
+        let rwasm_binary = &binary_format_writer.to_vec();
+
+        debug!(
+            "rmodule.trace_binary(): {:?}",
+            ReducedModule::new(&binary_format_writer.to_vec())
+                .unwrap()
+                .trace_binary()
+        );
+        let mut rmodule = ReducedModule::new(rwasm_binary).unwrap();
+        let mut import_linker = ImportLinker::default();
+        let config = Config::default();
+        let engine = Engine::new(&config);
+        let mut module_builder =
+            rmodule.to_module_builder(&engine, &import_linker, FuncType::new([], []));
+        module_builder.push_default_memory(100, None).unwrap();
+        let module = module_builder.finish();
+        debug!("module.exports:");
+        for export in module.exports() {
+            debug!("export {} (idx {:?})", export.name(), export.index());
+        }
+
+        rmodule
+            .bytecode()
+            .write_binary(&mut binary_format_writer)
+            .unwrap();
+        let result = Runtime::run(rwasm_binary, &Vec::new(), 0);
+        assert!(result.is_ok());
+        let execution_result = result.unwrap();
+        println!(
+            "execution_result (exit_code {}): {:?}",
+            execution_result.data().exit_code(),
+            execution_result
+        );
     }
 }
