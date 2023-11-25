@@ -365,6 +365,21 @@ impl Instruction {
                 stack_ops.push(RwOp::StackWrite(0));
             }
 
+            Instruction::F32Add => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::F32Mul => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+            Instruction::F32Sqrt => {
+                stack_ops.push(RwOp::StackRead(0));
+                stack_ops.push(RwOp::StackWrite(0));
+            }
+
             _ => unreachable!("not supported rws for opcode: {:?}", self),
         }
         stack_ops

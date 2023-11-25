@@ -153,37 +153,3 @@ pub(crate) fn wasi_args_get(
     // return success
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }
-
-pub(crate) fn rwasm_transact(
-    mut caller: Caller<'_, RuntimeContext>,
-    code_offset: i32,
-    code_len: i32,
-    input_offset: i32,
-    input_len: i32,
-    output_offset: i32,
-    output_len: i32,
-    state: i32,
-    fuel_limit: i32,
-) -> Result<i32, Trap> {
-    let bytecode = exported_memory_vec(&mut caller, code_offset as usize, code_len as usize);
-    let input = exported_memory_vec(&mut caller, input_offset as usize, input_len as usize);
-    // TODO: "we probably need custom linker here with reduced host calls number"
-    // TODO: "make sure there is no panic inside runtime"
-    let res = Runtime::run(bytecode.as_slice(), &input, fuel_limit as u32);
-    if res.is_err() {
-        return Err(ExitCode::TransactError.into());
-    }
-    let execution_result = res.unwrap();
-    // caller
-    //     .as_context_mut()
-    //     .tracer_mut()
-    //     .merge_nested_call(execution_result.tracer());
-    // copy output into memory
-    let output = execution_result.data().output();
-    if output.len() > output_len as usize {
-        return Err(ExitCode::TransactOutputOverflow.into());
-    }
-    caller.write_memory(output_offset as usize, output.as_slice());
-    // put exit code on stack
-    Ok(execution_result.data().exit_code)
-}

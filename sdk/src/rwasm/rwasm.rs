@@ -49,7 +49,7 @@ impl RwasmPlatformSDK for SDK {
                 output.as_mut_ptr(),
                 output.len() as i32,
                 state as i32,
-                fuel_limit as u32,
+                fuel_limit as i32,
             )
         }
     }
