@@ -8,23 +8,37 @@ mod platform;
 mod reduced_module;
 
 pub use self::{
-    binary_format::*, compiler::*, consts::*, instruction_set::*, platform::*, reduced_module::*,
+    binary_format::*,
+    compiler::*,
+    consts::*,
+    instruction_set::*,
+    platform::*,
+    reduced_module::*,
 };
 
 #[cfg(test)]
 mod tests {
+    use super::_SYS_HALT_FUEL_AMOUNT;
     use crate::{
         common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
-            compiler::Compiler, platform::ImportLinker, reduced_module::ReducedModule,
-            FuncOrExport, ImportFunc,
+            compiler::Compiler,
+            platform::ImportLinker,
+            reduced_module::ReducedModule,
+            FuncOrExport,
+            ImportFunc,
+            RouterInstructions,
         },
-        AsContextMut, Caller, Config, Engine, Func, Linker, Store,
+        AsContextMut,
+        Caller,
+        Config,
+        Engine,
+        Func,
+        Linker,
+        Store,
     };
     use alloc::string::ToString;
-
-    use super::_SYS_HALT_FUEL_AMOUNT;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -56,12 +70,13 @@ mod tests {
         translator.translate(run_config.entrypoint).unwrap();
         let binary = translator.finalize().unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
-        // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
         let _trace = reduced_module.trace_binary();
         // execute translated rwasm
-        let config = Config::default();
+        let mut config = Config::default();
+        config.consume_fuel(true);
         let engine = Engine::new(&config);
         let mut store = Store::new(&engine, HostState::default());
+        store.add_fuel(1_000_000).unwrap();
         let mut linker = Linker::<HostState>::new(&engine);
         let module = reduced_module.to_module(&engine, &mut import_linker);
         linker
@@ -266,8 +281,15 @@ mod tests {
         "#,
             RunConfig {
                 entrypoint: Some(FuncOrExport::StateRouter(
-                    vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-                    Instruction::I32Const(0.into()),
+                    vec![
+                        FuncOrExport::Export("main".to_string()),
+                        FuncOrExport::Export("deploy".to_string()),
+                    ],
+                    RouterInstructions {
+                        state_ix: Instruction::I32Const(0.into()),
+                        input_ix: vec![],
+                        output_ix: vec![],
+                    },
                 )),
             },
         );
