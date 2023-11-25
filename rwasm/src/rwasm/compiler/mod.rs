@@ -19,8 +19,7 @@ use crate::{
     Module,
 };
 use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
-use core::ops::Deref;
-use std::cell::RefCell;
+use core::{cell::RefCell, ops::Deref};
 
 mod drop_keep;
 
@@ -92,7 +91,7 @@ struct BrTableStatus {
 
 #[derive(Debug)]
 pub enum FuncOrExport {
-    Export(String),
+    Export(&'static str),
     Func(u32),
     Global(Instruction),
     StateRouter(Vec<FuncOrExport>, RouterInstructions),
@@ -107,7 +106,7 @@ pub struct RouterInstructions {
 
 impl Default for FuncOrExport {
     fn default() -> Self {
-        Self::Export("main".to_string())
+        Self::Export("main")
     }
 }
 

@@ -139,11 +139,9 @@ pub struct ImportLinker {
 impl ImportLinker {
     pub fn insert_function(&mut self, import_func: ImportFunc) {
         if self.func_by_index.contains_key(&import_func.index) {
-            println!("already persist index");
             return;
         }
         if self.func_by_name.contains_key(&import_func.import_name()) {
-            println!("already persist name");
             return;
         }
 

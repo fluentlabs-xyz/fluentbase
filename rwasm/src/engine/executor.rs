@@ -4,22 +4,39 @@ use crate::{
     common::{Pages, TrapCode, UntypedValue},
     engine::{
         bytecode::{
-            AddressOffset, BlockFuel, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx,
-            FuncIdx, GlobalIdx, Instruction, LocalDepth, SignatureIdx, TableIdx,
+            AddressOffset,
+            BlockFuel,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            Instruction,
+            LocalDepth,
+            SignatureIdx,
+            TableIdx,
         },
         cache::InstanceCache,
         code_map::{CodeMap, InstructionPtr},
         config::FuelCosts,
         stack::{CallStack, ValueStackPtr},
         tracer::Tracer,
-        DropKeep, EngineIdx, FuncFrame, ValueStack,
+        DropKeep,
+        EngineIdx,
+        FuncFrame,
+        ValueStack,
     },
     func::FuncEntity,
     module::{ConstExpr, DEFAULT_MEMORY_INDEX},
     store::ResourceLimiterRef,
     table::TableEntity,
     Error::Trap,
-    FuelConsumptionMode, Func, FuncRef, Instance, StoreInner, Table,
+    FuelConsumptionMode,
+    Func,
+    FuncRef,
+    Instance,
+    StoreInner,
+    Table,
 };
 use alloc::string::String;
 use core::cmp::{self};
@@ -230,7 +247,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             // TODO: Need to add recursive check while call function
             // TODO: Create more optimized check for stack overflowed
             if self.value_stack.is_stack_overflowed(self.sp) {
-                println!("Stack overflowed");
                 return Err(TrapCode::StackOverflow.into());
             }
 
