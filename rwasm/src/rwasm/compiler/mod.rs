@@ -13,13 +13,14 @@ use crate::{
         instruction_set::InstructionSet,
         ImportLinker,
     },
-    Config, Engine, FuncType, Module,
+    Config,
+    Engine,
+    FuncType,
+    Module,
 };
-use alloc::rc::Rc;
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 use core::ops::Deref;
 use std::cell::RefCell;
-use std::collections::BTreeSet;
 
 mod drop_keep;
 
@@ -233,10 +234,15 @@ impl<'linker> Compiler<'linker> {
         // find main entrypoint (it must starts with `main` keyword)
         let num_imports = self.module.imports.len_funcs as u32;
 
+        let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
+
         match main_index {
-            FuncOrExport::Export(name) => {
-                let main_index = self.resolve_export_index(name.as_str())?;
-                router_opcodes.op_call_internal(main_index - num_imports);
+            FuncOrExport::Export(_) => {
+                let call_func_type = self.module.funcs[func_index as usize];
+                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                let check_idx = self.get_or_insert_check_idx(func_type);
+                router_opcodes.op_i32_const(check_idx);
+                router_opcodes.op_call_internal(func_index - num_imports);
             }
             FuncOrExport::StateRouter(
                 states,
