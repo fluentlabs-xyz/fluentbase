@@ -41,11 +41,16 @@ impl InstancePre {
     /// # Panics
     ///
     /// If the `start` function is invalid albeit successful validation.
-    pub fn start(self, mut context: impl AsContextMut) -> Result<Instance, Error> {
-       self.start_with_param(context, &[], &mut [])
+    pub fn start(self, context: impl AsContextMut) -> Result<Instance, Error> {
+        self.start_with_param(context, &[], &mut [])
     }
 
-    pub fn start_with_param(self, mut context: impl AsContextMut, inputs: &[Value], outputs: &mut [Value]) -> Result<Instance, Error> {
+    pub fn start_with_param(
+        self,
+        mut context: impl AsContextMut,
+        inputs: &[Value],
+        outputs: &mut [Value],
+    ) -> Result<Instance, Error> {
         let opt_start_index = self.start_fn();
         context
             .as_context_mut()

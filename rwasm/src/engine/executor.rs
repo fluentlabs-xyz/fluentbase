@@ -22,7 +22,6 @@ use crate::{
         stack::{CallStack, ValueStackPtr},
         tracer::Tracer,
         DropKeep,
-        EngineIdx,
         FuncFrame,
         ValueStack,
     },
@@ -30,7 +29,6 @@ use crate::{
     module::{ConstExpr, DEFAULT_MEMORY_INDEX},
     store::ResourceLimiterRef,
     table::TableEntity,
-    Error::Trap,
     FuelConsumptionMode,
     Func,
     FuncRef,
@@ -40,7 +38,6 @@ use crate::{
 };
 use alloc::string::String;
 use core::cmp::{self};
-use num_traits::ToPrimitive;
 
 /// The outcome of a Wasm execution.
 ///

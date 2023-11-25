@@ -896,8 +896,6 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_memory_grow();
             }
             WI::TableGrow(idx) => {
-                let table_type = self.module.tables[idx.to_u32() as usize];
-
                 let max_size = self.module.tables[idx.to_u32() as usize]
                     .maximum()
                     .unwrap_or(1024);
