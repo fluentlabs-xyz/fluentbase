@@ -1,21 +1,42 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
-use fluentbase_rwasm::rwasm::_UNKNOWN;
 use fluentbase_rwasm::{
     common::{Trap, UntypedValue, ValueType, F32, F64},
     engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
     rwasm::{
-        Compiler, DefaultImportHandler, FuncOrExport, ImportFunc, ImportLinker, ReducedModule,
+        Compiler,
+        DefaultImportHandler,
+        FuncOrExport,
+        ImportFunc,
+        ImportLinker,
+        ReducedModule,
         RouterInstructions,
+        _UNKNOWN,
     },
     value::WithType,
-    AsContext, Caller, Config, Engine, Extern, ExternType, Func, FuncType, Global, GlobalType,
-    ImportType, Instance, Linker, Memory, MemoryType, Module, Mutability, Store, Table, TableType,
+    AsContext,
+    Caller,
+    Config,
+    Engine,
+    Extern,
+    ExternType,
+    Func,
+    FuncType,
+    Global,
+    GlobalType,
+    ImportType,
+    Instance,
+    Linker,
+    Memory,
+    MemoryType,
+    Module,
+    Mutability,
+    Store,
+    Table,
+    TableType,
     Value,
 };
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use wast::token::{Id, Span};
 
 /// The context of a single Wasm test spec suite run.
@@ -412,7 +433,8 @@ impl TestContext<'_> {
                     }
                     self.binaries.insert(name.clone(), wasm_binary.clone());
 
-                    FuncOrExport::Export(name)
+                    let static_name: &'static str = Box::leak(name.into_boxed_str());
+                    FuncOrExport::Export(static_name)
                 }
                 ExportRouter::Global((instruction, global_type)) => {
                     self.main_router.insert(

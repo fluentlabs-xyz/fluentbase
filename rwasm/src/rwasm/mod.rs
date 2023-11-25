@@ -38,7 +38,6 @@ mod tests {
         Linker,
         Store,
     };
-    use alloc::string::ToString;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -281,10 +280,7 @@ mod tests {
         "#,
             RunConfig {
                 entrypoint: Some(FuncOrExport::StateRouter(
-                    vec![
-                        FuncOrExport::Export("main".to_string()),
-                        FuncOrExport::Export("deploy".to_string()),
-                    ],
+                    vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
                     RouterInstructions {
                         state_ix: Instruction::I32Const(0.into()),
                         input_ix: vec![],
