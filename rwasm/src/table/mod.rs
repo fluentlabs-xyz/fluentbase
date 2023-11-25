@@ -7,10 +7,10 @@ use crate::{
     arena::ArenaIndex,
     common::{TrapCode, UntypedValue, ValueType},
     engine::executor::EntityGrowError,
-    module::FuncIdx,
     store::ResourceLimiterRef,
     value::WithType,
-    Func, FuncRef, Value,
+    Func,
+    Value,
 };
 use alloc::vec::Vec;
 use core::cmp::max;
