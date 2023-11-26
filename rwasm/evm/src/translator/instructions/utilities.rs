@@ -7,7 +7,7 @@ use crate::{
         WASM_I64_LOW_32_BIT_MASK,
     },
 };
-use fluentbase_rwasm::rwasm::InstructionSet;
+use fluentbase_rwasm::rwasm::{InstructionSet, INSTRUCTION_BYTES};
 use std::mem;
 
 pub(super) fn replace_current_opcode_with_code_snippet(
@@ -16,8 +16,8 @@ pub(super) fn replace_current_opcode_with_code_snippet(
 ) {
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
-    let instruction_set_replace = translator.get_code_snippet(opcode);
-    //
+    let mut instruction_set_replace = translator.get_code_snippet(opcode).clone();
+    instruction_set_replace.fix_br_offsets(instruction_set.len() as i32 * INSTRUCTION_BYTES as i32);
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());
@@ -34,8 +34,10 @@ pub(super) fn replace_current_opcode_with_code_snippet(
         | opcode::SHL
         | opcode::SHR
         | opcode::SLT => {
+            // TODO get rid of this hack
             const OFFSET_GARBAGE_COUNT: usize = 3;
             (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());
+
             // const INPUT_COUNT: usize = 11;
             // (0..INPUT_COUNT).for_each(|_| instruction_set.op_drop());
             //
@@ -44,8 +46,6 @@ pub(super) fn replace_current_opcode_with_code_snippet(
             //     instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
             //     instruction_set.op_i64_load(0);
             // }
-            // // TODO delete, 4tests
-            // (0..OUTPUT_COUNT).for_each(|_| instruction_set.op_drop());
         }
         _ => {
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)

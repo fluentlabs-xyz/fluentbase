@@ -491,12 +491,22 @@ impl InstructionSet {
         }
     }
 
-    pub fn drop_tail(&mut self, count: usize) -> usize {
-        if self.instr.len() < count {
-            return 0;
+    pub fn fix_br_offsets(&mut self, offset_change: i32) {
+        for (index, instr) in self.instr.iter_mut().enumerate() {
+            match instr {
+                // Instruction::BrTable(_) |
+                Instruction::Br(offset)
+                | Instruction::BrIndirect(offset)
+                | Instruction::BrIfEqz(offset)
+                | Instruction::BrAdjust(offset)
+                | Instruction::BrAdjustIfNez(offset)
+                | Instruction::BrIfEqz(offset)
+                | Instruction::BrIfNez(offset) => {
+                    *offset = BranchOffset::from(offset.to_i32() + offset_change)
+                }
+                _ => {}
+            }
         }
-        self.instr = self.instr[0..(self.instr.len() - count)].to_vec();
-        count
     }
 
     pub fn trace(&self) -> String {
