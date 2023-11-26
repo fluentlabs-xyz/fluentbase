@@ -9,27 +9,23 @@ fn bitwise_gt(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    if a0 > b0 {
-        return (0, 0, 0, 1);
-    }
-    if a0 < b0 {
-        return (0, 0, 0, 0);
-    }
-    if a1 > b1 {
-        return (0, 0, 0, 1);
-    }
-    if a1 < b1 {
-        return (0, 0, 0, 0);
-    }
+    let mut res = 0;
+    /*if a0 > b0 {
+        res = 1;
+    } else if a0 < b0 {
+        res = 0;
+    } else if a1 > b1 {
+        res = 1;
+    } else if a1 < b1 {
+        res = 0;
+    } else */
     if a2 > b2 {
-        return (0, 0, 0, 1);
-    }
-    if a2 < b2 {
-        return (0, 0, 0, 0);
-    }
-    if a3 > b3 {
-        return (0, 0, 0, 1);
+        res = 1;
+    } else if a2 < b2 {
+        res = 0;
+    } else if a3 > b3 {
+        res = 1;
     }
 
-    return (0, 0, 0, 0);
+    return (0, 0, 0, res);
 }

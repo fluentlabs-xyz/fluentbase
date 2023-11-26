@@ -34,18 +34,18 @@ pub(super) fn replace_current_opcode_with_code_snippet(
         | opcode::SHL
         | opcode::SHR
         | opcode::SLT => {
-            // input left 12 u64 params on stack (arg1, arg2, offset)
-            // output left 4 u64 params in memory by hardcoded offset
-            const INPUT_COUNT: usize = 12;
-            (0..INPUT_COUNT).for_each(|_| instruction_set.op_drop());
-
-            const OUTPUT_COUNT: usize = 4;
-            for i in 0..OUTPUT_COUNT {
-                instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
-                instruction_set.op_i64_load(0);
-            }
-            // TODO delete, 4tests
-            (0..OUTPUT_COUNT).for_each(|_| instruction_set.op_drop());
+            const OFFSET_GARBAGE_COUNT: usize = 3;
+            (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());
+            // const INPUT_COUNT: usize = 11;
+            // (0..INPUT_COUNT).for_each(|_| instruction_set.op_drop());
+            //
+            // const OUTPUT_COUNT: usize = 4;
+            // for i in 0..OUTPUT_COUNT {
+            //     instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
+            //     instruction_set.op_i64_load(0);
+            // }
+            // // TODO delete, 4tests
+            // (0..OUTPUT_COUNT).for_each(|_| instruction_set.op_drop());
         }
         _ => {
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)

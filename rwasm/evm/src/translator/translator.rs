@@ -5,7 +5,13 @@ use crate::translator::{
     translator::contract::Contract,
 };
 pub use analysis::BytecodeLocked;
-use fluentbase_rwasm::rwasm::{Compiler, FuncOrExport, InstructionSet, ReducedModule};
+use fluentbase_rwasm::rwasm::{
+    BinaryFormat,
+    Compiler,
+    FuncOrExport,
+    InstructionSet,
+    ReducedModule,
+};
 use hashbrown::HashMap;
 use log::debug;
 use std::marker::PhantomData;
@@ -111,7 +117,7 @@ impl<'a> Translator<'a> {
             let rwasm_binary = compiler
                 .finalize(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
-            let instruction_set = ReducedModule::new(&rwasm_binary)
+            let instruction_set = ReducedModule::new(&rwasm_binary, true)
                 .unwrap()
                 .bytecode()
                 .clone();

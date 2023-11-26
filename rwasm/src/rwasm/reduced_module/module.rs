@@ -24,8 +24,12 @@ pub struct ReducedModule {
 }
 
 impl ReducedModule {
-    pub fn new(sink: &[u8]) -> Result<ReducedModule, ReducedModuleError> {
+    pub fn new(
+        sink: &[u8],
+        do_not_rewrite_offsets: bool,
+    ) -> Result<ReducedModule, ReducedModuleError> {
         let mut reader = ReducedModuleReader::new(sink);
+        reader.do_not_rewrite_offsets(do_not_rewrite_offsets);
         reader
             .read_till_error()
             .map_err(|e| ReducedModuleError::BinaryFormat(e))?;

@@ -8,6 +8,9 @@ fluentbase-rwasm = { path = ".." }
 fluentbase-runtime = { path = "../../runtime", optional = true }
 hex = "0.4.3"
 wat = "1.0.77"
+
+[dev-dependencies]
+wat = "1.0.77"
 ethereum-types = "0.14.1"
 log = "0.4.20"
 ctor = "0.2.5"
@@ -34,9 +37,6 @@ bitwise_eq = []
 arithmetic_sub = []
 arithmetic_mul = []
 arithmetic_div = []
-
-[dev-dependencies]
-wat = "1.0.77"
 
 
 [profile.release]

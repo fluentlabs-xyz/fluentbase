@@ -145,8 +145,10 @@ impl From<InstructionResult> for SuccessOrHalt {
             InstructionResult::Return => Self::Success(Eval::Return),
             InstructionResult::SelfDestruct => Self::Success(Eval::SelfDestruct),
             InstructionResult::Revert => Self::Revert,
-            InstructionResult::CallTooDeep => Self::Halt(Halt::CallTooDeep), // not gonna happen for first call
-            InstructionResult::OutOfFund => Self::Halt(Halt::OutOfFund), // Check for first call is done separately.
+            InstructionResult::CallTooDeep => Self::Halt(Halt::CallTooDeep), /* not gonna happen for first call */
+            InstructionResult::OutOfFund => Self::Halt(Halt::OutOfFund),     /* Check for first
+                                                                               * call is done
+                                                                               * separately. */
             InstructionResult::OutOfGas => Self::Halt(Halt::OutOfGas(OutOfGasError::BasicOutOfGas)),
             InstructionResult::MemoryLimitOOG => {
                 Self::Halt(Halt::OutOfGas(OutOfGasError::MemoryLimit))
@@ -172,7 +174,7 @@ impl From<InstructionResult> for SuccessOrHalt {
             InstructionResult::StackOverflow => Self::Halt(Halt::StackOverflow),
             InstructionResult::OutOfOffset => Self::Halt(Halt::OutOfOffset),
             InstructionResult::CreateCollision => Self::Halt(Halt::CreateCollision),
-            InstructionResult::OverflowPayment => Self::Halt(Halt::OverflowPayment), // Check for first call is done separately.
+            InstructionResult::OverflowPayment => Self::Halt(Halt::OverflowPayment), /* Check for first call is done separately. */
             InstructionResult::PrecompileError => Self::Halt(Halt::PrecompileError),
             InstructionResult::NonceOverflow => Self::Halt(Halt::NonceOverflow),
             InstructionResult::CreateContractSizeLimit => Self::Halt(Halt::CreateContractSizeLimit),

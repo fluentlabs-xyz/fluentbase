@@ -206,7 +206,7 @@ impl TestContext<'_> {
             )
             .unwrap();
         let rwasm_binary = compiler.finalize(None, true).unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
         let func_type = elem.ty().func().unwrap();
         let mut module_builder =
             reduced_module.to_module_builder(self.engine(), &import_linker, func_type.clone());

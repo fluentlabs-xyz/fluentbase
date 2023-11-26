@@ -8,16 +8,16 @@ fluentbase-rwasm = { path = ".." }
 fluentbase-rwasm-core = { path = "../core" }
 fluentbase-runtime = { path = "../../runtime" }
 
+[dev-dependencies]
+ctor = "0.2.5"
+env_logger = "0.10.1"
+log = "0.4.20"
+
 alloy-primitives = { version = "0.4", default-features = false, features = [
     "rlp",
 ] }
 hashbrown = "0.14"
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
-
-# utility
-log = "0.4.20"
-env_logger = "0.10.1"
-ctor = "0.2.5"
 wat = "1.0.80"
 
 [build-dependencies]
