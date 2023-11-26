@@ -10,7 +10,7 @@ fn bitwise_gt(
     b3: u64,
 ) -> (u64, u64, u64, u64) {
     let mut res = 0;
-    /*if a0 > b0 {
+    if a0 > b0 {
         res = 1;
     } else if a0 < b0 {
         res = 0;
@@ -18,8 +18,7 @@ fn bitwise_gt(
         res = 1;
     } else if a1 < b1 {
         res = 0;
-    } else */
-    if a2 > b2 {
+    } else if a2 > b2 {
         res = 1;
     } else if a2 < b2 {
         res = 0;

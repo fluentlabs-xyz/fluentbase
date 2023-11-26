@@ -5,20 +5,41 @@
     i64.const 1
     local.set 9
     block  ;; label = @1
-      local.get 3
-      local.get 7
+      local.get 1
+      local.get 5
       i64.gt_u
       br_if 0 (;@1;)
+      block  ;; label = @2
+        local.get 1
+        local.get 5
+        i64.lt_u
+        br_if 0 (;@2;)
+        local.get 2
+        local.get 6
+        i64.gt_u
+        br_if 1 (;@1;)
+        local.get 2
+        local.get 6
+        i64.lt_u
+        br_if 0 (;@2;)
+        local.get 3
+        local.get 7
+        i64.gt_u
+        br_if 1 (;@1;)
+        i64.const 0
+        local.set 9
+        local.get 3
+        local.get 7
+        i64.lt_u
+        br_if 1 (;@1;)
+        local.get 4
+        local.get 8
+        i64.gt_u
+        i64.extend_i32_u
+        local.set 9
+        br 1 (;@1;)
+      end
       i64.const 0
-      local.set 9
-      local.get 3
-      local.get 7
-      i64.lt_u
-      br_if 0 (;@1;)
-      local.get 4
-      local.get 8
-      i64.gt_u
-      i64.extend_i32_u
       local.set 9
     end
     local.get 0

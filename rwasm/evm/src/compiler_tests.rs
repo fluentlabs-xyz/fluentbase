@@ -22,18 +22,16 @@ mod evm_to_rwasm_tests {
 
         let mut compiler = EvmCompiler::new(evm_binary.as_ref(), false);
 
+        compiler.instruction_set.op_i32_const(100);
+        compiler.instruction_set.op_memory_grow();
+        compiler.instruction_set.op_drop();
+
         let res = compiler.translate();
         assert_eq!(res, InstructionResult::Stop);
 
         let mut buffer = vec![0; 1024 * 1024];
         let mut binary_format_writer = BinaryFormatWriter::new(&mut buffer);
         // let mut binary_format_writer_tmp = BinaryFormatWriter::new(&mut buffer_tmp);
-
-        let mut preamble = InstructionSet::new();
-        preamble.op_i32_const(100);
-        preamble.op_memory_grow();
-        preamble.op_drop();
-        preamble.write_binary(&mut binary_format_writer).unwrap();
 
         compiler
             .instruction_set
@@ -73,11 +71,12 @@ mod evm_to_rwasm_tests {
             }
         }
         debug!("global_memory {:?}", &global_memory[..global_memory_len]);
-        // debug!(
-        //     "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
-        //     execution_result.data().exit_code(),
-        //     execution_result.tracer()
-        // );
+        debug!(
+            "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
+            execution_result.data().exit_code(),
+            execution_result.tracer()
+        );
+        assert_eq!(execution_result.data().exit_code(), 0);
     }
 
     #[test]
@@ -139,10 +138,10 @@ mod evm_to_rwasm_tests {
     fn gt_opcode() {
         let offset = 0;
         let a0_0 = 1;
-        let a1_0 = 1;
+        let a1_0 = 2;
 
-        let b0_0 = 0;
-        let b1_0 = 0;
+        let b0_0 = 1;
+        let b1_0 = 1;
         // if a > b
         let evm_bytecode_bytes: Vec<u8> = vec![
             // op: `mem_offset` a=1 b=0

@@ -11,6 +11,7 @@ pub use self::{
     binary_format::*,
     compiler::*,
     consts::*,
+    instruction::*,
     instruction_set::*,
     platform::*,
     reduced_module::*,

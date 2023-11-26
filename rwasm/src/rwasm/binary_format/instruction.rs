@@ -1,18 +1,32 @@
 use crate::{
     engine::{
         bytecode::{
-            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
-            ElementSegmentIdx, FuncIdx, GlobalIdx, Instruction, LocalDepth, TableIdx,
+            AddressOffset,
+            BlockFuel,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            Instruction,
+            LocalDepth,
+            TableIdx,
         },
         DropKeep,
     },
     rwasm::binary_format::{
         reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-        BinaryFormat, BinaryFormatError,
+        BinaryFormat,
+        BinaryFormatError,
     },
 };
 use alloc::vec::Vec;
 use fluentbase_rwasm_core::common::UntypedValue;
+
+pub const INSTRUCTION_OPCODE_BYTES: usize = 1;
+pub const INSTRUCTION_AUX_BYTES: usize = 8;
+pub const INSTRUCTION_BYTES: usize = INSTRUCTION_OPCODE_BYTES + INSTRUCTION_AUX_BYTES;
 
 impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
@@ -235,7 +249,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
         if n == 1 {
             n += sink.write_u64_be(0)?;
         }
-        debug_assert_eq!(n, 9);
+        debug_assert_eq!(n, INSTRUCTION_BYTES);
         Ok(n)
     }
 
@@ -532,6 +546,7 @@ mod tests {
     use crate::{
         engine::bytecode::Instruction,
         rwasm::binary_format::{
+            instruction::INSTRUCTION_AUX_BYTES,
             reader_writer::{BinaryFormatReader, BinaryFormatWriter},
             BinaryFormat,
         },
@@ -556,7 +571,11 @@ mod tests {
                 opcode
             );
             // make sure serialized bytes are always 9 bytes (1 for code and 8 for aux)
-            assert_eq!(aux_size, 8, "opcode {:?} length is not 9 bytes", opcode);
+            assert_eq!(
+                aux_size, INSTRUCTION_AUX_BYTES,
+                "opcode {:?} length is not 9 bytes",
+                opcode
+            );
             let mut reader = BinaryFormatReader::new(buf.as_slice());
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
             assert_eq!(opcode, opcode2);
