@@ -983,7 +983,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "891f5a47ac0f4c111c46c77a3480b1b36da7b3ef7074ea23e4faaad377d6080d"
 dependencies = [
  "ethereum-types 0.12.1",
- "hashbrown 0.14.2",
+ "hashbrown 0.14.3",
  "keccak-hash",
  "log",
  "parking_lot",
@@ -1472,12 +1472,9 @@ dependencies = [
  "assert_matches",
  "byteorder",
  "criterion",
- "ctor",
  "downcast-rs",
- "env_logger",
  "fluentbase-rwasm-core",
  "libm",
- "log",
  "num-traits",
  "paste",
  "rand",
@@ -1538,7 +1535,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-rwasm",
  "fluentbase-rwasm-core",
- "hashbrown 0.14.2",
+ "hashbrown 0.14.3",
  "hex",
  "log",
  "wat",
@@ -1865,9 +1862,9 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f93e7192158dbcda357bdec5fb5788eebf8bbac027f3f33e719d29135ae84156"
+checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
 dependencies = [
  "ahash",
  "allocator-api2",
@@ -2147,7 +2144,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f"
 dependencies = [
  "equivalent",
- "hashbrown 0.14.2",
+ "hashbrown 0.14.3",
 ]
 
 [[package]]
@@ -3014,9 +3011,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.69"
+version = "1.0.70"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "134c189feb4956b20f6f547d2cf727d4c0fe06722b20a0eec87ed445a97f92da"
+checksum = "39278fbbf5fb4f646ce651690877f89d1c5811a3d4acb27700c1cb3cdb78fd3b"
 dependencies = [
  "unicode-ident",
 ]

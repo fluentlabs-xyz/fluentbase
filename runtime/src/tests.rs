@@ -257,7 +257,7 @@ fn test_keccak256() {
         false,
     );
 
-    let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
+    let mut rmodule = ReducedModule::new(&rwasm_binary, false).unwrap();
     println!("rmodule.trace_binary(): {:?}", rmodule.trace());
     let execution_result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
     println!(

@@ -1,8 +1,12 @@
+use crate::{
+    exported_memory_vec,
+    instruction::exported_memory_slice,
+    ExitCode,
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_rwasm::{rwasm::Compiler, Caller};
 use fluentbase_rwasm_core::common::Trap;
-
-use crate::instruction::exported_memory_slice;
-use crate::{exported_memory_vec, ExitCode, Runtime, RuntimeContext};
 
 pub(crate) fn rwasm_compile(
     mut caller: Caller<'_, RuntimeContext>,

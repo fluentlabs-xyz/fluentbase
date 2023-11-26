@@ -517,8 +517,8 @@ impl<'linker> Compiler<'linker> {
                 unreachable!("check this")
             }
             WI::Return(drop_keep) => {
+                DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
                 if !self.translate_func_as_inline {
-                    DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
                     self.code_section.op_br_indirect(0);
                 }
             }

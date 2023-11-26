@@ -26,9 +26,8 @@ mod evm_to_rwasm_tests {
         assert_eq!(res, InstructionResult::Stop);
 
         let mut buffer = vec![0; 1024 * 1024];
-        let mut buffer_tmp = vec![0; 1024 * 1024];
         let mut binary_format_writer = BinaryFormatWriter::new(&mut buffer);
-        let mut binary_format_writer_tmp = BinaryFormatWriter::new(&mut buffer_tmp);
+        // let mut binary_format_writer_tmp = BinaryFormatWriter::new(&mut buffer_tmp);
 
         let mut preamble = InstructionSet::new();
         preamble.op_i32_const(100);
@@ -38,45 +37,47 @@ mod evm_to_rwasm_tests {
 
         compiler
             .instruction_set
-            .write_binary(&mut binary_format_writer_tmp)
-            .unwrap();
-        let mut rmodule_tmp = ReducedModule::new(&binary_format_writer_tmp.to_vec()).unwrap();
-        println!("\nrmodule_tmp.trace_binary(): \n{}\n", rmodule_tmp.trace());
-
-        compiler
-            .instruction_set
             .write_binary(&mut binary_format_writer)
             .unwrap();
         let rwasm_binary = binary_format_writer.to_vec();
 
-        println!("\nrwasm_binary.len(): {}", rwasm_binary.len());
-        let mut instruction_set = ReducedModule::new(&rwasm_binary)
+        let mut instruction_set = ReducedModule::new(&rwasm_binary, true)
             .unwrap()
             .bytecode()
             .clone();
-        println!("\nrmodule.trace_binary(): \n{}\n", instruction_set.trace());
-        // let import_linker = ImportLinker::default();
-        // let config = Config::default();
-        // let engine = Engine::new(&config);
-        // let mut module_builder =
-        //     rmodule.to_module_builder(&engine, &import_linker, FuncType::new([], []));
-        // module_builder.push_default_memory(100, None).unwrap();
-        // let module = module_builder.finish();
+        debug!(
+            "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",
+            rwasm_binary.len(),
+            instruction_set.trace()
+        );
 
+        let mut global_memory = vec![0u8; 1024 * 1024];
+        let mut global_memory_len: usize = 0;
         let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result = result.unwrap();
-        debug!("\nlogs:");
+        debug!("mem changes:");
         for log in execution_result.tracer().logs.iter() {
             if log.memory_changes.len() > 0 {
-                debug!("memory_changes: {:?}", log.memory_changes)
+                debug!(
+                    "log opcode {} memory_changes {:?}",
+                    log.opcode, &log.memory_changes
+                );
+            }
+            for change in &log.memory_changes {
+                let new_len = (change.offset + change.len) as usize;
+                global_memory[change.offset as usize..new_len].copy_from_slice(&change.data);
+                if new_len > global_memory_len {
+                    global_memory_len = (change.offset + change.len) as usize;
+                }
             }
         }
-        debug!(
-            "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
-            execution_result.data().exit_code(),
-            execution_result.tracer()
-        );
+        debug!("global_memory {:?}", &global_memory[..global_memory_len]);
+        // debug!(
+        //     "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
+        //     execution_result.data().exit_code(),
+        //     execution_result.tracer()
+        // );
     }
 
     #[test]
@@ -138,9 +139,10 @@ mod evm_to_rwasm_tests {
     fn gt_opcode() {
         let offset = 0;
         let a0_0 = 1;
-        let a1_0 = 2;
-        let b0_0 = 2;
-        let b1_0 = 1;
+        let a1_0 = 1;
+
+        let b0_0 = 0;
+        let b1_0 = 0;
         // if a > b
         let evm_bytecode_bytes: Vec<u8> = vec![
             // op: `mem_offset` a=1 b=0
@@ -148,6 +150,11 @@ mod evm_to_rwasm_tests {
             PUSH1, offset, PUSH9, a1_0, 0, 0, 0, 0, 0, 0, 0, a0_0, PUSH9, b1_0, 0, 0, 0, 0, 0, 0, 0,
             b0_0, GT,
         ];
+        // let evm_bytecode_bytes: Vec<u8> = vec![
+        //     // op: `mem_offset` a=1 b=0
+        //     // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
+        //     PUSH1, offset, PUSH1, a0_0, PUSH1, b0_0, GT,
+        // ];
 
         test(&evm_bytecode_bytes);
     }

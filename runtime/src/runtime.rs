@@ -1,33 +1,69 @@
-use std::mem::take;
-
+use crate::{
+    macros::{forward_call, forward_call_args},
+    ExitCode,
+    RuntimeError,
+    SysFuncIdx,
+    RECURSIVE_MAX_DEPTH,
+    STACK_MAX_HEIGHT,
+};
 use fluentbase_rwasm::{
     engine::Tracer,
     rwasm::{
-        ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError,
-        ARGS_GET_FUEL_AMOUNT, ARGS_SIZES_GET_FUEL_AMOUNT, ENVIRON_GET_FUEL_AMOUNT,
-        ENVIRON_SIZES_GET_FUEL_AMOUNT, FD_WRITE_FUEL_AMOUNT, PROC_EXIT_FUEL_AMOUNT,
-        _CRYPTO_KECCAK256_FUEL_AMOUNT, _CRYPTO_POSEIDON2_FUEL_AMOUNT, _CRYPTO_POSEIDON_FUEL_AMOUNT,
-        _ECC_SECP256K1_RECOVER_FUEL_AMOUNT, _ECC_SECP256K1_VERIFY_FUEL_AMOUNT,
-        _MPT_GET_FUEL_AMOUNT, _MPT_GET_ROOT_FUEL_AMOUNT, _MPT_OPEN_FUEL_AMOUNT,
-        _MPT_UPDATE_FUEL_AMOUNT, _RWASM_COMPILE_FUEL_AMOUNT, _RWASM_TRANSACT_FUEL_AMOUNT,
-        _SYS_HALT_FUEL_AMOUNT, _SYS_READ_FUEL_AMOUNT, _SYS_STATE_FUEL_AMOUNT,
-        _SYS_WRITE_FUEL_AMOUNT, _ZKTRIE_GET_BALANCE_FUEL_AMOUNT, _ZKTRIE_GET_CODE_HASH_FUEL_AMOUNT,
-        _ZKTRIE_GET_CODE_SIZE_FUEL_AMOUNT, _ZKTRIE_GET_NONCE_FUEL_AMOUNT,
-        _ZKTRIE_GET_STORAGE_ROOT_FUEL_AMOUNT, _ZKTRIE_GET_STORE_FUEL_AMOUNT,
-        _ZKTRIE_OPEN_FUEL_AMOUNT, _ZKTRIE_UPDATE_BALANCE_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_CODE_HASH_FUEL_AMOUNT, _ZKTRIE_UPDATE_CODE_SIZE_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_NONCE_FUEL_AMOUNT, _ZKTRIE_UPDATE_STORAGE_ROOT_FUEL_AMOUNT,
+        ImportFunc,
+        ImportLinker,
+        InstructionSet,
+        ReducedModule,
+        ReducedModuleError,
+        ARGS_GET_FUEL_AMOUNT,
+        ARGS_SIZES_GET_FUEL_AMOUNT,
+        ENVIRON_GET_FUEL_AMOUNT,
+        ENVIRON_SIZES_GET_FUEL_AMOUNT,
+        FD_WRITE_FUEL_AMOUNT,
+        PROC_EXIT_FUEL_AMOUNT,
+        _CRYPTO_KECCAK256_FUEL_AMOUNT,
+        _CRYPTO_POSEIDON2_FUEL_AMOUNT,
+        _CRYPTO_POSEIDON_FUEL_AMOUNT,
+        _ECC_SECP256K1_RECOVER_FUEL_AMOUNT,
+        _ECC_SECP256K1_VERIFY_FUEL_AMOUNT,
+        _MPT_GET_FUEL_AMOUNT,
+        _MPT_GET_ROOT_FUEL_AMOUNT,
+        _MPT_OPEN_FUEL_AMOUNT,
+        _MPT_UPDATE_FUEL_AMOUNT,
+        _RWASM_COMPILE_FUEL_AMOUNT,
+        _RWASM_TRANSACT_FUEL_AMOUNT,
+        _SYS_HALT_FUEL_AMOUNT,
+        _SYS_READ_FUEL_AMOUNT,
+        _SYS_STATE_FUEL_AMOUNT,
+        _SYS_WRITE_FUEL_AMOUNT,
+        _ZKTRIE_GET_BALANCE_FUEL_AMOUNT,
+        _ZKTRIE_GET_CODE_HASH_FUEL_AMOUNT,
+        _ZKTRIE_GET_CODE_SIZE_FUEL_AMOUNT,
+        _ZKTRIE_GET_NONCE_FUEL_AMOUNT,
+        _ZKTRIE_GET_STORAGE_ROOT_FUEL_AMOUNT,
+        _ZKTRIE_GET_STORE_FUEL_AMOUNT,
+        _ZKTRIE_OPEN_FUEL_AMOUNT,
+        _ZKTRIE_UPDATE_BALANCE_FUEL_AMOUNT,
+        _ZKTRIE_UPDATE_CODE_HASH_FUEL_AMOUNT,
+        _ZKTRIE_UPDATE_CODE_SIZE_FUEL_AMOUNT,
+        _ZKTRIE_UPDATE_NONCE_FUEL_AMOUNT,
+        _ZKTRIE_UPDATE_STORAGE_ROOT_FUEL_AMOUNT,
         _ZKTRIE_UPDATE_STORE_FUEL_AMOUNT,
     },
-    AsContextMut, Caller, Config, Engine, FuelConsumptionMode, Func, FuncType, Instance, Linker,
-    Module, StackLimits, Store,
+    AsContextMut,
+    Caller,
+    Config,
+    Engine,
+    FuelConsumptionMode,
+    Func,
+    FuncType,
+    Instance,
+    Linker,
+    Module,
+    StackLimits,
+    Store,
 };
 use fluentbase_rwasm_core::common::{Trap, ValueType};
-
-use crate::{
-    macros::{forward_call, forward_call_args},
-    ExitCode, RuntimeError, SysFuncIdx, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT,
-};
+use std::mem::take;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeContext {
@@ -496,7 +532,7 @@ impl Runtime {
         };
 
         let (module, bytecode) = {
-            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
+            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice(), false)
                 .map_err(Into::<RuntimeError>::into)?;
             let module_builder =
                 reduced_module.to_module_builder(&engine, import_linker, FuncType::new([], []));
@@ -569,19 +605,30 @@ impl Runtime {
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32, state: i32, fuel_limit: i32) -> i32);
         // zktrie
         // forward_call!(linker, store, "env", "_zktrie_open", fn zktrie_open() -> ());
-        // forward_call!(linker, store, "env", "_zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // forward_call!(linker, store, "env", "_zktrie_update_balance", fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // forward_call!(linker, store, "env", "_zktrie_update_storage_root", fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // forward_call!(linker, store, "env", "_zktrie_update_code_hash", fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // forward_call!(linker, store, "env", "_zktrie_update_code_size", fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // forward_call!(linker, store, "env", "_zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        // forward_call!(linker, store, "env", "_zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // mpt
+        // forward_call!(linker, store, "env", "_zktrie_update_nonce", fn
+        // zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) ->
+        // ()); forward_call!(linker, store, "env", "_zktrie_get_nonce", fn
+        // zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_balance", fn
+        // zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_balance", fn
+        // zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_storage_root", fn
+        // zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len:
+        // i32) -> ()); forward_call!(linker, store, "env", "_zktrie_get_storage_root", fn
+        // zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_code_hash", fn
+        // zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_code_hash", fn
+        // zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_code_size", fn
+        // zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_code_size", fn
+        // zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_store", fn
+        // zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) ->
+        // ()); forward_call!(linker, store, "env", "_zktrie_get_store", fn
+        // zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32); mpt
         forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
         forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);

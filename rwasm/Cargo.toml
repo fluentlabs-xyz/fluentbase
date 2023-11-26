@@ -6,7 +6,7 @@ description = "rwasm"
 edition = "2021"
 
 [dependencies]
-fluentbase-rwasm-core = {path = "./core"}
+fluentbase-rwasm-core = { path = "./core" }
 wasmparser = { version = "0.100.1", package = "wasmparser-nostd", default-features = false }
 spin = { version = "0.9", default-features = false, features = [
     "mutex",
@@ -22,9 +22,6 @@ byteorder = { version = "1.4.3", default-features = false }
 # strum is used only with test cfg
 strum = { version = "0.25.0" }
 strum_macros = { version = "0.25.1" }
-log = "0.4.20"
-ctor = "0.2.5"
-env_logger = "0.10.1"
 
 [dev-dependencies]
 wat = "1"
