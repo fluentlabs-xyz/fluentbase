@@ -183,7 +183,7 @@ impl ReducedModule {
         builder
     }
 
-    pub fn trace_binary(&self) -> String {
-        self.instruction_set.trace_binary()
+    pub fn trace(&self) -> String {
+        self.instruction_set.trace()
     }
 }

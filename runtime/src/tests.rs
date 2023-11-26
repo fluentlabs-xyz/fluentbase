@@ -1,9 +1,8 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
-use fluentbase_rwasm::rwasm::ReducedModule;
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
-    rwasm::{Compiler, FuncOrExport},
+    rwasm::{Compiler, FuncOrExport, ReducedModule},
 };
 use fluentbase_rwasm_core::common::Trap;
 use keccak_hash::H256;
@@ -259,7 +258,7 @@ fn test_keccak256() {
     );
 
     let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
-    println!("rmodule.trace_binary(): {:?}", rmodule.trace_binary());
+    println!("rmodule.trace_binary(): {:?}", rmodule.trace());
     let execution_result = Runtime::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
     println!(
         "execution_result (exit_code {}): {:?}",

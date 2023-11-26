@@ -13,8 +13,10 @@ pub(crate) mod test_helper;
 
 #[cfg(feature = "fluentbase-runtime")]
 mod all_tests {
-    use fluentbase_rwasm::rwasm::{Compiler, FuncOrExport, ReducedModule};
-    use fluentbase_rwasm::Engine;
+    use fluentbase_rwasm::{
+        rwasm::{Compiler, FuncOrExport, ReducedModule},
+        Engine,
+    };
 
     #[test]
     pub fn bitwise_byte_rwasm() {
@@ -35,7 +37,17 @@ mod all_tests {
         let reduced_module = ReducedModule::new(&rwasm).unwrap();
         println!(
             "reduced_module.trace_binary(): |||\n{}\n|||",
-            reduced_module.trace_binary()
+            reduced_module.trace()
         );
+    }
+}
+
+#[ctor::ctor]
+fn log_init() {
+    let init_res =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .try_init();
+    if let Err(e) = init_res {
+        println!("failed to init logger: {}", e.to_string());
     }
 }

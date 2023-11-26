@@ -499,10 +499,10 @@ impl InstructionSet {
         count
     }
 
-    pub fn trace_binary(&self) -> String {
+    pub fn trace(&self) -> String {
         let mut result = String::new();
-        for opcode in self.instr.iter() {
-            let str = format!("{:?}\n", opcode);
+        for (offset, opcode) in self.instr.iter().enumerate() {
+            let str = format!("{}: {:?}\n", offset, opcode);
             result += str.as_str();
         }
         result
