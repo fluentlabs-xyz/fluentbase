@@ -8,23 +8,36 @@ mod platform;
 mod reduced_module;
 
 pub use self::{
-    binary_format::*, compiler::*, consts::*, instruction_set::*, platform::*, reduced_module::*,
+    binary_format::*,
+    compiler::*,
+    consts::*,
+    instruction_set::*,
+    platform::*,
+    reduced_module::*,
 };
 
 #[cfg(test)]
 mod tests {
+    use super::_SYS_HALT_FUEL_AMOUNT;
     use crate::{
         engine::bytecode::Instruction,
         rwasm::{
-            compiler::Compiler, platform::ImportLinker, reduced_module::ReducedModule,
-            FuncOrExport, ImportFunc,
+            compiler::Compiler,
+            platform::ImportLinker,
+            reduced_module::ReducedModule,
+            FuncOrExport,
+            ImportFunc,
         },
-        AsContextMut, Caller, Config, Engine, Func, Linker, Store,
+        AsContextMut,
+        Caller,
+        Config,
+        Engine,
+        Func,
+        Linker,
+        Store,
     };
     use alloc::string::ToString;
     use fluentbase_rwasm_core::common::ValueType;
-
-    use super::_SYS_HALT_FUEL_AMOUNT;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -58,7 +71,7 @@ mod tests {
         let binary = translator.finalize(None, true).unwrap();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
-        let _trace = reduced_module.trace_binary();
+        let _trace = reduced_module.trace();
         // execute translated rwasm
         let config = Config::default();
         let engine = Engine::new(&config);

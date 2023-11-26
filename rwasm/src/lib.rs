@@ -173,3 +173,13 @@ use self::{
     store::{StoreInner, Stored},
     table::{ElementSegment, ElementSegmentEntity, ElementSegmentIdx, TableEntity, TableIdx},
 };
+
+#[ctor::ctor]
+fn log_init() {
+    let init_res =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .try_init();
+    if let Err(e) = init_res {
+        println!("failed to init logger: {}", e.to_string());
+    }
+}

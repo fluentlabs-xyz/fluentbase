@@ -26,7 +26,9 @@ mod evm_to_rwasm_tests {
         assert_eq!(res, InstructionResult::Stop);
 
         let mut buffer = vec![0; 1024 * 1024];
+        let mut buffer_tmp = vec![0; 1024 * 1024];
         let mut binary_format_writer = BinaryFormatWriter::new(&mut buffer);
+        let mut binary_format_writer_tmp = BinaryFormatWriter::new(&mut buffer_tmp);
 
         let mut preamble = InstructionSet::new();
         preamble.op_i32_const(100);
@@ -36,13 +38,23 @@ mod evm_to_rwasm_tests {
 
         compiler
             .instruction_set
+            .write_binary(&mut binary_format_writer_tmp)
+            .unwrap();
+        let mut rmodule_tmp = ReducedModule::new(&binary_format_writer_tmp.to_vec()).unwrap();
+        println!("\nrmodule_tmp.trace_binary(): \n{}\n", rmodule_tmp.trace());
+
+        compiler
+            .instruction_set
             .write_binary(&mut binary_format_writer)
             .unwrap();
         let rwasm_binary = binary_format_writer.to_vec();
 
         println!("\nrwasm_binary.len(): {}", rwasm_binary.len());
-        let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
-        println!("\nrmodule.trace_binary(): \n{}\n", rmodule.trace_binary());
+        let mut instruction_set = ReducedModule::new(&rwasm_binary)
+            .unwrap()
+            .bytecode()
+            .clone();
+        println!("\nrmodule.trace_binary(): \n{}\n", instruction_set.trace());
         // let import_linker = ImportLinker::default();
         // let config = Config::default();
         // let engine = Engine::new(&config);
@@ -51,10 +63,6 @@ mod evm_to_rwasm_tests {
         // module_builder.push_default_memory(100, None).unwrap();
         // let module = module_builder.finish();
 
-        rmodule
-            .bytecode()
-            .write_binary(&mut binary_format_writer)
-            .unwrap();
         let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result = result.unwrap();

@@ -120,7 +120,7 @@ impl<'a> Translator<'a> {
                     "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
                     opcode,
                     instruction_set.instr.len(),
-                    instruction_set.trace_binary(),
+                    instruction_set.trace(),
                 );
             };
             self.opcode_to_rwasm_replacer

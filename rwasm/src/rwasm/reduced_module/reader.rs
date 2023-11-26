@@ -4,6 +4,7 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use fluentbase_rwasm_core::common::UntypedValue;
+use log::debug;
 
 #[derive(Debug, Clone)]
 pub struct ReducedModuleTrace {
@@ -94,6 +95,7 @@ impl<'a> ReducedModuleReader<'a> {
             instr,
         };
 
+        // debug!("offset {}", trace.offset);
         self.relative_position
             .insert(trace.offset as u32, self.instruction_set.len());
         if let Ok(instr) = instr {
@@ -111,11 +113,14 @@ impl<'a> ReducedModuleReader<'a> {
     }
 
     pub fn rewrite_offsets(&mut self) -> Result<(), BinaryFormatError> {
+        // debug!("rewrite_offsets:");
         for (index, opcode) in self.instruction_set.instr.iter_mut().enumerate() {
             if let Some(jump_offset) = opcode.get_jump_offset() {
+                let jump_offset = jump_offset.to_i32();
+                // debug!("  jump_offset {}", jump_offset);
                 let relative_offset = self
                     .relative_position
-                    .get(&(jump_offset.to_i32() as u32))
+                    .get(&(jump_offset as u32))
                     .ok_or(BinaryFormatError::ReachedUnreachable)?;
                 opcode.update_branch_offset(BranchOffset::from(
                     *relative_offset as i32 - index as i32,
