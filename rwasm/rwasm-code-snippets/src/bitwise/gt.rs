@@ -26,5 +26,5 @@ fn bitwise_gt(
         res = 1;
     }
 
-    return (0, 0, 0, res);
+    (0, 0, 0, res)
 }

@@ -26,5 +26,5 @@ fn bitwise_slt(
     if a0_part < b0_part || a1 < b1 || a2 < b2 || a3 < b3 {
         return (0, 0, 0, 1);
     }
-    return (0, 0, 0, 0);
+    (0, 0, 0, 0)
 }

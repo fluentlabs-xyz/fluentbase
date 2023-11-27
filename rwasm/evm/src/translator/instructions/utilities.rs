@@ -24,6 +24,7 @@ pub(super) fn replace_current_opcode_with_code_snippet(
     // result postprocessing based on opcode
     const I64_STORE_OFFSET: usize = 0;
     match opcode {
+        // bitwise
         opcode::BYTE
         | opcode::EQ
         | opcode::GAS
@@ -33,7 +34,9 @@ pub(super) fn replace_current_opcode_with_code_snippet(
         | opcode::SGT
         | opcode::SHL
         | opcode::SHR
-        | opcode::SLT => {
+        | opcode::SLT
+        // arithmetic
+        | opcode::SUB => {
             // TODO get rid of this hack
             const OFFSET_GARBAGE_COUNT: usize = 3;
             (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());

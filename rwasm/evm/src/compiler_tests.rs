@@ -14,7 +14,7 @@ mod evm_to_rwasm_tests {
         hex::decode(hex.replace(" ", "")).unwrap()
     }
 
-    use crate::translator::instructions::opcode::{BYTE, SHR};
+    use crate::translator::instructions::opcode::{BYTE, SHR, SUB};
     use log::debug;
 
     fn run_test(evm_bytecode_bytes: &Vec<u8>) -> Vec<u8> {
@@ -56,12 +56,12 @@ mod evm_to_rwasm_tests {
         let execution_result = result.unwrap();
         // debug!("mem changes:");
         for log in execution_result.tracer().logs.iter() {
-            // if log.memory_changes.len() > 0 {
-            //     debug!(
-            //         "log opcode {} memory_changes {:?}",
-            //         log.opcode, &log.memory_changes
-            //     );
-            // }
+            if log.memory_changes.len() > 0 {
+                debug!(
+                    "log opcode {} memory_changes {:?}",
+                    log.opcode, &log.memory_changes
+                );
+            }
             for change in &log.memory_changes {
                 let new_len = (change.offset + change.len) as usize;
                 global_memory[change.offset as usize..new_len].copy_from_slice(&change.data);
@@ -70,20 +70,49 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
+        assert!(global_memory_len <= 32);
         let global_memory = global_memory[0..32].to_vec();
         debug!(
             "global_memory (len {}) {:?}",
             global_memory_len,
             &global_memory[..global_memory_len]
         );
-        debug!(
-            "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
-            execution_result.data().exit_code(),
-            execution_result.tracer()
-        );
+        // debug!(
+        //     "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
+        //     execution_result.data().exit_code(),
+        //     execution_result.tracer()
+        // );
         assert_eq!(execution_result.data().exit_code(), 0);
 
         global_memory
+    }
+
+    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) {
+        assert!(cases.len() > 0);
+        for case in cases {
+            let a = &case.0;
+            let b = &case.1;
+            let res_expected = &case.2;
+            let mut evm_bytecode_bytes: Vec<u8> = vec![];
+            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+            evm_bytecode_bytes.push(PUSH0);
+            evm_bytecode_bytes.push(PUSH32);
+            evm_bytecode_bytes.extend(a);
+            evm_bytecode_bytes.push(PUSH32);
+            evm_bytecode_bytes.extend(b);
+            evm_bytecode_bytes.push(opcode);
+
+            let mut global_memory = run_test(&evm_bytecode_bytes);
+            const CHUNK_LEN: usize = 8;
+            for chunk in global_memory.chunks_mut(8) {
+                for i in 0..(CHUNK_LEN / 2) {
+                    let tmp = chunk[i];
+                    chunk[i] = chunk[CHUNK_LEN - i - 1];
+                    chunk[CHUNK_LEN - i - 1] = tmp;
+                }
+            }
+            assert_eq!(res_expected, &global_memory[0..32]);
+        }
     }
 
     #[test]
@@ -183,31 +212,31 @@ mod evm_to_rwasm_tests {
                 d("0x0000000000000000000000000000000000000000000000000000000000000004"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000004"),
                 d("0xFF00000000000000000000000000000000000000000000000000000000000000"),
                 d("0xF000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFE"),
                 d("0xFF00000000000000000000000000000000000000000000000000000000000000"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
                 d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
                 d("0x8000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000100"),
                 d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 d("0xF000000000000000000000000000000000000000000000000000000000000000"),
                 d("0xe000000000000000000000000000000000000000000000000000000000000000"),
@@ -240,49 +269,49 @@ mod evm_to_rwasm_tests {
                 d("0x0000000000000000000000000000000000000000000000000000000000000002"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000004"),
                 d("0x00000000000000000000000000000000000000000000000000000000000000FF"),
                 d("0x000000000000000000000000000000000000000000000000000000000000000F"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000004"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000008"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
             ),
             (
-                // external
+                // externally checked
                 d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000001"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000100"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000000000000000000000000000000000000000101"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0x0000000000000000000000000F00000000000000000000000000000000000000"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
-                // external
+                // externally checked
                 d("0xF000000000000000000000000000000000000000000000000000000000000000"),
                 d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 d("0x0000000000000000000000000000000000000000000000000000000000000000"),
@@ -349,7 +378,54 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn sub() {
-        // TODO
+        let cases = [
+            // cases where: a>=0, b>=0, a-b >=0
+            // (
+            //     // a=1 b=1 r=0
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     // a=2 b=1 r=0
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            // ),
+            // (
+            //     // a=3 b=1 r=0
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000003"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            // ),
+            // (
+            //     // a=30001 b=1 r=30000
+            //     d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+            // ),
+            // (
+            //     // a=b b=a r=0
+            //     d("0x0000000012000000012340000000f0000020000000f123000000030000000001"),
+            //     d("0x0000000012000000012340000000f0000020000000f123000000030000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     // externally checked
+            //     d("0x000000000000000000000000000000000000000000f123000000000000000001"),
+            //     d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+            //     d("0x000000000000000000000000000000000000000000f122ffffffffffffff8ad0"),
+            // ),
+            // cases where: a>=0, b>0, a-b < 0
+            (
+                // a=0 b=9 r=-9
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000009"),
+                d("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7"),
+            ),
+        ];
+
+        test_binary(SUB, &cases);
     }
 
     #[test]
@@ -510,32 +586,5 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary(LT, &cases);
-    }
-
-    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) {
-        for case in cases {
-            let a = &case.0;
-            let b = &case.1;
-            let res_expected = &case.2;
-            let mut evm_bytecode_bytes: Vec<u8> = vec![];
-            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
-            evm_bytecode_bytes.push(PUSH0);
-            evm_bytecode_bytes.push(PUSH32);
-            evm_bytecode_bytes.extend(a);
-            evm_bytecode_bytes.push(PUSH32);
-            evm_bytecode_bytes.extend(b);
-            evm_bytecode_bytes.push(opcode);
-
-            let mut global_memory = run_test(&evm_bytecode_bytes);
-            const CHUNK_LEN: usize = 8;
-            for chunk in global_memory.chunks_mut(8) {
-                for i in 0..(CHUNK_LEN / 2) {
-                    let tmp = chunk[i];
-                    chunk[i] = chunk[CHUNK_LEN - i - 1];
-                    chunk[CHUNK_LEN - i - 1] = tmp;
-                }
-            }
-            assert_eq!(&global_memory[0..32], res_expected);
-        }
     }
 }
