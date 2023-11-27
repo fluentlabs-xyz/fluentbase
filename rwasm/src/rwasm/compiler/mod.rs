@@ -13,7 +13,9 @@ use crate::{
         instruction_set::InstructionSet,
         ImportLinker,
     },
-    Config, Engine, Module,
+    Config,
+    Engine,
+    Module,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
@@ -617,9 +619,9 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
-        let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
-        self.code_section.op_consume_fuel(import_index_and_fuel_amount.1);
-        self.code_section.op_call(import_index_and_fuel_amount.0);
+        let (import_index, fuel_amount) = self.resolve_host_call(fn_index)?;
+        self.code_section.op_consume_fuel(fuel_amount);
+        self.code_section.op_call(import_index);
         Ok(())
     }
 

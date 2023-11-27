@@ -26,12 +26,6 @@ pub enum SysFuncIdx {
     // RWASM runtime
     RWASM_TRANSACT = 0xC001, // env::_rwasm_transact
     RWASM_COMPILE = 0xC002,  // env::_rwasm_compile
-    // EVM-compatible host functions (starts with 0xEE00)
-    EVM_STOP = 0xEE01,
-    EVM_RETURN = 0xEE02,
-    EVM_KECCAK256 = 0xEE03,
-    EVM_CALLVALUE = 0xEE08,
-    EVM_CALLDATALOAD = 0xEE09,
     // zktrie functions
     ZKTRIE_OPEN = 0xDD01,
     ZKTRIE_UPDATE_NONCE = 0xDD02,

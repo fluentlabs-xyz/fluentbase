@@ -2,27 +2,20 @@
 
 extern crate core;
 
-// pub use crate::zktrie::*;
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
-pub use instruction::*;
-pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
+pub use zktrie::*;
 
-mod crypto;
-mod ecc;
+mod fuel;
 mod instruction;
 mod macros;
-mod mpt;
-mod mpt_helpers;
 mod platform;
 mod runtime;
-mod rwasm;
 #[cfg(test)]
 mod tests;
 mod types;
-// mod zktrie;
 
 #[derive(Debug)]
 pub enum RuntimeError {

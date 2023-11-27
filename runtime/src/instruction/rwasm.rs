@@ -1,5 +1,9 @@
-use crate::instruction::exported_memory_slice;
-use crate::{exported_memory_vec, ExitCode, Runtime, RuntimeContext};
+use crate::{
+    instruction::{exported_memory_slice, exported_memory_vec},
+    ExitCode,
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_rwasm::{
     common::Trap,
     rwasm::{Compiler, CompilerError},
