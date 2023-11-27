@@ -11,7 +11,6 @@ pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, r
 #[cfg(test)]
 mod tests {
     use crate::{
-        common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
             compiler::Compiler,
@@ -29,6 +28,7 @@ mod tests {
         Store,
     };
     use alloc::string::ToString;
+    use fluentbase_rwasm_core::common::ValueType;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -56,12 +56,13 @@ mod tests {
             &[ValueType::I32],
             &[],
         ));
-        let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-        translator.translate(run_config.entrypoint).unwrap();
-        let binary = translator.finalize().unwrap();
-        let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
+        let mut translator =
+            Compiler::new_with_linker(&wasm_binary, Some(&import_linker), true).unwrap();
+        translator.translate(run_config.entrypoint, true).unwrap();
+        let binary = translator.finalize(None, true).unwrap();
+        let reduced_module = ReducedModule::new(binary.as_slice(), false).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
-        let _trace = reduced_module.trace_binary();
+        let _trace = reduced_module.trace();
         // execute translated rwasm
         let mut config = Config::default();
         config.consume_fuel(true);

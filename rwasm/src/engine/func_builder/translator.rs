@@ -1,55 +1,30 @@
 use super::{
     control_frame::{
-        BlockControlFrame,
-        ControlFrame,
-        IfControlFrame,
-        LoopControlFrame,
-        UnreachableControlFrame,
+        BlockControlFrame, ControlFrame, IfControlFrame, LoopControlFrame, UnreachableControlFrame,
     },
     labels::LabelRef,
     locals_registry::LocalsRegistry,
     value_stack::ValueStackHeight,
-    ControlFlowStack,
-    InstructionsBuilder,
-    TranslationError,
+    ControlFlowStack, InstructionsBuilder, TranslationError,
 };
 use crate::{
-    common::{UntypedValue, ValueType, F32, F64},
     engine::{
         bytecode::{
-            self,
-            AddressOffset,
-            BranchOffset,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            Instruction,
-            SignatureIdx,
-            TableIdx,
+            self, AddressOffset, BranchOffset, BranchTableTargets, DataSegmentIdx,
+            ElementSegmentIdx, Instruction, SignatureIdx, TableIdx,
         },
         config::FuelCosts,
         func_builder::control_frame::ControlFrameKind,
-        CompiledFunc,
-        DropKeep,
-        Instr,
-        RelativeDepth,
+        CompiledFunc, DropKeep, Instr, RelativeDepth,
     },
     module::{
-        BlockType,
-        ConstExpr,
-        FuncIdx,
-        FuncTypeIdx,
-        GlobalIdx,
-        MemoryIdx,
-        ModuleResources,
+        BlockType, ConstExpr, FuncIdx, FuncTypeIdx, GlobalIdx, MemoryIdx, ModuleResources,
         DEFAULT_MEMORY_INDEX,
     },
-    Engine,
-    FuncType,
-    GlobalType,
-    Mutability,
+    Engine, FuncType, GlobalType, Mutability,
 };
 use alloc::vec::Vec;
+use fluentbase_rwasm_core::common::{UntypedValue, ValueType, F32, F64};
 use wasmparser::VisitOperator;
 
 /// Reusable allocations of a [`FuncTranslator`].

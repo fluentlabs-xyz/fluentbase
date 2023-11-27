@@ -1,5 +1,6 @@
 use crate::{instruction::exported_memory_vec, runtime::RuntimeContext, ExitCode};
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 
 pub(crate) fn sys_halt(mut caller: Caller<'_, RuntimeContext>, exit_code: u32) -> Result<(), Trap> {
     caller.data_mut().exit_code = exit_code as i32;

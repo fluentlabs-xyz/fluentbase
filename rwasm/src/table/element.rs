@@ -1,12 +1,12 @@
 use crate::{
     arena::ArenaIndex,
-    common::ValueType,
     module,
     module::{ConstExpr, ElementSegmentItems},
     store::Stored,
     AsContext, AsContextMut,
 };
 use alloc::sync::Arc;
+use fluentbase_rwasm_core::common::ValueType;
 
 /// A raw index to a element segment entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

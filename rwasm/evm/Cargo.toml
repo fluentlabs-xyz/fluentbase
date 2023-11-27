@@ -1,11 +1,32 @@
 [package]
-name = "fluentbase-rwasm-evm"
+name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { path = ".." }
-byteorder = "1.4.3"
-wat = "1.0.66"
-anyhow = "1.0.71"
-wast = "62.0.0"
+fluentbase-rwasm-core = { path = "../core" }
+fluentbase-runtime = { path = "../../runtime" }
+
+[dev-dependencies]
+ctor = "0.2.5"
+env_logger = "0.10.1"
+log = "0.4.20"
+
+alloy-primitives = { version = "0.4", default-features = false, features = [
+    "rlp",
+] }
+hashbrown = "0.14"
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+wat = "1.0.80"
+
+[build-dependencies]
+hex = "0.4"
+
+[features]
+default = ["std"]
+std = [
+    "hex/std",
+    "bitvec/std",
+]
+

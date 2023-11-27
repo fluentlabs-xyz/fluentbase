@@ -66,6 +66,10 @@ impl<'a> BinaryFormatWriter<'a> {
         self.pos = 0;
     }
 
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
     fn skip(&mut self, n: usize) -> Result<usize, BinaryFormatError> {
         assert!(self.sink.len() >= self.pos + n);
         self.pos += n;

@@ -7,7 +7,7 @@ use crate::{
     TypedResumableCall,
 };
 use core::{fmt, fmt::Debug, marker::PhantomData};
-use crate::common::{Trap, UntypedValue};
+use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
 /// A typed [`Func`] instance.
 ///

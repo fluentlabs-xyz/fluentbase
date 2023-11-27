@@ -1,5 +1,6 @@
-use crate::{runtime::RuntimeContext, ExitCode, Runtime};
+use crate::runtime::RuntimeContext;
 use fluentbase_rwasm::{AsContextMut, Caller, Extern, Memory};
+pub(crate) use mpt::*;
 
 mod crypto;
 mod ecc;

@@ -1,6 +1,7 @@
 use crate::{instruction::exported_memory_vec, RuntimeContext};
 use fluentbase_poseidon::{poseidon_hash, Hashable};
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use keccak_hash::write_keccak;
 

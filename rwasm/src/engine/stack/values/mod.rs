@@ -7,12 +7,10 @@ mod tests;
 
 pub use self::sp::ValueStackPtr;
 use super::{err_stack_overflow, DEFAULT_MAX_VALUE_STACK_HEIGHT, DEFAULT_MIN_VALUE_STACK_HEIGHT};
-use crate::{
-    common::{TrapCode, UntypedValue},
-    engine::code_map::FuncHeader,
-};
+use crate::engine::code_map::FuncHeader;
 use alloc::vec::Vec;
 use core::{fmt, fmt::Debug, iter, mem::size_of};
+use fluentbase_rwasm_core::common::{TrapCode, UntypedValue};
 
 /// The value stack that is used to execute Wasm bytecode.
 ///
@@ -46,7 +44,8 @@ impl Debug for ValueStack {
 
 impl PartialEq for ValueStack {
     fn eq(&self, other: &Self) -> bool {
-        self.stack_ptr == other.stack_ptr && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
+        self.stack_ptr == other.stack_ptr
+            && self.entries[..self.stack_ptr] == other.entries[..other.stack_ptr]
     }
 }
 
@@ -134,7 +133,10 @@ impl ValueStack {
     /// - If the `initial_len` is zero.
     /// - If the `initial_len` is greater than `maximum_len`.
     pub fn new(initial_len: usize, maximum_len: usize) -> Self {
-        assert!(initial_len > 0, "cannot initialize the value stack with zero length",);
+        assert!(
+            initial_len > 0,
+            "cannot initialize the value stack with zero length",
+        );
         assert!(
             initial_len <= maximum_len,
             "initial value stack length is greater than maximum value stack length",
@@ -249,7 +251,8 @@ impl ValueStack {
             // Note: By extending with the new length we effectively double
             // the current value stack length and add the additional flat amount
             // on top. This avoids too many frequent reallocations.
-            self.entries.extend(iter::repeat(UntypedValue::default()).take(new_len));
+            self.entries
+                .extend(iter::repeat(UntypedValue::default()).take(new_len));
         }
         Ok(())
     }

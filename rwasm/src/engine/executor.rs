@@ -1,43 +1,27 @@
 use super::{bytecode::BranchOffset, const_pool::ConstRef, CompiledFunc, ConstPoolView};
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, TrapCode, UntypedValue},
     engine::{
         bytecode::{
-            AddressOffset,
-            BlockFuel,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            Instruction,
-            LocalDepth,
-            SignatureIdx,
-            TableIdx,
+            AddressOffset, BlockFuel, BranchTableTargets, DataSegmentIdx, ElementSegmentIdx,
+            FuncIdx, GlobalIdx, Instruction, LocalDepth, SignatureIdx, TableIdx,
         },
         cache::InstanceCache,
         code_map::{CodeMap, InstructionPtr},
         config::FuelCosts,
         stack::{CallStack, ValueStackPtr},
         tracer::Tracer,
-        DropKeep,
-        FuncFrame,
-        ValueStack,
+        DropKeep, FuncFrame, ValueStack,
     },
     func::FuncEntity,
     module::{ConstExpr, DEFAULT_MEMORY_INDEX},
     store::ResourceLimiterRef,
     table::TableEntity,
-    FuelConsumptionMode,
-    Func,
-    FuncRef,
-    Instance,
-    StoreInner,
-    Table,
+    FuelConsumptionMode, Func, FuncRef, Instance, StoreInner, Table,
 };
 use alloc::string::String;
 use core::cmp::{self};
+use fluentbase_rwasm_core::common::{Pages, TrapCode, UntypedValue};
 
 /// The outcome of a Wasm execution.
 ///

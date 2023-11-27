@@ -1,5 +1,5 @@
 use crate::{
-    common::Trap,
+    
     func::{FuncEntity, HostFuncEntity, HostFuncTrampolineEntity},
     module::{ImportName, ImportType},
     AsContext,
@@ -19,6 +19,7 @@ use crate::{
     TableType,
     Value,
 };
+use fluentbase_rwasm_core::common::Trap;
 use alloc::{
     collections::{btree_map::Entry, BTreeMap},
     sync::Arc,
@@ -747,7 +748,7 @@ impl<T> Linker<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::ValueType;
+    use fluentbase_rwasm_core::common::ValueType;
 
     use super::*;
     use crate::Store;

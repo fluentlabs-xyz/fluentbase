@@ -1,5 +1,6 @@
 use crate::{instruction::exported_memory_slice, runtime::RuntimeContext};
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 
 pub(crate) fn wasi_proc_exit(
     mut caller: Caller<'_, RuntimeContext>,

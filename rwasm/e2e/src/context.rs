@@ -1,7 +1,6 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
-    common::{ValueType, F32, F64},
     rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule},
     Config,
     Engine,
@@ -19,6 +18,7 @@ use fluentbase_rwasm::{
     TableType,
     Value,
 };
+use fluentbase_rwasm_core::common::{ValueType, F32, F64};
 use std::collections::HashMap;
 use wast::token::{Id, Span};
 
@@ -194,14 +194,19 @@ impl TestContext<'_> {
             .find(|export| export.name() == fn_name)
             .unwrap();
         let import_linker = ImportLinker::default();
-        let mut compiler = Compiler::new(wasm_binary.as_slice()).unwrap();
+        let mut compiler = Compiler::new(
+            wasm_binary.as_slice(),
+            self.engine.config().get_consume_fuel(),
+        )
+        .unwrap();
         compiler
-            .translate(Some(FuncOrExport::Func(
-                elem.index().into_func_idx().unwrap(),
-            )))
+            .translate(
+                Some(FuncOrExport::Func(elem.index().into_func_idx().unwrap())),
+                true,
+            )
             .unwrap();
-        let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let rwasm_binary = compiler.finalize(None, true).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
         let func_type = elem.ty().func().unwrap();
         let mut module_builder =
             reduced_module.to_module_builder(self.engine(), &import_linker, func_type.clone());
