@@ -1,4 +1,4 @@
-use crate::consts::{U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1_EXCEPT_MSB, U64_MSB_IS_1};
+use crate::consts::{U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1_EXCEPT_MSB, U64_MSBIT_IS_1};
 
 #[no_mangle]
 fn arithmetic_sub(
@@ -11,7 +11,7 @@ fn arithmetic_sub(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let a0_sign = a0 & U64_MSB_IS_1;
+    let a0_sign = a0 & U64_MSBIT_IS_1;
 
     let mut borrow = 0;
     let s0;
@@ -51,7 +51,7 @@ fn arithmetic_sub(
             // borrowed = 1;
         } else {
             // TODO process overflow
-            return (U64_MSB_IS_1, 0, 0, 0);
+            return (U64_MSBIT_IS_1, 0, 0, 0);
         }
     }
 

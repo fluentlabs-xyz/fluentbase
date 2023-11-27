@@ -11,10 +11,10 @@ fn bitwise_shr(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let mut s0 = 0;
-    let mut s1 = 0;
-    let mut s2 = 0;
-    let mut s3 = 0;
+    let mut s0: u64 = 0;
+    let mut s1: u64 = 0;
+    let mut s2: u64 = 0;
+    let mut s3: u64 = 0;
 
     if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {
         // return (0, 0, 0, 0);
@@ -43,5 +43,6 @@ fn bitwise_shr(
         s2 = b1 << shift_inv | b2 >> shift;
         s3 = b2 << shift_inv | b3 >> shift;
     }
-    return (s0, s1, s2, s3);
+
+    (s0, s1, s2, s3)
 }

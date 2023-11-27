@@ -1,4 +1,4 @@
-use crate::consts::{BYTE_MAX_VAL, U64_ALL_BITS_ARE_1, U64_MSB_IS_1};
+use crate::consts::{BYTE_MAX_VAL, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1};
 
 #[no_mangle]
 fn bitwise_sar(
@@ -11,7 +11,7 @@ fn bitwise_sar(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let b0_sign = b0 & U64_MSB_IS_1;
+    let b0_sign = b0 & U64_MSBIT_IS_1;
     if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {
         if b0_sign > 0 {
             return (
