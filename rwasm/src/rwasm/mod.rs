@@ -2,24 +2,14 @@
 
 pub mod binary_format;
 mod compiler;
-mod consts;
 mod instruction_set;
 mod platform;
 mod reduced_module;
 
-pub use self::{
-    binary_format::*,
-    compiler::*,
-    consts::*,
-    instruction::*,
-    instruction_set::*,
-    platform::*,
-    reduced_module::*,
-};
+pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, reduced_module::*};
 
 #[cfg(test)]
 mod tests {
-    use super::_SYS_HALT_FUEL_AMOUNT;
     use crate::{
         engine::bytecode::Instruction,
         rwasm::{
@@ -62,7 +52,7 @@ mod tests {
             "env".to_string(),
             "_sys_halt".to_string(),
             10,
-            _SYS_HALT_FUEL_AMOUNT,
+            1,
             &[ValueType::I32],
             &[],
         ));
