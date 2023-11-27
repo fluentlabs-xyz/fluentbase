@@ -1,8 +1,7 @@
 use crate::{CryptoPlatformSDK, SDK};
+use fluentbase_poseidon::*;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use keccak_hash::write_keccak;
-
-use fluentbase_poseidon::*;
 
 impl CryptoPlatformSDK for SDK {
     fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
@@ -64,14 +63,14 @@ mod test {
     #[test]
     fn with_content() {
         let data: Vec<u8> = From::from("hello world");
-        let expected = vec![
+        let expected: Vec<u8> = vec![
             0x47, 0x17, 0x32, 0x85, 0xa8, 0xd7, 0x34, 0x1e, 0x5e, 0x97, 0x2f, 0xc6, 0x77, 0x28,
             0x63, 0x84, 0xf8, 0x02, 0xf8, 0xef, 0x42, 0xa5, 0xec, 0x5f, 0x03, 0xbb, 0xfa, 0x25,
             0x4c, 0xb0, 0x1f, 0xad,
         ];
-        let mut dest = [0u8; 32];
-        write_keccak(data, &mut dest);
+        let mut dest = vec![0u8; 32];
+        write_keccak(data, dest.as_mut_slice());
 
-        assert_eq!(dest, expected.as_ref());
+        assert_eq!(dest, expected);
     }
 }

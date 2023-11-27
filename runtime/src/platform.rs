@@ -51,6 +51,9 @@ pub enum SysFuncIdx {
     CRYPTO_POSEIDON2 = 0xE003,
     ECC_SECP256K1_VERIFY = 0xE104,
     ECC_SECP256K1_RECOVER = 0xE105,
+    // EVM
+    EVM_SLOAD = 0xFF01,
+    EVM_SSTORE = 0xFF02,
 }
 
 impl From<FuncIdx> for SysFuncIdx {
