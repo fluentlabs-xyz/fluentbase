@@ -1402,6 +1402,7 @@ dependencies = [
  "wasi",
  "wat",
  "web3",
+ "zktrie",
 ]
 
 [[package]]
@@ -1687,6 +1688,15 @@ dependencies = [
  "futures-core",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "gobuild"
+version = "0.1.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -4630,6 +4640,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zktrie"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/zktrie.git?tag=v0.6.0#83318659773604fa565e2ebeb810a6d3746f0af4"
+dependencies = [
+ "gobuild",
+]
+
+[[package]]
 name = "zstd"
 version = "0.11.2+zstd.1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4659,6 +4677,11 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "halo2_proofs"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5cf9a3726525810af41ef416e0292ec999b34030"
+
+[[patch.unused]]
 name = "ethers-core"
 version = "0.17.0"
 source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9a0df8daf536937739c87e85612bd73212f"
@@ -4667,8 +4690,3 @@ source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9
 name = "poseidon"
 version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
-
-[[patch.unused]]
-name = "halo2_proofs"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5cf9a3726525810af41ef416e0292ec999b34030"

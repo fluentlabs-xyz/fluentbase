@@ -1,3 +1,4 @@
+#[macro_export]
 macro_rules! forward_call_args {
     ($func:ident, $caller:ident, []) => {
         crate::instruction::$func($caller)
@@ -28,6 +29,7 @@ macro_rules! forward_call_args {
     };
 }
 
+#[macro_export]
 macro_rules! forward_call {
     ($linker:tt, $store:tt, $module:literal, $name:literal, fn $func:ident($($t:tt)*) -> $out:ty) => {
         $linker.define(

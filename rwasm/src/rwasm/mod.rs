@@ -2,14 +2,11 @@
 
 pub mod binary_format;
 mod compiler;
-mod consts;
 mod instruction_set;
 mod platform;
 mod reduced_module;
 
-pub use self::{
-    binary_format::*, compiler::*, consts::*, instruction_set::*, platform::*, reduced_module::*,
-};
+pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, reduced_module::*};
 
 #[cfg(test)]
 mod tests {
@@ -17,14 +14,21 @@ mod tests {
         common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
-            compiler::Compiler, platform::ImportLinker, reduced_module::ReducedModule,
-            FuncOrExport, ImportFunc,
+            compiler::Compiler,
+            platform::ImportLinker,
+            reduced_module::ReducedModule,
+            FuncOrExport,
+            ImportFunc,
         },
-        AsContextMut, Caller, Config, Engine, Func, Linker, Store,
+        AsContextMut,
+        Caller,
+        Config,
+        Engine,
+        Func,
+        Linker,
+        Store,
     };
     use alloc::string::ToString;
-
-    use super::_SYS_HALT_FUEL_AMOUNT;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -48,7 +52,7 @@ mod tests {
             "env".to_string(),
             "_sys_halt".to_string(),
             10,
-            _SYS_HALT_FUEL_AMOUNT,
+            1,
             &[ValueType::I32],
             &[],
         ));
