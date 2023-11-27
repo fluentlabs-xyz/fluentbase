@@ -1,13 +1,21 @@
-use log::debug;
-
-use crate::translator::host::Host;
-use crate::translator::instructions::utilities::{
-    assign_to_stack_and_drop, duplicate_i64_part_of_evm_word, duplicate_stack_value,
-    fetch_i64_part_as_i32, split_i64_repr_of_i32_sum_into_overflow_and_normal_parts, wasm_add,
-    wasm_drop_n,
+use crate::{
+    translator::{
+        host::Host,
+        instructions::utilities::{
+            assign_to_stack_and_drop,
+            duplicate_i64_part_of_evm_word,
+            duplicate_stack_value,
+            fetch_i64_part_as_i32,
+            replace_current_opcode_with_code_snippet,
+            split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
+            wasm_add,
+            wasm_drop_n,
+        },
+        translator::Translator,
+    },
+    utilities::WASM_I64_IN_EVM_WORD_COUNT,
 };
-use crate::translator::translator::Translator;
-use crate::utilities::WASM_I64_IN_EVM_WORD_COUNT;
+use log::debug;
 
 pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADD";
@@ -90,9 +98,10 @@ pub fn wrapping_mul<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn wrapping_sub<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_code_snippet(translator, host);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
