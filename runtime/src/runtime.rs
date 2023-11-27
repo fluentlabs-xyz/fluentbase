@@ -27,7 +27,6 @@ use fluentbase_rwasm::{
     Store,
 };
 use std::mem::take;
-use zktrie::ZkTrie;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeContext {
@@ -568,20 +567,31 @@ impl Runtime {
         forward_call!(linker, store, "env", "_rwasm_compile", fn rwasm_compile(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
         forward_call!(linker, store, "env", "_rwasm_transact", fn rwasm_transact(code_offset: i32, code_len: i32, input_offset: i32, input_len: i32, output_offset: i32, output_len: i32, state: i32, fuel_limit: i32) -> i32);
         // zktrie
-        forward_call!(linker, store, "env", "_zktrie_open", fn zktrie_open() -> ());
-        forward_call!(linker, store, "env", "_zktrie_update_nonce", fn zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_nonce", fn zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_zktrie_update_balance", fn zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_balance", fn zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_zktrie_update_storage_root", fn zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_storage_root", fn zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_zktrie_update_code_hash", fn zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_code_hash", fn zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_zktrie_update_code_size", fn zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_code_size", fn zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_zktrie_update_store", fn zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_zktrie_get_store", fn zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        // mpt
+        // forward_call!(linker, store, "env", "_zktrie_open", fn zktrie_open() -> ());
+        // forward_call!(linker, store, "env", "_zktrie_update_nonce", fn
+        // zktrie_update_nonce(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) ->
+        // ()); forward_call!(linker, store, "env", "_zktrie_get_nonce", fn
+        // zktrie_get_nonce(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_balance", fn
+        // zktrie_update_balance(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_balance", fn
+        // zktrie_get_balance(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_storage_root", fn
+        // zktrie_update_storage_root(key_offset: i32, key_len: i32, value_offset: i32, value_len:
+        // i32) -> ()); forward_call!(linker, store, "env", "_zktrie_get_storage_root", fn
+        // zktrie_get_storage_root(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_code_hash", fn
+        // zktrie_update_code_hash(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_code_hash", fn
+        // zktrie_get_code_hash(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_code_size", fn
+        // zktrie_update_code_size(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32)
+        // -> ()); forward_call!(linker, store, "env", "_zktrie_get_code_size", fn
+        // zktrie_get_code_size(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
+        // forward_call!(linker, store, "env", "_zktrie_update_store", fn
+        // zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) ->
+        // ()); forward_call!(linker, store, "env", "_zktrie_get_store", fn
+        // zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32); mpt
         forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
         forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
         forward_call!(linker, store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);

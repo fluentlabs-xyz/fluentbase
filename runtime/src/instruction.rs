@@ -7,7 +7,7 @@ mod mpt;
 mod rwasm;
 mod sys;
 mod wasi;
-mod zktrie;
+// mod zktrie;
 
 pub(crate) use crypto::*;
 pub(crate) use ecc::*;
@@ -15,7 +15,7 @@ pub(crate) use mpt::*;
 pub(crate) use rwasm::*;
 pub(crate) use sys::*;
 pub(crate) use wasi::*;
-pub(crate) use zktrie::*;
+// pub(crate) use zktrie::*;
 
 fn exported_memory(caller: &mut Caller<'_, RuntimeContext>) -> Memory {
     let memory = caller
