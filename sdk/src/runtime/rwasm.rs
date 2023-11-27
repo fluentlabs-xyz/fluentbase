@@ -1,19 +1,25 @@
 use crate::{RwasmPlatformSDK, SDK};
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
-use fluentbase_rwasm::engine::bytecode::Instruction;
-use fluentbase_rwasm::rwasm::{Compiler, FuncOrExport};
+use fluentbase_rwasm::{
+    engine::bytecode::Instruction,
+    rwasm::{Compiler, FuncOrExport},
+};
 
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        let import_linker = Runtime::new_linker();
-        let mut compiler = Compiler::new_with_linker(input.as_ref(), Some(&import_linker)).unwrap();
+        let import_linker = Runtime::<'_, ()>::new_linker();
+        let mut compiler =
+            Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
         compiler
-            .translate(Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
-                Instruction::Call(SysFuncIdx::SYS_STATE.into()),
-            )))
+            .translate(
+                Some(FuncOrExport::StateRouter(
+                    vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
+                    Instruction::Call(SysFuncIdx::SYS_STATE.into()),
+                )),
+                true,
+            )
             .unwrap();
-        let rwasm_bytecode = compiler.finalize().unwrap();
+        let rwasm_bytecode = compiler.finalize(None, true).unwrap();
         if rwasm_bytecode.len() <= output.len() {
             let len = rwasm_bytecode.len();
             output[0..len].copy_from_slice(rwasm_bytecode.as_slice());
@@ -28,8 +34,8 @@ impl RwasmPlatformSDK for SDK {
         state: u32,
         fuel_limit: u32,
     ) -> i32 {
-        let import_linker = Runtime::new_linker();
-        let ctx = RuntimeContext::new(bytecode)
+        let import_linker = Runtime::<'_, ()>::new_linker();
+        let ctx = RuntimeContext::<'_, ()>::new(bytecode)
             .with_input(input.to_vec())
             .with_state(state)
             .with_fuel_limit(fuel_limit);
@@ -50,8 +56,7 @@ impl RwasmPlatformSDK for SDK {
 
 #[cfg(test)]
 mod test {
-    use crate::RwasmPlatformSDK;
-    use crate::SDK;
+    use crate::{RwasmPlatformSDK, SDK};
 
     #[test]
     fn test_greeting() {
