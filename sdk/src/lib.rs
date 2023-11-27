@@ -5,6 +5,9 @@ mod runtime;
 #[cfg(not(feature = "runtime"))]
 mod rwasm;
 
+#[cfg(feature = "evm")]
+pub mod evm;
+
 pub struct SDK;
 
 pub trait CryptoPlatformSDK {
@@ -61,6 +64,12 @@ pub trait ZktriePlatformSDK {
     fn zktrie_get_code_size(key: &[u8]) -> [u8; 32];
     fn zktrie_update_store(key: &[u8], value: &[u8; 32]);
     fn zktrie_get_store(key: &[u8]) -> [u8; 32];
+}
+
+#[cfg(feature = "evm")]
+pub trait EvmPlatformSDK {
+    fn evm_sload(key: &[u8], value: &mut [u8]);
+    fn evm_sstore(key: &[u8], value: &[u8]);
 }
 
 // #[cfg(not(feature = "std"))]

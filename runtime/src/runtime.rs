@@ -1,4 +1,5 @@
 use crate::{
+    fuel::*,
     macros::{forward_call, forward_call_args},
     ExitCode,
     RuntimeError,
@@ -8,47 +9,7 @@ use crate::{
 };
 use fluentbase_rwasm::{
     engine::Tracer,
-    rwasm::{
-        ImportFunc,
-        ImportLinker,
-        InstructionSet,
-        ReducedModule,
-        ReducedModuleError,
-        ARGS_GET_FUEL_AMOUNT,
-        ARGS_SIZES_GET_FUEL_AMOUNT,
-        ENVIRON_GET_FUEL_AMOUNT,
-        ENVIRON_SIZES_GET_FUEL_AMOUNT,
-        FD_WRITE_FUEL_AMOUNT,
-        PROC_EXIT_FUEL_AMOUNT,
-        _CRYPTO_KECCAK256_FUEL_AMOUNT,
-        _CRYPTO_POSEIDON2_FUEL_AMOUNT,
-        _CRYPTO_POSEIDON_FUEL_AMOUNT,
-        _ECC_SECP256K1_RECOVER_FUEL_AMOUNT,
-        _ECC_SECP256K1_VERIFY_FUEL_AMOUNT,
-        _MPT_GET_FUEL_AMOUNT,
-        _MPT_GET_ROOT_FUEL_AMOUNT,
-        _MPT_OPEN_FUEL_AMOUNT,
-        _MPT_UPDATE_FUEL_AMOUNT,
-        _RWASM_COMPILE_FUEL_AMOUNT,
-        _RWASM_TRANSACT_FUEL_AMOUNT,
-        _SYS_HALT_FUEL_AMOUNT,
-        _SYS_READ_FUEL_AMOUNT,
-        _SYS_STATE_FUEL_AMOUNT,
-        _SYS_WRITE_FUEL_AMOUNT,
-        _ZKTRIE_GET_BALANCE_FUEL_AMOUNT,
-        _ZKTRIE_GET_CODE_HASH_FUEL_AMOUNT,
-        _ZKTRIE_GET_CODE_SIZE_FUEL_AMOUNT,
-        _ZKTRIE_GET_NONCE_FUEL_AMOUNT,
-        _ZKTRIE_GET_STORAGE_ROOT_FUEL_AMOUNT,
-        _ZKTRIE_GET_STORE_FUEL_AMOUNT,
-        _ZKTRIE_OPEN_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_BALANCE_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_CODE_HASH_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_CODE_SIZE_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_NONCE_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_STORAGE_ROOT_FUEL_AMOUNT,
-        _ZKTRIE_UPDATE_STORE_FUEL_AMOUNT,
-    },
+    rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
     AsContextMut,
     Caller,
     Config,
@@ -57,6 +18,7 @@ use fluentbase_rwasm::{
     Func,
     FuncType,
     Instance,
+    IntoFunc,
     Linker,
     Module,
     StackLimits,
@@ -201,7 +163,7 @@ impl Runtime {
             "env".to_string(),
             "_sys_halt".to_string(),
             SysFuncIdx::SYS_HALT as u16,
-            _SYS_HALT_FUEL_AMOUNT,
+            FUEL_SYS_HALT,
             &[ValueType::I32; 1],
             &[],
         ));
@@ -209,7 +171,7 @@ impl Runtime {
             "env".to_string(),
             "_sys_state".to_string(),
             SysFuncIdx::SYS_STATE as u16,
-            _SYS_STATE_FUEL_AMOUNT,
+            FUEL_SYS_STATE,
             &[],
             &[ValueType::I32; 1],
         ));
@@ -217,7 +179,7 @@ impl Runtime {
             "env".to_string(),
             "_sys_write".to_string(),
             SysFuncIdx::SYS_WRITE as u16,
-            _SYS_WRITE_FUEL_AMOUNT,
+            FUEL_SYS_WRITE,
             &[ValueType::I32; 2],
             &[],
         ));
@@ -225,7 +187,7 @@ impl Runtime {
             "env".to_string(),
             "_sys_read".to_string(),
             SysFuncIdx::SYS_READ as u16,
-            _SYS_READ_FUEL_AMOUNT,
+            FUEL_SYS_READ,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -234,7 +196,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "proc_exit".to_string(),
             SysFuncIdx::WASI_PROC_EXIT as u16,
-            PROC_EXIT_FUEL_AMOUNT,
+            FUEL_PROC_EXIT,
             &[ValueType::I32; 1],
             &[],
         ));
@@ -242,7 +204,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "fd_write".to_string(),
             SysFuncIdx::WASI_FD_WRITE as u16,
-            FD_WRITE_FUEL_AMOUNT,
+            FUEL_FD_WRITE_FUEL,
             &[ValueType::I32; 4],
             &[ValueType::I32; 1],
         ));
@@ -250,7 +212,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "environ_sizes_get".to_string(),
             SysFuncIdx::WASI_ENVIRON_SIZES_GET as u16,
-            ENVIRON_SIZES_GET_FUEL_AMOUNT,
+            FUEL_ENVIRON_SIZES_GET,
             &[ValueType::I32; 2],
             &[ValueType::I32; 1],
         ));
@@ -258,7 +220,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "environ_get".to_string(),
             SysFuncIdx::WASI_ENVIRON_GET as u16,
-            ENVIRON_GET_FUEL_AMOUNT,
+            FUEL_ENVIRON_GET,
             &[ValueType::I32; 2],
             &[ValueType::I32; 1],
         ));
@@ -266,7 +228,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "args_sizes_get".to_string(),
             SysFuncIdx::WASI_ARGS_SIZES_GET as u16,
-            ARGS_SIZES_GET_FUEL_AMOUNT,
+            FUEL_ARGS_SIZES_GET,
             &[ValueType::I32; 2],
             &[ValueType::I32; 1],
         ));
@@ -274,7 +236,7 @@ impl Runtime {
             "wasi_snapshot_preview1".to_string(),
             "args_get".to_string(),
             SysFuncIdx::WASI_ARGS_GET as u16,
-            ARGS_GET_FUEL_AMOUNT,
+            FUEL_ARGS_GET,
             &[ValueType::I32; 2],
             &[ValueType::I32; 1],
         ));
@@ -283,7 +245,7 @@ impl Runtime {
             "env".to_string(),
             "_rwasm_transact".to_string(),
             SysFuncIdx::RWASM_TRANSACT as u16,
-            _RWASM_TRANSACT_FUEL_AMOUNT,
+            FUEL_RWASM_TRANSACT,
             &[ValueType::I32; 8],
             &[ValueType::I32; 1],
         ));
@@ -291,7 +253,7 @@ impl Runtime {
             "env".to_string(),
             "_rwasm_compile".to_string(),
             SysFuncIdx::RWASM_COMPILE as u16,
-            _RWASM_COMPILE_FUEL_AMOUNT,
+            FUEL_RWASM_COMPILE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 1],
         ));
@@ -300,7 +262,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_open".to_string(),
             SysFuncIdx::ZKTRIE_OPEN as u16,
-            _ZKTRIE_OPEN_FUEL_AMOUNT,
+            FUEL_ZKTRIE_OPEN,
             &[ValueType::I32; 0],
             &[ValueType::I32; 0],
         ));
@@ -309,7 +271,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_nonce".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_NONCE as u16,
-            _ZKTRIE_UPDATE_NONCE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_NONCE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -317,7 +279,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_balance".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_BALANCE as u16,
-            _ZKTRIE_UPDATE_BALANCE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_BALANCE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -325,7 +287,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORAGE_ROOT as u16,
-            _ZKTRIE_UPDATE_STORAGE_ROOT_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_STORAGE_ROOT,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -333,7 +295,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_HASH as u16,
-            _ZKTRIE_UPDATE_CODE_HASH_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_CODE_HASH,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -341,7 +303,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_code_size".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_CODE_SIZE as u16,
-            _ZKTRIE_UPDATE_CODE_SIZE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_CODE_SIZE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -350,7 +312,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_nonce".to_string(),
             SysFuncIdx::ZKTRIE_GET_NONCE as u16,
-            _ZKTRIE_GET_NONCE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_NONCE,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -358,7 +320,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_balance".to_string(),
             SysFuncIdx::ZKTRIE_GET_BALANCE as u16,
-            _ZKTRIE_GET_BALANCE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_BALANCE,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -366,7 +328,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_storage_root".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORAGE_ROOT as u16,
-            _ZKTRIE_GET_STORAGE_ROOT_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_STORAGE_ROOT,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -374,7 +336,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_code_hash".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_HASH as u16,
-            _ZKTRIE_GET_CODE_HASH_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_CODE_HASH,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -382,7 +344,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_code_size".to_string(),
             SysFuncIdx::ZKTRIE_GET_CODE_SIZE as u16,
-            _ZKTRIE_GET_CODE_SIZE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_CODE_SIZE,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -391,7 +353,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_update_store".to_string(),
             SysFuncIdx::ZKTRIE_UPDATE_STORE as u16,
-            _ZKTRIE_UPDATE_STORE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_UPDATE_STORE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -400,7 +362,7 @@ impl Runtime {
             "env".to_string(),
             "_zktrie_get_store".to_string(),
             SysFuncIdx::ZKTRIE_GET_STORE as u16,
-            _ZKTRIE_GET_STORE_FUEL_AMOUNT,
+            FUEL_ZKTRIE_GET_STORE,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -409,7 +371,7 @@ impl Runtime {
             "env".to_string(),
             "_mpt_open".to_string(),
             SysFuncIdx::MPT_OPEN as u16,
-            _MPT_OPEN_FUEL_AMOUNT,
+            FUEL_MPT_OPEN,
             &[ValueType::I32; 0],
             &[ValueType::I32; 0],
         ));
@@ -417,7 +379,7 @@ impl Runtime {
             "env".to_string(),
             "_mpt_update".to_string(),
             SysFuncIdx::MPT_UPDATE as u16,
-            _MPT_UPDATE_FUEL_AMOUNT,
+            FUEL_MPT_UPDATE,
             &[ValueType::I32; 4],
             &[ValueType::I32; 0],
         ));
@@ -425,7 +387,7 @@ impl Runtime {
             "env".to_string(),
             "_mpt_get".to_string(),
             SysFuncIdx::MPT_GET as u16,
-            _MPT_GET_FUEL_AMOUNT,
+            FUEL_MPT_GET,
             &[ValueType::I32; 3],
             &[ValueType::I32; 1],
         ));
@@ -433,7 +395,7 @@ impl Runtime {
             "env".to_string(),
             "_mpt_get_root".to_string(),
             SysFuncIdx::MPT_GET_ROOT as u16,
-            _MPT_GET_ROOT_FUEL_AMOUNT,
+            FUEL_MPT_GET_ROOT,
             &[ValueType::I32; 1],
             &[ValueType::I32; 1],
         ));
@@ -442,7 +404,7 @@ impl Runtime {
             "env".to_string(),
             "_crypto_keccak256".to_string(),
             SysFuncIdx::CRYPTO_KECCAK256 as u16,
-            _CRYPTO_KECCAK256_FUEL_AMOUNT,
+            FUEL_CRYPTO_KECCAK256,
             &[ValueType::I32; 3],
             &[],
         ));
@@ -450,7 +412,7 @@ impl Runtime {
             "env".to_string(),
             "_crypto_poseidon".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON as u16,
-            _CRYPTO_POSEIDON_FUEL_AMOUNT,
+            FUEL_CRYPTO_POSEIDON,
             &[ValueType::I32; 3],
             &[],
         ));
@@ -458,7 +420,7 @@ impl Runtime {
             "env".to_string(),
             "_crypto_poseidon2".to_string(),
             SysFuncIdx::CRYPTO_POSEIDON2 as u16,
-            _CRYPTO_POSEIDON2_FUEL_AMOUNT,
+            FUEL_CRYPTO_POSEIDON2,
             &[ValueType::I32; 4],
             &[],
         ));
@@ -467,7 +429,7 @@ impl Runtime {
             "env".to_string(),
             "_ecc_secp256k1_verify".to_string(),
             SysFuncIdx::ECC_SECP256K1_VERIFY as u16,
-            _ECC_SECP256K1_VERIFY_FUEL_AMOUNT,
+            FUEL_ECC_SECP256K1_VERIFY,
             &[ValueType::I32; 7],
             &[ValueType::I32; 1],
         ));
@@ -475,11 +437,27 @@ impl Runtime {
             "env".to_string(),
             "_ecc_secp256k1_recover".to_string(),
             SysFuncIdx::ECC_SECP256K1_RECOVER as u16,
-            _ECC_SECP256K1_RECOVER_FUEL_AMOUNT,
+            FUEL_ECC_SECP256K1_RECOVER,
             &[ValueType::I32; 7],
             &[ValueType::I32; 1],
         ));
-
+        // EVM
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_sload".to_string(),
+            SysFuncIdx::EVM_SLOAD as u16,
+            800,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_sstore".to_string(),
+            SysFuncIdx::EVM_SSTORE as u16,
+            5000,
+            &[ValueType::I32; 2],
+            &[],
+        ));
         import_linker
     }
 
@@ -587,7 +565,23 @@ impl Runtime {
         Ok(execution_result)
     }
 
+    pub fn add_binding<Params, Results>(
+        &mut self,
+        module: &'static str,
+        name: &'static str,
+        func: impl IntoFunc<RuntimeContext, Params, Results>,
+    ) {
+        self.linker
+            .define(
+                module,
+                name,
+                Func::wrap::<RuntimeContext, Params, Results>(self.store.as_context_mut(), func),
+            )
+            .unwrap();
+    }
+
     fn register_bindings(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>) {
+        use crate::instruction::*;
         // sys
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);

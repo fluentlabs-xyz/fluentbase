@@ -1,6 +1,5 @@
 use crate::{
-    exported_memory_vec,
-    instruction::exported_memory_slice,
+    instruction::{exported_memory_slice, exported_memory_vec},
     ExitCode,
     Runtime,
     RuntimeContext,

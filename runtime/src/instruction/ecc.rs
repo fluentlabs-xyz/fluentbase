@@ -1,7 +1,9 @@
-extern crate alloc;
-
-use crate::{exported_memory_slice, exported_memory_vec, ExitCode, Runtime, RuntimeContext};
-use alloc::{vec, vec::Vec};
+use crate::{
+    instruction::{exported_memory_slice, exported_memory_vec},
+    ExitCode,
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::Caller;
 use fluentbase_rwasm_core::common::Trap;
@@ -71,7 +73,7 @@ pub(crate) fn ecc_secp256k1_recover(
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::ecc::secp256k1_verify;
+    use super::secp256k1_verify;
     use hex_literal::hex;
     use k256::ecdsa::RecoveryId;
     use sha2::{Digest, Sha256};

@@ -7,7 +7,7 @@ use crate::{
         WASM_I64_LOW_32_BIT_MASK,
     },
 };
-use fluentbase_rwasm::rwasm::{InstructionSet, INSTRUCTION_BYTES};
+use fluentbase_rwasm::rwasm::{instruction::INSTRUCTION_BYTES, InstructionSet};
 use std::mem;
 
 pub(super) fn replace_current_opcode_with_code_snippet(
