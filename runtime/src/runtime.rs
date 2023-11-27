@@ -442,7 +442,23 @@ impl Runtime {
             &[ValueType::I32; 7],
             &[ValueType::I32; 1],
         ));
-
+        // EVM
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_sload".to_string(),
+            SysFuncIdx::EVM_SLOAD as u16,
+            800,
+            &[ValueType::I32; 2],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_sstore".to_string(),
+            SysFuncIdx::EVM_SSTORE as u16,
+            5000,
+            &[ValueType::I32; 2],
+            &[],
+        ));
         import_linker
     }
 
@@ -551,6 +567,7 @@ impl Runtime {
     }
 
     fn register_bindings(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>) {
+        use crate::instruction::*;
         // sys
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
