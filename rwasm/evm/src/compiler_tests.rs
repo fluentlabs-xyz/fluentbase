@@ -4,17 +4,17 @@ mod evm_to_rwasm_tests {
         compiler::EvmCompiler,
         translator::{
             instruction_result::InstructionResult,
-            instructions::opcode::{EQ, GT, LT, PUSH0, PUSH1, PUSH2, PUSH5, PUSH8, PUSH9, SHL},
+            instructions::opcode::{EQ, GT, LT, PUSH0, PUSH32, SHL},
         },
     };
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{hex, Bytes};
     use fluentbase_runtime::Runtime;
-    use fluentbase_rwasm::rwasm::{
-        BinaryFormat,
-        BinaryFormatWriter,
-        InstructionSet,
-        ReducedModule,
-    };
+    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
+    fn d(hex: &str) -> Vec<u8> {
+        hex::decode(hex).unwrap()
+    }
+
+    use crate::translator::instructions::opcode::SHR;
     use log::debug;
 
     fn run_test(evm_bytecode_bytes: &Vec<u8>) -> Vec<u8> {
@@ -70,7 +70,7 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        let global_memory = global_memory.to_vec();
+        let global_memory = global_memory[0..32].to_vec();
         debug!(
             "global_memory (len {}) {:?}",
             global_memory_len,
@@ -87,87 +87,420 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn simple() {
-        let evm_bytecode_bytes: Vec<u8> = vec![
-            PUSH0, PUSH1, 0x80, PUSH1, 0x40, PUSH8, 0, 0, 0, 0, 0, 0, 1, 246,
+    fn eq() {
+        let cases = [
+            (
+                // a=-4 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=-4 b=-5 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-5 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30000 b=-30000 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=-30000 b=-30001 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30001 b=-30000 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=1 b=1 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=2 b=1 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=1 b=2 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30000 b=30000 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=30001 b=30000 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30000 b=30001 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
         ];
 
-        run_test(&evm_bytecode_bytes);
+        test_binary(EQ, &cases);
     }
 
     #[test]
-    fn eq_opcode() {
-        let offset = 1;
-        let a0 = 1;
-        let b0 = 2;
-        let evm_bytecode_bytes: Vec<u8> = vec![
-            // args: `mem_offset` a=1 b=0
-            // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
-            PUSH1, offset, PUSH1, a0, PUSH1, b0, EQ,
+    fn shl() {
+        // [(shift, value, r), ...]
+        let cases = [
+            (
+                // shift=1 value=1 r=4
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            ),
+            (
+                // shift=2 value=1 r=4
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                d("0xFF00000000000000000000000000000000000000000000000000000000000000"),
+                d("0xF000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFE"),
+                d("0xFF00000000000000000000000000000000000000000000000000000000000000"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+                d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+                d("0x8000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000100"),
+                d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0xF000000000000000000000000000000000000000000000000000000000000000"),
+                d("0xe000000000000000000000000000000000000000000000000000000000000000"),
+            ),
         ];
 
-        run_test(&evm_bytecode_bytes);
+        test_binary(SHL, &cases);
     }
 
     #[test]
-    fn shl_opcode() {
-        let offset = 1;
-        let a0 = 1;
-        let b0 = 2;
-        let evm_bytecode_bytes: Vec<u8> = vec![
-            // args: `mem_offset` a=1 b=0
-            // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
-            PUSH1, offset, PUSH1, a0, PUSH1, b0, SHL,
+    fn shr() {
+        // [(shift, value, r), ...]
+        let cases = [
+            (
+                // shift=1 value=1 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // shift=2 value=4 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // shift=1 value=4 r=2
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                d("0x00000000000000000000000000000000000000000000000000000000000000FF"),
+                d("0x000000000000000000000000000000000000000000000000000000000000000F"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000008"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            ),
+            (
+                // external
+                d("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000100"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000000000000000000000000000000000000000101"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0x0000000000000000000000000F00000000000000000000000000000000000000"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // external
+                d("0xF000000000000000000000000000000000000000000000000000000000000000"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
         ];
 
-        run_test(&evm_bytecode_bytes);
+        test_binary(SHR, &cases);
     }
 
     #[test]
-    fn lt_opcode() {
-        let offset = 0;
-        let a0_0 = 1;
-        let a1_0 = 2;
-        let b0_0 = 2;
-        let b1_0 = 1;
-        // if a > b
-        let evm_bytecode_bytes: Vec<u8> = vec![
-            // op: `mem_offset` a=1 b=0
-            // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
-            PUSH1, offset, PUSH9, a1_0, 0, 0, 0, 0, 0, 0, 0, a0_0, PUSH9, b1_0, 0, 0, 0, 0, 0, 0, 0,
-            b0_0, LT,
-        ];
-
-        run_test(&evm_bytecode_bytes);
+    fn byte() {
+        // TODO
     }
 
     #[test]
-    fn gt_opcode() {
-        let offset = 0;
-        // BE repr of A and B params and expected RESULT
-        let test_cases = [
-            ((0, 1), (0, 1), 0u8),
-            ((0, 2), (0, 1), 1u8),
-            ((2, 1), (1, 1), 1u8),
-            ((1, 1), (1, 1), 0),
-        ];
-        for case in &test_cases {
-            let a1_0 = case.0 .0;
-            let a0_0 = case.0 .1;
-            let b1_0 = case.1 .0;
-            let b0_0 = case.1 .1;
-            let res_expected = case.2;
-            // if a > b
-            let evm_bytecode_bytes: Vec<u8> = vec![
-                // op: `mem_offset` a=1 b=0
-                // TODO need evm preprocessing to automatically insert offset arg (PUSH1 0)
-                PUSH1, offset, PUSH9, a1_0, 0, 0, 0, 0, 0, 0, 0, a0_0, PUSH9, b1_0, 0, 0, 0, 0, 0,
-                0, 0, b0_0, GT,
-            ];
+    fn slt() {
+        // TODO
+    }
 
-            let global_memory = run_test(&evm_bytecode_bytes);
-            let res = global_memory[32 - 8];
-            assert_eq!(res, res_expected);
+    #[test]
+    fn sgt() {
+        // TODO
+    }
+
+    #[test]
+    fn sar() {
+        // TODO
+    }
+
+    #[test]
+    fn sub() {
+        // TODO
+    }
+
+    #[test]
+    fn gt() {
+        let cases = [
+            (
+                // a=-4 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-4 b=-5 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=-5 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30000 b=-30000 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30000 b=-30001 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=-30001 b=-30000 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=1 b=1 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=2 b=1 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=1 b=2 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30000 b=30000 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30001 b=30000 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=30000 b=30001 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+        ];
+
+        test_binary(GT, &cases);
+    }
+
+    #[test]
+    fn lt() {
+        let cases = [
+            (
+                // a=-4 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-4 b=-5 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-5 b=-4 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=-30000 b=-30000 r=0
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30000 b=-30001 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=-30001 b=-30000 r=1
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=1 b=1 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=2 b=1 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=1 b=2 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+            (
+                // a=30000 b=30000 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30001 b=30000 r=1
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // a=30000 b=30001 r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                d("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            ),
+        ];
+
+        test_binary(LT, &cases);
+    }
+
+    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) {
+        for case in cases {
+            let a = &case.0;
+            let b = &case.1;
+            let res_expected = &case.2;
+            let mut evm_bytecode_bytes: Vec<u8> = vec![];
+            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+            evm_bytecode_bytes.push(PUSH0);
+            evm_bytecode_bytes.push(PUSH32);
+            evm_bytecode_bytes.extend(a);
+            evm_bytecode_bytes.push(PUSH32);
+            evm_bytecode_bytes.extend(b);
+            evm_bytecode_bytes.push(opcode);
+
+            let mut global_memory = run_test(&evm_bytecode_bytes);
+            const CHUNK_LEN: usize = 8;
+            for chunk in global_memory.chunks_mut(8) {
+                for i in 0..(CHUNK_LEN / 2) {
+                    let tmp = chunk[i];
+                    chunk[i] = chunk[CHUNK_LEN - i - 1];
+                    chunk[CHUNK_LEN - i - 1] = tmp;
+                }
+            }
+            assert_eq!(&global_memory[0..32], res_expected);
         }
     }
 }
