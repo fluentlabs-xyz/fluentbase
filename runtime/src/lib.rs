@@ -7,7 +7,7 @@ pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
-pub use zktrie::*;
+// pub use zktrie::*;
 
 mod fuel;
 mod instruction;
