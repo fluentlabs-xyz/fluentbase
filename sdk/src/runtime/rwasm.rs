@@ -34,8 +34,8 @@ impl RwasmPlatformSDK for SDK {
         state: u32,
         fuel_limit: u32,
     ) -> i32 {
-        let import_linker = Runtime::<'_, ()>::new_linker();
-        let ctx = RuntimeContext::<'_, ()>::new(bytecode)
+        let import_linker = Runtime::new_linker();
+        let ctx = RuntimeContext::new(bytecode)
             .with_input(input.to_vec())
             .with_state(state)
             .with_fuel_limit(fuel_limit);
