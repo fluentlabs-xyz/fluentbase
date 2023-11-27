@@ -20,6 +20,7 @@ use fluentbase_rwasm::{
     Func,
     FuncType,
     Instance,
+    IntoFunc,
     Linker,
     Memory,
     Module,
@@ -564,6 +565,21 @@ impl Runtime {
         self.restore_trace();
         let execution_result = ExecutionResult::cloned(&self.store);
         Ok(execution_result)
+    }
+
+    pub fn add_binding<Params, Results>(
+        &mut self,
+        module: &'static str,
+        name: &'static str,
+        func: impl IntoFunc<RuntimeContext, Params, Results>,
+    ) {
+        self.linker
+            .define(
+                module,
+                name,
+                Func::wrap::<RuntimeContext, Params, Results>(self.store.as_context_mut(), func),
+            )
+            .unwrap();
     }
 
     fn register_bindings(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>) {
