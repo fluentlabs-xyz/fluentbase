@@ -11,10 +11,10 @@ mod evm_to_rwasm_tests {
     use fluentbase_runtime::Runtime;
     use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
     fn d(hex: &str) -> Vec<u8> {
-        hex::decode(hex).unwrap()
+        hex::decode(hex.replace(" ", "")).unwrap()
     }
 
-    use crate::translator::instructions::opcode::SHR;
+    use crate::translator::instructions::opcode::{BYTE, SHR};
     use log::debug;
 
     fn run_test(evm_bytecode_bytes: &Vec<u8>) -> Vec<u8> {
@@ -294,7 +294,42 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn byte() {
-        // TODO
+        // [(idx, value, r), ...]
+        let mut cases = vec![
+            (
+                // shift=32 value=0xff..ff r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000020"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // shift=33 value=0xff..ff r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000021"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                // shift=34 value=0xff..ff r=0
+                d("0x0000000000000000000000000000000000000000000000000000000000000022"),
+                d("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                d("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+        ];
+
+        for i in 0..32 {
+            let mut idx = d("0x0000000000000000000000000000000000000000000000000000000000000000");
+            let mut res = d("0x0000000000000000000000000000000000000000000000000000000000000000");
+            let last_byte_idx = idx.len() - 1;
+            idx[last_byte_idx] = i;
+            res[last_byte_idx] = i + 1;
+            cases.push((
+                idx,
+                d("0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"),
+                res,
+            ));
+        }
+
+        test_binary(BYTE, &cases);
     }
 
     #[test]

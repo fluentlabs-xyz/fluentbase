@@ -1,4 +1,4 @@
-use crate::consts::U64_MSB_IS_1;
+use crate::consts::U64_MSBIT_IS_1;
 
 #[no_mangle]
 fn bitwise_slt(
@@ -11,8 +11,8 @@ fn bitwise_slt(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let a_sign = a0 & U64_MSB_IS_1;
-    let b_sign = b0 & U64_MSB_IS_1;
+    let a_sign = a0 & U64_MSBIT_IS_1;
+    let b_sign = b0 & U64_MSBIT_IS_1;
 
     if a_sign < b_sign {
         return (0, 0, 0, 0);
