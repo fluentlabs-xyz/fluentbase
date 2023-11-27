@@ -49,7 +49,7 @@ impl<'a, T> Caller<'a, T> {
         self.ctx.store.engine()
     }
 
-    pub fn exported_memory(&mut self) -> Memory {
+    pub fn exported_memory(&self) -> Memory {
         let memory = self
             .get_export("memory")
             .unwrap_or_else(|| unreachable!("there is no memory export inside"));
