@@ -7,7 +7,7 @@ use fluentbase_rwasm::{
 
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        let import_linker = Runtime::<'_, ()>::new_linker();
+        let import_linker = Runtime::new_linker();
         let mut compiler =
             Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
         compiler
