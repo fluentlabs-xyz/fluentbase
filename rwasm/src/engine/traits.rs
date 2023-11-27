@@ -1,6 +1,6 @@
 use crate::{value::WithType, Value};
 use core::{iter, slice};
-use crate::common::UntypedValue;
+use fluentbase_rwasm_core::common::UntypedValue;
 
 /// Types implementing this trait may be used as parameters for function execution.
 ///

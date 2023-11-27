@@ -2,7 +2,7 @@ use crate::{store::Stored, AsContextMut, StoreContext};
 use alloc::boxed::Box;
 use core::{any::Any, num::NonZeroU32};
 use crate::arena::ArenaIndex;
-use crate::common::UntypedValue;
+use fluentbase_rwasm_core::common::UntypedValue;
 
 /// A raw index to a function entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

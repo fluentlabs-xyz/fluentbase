@@ -8,25 +8,23 @@ use crate::{
     STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
-    common::{Trap, ValueType},
     engine::Tracer,
     rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
     AsContextMut,
     Caller,
     Config,
     Engine,
-    Extern,
     FuelConsumptionMode,
     Func,
     FuncType,
     Instance,
     IntoFunc,
     Linker,
-    Memory,
     Module,
     StackLimits,
     Store,
 };
+use fluentbase_rwasm_core::common::{Trap, ValueType};
 use std::mem::take;
 
 #[derive(Debug, Clone)]
@@ -512,7 +510,7 @@ impl Runtime {
         };
 
         let (module, bytecode) = {
-            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
+            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice(), false)
                 .map_err(Into::<RuntimeError>::into)?;
             let module_builder =
                 reduced_module.to_module_builder(&engine, import_linker, FuncType::new([], []));

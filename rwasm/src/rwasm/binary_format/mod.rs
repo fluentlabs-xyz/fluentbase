@@ -1,4 +1,4 @@
-mod instruction;
+pub mod instruction;
 mod instruction_set;
 mod number;
 mod reader_writer;

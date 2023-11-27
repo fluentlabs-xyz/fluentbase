@@ -6,6 +6,8 @@ members = [
     "rwasm",
     "rwasm/e2e",
     "rwasm/evm",
+    "rwasm/rwasm-code-snippets",
+    "rwasm/core",
     "sdk",
 ]
 exclude = []

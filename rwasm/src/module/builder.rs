@@ -13,7 +13,6 @@ use super::{
     Module,
 };
 use crate::{
-    common::ValueType,
     engine::{CompiledFunc, DedupFuncType},
     errors::ModuleError,
     module::{DataSegmentKind, ElementSegmentItems, ElementSegmentKind},
@@ -25,6 +24,7 @@ use crate::{
     TableType,
 };
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
+use fluentbase_rwasm_core::common::ValueType;
 
 /// A builder for a WebAssembly [`Module`].
 #[derive(Debug)]

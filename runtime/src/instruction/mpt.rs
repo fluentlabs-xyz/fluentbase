@@ -1,6 +1,7 @@
 use crate::{instruction::exported_memory_vec, RuntimeContext};
 use eth_trie::{EthTrie, MemoryDB, Trie};
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 use std::{cell::RefCell, collections::HashMap, hint::unreachable_unchecked, rc::Rc, sync::Arc};
 
 type TrieId = i32;

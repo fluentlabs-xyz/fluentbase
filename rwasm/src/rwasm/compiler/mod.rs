@@ -1,8 +1,7 @@
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, UntypedValue, ValueType},
     engine::{
-        bytecode::{BranchOffset, Instruction, TableIdx},
+        bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },
@@ -19,6 +18,7 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
+use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType};
 
 mod drop_keep;
 
@@ -69,6 +69,7 @@ pub struct Compiler<'linker> {
     is_translated: bool,
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
+    translate_func_as_inline: bool,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -100,16 +101,17 @@ impl Default for FuncOrExport {
 }
 
 impl<'linker> Compiler<'linker> {
-    pub fn new(wasm_binary: &[u8]) -> Result<Self, CompilerError> {
-        Self::new_with_linker(wasm_binary, None)
+    pub fn new(wasm_binary: &[u8], consume_fuel: bool) -> Result<Self, CompilerError> {
+        Self::new_with_linker(wasm_binary, None, consume_fuel)
     }
 
     pub fn new_with_linker(
         wasm_binary: &[u8],
         import_linker: Option<&'linker ImportLinker>,
+        consume_fuel: bool,
     ) -> Result<Self, CompilerError> {
         let mut config = Config::default();
-        config.consume_fuel(true);
+        config.consume_fuel(consume_fuel);
         let engine = Engine::new(&config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
@@ -122,15 +124,26 @@ impl<'linker> Compiler<'linker> {
             is_translated: false,
             injection_segments: vec![],
             br_table_status: None,
+            translate_func_as_inline: false,
         })
     }
 
-    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
+    pub fn translate_func_as_inline(&mut self, v: bool) {
+        self.translate_func_as_inline = v;
+    }
+
+    pub fn translate(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        translate_sections: bool,
+    ) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
         // first we must translate all sections, this is an entrypoint
-        self.translate_sections(main_index.unwrap_or_default())?;
+        if translate_sections {
+            self.translate_sections(main_index.unwrap_or_default())?;
+        }
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
@@ -361,7 +374,9 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        self.swap_stack_parameters(num_inputs.len() as u32);
+        if !self.translate_func_as_inline {
+            self.swap_stack_parameters(num_inputs.len() as u32);
+        }
 
         let func_body = self
             .module
@@ -379,7 +394,9 @@ impl<'linker> Compiler<'linker> {
         while instr_ptr != instr_end {
             self.translate_opcode(&mut instr_ptr, 0)?;
         }
-        self.code_section.op_unreachable();
+        if !self.translate_func_as_inline {
+            self.code_section.op_unreachable();
+        }
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
         self.function_beginning
             .insert(fn_index + 1, beginning_offset);
@@ -412,7 +429,8 @@ impl<'linker> Compiler<'linker> {
         use Instruction as WI;
         let injection_begin = self.code_section.len();
         let mut opcode_count = 1;
-        match *instr_ptr.get() {
+        let instr = *instr_ptr.get();
+        match instr {
             WI::BrAdjust(branch_offset) => {
                 opcode_count += 1;
                 if let Some(mut br_table_status) = self.br_table_status.take() {
@@ -500,7 +518,9 @@ impl<'linker> Compiler<'linker> {
             }
             WI::Return(drop_keep) => {
                 DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
-                self.code_section.op_br_indirect(0);
+                if !self.translate_func_as_inline {
+                    self.code_section.op_br_indirect(0);
+                }
             }
             WI::ReturnIfNez(drop_keep) => {
                 let br_if_offset = self.code_section.len();
@@ -625,9 +645,13 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
+    pub fn finalize(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        translate_sections: bool,
+    ) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(None)?;
+            self.translate(main_index, translate_sections)?;
         }
         let bytecode = &mut self.code_section;
 
@@ -663,7 +687,7 @@ impl<'linker> Compiler<'linker> {
                             }
                         }
                     };
-                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset));
                 }
                 Instruction::BrTable(target) => {
                     i += target.to_usize() * 2;
