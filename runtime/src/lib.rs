@@ -3,6 +3,7 @@
 extern crate core;
 
 use fluentbase_rwasm::{rwasm::ReducedModuleError, Caller};
+pub use macros::*;
 pub use platform::*;
 pub use runtime::*;
 pub use types::*;
