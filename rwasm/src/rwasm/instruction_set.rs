@@ -21,7 +21,7 @@ use crate::{
     },
     rwasm::{BinaryFormat, BinaryFormatWriter, N_BYTES_PER_MEMORY_PAGE, N_MAX_MEMORY_PAGES},
 };
-use alloc::{slice::SliceIndex, vec::Vec};
+use alloc::{slice::SliceIndex, string::String, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_rwasm_core::common::UntypedValue;
 

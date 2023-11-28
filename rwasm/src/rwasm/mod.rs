@@ -64,9 +64,11 @@ mod tests {
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
         let _trace = reduced_module.trace();
         // execute translated rwasm
-        let config = Config::default();
+        let mut config = Config::default();
+        config.consume_fuel(true);
         let engine = Engine::new(&config);
         let mut store = Store::new(&engine, HostState::default());
+        store.add_fuel(1_000_000).unwrap();
         let mut linker = Linker::<HostState>::new(&engine);
         let module = reduced_module.to_module(&engine, &mut import_linker);
         linker
