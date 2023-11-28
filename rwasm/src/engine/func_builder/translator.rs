@@ -1,27 +1,52 @@
 use super::{
     control_frame::{
-        BlockControlFrame, ControlFrame, IfControlFrame, LoopControlFrame, UnreachableControlFrame,
+        BlockControlFrame,
+        ControlFrame,
+        IfControlFrame,
+        LoopControlFrame,
+        UnreachableControlFrame,
     },
     labels::LabelRef,
     locals_registry::LocalsRegistry,
     value_stack::ValueStackHeight,
-    ControlFlowStack, InstructionsBuilder, TranslationError,
+    ControlFlowStack,
+    InstructionsBuilder,
+    TranslationError,
 };
 use crate::{
     engine::{
         bytecode::{
-            self, AddressOffset, BranchOffset, BranchTableTargets, DataSegmentIdx,
-            ElementSegmentIdx, Instruction, SignatureIdx, TableIdx,
+            self,
+            AddressOffset,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            Instruction,
+            SignatureIdx,
+            TableIdx,
         },
         config::FuelCosts,
         func_builder::control_frame::ControlFrameKind,
-        CompiledFunc, DropKeep, Instr, RelativeDepth,
+        CompiledFunc,
+        DropKeep,
+        Instr,
+        RelativeDepth,
     },
     module::{
-        BlockType, ConstExpr, FuncIdx, FuncTypeIdx, GlobalIdx, MemoryIdx, ModuleResources,
+        BlockType,
+        ConstExpr,
+        FuncIdx,
+        FuncTypeIdx,
+        GlobalIdx,
+        MemoryIdx,
+        ModuleResources,
         DEFAULT_MEMORY_INDEX,
     },
-    Engine, FuncType, GlobalType, Mutability,
+    Engine,
+    FuncType,
+    GlobalType,
+    Mutability,
 };
 use alloc::vec::Vec;
 use fluentbase_rwasm_core::common::{UntypedValue, ValueType, F32, F64};
@@ -1741,21 +1766,18 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Result<(), TranslationError> {
-        match i32::try_from(value) {
-            Ok(value) => self.translate_if_reachable(|builder| {
-                // Case: The constant value is small enough that we can apply
-                //       a small value optimization and use a more efficient
-                //       instruction to encode the constant value instruction.
-                builder.bump_fuel_consumption(builder.fuel_costs().base)?;
-                builder.stack_height.push();
-                builder
-                    .alloc
-                    .inst_builder
-                    .push_inst(Instruction::I64Const(UntypedValue::from(value)));
-                Ok(())
-            }),
-            Err(_) => self.translate_const_ref(value),
-        }
+        self.translate_if_reachable(|builder| {
+            // Case: The constant value is small enough that we can apply
+            //       a small value optimization and use a more efficient
+            //       instruction to encode the constant value instruction.
+            builder.bump_fuel_consumption(builder.fuel_costs().base)?;
+            builder.stack_height.push();
+            builder
+                .alloc
+                .inst_builder
+                .push_inst(Instruction::I64Const(UntypedValue::from(value)));
+            Ok(())
+        })
     }
 
     fn visit_f32_const(&mut self, value: wasmparser::Ieee32) -> Result<(), TranslationError> {
