@@ -80,8 +80,8 @@ fn test_arithmetic_mul() {
     let u256_y = U256::from_dec_str("2000000000000000000000000000").unwrap();
 
     // split the U256 into 4 u64 values
-    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256(u256_x);
-    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256(u256_y);
+    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256_be(u256_x);
+    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256_be(u256_y);
 
     let (res_0, res_1, res_2, res_3) = arithmetic_mul(
         u64_x_0, u64_x_1, u64_x_2, u64_x_3, u64_y_0, u64_y_1, u64_y_2, u64_y_3,
