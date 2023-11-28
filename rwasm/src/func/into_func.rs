@@ -2,15 +2,20 @@ use super::{
     super::engine::{FuncFinished, FuncParams, FuncResults},
     TrampolineEntity,
 };
-
 use crate::{foreach_tuple::for_each_tuple, Caller, ExternRef, FuncRef, FuncType};
 use core::{array, iter::FusedIterator};
 use fluentbase_rwasm_core::common::{
-    DecodeUntypedSlice, EncodeUntypedSlice, Trap, UntypedValue, ValueType, F32, F64,
+    DecodeUntypedSlice,
+    EncodeUntypedSlice,
+    Trap,
+    UntypedValue,
+    ValueType,
+    F32,
+    F64,
 };
 
 /// Closures and functions that can be used as host functions.
-pub trait IntoFunc<T, Params, Results>: Send + Sync + 'static {
+pub trait IntoFunc<T, Params, Results>: Sync + 'static {
     /// The parameters of the host function.
     #[doc(hidden)]
     type Params: WasmTypeList;
@@ -27,7 +32,7 @@ macro_rules! impl_into_func {
     ( $n:literal $( $tuple:ident )* ) => {
         impl<T, F, $($tuple,)* R> IntoFunc<T, ($($tuple,)*), R> for F
         where
-            F: Fn($($tuple),*) -> R,
+            F: FnMut($($tuple),*) -> R,
             F: Send + Sync + 'static,
             $(
                 $tuple: WasmType,
@@ -38,7 +43,7 @@ macro_rules! impl_into_func {
             type Results = <R as WasmRet>::Ok;
 
             #[allow(non_snake_case)]
-            fn into_func(self) -> (FuncType, TrampolineEntity<T>) {
+            fn into_func(mut self) -> (FuncType, TrampolineEntity<T>) {
                 IntoFunc::into_func(
                     move |
                         _: Caller<'_, T>,
@@ -54,7 +59,7 @@ macro_rules! impl_into_func {
 
         impl<T, F, $($tuple,)* R> IntoFunc<T, (Caller<'_, T>, $($tuple),*), R> for F
         where
-            F: Fn(Caller<T>, $($tuple),*) -> R,
+            F: FnMut(Caller<T>, $($tuple),*) -> R,
             F: Send + Sync + 'static,
             $(
                 $tuple: WasmType,
@@ -65,7 +70,7 @@ macro_rules! impl_into_func {
             type Results = <R as WasmRet>::Ok;
 
             #[allow(non_snake_case)]
-            fn into_func(self) -> (FuncType, TrampolineEntity<T>) {
+            fn into_func(mut self) -> (FuncType, TrampolineEntity<T>) {
                 let signature = FuncType::new(
                     <Self::Params as WasmTypeList>::types(),
                     <Self::Results as WasmTypeList>::types(),
