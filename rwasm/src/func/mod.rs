@@ -22,11 +22,11 @@ use super::{
     StoreContext,
     Stored,
 };
-use fluentbase_rwasm_core::common::Trap;
-use crate::{ engine::ResumableCall, Engine, Error, Value};
+use crate::{arena::ArenaIndex, engine::ResumableCall, Engine, Error, Value};
 use alloc::{boxed::Box, sync::Arc};
 use core::{fmt, fmt::Debug, num::NonZeroU32};
-use crate::arena::ArenaIndex;
+use fluentbase_rwasm_core::common::Trap;
+use std::sync::Mutex;
 
 /// A raw index to a function entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -201,7 +201,10 @@ impl<T> HostFuncTrampolineEntity<T> {
     pub fn new(
         engine: &Engine,
         ty: FuncType,
-        func: impl Fn(Caller<'_, T>, &[Value], &mut [Value]) -> Result<(), Trap> + Send + Sync + 'static,
+        mut func: impl FnMut(Caller<'_, T>, &[Value], &mut [Value]) -> Result<(), Trap>
+            + Send
+            + Sync
+            + 'static,
     ) -> Self {
         // Preprocess parameters and results buffers so that we can reuse those
         // computations within the closure implementation. We put both parameters
@@ -245,10 +248,10 @@ impl<T> HostFuncTrampolineEntity<T> {
 }
 
 type TrampolineFn<T> =
-    dyn Fn(Caller<T>, FuncParams) -> Result<FuncFinished, Trap> + Send + Sync + 'static;
+    dyn FnMut(Caller<T>, FuncParams) -> Result<FuncFinished, Trap> + Send + Sync + 'static;
 
 pub struct TrampolineEntity<T> {
-    closure: Arc<TrampolineFn<T>>,
+    closure: Arc<Mutex<TrampolineFn<T>>>,
 }
 
 impl<T> Debug for TrampolineEntity<T> {
@@ -261,10 +264,10 @@ impl<T> TrampolineEntity<T> {
     /// Creates a new [`TrampolineEntity`] from the given host function.
     pub fn new<F>(trampoline: F) -> Self
     where
-        F: Fn(Caller<T>, FuncParams) -> Result<FuncFinished, Trap> + Send + Sync + 'static,
+        F: FnMut(Caller<T>, FuncParams) -> Result<FuncFinished, Trap> + Send + Sync + 'static,
     {
         Self {
-            closure: Arc::new(trampoline),
+            closure: Arc::new(Mutex::new(trampoline)),
         }
     }
 
@@ -272,13 +275,13 @@ impl<T> TrampolineEntity<T> {
     ///
     /// The result is written back into the `outputs` buffer.
     pub fn call(
-        &self,
+        &mut self,
         mut ctx: impl AsContextMut<UserState = T>,
         instance: Option<&Instance>,
         params: FuncParams,
     ) -> Result<FuncFinished, Trap> {
         let caller = <Caller<T>>::new(&mut ctx, instance);
-        (self.closure)(caller, params)
+        (self.closure.lock().unwrap())(caller, params)
     }
 }
 
@@ -308,31 +311,34 @@ impl Func {
 
     /// Creates a new [`Func`] with the given arguments.
     ///
-    /// This is typically used to create a host-defined function to pass as an import to a Wasm module.
+    /// This is typically used to create a host-defined function to pass as an import to a Wasm
+    /// module.
     ///
-    /// - `ty`: the signature that the given closure adheres to,
-    ///         used to indicate what the inputs and outputs are.
-    /// - `func`: the native code invoked whenever this Func will be called.
-    ///           The closure is provided a [`Caller`] as its first argument
-    ///           which allows it to query information about the [`Instance`]
-    ///           that is assocaited to the call.
+    /// - `ty`: the signature that the given closure adheres to, used to indicate what the inputs
+    ///   and outputs are.
+    /// - `func`: the native code invoked whenever this Func will be called. The closure is provided
+    ///   a [`Caller`] as its first argument which allows it to query information about the
+    ///   [`Instance`] that is assocaited to the call.
     ///
     /// # Note
     ///
-    /// - The given [`FuncType`] `ty` must match the parameters and results otherwise
-    ///   the resulting host [`Func`] might trap during execution.
-    /// - It is the responsibility of the caller of [`Func::new`] to guarantee that
-    ///   the correct amount and types of results are written into the results buffer
-    ///   from the `func` closure. If an incorrect amount of results or types of results
-    ///   is written into the buffer then the remaining computation may fail in unexpected
-    ///   ways. This footgun can be avoided by using the typed [`Func::wrap`] method instead.
-    /// - Prefer using [`Func::wrap`] over this method if possible since [`Func`] instances
-    ///   created using this constructor have runtime overhead for every invokation that
-    ///   can be avoided by using [`Func::wrap`].
+    /// - The given [`FuncType`] `ty` must match the parameters and results otherwise the resulting
+    ///   host [`Func`] might trap during execution.
+    /// - It is the responsibility of the caller of [`Func::new`] to guarantee that the correct
+    ///   amount and types of results are written into the results buffer from the `func` closure.
+    ///   If an incorrect amount of results or types of results is written into the buffer then the
+    ///   remaining computation may fail in unexpected ways. This footgun can be avoided by using
+    ///   the typed [`Func::wrap`] method instead.
+    /// - Prefer using [`Func::wrap`] over this method if possible since [`Func`] instances created
+    ///   using this constructor have runtime overhead for every invokation that can be avoided by
+    ///   using [`Func::wrap`].
     pub fn new<T>(
         mut ctx: impl AsContextMut<UserState = T>,
         ty: FuncType,
-        func: impl Fn(Caller<'_, T>, &[Value], &mut [Value]) -> Result<(), Trap> + Send + Sync + 'static,
+        func: impl FnMut(Caller<'_, T>, &[Value], &mut [Value]) -> Result<(), Trap>
+            + Send
+            + Sync
+            + 'static,
     ) -> Self {
         let engine = ctx.as_context().store.engine();
         let host_func = HostFuncTrampolineEntity::new(engine, ty, func);
@@ -384,12 +390,12 @@ impl Func {
     /// # Errors
     ///
     /// - If the function returned a [`Trap`].
-    /// - If the types of the `inputs` do not match the expected types for the
+    /// - If the types of the `inputs` do not match the expected types for the function signature of
+    ///   `self`.
+    /// - If the number of input values does not match the expected number of inputs required by the
     ///   function signature of `self`.
-    /// - If the number of input values does not match the expected number of
-    ///   inputs required by the function signature of `self`.
-    /// - If the number of output values does not match the expected number of
-    ///   outputs required by the function signature of `self`.
+    /// - If the number of output values does not match the expected number of outputs required by
+    ///   the function signature of `self`.
     pub fn call<T>(
         &self,
         mut ctx: impl AsContextMut<UserState = T>,
@@ -424,12 +430,12 @@ impl Func {
     /// # Errors
     ///
     /// - If the function returned a Wasm [`Trap`].
-    /// - If the types of the `inputs` do not match the expected types for the
+    /// - If the types of the `inputs` do not match the expected types for the function signature of
+    ///   `self`.
+    /// - If the number of input values does not match the expected number of inputs required by the
     ///   function signature of `self`.
-    /// - If the number of input values does not match the expected number of
-    ///   inputs required by the function signature of `self`.
-    /// - If the number of output values does not match the expected number of
-    ///   outputs required by the function signature of `self`.
+    /// - If the number of output values does not match the expected number of outputs required by
+    ///   the function signature of `self`.
     pub fn call_resumable<T>(
         &self,
         mut ctx: impl AsContextMut<UserState = T>,
