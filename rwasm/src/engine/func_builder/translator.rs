@@ -1767,9 +1767,6 @@ impl<'a> VisitOperator<'a> for FuncTranslator<'a> {
 
     fn visit_i64_const(&mut self, value: i64) -> Result<(), TranslationError> {
         self.translate_if_reachable(|builder| {
-            // Case: The constant value is small enough that we can apply
-            //       a small value optimization and use a more efficient
-            //       instruction to encode the constant value instruction.
             builder.bump_fuel_consumption(builder.fuel_costs().base)?;
             builder.stack_height.push();
             builder
