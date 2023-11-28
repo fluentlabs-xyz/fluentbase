@@ -104,8 +104,8 @@ fn test_xx() {
     println!("{:?}", u256_y.bits());
 
     // split the U256 into 4 u64 values
-    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256(u256_x);
-    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256(u256_y);
+    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256_be(u256_x);
+    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256_be(u256_y);
 
     println!("{:?}", (u64_x_0, u64_x_1, u64_x_2, u64_x_3));
 
@@ -280,8 +280,8 @@ fn test_xx() {
 // }
 
 // #[no_mangle]
-// fn arithmetic_mul(x1: u64, x2: u64, x3: u64, x4: u64, y1: u64, y2: u64, y3: u64, y4: u64) -> U256 {
-//     let mut result = U256::zero();
+// fn arithmetic_mul(x1: u64, x2: u64, x3: u64, x4: u64, y1: u64, y2: u64, y3: u64, y4: u64) -> U256
+// {     let mut result = U256::zero();
 
 //     // for i in 0..3 {
 //     let mut carry = 0u64;

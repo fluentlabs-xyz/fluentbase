@@ -23,7 +23,7 @@ test = false
 proc-macro = false
 
 [features]
-default = []
+default = ["arithmetic_sub"]
 testing = ["fluentbase-runtime"]
 bitwise_byte = []
 bitwise_shl = []
