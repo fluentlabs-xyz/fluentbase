@@ -22,7 +22,7 @@ pub fn arithmetic_sub(
     if a3 >= b3 {
         s3 = a3 - b3;
     } else {
-        s3 = U64_MAX_VAL - b3 + a3 + 1;
+        s3 = U64_MAX_VAL - b3 + a3 + (1 - borrow);
         borrow = 1;
     }
 
@@ -30,7 +30,7 @@ pub fn arithmetic_sub(
         s2 = a2 - b2 - borrow;
         borrow = 0;
     } else {
-        s2 = U64_MAX_VAL - b2 + a2 + 1;
+        s2 = U64_MAX_VAL - b2 + a2 + (1 - borrow);
         borrow = 1;
     }
 
@@ -38,7 +38,7 @@ pub fn arithmetic_sub(
         s1 = a1 - b1 - borrow;
         borrow = 0;
     } else {
-        s1 = U64_MAX_VAL - b1 + a1 + 1;
+        s1 = U64_MAX_VAL - b1 + a1 + (1 - borrow);
         borrow = 1;
     }
 
@@ -46,10 +46,10 @@ pub fn arithmetic_sub(
         s0 = a0 - b0 - borrow;
     } else {
         if a0_sign > 0 {
-            s0 = U64_MAX_VAL - b0 + a0 + 1;
-        } else {
             // TODO process overflow
             s0 = U64_MSBIT_IS_1;
+        } else {
+            s0 = U64_MAX_VAL - b0 + a0 + (1 - borrow);
         }
     }
 
@@ -75,6 +75,24 @@ mod tests {
                 "769997000000000000000000000000000000000000000",
             ),
             ("1000", "777", "223"),
+            // 0, 9, -9
+            (
+                "0",
+                "9",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+            ),
+            // -9, -9, 0
+            (
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "0",
+            ),
+            // -9, 9, -18
+            (
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "9",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639918",
+            ),
         ];
 
         for case in &cases {
@@ -86,7 +104,7 @@ mod tests {
             let res_expected = split_u256_be(u256_expected);
 
             let res_tuple = arithmetic_sub(a.0, a.1, a.2, a.3, b.0, b.1, b.2, b.3);
-            let res = combine256_tuple_be(&res_tuple);
+            let mut res = combine256_tuple_be(&res_tuple);
 
             debug!("a {:?}", a);
             debug!("b {:?}", b);
