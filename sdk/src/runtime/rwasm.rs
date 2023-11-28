@@ -7,7 +7,7 @@ use fluentbase_rwasm::{
 
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        let import_linker = Runtime::new_linker();
+        let import_linker = Runtime::<()>::new_linker();
         let mut compiler =
             Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
         compiler
@@ -34,12 +34,12 @@ impl RwasmPlatformSDK for SDK {
         state: u32,
         fuel_limit: u32,
     ) -> i32 {
-        let import_linker = Runtime::new_linker();
-        let ctx = RuntimeContext::new(bytecode)
+        let import_linker = Runtime::<()>::new_linker();
+        let ctx = RuntimeContext::<()>::new(bytecode)
             .with_input(input.to_vec())
             .with_state(state)
             .with_fuel_limit(fuel_limit);
-        let result = Runtime::run_with_context(ctx, &import_linker);
+        let result = Runtime::<()>::run_with_context(ctx, &import_linker);
         if result.is_err() {
             return ExitCode::TransactError.into();
         }

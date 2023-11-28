@@ -7,8 +7,8 @@ use crate::{
 use fluentbase_rwasm::{rwasm::Compiler, Caller};
 use fluentbase_rwasm_core::common::Trap;
 
-pub(crate) fn rwasm_compile(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn rwasm_compile<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     input_ptr: u32,
     input_len: u32,
     output_ptr: u32,
@@ -17,7 +17,7 @@ pub(crate) fn rwasm_compile(
     let input = exported_memory_vec(&mut caller, input_ptr as usize, input_len as usize);
 
     // translate WASM binary to rWASM
-    let import_linker = Runtime::new_linker();
+    let import_linker = Runtime::<T>::new_linker();
     let mut compiler =
         Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
     let compile_res = compiler.finalize(None, true);
@@ -32,8 +32,8 @@ pub(crate) fn rwasm_compile(
     }
 }
 
-pub(crate) fn rwasm_transact(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn rwasm_transact<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     code_offset: i32,
     code_len: i32,
     input_offset: i32,
@@ -48,12 +48,12 @@ pub(crate) fn rwasm_transact(
     let output = exported_memory_slice(&mut caller, output_offset as usize, output_len as usize);
     // TODO: "we probably need custom linker here with reduced host calls number"
     // TODO: "make sure there is no panic inside runtime"
-    let import_linker = Runtime::new_linker();
-    let ctx = RuntimeContext::new(bytecode)
+    let import_linker = Runtime::<T>::new_linker();
+    let ctx = RuntimeContext::<T>::new(bytecode)
         .with_input(input.to_vec())
         .with_state(state as u32)
         .with_fuel_limit(fuel_limit as u32);
-    let result = Runtime::run_with_context(ctx, &import_linker);
+    let result = Runtime::<T>::run_with_context(ctx, &import_linker);
     if result.is_err() {
         return Err(ExitCode::TransactError.into());
     }
