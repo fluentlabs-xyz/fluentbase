@@ -1,30 +1,98 @@
 #[cfg(test)]
 mod tests {
-    use fluentbase_rwasm::{
-        rwasm::{Compiler, FuncOrExport, ReducedModule},
-        Engine,
+    #[cfg(feature = "arithmetic_mul")]
+    use crate::arithmetic::mul::arithmetic_mul;
+    #[cfg(feature = "arithmetic_sub")]
+    use crate::arithmetic::sub::arithmetic_sub;
+    use crate::{
+        test_helper::test_binary_cases,
+        utils::{combine_u64, split_u256_be},
     };
 
+    #[cfg(feature = "arithmetic_sub")]
     #[test]
-    pub fn bitwise_byte() {
-        let wasm_binary = wat::parse_file("./bin/bitwise_byte.wat").unwrap();
-        let engine = Engine::default();
-        let module = fluentbase_rwasm::module::Module::new(&engine, &wasm_binary[..]).unwrap();
-        println!("exports:");
-        for export in module.exports().into_iter() {
-            println!("export index {:?} name '{}'", export.index(), export.name());
-        }
-        println!("module.exports().count(): {}", module.exports().count());
-        // let import_linker = Runtime::new_linker();
-        let rwasm = Compiler::new(&wasm_binary, false)/*new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))*/
-            .unwrap()
-            .finalize(Some(FuncOrExport::Func(0)), false)
-            .unwrap();
-        println!("rwasm {:x?}", &rwasm);
-        let reduced_module = ReducedModule::new(&rwasm, false).unwrap();
-        println!(
-            "reduced_module.trace_binary(): |||\n{}\n|||",
-            reduced_module.trace()
+    pub fn arithmetic_sub_test() {
+        let cases = [
+            (
+                "770000000000000000000000000000000000000000000",
+                "3000000000000000000000000000000000000000",
+                "769997000000000000000000000000000000000000000",
+            ),
+            ("1000", "777", "223"),
+            // 0, 9, -9
+            (
+                "0",
+                "9",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+            ),
+            // -9, -9, 0
+            (
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "0",
+            ),
+            // -9, 9, -18
+            (
+                "115792089237316195423570985008687907853269984665640564039457584007913129639927",
+                "9",
+                "115792089237316195423570985008687907853269984665640564039457584007913129639918",
+            ),
+            (
+                "1579684469184883832639141051588852743717413708303648619256214454273",
+                "200890243713775611099931966610046929622137341824116535096625",
+                "1579684268294640118863529951656886133670484086166306795139679357648",
+            ),
+            (
+                "94179513839427778125920318524484559090418146069193034825729",
+                "22988181401826657186705067401604306861967601267430683953",
+                "94156525658025951468733613457082954783556178467925604141776",
+            ),
+            // 0x000000000000000f000000000000000000000000000000000000000000000000
+            // 0x0000000000000000000000000000000100000000000000000000000000000000
+            // 0x000000000000000effffffffffffffff00000000000000000000000000000000
+            (
+                "94156526030800211457536841348114996241535331666960517693440",
+                "340282366920938463463374607431768211456",
+                "94156526030800211457196558981194057778071957059528749481984",
+            ),
+        ];
+
+        test_binary_cases(arithmetic_sub, &cases);
+    }
+
+    #[cfg(feature = "arithmetic_mul")]
+    #[test]
+    fn test_arithmetic_mul() {
+        use ethereum_types::U256;
+
+        let u256_x = U256::from_dec_str("60000000000000000000000000000000000000000000").unwrap();
+        let u256_y = U256::from_dec_str("2000000000000000000000000000").unwrap();
+
+        // split the U256 into 4 u64 values
+        let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256_be(u256_x);
+        let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256_be(u256_y);
+
+        let (res_0, res_1, res_2, res_3) = arithmetic_mul(
+            u64_x_0, u64_x_1, u64_x_2, u64_x_3, u64_y_0, u64_y_1, u64_y_2, u64_y_3,
         );
+
+        println!("RES: {:?} ", combine_u64(res_0, res_1, res_2, res_3));
+
+        assert_eq!(
+            combine_u64(res_0, res_1, res_2, res_3),
+            U256::from_dec_str(
+                "120000000000000000000000000000000000000000000000000000000000000000000000"
+            )
+            .unwrap()
+        );
+    }
+
+    #[cfg(feature = "arithmetic_mul")]
+    #[test]
+    pub fn arithmetic_mul_test() {
+        // [(a,b,res), ...]
+        let cases = [("1", "1", "1")];
+
+        test_binary_cases(arithmetic_mul, &cases);
     }
 }

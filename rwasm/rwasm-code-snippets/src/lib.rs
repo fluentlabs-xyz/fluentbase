@@ -12,6 +12,7 @@ pub(crate) mod consts;
 #[cfg(test)]
 pub(crate) mod test_helper;
 mod tests;
+mod utils;
 
 #[cfg(test)]
 #[ctor::ctor]
