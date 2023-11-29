@@ -1,28 +1,39 @@
+use crate::{
+    primitives::Bytecode,
+    translator::{
+        host::host_impl::HostImpl,
+        instruction_result::InstructionResult,
+        instructions::opcode::make_instruction_table,
+        translator::{contract::Contract, Translator},
+    },
+};
 use alloy_primitives::Bytes;
+use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet};
 
-use fluentbase_rwasm::rwasm::InstructionSet;
-
-use crate::primitives::Bytecode;
-use crate::translator::host::host_impl::HostImpl;
-use crate::translator::instruction_result::InstructionResult;
-use crate::translator::instructions::opcode::make_instruction_table;
-use crate::translator::translator::contract::Contract;
-use crate::translator::translator::Translator;
-
-#[derive(Default)]
+#[derive()]
 pub struct EvmCompiler<'a> {
     pub evm_bytecode: &'a [u8],
     pub instruction_set: InstructionSet,
+    import_linker: &'a ImportLinker,
     inject_fuel_consumption: bool,
 }
 
 impl<'a> EvmCompiler<'a> {
-    pub fn new(evm_bytecode: &'a [u8], inject_fuel_consumption: bool) -> Self {
+    pub fn new(
+        import_linker: &'a ImportLinker,
+        inject_fuel_consumption: bool,
+        evm_bytecode: &'a [u8],
+    ) -> Self {
         Self {
             evm_bytecode,
             inject_fuel_consumption,
-            ..Default::default()
+            import_linker,
+            instruction_set: Default::default(),
         }
+    }
+
+    pub fn get_mut_instruction_set(&mut self) -> &InstructionSet {
+        &self.instruction_set
     }
 
     pub fn translate(&mut self) -> InstructionResult {
@@ -30,7 +41,8 @@ impl<'a> EvmCompiler<'a> {
             Bytecode::new_raw(Bytes::copy_from_slice(self.evm_bytecode)).to_checked();
 
         let contract = Box::new(Contract::new(evm_bytecode));
-        let mut translator = Translator::new(contract, self.inject_fuel_consumption);
+        let mut translator =
+            Translator::new(self.import_linker, self.inject_fuel_consumption, contract);
 
         let mut host = HostImpl::new(&mut self.instruction_set);
         let instruction_table = make_instruction_table::<HostImpl>();

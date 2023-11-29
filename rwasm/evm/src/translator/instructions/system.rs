@@ -1,9 +1,11 @@
-use crate::translator::host::Host;
-use crate::translator::translator::Translator;
+use crate::translator::{host::Host, translator::Translator};
+use log::debug;
 
-pub fn keccak256<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn keccak256<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "KECCAK256";
     panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    // translator.get_import_linker().index_mapping()[""]
 }
 
 pub fn address<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
