@@ -125,9 +125,10 @@ impl<'a> Translator<'a> {
             }
             let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
             compiler.translate_func_as_inline(true);
-            let rwasm_binary = compiler
-                .finalize(Some(FuncOrExport::Func(0)), false)
+            compiler
+                .translate(Some(FuncOrExport::Func(0)), false)
                 .unwrap();
+            let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary, true)
                 .unwrap()
                 .bytecode()
