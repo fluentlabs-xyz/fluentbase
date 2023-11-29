@@ -1,5 +1,7 @@
+use crate::utils::{combine_u64, split_u256_be};
+
 #[no_mangle]
-fn arithmetic_mul(
+pub fn arithmetic_mul(
     x1: u64,
     x2: u64,
     x3: u64,
@@ -69,31 +71,4 @@ fn arithmetic_mul(
     }
 
     result.into()
-}
-
-#[test]
-fn test_arithmetic_mul() {
-    use crate::test_helper::*;
-    use ethereum_types::U256;
-
-    let u256_x = U256::from_dec_str("60000000000000000000000000000000000000000000").unwrap();
-    let u256_y = U256::from_dec_str("2000000000000000000000000000").unwrap();
-
-    // split the U256 into 4 u64 values
-    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256_be(u256_x);
-    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256_be(u256_y);
-
-    let (res_0, res_1, res_2, res_3) = arithmetic_mul(
-        u64_x_0, u64_x_1, u64_x_2, u64_x_3, u64_y_0, u64_y_1, u64_y_2, u64_y_3,
-    );
-
-    println!("RES: {:?} ", combine_u64(res_0, res_1, res_2, res_3));
-
-    assert_eq!(
-        combine_u64(res_0, res_1, res_2, res_3),
-        U256::from_dec_str(
-            "120000000000000000000000000000000000000000000000000000000000000000000000"
-        )
-        .unwrap()
-    );
 }

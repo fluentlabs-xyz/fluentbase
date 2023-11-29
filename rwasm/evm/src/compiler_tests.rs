@@ -17,7 +17,7 @@ mod evm_to_rwasm_tests {
     use crate::translator::instructions::opcode::{BYTE, SHR, SUB};
     use log::debug;
 
-    fn run_test(evm_bytecode_bytes: &Vec<u8>) -> [u8; 32] {
+    fn run_test(evm_bytecode_bytes: &Vec<u8>, res_size: Option<usize>) -> Vec<u8> {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
         let mut compiler = EvmCompiler::new(evm_binary.as_ref(), false);
@@ -69,8 +69,7 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        assert!(global_memory_len <= 32);
-        let global_memory = global_memory[0..32].to_vec();
+        let global_memory = global_memory[0..res_size.unwrap_or(32)].to_vec();
         debug!(
             "global_memory (len {}) {:?}",
             global_memory_len,
@@ -83,10 +82,10 @@ mod evm_to_rwasm_tests {
         // );
         assert_eq!(execution_result.data().exit_code(), 0);
 
-        global_memory.try_into().unwrap()
+        global_memory
     }
 
-    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) {
+    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)], res_size: Option<usize>) {
         assert!(cases.len() > 0);
         for case in cases {
             let a = &case.0;
@@ -101,7 +100,7 @@ mod evm_to_rwasm_tests {
             evm_bytecode_bytes.extend(b);
             evm_bytecode_bytes.push(opcode);
 
-            let mut global_memory = run_test(&evm_bytecode_bytes);
+            let mut global_memory = run_test(&evm_bytecode_bytes, None);
             const CHUNK_LEN: usize = 8;
             for chunk in global_memory.chunks_mut(8) {
                 for i in 0..(CHUNK_LEN / 2) {
@@ -111,13 +110,13 @@ mod evm_to_rwasm_tests {
                     chunk[opposite_index] = tmp;
                 }
             }
-            if res_expected[..] != global_memory[..] {
+            if *res_expected != global_memory {
                 debug!("a=           {:x?}", a);
                 debug!("b=            {:x?}", b);
                 debug!("res_expected= {:x?}", res_expected);
                 debug!("res=          {:x?}", global_memory);
             }
-            assert_eq!(res_expected[..], global_memory);
+            assert_eq!(*res_expected, global_memory);
         }
     }
 
@@ -198,7 +197,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(EQ, &cases);
+        test_binary(EQ, &cases, None);
     }
 
     #[test]
@@ -249,7 +248,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(SHL, &cases);
+        test_binary(SHL, &cases, None);
     }
 
     #[test]
@@ -324,7 +323,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(SHR, &cases);
+        test_binary(SHR, &cases, None);
     }
 
     #[test]
@@ -358,7 +357,7 @@ mod evm_to_rwasm_tests {
             ));
         }
 
-        test_binary(BYTE, &cases);
+        test_binary(BYTE, &cases, None);
     }
 
     #[test]
@@ -462,7 +461,7 @@ mod evm_to_rwasm_tests {
             // ),
         ];
 
-        test_binary(SUB, &cases);
+        test_binary(SUB, &cases, None);
     }
 
     #[test]
@@ -542,7 +541,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(GT, &cases);
+        test_binary(GT, &cases, None);
     }
 
     #[test]
@@ -622,6 +621,6 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(LT, &cases);
+        test_binary(LT, &cases, None);
     }
 }
