@@ -4,12 +4,26 @@ mod evm_to_rwasm_tests {
         compiler::EvmCompiler,
         translator::{
             instruction_result::InstructionResult,
-            instructions::opcode::{EQ, GT, LT, PUSH0, PUSH32, SHL},
+            instructions::opcode::{
+                BYTE,
+                EQ,
+                GT,
+                LT,
+                MSTORE,
+                MSTORE8,
+                PUSH0,
+                PUSH32,
+                SHL,
+                SHR,
+                SUB,
+            },
         },
     };
     use alloy_primitives::{hex, Bytes};
-    use fluentbase_runtime::Runtime;
-    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ImportLinker, ReducedModule};
+    use fluentbase_runtime::{ExecutionResult, Runtime};
+    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
+    use log::debug;
+
     fn d(hex: &str) -> Vec<u8> {
         let mut res = hex.replace(" ", "");
         if !res.starts_with("0x") {
@@ -19,9 +33,6 @@ mod evm_to_rwasm_tests {
         hex::decode(res.clone()).unwrap()
     }
 
-    use crate::translator::instructions::opcode::{BYTE, MSTORE, MSTORE8, SHR, SUB};
-    use log::debug;
-
     fn run_test(
         evm_bytecode_bytes: &Vec<u8>,
         force_memory_result_size_to: Option<usize>,
@@ -29,7 +40,7 @@ mod evm_to_rwasm_tests {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
         debug!("import_linker: before init");
-        let import_linker = Runtime::new_linker();
+        let import_linker = Runtime::<()>::new_linker();
         debug!("import_linker: after init");
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
@@ -63,7 +74,7 @@ mod evm_to_rwasm_tests {
         let mut global_memory_len: usize = 0;
         let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
-        let execution_result = result.unwrap();
+        let execution_result: ExecutionResult<()> = result.unwrap();
         // debug!("mem changes:");
         for log in execution_result.tracer().logs.iter() {
             if log.memory_changes.len() > 0 {
@@ -131,7 +142,7 @@ mod evm_to_rwasm_tests {
             }
             let res = &global_memory[0..res_expected.len()];
             if res_expected != res {
-                debug!("a=           {:x?}", a);
+                debug!("a=            {:x?}", a);
                 debug!("b=            {:x?}", b);
                 debug!("res_expected= {:x?}", res_expected);
                 debug!("res=          {:x?}", global_memory);

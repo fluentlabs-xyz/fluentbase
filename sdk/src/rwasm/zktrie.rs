@@ -1,5 +1,3 @@
-use std::vec;
-
 use crate::{ZktriePlatformSDK, SDK};
 
 extern "C" {

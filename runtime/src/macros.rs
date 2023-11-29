@@ -37,7 +37,7 @@ macro_rules! forward_call {
             $name,
             Func::wrap(
                 $store.as_context_mut(),
-                |caller: Caller<'_, RuntimeContext>, $($t)*| -> Result<$out, Trap> {
+                |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, Trap> {
                     return forward_call_args! { $func, caller, [$($t)*] };
                 })
         ).unwrap();
