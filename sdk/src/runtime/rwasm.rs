@@ -20,7 +20,7 @@ impl RwasmPlatformSDK for SDK {
                 true,
             )
             .unwrap();
-        let rwasm_bytecode = compiler.finalize(None, true).unwrap();
+        let rwasm_bytecode = compiler.finalize().unwrap();
         if rwasm_bytecode.len() <= output.len() {
             let len = rwasm_bytecode.len();
             output[0..len].copy_from_slice(rwasm_bytecode.as_slice());

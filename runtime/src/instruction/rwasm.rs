@@ -20,7 +20,7 @@ pub(crate) fn rwasm_compile<T>(
     let import_linker = Runtime::<T>::new_linker();
     let mut compiler =
         Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
-    let compile_res = compiler.finalize(None, true);
+    let compile_res = compiler.finalize();
     match compile_res {
         Ok(rwasm_bytecode) => {
             if rwasm_bytecode.len() <= output_len as usize {

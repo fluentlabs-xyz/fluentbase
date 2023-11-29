@@ -65,7 +65,6 @@ pub struct Compiler<'linker> {
     // mapping from function index to its position inside code section
     function_beginning: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
-    // for automatic translation
     is_translated: bool,
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
@@ -645,13 +644,9 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    pub fn finalize(
-        &mut self,
-        main_index: Option<FuncOrExport>,
-        translate_sections: bool,
-    ) -> Result<Vec<u8>, CompilerError> {
+    pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(main_index, translate_sections)?;
+            self.translate(None, true)?;
         }
         let bytecode = &mut self.code_section;
 

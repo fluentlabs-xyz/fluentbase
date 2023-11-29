@@ -1,4 +1,4 @@
-#![no_std]
+// #![no_std]
 
 extern crate alloc;
 
@@ -79,9 +79,9 @@ pub trait EvmPlatformSDK {
 // #[inline(always)]
 // fn panic(info: &core::panic::PanicInfo) -> ! {
 //     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-//         sys_write(panic_message.as_ptr() as u32, panic_message.len() as u32);
+//         SDK::sys_write(panic_message.as_bytes());
 //     }
-//     sys_panic();
+//     SDK::sys_halt(ExitCode::ExecutionHalted as i32);
 //     loop {}
 // }
 
