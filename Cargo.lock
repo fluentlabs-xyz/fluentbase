@@ -78,23 +78,6 @@ dependencies = [
  "derive_more",
  "hex-literal",
  "itoa",
- "ruint",
- "tiny-keccak",
-]
-
-[[package]]
-name = "alloy-primitives"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5def4b5e1bb8fe7ea37eeac1063246d4ef26f56cbdccf864a5a6bdcb80e91f4"
-dependencies = [
- "alloy-rlp",
- "bytes",
- "cfg-if",
- "const-hex",
- "derive_more",
- "hex-literal",
- "itoa",
  "proptest",
  "rand",
  "ruint",
@@ -1713,7 +1696,7 @@ dependencies = [
 name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.4.2",
+ "alloy-primitives",
  "bitvec 1.0.1",
  "ctor",
  "env_logger",
@@ -1730,7 +1713,7 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.5.0",
+ "alloy-primitives",
  "alloy-rlp",
  "derive",
  "eth_trie",
@@ -5080,6 +5063,11 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "ethers-core"
+version = "0.17.0"
+source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9a0df8daf536937739c87e85612bd73212f"
+
+[[patch.unused]]
 name = "poseidon"
 version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
@@ -5088,8 +5076,3 @@ source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220
 name = "halo2_proofs"
 version = "0.2.0"
 source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5cf9a3726525810af41ef416e0292ec999b34030"
-
-[[patch.unused]]
-name = "ethers-core"
-version = "0.17.0"
-source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9a0df8daf536937739c87e85612bd73212f"

@@ -54,25 +54,25 @@ pub(crate) fn wasi_args_sizes_get<T>(
 }
 
 pub(crate) fn wasi_args_get<T>(
-    mut caller: Caller<'_, RuntimeContext<T>>,
-    argv_ptrs_ptr: i32,
-    argv_buff_ptr: i32,
+    mut _caller: Caller<'_, RuntimeContext<T>>,
+    _argv_ptrs_ptr: i32,
+    _argv_buff_ptr: i32,
 ) -> Result<i32, Trap> {
-    let argc = caller.data().input_count();
-    let argv = caller.data().input_size();
-    // copy argv ptrs into argc buffer
-    let input = caller.data().input.clone();
-    let argv_buffer = caller.data().argv_buffer();
-    let argv_ptrs = exported_memory_slice(&mut caller, argv_ptrs_ptr as usize, (argc * 4) as usize);
-    let mut ptr_sum = argv_buff_ptr;
-    for (i, it) in input.iter().enumerate() {
-        // let ptr_le = ptr_sum.to_le_bytes();
-        // argv_ptrs[i..].copy_from_slice(&ptr_le);
-        // ptr_sum += it.len() as i32;
-    }
-    // copy argv buffer
-    let argv_buff = exported_memory_slice(&mut caller, argv_buff_ptr as usize, argv as usize);
-    argv_buff.copy_from_slice(argv_buffer.as_slice());
+    // let argc = caller.data().input_count();
+    // let argv = caller.data().input_size();
+    // // copy argv ptrs into argc buffer
+    // let input = caller.data().input.clone();
+    // let argv_buffer = caller.data().argv_buffer();
+    // let argv_ptrs = exported_memory_slice(&mut caller, argv_ptrs_ptr as usize, (argc * 4) as
+    // usize); let mut ptr_sum = argv_buff_ptr;
+    // for (i, it) in input.iter().enumerate() {
+    //     let ptr_le = ptr_sum.to_le_bytes();
+    //     argv_ptrs[i..].copy_from_slice(&ptr_le);
+    //     ptr_sum += it.len() as i32;
+    // }
+    // // copy argv buffer
+    // let argv_buff = exported_memory_slice(&mut caller, argv_buff_ptr as usize, argv as usize);
+    // argv_buff.copy_from_slice(argv_buffer.as_slice());
     // return success
     Ok(wasi::ERRNO_SUCCESS.raw() as i32)
 }

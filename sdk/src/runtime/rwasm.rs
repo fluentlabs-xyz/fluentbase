@@ -1,4 +1,5 @@
 use crate::{RwasmPlatformSDK, SDK};
+use alloc::vec;
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
@@ -57,6 +58,7 @@ impl RwasmPlatformSDK for SDK {
 #[cfg(test)]
 mod test {
     use crate::{RwasmPlatformSDK, SDK};
+    use alloc::vec;
 
     #[test]
     fn test_greeting() {
