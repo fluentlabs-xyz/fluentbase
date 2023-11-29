@@ -10,12 +10,12 @@ impl MptPlatformSDK for SDK {
         // TRIE.replace(EthTrie::new(Arc::new(MemoryDB::new(true))));
     }
 
-    fn mpt_update(key: &[u8], value: &[u8]) {
+    fn mpt_update(_key: &[u8], _value: &[u8]) {
         unreachable!("not implemented")
         // TRIE.with_borrow_mut(|trie| trie.insert(key, value).unwrap());
     }
 
-    fn mpt_get(key: &[u8], output: &mut [u8]) -> i32 {
+    fn mpt_get(_key: &[u8], _output: &mut [u8]) -> i32 {
         unreachable!("not implemented")
         // TRIE.with_borrow(|trie| {
         //     if let Some(value) = trie.get(key).unwrap() {
@@ -25,7 +25,7 @@ impl MptPlatformSDK for SDK {
         // 0
     }
 
-    fn mpt_root(output: &mut [u8]) -> i32 {
+    fn mpt_root(_output: &mut [u8]) -> i32 {
         unreachable!("not implemented")
         // TRIE.with_borrow_mut(|trie| {
         //     let trie_root = trie.root_hash().unwrap();
