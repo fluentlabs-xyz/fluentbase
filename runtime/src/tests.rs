@@ -14,7 +14,7 @@ pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut compiler =
         Compiler::new_with_linker(&wasm_binary, Some(&import_linker), consume_fuel).unwrap();
-    compiler.finalize(None, true).unwrap()
+    compiler.finalize().unwrap()
 }
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
@@ -25,7 +25,7 @@ fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
         inject_fuel_consumption,
     )
     .unwrap()
-    .finalize(None, true)
+    .finalize()
     .unwrap()
 }
 
@@ -230,7 +230,7 @@ fn test_state() {
             true,
         )
         .unwrap();
-    let rwasm_bytecode = compiler.finalize(None, true).unwrap();
+    let rwasm_bytecode = compiler.finalize().unwrap();
     Runtime::<()>::run_with_context(RuntimeContext::new(rwasm_bytecode), &import_linker).unwrap();
 }
 
