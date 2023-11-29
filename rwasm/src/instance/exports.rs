@@ -12,7 +12,7 @@ pub enum Extern {
     ///
     /// [`Cell<T>`]: https://doc.rust-lang.org/core/cell/struct.Cell.html
     Global(Global),
-    /// A WebAssembly table which is an array of funtion references.
+    /// A WebAssembly table which is an array of function references.
     Table(Table),
     /// A WebAssembly linear memory.
     Memory(Memory),
