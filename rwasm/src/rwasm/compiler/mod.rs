@@ -1,7 +1,7 @@
 use crate::{
     arena::ArenaIndex,
     engine::{
-        bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
+        bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
         DropKeep,
     },

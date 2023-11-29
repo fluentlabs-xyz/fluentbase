@@ -1,4 +1,6 @@
-// #![no_std]
+#![no_std]
+
+extern crate alloc;
 
 #[cfg(feature = "runtime")]
 mod runtime;
