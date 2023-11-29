@@ -9,18 +9,29 @@ mod evm_to_rwasm_tests {
     };
     use alloy_primitives::{hex, Bytes};
     use fluentbase_runtime::Runtime;
-    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ReducedModule};
+    use fluentbase_rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, ImportLinker, ReducedModule};
     fn d(hex: &str) -> Vec<u8> {
-        hex::decode(hex.replace(" ", "")).unwrap()
+        let mut res = hex.replace(" ", "");
+        if !res.starts_with("0x") {
+            res = "0x".to_string();
+            res.push_str(hex);
+        }
+        hex::decode(res.clone()).unwrap()
     }
 
-    use crate::translator::instructions::opcode::{BYTE, SHR, SUB};
+    use crate::translator::instructions::opcode::{BYTE, MSTORE, MSTORE8, SHR, SUB};
     use log::debug;
 
-    fn run_test(evm_bytecode_bytes: &Vec<u8>, res_size: Option<usize>) -> Vec<u8> {
+    fn run_test(
+        evm_bytecode_bytes: &Vec<u8>,
+        force_memory_result_size_to: Option<usize>,
+    ) -> Vec<u8> {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
-        let mut compiler = EvmCompiler::new(evm_binary.as_ref(), false);
+        debug!("import_linker: before init");
+        let import_linker = Runtime::new_linker();
+        debug!("import_linker: after init");
+        let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         compiler.instruction_set.op_i32_const(100);
         compiler.instruction_set.op_memory_grow();
@@ -69,7 +80,7 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        let global_memory = global_memory[0..res_size.unwrap_or(32)].to_vec();
+        let global_memory = global_memory[0..force_memory_result_size_to.unwrap_or(32)].to_vec();
         debug!(
             "global_memory (len {}) {:?}",
             global_memory_len,
@@ -85,7 +96,13 @@ mod evm_to_rwasm_tests {
         global_memory
     }
 
-    fn test_binary(opcode: u8, cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)], res_size: Option<usize>) {
+    /// @cases - &(a,b,result)
+    fn test_binary(
+        opcode: u8,
+        push_offset_for_result_in_memory: bool,
+        cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+        force_memory_result_size_to: Option<usize>,
+    ) {
         assert!(cases.len() > 0);
         for case in cases {
             let a = &case.0;
@@ -93,14 +110,16 @@ mod evm_to_rwasm_tests {
             let res_expected = &case.2;
             let mut evm_bytecode_bytes: Vec<u8> = vec![];
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
-            evm_bytecode_bytes.push(PUSH0);
+            if push_offset_for_result_in_memory {
+                evm_bytecode_bytes.push(PUSH0);
+            }
             evm_bytecode_bytes.push(PUSH32);
             evm_bytecode_bytes.extend(a);
             evm_bytecode_bytes.push(PUSH32);
             evm_bytecode_bytes.extend(b);
             evm_bytecode_bytes.push(opcode);
 
-            let mut global_memory = run_test(&evm_bytecode_bytes, None);
+            let mut global_memory = run_test(&evm_bytecode_bytes, force_memory_result_size_to);
             const CHUNK_LEN: usize = 8;
             for chunk in global_memory.chunks_mut(8) {
                 for i in 0..(CHUNK_LEN / 2) {
@@ -110,13 +129,14 @@ mod evm_to_rwasm_tests {
                     chunk[opposite_index] = tmp;
                 }
             }
-            if *res_expected != global_memory {
+            let res = &global_memory[0..res_expected.len()];
+            if res_expected != res {
                 debug!("a=           {:x?}", a);
                 debug!("b=            {:x?}", b);
                 debug!("res_expected= {:x?}", res_expected);
                 debug!("res=          {:x?}", global_memory);
             }
-            assert_eq!(*res_expected, global_memory);
+            assert_eq!(res_expected, res);
         }
     }
 
@@ -197,7 +217,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(EQ, &cases, None);
+        test_binary(EQ, true, &cases, None);
     }
 
     #[test]
@@ -248,7 +268,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(SHL, &cases, None);
+        test_binary(SHL, true, &cases, None);
     }
 
     #[test]
@@ -323,7 +343,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(SHR, &cases, None);
+        test_binary(SHR, true, &cases, None);
     }
 
     #[test]
@@ -357,7 +377,7 @@ mod evm_to_rwasm_tests {
             ));
         }
 
-        test_binary(BYTE, &cases, None);
+        test_binary(BYTE, true, &cases, None);
     }
 
     #[test]
@@ -461,7 +481,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(SUB, &cases, None);
+        test_binary(SUB, true, &cases, None);
     }
 
     #[test]
@@ -541,7 +561,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(GT, &cases, None);
+        test_binary(GT, true, &cases, None);
     }
 
     #[test]
@@ -621,6 +641,51 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary(LT, &cases, None);
+        test_binary(LT, true, &cases, None);
+    }
+
+    #[test]
+    fn mstore() {
+        let max_result_size = 8 + 32; // multiple of 8
+        let max_result_size = (max_result_size + 7) / 8 * 8;
+        // expected results must be multiple of 8 bytes (i64/u64 value) or memory swap will spoil it
+        let cases = [
+            // offset=0 value= r=0
+            (
+                d("0000000000000000000000000000000000000000000000000000000000000000"),
+                d("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
+                d("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
+            ),
+            // offset=2 value= r=0
+            (
+                d("0000000000000000000000000000000000000000000000000000000000000008"),
+                d("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
+                d("0000000000000000000000000f00000100000000f0000000100000000f00000000000000000f0000"),
+            ),
+        ];
+
+        test_binary(MSTORE, false, &cases, Some(max_result_size));
+    }
+
+    #[test]
+    fn mstore8() {
+        let max_result_size = 8 + 32; // multiple of 8
+        let max_result_size = (max_result_size + 7) / 8 * 8;
+        // expected results must be multiple of 8 bytes (i64/u64 value) or memory swap will spoil it
+        let cases = [
+            // offset=0 value= r=0
+            (
+                d("0000000000000000000000000000000000000000000000000000000000000000"),
+                d("000000000f00000100000000f0000000100000000f00000000000000000f0032"),
+                d("3200000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            (
+                d("0000000000000000000000000000000000000000000000000000000000000008"),
+                d("000000000f00000100000000f0000000100000000f00000000000000000f00af"),
+                d("0000000000000000af00000000000000000000000000000000000000000000000000000000000000"),
+            ),
+        ];
+
+        test_binary(MSTORE8, false, &cases, Some(max_result_size));
     }
 }

@@ -9,6 +9,7 @@ use fluentbase_rwasm::rwasm::{
     BinaryFormat,
     Compiler,
     FuncOrExport,
+    ImportLinker,
     InstructionSet,
     ReducedModule,
 };
@@ -19,28 +20,38 @@ use std::marker::PhantomData;
 pub mod analysis;
 pub mod contract;
 
-#[derive(Debug)]
+#[derive()]
 pub struct Translator<'a> {
     pub contract: Box<Contract>,
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
+    import_linker: &'a ImportLinker,
     opcode_to_rwasm_replacer: HashMap<u8, InstructionSet>,
     inject_fuel_consumption: bool,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Translator<'a> {
-    pub fn new(contract: Box<Contract>, inject_fuel_consumption: bool) -> Self {
+    pub fn new(
+        import_linker: &'a ImportLinker,
+        inject_fuel_consumption: bool,
+        contract: Box<Contract>,
+    ) -> Self {
         let mut s = Self {
             instruction_pointer: contract.bytecode.as_ptr(),
             contract,
             instruction_result: InstructionResult::Continue,
+            import_linker,
             opcode_to_rwasm_replacer: Default::default(),
             inject_fuel_consumption,
             _lifetime: Default::default(),
         };
         s.init_code_snippets();
         s
+    }
+
+    pub fn get_import_linker(&self) -> &'a ImportLinker {
+        self.import_linker
     }
 
     #[inline]
