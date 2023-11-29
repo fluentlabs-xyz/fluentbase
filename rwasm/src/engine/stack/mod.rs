@@ -8,9 +8,7 @@ pub use self::{
 use crate::{
     engine::{code_map::CodeMap, func_types::FuncTypeRegistry, FuncParams},
     func::{HostFuncEntity, WasmFuncEntity},
-    AsContext,
-    Instance,
-    StoreContextMut,
+    AsContext, Instance, StoreContextMut,
 };
 use core::fmt::{self, Display};
 use fluentbase_rwasm_core::common::{Trap, TrapCode};
@@ -202,7 +200,7 @@ impl Stack {
         // Now we are ready to perform the host function call.
         // Note: We need to clone the host function due to some borrowing issues.
         //       This should not be a big deal since host functions usually are cheap to clone.
-        let mut trampoline = ctx
+        let trampoline = ctx
             .as_context()
             .store
             .resolve_trampoline(host_func.trampoline())
