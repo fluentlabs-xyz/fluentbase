@@ -1,4 +1,5 @@
 use crate::{RwasmPlatformSDK, SDK};
+use alloc::vec;
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
@@ -7,7 +8,7 @@ use fluentbase_rwasm::{
 
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        let import_linker = Runtime::new_linker();
+        let import_linker = Runtime::<()>::new_linker();
         let mut compiler =
             Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
         compiler
@@ -19,7 +20,7 @@ impl RwasmPlatformSDK for SDK {
                 true,
             )
             .unwrap();
-        let rwasm_bytecode = compiler.finalize(None, true).unwrap();
+        let rwasm_bytecode = compiler.finalize().unwrap();
         if rwasm_bytecode.len() <= output.len() {
             let len = rwasm_bytecode.len();
             output[0..len].copy_from_slice(rwasm_bytecode.as_slice());
@@ -34,12 +35,12 @@ impl RwasmPlatformSDK for SDK {
         state: u32,
         fuel_limit: u32,
     ) -> i32 {
-        let import_linker = Runtime::new_linker();
-        let ctx = RuntimeContext::new(bytecode)
+        let import_linker = Runtime::<()>::new_linker();
+        let ctx = RuntimeContext::<()>::new(bytecode)
             .with_input(input.to_vec())
             .with_state(state)
             .with_fuel_limit(fuel_limit);
-        let result = Runtime::run_with_context(ctx, &import_linker);
+        let result = Runtime::<()>::run_with_context(ctx, &import_linker);
         if result.is_err() {
             return ExitCode::TransactError.into();
         }
@@ -57,6 +58,7 @@ impl RwasmPlatformSDK for SDK {
 #[cfg(test)]
 mod test {
     use crate::{RwasmPlatformSDK, SDK};
+    use alloc::vec;
 
     #[test]
     fn test_greeting() {

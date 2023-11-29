@@ -492,7 +492,7 @@ impl InstructionSet {
     }
 
     pub fn fix_br_offsets(&mut self, offset_change: i32) {
-        for (index, instr) in self.instr.iter_mut().enumerate() {
+        for (_index, instr) in self.instr.iter_mut().enumerate() {
             match instr {
                 // Instruction::BrTable(_) |
                 Instruction::Br(offset)

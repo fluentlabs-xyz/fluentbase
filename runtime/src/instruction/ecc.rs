@@ -23,8 +23,8 @@ fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) ->
     return pk_expected == pk_computed.as_bytes();
 }
 
-pub(crate) fn ecc_secp256k1_verify(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn ecc_secp256k1_verify<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     digest: i32,
     digest_len: i32,
     signature: i32,
@@ -47,8 +47,8 @@ pub(crate) fn ecc_secp256k1_verify(
     Ok(is_ok as i32)
 }
 
-pub(crate) fn ecc_secp256k1_recover(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn ecc_secp256k1_recover<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     digest: i32,
     digest_len: i32,
     signature: i32,

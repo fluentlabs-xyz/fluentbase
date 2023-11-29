@@ -11,8 +11,8 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<EthTrie<MemoryDB>>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn mpt_open(
-    _caller: Caller<'_, RuntimeContext>,
+pub(crate) fn mpt_open<T>(
+    _caller: Caller<'_, RuntimeContext<T>>,
     // rlp_offset: i32,
     // rlp_len: i32,
 ) -> Result<(), Trap> {
@@ -53,8 +53,8 @@ pub(crate) fn mpt_get_trie(id: &TrieId) -> Result<Rc<RefCell<EthTrie<MemoryDB>>>
     })
 }
 
-pub(crate) fn mpt_update(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn mpt_update<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     key_offset: i32,
     key_len: i32,
     value_offset: i32,
@@ -85,8 +85,8 @@ pub(crate) fn mpt_update(
     Ok(())
 }
 
-pub(crate) fn mpt_get(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn mpt_get<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     key_offset: i32,
     key_len: i32,
     output_offset: i32,
@@ -112,8 +112,8 @@ pub(crate) fn mpt_get(
     Ok(res.len() as i32)
 }
 
-pub(crate) fn mpt_get_root(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn mpt_get_root<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     output_offset: i32,
 ) -> Result<i32, Trap> {
     let trie_id;

@@ -25,10 +25,11 @@ use fluentbase_rwasm::{
     Store,
 };
 use fluentbase_rwasm_core::common::{Trap, ValueType};
-use std::mem::take;
+use std::{cell::RefCell, mem::take};
 
-#[derive(Debug, Clone)]
-pub struct RuntimeContext {
+#[derive(Debug)]
+pub struct RuntimeContext<'t, T> {
+    pub context: Option<&'t mut T>,
     // context inputs
     pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
@@ -40,9 +41,25 @@ pub struct RuntimeContext {
     pub(crate) output: Vec<u8>,
 }
 
-impl Default for RuntimeContext {
+impl<'t, T> Clone for RuntimeContext<'t, T> {
+    fn clone(&self) -> Self {
+        Self {
+            context: None,
+            bytecode: self.bytecode.clone(),
+            fuel_limit: self.fuel_limit.clone(),
+            state: self.state.clone(),
+            catch_trap: self.catch_trap.clone(),
+            input: self.input.clone(),
+            exit_code: self.exit_code.clone(),
+            output: self.output.clone(),
+        }
+    }
+}
+
+impl<'t, T> Default for RuntimeContext<'t, T> {
     fn default() -> Self {
         Self {
+            context: None,
             bytecode: vec![],
             fuel_limit: 0,
             state: 0,
@@ -54,12 +71,17 @@ impl Default for RuntimeContext {
     }
 }
 
-impl RuntimeContext {
+impl<'t, T> RuntimeContext<'t, T> {
     pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
         Self {
             bytecode: bytecode.into(),
             ..Default::default()
         }
+    }
+
+    pub fn with_context(mut self, context: &'t mut T) -> Self {
+        self.context = Some(context);
+        self
     }
 
     pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
@@ -84,6 +106,15 @@ impl RuntimeContext {
 
     pub(crate) fn extend_return_data(&mut self, value: &[u8]) {
         self.output.extend(value);
+    }
+
+    pub fn take_context<F>(&mut self, func: F)
+    where
+        F: FnOnce(&&'t mut T),
+    {
+        if let Some(context) = &self.context {
+            func(context)
+        }
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -112,20 +143,20 @@ impl RuntimeContext {
 }
 
 #[derive(Debug)]
-pub struct ExecutionResult {
-    runtime_context: RuntimeContext,
+pub struct ExecutionResult<'t, T> {
+    runtime_context: RuntimeContext<'t, T>,
     tracer: Tracer,
 }
 
-impl ExecutionResult {
-    pub fn cloned(store: &Store<RuntimeContext>) -> Self {
+impl<'t, T> ExecutionResult<'t, T> {
+    pub fn cloned(store: &Store<RuntimeContext<'t, T>>) -> Self {
         Self {
             runtime_context: store.data().clone(),
             tracer: store.tracer().clone(),
         }
     }
 
-    pub fn taken(store: &mut Store<RuntimeContext>) -> Self {
+    pub fn taken(store: &mut Store<RuntimeContext<'t, T>>) -> Self {
         Self {
             runtime_context: take(store.data_mut()),
             tracer: take(store.tracer_mut()),
@@ -140,22 +171,22 @@ impl ExecutionResult {
         &self.tracer
     }
 
-    pub fn data(&self) -> &RuntimeContext {
+    pub fn data(&self) -> &RuntimeContext<'t, T> {
         &self.runtime_context
     }
 }
 
 #[allow(dead_code)]
-pub struct Runtime {
+pub struct Runtime<'t, T> {
     engine: Engine,
     bytecode: InstructionSet,
     module: Module,
-    linker: Linker<RuntimeContext>,
-    store: Store<RuntimeContext>,
+    linker: Linker<RuntimeContext<'t, T>>,
+    store: Store<RuntimeContext<'t, T>>,
     instance: Instance,
 }
 
-impl Runtime {
+impl<'t, T> Runtime<'t, T> {
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
         // sys calls
@@ -465,7 +496,7 @@ impl Runtime {
         rwasm_binary: &[u8],
         input_data: &Vec<u8>,
         fuel_limit: u32,
-    ) -> Result<ExecutionResult, RuntimeError> {
+    ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
         let runtime_context = RuntimeContext::new(rwasm_binary)
             .with_input(input_data.clone())
             .with_catch_trap(true)
@@ -475,9 +506,9 @@ impl Runtime {
     }
 
     pub fn run_with_context(
-        mut runtime_context: RuntimeContext,
+        mut runtime_context: RuntimeContext<'t, T>,
         import_linker: &ImportLinker,
-    ) -> Result<ExecutionResult, RuntimeError> {
+    ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
@@ -491,7 +522,7 @@ impl Runtime {
     }
 
     pub fn new(
-        runtime_context: RuntimeContext,
+        runtime_context: RuntimeContext<'t, T>,
         import_linker: &ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
@@ -517,8 +548,8 @@ impl Runtime {
             (module_builder.finish(), reduced_module.bytecode().clone())
         };
 
-        let mut linker = Linker::<RuntimeContext>::new(&engine);
-        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+        let mut linker = Linker::<RuntimeContext<T>>::new(&engine);
+        let mut store = Store::<RuntimeContext<T>>::new(&engine, runtime_context);
 
         if fuel_limit > 0 {
             store.add_fuel(fuel_limit as u64).unwrap();
@@ -544,7 +575,7 @@ impl Runtime {
         Ok(result)
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
+    pub fn call(&mut self) -> Result<ExecutionResult<'t, T>, RuntimeError> {
         let func =
             self.instance
                 .get_func(&mut self.store, "main")
@@ -569,18 +600,24 @@ impl Runtime {
         &mut self,
         module: &'static str,
         name: &'static str,
-        func: impl IntoFunc<RuntimeContext, Params, Results>,
+        func: impl IntoFunc<RuntimeContext<'t, T>, Params, Results>,
     ) {
         self.linker
             .define(
                 module,
                 name,
-                Func::wrap::<RuntimeContext, Params, Results>(self.store.as_context_mut(), func),
+                Func::wrap::<RuntimeContext<'t, T>, Params, Results>(
+                    self.store.as_context_mut(),
+                    func,
+                ),
             )
             .unwrap();
     }
 
-    fn register_bindings(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>) {
+    fn register_bindings(
+        linker: &mut Linker<RuntimeContext<'t, T>>,
+        store: &mut Store<RuntimeContext<'t, T>>,
+    ) {
         use crate::instruction::*;
         // sys
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
