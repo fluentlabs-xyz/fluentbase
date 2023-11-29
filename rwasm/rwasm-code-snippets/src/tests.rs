@@ -16,10 +16,12 @@ mod tests {
         }
         println!("module.exports().count(): {}", module.exports().count());
         // let import_linker = Runtime::new_linker();
-        let rwasm = Compiler::new(&wasm_binary, false)/*new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))*/
-            .unwrap()
-            .finalize(Some(FuncOrExport::Func(0)), false)
+        let mut compiler = Compiler::new(&wasm_binary, false)/*new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))*/
             .unwrap();
+        compiler
+            .translate(Some(FuncOrExport::Func(0)), false)
+            .unwrap();
+        let rwasm = compiler.finalize().unwrap();
         println!("rwasm {:x?}", &rwasm);
         let reduced_module = ReducedModule::new(&rwasm, false).unwrap();
         println!(
