@@ -6,6 +6,7 @@ use crate::{
             duplicate_i64_part_of_evm_word,
             duplicate_stack_value,
             fetch_i64_part_as_i32,
+            preprocess_op_params,
             replace_current_opcode_with_code_snippet,
             split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
             wasm_add,
@@ -101,7 +102,7 @@ pub fn wrapping_mul<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
-    replace_current_opcode_with_code_snippet(translator, host);
+    replace_current_opcode_with_code_snippet(translator, host, true);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

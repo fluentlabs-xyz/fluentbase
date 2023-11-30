@@ -32,3 +32,5 @@ pub const FUEL_CRYPTO_POSEIDON: u32 = 1;
 pub const FUEL_CRYPTO_POSEIDON2: u32 = 1;
 pub const FUEL_ECC_SECP256K1_VERIFY: u32 = 1;
 pub const FUEL_ECC_SECP256K1_RECOVER: u32 = 1;
+pub const FUEL_EVM_SLOAD: u32 = 800;
+pub const FUEL_EVM_SSTORE: u32 = 500;

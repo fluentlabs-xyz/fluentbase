@@ -133,7 +133,7 @@ impl<'a> Translator<'a> {
                 .unwrap()
                 .bytecode()
                 .clone();
-            if opcode == opcode::GT {
+            if opcode == opcode::MSTORE {
                 debug!(
                     "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
                     opcode,
