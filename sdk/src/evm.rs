@@ -12,6 +12,8 @@ sol! {
         address address;
         address caller;
         uint256 value;
+        bytes32 block_hash;
+        uint256 balance;
     }
 }
 
@@ -30,6 +32,8 @@ enum ContractInputFields {
     Address,
     Caller,
     Value,
+    BlockHash,
+    Balance,
     _MaxFields,
 }
 
@@ -91,6 +95,16 @@ pub fn contract_read_value() -> U256 {
     U256::from_be_slice(&hash[..])
 }
 
+pub fn contract_read_block_hash() -> B256 {
+    let hash = ContractInputFields::BlockHash.read_u256_word();
+    B256::from(hash)
+}
+
+pub fn contract_read_balance() -> U256 {
+    let hash = ContractInputFields::Balance.read_u256_word();
+    U256::from_be_slice(&hash[..])
+}
+
 #[cfg(feature = "runtime")]
 impl ContractInput {
     fn encode(&self) -> Vec<u8> {
@@ -108,6 +122,8 @@ impl ContractInput {
         result.extend(&self.address.abi_encode());
         result.extend(&self.caller.abi_encode());
         result.extend(&self.value.abi_encode());
+        result.extend(&self.block_hash.abi_encode());
+        result.extend(&self.balance.abi_encode());
         // encode raw data
         result.extend(&self.input);
         result.extend(&self.bytecode);
@@ -132,6 +148,8 @@ mod test {
             address: Default::default(),
             caller: Default::default(),
             value: Default::default(),
+            block_hash: Default::default(),
+            balance: Default::default(),
         };
         let encoded_input = contract_input.encode();
         for chunk in encoded_input.chunks(32) {
