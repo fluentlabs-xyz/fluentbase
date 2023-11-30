@@ -1,4 +1,4 @@
-use crate::utils::{combine256_tuple_be, split_u256_be};
+use crate::test_utils::{u256_from_tuple_be, u256_split_le};
 use ethereum_types::U256;
 use log::debug;
 
@@ -15,12 +15,12 @@ pub fn test_binary_cases(
         let u256_a = U256::from_dec_str(case.0).unwrap();
         let u256_b = U256::from_dec_str(case.1).unwrap();
         let u256_expected = U256::from_dec_str(case.2).unwrap();
-        let a = split_u256_be(u256_a);
-        let b = split_u256_be(u256_b);
-        let res_expected = split_u256_be(u256_expected);
+        let a = u256_split_le(u256_a);
+        let b = u256_split_le(u256_b);
+        let res_expected = u256_split_le(u256_expected);
 
         let res_tuple = func_to_test(a.0, a.1, a.2, a.3, b.0, b.1, b.2, b.3);
-        let mut res = combine256_tuple_be(&res_tuple);
+        let mut res = u256_from_tuple_be(&res_tuple);
 
         debug!("a {:?}", a);
         debug!("b {:?}", b);

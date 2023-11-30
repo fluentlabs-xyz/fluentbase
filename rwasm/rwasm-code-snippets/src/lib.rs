@@ -11,8 +11,9 @@ mod bitwise;
 pub(crate) mod consts;
 #[cfg(test)]
 pub(crate) mod test_helper;
+#[cfg(test)]
+mod test_utils;
 mod tests;
-mod utils;
 
 #[cfg(test)]
 #[ctor::ctor]

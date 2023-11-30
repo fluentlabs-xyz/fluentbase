@@ -1,4 +1,4 @@
-use crate::utils::{combine_u64, split_u256_be};
+use crate::test_utils::{combine_u64, u256_split_le};
 
 #[no_mangle]
 pub fn arithmetic_mul(

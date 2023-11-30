@@ -7,13 +7,88 @@ use crate::{
         WASM_I64_LOW_32_BIT_MASK,
     },
 };
-use fluentbase_rwasm::rwasm::{instruction::INSTRUCTION_BYTES, InstructionSet};
-use std::mem;
+use fluentbase_rwasm::{
+    module::ImportName,
+    rwasm::{instruction::INSTRUCTION_BYTES, InstructionSet},
+};
+
+pub(super) enum SystemFuncs {
+    CryptoKeccak256,
+    EvmSstore,
+    EvmSload,
+}
+
+pub(super) fn wasm_call(
+    instruction_set: &mut InstructionSet,
+    fn_name: SystemFuncs,
+    translator: &mut Translator,
+) {
+    let fn_name = match fn_name {
+        SystemFuncs::CryptoKeccak256 => "_crypto_keccak256",
+        SystemFuncs::EvmSstore => "_evm_sstore",
+        SystemFuncs::EvmSload => "_evm_sload",
+    };
+    let import_fn_idx =
+        translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name)].0;
+    instruction_set.op_call(import_fn_idx);
+}
+
+pub(super) fn preprocess_op_params(
+    translator: &mut Translator<'_>,
+    host: &mut dyn Host,
+    inject_memory_result_offset: bool,
+) {
+    let instruction_set = host.instruction_set();
+    let opcode = translator.opcode_prev();
+    // hardcoded result place in memory
+    const I64_STORE_OFFSET: usize = 0;
+    match opcode {
+        // two u256 params
+        opcode::BYTE
+        | opcode::EQ
+        | opcode::GAS
+        | opcode::LT
+        | opcode::GT
+        | opcode::SAR
+        | opcode::SGT
+        | opcode::SHL
+        | opcode::SHR
+        | opcode::SLT
+        | opcode::SUB
+        | opcode::MSTORE
+        | opcode::MSTORE8 => {
+            // let last_item_idx = instruction_set.len() as usize - 1;
+            // for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
+            //     let tmp = instruction_set.instr[last_item_idx - i];
+            //     instruction_set.instr[last_item_idx - i] =
+            //         instruction_set.instr[last_item_idx - i - 4];
+            //     instruction_set.instr[last_item_idx - i - 4] = tmp;
+            // }
+
+            // mem offset for the result
+            if inject_memory_result_offset {
+                instruction_set.op_i32_const(I64_STORE_OFFSET);
+                let last_item_idx = instruction_set.len() as usize - 1;
+                let params_start_idx = last_item_idx - WASM_I64_IN_EVM_WORD_COUNT * 2;
+                let params_end_idx = last_item_idx - 1;
+                let tmp = instruction_set.instr[params_start_idx..=params_end_idx].to_vec();
+                instruction_set.instr[params_start_idx] = instruction_set.instr[last_item_idx];
+                instruction_set.instr[params_start_idx + 1..=last_item_idx].clone_from_slice(&tmp);
+            }
+        }
+        _ => {
+            panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
+        }
+    }
+}
 
 pub(super) fn replace_current_opcode_with_code_snippet(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
+    inject_memory_result_offset: bool,
 ) {
+    preprocess_op_params(translator, host, inject_memory_result_offset);
+
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
     let mut instruction_set_replace = translator.get_code_snippet(opcode).clone();
@@ -38,8 +113,8 @@ pub(super) fn replace_current_opcode_with_code_snippet(
         // arithmetic
         | opcode::SUB => {
             // TODO get rid of this hack
-            const OFFSET_GARBAGE_COUNT: usize = 3;
-            (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());
+            // const OFFSET_GARBAGE_COUNT: usize = 3;
+            // (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());
 
             // const INPUT_COUNT: usize = 11;
             // (0..INPUT_COUNT).for_each(|_| instruction_set.op_drop());
