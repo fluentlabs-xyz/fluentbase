@@ -283,7 +283,7 @@ impl From<i32> for BranchOffset {
 }
 
 impl BranchOffset {
-    /// Creates an uninitalized [`BranchOffset`].
+    /// Creates an uninitialized [`BranchOffset`].
     pub fn uninit() -> Self {
         Self(0)
     }
