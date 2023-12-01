@@ -1,4 +1,4 @@
-FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar arithmetic_sub
+FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar arithmetic_sub system_address
 
 all: $(FILES)
 

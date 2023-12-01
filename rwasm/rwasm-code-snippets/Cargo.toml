@@ -24,7 +24,7 @@ proc-macro = false
 
 [features]
 default = []
-testing = ["fluentbase-runtime"]
+#testing = ["fluentbase-runtime"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_shr = []
