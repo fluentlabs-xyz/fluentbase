@@ -276,6 +276,7 @@ fn test_input_output() {
                         Instruction::i32_const(0),
                         Instruction::i32_const(8),
                         Instruction::Call((SysFuncIdx::SYS_READ as u32).into()),
+                        Instruction::Drop,
                         Instruction::i32_const(0),
                         Instruction::I64Load(AddressOffset::from(0)),
                     ],
@@ -303,6 +304,7 @@ fn test_input_output() {
         &import_linker,
     )
     .unwrap();
+    runtime.data_mut().clean_output();
     runtime.call().unwrap();
 
     assert_eq!(runtime.data().output, [100, 0, 0, 0, 0, 0, 0, 0]);
@@ -355,6 +357,7 @@ fn test_wrong_indirect_type() {
     let mut runtime = Runtime::new(
         RuntimeContext::new(rwasm_bytecode.as_slice())
             .with_input(vec![1, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0])
+            .with_fuel_limit(1_000_000)
             .with_state(1000),
         &import_linker,
     )
@@ -363,8 +366,7 @@ fn test_wrong_indirect_type() {
     runtime.call().unwrap();
     runtime.data_mut().state = 0;
     let res = runtime.call();
-
-    assert!(res.is_err());
+    assert_eq!(-2014, res.as_ref().unwrap().data().exit_code());
 }
 
 #[test]
