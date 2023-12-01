@@ -241,7 +241,8 @@ impl<'linker> Compiler<'linker> {
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let check_idx = self.get_or_insert_check_idx(func_type);
                 router_opcodes.op_i32_const(check_idx);
-                router_opcodes.op_call_internal(func_index - num_imports);
+                // router_opcodes.op_call_internal(func_index - num_imports);
+                router_opcodes.op_call_internal(func_index);
             }
             FuncOrExport::StateRouter(
                 states,
@@ -845,7 +846,8 @@ impl<'linker> Compiler<'linker> {
                 let idx = self.get_or_insert_check_idx(func_type.clone());
                 self.code_section.op_i32_const(idx);
 
-                self.code_section.op_call_internal(fn_index);
+                self.code_section
+                    .op_call_internal(fn_index + self.module.imports.len_funcs as u32);
                 // self.code_section.op_drop();
             }
             WI::CallIndirect(sig_index) => {

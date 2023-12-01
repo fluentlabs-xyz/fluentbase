@@ -627,9 +627,13 @@ impl<T> Linker<T> {
             context.as_context().store.engine(),
             self.engine()
         ));
+
         let key = ImportKey {
             module: self.strings.get(module)?,
-            name: self.strings.get(name)?,
+            name: self
+                .strings
+                .get(name)
+                .or(self.strings.get(format!("{}:{}", module, name).as_str()))?,
         };
         self.definitions.get(&key)
     }
