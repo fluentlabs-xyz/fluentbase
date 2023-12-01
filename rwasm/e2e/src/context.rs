@@ -109,8 +109,8 @@ impl<'a> TestContext<'a> {
         .unwrap();
         let global_i32 = Func::wrap(&mut store, || -> i32 { 666 });
         let global_i64 = Func::wrap(&mut store, || -> i64 { 666 });
-        let global_f32 = Global::new(&mut store, Value::F32(666.0.into()), Mutability::Const);
-        let global_f64 = Global::new(&mut store, Value::F64(666.0.into()), Mutability::Const);
+        let global_f32 = Func::wrap(&mut store, || -> F32 { F32::from(666) });
+        let global_f64 = Func::wrap(&mut store, || -> F64 { F64::from(666) });
         let print = Func::wrap(&mut store, || {
             println!("print");
         });
@@ -383,6 +383,28 @@ impl TestContext<'_> {
                         &[global_type.content()],
                     ));
                     global_index += 1;
+
+                    if import.module().eq("spectest") {
+                        continue;
+                    }
+
+                    let exports = self
+                        .instances
+                        .get(format!("{}:{}", import.module(), import.name()).as_str())
+                        .ok_or(TestError::NoModuleInstancesFound)?
+                        .exports(&self.store)
+                        .collect::<Vec<_>>();
+                    if self
+                        .linker
+                        .get(self.store.as_context(), import.module(), import.name())
+                        .is_none()
+                    {
+                        self.linker.define(
+                            import.module(),
+                            import.name(),
+                            exports[0].clone().into_func().unwrap(),
+                        )?;
+                    }
                 }
                 _ => {}
             }
@@ -445,6 +467,16 @@ impl TestContext<'_> {
                         },
                     );
                     router_index += 1;
+                    match exports_names.as_mut() {
+                        None => {
+                            exports_names = Some(vec![name.clone()]);
+                        }
+                        Some(names) => {
+                            names.push(name.clone());
+                        }
+                    }
+                    self.binaries.insert(name.clone(), wasm_binary.clone());
+
                     FuncOrExport::Global(instruction)
                 }
             })
@@ -716,16 +748,27 @@ impl TestContext<'_> {
             self.func_type_check_idx.clone(),
         )
         .unwrap();
-        compiler
-            .translate(Some(FuncOrExport::Func(
-                elem.index().into_func_idx().unwrap(),
-            )))
-            .unwrap();
+        if let Some(idx) = elem.index().into_func_idx() {
+            compiler.translate(Some(FuncOrExport::Func(idx))).unwrap();
+        } else if let Some(ix) = module.get_global_init(elem.index()) {
+            compiler
+                .translate_with_state(Some(FuncOrExport::Global(ix)), true)
+                .unwrap();
+        }
+
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
-        let func_type = elem.ty().func().unwrap();
-        let mut module_builder =
-            reduced_module.to_module_builder(self.engine(), &import_linker, func_type.clone());
+
+        let func_type = elem.ty().func();
+        let global_type = elem
+            .ty()
+            .global()
+            .map(|global| FuncType::new([], [global.content()]));
+        let mut module_builder = reduced_module.to_module_builder(
+            self.engine(),
+            &import_linker,
+            func_type.or(global_type.as_ref()).unwrap().clone(),
+        );
         module_builder.remove_start();
         let module = module_builder.finish();
         let instance = self

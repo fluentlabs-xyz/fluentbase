@@ -9,7 +9,9 @@ use crate::{
             types::{ReducedModuleError, N_MAX_MEMORY_PAGES},
         },
     },
-    Engine, FuncType, Module,
+    Engine,
+    FuncType,
+    Module,
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
