@@ -34,3 +34,4 @@ rand = "0.8.2"
 default = ["std"]
 # Use `no-default-features` for a `no_std` build.
 std = ["num-traits/std", "downcast-rs/std", "byteorder/std"]
+e2e = []

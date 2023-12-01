@@ -118,7 +118,20 @@ impl InstructionSet {
         self.init_memory_size = 0;
     }
 
-    pub fn add_memory(&mut self, mut offset: u32, mut bytes: &[u8], segment_idx: usize) -> bool {
+    pub fn add_memory(&mut self, mut offset: i32, mut bytes: &[u8], segment_idx: usize) -> bool {
+        #[cfg(feature = "e2e")]
+        {
+            self.op_i32_const(offset);
+            self.op_i32_const(0);
+            self.op_i32_const(0);
+            self.op_memory_init(0);
+
+            if offset < 0 {
+                return false;
+            }
+        }
+
+        let mut offset = offset as u32;
         // make sure we have enough allocated memory
         let new_size = self.init_memory_size + offset + bytes.len() as u32;
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
@@ -127,6 +140,7 @@ impl InstructionSet {
         }
         self.init_memory_size += bytes.len() as u32;
         self.init_memory_pages = total_pages;
+
         // translate input bytes
         [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
             let mut it = bytes.chunks_exact(chunk_size);
@@ -151,9 +165,6 @@ impl InstructionSet {
             }
             bytes = it.remainder();
         });
-        self.op_i64_const(0);
-        self.op_data_store8(segment_idx as u32);
-        self.op_data_drop(segment_idx as u32);
 
         return true;
     }

@@ -1,6 +1,6 @@
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, UntypedValue, ValueType},
+    common::{Pages, UntypedValue, ValueType, ValueType::I32, F32},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -11,12 +11,16 @@ use crate::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         compiler::drop_keep::{translate_drop_keep, DropKeepWithReturnParam},
         instruction_set::InstructionSet,
+        FuncOrExport::Global,
         ImportLinker,
     },
+    value::WithType,
     Config,
     Engine,
+    FuncRef,
     FuncType,
     Module,
+    Value,
 };
 use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 use core::{cell::RefCell, ops::Deref};
@@ -144,6 +148,7 @@ impl<'linker> Compiler<'linker> {
         let mut config = Config::default();
         config.consume_fuel(fuel_consume);
         config.wasm_tail_call(true);
+        config.wasm_extended_const(true);
 
         let engine = Engine::new(&config);
         let module =
@@ -426,6 +431,15 @@ impl<'linker> Compiler<'linker> {
                         return Err(CompilerError::NotSupported("not zero index"));
                     }
                     Ok((data_offset, memory.bytes(), true))
+                } else if let Some(data_offset) = seg.offset().eval_with_context(
+                    |index| Value::F32(F32::from(666)),
+                    |index| FuncRef::default(),
+                ) {
+                    #[cfg(feature = "e2e")]
+                    return Ok((data_offset, memory.bytes(), true));
+
+                    #[cfg(not(feature = "e2e"))]
+                    return Err(CompilerError::NotSupported("can't eval offset"));
                 } else {
                     Err(CompilerError::NotSupported("can't eval offset"))
                 }
@@ -435,10 +449,26 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_memory(&mut self) -> Result<(), CompilerError> {
-        for memory in self.module.memories.iter() {
-            self.code_section
-                .add_memory_pages(memory.initial_pages().into_inner());
+        #[cfg(not(feature = "e2e"))]
+        {
+            for memory in self.module.memories.iter() {
+                self.code_section
+                    .add_memory_pages(memory.initial_pages().into_inner());
+            }
         }
+
+        #[cfg(feature = "e2e")]
+        {
+            if self.module.imports.len_memories != 0 {
+                self.code_section.add_memory_pages(1);
+            } else {
+                for memory in self.module.memories.iter() {
+                    self.code_section
+                        .add_memory_pages(memory.initial_pages().into_inner());
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -446,8 +476,11 @@ impl<'linker> Compiler<'linker> {
         for (idx, memory) in self.module.data_segments.iter().enumerate() {
             if let Ok((offset, bytes, is_active)) = Self::read_memory_segment(memory) {
                 if is_active {
-                    self.code_section
-                        .add_memory(offset.to_bits() as u32, bytes, idx);
+                    self.code_section.add_memory(
+                        offset.with_type(ValueType::I32).i32().unwrap(),
+                        bytes,
+                        idx,
+                    );
                 } else {
                     self.code_section.add_data(bytes, idx);
                 }
@@ -470,13 +503,20 @@ impl<'linker> Compiler<'linker> {
             assert!(global_index as usize - len_imported < global_inits.len());
 
             let global_expr = &global_inits[global_index as usize - len_imported];
-
             if let Some(value) = global_expr.eval_const() {
                 self.code_section.op_i64_const(value);
             } else if let Some(value) = global_expr.funcref() {
                 self.code_section.op_ref_func(value.into_u32());
             } else if let Some(index) = global_expr.global() {
                 self.code_section.op_global_get(index.into_u32());
+            } else if let Some(value) = global_expr.eval_with_context(
+                |index| Value::F32(F32::from(666)),
+                |index| FuncRef::default(),
+            ) {
+                #[cfg(feature = "e2e")]
+                self.code_section.op_i64_const(value.to_bits());
+                #[cfg(not(feature = "e2e"))]
+                self.code_section.op_unreachable();
             }
         }
 
@@ -485,17 +525,39 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_const_expr(&self, const_expr: &ConstExpr) -> Result<UntypedValue, CompilerError> {
-        let init_value = const_expr.eval_const().ok_or(CompilerError::NotSupported(
-            "only static global variables supported",
-        ))?;
-        Ok(init_value)
+        #[cfg(not(feature = "e2e"))]
+        {
+            let init_value = const_expr.eval_const().ok_or(CompilerError::NotSupported(
+                "only static global variables supported",
+            ))?;
+
+            return Ok(init_value);
+        }
+
+        #[cfg(feature = "e2e")]
+        {
+            let init_value = const_expr
+                .eval_with_context(|index| Value::I32(666), |index| FuncRef::default())
+                .ok_or(CompilerError::NotSupported(
+                    "only static global variables supported",
+                ))?;
+
+            return Ok(init_value);
+        }
     }
 
     fn translate_table(&mut self) -> Result<(), CompilerError> {
         for (table_index, table) in self.module.tables.iter().enumerate() {
             // don't use ref_func here due to the entrypoint section
             self.code_section.op_i32_const(0);
-            self.code_section.op_i64_const(table.minimum() as usize);
+            if table_index < self.module.imports.len_tables {
+                #[cfg(not(feature = "e2e"))]
+                self.code_section.op_i64_const(table.minimum() as usize);
+                #[cfg(feature = "e2e")]
+                self.code_section.op_i64_const(10);
+            } else {
+                self.code_section.op_i64_const(table.minimum() as usize);
+            }
             self.code_section.op_table_grow(table_index as u32);
             self.code_section.op_drop();
         }
@@ -515,6 +577,12 @@ impl<'linker> Compiler<'linker> {
                             self.code_section.op_elem_store(i as u32);
                         }
                     }
+                    #[cfg(feature = "e2e")]
+                    {
+                        self.code_section.op_i64_const(0);
+                        self.code_section.op_elem_store(i as u32);
+                        self.code_section.op_elem_drop(i as u32);
+                    }
                 }
                 ElementSegmentKind::Active(aes) => {
                     let dest_offset = self.translate_const_expr(aes.offset())?;
@@ -528,9 +596,14 @@ impl<'linker> Compiler<'linker> {
                         }
                         self.code_section.op_table_set(aes.table_index().into_u32());
                     }
-                    self.code_section.op_i32_const(0);
-                    self.code_section.op_elem_store(i as u32);
-                    self.code_section.op_elem_drop(i as u32);
+                    #[cfg(feature = "e2e")]
+                    {
+                        self.code_section.op_i64_const(dest_offset);
+                        self.code_section.op_i64_const(0);
+                        self.code_section.op_i64_const(0);
+                        self.code_section.op_table_init(i as u32);
+                        self.code_section.op_table_get(aes.table_index().into_u32());
+                    }
                 }
                 _ => {}
             };
@@ -916,7 +989,6 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br(2);
                 self.code_section.op_table_grow(idx);
             }
-
             // WI::LocalGet(local_depth) => {
             //     self.code_section
             //         .op_local_get(local_depth.to_usize() as u32 + 1);
