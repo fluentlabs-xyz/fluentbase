@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-rwasm = { path = ".." }
+fluentbase-rwasm = { path = "..", features = ["e2e"] }
 byteorder = "1.4.3"
 wat = "1.0.66"
 anyhow = "1.0.71"
