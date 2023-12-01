@@ -154,6 +154,10 @@ impl RuntimeContext {
     pub fn output(&self) -> &Vec<u8> {
         &self.output
     }
+
+    pub fn clean_output(&mut self) {
+        self.output = vec![];
+    }
 }
 
 #[derive(Debug)]
@@ -511,12 +515,15 @@ impl Runtime {
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
             runtime_context.exit_code = Self::catch_trap(runtime.err().unwrap());
-            return Ok(ExecutionResult {
+            Ok(ExecutionResult {
                 runtime_context,
                 tracer: Default::default(),
-            });
+            })
+        } else {
+            let mut runtime = runtime?;
+            runtime.data_mut().clean_output();
+            runtime.call()
         }
-        runtime?.call()
     }
 
     pub fn new(
@@ -549,7 +556,6 @@ impl Runtime {
                 reduced_module.to_module_builder(&engine, import_linker, func_type);
             (module_builder.finish(), reduced_module.bytecode().clone())
         };
-
         let mut linker = Linker::<RuntimeContext>::new(&engine);
         let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
 
