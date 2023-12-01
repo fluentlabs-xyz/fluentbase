@@ -78,6 +78,23 @@ dependencies = [
  "derive_more",
  "hex-literal",
  "itoa",
+ "ruint",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-primitives"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a3877a2fa7474d9367d01ab43e33a4a4eeedf9bf7ec481533520686e956703b"
+dependencies = [
+ "alloy-rlp",
+ "bytes",
+ "cfg-if",
+ "const-hex",
+ "derive_more",
+ "hex-literal",
+ "itoa",
  "proptest",
  "rand",
  "ruint",
@@ -91,21 +108,39 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc0fac0fc16baf1f63f78b47c3d24718f3619b0714076f6a02957d808d52cbef"
 dependencies = [
- "alloy-rlp-derive",
  "arrayvec",
  "bytes",
  "smol_str",
 ]
 
 [[package]]
-name = "alloy-rlp-derive"
-version = "0.3.3"
+name = "alloy-sol-macro"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0391754c09fab4eae3404d19d0d297aa1c670c1775ab51d8a5312afeca23157"
+checksum = "123b602fbffdfb514183bcca2e5e7428b41ed5d59580ae70bf8eca937d165427"
 dependencies = [
+ "const-hex",
+ "dunce",
+ "heck",
+ "indexmap 2.1.0",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn 2.0.39",
+ "syn-solidity",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-sol-types"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c4c333ed7d5a4d87e3b8ad2ce230d4f9347b9e43faf98ad16ba58bf318cd023"
+dependencies = [
+ "alloy-primitives 0.5.1",
+ "alloy-sol-macro",
+ "const-hex",
+ "serde",
 ]
 
 [[package]]
@@ -909,12 +944,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72e3ae26c830a573f2e231fc2475f71fce4705609097cb9523abfc4007caed0b"
-
-[[package]]
 name = "derive_more"
 version = "0.99.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1697,7 +1726,7 @@ dependencies = [
 name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.4.2",
  "bitvec 1.0.1",
  "ctor",
  "env_logger",
@@ -1714,9 +1743,9 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "derive",
+ "alloy-primitives 0.4.2",
+ "alloy-sol-types",
+ "byteorder",
  "eth_trie",
  "fluentbase-poseidon",
  "fluentbase-runtime",
@@ -1726,6 +1755,7 @@ dependencies = [
  "hex-literal",
  "k256",
  "keccak-hash",
+ "lazy_static",
  "sha2",
 ]
 
@@ -4096,6 +4126,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn-solidity"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf07302c875aa7e1ee4fb811fdf2a0436bb04640639539003dcab2e049a9d1fe"
+dependencies = [
+ "paste",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
 name = "system-configuration"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5151,16 +5193,16 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "poseidon"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
-
-[[patch.unused]]
 name = "ethers-core"
 version = "0.17.0"
 source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9a0df8daf536937739c87e85612bd73212f"
 
 [[patch.unused]]
+name = "poseidon"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
+
+[[patch.unused]]
 name = "halo2_proofs"
 version = "0.2.0"
-source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5f758e0bf22157f1f64e93056e8f5aea35ea6f19"
+source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5cf9a3726525810af41ef416e0292ec999b34030"
