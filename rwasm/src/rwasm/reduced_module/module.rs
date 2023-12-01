@@ -138,10 +138,11 @@ impl ReducedModule {
                 Instruction::DataStore8(seg)
                 | Instruction::DataStore16(seg)
                 | Instruction::DataStore32(seg)
-                | Instruction::DataStore64(seg) => {
+                | Instruction::DataStore64(seg)
+                | Instruction::MemoryInit(seg) => {
                     data_segments.insert(seg.to_u32());
                 }
-                Instruction::ElemStore(seg) => {
+                Instruction::ElemStore(seg) | Instruction::TableInit(seg) => {
                     elem_segments.insert(seg.to_u32());
                 }
                 _ => continue,
