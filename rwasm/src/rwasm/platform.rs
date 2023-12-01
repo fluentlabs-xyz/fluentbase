@@ -141,12 +141,11 @@ impl ImportLinker {
         if self.func_by_index.contains_key(&import_func.index) {
             return;
         }
+        self.func_by_index
+            .insert(import_func.index, import_func.clone());
         if self.func_by_name.contains_key(&import_func.import_name()) {
             return;
         }
-
-        self.func_by_index
-            .insert(import_func.index, import_func.clone());
         self.func_by_name.insert(
             import_func.import_name(),
             (import_func.index, import_func.fuel_amount),
