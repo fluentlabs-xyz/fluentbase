@@ -3,15 +3,24 @@ use anyhow::Result;
 use fluentbase_rwasm::{
     common::{F32, F64},
     rwasm::DefaultImportHandler,
-    Config, ExternRef, FuncRef, Store, Value,
+    Config,
+    ExternRef,
+    FuncRef,
+    Store,
+    Value,
 };
-use wast::token::Id;
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
     lexer::Lexer,
     parser::ParseBuffer,
-    token::Span,
-    QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
+    token::{Id, Span},
+    QuoteWat,
+    Wast,
+    WastDirective,
+    WastExecute,
+    WastInvoke,
+    WastRet,
+    Wat,
 };
 
 /// Runs the Wasm test spec identified by the given name.
@@ -58,7 +67,7 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 match test_context.compile_and_instantiate_with_router(module) {
                     Ok(instance) => instance,
                     Err(error) => panic!(
-                        "{}: failed to instantiate module but should have suceeded: {}",
+                        "{}: failed to instantiate module but should have suceeded: {:?}",
                         test_context.spanned(span),
                         error
                     ),

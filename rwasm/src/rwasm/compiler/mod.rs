@@ -299,7 +299,10 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_call_internal(index);
             }
             FuncOrExport::Global(instruction) => {
+                router_opcodes.op_local_get(1);
                 router_opcodes.push(instruction);
+                router_opcodes.op_local_set(2);
+                router_opcodes.op_br_indirect(0);
             }
         }
         Ok(router_opcodes)

@@ -9,7 +9,9 @@
 use super::FuncIdx;
 use crate::{
     common::{UntypedValue, F32, F64},
-    ExternRef, FuncRef, Value,
+    ExternRef,
+    FuncRef,
+    Value,
 };
 use alloc::boxed::Box;
 use core::fmt;
