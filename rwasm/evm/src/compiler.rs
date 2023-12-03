@@ -38,7 +38,11 @@ impl<'a> EvmCompiler<'a> {
         &self.instruction_set
     }
 
-    pub fn compile(&mut self) -> InstructionResult {
+    pub fn compile(
+        &mut self,
+        preamble: Option<&InstructionSet>,
+        postamble: Option<&InstructionSet>,
+    ) -> InstructionResult {
         let evm_bytecode =
             Bytecode::new_raw(Bytes::copy_from_slice(self.evm_bytecode)).to_checked();
 
@@ -51,24 +55,31 @@ impl<'a> EvmCompiler<'a> {
             Some(translator.subroutines_instruction_set().instr.len() + 1);
         self.instruction_set
             .op_br(self.instruction_set_entry_offset.unwrap() as i32 * INSTRUCTION_BYTES as i32);
-        // translator.subroutines_instruction_set().fix_br_offsets(
-        //     None,
-        //     None,
-        //     self.instruction_set.len() as i32,
-        // );
+        let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
+        for (_opcode, (offset_start, offset_end)) in translator.opcode_to_subroutine_meta() {
+            subroutines_instruction_set.fix_br_offsets(
+                Some(*offset_start),
+                Some(*offset_end),
+                ((self.instruction_set.len() + *offset_start as u32) as i32)
+                    * INSTRUCTION_BYTES as i32,
+            );
+        }
         self.instruction_set
             .instr
-            .extend(&translator.subroutines_instruction_set().instr);
-        // self.instruction_set_entry_offset = Some(self.instruction_set.len().as_usize());
+            .extend(&subroutines_instruction_set.instr);
 
-        // TODO move it somewhere else
-        self.instruction_set.op_i32_const(100);
-        self.instruction_set.op_memory_grow();
-        self.instruction_set.op_drop();
+        preamble.map(|v| {
+            self.instruction_set.instr.extend(&v.instr);
+        });
 
         let mut host = HostImpl::new(&mut self.instruction_set);
         let instruction_table = make_instruction_table::<HostImpl>();
         let res = translator.run(&instruction_table, &mut host);
+
+        postamble.map(|v| {
+            self.instruction_set.instr.extend(&v.instr);
+        });
+
         res
     }
 

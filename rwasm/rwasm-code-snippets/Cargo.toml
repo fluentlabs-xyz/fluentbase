@@ -35,6 +35,7 @@ bitwise_slt = []
 bitwise_sar = []
 bitwise_eq = []
 arithmetic_sub = []
+arithmetic_sub_global = []
 arithmetic_mul = []
 arithmetic_div = []
 

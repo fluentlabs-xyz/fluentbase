@@ -69,6 +69,7 @@ pub struct Compiler<'linker> {
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
     translate_func_as_inline: bool,
+    swap_stack_params: bool,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -124,11 +125,16 @@ impl<'linker> Compiler<'linker> {
             injection_segments: vec![],
             br_table_status: None,
             translate_func_as_inline: false,
+            swap_stack_params: true,
         })
     }
 
     pub fn translate_func_as_inline(&mut self, v: bool) {
         self.translate_func_as_inline = v;
+    }
+
+    pub fn swap_stack_params(&mut self, v: bool) {
+        self.swap_stack_params = v;
     }
 
     pub fn translate(
@@ -373,7 +379,7 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        if !self.translate_func_as_inline {
+        if !self.translate_func_as_inline && self.swap_stack_params {
             self.swap_stack_parameters(num_inputs.len() as u32);
         }
 

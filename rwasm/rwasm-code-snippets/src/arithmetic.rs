@@ -4,3 +4,5 @@ pub mod div;
 pub mod mul;
 #[cfg(feature = "arithmetic_sub")]
 pub mod sub;
+#[cfg(feature = "arithmetic_sub_global")]
+mod sub_global;
