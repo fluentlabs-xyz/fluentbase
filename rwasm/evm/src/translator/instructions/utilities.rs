@@ -37,11 +37,11 @@ pub(super) fn preprocess_op_params(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
+    inject_return_offset: bool,
 ) {
-    let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
     // hardcoded result place in memory
-    const I64_STORE_OFFSET: usize = 0;
+    const I64_MEM_RESULT_OFFSET: usize = 0;
     match opcode {
         // two u256 params
         opcode::BYTE
@@ -57,23 +57,36 @@ pub(super) fn preprocess_op_params(
         | opcode::SUB
         | opcode::MSTORE
         | opcode::MSTORE8 => {
-            // let last_item_idx = instruction_set.len() as usize - 1;
-            // for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-            //     let tmp = instruction_set.instr[last_item_idx - i];
-            //     instruction_set.instr[last_item_idx - i] =
-            //         instruction_set.instr[last_item_idx - i - 4];
-            //     instruction_set.instr[last_item_idx - i - 4] = tmp;
-            // }
-
             // mem offset for the result
+            const I64_PARAMS_COUNT: usize = 8;
+            let instruction_set = host.instruction_set();
+            let mut aux_params_count = 0;
+            if inject_return_offset {
+                aux_params_count += 1;
+                instruction_set.op_i32_const(
+                    instruction_set.len() + 2 + if inject_memory_result_offset { 1 } else { 0 },
+                );
+            }
             if inject_memory_result_offset {
-                instruction_set.op_i32_const(I64_STORE_OFFSET);
-                let last_item_idx = instruction_set.len() as usize - 1;
-                let params_start_idx = last_item_idx - WASM_I64_IN_EVM_WORD_COUNT * 2;
-                let params_end_idx = last_item_idx - 1;
-                let tmp = instruction_set.instr[params_start_idx..=params_end_idx].to_vec();
-                instruction_set.instr[params_start_idx] = instruction_set.instr[last_item_idx];
-                instruction_set.instr[params_start_idx + 1..=last_item_idx].clone_from_slice(&tmp);
+                aux_params_count += 1;
+                instruction_set.op_i32_const(I64_MEM_RESULT_OFFSET);
+            }
+            if aux_params_count > 0 {
+                let instruction_set_len = instruction_set.len() as usize;
+                let last_item_idx = instruction_set_len - 1;
+                let aux_params_start_idx = instruction_set_len - aux_params_count;
+                let aux_params_end_idx = last_item_idx;
+                let aux_params =
+                    instruction_set.instr[aux_params_start_idx..=aux_params_end_idx].to_vec();
+                let params_start_idx = instruction_set_len - I64_PARAMS_COUNT - aux_params_count;
+                let params_end_idx = params_start_idx + I64_PARAMS_COUNT;
+                let params = instruction_set.instr[params_start_idx..params_end_idx].to_vec();
+
+                instruction_set.instr[params_start_idx..params_start_idx + aux_params_count]
+                    .copy_from_slice(&aux_params);
+                instruction_set.instr[params_start_idx + aux_params_count
+                    ..params_start_idx + aux_params_count + I64_PARAMS_COUNT]
+                    .clone_from_slice(&params);
             }
         }
         _ => {
@@ -82,16 +95,16 @@ pub(super) fn preprocess_op_params(
     }
 }
 
-pub(super) fn replace_current_opcode_with_code_snippet(
+pub(super) fn replace_current_opcode_with_inline_instruction_set(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
 ) {
-    preprocess_op_params(translator, host, inject_memory_result_offset);
+    preprocess_op_params(translator, host, inject_memory_result_offset, false);
 
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
-    let mut instruction_set_replace = translator.get_code_snippet(opcode).clone();
+    let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
     instruction_set_replace.fix_br_offsets(
         None,
         None,
@@ -100,56 +113,22 @@ pub(super) fn replace_current_opcode_with_code_snippet(
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());
-    // result postprocessing based on opcode
-    const I64_STORE_OFFSET: usize = 0;
-    match opcode {
-        // bitwise
-        opcode::BYTE
-        | opcode::EQ
-        | opcode::GAS
-        | opcode::LT
-        | opcode::GT
-        | opcode::SAR
-        | opcode::SGT
-        | opcode::SHL
-        | opcode::SHR
-        | opcode::SLT
-        // arithmetic
-        | opcode::SUB => {
-            // TODO get rid of this hack
-            // const OFFSET_GARBAGE_COUNT: usize = 3;
-            // (0..OFFSET_GARBAGE_COUNT).for_each(|_| instruction_set.op_drop());
-
-            // const INPUT_COUNT: usize = 11;
-            // (0..INPUT_COUNT).for_each(|_| instruction_set.op_drop());
-            //
-            // const OUTPUT_COUNT: usize = 4;
-            // for i in 0..OUTPUT_COUNT {
-            //     instruction_set.op_i64_const(I64_STORE_OFFSET + i * mem::size_of::<i64>());
-            //     instruction_set.op_i64_load(0);
-            // }
-        }
-        _ => {
-            panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
-        }
-    }
 }
 
-pub(super) fn replace_current_opcode_with_subroutine_call(
+pub(super) fn replace_current_opcode_with_subroutine_instruction_set(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
 ) {
-    preprocess_op_params(translator, host, inject_memory_result_offset);
+    preprocess_op_params(translator, host, inject_memory_result_offset, true);
 
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
-    let subroutine_entry = *translator
-        .get_subroutine_offset(opcode)
-        .expect(format!("subroutine entry not found for 0x{:x?}", opcode).as_str())
-        + 1;
-    instruction_set.op_i32_const((instruction_set.len() + 2) * INSTRUCTION_BYTES as u32);
-    instruction_set.op_br(subroutine_entry as i32 * INSTRUCTION_BYTES as i32);
+    let subroutine_meta = *translator
+        .subroutine_meta(opcode)
+        .expect(format!("subroutine entry not found for 0x{:x?}", opcode).as_str());
+    let subroutine_entry = subroutine_meta.0 + 1;
+    instruction_set.op_br((subroutine_entry as i32) * INSTRUCTION_BYTES as i32);
 }
 
 pub(super) fn duplicate_stack_value(

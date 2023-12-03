@@ -7,8 +7,8 @@ use crate::{
             duplicate_stack_value,
             fetch_i64_part_as_i32,
             preprocess_op_params,
-            replace_current_opcode_with_code_snippet,
-            replace_current_opcode_with_subroutine_call,
+            replace_current_opcode_with_inline_instruction_set,
+            replace_current_opcode_with_subroutine_instruction_set,
             split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
             wasm_add,
             wasm_drop_n,
@@ -103,8 +103,8 @@ pub fn wrapping_mul<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
-    replace_current_opcode_with_code_snippet(translator, host, true);
-    // replace_current_opcode_with_subroutine_call(translator, host, true);
+    // replace_current_opcode_with_code_snippet(translator, host, true);
+    replace_current_opcode_with_subroutine_instruction_set(translator, host, true);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

@@ -26,9 +26,10 @@ pub struct Translator<'a> {
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
-    opcode_to_rwasm_replacer: HashMap<u8, InstructionSet>,
+    opcode_to_inline_instruction_set: HashMap<u8, InstructionSet>,
+    opcode_to_subroutine_instruction_set: HashMap<u8, InstructionSet>,
     inject_fuel_consumption: bool,
-    opcode_to_subroutine_offset: HashMap<u8, usize>,
+    opcode_to_subroutine_meta: HashMap<u8, (usize, usize)>,
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
 }
@@ -44,9 +45,10 @@ impl<'a> Translator<'a> {
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
-            opcode_to_rwasm_replacer: Default::default(),
+            opcode_to_inline_instruction_set: Default::default(),
+            opcode_to_subroutine_instruction_set: Default::default(),
             inject_fuel_consumption,
-            opcode_to_subroutine_offset: Default::default(),
+            opcode_to_subroutine_meta: Default::default(),
             subroutines_instruction_set: Default::default(),
             _lifetime: Default::default(),
         };
@@ -121,8 +123,8 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let mut initiate = |opcode: u8, wasm_binary: &[u8]| {
-            if self.opcode_to_rwasm_replacer.contains_key(&opcode) {
+        let mut initiate_inlines = |opcode: u8, wasm_binary: &[u8]| {
+            if self.opcode_to_inline_instruction_set.contains_key(&opcode) {
                 panic!(
                     "code snippet for opcode 0x{:x?} already exists (decimal: {})",
                     opcode, opcode
@@ -138,15 +140,42 @@ impl<'a> Translator<'a> {
                 .unwrap()
                 .bytecode()
                 .clone();
-            // if opcode == opcode::SUB {
             debug!(
-                "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
+                "\ninline_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
                 opcode,
                 instruction_set.instr.len(),
                 instruction_set.trace(),
             );
-            // };
-            self.opcode_to_rwasm_replacer
+            self.opcode_to_inline_instruction_set
+                .insert(opcode, instruction_set);
+        };
+        let mut initiate_subroutines = |opcode: u8, wasm_binary: &[u8]| {
+            if self
+                .opcode_to_subroutine_instruction_set
+                .contains_key(&opcode)
+            {
+                panic!(
+                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
+                    opcode, opcode
+                );
+            }
+            let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
+            compiler.swap_stack_params(false);
+            compiler
+                .translate(Some(FuncOrExport::Func(0)), false)
+                .unwrap();
+            let rwasm_binary = compiler.finalize().unwrap();
+            let instruction_set = ReducedModule::new(&rwasm_binary, true)
+                .unwrap()
+                .bytecode()
+                .clone();
+            debug!(
+                "\nsubroutine_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
+                opcode,
+                instruction_set.instr.len(),
+                instruction_set.trace(),
+            );
+            self.opcode_to_subroutine_instruction_set
                 .insert(opcode, instruction_set);
         };
 
@@ -164,30 +193,32 @@ impl<'a> Translator<'a> {
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();
-            initiate(v.0, &bytecode);
+            initiate_inlines(v.0, &bytecode);
+            initiate_subroutines(v.0, &bytecode);
         });
     }
 
     fn init_subroutines(&mut self) {
-        for (opcode, bytecode) in self.opcode_to_rwasm_replacer.iter() {
+        for (opcode, instruction_set) in self.opcode_to_subroutine_instruction_set.iter() {
             let l = self.subroutines_instruction_set.instr.len();
-            self.opcode_to_subroutine_offset.insert(*opcode, l);
+            self.opcode_to_subroutine_meta
+                .insert(*opcode, (l, l + instruction_set.len() as usize - 1));
             self.subroutines_instruction_set
                 .instr
-                .extend(&bytecode.instr);
+                .extend(&instruction_set.instr);
         }
     }
 
-    pub fn get_subroutine_offset(&self, opcode: u8) -> Option<&usize> {
-        self.opcode_to_subroutine_offset.get(&opcode)
+    pub fn opcode_to_subroutine_meta(&self) -> &HashMap<u8, (usize, usize)> {
+        &self.opcode_to_subroutine_meta
     }
 
-    fn opcode_to_subroutine_offset(&self) -> &HashMap<u8, usize> {
-        &self.opcode_to_subroutine_offset
+    pub fn subroutine_meta(&self, opcode: u8) -> Option<&(usize, usize)> {
+        self.opcode_to_subroutine_meta.get(&opcode)
     }
 
-    pub fn get_code_snippet(&mut self, opcode: u8) -> &InstructionSet {
-        if let Some(is) = self.opcode_to_rwasm_replacer.get(&opcode) {
+    pub fn inline_instruction_set(&mut self, opcode: u8) -> &InstructionSet {
+        if let Some(is) = self.opcode_to_inline_instruction_set.get(&opcode) {
             return is;
         }
         panic!(
@@ -198,7 +229,7 @@ impl<'a> Translator<'a> {
         );
     }
 
-    pub fn subroutines_instruction_set(&mut self) -> &mut InstructionSet {
-        &mut self.subroutines_instruction_set
+    pub fn subroutines_instruction_set(&self) -> &InstructionSet {
+        &self.subroutines_instruction_set
     }
 }

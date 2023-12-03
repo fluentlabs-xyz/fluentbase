@@ -497,8 +497,8 @@ impl InstructionSet {
         to_idx: Option<usize>,
         offset_change: i32,
     ) {
-        for i in from_idx.unwrap_or(0)..to_idx.unwrap_or(self.instr.len()) {
-            let instr = &mut self.instr[i];
+        for offset in from_idx.unwrap_or(0)..=to_idx.unwrap_or(self.instr.len() - 1) {
+            let instr = &mut self.instr[offset];
             match instr {
                 // Instruction::BrTable(_) |
                 Instruction::Br(offset)

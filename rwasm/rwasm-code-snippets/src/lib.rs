@@ -8,6 +8,7 @@ extern crate wat;
 
 mod arithmetic;
 mod bitwise;
+pub(crate) mod common;
 pub(crate) mod consts;
 mod system;
 #[cfg(test)]
