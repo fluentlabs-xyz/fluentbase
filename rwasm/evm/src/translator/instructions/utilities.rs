@@ -92,7 +92,11 @@ pub(super) fn replace_current_opcode_with_code_snippet(
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
     let mut instruction_set_replace = translator.get_code_snippet(opcode).clone();
-    instruction_set_replace.fix_br_offsets(instruction_set.len() as i32 * INSTRUCTION_BYTES as i32);
+    instruction_set_replace.fix_br_offsets(
+        None,
+        None,
+        instruction_set.len() as i32 * INSTRUCTION_BYTES as i32,
+    );
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());
@@ -129,6 +133,23 @@ pub(super) fn replace_current_opcode_with_code_snippet(
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
         }
     }
+}
+
+pub(super) fn replace_current_opcode_with_subroutine_call(
+    translator: &mut Translator<'_>,
+    host: &mut dyn Host,
+    inject_memory_result_offset: bool,
+) {
+    preprocess_op_params(translator, host, inject_memory_result_offset);
+
+    let instruction_set = host.instruction_set();
+    let opcode = translator.opcode_prev();
+    let subroutine_entry = *translator
+        .get_subroutine_offset(opcode)
+        .expect(format!("subroutine entry not found for 0x{:x?}", opcode).as_str())
+        + 1;
+    instruction_set.op_i32_const((instruction_set.len() + 2) * INSTRUCTION_BYTES as u32);
+    instruction_set.op_br(subroutine_entry as i32 * INSTRUCTION_BYTES as i32);
 }
 
 pub(super) fn duplicate_stack_value(
