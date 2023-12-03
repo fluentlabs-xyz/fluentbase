@@ -8,6 +8,7 @@ use crate::{
             fetch_i64_part_as_i32,
             preprocess_op_params,
             replace_current_opcode_with_code_snippet,
+            replace_current_opcode_with_subroutine_call,
             split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
             wasm_add,
             wasm_drop_n,
@@ -103,6 +104,7 @@ pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
     replace_current_opcode_with_code_snippet(translator, host, true);
+    // replace_current_opcode_with_subroutine_call(translator, host, true);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

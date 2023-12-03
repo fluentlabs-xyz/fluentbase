@@ -28,6 +28,8 @@ pub struct Translator<'a> {
     import_linker: &'a ImportLinker,
     opcode_to_rwasm_replacer: HashMap<u8, InstructionSet>,
     inject_fuel_consumption: bool,
+    opcode_to_subroutine_offset: HashMap<u8, usize>,
+    subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
 }
 
@@ -44,9 +46,12 @@ impl<'a> Translator<'a> {
             import_linker,
             opcode_to_rwasm_replacer: Default::default(),
             inject_fuel_consumption,
+            opcode_to_subroutine_offset: Default::default(),
+            subroutines_instruction_set: Default::default(),
             _lifetime: Default::default(),
         };
         s.init_code_snippets();
+        s.init_subroutines();
         s
     }
 
@@ -133,34 +138,52 @@ impl<'a> Translator<'a> {
                 .unwrap()
                 .bytecode()
                 .clone();
-            if opcode == opcode::MSTORE {
-                debug!(
-                    "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
-                    opcode,
-                    instruction_set.instr.len(),
-                    instruction_set.trace(),
-                );
-            };
+            // if opcode == opcode::SUB {
+            debug!(
+                "\ncode snippet (opcode 0x{:x?} len {}): \n{}\n",
+                opcode,
+                instruction_set.instr.len(),
+                instruction_set.trace(),
+            );
+            // };
             self.opcode_to_rwasm_replacer
                 .insert(opcode, instruction_set);
         };
 
         [
-            (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
-            (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
-            (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
-            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
-            (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
-            (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
-            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
-            (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
-            (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
             (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
+            // (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
+            // (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
+            // (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
+            // (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
+            // (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
+            // (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            // (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
+            // (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
+            // (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();
             initiate(v.0, &bytecode);
         });
+    }
+
+    fn init_subroutines(&mut self) {
+        for (opcode, bytecode) in self.opcode_to_rwasm_replacer.iter() {
+            let l = self.subroutines_instruction_set.instr.len();
+            self.opcode_to_subroutine_offset.insert(*opcode, l);
+            self.subroutines_instruction_set
+                .instr
+                .extend(&bytecode.instr);
+        }
+    }
+
+    pub fn get_subroutine_offset(&self, opcode: u8) -> Option<&usize> {
+        self.opcode_to_subroutine_offset.get(&opcode)
+    }
+
+    fn opcode_to_subroutine_offset(&self) -> &HashMap<u8, usize> {
+        &self.opcode_to_subroutine_offset
     }
 
     pub fn get_code_snippet(&mut self, opcode: u8) -> &InstructionSet {
@@ -173,5 +196,9 @@ impl<'a> Translator<'a> {
             opcode,
             self.program_counter()
         );
+    }
+
+    pub fn subroutines_instruction_set(&mut self) -> &mut InstructionSet {
+        &mut self.subroutines_instruction_set
     }
 }
