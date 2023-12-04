@@ -577,12 +577,6 @@ impl<'linker> Compiler<'linker> {
                             self.code_section.op_elem_store(i as u32);
                         }
                     }
-                    #[cfg(feature = "e2e")]
-                    {
-                        self.code_section.op_i64_const(0);
-                        self.code_section.op_elem_store(i as u32);
-                        self.code_section.op_elem_drop(i as u32);
-                    }
                 }
                 ElementSegmentKind::Active(aes) => {
                     let dest_offset = self.translate_const_expr(aes.offset())?;
