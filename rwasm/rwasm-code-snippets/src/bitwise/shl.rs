@@ -16,32 +16,32 @@ fn bitwise_shl(
     let mut s2: u64 = 0;
     let mut s3: u64 = 0;
 
-    if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {
+    if a3 != 0 || a2 != 0 || a1 != 0 || a0 > BYTE_MAX_VAL {
         // return (s0, s1, s2, s3);
-    } else if a3 >= 192 {
-        let shift = a3 - 192;
-        s0 = b3 << shift;
+    } else if a0 >= 192 {
+        let shift = a0 - 192;
+        s3 = b0 << shift;
         // return (s0, 0, 0, 0);
-    } else if a3 >= 128 {
-        let shift = a3 - 128;
+    } else if a0 >= 128 {
+        let shift = a0 - 128;
         let shift_inv = 64 - shift;
-        s1 = b3 << shift;
-        s0 = b2 << shift | b3 >> shift_inv;
+        s2 = b0 << shift;
+        s3 = b1 << shift | b0 >> shift_inv;
         // return (s0, s1, 0, 0);
-    } else if a3 >= 64 {
-        let shift = a3 - 64;
+    } else if a0 >= 64 {
+        let shift = a0 - 64;
         let shift_inv = 64 - shift;
-        s2 = b3 << shift;
-        s1 = b2 << shift | b3 >> shift_inv;
-        s0 = b1 << shift | b2 >> shift_inv;
+        s1 = b0 << shift;
+        s2 = b1 << shift | b0 >> shift_inv;
+        s3 = b2 << shift | b1 >> shift_inv;
         // return (s0, s1, s2, 0);
     } else {
-        let shift = a3;
+        let shift = a0;
         let shift_inv = 64 - shift;
-        s3 = b3 << shift;
-        s2 = b2 << shift | b3 >> shift_inv;
-        s1 = b1 << shift | b2 >> shift_inv;
-        s0 = b0 << shift | b1 >> shift_inv;
+        s0 = b0 << shift;
+        s1 = b1 << shift | b0 >> shift_inv;
+        s2 = b2 << shift | b1 >> shift_inv;
+        s3 = b3 << shift | b2 >> shift_inv;
     }
 
     (s0, s1, s2, s3)

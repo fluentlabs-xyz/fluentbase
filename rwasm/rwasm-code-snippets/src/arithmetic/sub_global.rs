@@ -1,7 +1,4 @@
-use crate::{
-    common::STACK_POINTER_DEFAULT_MEM_OFFSET,
-    consts::{U64_MAX_VAL, U64_MSBIT_IS_1},
-};
+use crate::common::STACK_POINTER_DEFAULT_MEM_OFFSET;
 use std::slice;
 
 extern "C" {
@@ -22,8 +19,11 @@ pub fn arithmetic_sub_global(
 )
 /* -> (u64, u64, u64, u64) */
 {
-    let sp =
-        unsafe { slice::from_raw_parts_mut(STACK_POINTER_DEFAULT_MEM_OFFSET as *mut i32, 1)[0] };
+    let mut sp: i32;
+    unsafe {
+        let mem = slice::from_raw_parts_mut(STACK_POINTER_DEFAULT_MEM_OFFSET as *mut u8, 4);
+        sp = i32::from_le_bytes(mem.try_into().unwrap());
+    };
 
     // let a0_sign: u64 = a0 & U64_MSBIT_IS_1;
     //
@@ -67,11 +67,10 @@ pub fn arithmetic_sub_global(
     //     }
     // }
 
+    sp += 8 * 4;
     unsafe {
-        let sp_pointer: *mut i64 = 0 as *mut i64;
-        // *sp_pointer = 3;
-        // let mem = slice::from_raw_parts_mut(0 as *mut i32, 1);
-        // mem[0] = sp + 3;
+        let mem = slice::from_raw_parts_mut(0 as *mut u8, 4);
+        mem.copy_from_slice(sp.to_le_bytes().as_slice())
     }
 
     // (s0, s1, s2, s3)

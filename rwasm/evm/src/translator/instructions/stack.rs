@@ -37,7 +37,8 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         return;
     }
     let data_padded = data_padded.unwrap();
-    for bytes in iterate_over_wasm_i64_chunks(&data_padded) {
+    // in LE chunks
+    for bytes in iterate_over_wasm_i64_chunks(&data_padded).rev() {
         let v = i64::from_be_bytes(bytes.try_into().unwrap());
         instruction_set.op_i64_const(v);
     }

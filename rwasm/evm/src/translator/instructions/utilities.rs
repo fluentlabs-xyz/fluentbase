@@ -54,6 +54,7 @@ pub(super) fn preprocess_op_params(
         | opcode::SHL
         | opcode::SHR
         | opcode::SLT
+        | opcode::ADD
         | opcode::SUB
         | opcode::MSTORE
         | opcode::MSTORE8 => {
@@ -95,7 +96,7 @@ pub(super) fn preprocess_op_params(
     }
 }
 
-pub(super) fn replace_current_opcode_with_inline_instruction_set(
+pub(super) fn replace_current_opcode_with_inline_func(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
@@ -115,7 +116,7 @@ pub(super) fn replace_current_opcode_with_inline_instruction_set(
         .extend(instruction_set_replace.instr.iter());
 }
 
-pub(super) fn replace_current_opcode_with_subroutine_instruction_set(
+pub(super) fn replace_current_opcode_with_subroutine(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,

@@ -11,7 +11,7 @@ pub fn arithmetic_sub(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let a0_sign: u64 = a0 & U64_MSBIT_IS_1;
+    let a3_sign: u64 = a3 & U64_MSBIT_IS_1;
 
     let mut borrow: u64 = 0;
     let mut s0: u64 = 0;
@@ -19,18 +19,10 @@ pub fn arithmetic_sub(
     let mut s2: u64 = 0;
     let mut s3: u64 = 0;
 
-    if a3 >= b3 {
-        s3 = a3 - b3;
+    if a0 >= b0 {
+        s0 = a0 - b0;
     } else {
-        s3 = U64_MAX_VAL - b3 + a3 + (1 - borrow);
-        borrow = 1;
-    }
-
-    if a2 >= b2 + borrow {
-        s2 = a2 - b2 - borrow;
-        borrow = 0;
-    } else {
-        s2 = U64_MAX_VAL - b2 + a2 + (1 - borrow);
+        s0 = U64_MAX_VAL - b0 + a0 + (1 - borrow);
         borrow = 1;
     }
 
@@ -42,14 +34,22 @@ pub fn arithmetic_sub(
         borrow = 1;
     }
 
-    if a0 >= b0 + borrow {
-        s0 = a0 - b0 - borrow;
+    if a2 >= b2 + borrow {
+        s2 = a2 - b2 - borrow;
+        borrow = 0;
     } else {
-        if a0_sign > 0 {
+        s2 = U64_MAX_VAL - b2 + a2 + (1 - borrow);
+        borrow = 1;
+    }
+
+    if a3 >= b3 + borrow {
+        s3 = a3 - b3 - borrow;
+    } else {
+        if a3_sign > 0 {
             // TODO process overflow
-            s0 = U64_MSBIT_IS_1;
+            s3 = U64_MSBIT_IS_1;
         } else {
-            s0 = U64_MAX_VAL - b0 + a0 + (1 - borrow);
+            s3 = U64_MAX_VAL - b3 + a3 + (1 - borrow);
         }
     }
 

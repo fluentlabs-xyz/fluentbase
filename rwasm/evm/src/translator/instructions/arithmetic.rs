@@ -7,8 +7,8 @@ use crate::{
             duplicate_stack_value,
             fetch_i64_part_as_i32,
             preprocess_op_params,
-            replace_current_opcode_with_inline_instruction_set,
-            replace_current_opcode_with_subroutine_instruction_set,
+            replace_current_opcode_with_inline_func,
+            replace_current_opcode_with_subroutine,
             split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
             wasm_add,
             wasm_drop_n,
@@ -19,80 +19,82 @@ use crate::{
 };
 use log::debug;
 
-pub fn wrapped_add<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADD";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-
-    let mut stack_pos_shift = 0;
-
-    for subpart_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT * 2) {
-        let part_idx = subpart_idx / 2;
-        let fetch_low_part = subpart_idx % 2 == 0;
-        // extract i64 part of B evm
-        duplicate_i64_part_of_evm_word(
-            instruction_set,
-            &mut stack_pos_shift,
-            part_idx,
-            true,
-            false,
-        );
-        // stack: i64_part_of_B
-
-        // extract low part of B
-        fetch_i64_part_as_i32(instruction_set, &mut stack_pos_shift, fetch_low_part);
-        // stack: subpart_B
-
-        // extract i64 part of A
-        duplicate_i64_part_of_evm_word(
-            instruction_set,
-            &mut stack_pos_shift,
-            part_idx,
-            false,
-            false,
-        );
-        // stack: i64_part_of_A subpart_B
-
-        // extract low part of A
-        fetch_i64_part_as_i32(instruction_set, &mut stack_pos_shift, fetch_low_part);
-        // stack: subpart_A subpart_B
-
-        // sum low parts
-        wasm_add(instruction_set, &mut stack_pos_shift);
-        // stack: sum_of_subpart_A_and_subpart_B
-
-        //
-        if subpart_idx != 0 {
-            // add overflow amount (which must be on stack) to the sum of parts
-            wasm_add(instruction_set, &mut stack_pos_shift);
-            // stack: sum_of_subpart_A_and_subpart_B_with_overflow_amount
-        }
-
-        split_i64_repr_of_i32_sum_into_overflow_and_normal_parts(
-            instruction_set,
-            &mut stack_pos_shift,
-            !fetch_low_part,
-        );
-    }
-
-    // drop last overflow value
-    wasm_drop_n(instruction_set, &mut stack_pos_shift, 1);
-
-    let mut stack_pos_shift = 0;
-    const BASE: usize = WASM_I64_IN_EVM_WORD_COUNT * 2;
-    for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        let items_base_pos = BASE - i * 2;
-        let assign_pos = BASE - i + 1;
-        duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos);
-        duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos - 1);
-        wasm_add(instruction_set, &mut stack_pos_shift);
-        assign_to_stack_and_drop(instruction_set, &mut stack_pos_shift, assign_pos);
-    }
-    wasm_drop_n(
-        instruction_set,
-        &mut stack_pos_shift,
-        WASM_I64_IN_EVM_WORD_COUNT,
-    );
+    // replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_subroutine(translator, host, true);
+    // let instruction_set = host.instruction_set();
+    //
+    // let mut stack_pos_shift = 0;
+    //
+    // for subpart_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT * 2) {
+    //     let part_idx = subpart_idx / 2;
+    //     let fetch_low_part = subpart_idx % 2 == 0;
+    //     // extract i64 part of B evm
+    //     duplicate_i64_part_of_evm_word(
+    //         instruction_set,
+    //         &mut stack_pos_shift,
+    //         part_idx,
+    //         true,
+    //         false,
+    //     );
+    //     // stack: i64_part_of_B
+    //
+    //     // extract low part of B
+    //     fetch_i64_part_as_i32(instruction_set, &mut stack_pos_shift, fetch_low_part);
+    //     // stack: subpart_B
+    //
+    //     // extract i64 part of A
+    //     duplicate_i64_part_of_evm_word(
+    //         instruction_set,
+    //         &mut stack_pos_shift,
+    //         part_idx,
+    //         false,
+    //         false,
+    //     );
+    //     // stack: i64_part_of_A subpart_B
+    //
+    //     // extract low part of A
+    //     fetch_i64_part_as_i32(instruction_set, &mut stack_pos_shift, fetch_low_part);
+    //     // stack: subpart_A subpart_B
+    //
+    //     // sum low parts
+    //     wasm_add(instruction_set, &mut stack_pos_shift);
+    //     // stack: sum_of_subpart_A_and_subpart_B
+    //
+    //     //
+    //     if subpart_idx != 0 {
+    //         // add overflow amount (which must be on stack) to the sum of parts
+    //         wasm_add(instruction_set, &mut stack_pos_shift);
+    //         // stack: sum_of_subpart_A_and_subpart_B_with_overflow_amount
+    //     }
+    //
+    //     split_i64_repr_of_i32_sum_into_overflow_and_normal_parts(
+    //         instruction_set,
+    //         &mut stack_pos_shift,
+    //         !fetch_low_part,
+    //     );
+    // }
+    //
+    // // drop last overflow value
+    // wasm_drop_n(instruction_set, &mut stack_pos_shift, 1);
+    //
+    // let mut stack_pos_shift = 0;
+    // const BASE: usize = WASM_I64_IN_EVM_WORD_COUNT * 2;
+    // for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
+    //     let items_base_pos = BASE - i * 2;
+    //     let assign_pos = BASE - i + 1;
+    //     duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos);
+    //     duplicate_stack_value(instruction_set, &mut stack_pos_shift, items_base_pos - 1);
+    //     wasm_add(instruction_set, &mut stack_pos_shift);
+    //     assign_to_stack_and_drop(instruction_set, &mut stack_pos_shift, assign_pos);
+    // }
+    // wasm_drop_n(
+    //     instruction_set,
+    //     &mut stack_pos_shift,
+    //     WASM_I64_IN_EVM_WORD_COUNT,
+    // );
 }
 
 pub fn wrapping_mul<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -104,7 +106,7 @@ pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
     // replace_current_opcode_with_code_snippet(translator, host, true);
-    replace_current_opcode_with_subroutine_instruction_set(translator, host, true);
+    replace_current_opcode_with_subroutine(translator, host, true);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
