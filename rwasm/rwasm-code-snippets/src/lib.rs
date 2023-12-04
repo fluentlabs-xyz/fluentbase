@@ -10,6 +10,7 @@ mod arithmetic;
 mod bitwise;
 pub(crate) mod common;
 pub(crate) mod consts;
+mod memory;
 mod system;
 #[cfg(test)]
 pub(crate) mod test_helper;
