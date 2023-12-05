@@ -1,28 +1,17 @@
 use crate::{
-    common::UntypedValue,
     engine::{
         bytecode::{
-            AddressOffset,
-            BlockFuel,
-            BranchOffset,
-            BranchTableTargets,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            LocalDepth,
-            SignatureIdx,
-            TableIdx,
+            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
+            ElementSegmentIdx, FuncIdx, GlobalIdx, LocalDepth, SignatureIdx, TableIdx,
         },
-        CompiledFunc,
-        ConstRef,
+        CompiledFunc, ConstRef,
     },
     rwasm::binary_format::{
         reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-        BinaryFormat,
-        BinaryFormatError,
+        BinaryFormat, BinaryFormatError,
     },
 };
+use fluentbase_rwasm_core::common::UntypedValue;
 
 impl<'a> BinaryFormat<'a> for UntypedValue {
     type SelfType = UntypedValue;

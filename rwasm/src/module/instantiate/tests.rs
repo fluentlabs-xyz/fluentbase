@@ -7,8 +7,6 @@
 //! instances with more than 1 memory (or table) if the Wasm module imported
 //! those entities.
 
-use crate::common::ValueType;
-
 use crate::{
     instance::InstanceEntity,
     Engine,
@@ -23,6 +21,7 @@ use crate::{
     TableType,
     Value,
 };
+use fluentbase_rwasm_core::common::ValueType;
 
 fn try_instantiate_from_wat(wat: &str) -> Result<(Store<()>, Instance), Error> {
     let wasm = wat::parse_str(wat).unwrap();

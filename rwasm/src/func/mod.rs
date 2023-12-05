@@ -22,7 +22,8 @@ use super::{
     StoreContext,
     Stored,
 };
-use crate::{arena::ArenaIndex, common::Trap, engine::ResumableCall, Engine, Error, Value};
+use fluentbase_rwasm_core::common::Trap;
+use crate::{ engine::ResumableCall, Engine, Error, Value};
 use alloc::{boxed::Box, sync::Arc};
 use core::{fmt, fmt::Debug, num::NonZeroU32};
 

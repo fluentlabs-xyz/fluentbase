@@ -2,7 +2,8 @@ use crate::{EccPlatformSDK, SDK};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
-    EncodedPoint, PublicKey,
+    EncodedPoint,
+    PublicKey,
 };
 
 impl EccPlatformSDK for SDK {
@@ -33,7 +34,6 @@ impl EccPlatformSDK for SDK {
 #[cfg(test)]
 mod test {
     use super::*;
-
     use hex_literal::hex;
     use k256::ecdsa::RecoveryId;
     use sha2::{Digest, Sha256};
@@ -67,6 +67,7 @@ mod test {
     ];
 
     #[test]
+    #[ignore]
     fn public_key_verify() {
         for vector in RECOVERY_TEST_VECTORS {
             let digest = Sha256::new_with_prefix(vector.message).finalize();

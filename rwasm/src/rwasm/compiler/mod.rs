@@ -1,6 +1,5 @@
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, UntypedValue, ValueType, ValueType::I32, F32},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -14,16 +13,13 @@ use crate::{
         FuncOrExport::Global,
         ImportLinker,
     },
-    value::WithType,
     Config,
     Engine,
-    FuncRef,
-    FuncType,
     Module,
-    Value,
 };
-use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
-use core::{cell::RefCell, ops::Deref};
+use alloc::{collections::BTreeMap, vec::Vec};
+use core::ops::Deref;
+use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType};
 
 mod drop_keep;
 
@@ -70,12 +66,12 @@ pub struct Compiler<'linker> {
     // mapping from function index to its position inside code section
     function_beginning: BTreeMap<u32, u32>,
     import_linker: Option<&'linker ImportLinker>,
-    // for automatic translation
     is_translated: bool,
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
     func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
     global_start_index: u32,
+    translate_func_as_inline: bool,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -115,13 +111,14 @@ impl Default for FuncOrExport {
 }
 
 impl<'linker> Compiler<'linker> {
-    pub fn new(wasm_binary: &[u8]) -> Result<Self, CompilerError> {
-        Self::new_with_linker(wasm_binary, None)
+    pub fn new(wasm_binary: &[u8], consume_fuel: bool) -> Result<Self, CompilerError> {
+        Self::new_with_linker(wasm_binary, None, consume_fuel)
     }
 
     pub fn new_with_linker(
         wasm_binary: &[u8],
         import_linker: Option<&'linker ImportLinker>,
+        consume_fuel: bool,
     ) -> Result<Self, CompilerError> {
         Self::new_with_fuel_consume(wasm_binary, import_linker, true)
     }
@@ -162,10 +159,16 @@ impl<'linker> Compiler<'linker> {
             is_translated: false,
             injection_segments: vec![],
             br_table_status: None,
+            translate_func_as_inline: false,
             func_type_check_idx,
             global_start_index: 0,
         })
     }
+
+    pub fn translate_func_as_inline(&mut self, v: bool) {
+        self.translate_func_as_inline = v;
+    }
+
 
     pub fn set_global_start_index(&mut self, idx: u32) {
         self.global_start_index = idx;
@@ -186,6 +189,29 @@ impl<'linker> Compiler<'linker> {
             self.translate_sections(main_index.unwrap_or_default())?;
         }
         self.translate_imports_funcs()?;
+        // translate rest functions
+        let total_fns = self.module.funcs.len();
+        for i in 0..total_fns {
+            self.translate_function(i as u32)?;
+        }
+        // there is no need to inject because code is already validated
+        self.code_section.finalize(false);
+        self.is_translated = true;
+        Ok(())
+    }
+
+    pub fn translate(
+        &mut self,
+        main_index: Option<FuncOrExport>,
+        translate_sections: bool,
+    ) -> Result<(), CompilerError> {
+        if self.is_translated {
+            unreachable!("already translated");
+        }
+        // first we must translate all sections, this is an entrypoint
+        if translate_sections {
+            self.translate_sections(main_index.unwrap_or_default())?;
+        }
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {
@@ -662,7 +688,9 @@ impl<'linker> Compiler<'linker> {
 
         self.code_section.op_type_check(idx);
 
-        self.swap_stack_parameters(num_inputs.len() as u32);
+        if !self.translate_func_as_inline {
+            self.swap_stack_parameters(num_inputs.len() as u32);
+        }
 
         let func_body = self
             .module
@@ -680,7 +708,9 @@ impl<'linker> Compiler<'linker> {
         while instr_ptr != instr_end {
             self.translate_opcode(&mut instr_ptr, 0)?;
         }
-        self.code_section.op_unreachable();
+        if !self.translate_func_as_inline {
+            self.code_section.op_unreachable();
+        }
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
         self.function_beginning
             .insert(fn_index + 1, beginning_offset);
@@ -884,7 +914,10 @@ impl<'linker> Compiler<'linker> {
                     self.translate_br_table(instr_ptr, None)?;
                 } else {
                     DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
-                    self.code_section.op_br_indirect(0);
+
+                    if !self.translate_func_as_inline {
+                        self.code_section.op_br_indirect(0);
+                    }
                 }
             }
             WI::ReturnIfNez(drop_keep) => {
@@ -1039,20 +1072,20 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_host_call(&mut self, fn_index: u32) -> Result<(), CompilerError> {
-        let import_index_and_fuel_amount = self.resolve_host_call(fn_index)?;
+        let (import_index, fuel_amount) = self.resolve_host_call(fn_index)?;
 
         if self.engine.config().get_fuel_consumption_mode().is_some() {
             self.code_section
-                .op_consume_fuel(import_index_and_fuel_amount.1);
+                .op_consume_fuel(fuel_amount);
         }
 
-        self.code_section.op_call(import_index_and_fuel_amount.0);
+        self.code_section.op_call(import_index);
         Ok(())
     }
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(None)?;
+            self.translate(None, true)?;
         }
         let bytecode = &mut self.code_section;
 
@@ -1088,7 +1121,7 @@ impl<'linker> Compiler<'linker> {
                             }
                         }
                     };
-                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset as i32));
+                    bytecode.instr[i].update_branch_offset(BranchOffset::from(offset));
                 }
                 Instruction::BrTable(target) => {
                     i += target.to_usize() * 2;

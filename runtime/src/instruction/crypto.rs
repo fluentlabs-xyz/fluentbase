@@ -1,11 +1,12 @@
 use crate::{instruction::exported_memory_vec, RuntimeContext};
 use fluentbase_poseidon::{poseidon_hash, Hashable};
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use keccak_hash::write_keccak;
 
-pub(crate) fn crypto_keccak256(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn crypto_keccak256<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     data_offset: i32,
     data_len: i32,
     output_offset: i32,
@@ -17,8 +18,8 @@ pub(crate) fn crypto_keccak256(
     Ok(())
 }
 
-pub(crate) fn crypto_poseidon(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn crypto_poseidon<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     data_offset: i32,
     data_len: i32,
     output_offset: i32,
@@ -29,8 +30,8 @@ pub(crate) fn crypto_poseidon(
     Ok(())
 }
 
-pub(crate) fn crypto_poseidon2(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn crypto_poseidon2<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     fa_offset: i32,
     fb_offset: i32,
     domain_offset: i32,

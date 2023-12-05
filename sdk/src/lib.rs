@@ -1,9 +1,14 @@
 // #![no_std]
 
+extern crate alloc;
+
 #[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(not(feature = "runtime"))]
 mod rwasm;
+
+#[cfg(feature = "evm")]
+pub mod evm;
 
 pub struct SDK;
 
@@ -63,14 +68,20 @@ pub trait ZktriePlatformSDK {
     fn zktrie_get_store(key: &[u8]) -> [u8; 32];
 }
 
+#[cfg(feature = "evm")]
+pub trait EvmPlatformSDK {
+    fn evm_sload(key: &[u8], value: &mut [u8]);
+    fn evm_sstore(key: &[u8], value: &[u8]);
+}
+
 // #[cfg(not(feature = "std"))]
 // #[panic_handler]
 // #[inline(always)]
 // fn panic(info: &core::panic::PanicInfo) -> ! {
 //     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-//         sys_write(panic_message.as_ptr() as u32, panic_message.len() as u32);
+//         SDK::sys_write(panic_message.as_bytes());
 //     }
-//     sys_panic();
+//     SDK::sys_halt(ExitCode::ExecutionHalted as i32);
 //     loop {}
 // }
 

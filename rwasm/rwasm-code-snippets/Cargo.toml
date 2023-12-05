@@ -1,0 +1,45 @@
+[package]
+name = "fluentbase-rwasm-code-snippets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-rwasm = { path = ".." }
+fluentbase-runtime = { path = "../../runtime", optional = true }
+hex = "0.4.3"
+wat = "1.0.77"
+
+[dev-dependencies]
+wat = "1.0.77"
+ethereum-types = "0.14.1"
+log = "0.4.20"
+ctor = "0.2.5"
+env_logger = "0.10.1"
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+test = false
+proc-macro = false
+
+[features]
+default = []
+testing = ["fluentbase-runtime"]
+bitwise_byte = []
+bitwise_shl = []
+bitwise_shr = []
+bitwise_gt = []
+bitwise_sgt = []
+bitwise_lt = []
+bitwise_slt = []
+bitwise_sar = []
+bitwise_eq = []
+arithmetic_sub = []
+arithmetic_mul = []
+arithmetic_div = []
+
+
+[profile.release]
+opt-level = 0
+lto = false
+strip = true

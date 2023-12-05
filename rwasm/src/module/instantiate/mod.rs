@@ -15,6 +15,7 @@ use crate::{
     AsContext, AsContextMut, ElementSegment, Error, Extern, ExternType, FuncRef, FuncType, Global,
     Instance, InstanceEntity, InstanceEntityBuilder, Memory, Table, Value,
 };
+use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
 impl Module {
     /// Instantiates a new [`Instance`] from the given compiled [`Module`].

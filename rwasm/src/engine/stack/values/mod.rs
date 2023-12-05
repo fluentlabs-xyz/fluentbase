@@ -7,12 +7,10 @@ mod tests;
 
 pub use self::sp::ValueStackPtr;
 use super::{err_stack_overflow, DEFAULT_MAX_VALUE_STACK_HEIGHT, DEFAULT_MIN_VALUE_STACK_HEIGHT};
-use crate::{
-    common::{TrapCode, UntypedValue},
-    engine::code_map::FuncHeader,
-};
+use crate::engine::code_map::FuncHeader;
 use alloc::vec::Vec;
 use core::{fmt, fmt::Debug, iter, mem::size_of};
+use fluentbase_rwasm_core::common::{TrapCode, UntypedValue};
 
 /// The value stack that is used to execute Wasm bytecode.
 ///

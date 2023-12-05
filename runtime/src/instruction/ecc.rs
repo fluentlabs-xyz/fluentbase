@@ -1,9 +1,12 @@
-extern crate alloc;
-
-use crate::{exported_memory_slice, exported_memory_vec, ExitCode, Runtime, RuntimeContext};
-use alloc::{vec, vec::Vec};
+use crate::{
+    instruction::{exported_memory_slice, exported_memory_vec},
+    ExitCode,
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_poseidon::Hashable;
-use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_rwasm::Caller;
+use fluentbase_rwasm_core::common::Trap;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
@@ -20,8 +23,8 @@ fn secp256k1_verify(digest: &[u8], sig: &[u8], recid: u8, pk_expected: &[u8]) ->
     return pk_expected == pk_computed.as_bytes();
 }
 
-pub(crate) fn ecc_secp256k1_verify(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn ecc_secp256k1_verify<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     digest: i32,
     digest_len: i32,
     signature: i32,
@@ -44,8 +47,8 @@ pub(crate) fn ecc_secp256k1_verify(
     Ok(is_ok as i32)
 }
 
-pub(crate) fn ecc_secp256k1_recover(
-    mut caller: Caller<'_, RuntimeContext>,
+pub(crate) fn ecc_secp256k1_recover<T>(
+    mut caller: Caller<'_, RuntimeContext<T>>,
     digest: i32,
     digest_len: i32,
     signature: i32,
@@ -70,7 +73,7 @@ pub(crate) fn ecc_secp256k1_recover(
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::ecc::secp256k1_verify;
+    use super::secp256k1_verify;
     use hex_literal::hex;
     use k256::ecdsa::RecoveryId;
     use sha2::{Digest, Sha256};
