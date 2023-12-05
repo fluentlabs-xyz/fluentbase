@@ -10,7 +10,8 @@ fn memory_mstore8(
     offset1: u64,
     offset2: u64,
     offset3: u64,
-) -> (u8) {
+) {
     let v = (value0 & BYTE_MAX_VAL) as u8;
-    (v)
+    let ptr = offset0 as *mut u8;
+    unsafe { *ptr = v };
 }

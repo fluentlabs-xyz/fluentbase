@@ -9,5 +9,5 @@ fn memory_mstore(
     offset2: u64,
     offset3: u64,
 ) -> (u64, u64, u64, u64) {
-    return (value0, value1, value2, value3);
+    (value0, value1, value2, value3)
 }
