@@ -6,14 +6,26 @@ mod tests;
 
 pub use self::{error::InstantiationError, pre::InstancePre};
 use super::{element::ElementSegmentKind, export, ConstExpr, DataSegmentKind, Module};
-use crate::common::{Trap, UntypedValue};
-use crate::module::FuncIdx;
 use crate::{
     func::WasmFuncEntity,
     memory::{DataSegment, MemoryError},
+    module::FuncIdx,
     value::WithType,
-    AsContext, AsContextMut, ElementSegment, Error, Extern, ExternType, FuncRef, FuncType, Global,
-    Instance, InstanceEntity, InstanceEntityBuilder, Memory, Table, Value,
+    AsContext,
+    AsContextMut,
+    ElementSegment,
+    Error,
+    Extern,
+    ExternType,
+    FuncRef,
+    FuncType,
+    Global,
+    Instance,
+    InstanceEntity,
+    InstanceEntityBuilder,
+    Memory,
+    Table,
+    Value,
 };
 use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
@@ -73,9 +85,9 @@ impl Module {
     /// # Errors
     ///
     /// - If too few or too many external values are given for the required module imports.
-    /// - If the zipped import and given external have mismatching types, e.g. on index `i`
-    ///   the module requires a function import but on index `i` the externals provide a global
-    ///   variable external value.
+    /// - If the zipped import and given external have mismatching types, e.g. on index `i` the
+    ///   module requires a function import but on index `i` the externals provide a global variable
+    ///   external value.
     /// - If the externally provided [`Table`], [`Memory`], [`Func`] or [`Global`] has a type
     ///   mismatch with the expected module import type.
     ///
@@ -110,10 +122,12 @@ impl Module {
                         .engine
                         .resolve_func_type(actual_signature, FuncType::clone);
                     // Note: We can compare function signatures without resolving them because
-                    //       we deduplicate them before registering. Therefore two equal instances of
-                    //       [`SignatureEntity`] will be associated to the same [`Signature`].
+                    //       we deduplicate them before registering. Therefore two equal instances
+                    // of       [`SignatureEntity`] will be associated to the
+                    // same [`Signature`].
                     if &actual_signature != expected_signature {
-                        // Note: In case of error we could resolve the signatures for better error readability.
+                        // Note: In case of error we could resolve the signatures for better error
+                        // readability.
                         return Err(InstantiationError::SignatureMismatch {
                             actual: actual_signature,
                             expected: expected_signature.clone(),

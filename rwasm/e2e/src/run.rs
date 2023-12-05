@@ -1,14 +1,19 @@
 use super::{error::TestError, TestContext, TestDescriptor};
 use anyhow::Result;
 use fluentbase_rwasm::{rwasm::DefaultImportHandler, Config, ExternRef, FuncRef, Store, Value};
-use fluentbase_rwasm_core::common::F32;
-use fluentbase_rwasm_core::common::F64;
+use fluentbase_rwasm_core::common::{F32, F64};
 use wast::{
     core::{HeapType, NanPattern, WastRetCore},
     lexer::Lexer,
     parser::ParseBuffer,
     token::Span,
-    QuoteWat, Wast, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
+    QuoteWat,
+    Wast,
+    WastDirective,
+    WastExecute,
+    WastInvoke,
+    WastRet,
+    Wat,
 };
 
 /// Runs the Wasm test spec identified by the given name.
