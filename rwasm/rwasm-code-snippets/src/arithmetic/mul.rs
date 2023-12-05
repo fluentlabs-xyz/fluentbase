@@ -1,19 +1,21 @@
+use crate::consts::{U64_HALF_BITS_COUNT, U64_LOW_PART_MASK};
+
 #[no_mangle]
-fn arithmetic_mul(
-    x1: u64,
-    x2: u64,
-    x3: u64,
-    x4: u64,
-    y1: u64,
-    y2: u64,
-    y3: u64,
-    y4: u64,
+pub fn arithmetic_mul(
+    b0: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
 ) -> (u64, u64, u64, u64) {
     fn multiply_u64(a: u64, b: u64) -> (u64, u64) {
-        let a_lo = a as u32 as u64;
-        let a_hi = (a >> 32) as u32 as u64;
-        let b_lo = b as u32 as u64;
-        let b_hi = (b >> 32) as u32 as u64;
+        let a_lo = a & U64_LOW_PART_MASK;
+        let a_hi = a >> U64_HALF_BITS_COUNT;
+        let b_lo = b & U64_LOW_PART_MASK;
+        let b_hi = b >> U64_HALF_BITS_COUNT;
 
         let lo = a_lo.wrapping_mul(b_lo);
         let mid1 = a_lo.wrapping_mul(b_hi);
@@ -23,15 +25,16 @@ fn arithmetic_mul(
         let mid_sum = mid1.wrapping_add(mid2);
         let hi_carry = mid_sum < mid1 || lo > (u64::MAX - mid_sum);
 
-        let hi_result = hi.wrapping_add((mid_sum >> 32) + if hi_carry { 1 } else { 0 });
-        let lo_result = lo.wrapping_add((mid_sum & 0xFFFFFFFF) << 32);
+        let hi_result =
+            hi.wrapping_add((mid_sum >> U64_HALF_BITS_COUNT) + if hi_carry { 1 } else { 0 });
+        let lo_result = lo.wrapping_add((mid_sum & U64_LOW_PART_MASK) << 32);
 
         (hi_result, lo_result)
     }
 
     let mut result = [0u64; 4];
-    let x = [x1, x2, x3, x4];
-    let y = [y1, y2, y3, y4];
+    let x = [a3, a2, a1, a0];
+    let y = [b3, b2, b1, b0];
 
     for i in 0..3 {
         let mut carry = 0u64;
@@ -68,32 +71,5 @@ fn arithmetic_mul(
         }
     }
 
-    result.into()
-}
-
-#[test]
-fn test_arithmetic_mul() {
-    use crate::test_helper::*;
-    use ethereum_types::U256;
-
-    let u256_x = U256::from_dec_str("60000000000000000000000000000000000000000000").unwrap();
-    let u256_y = U256::from_dec_str("2000000000000000000000000000").unwrap();
-
-    // split the U256 into 4 u64 values
-    let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = split_u256(u256_x);
-    let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = split_u256(u256_y);
-
-    let (res_0, res_1, res_2, res_3) = arithmetic_mul(
-        u64_x_0, u64_x_1, u64_x_2, u64_x_3, u64_y_0, u64_y_1, u64_y_2, u64_y_3,
-    );
-
-    println!("RES: {:?} ", combine_u64(res_0, res_1, res_2, res_3));
-
-    assert_eq!(
-        combine_u64(res_0, res_1, res_2, res_3),
-        U256::from_dec_str(
-            "120000000000000000000000000000000000000000000000000000000000000000000000"
-        )
-        .unwrap()
-    );
+    (result[0], result[1], result[2], result[3])
 }

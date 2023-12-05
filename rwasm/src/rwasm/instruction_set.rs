@@ -491,12 +491,18 @@ impl InstructionSet {
         }
     }
 
-    pub fn fix_br_offsets(&mut self, offset_change: i32) {
-        for (_index, instr) in self.instr.iter_mut().enumerate() {
+    pub fn fix_br_offsets(
+        &mut self,
+        from_idx: Option<usize>,
+        to_idx: Option<usize>,
+        offset_change: i32,
+    ) {
+        for offset in from_idx.unwrap_or(0)..=to_idx.unwrap_or(self.instr.len() - 1) {
+            let instr = &mut self.instr[offset];
             match instr {
                 // Instruction::BrTable(_) |
                 Instruction::Br(offset)
-                | Instruction::BrIndirect(offset)
+                // | Instruction::BrIndirect(offset)
                 | Instruction::BrIfEqz(offset)
                 | Instruction::BrAdjust(offset)
                 | Instruction::BrAdjustIfNez(offset)

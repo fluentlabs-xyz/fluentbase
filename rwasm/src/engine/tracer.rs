@@ -1,4 +1,3 @@
-use fluentbase_rwasm_core::common::UntypedValue;
 use crate::{
     engine::bytecode::{InstrMeta, Instruction, TableIdx},
     Extern,
@@ -8,6 +7,7 @@ use core::{
     fmt::{Debug, Formatter},
     mem::take,
 };
+use fluentbase_rwasm_core::common::UntypedValue;
 
 #[derive(Debug, Clone)]
 pub struct TracerMemoryState {

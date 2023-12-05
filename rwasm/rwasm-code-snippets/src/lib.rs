@@ -1,16 +1,21 @@
-#![no_std]
+// #![no_std]
 
 extern crate alloc;
 #[cfg(test)]
-#[macro_use]
-extern crate std;
+// #[macro_use]
+// extern crate std;
 extern crate wat;
 
 mod arithmetic;
 mod bitwise;
+pub(crate) mod common;
 pub(crate) mod consts;
+mod memory;
+mod system;
 #[cfg(test)]
 pub(crate) mod test_helper;
+#[cfg(test)]
+mod test_utils;
 mod tests;
 
 #[cfg(test)]
