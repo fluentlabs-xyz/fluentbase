@@ -1,4 +1,5 @@
 use crate::{SysPlatformSDK, SDK};
+use alloc::{vec, vec::Vec};
 
 lazy_static::lazy_static! {
     static ref INPUT: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(vec![]);

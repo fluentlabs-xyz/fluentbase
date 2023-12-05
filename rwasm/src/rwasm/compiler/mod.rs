@@ -727,14 +727,15 @@ impl<'linker> Compiler<'linker> {
                 }
                 Instruction::RefFunc(func_idx) => {
                     let func_idx = func_idx.to_u32() + 1;
-                    let imports = self.module.imports.items.deref();
+                    let import_len = self.module.imports.len_funcs;
                     // if ref func refers to host call
-                    if func_idx < imports.len() as u32 {
+                    if func_idx < import_len as u32 {
                         panic!("this is not supported right now, no ref func for host calls")
                         // let import_index = self.resolve_host_call(func_idx.to_u32())?;
                         // code.update_call_index(import_index);
                         // affected = true;
                     } else {
+                        let func_idx = func_idx - import_len as u32;
                         let func_offset = self
                             .function_beginning
                             .get(&func_idx)

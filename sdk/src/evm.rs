@@ -157,6 +157,7 @@ mod test {
         evm::{contract_read_bytecode, contract_read_env, contract_read_input, ContractInput},
         SDK,
     };
+    use alloc::vec;
 
     #[test]
     fn test_encode_decode() {
@@ -173,9 +174,9 @@ mod test {
             env: vec![10, 20, 30],
         };
         let encoded_input = contract_input.encode();
-        for chunk in encoded_input.chunks(32) {
-            println!("{}", hex::encode(chunk));
-        }
+        // for chunk in encoded_input.chunks(32) {
+        //     println!("{}", hex::encode(chunk));
+        // }
         SDK::with_test_input(encoded_input);
         // read input fields
         let input = contract_read_input();

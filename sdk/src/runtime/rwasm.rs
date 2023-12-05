@@ -9,18 +9,26 @@ use fluentbase_rwasm::{
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
         let import_linker = Runtime::<()>::new_linker();
-        let mut compiler =
-            Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
-        compiler
-            .translate(
-                Some(FuncOrExport::StateRouter(
-                    vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
-                    Instruction::Call(SysFuncIdx::SYS_STATE.into()),
-                )),
-                true,
-            )
-            .unwrap();
-        let rwasm_bytecode = compiler.finalize().unwrap();
+        let mut compiler = Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true);
+        if compiler.is_err() {
+            return -100;
+        }
+        let mut compiler = compiler.unwrap();
+        let res = compiler.translate(
+            Some(FuncOrExport::StateRouter(
+                vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
+                Instruction::Call(SysFuncIdx::SYS_STATE.into()),
+            )),
+            true,
+        );
+        if res.is_err() {
+            return -101;
+        }
+        let res = compiler.finalize();
+        if res.is_err() {
+            return -102;
+        }
+        let rwasm_bytecode = res.unwrap();
         if rwasm_bytecode.len() <= output.len() {
             let len = rwasm_bytecode.len();
             output[0..len].copy_from_slice(rwasm_bytecode.as_slice());
@@ -59,11 +67,32 @@ impl RwasmPlatformSDK for SDK {
 mod test {
     use crate::{RwasmPlatformSDK, SDK};
     use alloc::vec;
+    use hex_literal::hex;
 
     #[test]
     fn test_greeting() {
         let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
         let mut output = vec![0u8; 1024 * 1024];
         SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
+    }
+
+    #[test]
+    fn test_keccak256() {
+        let wasm_binary = include_bytes!("../../../examples/bin/keccak256.wasm");
+        let mut output = vec![0u8; 1024 * 1024];
+        let code_len = SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
+        let mut result: [u8; 32] = [0; 32];
+        let exit_code = SDK::rwasm_transact(
+            &output.as_slice()[0..code_len as usize],
+            "Hello, World".as_bytes(),
+            &mut result,
+            0,
+            100_000,
+        );
+        assert_eq!(exit_code, 0);
+        assert_eq!(
+            result,
+            hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529")
+        )
     }
 }
