@@ -1,4 +1,5 @@
 use crate::{
+    common::UntypedValue,
     engine::{
         bytecode::{
             AddressOffset,
@@ -23,7 +24,6 @@ use crate::{
 };
 use alloc::{slice::SliceIndex, string::String, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_rwasm_core::common::UntypedValue;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct InstructionSet {

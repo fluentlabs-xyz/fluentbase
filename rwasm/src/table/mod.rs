@@ -3,14 +3,19 @@ pub use self::{
     error::TableError,
 };
 use super::{AsContext, AsContextMut, Stored};
-use crate::arena::ArenaIndex;
 use crate::{
-    engine::executor::EntityGrowError, module::FuncIdx, store::ResourceLimiterRef, value::WithType,
-    Func, FuncRef, Value,
+    arena::ArenaIndex,
+    common::{TrapCode, UntypedValue, ValueType},
+    engine::executor::EntityGrowError,
+    module::FuncIdx,
+    store::ResourceLimiterRef,
+    value::WithType,
+    Func,
+    FuncRef,
+    Value,
 };
 use alloc::vec::Vec;
 use core::cmp::max;
-use fluentbase_rwasm_core::common::{TrapCode, UntypedValue, ValueType};
 
 mod element;
 mod error;

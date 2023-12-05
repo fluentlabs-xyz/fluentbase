@@ -1,5 +1,6 @@
 use super::{into_func::WasmTypeList, Func};
 use crate::{
+    common::{Trap, UntypedValue},
     engine::{CallParams, CallResults},
     AsContext,
     AsContextMut,
@@ -7,7 +8,6 @@ use crate::{
     TypedResumableCall,
 };
 use core::{fmt, fmt::Debug, marker::PhantomData};
-use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
 /// A typed [`Func`] instance.
 ///

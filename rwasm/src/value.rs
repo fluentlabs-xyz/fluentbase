@@ -1,5 +1,9 @@
-use crate::{ExternRef, Func, FuncRef};
-use fluentbase_rwasm_core::common::{UntypedValue, ValueType, F32, F64};
+use crate::{
+    common::{UntypedValue, ValueType, F32, F64},
+    ExternRef,
+    Func,
+    FuncRef,
+};
 
 /// Untyped instances that allow to be typed.
 pub trait WithType {
@@ -44,7 +48,8 @@ impl From<Value> for UntypedValue {
 /// integers and floating-point (IEEE 754-2008) data of 32 or 64 bit width each, respectively.
 ///
 /// There is no distinction between signed and unsigned integer types. Instead, integers are
-/// interpreted by respective operations as either unsigned or signed in two’s complement representation.
+/// interpreted by respective operations as either unsigned or signed in two’s complement
+/// representation.
 #[derive(Clone, Debug)]
 pub enum Value {
     /// Value of 32-bit signed or unsigned integer.

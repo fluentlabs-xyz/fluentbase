@@ -1,22 +1,41 @@
 use crate::{
     arena::{Arena, ArenaIndex, GuardedEntity},
+    common::TrapCode,
     engine::{DedupFuncType, Tracer},
     externref::{ExternObject, ExternObjectEntity, ExternObjectIdx},
     func::{Trampoline, TrampolineEntity, TrampolineIdx},
     memory::{DataSegment, MemoryError},
     module::InstantiationError,
     table::TableError,
-    DataSegmentEntity, DataSegmentIdx, ElementSegment, ElementSegmentEntity, ElementSegmentIdx,
-    Engine, Func, FuncEntity, FuncIdx, FuncType, Global, GlobalEntity, GlobalIdx, Instance,
-    InstanceEntity, InstanceIdx, Memory, MemoryEntity, MemoryIdx, ResourceLimiter, Table,
-    TableEntity, TableIdx,
+    DataSegmentEntity,
+    DataSegmentIdx,
+    ElementSegment,
+    ElementSegmentEntity,
+    ElementSegmentIdx,
+    Engine,
+    Func,
+    FuncEntity,
+    FuncIdx,
+    FuncType,
+    Global,
+    GlobalEntity,
+    GlobalIdx,
+    Instance,
+    InstanceEntity,
+    InstanceIdx,
+    Memory,
+    MemoryEntity,
+    MemoryIdx,
+    ResourceLimiter,
+    Table,
+    TableEntity,
+    TableIdx,
 };
 use alloc::boxed::Box;
 use core::{
     fmt::{self, Debug},
     sync::atomic::{AtomicU32, Ordering},
 };
-use fluentbase_rwasm_core::common::TrapCode;
 
 /// A unique store index.
 ///

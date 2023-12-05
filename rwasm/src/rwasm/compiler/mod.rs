@@ -1,5 +1,6 @@
 use crate::{
     arena::ArenaIndex,
+    common::{Pages, UntypedValue, ValueType},
     engine::{
         bytecode::{BranchOffset, Instruction, TableIdx},
         code_map::InstructionPtr,
@@ -18,7 +19,6 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
-use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType};
 
 mod drop_keep;
 
