@@ -477,7 +477,7 @@ impl<'t, T> Runtime<'t, T> {
             "env".to_string(),
             "_evm_sload".to_string(),
             SysFuncIdx::EVM_SLOAD as u16,
-            800,
+            FUEL_EVM_SLOAD,
             &[ValueType::I32; 2],
             &[],
         ));
@@ -485,7 +485,7 @@ impl<'t, T> Runtime<'t, T> {
             "env".to_string(),
             "_evm_sstore".to_string(),
             SysFuncIdx::EVM_SSTORE as u16,
-            5000,
+            FUEL_EVM_SSTORE,
             &[ValueType::I32; 2],
             &[],
         ));

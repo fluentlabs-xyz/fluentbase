@@ -1,25 +1,36 @@
+use crate::test_utils::{u256_from_be_tuple, u256_into_le_tuple};
 use ethereum_types::U256;
+use log::debug;
 
-// #[derive(Debug, Copy, Clone)]
-// pub(super) struct U256([u64; 4]);
+pub fn test_binary_cases(
+    func_to_test: fn(u64, u64, u64, u64, u64, u64, u64, u64) -> (u64, u64, u64, u64),
+    cases: &[(&str, &str, &str)],
+) {
+    for case in cases {
+        debug!("");
+        debug!("a {:?}", case.0);
+        debug!("b {:?}", case.1);
+        debug!("a-b expected {:?}", case.2);
 
-pub(super) fn split_u256(u256: U256) -> (u64, u64, u64, u64) {
-    let limb0 = u256.0[0];
-    let limb1 = u256.0[1];
-    let limb2 = u256.0[2];
-    let limb3 = u256.0[3];
+        let u256_a = U256::from_dec_str(case.0).unwrap();
+        let u256_b = U256::from_dec_str(case.1).unwrap();
+        let u256_expected = U256::from_dec_str(case.2).unwrap();
+        let a = u256_into_le_tuple(u256_a);
+        let b = u256_into_le_tuple(u256_b);
+        let res_expected = u256_into_le_tuple(u256_expected);
 
-    (limb0, limb1, limb2, limb3)
-}
+        let res_tuple = func_to_test(a.0, a.1, a.2, a.3, b.0, b.1, b.2, b.3);
+        let mut res = u256_from_be_tuple(&res_tuple);
 
-pub(super) fn combine_u64(u64_0: u64, u64_1: u64, u64_2: u64, u64_3: u64) -> U256 {
-    U256([u64_0, u64_1, u64_2, u64_3])
-}
+        debug!("a {:?}", a);
+        debug!("b {:?}", b);
+        debug!("res_tuple {:?}", res_tuple);
+        debug!("res_expected {:?}", res_expected);
 
-pub(super) fn split256(value: U256) -> (u64, u64, u64, u64) {
-    (value.0[0], value.0[1], value.0[2], value.0[3])
-}
+        let mut res_be = vec![0u8; 32];
+        res.to_big_endian(&mut res_be);
+        debug!("res_be {:x?}", res_be);
 
-pub(super) fn combine256(a: u64, b: u64, c: u64, d: u64) -> U256 {
-    U256([a, b, c, d])
+        assert_eq!(u256_expected, res);
+    }
 }
