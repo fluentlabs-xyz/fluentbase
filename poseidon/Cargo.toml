@@ -12,7 +12,7 @@ categories.workspace = true
 [dependencies]
 poseidon = {git = "https://github.com/scroll-tech/poseidon", branch = "main"}
 lazy_static = "1.4.0"
-halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves", branch = "0.3.1-derive-serde" }
 bitvec = "1"
 
 [dev-dependencies]
