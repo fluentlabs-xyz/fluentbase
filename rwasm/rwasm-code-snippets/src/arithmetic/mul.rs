@@ -1,21 +1,21 @@
-use crate::test_utils::{combine_u64, u256_split_le};
+use crate::consts::{U64_HALF_BITS_COUNT, U64_LOW_PART_MASK};
 
 #[no_mangle]
 pub fn arithmetic_mul(
-    x1: u64,
-    x2: u64,
-    x3: u64,
-    x4: u64,
-    y1: u64,
-    y2: u64,
-    y3: u64,
-    y4: u64,
+    b0: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
 ) -> (u64, u64, u64, u64) {
     fn multiply_u64(a: u64, b: u64) -> (u64, u64) {
-        let a_lo = a as u32 as u64;
-        let a_hi = (a >> 32) as u32 as u64;
-        let b_lo = b as u32 as u64;
-        let b_hi = (b >> 32) as u32 as u64;
+        let a_lo = a & U64_LOW_PART_MASK;
+        let a_hi = a >> U64_HALF_BITS_COUNT;
+        let b_lo = b & U64_LOW_PART_MASK;
+        let b_hi = b >> U64_HALF_BITS_COUNT;
 
         let lo = a_lo.wrapping_mul(b_lo);
         let mid1 = a_lo.wrapping_mul(b_hi);
@@ -25,15 +25,16 @@ pub fn arithmetic_mul(
         let mid_sum = mid1.wrapping_add(mid2);
         let hi_carry = mid_sum < mid1 || lo > (u64::MAX - mid_sum);
 
-        let hi_result = hi.wrapping_add((mid_sum >> 32) + if hi_carry { 1 } else { 0 });
-        let lo_result = lo.wrapping_add((mid_sum & 0xFFFFFFFF) << 32);
+        let hi_result =
+            hi.wrapping_add((mid_sum >> U64_HALF_BITS_COUNT) + if hi_carry { 1 } else { 0 });
+        let lo_result = lo.wrapping_add((mid_sum & U64_LOW_PART_MASK) << 32);
 
         (hi_result, lo_result)
     }
 
     let mut result = [0u64; 4];
-    let x = [x1, x2, x3, x4];
-    let y = [y1, y2, y3, y4];
+    let x = [a3, a2, a1, a0];
+    let y = [b3, b2, b1, b0];
 
     for i in 0..3 {
         let mut carry = 0u64;
@@ -70,5 +71,5 @@ pub fn arithmetic_mul(
         }
     }
 
-    result.into()
+    (result[0], result[1], result[2], result[3])
 }
