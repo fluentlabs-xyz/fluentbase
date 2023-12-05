@@ -13,6 +13,7 @@ mod evm_to_rwasm_tests {
                 LT,
                 MSTORE,
                 MSTORE8,
+                MUL,
                 PUSH32,
                 SHL,
                 SHR,
@@ -58,12 +59,7 @@ mod evm_to_rwasm_tests {
         r
     }
 
-    fn compile_binary_op(
-        opcode: u8,
-        push_offset_where_to_save_result_in_memory: bool,
-        a: &[u8],
-        b: &[u8],
-    ) -> Vec<u8> {
+    fn compile_binary_op(opcode: u8, a: &[u8], b: &[u8]) -> Vec<u8> {
         let mut evm_bytecode: Vec<u8> = vec![];
         evm_bytecode.push(PUSH32);
         evm_bytecode.extend(b);
@@ -77,7 +73,6 @@ mod evm_to_rwasm_tests {
     fn test_binary_op(
         opcode: u8,
         bytecode_preamble: Option<&[u8]>,
-        push_offset_where_to_save_result_in_memory: bool,
         cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
         force_memory_result_size_to: Option<usize>,
     ) {
@@ -89,39 +84,34 @@ mod evm_to_rwasm_tests {
             let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
-            evm_bytecode.extend(compile_binary_op(
-                opcode,
-                push_offset_where_to_save_result_in_memory,
-                a,
-                b,
-            ));
+            evm_bytecode.extend(compile_binary_op(opcode, a, b));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
             let res = &global_memory[0..res_expected.len()];
             if res_expected != res {
-                debug!("a=            {:x?}", a);
-                debug!("b=            {:x?}", b);
-                debug!("res_expected= {:x?}", res_expected);
-                debug!("res=          {:x?}", global_memory);
+                debug!("a=            {:?}", a);
+                debug!("b=            {:?}", b);
+                debug!("res_expected= {:?}", res_expected);
+                debug!("res=          {:?}", global_memory);
             }
             assert_eq!(res_expected, res);
         }
     }
 
-    fn run_test(
-        evm_bytecode_bytes: &Vec<u8>,
-        force_memory_result_size_to: Option<usize>,
-    ) -> Vec<u8> {
+    fn run_test(evm_bytecode_bytes: &Vec<u8>, force_memory_result_size: Option<usize>) -> Vec<u8> {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
         let import_linker = Runtime::<()>::new_linker();
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
-        let mut basic = InstructionSet::new();
-        basic.op_i32_const(1);
-        basic.op_memory_grow();
-        basic.op_drop();
-        let res = compiler.compile(Some(&basic), None);
+        let mut preamble = InstructionSet::new();
+        let virtual_stack_top = 300;
+        preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
+        preamble.op_global_set(0);
+        preamble.op_i32_const(20);
+        preamble.op_memory_grow();
+        preamble.op_drop();
+        let res = compiler.compile(Some(&preamble), None);
         assert_eq!(res, InstructionResult::Stop);
 
         let mut buffer = vec![0; 1024 * 1024];
@@ -141,7 +131,7 @@ mod evm_to_rwasm_tests {
             instruction_set.trace()
         );
 
-        let mut global_memory = vec![0u8; 4086];
+        let mut global_memory = vec![0u8; virtual_stack_top];
         let mut global_memory_len: usize = 0;
         let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
@@ -150,7 +140,7 @@ mod evm_to_rwasm_tests {
             if log.memory_changes.len() <= 0 {
                 continue;
             };
-            let mut memory_changes = log.memory_changes.clone();
+            let memory_changes = log.memory_changes.clone();
             // let prev_opcode = if index > 0 {
             //     Some(execution_result.tracer().logs[index - 1].opcode)
             // } else {
@@ -165,21 +155,25 @@ mod evm_to_rwasm_tests {
             //     }
             //     _ => {}
             // }
-            debug!("opcode:{} memory_changes:{:?}", log.opcode, &memory_changes);
+            debug!(
+                "opcode:{:x?} memory_changes:{:?}",
+                log.opcode, &memory_changes
+            );
             for change in &memory_changes {
-                let new_len = (change.offset + change.len) as usize;
-                global_memory[change.offset as usize..new_len].copy_from_slice(&change.data);
-                if new_len > global_memory_len {
-                    global_memory_len = (change.offset + change.len) as usize;
+                let offset_start = change.offset as usize;
+                let offset_end = offset_start + change.len as usize;
+                global_memory[offset_start..offset_end].copy_from_slice(&change.data);
+                if offset_end > global_memory_len {
+                    global_memory_len = offset_end;
                 }
             }
         }
-        let global_memory = global_memory[0..force_memory_result_size_to.unwrap_or(32)].to_vec();
         debug!(
-            "global_memory (len {}) {:?}",
-            global_memory_len,
-            &global_memory[..global_memory_len]
+            "global_memory part (total len {}) {:?}",
+            global_memory_len, &global_memory
         );
+        let global_memory =
+            global_memory[0..force_memory_result_size.unwrap_or(EVM_WORD_BYTES)].to_vec();
         // debug!(
         //     "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
         //     execution_result.data().exit_code(),
@@ -303,7 +297,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(EQ, None, true, &cases, None);
+        test_binary_op(EQ, None, &cases, None);
     }
 
     #[test]
@@ -375,7 +369,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SHL, None, true, &cases, None);
+        test_binary_op(SHL, None, &cases, None);
     }
 
     #[test]
@@ -483,7 +477,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SHR, None, true, &cases, None);
+        test_binary_op(SHR, None, &cases, None);
     }
 
     #[test]
@@ -526,7 +520,7 @@ mod evm_to_rwasm_tests {
             ));
         }
 
-        test_binary_op(BYTE, None, true, &cases, None);
+        test_binary_op(BYTE, None, &cases, None);
     }
 
     #[test]
@@ -667,7 +661,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SUB, None, true, &cases, None);
+        test_binary_op(SUB, None, &cases, None);
     }
 
     #[test]
@@ -747,7 +741,60 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(ADD, None, true, &cases, None);
+        test_binary_op(ADD, None, &cases, None);
+    }
+
+    #[test]
+    fn mul() {
+        let cases = [
+            // // a=0 b=0 r=0
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
+            //         0,
+            //     ),
+            // ),
+            // // a= b= r=
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
+            //         0,
+            //     ),
+            // ),
+            // // a= b= r=
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
+            //         0,
+            //     ),
+            // ),
+            // // a=1 b=1 r=1
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
+            //         0,
+            //     ),
+            // ),
+            // a=9 b=9 r=81
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000008"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000009"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000048",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(MUL, None, &cases, None);
     }
 
     #[test]
@@ -863,7 +910,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(GT, None, true, &cases, None);
+        test_binary_op(GT, None, &cases, None);
     }
 
     #[test]
@@ -979,7 +1026,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(LT, None, true, &cases, None);
+        test_binary_op(LT, None, &cases, None);
     }
 
     #[test]
@@ -1011,7 +1058,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MSTORE, None, false, &cases, Some(max_result_size));
+        test_binary_op(MSTORE, None, &cases, Some(max_result_size));
     }
 
     #[test]
@@ -1033,20 +1080,22 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MSTORE8, None, false, &cases, Some(max_result_size));
+        test_binary_op(MSTORE8, None, &cases, Some(max_result_size));
     }
 
     #[test]
     fn keccak256() {
-        let max_result_size = 32; // multiple of 8
-        let max_result_size = (max_result_size + 7) / 8 * 8;
+        // let max_result_size = 32; // multiple of 8
+        // let max_result_size = (max_result_size + 7) / 8 * 8;
         // [(initial_bytecode, (a,b,result)), ...]
         let cases = [(
             compile_binary_op(
                 MSTORE,
-                false,
                 &x("0000000000000000000000000000000000000000000000000000000000000000"),
-                &x("FFFFFFFF00000000000000000000000000000000000000000000000000000000"),
+                &xr(
+                    "FFFFFFFF00000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
             ),
             (
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
@@ -1055,13 +1104,7 @@ mod evm_to_rwasm_tests {
             ),
         )];
         for case in &cases {
-            test_binary_op(
-                KECCAK256,
-                Some(&case.0),
-                true,
-                &[case.1.clone()],
-                Some(max_result_size),
-            );
+            test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], None);
         }
     }
 }

@@ -23,7 +23,7 @@ test = false
 proc-macro = false
 
 [features]
-default = []
+default = ["arithmetic_mul"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_shr = []

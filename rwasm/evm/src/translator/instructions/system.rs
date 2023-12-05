@@ -3,7 +3,6 @@ use crate::translator::{
     instructions::utilities::{wasm_call, SystemFuncs},
     translator::Translator,
 };
-use fluentbase_rwasm::module::ImportName;
 use log::debug;
 
 pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

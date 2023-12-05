@@ -1,5 +1,3 @@
-use crate::test_helper::*;
-
 #[no_mangle]
 fn arithmetic_div(
     mut a0: u64,
@@ -94,7 +92,6 @@ fn compare_limbs(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, 
 
 #[test]
 fn test_xx() {
-    use crate::test_helper::*;
     use ethereum_types::U256;
 
     let u256_x = U256::from_dec_str("1200000000000000000000000000000").unwrap();
