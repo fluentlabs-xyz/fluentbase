@@ -42,7 +42,7 @@ memory_mstore = []
 memory_mstore8 = []
 
 
-[profile.release]
-opt-level = 0
-lto = false
-strip = true
+#[profile.release]
+#opt-level = 0
+#lto = false
+#strip = true

@@ -1,6 +1,7 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
+    common::{ValueType, F32, F64},
     rwasm::{Compiler, DefaultImportHandler, FuncOrExport, ImportLinker, ReducedModule},
     Config,
     Engine,
@@ -18,7 +19,6 @@ use fluentbase_rwasm::{
     TableType,
     Value,
 };
-use fluentbase_rwasm_core::common::{ValueType, F32, F64};
 use std::collections::HashMap;
 use wast::token::{Id, Span};
 

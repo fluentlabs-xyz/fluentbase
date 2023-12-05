@@ -1,9 +1,9 @@
 use crate::{
+    common::UntypedValue,
     engine::bytecode::{BranchOffset, InstrMeta, Instruction},
     rwasm::{BinaryFormat, BinaryFormatError, BinaryFormatReader, InstructionSet},
 };
 use alloc::{collections::BTreeMap, vec::Vec};
-use fluentbase_rwasm_core::common::UntypedValue;
 
 #[derive(Debug, Clone)]
 pub struct ReducedModuleTrace {

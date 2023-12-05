@@ -1,6 +1,6 @@
 use super::{stack::StackLimits, DropKeep};
+use crate::common::UntypedValue;
 use core::{mem::size_of, num::NonZeroU64};
-use fluentbase_rwasm_core::common::UntypedValue;
 use wasmparser::WasmFeatures;
 
 /// The default amount of stacks kept in the cache at most.

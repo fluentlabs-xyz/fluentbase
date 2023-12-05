@@ -1,14 +1,13 @@
-use crate::{value::WithType, Value};
+use crate::{common::UntypedValue, value::WithType, Value};
 use core::{iter, slice};
-use fluentbase_rwasm_core::common::UntypedValue;
 
 /// Types implementing this trait may be used as parameters for function execution.
 ///
 /// # Note
 ///
 /// - This is generically implemented by `&[Value]` and tuples of `T: WasmType` types.
-/// - Using this trait allows to customize the parameters entrypoint for efficient
-///   function execution via the [`Engine`].
+/// - Using this trait allows to customize the parameters entrypoint for efficient function
+///   execution via the [`Engine`].
 ///
 /// [`Engine`]: [`crate::Engine`]
 pub trait CallParams {
@@ -56,10 +55,9 @@ impl ExactSizeIterator for CallParamsValueIter<'_> {}
 ///
 /// # Note
 ///
-/// - This is generically implemented by `&mut [Value]` and indirectly for
-///   tuples of `T: WasmType`.
-/// - Using this trait allows to customize the parameters entrypoint for efficient
-///   function execution via the [`Engine`].
+/// - This is generically implemented by `&mut [Value]` and indirectly for tuples of `T: WasmType`.
+/// - Using this trait allows to customize the parameters entrypoint for efficient function
+///   execution via the [`Engine`].
 ///
 /// [`Engine`]: [`crate::Engine`]
 pub trait CallResults {

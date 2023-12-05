@@ -6,12 +6,14 @@ pub use self::{
     values::{ValueStack, ValueStackPtr},
 };
 use crate::{
+    common::{Trap, TrapCode},
     engine::{code_map::CodeMap, func_types::FuncTypeRegistry, FuncParams},
     func::{HostFuncEntity, WasmFuncEntity},
-    AsContext, Instance, StoreContextMut,
+    AsContext,
+    Instance,
+    StoreContextMut,
 };
 use core::fmt::{self, Display};
-use fluentbase_rwasm_core::common::{Trap, TrapCode};
 
 /// Default value for initial value stack height in bytes.
 const DEFAULT_MIN_VALUE_STACK_HEIGHT: usize = 1024;

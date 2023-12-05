@@ -1,8 +1,11 @@
 //! API using the Rust type system to guide host function trampoline execution.
 
-use crate::{value::WithType, Value};
+use crate::{
+    common::{DecodeUntypedSlice, EncodeUntypedSlice, UntypedError, UntypedValue},
+    value::WithType,
+    Value,
+};
 use core::cmp;
-use fluentbase_rwasm_core::common::{DecodeUntypedSlice, EncodeUntypedSlice, UntypedError, UntypedValue};
 
 /// Used to decode host function parameters.
 #[derive(Debug)]

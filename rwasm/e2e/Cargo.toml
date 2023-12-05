@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 fluentbase-rwasm = { path = ".." }
-fluentbase-rwasm-core = { path = "../core" }
 byteorder = "1.4.3"
 wat = "1.0.66"
 anyhow = "1.0.71"
