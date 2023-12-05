@@ -42,7 +42,7 @@ pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSORE8";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, true);
+    replace_current_opcode_with_subroutine(translator, host, false, false);
     // let instruction_set = host.instruction_set();
     // // for offset
     // instruction_set.op_local_get(5);

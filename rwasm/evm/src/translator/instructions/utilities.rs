@@ -156,7 +156,7 @@ pub(super) fn replace_current_opcode_with_subroutine(
     let opcode = translator.opcode_prev();
     let subroutine_meta = *translator
         .subroutine_meta(opcode)
-        .expect(format!("subroutine entry not found for 0x{:x?}", opcode).as_str());
+        .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
     let subroutine_entry = subroutine_meta.0 + 1;
     instruction_set.op_br((subroutine_entry as i32) * INSTRUCTION_BYTES as i32);
 }

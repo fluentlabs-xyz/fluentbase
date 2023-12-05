@@ -195,6 +195,10 @@ impl<'a> Translator<'a> {
                 opcode::MSTORE,
                 "../rwasm-code-snippets/bin/memory_mstore.wat",
             ),
+            (
+                opcode::MSTORE8,
+                "../rwasm-code-snippets/bin/memory_mstore8.wat",
+            ),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();
