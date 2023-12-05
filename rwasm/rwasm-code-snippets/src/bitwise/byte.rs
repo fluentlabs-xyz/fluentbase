@@ -2,14 +2,14 @@ use crate::consts::{BITS_IN_BYTE, BYTE_MAX_VAL, U64_BYTES_COUNT, U64_LSBYTE_MASK
 
 #[no_mangle]
 fn bitwise_byte(
-    shift0: u64,
-    shift1: u64,
-    shift2: u64,
-    shift3: u64,
     b0: u64,
     b1: u64,
     b2: u64,
     b3: u64,
+    shift0: u64,
+    shift1: u64,
+    shift2: u64,
+    shift3: u64,
 ) -> (u64, u64, u64, u64) {
     let mut s0: u64 = 0;
     let mut s1: u64 = 0;
