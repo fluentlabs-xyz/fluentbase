@@ -5,8 +5,7 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_poseidon::Hashable;
-use fluentbase_rwasm::Caller;
-use fluentbase_rwasm_core::common::Trap;
+use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},

@@ -21,6 +21,6 @@ pub fn main() {
 
     let res = SDK::ecc_secp256k1_verify(&digest, &sig, &pk_expected, rec_id[0]);
     if !res {
-        unreachable!("verification failed")
+        panic!("verification failed")
     }
 }

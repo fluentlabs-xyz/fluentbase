@@ -25,4 +25,8 @@ impl SysPlatformSDK for SDK {
     fn sys_halt(exit_code: i32) {
         unreachable!("program has exited with code: {}", exit_code)
     }
+
+    fn sys_state() -> u32 {
+        unreachable!("state is not known")
+    }
 }

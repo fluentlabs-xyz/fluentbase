@@ -12,23 +12,20 @@ fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #revm = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false, features=["sdk"] }
 #revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
-wat = "1.0.77"
+#wat = "1.0.77"
+byteorder = { version = "1.5.0", default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
 
 [features]
 greeting = []
-evm_verify_block_rlps = []
 keccak256 = []
-poseidon = []
-secp256k1 = []
 panic = []
+poseidon = []
 rwasm = []
-rwasm_compile_with_linker_test = []
-evm = []
-wasi = []
-revm_db_test = []
+secp256k1 = []
+state = []
 
 [dev-dependencies]
 wat = "1.0.77"

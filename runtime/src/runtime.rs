@@ -8,6 +8,7 @@ use crate::{
     STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
+    common::{Trap, ValueType},
     engine::Tracer,
     rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
     AsContextMut,
@@ -24,7 +25,6 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use fluentbase_rwasm_core::common::{Trap, ValueType};
 use std::{cell::RefCell, mem::take};
 
 #[derive(Debug)]

@@ -5,4 +5,5 @@ pub fn main() {
     SDK::sys_read(&mut input, 0);
     let mut output = [0u8; 32];
     SDK::crypto_keccak256(&input, &mut output);
+    SDK::sys_write(&output);
 }
