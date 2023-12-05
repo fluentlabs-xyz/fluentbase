@@ -5202,3 +5202,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "poseidon"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/poseidon.git?branch=scroll-dev-0220#2fb4a2385bada39b50dce12fe50cb80d2fd33476"
