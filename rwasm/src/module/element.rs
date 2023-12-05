@@ -1,6 +1,7 @@
 use super::{ConstExpr, TableIdx};
-use crate::{common::ValueType, module::utils::WasmiValueType};
+use crate::module::utils::WasmiValueType;
 use alloc::sync::Arc;
+use fluentbase_rwasm_core::common::ValueType;
 
 /// A table element segment within a [`Module`].
 ///

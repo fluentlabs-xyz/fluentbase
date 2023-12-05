@@ -1,5 +1,5 @@
 use crate::{FuncType, GlobalType, MemoryType, Mutability, TableType};
-use crate::common::ValueType;
+use fluentbase_rwasm_core::common::ValueType;
 
 impl TableType {
     /// Creates a new [`TableType`] from the given `wasmparser` primitive.

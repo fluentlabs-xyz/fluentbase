@@ -10,8 +10,15 @@ fluentbase-runtime = { path = "../runtime", optional = true }
 fluentbase-poseidon = { path = "../poseidon", optional = true }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
 eth_trie = { version = "0.3.0", optional = true }
-keccak-hash = "0.10.0"
-halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+keccak-hash = { version = "0.10.0", optional = true }
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde", optional = true }
+alloy-primitives = { version = "0.4.2", default-features = false }
+#alloy-rlp = { version = "0.3.3", features = ["derive"] }
+#derive = "1.0.0"
+#solabi = "0.2.0"
+lazy_static = "1.4.0"
+alloy-sol-types = "0.5.1"
+byteorder = "1.5.0"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -22,5 +29,6 @@ sha2 = "0.10.8"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["runtime"]
-runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:k256", "dep:eth_trie", "dep:fluentbase-poseidon"]
+default = ["runtime", "evm"]
+evm = []
+runtime = ["dep:fluentbase-rwasm", "dep:fluentbase-runtime", "dep:fluentbase-poseidon", "dep:k256", "dep:eth_trie", "dep:keccak-hash", "dep:halo2curves"]

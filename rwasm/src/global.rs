@@ -1,8 +1,9 @@
 use super::{AsContext, AsContextMut, Stored};
-use crate::{common::ValueType, value::WithType, Value};
-use core::{fmt, fmt::Display, ptr::NonNull};
 use crate::arena::ArenaIndex;
-use crate::common::UntypedValue;
+use crate::{value::WithType, Value};
+use core::{fmt, fmt::Display, ptr::NonNull};
+use fluentbase_rwasm_core::common::UntypedValue;
+use fluentbase_rwasm_core::common::ValueType;
 
 /// A raw index to a global variable entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

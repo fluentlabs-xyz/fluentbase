@@ -4,7 +4,7 @@ fn table_type(element: ValueType, minimum: u32, maximum: impl Into<Option<u32>>)
     TableType::new(element, minimum, maximum.into())
 }
 
-use crate::common::ValueType::{F64, I32};
+use fluentbase_rwasm_core::common::ValueType::{F64, I32};
 
 #[test]
 fn subtyping_works() {

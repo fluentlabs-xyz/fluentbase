@@ -2,25 +2,15 @@
 
 pub mod binary_format;
 mod compiler;
-mod consts;
 mod instruction_set;
 mod platform;
 mod reduced_module;
 
-pub use self::{
-    binary_format::*,
-    compiler::*,
-    consts::*,
-    instruction_set::*,
-    platform::*,
-    reduced_module::*,
-};
+pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, reduced_module::*};
 
 #[cfg(test)]
 mod tests {
-    use super::_SYS_HALT_FUEL_AMOUNT;
     use crate::{
-        common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
             compiler::Compiler,
@@ -38,6 +28,8 @@ mod tests {
         Linker,
         Store,
     };
+    use alloc::string::ToString;
+    use fluentbase_rwasm_core::common::ValueType;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {
@@ -61,15 +53,20 @@ mod tests {
             "env".to_string(),
             "_sys_halt".to_string(),
             10,
-            _SYS_HALT_FUEL_AMOUNT,
+            1,
             &[ValueType::I32],
             &[],
         ));
-        let mut translator = Compiler::new_with_linker(&wasm_binary, Some(&import_linker)).unwrap();
-        translator.translate(run_config.entrypoint).unwrap();
+        let mut translator =
+            Compiler::new_with_linker(&wasm_binary, Some(&import_linker), true).unwrap();
+        translator.translate(run_config.entrypoint, true).unwrap();
         let binary = translator.finalize().unwrap();
+        let reduced_module = ReducedModule::new(binary.as_slice(), false).unwrap();
+        // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
+        let _trace = reduced_module.trace();
         let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
         let _trace = reduced_module.trace_binary();
+        todo!("Add config");
         // execute translated rwasm
         let mut config = Config::default();
         config.consume_fuel(true);
