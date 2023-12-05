@@ -24,7 +24,6 @@ proc-macro = false
 
 [features]
 default = []
-#testing = ["fluentbase-runtime"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_shr = []
@@ -39,6 +38,8 @@ arithmetic_sub = []
 arithmetic_sub_global = []
 arithmetic_mul = []
 arithmetic_div = []
+memory_mstore = []
+memory_mstore8 = []
 
 
 [profile.release]

@@ -191,6 +191,10 @@ impl<'a> Translator<'a> {
             (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
             (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
             (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
+            (
+                opcode::MSTORE,
+                "../rwasm-code-snippets/bin/memory_mstore.wat",
+            ),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();

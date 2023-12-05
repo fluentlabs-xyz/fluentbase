@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use fluentbase_rwasm::{
+    engine::bytecode::Instruction,
     module::ImportName,
     rwasm::{instruction::INSTRUCTION_BYTES, InstructionSet},
 };
@@ -37,11 +38,12 @@ pub(super) fn preprocess_op_params(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
+    memory_result_offset_is_first_param: bool,
     inject_return_offset: bool,
 ) {
     let opcode = translator.opcode_prev();
     // hardcoded result place in memory
-    const I64_MEM_RESULT_OFFSET: usize = 0;
+    const MEM_RESULT_OFFSET: usize = 0;
     match opcode {
         // two u256 params
         opcode::BYTE
@@ -70,7 +72,20 @@ pub(super) fn preprocess_op_params(
             }
             if inject_memory_result_offset {
                 aux_params_count += 1;
-                instruction_set.op_i32_const(I64_MEM_RESULT_OFFSET);
+                if memory_result_offset_is_first_param {
+                    let offset_instruction = instruction_set.instr
+                        [instruction_set.len() as usize - if inject_return_offset { 5 } else { 4 }];
+                    let offset = match offset_instruction {
+                        Instruction::I64Const(offset) => offset,
+                        x => {
+                            panic!("unexpected instruction: {:?}", x)
+                        }
+                    };
+                    let mem_result_offset = offset.as_usize();
+                    instruction_set.op_i32_const(mem_result_offset);
+                } else {
+                    instruction_set.op_i32_const(MEM_RESULT_OFFSET);
+                }
             }
             if aux_params_count > 0 {
                 let instruction_set_len = instruction_set.len() as usize;
@@ -100,8 +115,15 @@ pub(super) fn replace_current_opcode_with_inline_func(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
+    memory_result_offset_is_first_param: bool,
 ) {
-    preprocess_op_params(translator, host, inject_memory_result_offset, false);
+    preprocess_op_params(
+        translator,
+        host,
+        inject_memory_result_offset,
+        memory_result_offset_is_first_param,
+        false,
+    );
 
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
@@ -120,8 +142,15 @@ pub(super) fn replace_current_opcode_with_subroutine(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
+    memory_result_offset_is_first_param: bool,
 ) {
-    preprocess_op_params(translator, host, inject_memory_result_offset, true);
+    preprocess_op_params(
+        translator,
+        host,
+        inject_memory_result_offset,
+        memory_result_offset_is_first_param,
+        true,
+    );
 
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();

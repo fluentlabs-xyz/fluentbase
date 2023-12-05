@@ -2,14 +2,14 @@ use crate::consts::{BYTE_MAX_VAL, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1};
 
 #[no_mangle]
 fn bitwise_sar(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
     b0: u64,
     b1: u64,
     b2: u64,
     b3: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
 ) -> (u64, u64, u64, u64) {
     let b0_sign = b0 & U64_MSBIT_IS_1;
     if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {

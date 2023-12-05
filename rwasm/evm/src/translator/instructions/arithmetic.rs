@@ -23,7 +23,7 @@ pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADD";
     debug!("op:{}", OP);
     // replace_current_opcode_with_inline_func(translator, host, true);
-    replace_current_opcode_with_subroutine(translator, host, true);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
     // let mut stack_pos_shift = 0;
@@ -106,7 +106,7 @@ pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
     // replace_current_opcode_with_code_snippet(translator, host, true);
-    replace_current_opcode_with_subroutine(translator, host, true);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
 pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

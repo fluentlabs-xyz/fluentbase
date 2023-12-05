@@ -67,10 +67,10 @@
     i64.const 4294967295
     i64.and
     i64.add
-    local.get 4
+    local.get 8
     i64.const -4294967296
     i64.and
-    local.get 8
+    local.get 4
     i64.add
     i64.const -4294967296
     i64.and

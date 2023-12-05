@@ -4,11 +4,11 @@
     (local i64 i64)
     block  ;; label = @1
       block  ;; label = @2
-        local.get 1
+        local.get 5
         i64.const -9223372036854775808
         i64.and
         local.tee 9
-        local.get 5
+        local.get 1
         i64.const -9223372036854775808
         i64.and
         local.tee 10
@@ -20,24 +20,24 @@
         br_if 1 (;@1;)
         block  ;; label = @3
           block  ;; label = @4
-            local.get 1
-            i64.const 9223372036854775807
-            i64.and
             local.get 5
             i64.const 9223372036854775807
             i64.and
+            local.get 1
+            i64.const 9223372036854775807
+            i64.and
             i64.lt_u
             br_if 0 (;@4;)
-            local.get 2
             local.get 6
+            local.get 2
             i64.lt_u
             br_if 0 (;@4;)
-            local.get 3
             local.get 7
+            local.get 3
             i64.lt_u
             br_if 0 (;@4;)
-            local.get 4
             local.get 8
+            local.get 4
             i64.ge_u
             br_if 1 (;@3;)
           end
