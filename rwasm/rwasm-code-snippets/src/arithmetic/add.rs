@@ -2,14 +2,14 @@ use crate::consts::{U64_HALF_BITS_COUNT, U64_LOW_PART_MASK};
 
 #[no_mangle]
 pub fn arithmetic_add(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
     b0: u64,
     b1: u64,
     b2: u64,
     b3: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
 ) -> (u64, u64, u64, u64) {
     let mut a_part: u64 = 0;
     let mut b_part: u64 = 0;

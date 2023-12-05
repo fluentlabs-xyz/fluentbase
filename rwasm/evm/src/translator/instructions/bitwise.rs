@@ -19,31 +19,31 @@ use log::debug;
 pub fn lt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "LT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn gt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn slt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn sgt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SGT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn eq<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EQ";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn iszero<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
@@ -127,23 +127,23 @@ pub fn not<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 pub fn byte<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BYTE";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn shl<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHL";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn shr<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn sar<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SAR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true);
+    replace_current_opcode_with_inline_func(translator, host, true, false);
 }
