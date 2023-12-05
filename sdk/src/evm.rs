@@ -14,6 +14,7 @@ sol! {
         uint256 value;
         bytes32 block_hash;
         uint256 balance;
+        bytes env;
     }
 }
 
@@ -34,6 +35,8 @@ enum ContractInputFields {
     Value,
     BlockHash,
     Balance,
+    EnvOffset,
+    EnvLength,
     _MaxFields,
 }
 
@@ -75,6 +78,18 @@ pub fn contract_read_bytecode() -> Vec<u8> {
     buffer
 }
 
+pub fn contract_read_env() -> Vec<u8> {
+    // read offset and length
+    let offset = ContractInputFields::EnvOffset.read_u256_word();
+    let offset = BigEndian::read_u32(&offset[28..]);
+    let length = ContractInputFields::EnvLength.read_u256_word();
+    let length = BigEndian::read_u32(&length[28..]);
+    // read input itself
+    let mut buffer = vec![0; length as usize];
+    SDK::sys_read(buffer.as_mut_slice(), offset);
+    buffer
+}
+
 pub fn contract_read_hash() -> B256 {
     let hash = ContractInputFields::Hash.read_u256_word();
     B256::from(hash)
@@ -107,7 +122,7 @@ pub fn contract_read_balance() -> U256 {
 
 #[cfg(feature = "runtime")]
 impl ContractInput {
-    fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Vec<u8> {
         let mut result = vec![];
         // encode ABI data
         let input_offset = ContractInputFields::input_size();
@@ -124,9 +139,14 @@ impl ContractInput {
         result.extend(&self.value.abi_encode());
         result.extend(&self.block_hash.abi_encode());
         result.extend(&self.balance.abi_encode());
+        let env_offset = bytecode_offset + bytecode_length;
+        let env_length = self.env.len() as u32;
+        result.extend(&env_offset.abi_encode());
+        result.extend(&env_length.abi_encode());
         // encode raw data
         result.extend(&self.input);
         result.extend(&self.bytecode);
+        result.extend(&self.env);
         result
     }
 }
@@ -134,7 +154,7 @@ impl ContractInput {
 #[cfg(test)]
 mod test {
     use crate::{
-        evm::{contract_read_bytecode, contract_read_input, ContractInput},
+        evm::{contract_read_bytecode, contract_read_env, contract_read_input, ContractInput},
         SDK,
     };
 
@@ -150,6 +170,7 @@ mod test {
             value: Default::default(),
             block_hash: Default::default(),
             balance: Default::default(),
+            env: vec![10, 20, 30],
         };
         let encoded_input = contract_input.encode();
         for chunk in encoded_input.chunks(32) {
@@ -161,5 +182,7 @@ mod test {
         assert_eq!(input, contract_input.input);
         let bytecode = contract_read_bytecode();
         assert_eq!(bytecode, contract_input.bytecode);
+        let env = contract_read_env();
+        assert_eq!(env, contract_input.env);
     }
 }
