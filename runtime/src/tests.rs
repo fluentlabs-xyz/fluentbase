@@ -79,12 +79,13 @@ fn test_greeting() {
 fn test_keccak256_example() {
     let wasm_binary = include_bytes!("../../examples/bin/keccak256.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
-    let input_data: &[u8] = "hello world".as_bytes();
+    let input_data: &[u8] = "Hello, World".as_bytes();
     let output =
         Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
+    assert_eq!(output.data().exit_code, 0);
     assert_eq!(
         output.data().output().clone(),
-        hex!("47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad").to_vec()
+        hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529").to_vec()
     );
 }
 
@@ -95,6 +96,7 @@ fn test_poseidon() {
     let input_data: &[u8] = "hello world".as_bytes();
     let output =
         Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
+    assert_eq!(output.data().exit_code, 0);
     assert_eq!(
         output.data().output().clone(),
         poseidon_hash(input_data).to_vec()

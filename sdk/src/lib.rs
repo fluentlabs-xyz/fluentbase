@@ -1,4 +1,5 @@
-#![no_std]
+// #![no_std]
+#![cfg_attr(not(feature = "runtime"), no_std)]
 
 extern crate alloc;
 extern crate wee_alloc;
@@ -76,17 +77,17 @@ pub trait EvmPlatformSDK {
     fn evm_sstore(key: &[u8], value: &[u8]);
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(feature = "runtime"))]
 #[panic_handler]
 #[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
         SDK::sys_write(panic_message.as_bytes());
     }
-    SDK::sys_halt(-1);
+    SDK::sys_halt(-71);
     loop {}
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(feature = "runtime"))]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
