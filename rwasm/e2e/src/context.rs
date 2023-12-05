@@ -1,17 +1,16 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
-    common::{Trap, UntypedValue},
     engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
     rwasm::{
         Compiler,
+        CompilerConfig,
         DefaultImportHandler,
         FuncOrExport,
         ImportFunc,
         ImportLinker,
         ReducedModule,
         RouterInstructions,
-        _UNKNOWN,
     },
     value::WithType,
     AsContext,
@@ -36,8 +35,7 @@ use fluentbase_rwasm::{
     TableType,
     Value,
 };
-use fluentbase_rwasm_core::common::{ValueType, F32, F64};
-use std::collections::HashMap;
+use fluentbase_rwasm_core::common::{Trap, UntypedValue, ValueType, F32, F64};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use wast::token::{Id, Span};
 
@@ -303,24 +301,6 @@ impl TestContext<'_> {
         Ok(())
     }
 
-    pub fn compile_and_instantiate_from_wasm(
-        &mut self,
-        wasm_binary: Vec<u8>,
-    ) -> Result<(), TestError> {
-        let mut config = Config::default();
-        config.consume_fuel(false);
-        let engine = Engine::new(&config);
-        let module2 = Module::new(&engine, wasm_binary.as_slice())?;
-        for elem in module2.exports() {
-            let instance = self.compile_and_instantiate_method(&wasm_binary, elem.name())?;
-            self.binaries
-                .insert(elem.name().to_string(), wasm_binary.clone());
-            self.instances.insert(elem.name().to_string(), instance);
-            self.last_instance = Some(instance);
-        }
-        Ok(())
-    }
-
     pub fn compile_and_instantiate_with_router(
         &mut self,
         mut module: wast::core::Module,
@@ -352,7 +332,7 @@ impl TestContext<'_> {
                         import.module().to_string(),
                         import.name().to_string(),
                         import_index,
-                        _UNKNOWN,
+                        1,
                         &func_type.params(),
                         &func_type.results(),
                     ));
@@ -380,7 +360,7 @@ impl TestContext<'_> {
                         import.module().to_string(),
                         import.name().to_string(),
                         GLOBAL_START_INDEX as u16 + global_index,
-                        _UNKNOWN,
+                        1,
                         &[],
                         &[global_type.content()],
                     ));
@@ -497,144 +477,146 @@ impl TestContext<'_> {
             );
         }
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "env".to_string(),
-            "_sys_state".to_string(),
-            SYS_STATE as u16,
-            _UNKNOWN,
-            &[],
-            &[ValueType::I32],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "_sys_input".to_string(),
-            SYS_INPUT as u16,
-            _UNKNOWN,
-            &[],
-            &[ValueType::I64],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "_sys_output".to_string(),
-            SYS_OUTPUT as u16,
-            _UNKNOWN,
-            &[ValueType::I64],
-            &[],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "_sys_input_len".to_string(),
-            SYS_INPUT_LEN as u16,
-            _UNKNOWN,
-            &[],
-            &[ValueType::I32],
-        ));
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "_sys_output_len".to_string(),
-            SYS_OUTPUT_LEN as u16,
-            _UNKNOWN,
-            &[],
-            &[ValueType::I32],
-        ));
+        #[cfg(feature = "e2e")]
+        {
+            import_linker.insert_function(ImportFunc::new_env(
+                "env".to_string(),
+                "_sys_state".to_string(),
+                SYS_STATE as u16,
+                1,
+                &[],
+                &[ValueType::I32],
+            ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "_sys_input".to_string(),
+                SYS_INPUT as u16,
+                1,
+                &[],
+                &[ValueType::I64],
+            ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "_sys_output".to_string(),
+                SYS_OUTPUT as u16,
+                1,
+                &[ValueType::I64],
+                &[],
+            ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "_sys_input_len".to_string(),
+                SYS_INPUT_LEN as u16,
+                1,
+                &[],
+                &[ValueType::I32],
+            ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "_sys_output_len".to_string(),
+                SYS_OUTPUT_LEN as u16,
+                1,
+                &[],
+                &[ValueType::I32],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_i32".to_string(),
-            SYS_PRINT_I32 as u16,
-            _UNKNOWN,
-            &[ValueType::I32],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_i32".to_string(),
+                SYS_PRINT_I32 as u16,
+                1,
+                &[ValueType::I32],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_i64".to_string(),
-            SYS_PRINT_I64 as u16,
-            _UNKNOWN,
-            &[ValueType::I64],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_i64".to_string(),
+                SYS_PRINT_I64 as u16,
+                1,
+                &[ValueType::I64],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_f32".to_string(),
-            SYS_PRINT_F32 as u16,
-            _UNKNOWN,
-            &[ValueType::F32],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_f32".to_string(),
+                SYS_PRINT_F32 as u16,
+                1,
+                &[ValueType::F32],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_f64".to_string(),
-            SYS_PRINT_F64 as u16,
-            _UNKNOWN,
-            &[ValueType::F64],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_f64".to_string(),
+                SYS_PRINT_F64 as u16,
+                1,
+                &[ValueType::F64],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_i32_f32".to_string(),
-            SYS_PRINT_I32_F32 as u16,
-            _UNKNOWN,
-            &[ValueType::I32, ValueType::F32],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_i32_f32".to_string(),
+                SYS_PRINT_I32_F32 as u16,
+                1,
+                &[ValueType::I32, ValueType::F32],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print_f64_f64".to_string(),
-            SYS_PRINT_F64_F64 as u16,
-            _UNKNOWN,
-            &[ValueType::F64, ValueType::F64],
-            &[],
-        ));
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print_f64_f64".to_string(),
+                SYS_PRINT_F64_F64 as u16,
+                1,
+                &[ValueType::F64, ValueType::F64],
+                &[],
+            ));
 
-        import_linker.insert_function(ImportFunc::new_env(
-            "spectest".to_string(),
-            "print".to_string(),
-            SYS_PRINT as u16,
-            _UNKNOWN,
-            &[],
-            &[],
-        ));
-
-        let mut compiler = Compiler::new_with_type_check_idx(
+            import_linker.insert_function(ImportFunc::new_env(
+                "spectest".to_string(),
+                "print".to_string(),
+                SYS_PRINT as u16,
+                1,
+                &[],
+                &[],
+            ));
+        }
+        let mut compiler = Compiler::new_with_linker(
             wasm_binary.as_slice(),
+            CompilerConfig::default()
+                .fuel_consume(false)
+                .with_state(true),
             Some(&import_linker),
-            false,
-            self.func_type_check_idx.clone(),
         )
         .unwrap();
 
+        compiler.set_func_type_check_idx(self.func_type_check_idx.clone());
+
         compiler.set_global_start_index(GLOBAL_START_INDEX);
         compiler
-            .translate_with_state(
-                Some(FuncOrExport::StateRouter(
-                    exports,
-                    RouterInstructions {
-                        state_ix: Instruction::Call((SYS_STATE).into()),
-                        input_ix: vec![
-                            Instruction::Call((SYS_INPUT_LEN).into()),
-                            Instruction::BrIfEqz(BranchOffset::from(3)),
-                            Instruction::Call((SYS_INPUT).into()),
-                            Instruction::Br(BranchOffset::from(-3)),
-                        ],
-                        output_ix: vec![
-                            Instruction::Call((SYS_OUTPUT_LEN).into()),
-                            Instruction::BrIfEqz(BranchOffset::from(3)),
-                            Instruction::Call((SYS_OUTPUT).into()),
-                            Instruction::Br(BranchOffset::from(-3)),
-                        ],
-                    },
-                )),
-                true,
-            )
+            .translate(Some(FuncOrExport::StateRouter(
+                exports,
+                RouterInstructions {
+                    state_ix: Instruction::Call((SYS_STATE).into()),
+                    input_ix: vec![
+                        Instruction::Call((SYS_INPUT_LEN).into()),
+                        Instruction::BrIfEqz(BranchOffset::from(3)),
+                        Instruction::Call((SYS_INPUT).into()),
+                        Instruction::Br(BranchOffset::from(-3)),
+                    ],
+                    output_ix: vec![
+                        Instruction::Call((SYS_OUTPUT_LEN).into()),
+                        Instruction::BrIfEqz(BranchOffset::from(3)),
+                        Instruction::Call((SYS_OUTPUT).into()),
+                        Instruction::Br(BranchOffset::from(-3)),
+                    ],
+                },
+            )))
             .map_err(|err| TestError::Compiler(err))?;
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), true).unwrap();
         let mut module_builder =
             reduced_module.to_module_builder(&self.engine, &import_linker, FuncType::new([], []));
 
@@ -675,17 +657,14 @@ impl TestContext<'_> {
         println!("compiling function: {}", fn_name);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice())?;
-        let elem = module
-            .exports()
-            .find(|export| export.name() == fn_name)
-            .unwrap();
+
         let mut import_linker = ImportLinker::default();
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_i32".to_string(),
             SYS_PRINT_I32 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::I32],
             &[],
         ));
@@ -694,7 +673,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i64".to_string(),
             SYS_PRINT_I64 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::I64],
             &[],
         ));
@@ -703,7 +682,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f32".to_string(),
             SYS_PRINT_F32 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::F32],
             &[],
         ));
@@ -712,7 +691,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64".to_string(),
             SYS_PRINT_F64 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::F64],
             &[],
         ));
@@ -721,7 +700,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32_f32".to_string(),
             SYS_PRINT_I32_F32 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::I32, ValueType::F32],
             &[],
         ));
@@ -730,7 +709,7 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_f64_f64".to_string(),
             SYS_PRINT_F64_F64 as u16,
-            _UNKNOWN,
+            1,
             &[ValueType::F64, ValueType::F64],
             &[],
         ));
@@ -738,41 +717,33 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print".to_string(),
             SYS_PRINT as u16,
-            _UNKNOWN,
+            1,
             &[],
             &[],
         ));
 
-        let mut compiler = Compiler::new_with_type_check_idx(
+        let mut compiler = Compiler::new_with_linker(
             wasm_binary.as_slice(),
+            CompilerConfig::default(),
             Some(&import_linker),
-            false,
-            self.func_type_check_idx.clone(),
         )
         .unwrap();
+        compiler.set_func_type_check_idx(self.func_type_check_idx.clone());
+
+        let elem = module
+            .exports()
+            .find(|export| export.name() == fn_name)
+            .unwrap();
+
         if let Some(idx) = elem.index().into_func_idx() {
             compiler.translate(Some(FuncOrExport::Func(idx))).unwrap();
         } else if let Some(ix) = module.get_global_init(elem.index()) {
-            compiler
-                .translate_with_state(Some(FuncOrExport::Global(ix)), true)
-                .unwrap();
+            compiler.set_state(true);
+            compiler.translate(Some(FuncOrExport::Global(ix))).unwrap();
         }
 
-        let import_linker = ImportLinker::default();
-        let mut compiler = Compiler::new(
-            wasm_binary.as_slice(),
-            self.engine.config().get_consume_fuel(),
-        )
-        .unwrap();
-        compiler
-            .translate(
-                Some(FuncOrExport::Func(elem.index().into_func_idx().unwrap())),
-                true,
-            )
-            .unwrap();
-        todo!("Add config");
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), true).unwrap();
 
         let func_type = elem.ty().func();
         let global_type = elem
@@ -784,11 +755,7 @@ impl TestContext<'_> {
             &import_linker,
             func_type.or(global_type.as_ref()).unwrap().clone(),
         );
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
-        let func_type = elem.ty().func().unwrap();
-        let mut module_builder =
-            reduced_module.to_module_builder(self.engine(), &import_linker, func_type.clone());
-        todo!("Add Config");
+
         module_builder.remove_start();
         let module = module_builder.finish();
         let instance = self

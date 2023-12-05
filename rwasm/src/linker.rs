@@ -1,5 +1,4 @@
 use crate::{
-
     func::{FuncEntity, HostFuncEntity, HostFuncTrampolineEntity},
     module::{ImportName, ImportType},
     AsContext,
@@ -19,7 +18,6 @@ use crate::{
     TableType,
     Value,
 };
-use fluentbase_rwasm_core::common::Trap;
 use alloc::{
     collections::{btree_map::Entry, BTreeMap},
     sync::Arc,
@@ -31,6 +29,7 @@ use core::{
     num::NonZeroUsize,
     ops::Deref,
 };
+use fluentbase_rwasm_core::common::Trap;
 
 /// An error that may occur upon operating with [`Linker`] instances.
 #[derive(Debug)]
@@ -753,10 +752,9 @@ impl<T> Linker<T> {
 
 #[cfg(test)]
 mod tests {
-    use fluentbase_rwasm_core::common::ValueType;
-
     use super::*;
     use crate::{common::ValueType, Store};
+    use fluentbase_rwasm_core::common::ValueType;
 
     struct HostState {
         a: i32,

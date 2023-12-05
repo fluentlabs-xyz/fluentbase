@@ -15,13 +15,18 @@ use crate::{
     },
     Config,
     Engine,
+    FuncRef,
+    FuncType,
     Module,
+    Value,
 };
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 use core::ops::Deref;
-use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType};
+use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType, F32};
+use std::cell::RefCell;
 
 mod drop_keep;
+use crate::value::WithType;
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -58,6 +63,66 @@ pub trait Translator {
     fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError>;
 }
 
+pub struct CompilerConfig {
+    pub fuel_consume: bool,
+    pub tail_call: bool,
+    pub extended_const: bool,
+    pub translate_sections: bool,
+    pub with_state: bool,
+    pub translate_func_as_inline: bool,
+}
+
+impl Default for CompilerConfig {
+    fn default() -> Self {
+        Self {
+            fuel_consume: true,
+            tail_call: true,
+            extended_const: true,
+            translate_sections: true,
+            with_state: false,
+            translate_func_as_inline: false,
+        }
+    }
+}
+
+impl CompilerConfig {
+    pub fn fuel_consume(mut self, value: bool) -> Self {
+        self.fuel_consume = value;
+
+        self
+    }
+
+    pub fn tail_call(mut self, value: bool) -> Self {
+        self.tail_call = value;
+
+        self
+    }
+
+    pub fn extended_const(mut self, value: bool) -> Self {
+        self.extended_const = value;
+
+        self
+    }
+
+    pub fn translate_sections(mut self, value: bool) -> Self {
+        self.translate_sections = value;
+
+        self
+    }
+
+    pub fn with_state(mut self, value: bool) -> Self {
+        self.with_state = value;
+
+        self
+    }
+
+    pub fn translate_func_as_inline(mut self, value: bool) -> Self {
+        self.translate_func_as_inline = value;
+
+        self
+    }
+}
+
 pub struct Compiler<'linker> {
     engine: Engine,
     module: Module,
@@ -71,7 +136,7 @@ pub struct Compiler<'linker> {
     br_table_status: Option<BrTableStatus>,
     func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
     global_start_index: u32,
-    translate_func_as_inline: bool,
+    pub config: CompilerConfig,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -111,43 +176,21 @@ impl Default for FuncOrExport {
 }
 
 impl<'linker> Compiler<'linker> {
-    pub fn new(wasm_binary: &[u8], consume_fuel: bool) -> Result<Self, CompilerError> {
-        Self::new_with_linker(wasm_binary, None, consume_fuel)
+    pub fn new(wasm_binary: &[u8], config: CompilerConfig) -> Result<Self, CompilerError> {
+        Self::new_with_linker(wasm_binary, config, None)
     }
 
     pub fn new_with_linker(
         wasm_binary: &[u8],
+        config: CompilerConfig,
         import_linker: Option<&'linker ImportLinker>,
-        consume_fuel: bool,
     ) -> Result<Self, CompilerError> {
-        Self::new_with_fuel_consume(wasm_binary, import_linker, true)
-    }
+        let mut engine_config = Config::default();
+        engine_config.consume_fuel(config.fuel_consume);
+        engine_config.wasm_tail_call(config.tail_call);
+        engine_config.wasm_extended_const(config.extended_const);
 
-    pub fn new_with_fuel_consume(
-        wasm_binary: &[u8],
-        import_linker: Option<&'linker ImportLinker>,
-        fuel_consume: bool,
-    ) -> Result<Self, CompilerError> {
-        Self::new_with_type_check_idx(
-            wasm_binary,
-            import_linker,
-            fuel_consume,
-            Rc::new(RefCell::new(vec![])),
-        )
-    }
-
-    pub fn new_with_type_check_idx(
-        wasm_binary: &[u8],
-        import_linker: Option<&'linker ImportLinker>,
-        fuel_consume: bool,
-        func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
-    ) -> Result<Self, CompilerError> {
-        let mut config = Config::default();
-        config.consume_fuel(fuel_consume);
-        config.wasm_tail_call(true);
-        config.wasm_extended_const(true);
-
-        let engine = Engine::new(&config);
+        let engine = Engine::new(&engine_config);
         let module =
             Module::new(&engine, wasm_binary).map_err(|e| CompilerError::ModuleError(e))?;
         Ok(Compiler {
@@ -159,72 +202,48 @@ impl<'linker> Compiler<'linker> {
             is_translated: false,
             injection_segments: vec![],
             br_table_status: None,
-            translate_func_as_inline: false,
-            func_type_check_idx,
+            func_type_check_idx: Default::default(),
             global_start_index: 0,
+            config,
         })
     }
 
     pub fn translate_func_as_inline(&mut self, v: bool) {
-        self.translate_func_as_inline = v;
+        self.config.translate_func_as_inline = v;
     }
-
 
     pub fn set_global_start_index(&mut self, idx: u32) {
         self.global_start_index = idx;
     }
 
-    pub fn translate_with_state(
-        &mut self,
-        main_index: Option<FuncOrExport>,
-        with_state: bool,
-    ) -> Result<(), CompilerError> {
-        if self.is_translated {
-            unreachable!("already translated");
-        }
-        // first we must translate all sections, this is an entrypoint
-        if with_state {
-            self.translate_sections_with_state(main_index.unwrap_or_default())?;
-        } else {
-            self.translate_sections(main_index.unwrap_or_default())?;
-        }
-        self.translate_imports_funcs()?;
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            self.translate_function(i as u32)?;
-        }
-        // there is no need to inject because code is already validated
-        self.code_section.finalize(false);
-        self.is_translated = true;
-        Ok(())
+    pub fn set_func_type_check_idx(&mut self, func_type_check_idx: Rc<RefCell<Vec<FuncType>>>) {
+        self.func_type_check_idx = func_type_check_idx;
     }
 
-    pub fn translate(
-        &mut self,
-        main_index: Option<FuncOrExport>,
-        translate_sections: bool,
-    ) -> Result<(), CompilerError> {
-        if self.is_translated {
-            unreachable!("already translated");
-        }
-        // first we must translate all sections, this is an entrypoint
-        if translate_sections {
-            self.translate_sections(main_index.unwrap_or_default())?;
-        }
-        // translate rest functions
-        let total_fns = self.module.funcs.len();
-        for i in 0..total_fns {
-            self.translate_function(i as u32)?;
-        }
-        // there is no need to inject because code is already validated
-        self.code_section.finalize(false);
-        self.is_translated = true;
-        Ok(())
+    pub fn set_state(&mut self, with_state: bool) {
+        self.config.with_state = with_state;
     }
 
     pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
-        self.translate_with_state(main_index, false)?;
+        if self.is_translated {
+            unreachable!("already translated");
+        }
+        // first we must translate all sections, this is an entrypoint
+
+        if self.config.with_state {
+            self.translate_sections_with_state(main_index.unwrap_or_default())?;
+        } else if self.config.translate_sections {
+            self.translate_sections(main_index.unwrap_or_default())?;
+        }
+
+        // translate rest functions
+        let total_fns = self.module.funcs.len();
+        for i in 0..total_fns {
+            self.translate_function(i as u32)?;
+        }
+        // there is no need to inject because code is already validated
+        self.code_section.finalize(false);
+        self.is_translated = true;
         Ok(())
     }
 
@@ -688,7 +707,7 @@ impl<'linker> Compiler<'linker> {
 
         self.code_section.op_type_check(idx);
 
-        if !self.translate_func_as_inline {
+        if !self.config.translate_func_as_inline {
             self.swap_stack_parameters(num_inputs.len() as u32);
         }
 
@@ -708,7 +727,7 @@ impl<'linker> Compiler<'linker> {
         while instr_ptr != instr_end {
             self.translate_opcode(&mut instr_ptr, 0)?;
         }
-        if !self.translate_func_as_inline {
+        if !self.config.translate_func_as_inline {
             self.code_section.op_unreachable();
         }
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
@@ -915,7 +934,7 @@ impl<'linker> Compiler<'linker> {
                 } else {
                     DropKeepWithReturnParam(drop_keep).translate(&mut self.code_section)?;
 
-                    if !self.translate_func_as_inline {
+                    if !self.config.translate_func_as_inline {
                         self.code_section.op_br_indirect(0);
                     }
                 }
@@ -1075,8 +1094,7 @@ impl<'linker> Compiler<'linker> {
         let (import_index, fuel_amount) = self.resolve_host_call(fn_index)?;
 
         if self.engine.config().get_fuel_consumption_mode().is_some() {
-            self.code_section
-                .op_consume_fuel(fuel_amount);
+            self.code_section.op_consume_fuel(fuel_amount);
         }
 
         self.code_section.op_call(import_index);
@@ -1085,7 +1103,7 @@ impl<'linker> Compiler<'linker> {
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(None, true)?;
+            self.translate(None)?;
         }
         let bytecode = &mut self.code_section;
 

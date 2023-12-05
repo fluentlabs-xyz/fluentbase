@@ -64,9 +64,7 @@ mod tests {
         let reduced_module = ReducedModule::new(binary.as_slice(), false).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
         let _trace = reduced_module.trace();
-        let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
-        let _trace = reduced_module.trace_binary();
-        todo!("Add config");
+
         // execute translated rwasm
         let mut config = Config::default();
         config.consume_fuel(true);

@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-rwasm = { path = "..", features = ["e2e"] }
+fluentbase-rwasm = { path = ".." }
 fluentbase-rwasm-core = { path = "../core" }
 byteorder = "1.4.3"
 wat = "1.0.66"
 anyhow = "1.0.71"
 wast = "62.0.0"
+
+[features]
+default = ["e2e"]
+e2e = ["fluentbase-rwasm/e2e"]
