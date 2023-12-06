@@ -100,7 +100,7 @@ pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn wrapping_mul<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MUL";
     debug!("op:{}", OP);
-    // replace_current_opcode_with_inline_func(translator, host, true);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
     replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
