@@ -181,7 +181,7 @@ fn test_panic() {
     let wasm_binary = include_bytes!("../../examples/bin/panic.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
     let result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
-    assert_eq!(result.data().exit_code(), -1);
+    assert_eq!(result.data().exit_code(), -71);
 }
 
 #[test]
