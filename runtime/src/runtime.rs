@@ -629,7 +629,7 @@ impl<'t, T> Runtime<'t, T> {
             .unwrap();
     }
 
-    fn register_bindings(&mut self) {
+    pub fn register_bindings(&mut self) {
         let linker = &mut self.linker;
         let store = &mut self.store;
         use crate::instruction::*;
