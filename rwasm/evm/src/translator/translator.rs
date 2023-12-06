@@ -8,6 +8,7 @@ pub use analysis::BytecodeLocked;
 use fluentbase_rwasm::rwasm::{
     BinaryFormat,
     Compiler,
+    CompilerConfig,
     FuncOrExport,
     ImportLinker,
     InstructionSet,
@@ -130,11 +131,15 @@ impl<'a> Translator<'a> {
                     opcode, opcode
                 );
             }
-            let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
-            compiler.translate_func_as_inline(true);
-            compiler
-                .translate(Some(FuncOrExport::Func(0)), false)
-                .unwrap();
+            let mut compiler = Compiler::new(
+                wasm_binary,
+                CompilerConfig::default()
+                    .fuel_consume(self.inject_fuel_consumption)
+                    .translate_sections(false)
+                    .translate_func_as_inline(true),
+            )
+            .unwrap();
+            compiler.translate(Some(FuncOrExport::Func(0))).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary, true)
                 .unwrap()
@@ -159,11 +164,15 @@ impl<'a> Translator<'a> {
                     opcode, opcode
                 );
             }
-            let mut compiler = Compiler::new(wasm_binary, self.inject_fuel_consumption).unwrap();
+            let mut compiler = Compiler::new(
+                wasm_binary,
+                CompilerConfig::default()
+                    .fuel_consume(self.inject_fuel_consumption)
+                    .translate_sections(false),
+            )
+            .unwrap();
             compiler.swap_stack_params(false);
-            compiler
-                .translate(Some(FuncOrExport::Func(0)), false)
-                .unwrap();
+            compiler.translate(Some(FuncOrExport::Func(0))).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary, true)
                 .unwrap()

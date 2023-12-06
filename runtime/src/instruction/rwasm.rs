@@ -4,7 +4,11 @@ use crate::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_rwasm::{common::Trap, rwasm::Compiler, Caller};
+use fluentbase_rwasm::{
+    common::Trap,
+    rwasm::{Compiler, CompilerConfig},
+    Caller,
+};
 
 pub(crate) fn rwasm_compile<T>(
     mut caller: Caller<'_, RuntimeContext<T>>,

@@ -1,4 +1,5 @@
 use crate::{
+    common::{Trap, F32},
     func::{FuncEntity, HostFuncEntity, HostFuncTrampolineEntity},
     module::{ImportName, ImportType},
     AsContext,
@@ -29,8 +30,6 @@ use core::{
     num::NonZeroUsize,
     ops::Deref,
 };
-use fluentbase_rwasm_core::common::Trap;
-
 /// An error that may occur upon operating with [`Linker`] instances.
 #[derive(Debug)]
 pub enum LinkerError {
@@ -753,8 +752,7 @@ impl<T> Linker<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Store;
-    use fluentbase_rwasm_core::common::ValueType;
+    use crate::{common::ValueType, Store};
 
     struct HostState {
         a: i32,

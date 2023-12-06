@@ -1,9 +1,9 @@
-use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
+use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use eth_trie::DB;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
     common::Trap,
-    engine::bytecode::Instruction,
+    engine::bytecode::{AddressOffset, Instruction},
     rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule, RouterInstructions},
 };
 use hex_literal::hex;
@@ -154,7 +154,9 @@ fn test_state() {
     let import_linker = Runtime::<()>::new_linker();
     let mut compiler = Compiler::new_with_linker(
         wasm_binary.as_slice(),
-        CompilerConfig::default().fuel_consume(true),
+        CompilerConfig::default()
+            .fuel_consume(false)
+            .translate_sections(true),
         Some(&import_linker),
     )
     .unwrap();
@@ -169,18 +171,22 @@ fn test_state() {
         )))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
-    let mut runtime = Runtime::<()>::new(
-        RuntimeContext::new(rwasm_bytecode).with_fuel_limit(1_000_000),
+    let result = Runtime::<()>::run_with_context(
+        RuntimeContext::new(rwasm_bytecode.clone())
+            .with_state(STATE_DEPLOY)
+            .with_fuel_limit(100_000),
         &import_linker,
     )
     .unwrap();
-    runtime.call().unwrap();
-    runtime.data_mut().state = 0;
-    runtime.call().unwrap();
-    runtime.data_mut().state = 1;
-    runtime.call().unwrap();
-    runtime.data_mut().state = 0;
-    runtime.call().unwrap();
+    assert_eq!(result.data().output()[0], 100);
+    let result = Runtime::<()>::run_with_context(
+        RuntimeContext::new(rwasm_bytecode)
+            .with_state(STATE_MAIN)
+            .with_fuel_limit(100_000),
+        &import_linker,
+    )
+    .unwrap();
+    assert_eq!(result.data().output()[0], 200);
 }
 
 #[test]
