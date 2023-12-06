@@ -16,7 +16,7 @@ impl RwasmPlatformSDK for SDK {
         let mut compiler = compiler.unwrap();
         let res = compiler.translate(
             Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
+                vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
                 Instruction::Call(SysFuncIdx::SYS_STATE.into()),
             )),
             true,
@@ -67,6 +67,7 @@ impl RwasmPlatformSDK for SDK {
 mod test {
     use crate::{RwasmPlatformSDK, SDK};
     use alloc::vec;
+    use fluentbase_runtime::{STATE_DEPLOY, STATE_MAIN};
     use hex_literal::hex;
 
     #[test]
@@ -82,11 +83,12 @@ mod test {
         let mut output = vec![0u8; 1024 * 1024];
         let code_len = SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
         let mut result: [u8; 32] = [0; 32];
+        SDK::with_test_state(STATE_MAIN);
         let exit_code = SDK::rwasm_transact(
             &output.as_slice()[0..code_len as usize],
             "Hello, World".as_bytes(),
             &mut result,
-            0,
+            STATE_MAIN,
             100_000,
         );
         assert_eq!(exit_code, 0);

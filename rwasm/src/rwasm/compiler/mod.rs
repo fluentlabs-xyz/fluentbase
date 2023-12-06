@@ -191,7 +191,7 @@ impl<'linker> Compiler<'linker> {
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
-                    router_opcodes.op_br_if_nez(2);
+                    router_opcodes.op_br_if_eqz(2);
                     if func_index < num_imports {
                         router_opcodes.op_call(func_index);
                     } else {
