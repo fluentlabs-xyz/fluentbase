@@ -8,6 +8,7 @@ use crate::{
     STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
+    common::{Trap, ValueType},
     engine::Tracer,
     rwasm::{ImportFunc, ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
     AsContextMut,
@@ -24,7 +25,6 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use fluentbase_rwasm_core::common::{Trap, ValueType};
 use std::{cell::RefCell, mem::take};
 
 #[derive(Debug)]
@@ -489,7 +489,7 @@ impl<'t, T> Runtime<'t, T> {
             "env".to_string(),
             "_evm_sload".to_string(),
             SysFuncIdx::EVM_SLOAD as u16,
-            800,
+            FUEL_EVM_SLOAD,
             &[ValueType::I32; 2],
             &[],
         ));
@@ -497,7 +497,7 @@ impl<'t, T> Runtime<'t, T> {
             "env".to_string(),
             "_evm_sstore".to_string(),
             SysFuncIdx::EVM_SSTORE as u16,
-            5000,
+            FUEL_EVM_SSTORE,
             &[ValueType::I32; 2],
             &[],
         ));

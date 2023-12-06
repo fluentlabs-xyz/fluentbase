@@ -9,12 +9,12 @@ fn bitwise_eq(
     b2: u64,
     b3: u64,
 ) -> (u64, u64, u64, u64) {
-    let s3;
+    let s0;
     if a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3 {
-        s3 = 1;
+        s0 = 1;
     } else {
-        s3 = 0;
+        s0 = 0;
     }
 
-    return (0, 0, 0, s3);
+    return (s0, 0, 0, 0);
 }

@@ -2,12 +2,15 @@ use super::{
     super::engine::{FuncFinished, FuncParams, FuncResults},
     TrampolineEntity,
 };
-
-use crate::{foreach_tuple::for_each_tuple, Caller, ExternRef, FuncRef, FuncType};
-use core::{array, iter::FusedIterator};
-use fluentbase_rwasm_core::common::{
-    DecodeUntypedSlice, EncodeUntypedSlice, Trap, UntypedValue, ValueType, F32, F64,
+use crate::{
+    common::{DecodeUntypedSlice, EncodeUntypedSlice, Trap, UntypedValue, ValueType, F32, F64},
+    foreach_tuple::for_each_tuple,
+    Caller,
+    ExternRef,
+    FuncRef,
+    FuncType,
 };
+use core::{array, iter::FusedIterator};
 
 /// Closures and functions that can be used as host functions.
 pub trait IntoFunc<T, Params, Results>: Send + Sync + 'static {
@@ -316,7 +319,7 @@ for_each_tuple!(impl_wasm_type_list);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_rwasm_core::common::{F32, F64};
+    use crate::common::{F32, F64};
 
     /// Utility struct helper for the `implements_wasm_results` macro.
     pub struct ImplementsWasmRet<T> {

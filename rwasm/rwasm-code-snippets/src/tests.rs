@@ -1,32 +1,45 @@
 #[cfg(test)]
 mod tests {
-    use fluentbase_rwasm::{
-        rwasm::{Compiler, FuncOrExport, ReducedModule},
-        Engine,
-    };
+    #[cfg(feature = "arithmetic_mul")]
+    use crate::arithmetic::mul::arithmetic_mul;
+    use crate::test_utils::{u256_from_be_u64, u256_from_le_u64, u256_into_le_tuple};
 
+    #[cfg(feature = "arithmetic_mul")]
     #[test]
-    pub fn bitwise_byte() {
-        let wasm_binary = wat::parse_file("./bin/bitwise_byte.wat").unwrap();
-        let engine = Engine::default();
-        let module = fluentbase_rwasm::module::Module::new(&engine, &wasm_binary[..]).unwrap();
-        println!("exports:");
-        for export in module.exports().into_iter() {
-            println!("export index {:?} name '{}'", export.index(), export.name());
+    fn test_arithmetic_mul() {
+        use ethereum_types::U256;
+
+        let cases =
+            [
+                (
+                    U256::from_dec_str("60000000000000000000000000000000000000000000").unwrap(),
+                    U256::from_dec_str("2000000000000000000000000000").unwrap(),
+                    U256::from_dec_str(
+                        "120000000000000000000000000000000000000000000000000000000000000000000000",
+                    )
+                    .unwrap(),
+                ),
+                // -1 2 -2
+                (
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639934").unwrap(),
+                ),
+            ];
+
+        for case in &cases {
+            let u256_x = case.0;
+            let u256_y = case.1;
+
+            // split the U256 into 4 u64 values
+            let (u64_x_0, u64_x_1, u64_x_2, u64_x_3) = u256_into_le_tuple(u256_x);
+            let (u64_y_0, u64_y_1, u64_y_2, u64_y_3) = u256_into_le_tuple(u256_y);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_mul(
+                u64_x_0, u64_x_1, u64_x_2, u64_x_3, u64_y_0, u64_y_1, u64_y_2, u64_y_3,
+            );
+
+            assert_eq!(u256_from_le_u64(res_0, res_1, res_2, res_3), case.2);
         }
-        println!("module.exports().count(): {}", module.exports().count());
-        // let import_linker = Runtime::new_linker();
-        let mut compiler = Compiler::new(&wasm_binary, false)/*new_with_linker(&wasm_binary.to_vec(), Some(&import_linker))*/
-            .unwrap();
-        compiler
-            .translate(Some(FuncOrExport::Func(0)), false)
-            .unwrap();
-        let rwasm = compiler.finalize().unwrap();
-        println!("rwasm {:x?}", &rwasm);
-        let reduced_module = ReducedModule::new(&rwasm, false).unwrap();
-        println!(
-            "reduced_module.trace_binary(): |||\n{}\n|||",
-            reduced_module.trace()
-        );
     }
 }

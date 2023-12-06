@@ -18,7 +18,8 @@ alloy-primitives = { version = "0.4.2", default-features = false }
 #solabi = "0.2.0"
 lazy_static = "1.4.0"
 alloy-sol-types = "0.5.1"
-byteorder = "1.5.0"
+byteorder = { version = "1.5.0", default-features = false }
+wee_alloc = "0.4.5"
 
 [dev-dependencies]
 hex-literal = "0.4.1"

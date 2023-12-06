@@ -1,6 +1,5 @@
-use crate::{module::ImportName, FuncType};
+use crate::{common::ValueType, module::ImportName, FuncType};
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use fluentbase_rwasm_core::common::{UntypedValue, ValueType};
 
 pub trait ImportHandler {
     // sys calls

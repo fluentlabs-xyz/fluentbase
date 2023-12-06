@@ -1,10 +1,12 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
+use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
-    engine::bytecode::{AddressOffset, Instruction},
+    common::Trap,
+    engine::bytecode::Instruction,
     rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule, RouterInstructions},
 };
-use fluentbase_rwasm_core::common::Trap;
+use hex_literal::hex;
 use keccak_hash::H256;
 use serde_json::from_str;
 use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync::Arc};
@@ -77,52 +79,32 @@ fn test_greeting() {
     );
 }
 
-// #[test]
-// fn zktrie_open_test() {
-//     use HASH_SCHEME_DONE;
-//     assert_eq!(*HASH_SCHEME_DONE, true);
-//
-//     let wasm_binary = include_bytes!("../../examples/bin/zktrie_open_test.wasm");
-//     let rwasm_binary = wasm2rwasm(wasm_binary);
-//
-//     let input_data = vec![];
-//
-//     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-//     assert_eq!(output.data().output().clone(), vec![]);
-// }
-//
-// #[test]
-// fn mpt_open_test() {
-//     let wasm_binary = include_bytes!("../../examples/bin/mpt_open_test.wasm");
-//     let rwasm_binary = wasm2rwasm(wasm_binary);
-//
-//     let input_data = [];
-//
-//     let output = Runtime::run(rwasm_binary.as_slice(), &input_data).unwrap();
-//     assert_eq!(output.data().output().clone(), vec![]);
-// }
-
 #[test]
 fn test_keccak256_example() {
     let wasm_binary = include_bytes!("../../examples/bin/keccak256.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
-
-    let input_data: &[u8] = "hello world".as_bytes();
+    let input_data: &[u8] = "Hello, World".as_bytes();
     let output =
         Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
-    assert_eq!(output.data().output().clone(), Vec::<u8>::new());
+    assert_eq!(output.data().exit_code, 0);
+    assert_eq!(
+        output.data().output().clone(),
+        hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529").to_vec()
+    );
 }
 
 #[test]
 fn test_poseidon() {
     let wasm_binary = include_bytes!("../../examples/bin/poseidon.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
-
     let input_data: &[u8] = "hello world".as_bytes();
-
     let output =
         Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
-    assert_eq!(output.data().output().clone(), Vec::<u8>::new());
+    assert_eq!(output.data().exit_code, 0);
+    assert_eq!(
+        output.data().output().clone(),
+        poseidon_hash(input_data).to_vec()
+    );
 }
 
 #[test]
@@ -163,72 +145,12 @@ fn test_panic() {
     let wasm_binary = include_bytes!("../../examples/bin/panic.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
     let result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
-    assert_eq!(result.data().exit_code(), 71);
-}
-
-// #[test]
-// #[ignore]
-// fn test_translator() {
-//     let wasm_binary = include_bytes!("../../examples/bin/rwasm.wasm");
-//     let rwasm_binary = wasm2rwasm(wasm_binary);
-//     let result = Runtime::run(rwasm_binary.as_slice(), &Vec::new()).unwrap();
-//     println!("{:?}", result.data().output().clone());
-// }
-
-#[test]
-fn rwasm_compile_with_linker_test() {
-    let wasm_binary_to_execute =
-        include_bytes!("../../examples/bin/rwasm_compile_with_linker_test.wasm");
-    let rwasm_binary_to_execute = wasm2rwasm(wasm_binary_to_execute, true);
-    let wasm_binary_to_compile = include_bytes!("../../examples/bin/greeting.wasm");
-    // let rwasm_binary_compile_res_len = wasm2rwasm(wasm_binary_to_compile);
-    // println!("wasm_binary_to_compile {}", wasm_binary_to_compile.len());
-    // println!(
-    //     "rwasm_binary_compile_res_len {}",
-    //     rwasm_binary_compile_res_len.len()
-    // );
-    let input = wasm_binary_to_compile.to_vec();
-    let result =
-        Runtime::<()>::run(rwasm_binary_to_execute.as_slice(), &input, 10_000_000).unwrap();
-    println!("{:?}", result.data().output().clone());
-    assert_eq!(result.data().output().clone(), Vec::<u8>::new());
+    assert_eq!(result.data().exit_code(), -1);
 }
 
 #[test]
 fn test_state() {
-    let wasm_binary = wat::parse_str(
-        r#"
-(module
-  (memory 1)
-  (data (i32.const 0) "\01\00\00\00\00\00\00\00")
-
-  (func $main
-    i32.const 0
-    i32.load
-    drop
-    )
-  (func $add (param $lhs i32) (param $rhs i32) (result i32)
-    local.get $lhs
-    local.get $rhs
-    i32.add
-    )
-  (func $deploy
-    i32.const 1
-    memory.grow
-    drop
-    i32.const 0
-    i32.const 1000
-    i32.store
-    )
-
-  (global (;0;) i32 (i32.const 100))
-  (global (;1;) i32 (i32.const 20))
-  (global (;2;) i32 (i32.const 3))
-  (export "main" (func $main))
-  (export "deploy" (func $deploy)))
-    "#,
-    )
-    .unwrap();
+    let wasm_binary = include_bytes!("../../examples/bin/state.wasm");
     let import_linker = Runtime::<()>::new_linker();
     let mut compiler = Compiler::new_with_linker(
         wasm_binary.as_slice(),
@@ -416,8 +338,8 @@ fn test_keccak256() {
         false,
     );
 
-    let mut rmodule = ReducedModule::new(&rwasm_binary, false).unwrap();
-    println!("rmodule.trace_binary(): {:?}", rmodule.trace());
+    let module = ReducedModule::new(&rwasm_binary, false).unwrap();
+    println!("module.trace_binary(): {:?}", module.trace());
     let execution_result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
     println!(
         "execution_result (exit_code {}): {:?}",

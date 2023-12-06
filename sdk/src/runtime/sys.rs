@@ -1,4 +1,5 @@
 use crate::{SysPlatformSDK, SDK};
+use alloc::{vec, vec::Vec};
 
 lazy_static::lazy_static! {
     static ref INPUT: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(vec![]);
@@ -24,5 +25,9 @@ impl SysPlatformSDK for SDK {
 
     fn sys_halt(exit_code: i32) {
         unreachable!("program has exited with code: {}", exit_code)
+    }
+
+    fn sys_state() -> u32 {
+        unreachable!("state is not known")
     }
 }

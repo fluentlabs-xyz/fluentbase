@@ -5,16 +5,18 @@ mod error;
 #[cfg(test)]
 mod tests;
 
-use crate::arena::ArenaIndex;
-use crate::{engine::executor::EntityGrowError, store::ResourceLimiterRef};
-
 use self::buffer::ByteBuffer;
 pub use self::{
     data::{DataSegment, DataSegmentEntity, DataSegmentIdx},
     error::MemoryError,
 };
 use super::{AsContext, AsContextMut, StoreContext, StoreContextMut, Stored};
-use fluentbase_rwasm_core::common::{Pages, TrapCode};
+use crate::{
+    arena::ArenaIndex,
+    common::{Pages, TrapCode},
+    engine::executor::EntityGrowError,
+    store::ResourceLimiterRef,
+};
 
 /// A raw index to a linear memory entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -1,6 +1,7 @@
 use super::{bytecode::BranchOffset, const_pool::ConstRef, CompiledFunc, ConstPoolView};
 use crate::{
     arena::ArenaIndex,
+    common::{Pages, TrapCode, UntypedValue},
     engine::{
         bytecode::{
             AddressOffset,
@@ -37,7 +38,6 @@ use crate::{
 };
 use alloc::string::String;
 use core::cmp::{self};
-use fluentbase_rwasm_core::common::{Pages, TrapCode, UntypedValue};
 
 /// The outcome of a Wasm execution.
 ///

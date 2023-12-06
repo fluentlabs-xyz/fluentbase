@@ -4,19 +4,47 @@ const fs = require('fs');
 const DEPLOYER_PRIVATE_KEY = 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
 const main = async () => {
-    let wasmBinary = fs.readFileSync('./bin/greeting.wasm').toString('hex');
-    const web3 = new Web3('http://127.0.0.1:8545');
+    if (process.argv.length < 3) {
+        console.log(`You must specify path to the WASM binary!`);
+        console.log(`Example: node deploy-contract.js --dev ./bin/greeting.wasm`);
+        process.exit(-1);
+    }
+    let args = process.argv.slice(2);
+    const checkFlag = (param) => {
+        let indexOf = args.indexOf(param)
+        if (indexOf < 0) {
+            return false
+        }
+        args.splice(indexOf, 1)
+        return true
+    };
+    let isLocal = checkFlag('--local')
+    let isDev = checkFlag('--dev')
+
+    let web3Url = 'https://rpc.dev0.fluentlabs.xyz/';
+    if (isLocal) {
+        web3Url = 'http://127.0.0.1:8545';
+    }
+
+    let [binaryPath] = args;
+    let wasmBinary = fs.readFileSync(binaryPath).toString('hex');
+    const web3 = new Web3(web3Url);
+    let privateKey = process.env.DEPLOYER_PRIVATE_KEY || DEPLOYER_PRIVATE_KEY;
 
     console.log('Signing transaction...');
     const signedTransaction = await web3.eth.accounts.signTransaction({
         data: '0x' + wasmBinary,
-        gas: 10_000_000,
-    }, DEPLOYER_PRIVATE_KEY)
+        gas: 1_000_000,
+    }, privateKey)
+
     console.log('Sending transaction...');
     const receipt = await web3.eth.sendSignedTransaction(signedTransaction.rawTransaction);
     console.log(`Receipt: ${JSON.stringify(receipt, null, 2)}`)
+
     const {contractAddress} = receipt;
-    console.log(`Contract address is: ${contractAddress}`);
+    if (contractAddress) {
+        console.log(`Contract address is: ${contractAddress}`);
+    }
 
     // let contractAddress = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9';
     // const result = await web3.eth.call({

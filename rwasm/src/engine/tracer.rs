@@ -1,5 +1,5 @@
-use fluentbase_rwasm_core::common::UntypedValue;
 use crate::{
+    common::UntypedValue,
     engine::bytecode::{InstrMeta, Instruction, TableIdx},
     Extern,
 };

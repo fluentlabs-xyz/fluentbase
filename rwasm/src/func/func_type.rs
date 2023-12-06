@@ -1,5 +1,4 @@
-use fluentbase_rwasm_core::common::ValueType;
-use crate::{ func::FuncError, Value};
+use crate::{common::ValueType, func::FuncError, Value};
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt;
 

@@ -1,6 +1,6 @@
 use super::bytecode::{DataSegmentIdx, ElementSegmentIdx, FuncIdx, GlobalIdx, TableIdx};
-use fluentbase_rwasm_core::common::UntypedValue;
 use crate::{
+    common::UntypedValue,
     instance::InstanceEntity,
     memory::DataSegment,
     module::DEFAULT_MEMORY_INDEX,
