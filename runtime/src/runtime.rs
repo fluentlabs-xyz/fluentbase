@@ -183,7 +183,7 @@ pub struct Runtime<'t, T> {
     module: Module,
     linker: Linker<RuntimeContext<'t, T>>,
     store: Store<RuntimeContext<'t, T>>,
-    instance: Instance,
+    instance: Option<Instance>,
 }
 
 impl<'t, T> Runtime<'t, T> {
@@ -492,6 +492,7 @@ impl<'t, T> Runtime<'t, T> {
         import_linker
     }
 
+    #[deprecated(note = "use `run_with_context` instead")]
     pub fn run(
         rwasm_binary: &[u8],
         input_data: &Vec<u8>,
@@ -525,6 +526,16 @@ impl<'t, T> Runtime<'t, T> {
         runtime_context: RuntimeContext<'t, T>,
         import_linker: &ImportLinker,
     ) -> Result<Self, RuntimeError> {
+        let mut result = Self::new_uninit(runtime_context, import_linker)?;
+        result.register_bindings();
+        result.instantiate()?;
+        Ok(result)
+    }
+
+    pub fn new_uninit(
+        runtime_context: RuntimeContext<'t, T>,
+        import_linker: &ImportLinker,
+    ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
 
         let engine = {
@@ -555,33 +566,37 @@ impl<'t, T> Runtime<'t, T> {
             store.add_fuel(fuel_limit as u64).unwrap();
         }
 
-        Self::register_bindings(&mut linker, &mut store);
-
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(Into::<RuntimeError>::into)?
-            .start(&mut store)
-            .map_err(Into::<RuntimeError>::into)?;
-
         let result = Self {
             engine,
             bytecode,
             module,
             linker,
             store,
-            instance,
+            instance: None,
         };
 
         Ok(result)
     }
 
+    pub fn instantiate(&mut self) -> Result<(), RuntimeError> {
+        let instance = self
+            .linker
+            .instantiate(&mut self.store, &self.module)
+            .map_err(Into::<RuntimeError>::into)?
+            .start(&mut self.store)
+            .map_err(Into::<RuntimeError>::into)?;
+        self.instance = Some(instance);
+        Ok(())
+    }
+
     pub fn call(&mut self) -> Result<ExecutionResult<'t, T>, RuntimeError> {
-        let func =
-            self.instance
-                .get_func(&mut self.store, "main")
-                .ok_or(RuntimeError::ReducedModule(
-                    ReducedModuleError::MissingEntrypoint,
-                ))?;
+        let func = self
+            .instance
+            .unwrap()
+            .get_func(&mut self.store, "main")
+            .ok_or(RuntimeError::ReducedModule(
+                ReducedModuleError::MissingEntrypoint,
+            ))?;
         let res = func
             .call(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
@@ -614,10 +629,9 @@ impl<'t, T> Runtime<'t, T> {
             .unwrap();
     }
 
-    fn register_bindings(
-        linker: &mut Linker<RuntimeContext<'t, T>>,
-        store: &mut Store<RuntimeContext<'t, T>>,
-    ) {
+    fn register_bindings(&mut self) {
+        let linker = &mut self.linker;
+        let store = &mut self.store;
         use crate::instruction::*;
         // sys
         forward_call!(linker, store, "env", "_sys_halt", fn sys_halt(exit_code: u32) -> ());
@@ -660,11 +674,12 @@ impl<'t, T> Runtime<'t, T> {
         // zktrie_update_store(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) ->
         // ()); forward_call!(linker, store, "env", "_zktrie_get_store", fn
         // zktrie_get_store(key_offset: i32, key_len: i32, output_offset: i32) -> i32); mpt
-        forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
-        forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32, key_len: i32, value_offset: i32, value_len: i32) -> ());
-        forward_call!(linker, store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32) -> i32);
-        forward_call!(linker, store, "env", "_mpt_get_root", fn mpt_get_root(output_offset: i32) -> i32);
-        // crypto
+        // forward_call!(linker, store, "env", "_mpt_open", fn mpt_open() -> ());
+        // forward_call!(linker, store, "env", "_mpt_update", fn mpt_update(key_offset: i32,
+        // key_len: i32, value_offset: i32, value_len: i32) -> ()); forward_call!(linker,
+        // store, "env", "_mpt_get", fn mpt_get(key_offset: i32, key_len: i32, output_offset: i32)
+        // -> i32); forward_call!(linker, store, "env", "_mpt_get_root", fn
+        // mpt_get_root(output_offset: i32) -> i32); crypto
         forward_call!(linker, store, "env", "_crypto_keccak256", fn crypto_keccak256(data_offset: i32, data_len: i32, output_offset: i32) -> ());
         forward_call!(linker, store, "env", "_crypto_poseidon", fn crypto_poseidon(data_offset: i32, data_len: i32, output_offset: i32) -> ());
         forward_call!(linker, store, "env", "_crypto_poseidon2", fn crypto_poseidon2(fa_offset: i32, fb_offset: i32, fdomain_offset: i32, output_offset: i32) -> ());
