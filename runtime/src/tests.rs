@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
+use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx, STATE_DEPLOY, STATE_MAIN};
 use eth_trie::DB;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
@@ -31,14 +31,26 @@ fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     .unwrap()
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::{tests::wat2rwasm, Runtime};
+fn translate_with_state(wasm_binary: &[u8]) -> Vec<u8> {
+    let import_linker = Runtime::<()>::new_linker();
+    let mut compiler =
+        Compiler::new_with_linker(&wasm_binary.to_vec(), Some(&import_linker), true).unwrap();
+    compiler
+        .translate(
+            Some(FuncOrExport::StateRouter(
+                vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+            )),
+            true,
+        )
+        .unwrap();
+    compiler.finalize().unwrap()
+}
 
-    #[test]
-    fn test_simple() {
-        let rwasm_binary = wat2rwasm(
-            r#"
+#[test]
+fn test_simple() {
+    let rwasm_binary = wat2rwasm(
+        r#"
 (module
   (func $main
     global.get 0
@@ -58,17 +70,23 @@ mod tests {
   (global (;2;) i32 (i32.const 3))
   (export "main" (func $main)))
     "#,
-            true,
-        );
-        Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
-    }
+        true,
+    );
+    Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
 }
 
 #[test]
 fn test_greeting() {
-    let wasm_binary = include_bytes!("../../examples/bin/greeting.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary, true);
-    let output = Runtime::<()>::run(rwasm_binary.as_slice(), &vec![], 10_000_000).unwrap();
+    let rwasm_binary = translate_with_state(include_bytes!("../../examples/bin/greeting.wasm"));
+    let input_data: &[u8] = "Hello, World".as_bytes();
+    let ctx = RuntimeContext::new(rwasm_binary)
+        .with_state(STATE_MAIN)
+        .with_fuel_limit(100_000)
+        .with_input(input_data.to_vec());
+    let import_linker = Runtime::<()>::new_linker();
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    let output = runtime.call().unwrap();
+    assert_eq!(output.data().exit_code, 0);
     assert_eq!(
         output.data().output().clone(),
         "Hello, World".as_bytes().to_vec()
@@ -77,11 +95,15 @@ fn test_greeting() {
 
 #[test]
 fn test_keccak256_example() {
-    let wasm_binary = include_bytes!("../../examples/bin/keccak256.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary, true);
+    let rwasm_binary = translate_with_state(include_bytes!("../../examples/bin/keccak256.wasm"));
     let input_data: &[u8] = "Hello, World".as_bytes();
-    let output =
-        Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary)
+        .with_state(STATE_MAIN)
+        .with_fuel_limit(100_000)
+        .with_input(input_data.to_vec());
+    let import_linker = Runtime::<()>::new_linker();
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    let output = runtime.call().unwrap();
     assert_eq!(output.data().exit_code, 0);
     assert_eq!(
         output.data().output().clone(),
@@ -162,7 +184,7 @@ fn test_state() {
     let rwasm_bytecode = compiler.finalize().unwrap();
     let result = Runtime::<()>::run_with_context(
         RuntimeContext::new(rwasm_bytecode.clone())
-            .with_state(0)
+            .with_state(STATE_DEPLOY)
             .with_fuel_limit(100_000),
         &import_linker,
     )
@@ -170,7 +192,7 @@ fn test_state() {
     assert_eq!(result.data().output()[0], 100);
     let result = Runtime::<()>::run_with_context(
         RuntimeContext::new(rwasm_bytecode)
-            .with_state(1)
+            .with_state(STATE_MAIN)
             .with_fuel_limit(100_000),
         &import_linker,
     )

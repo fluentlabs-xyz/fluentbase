@@ -3,11 +3,21 @@ use alloc::{vec, vec::Vec};
 
 lazy_static::lazy_static! {
     static ref INPUT: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(vec![]);
+    static ref OUTPUT: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(vec![]);
+    static ref STATE: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
 }
 
 impl SDK {
     pub fn with_test_input(input: Vec<u8>) {
         INPUT.lock().unwrap().extend(&input);
+    }
+
+    pub fn get_test_output() -> Vec<u8> {
+        OUTPUT.lock().unwrap().clone()
+    }
+
+    pub(crate) fn with_test_state(state: u32) {
+        *STATE.lock().unwrap() = state;
     }
 }
 
@@ -19,8 +29,8 @@ impl SysPlatformSDK for SDK {
         target.len() as u32
     }
 
-    fn sys_write(_value: &[u8]) {
-        unreachable!("I think this function is not possible for runtime")
+    fn sys_write(value: &[u8]) {
+        OUTPUT.lock().unwrap().extend(value);
     }
 
     fn sys_halt(exit_code: i32) {
@@ -28,6 +38,6 @@ impl SysPlatformSDK for SDK {
     }
 
     fn sys_state() -> u32 {
-        unreachable!("state is not known")
+        *STATE.lock().unwrap()
     }
 }
