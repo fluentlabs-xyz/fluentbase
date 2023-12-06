@@ -17,59 +17,52 @@ pub fn arithmetic_mul(
         let b_lo = b & U64_LOW_PART_MASK;
         let b_hi = b >> U64_HALF_BITS_COUNT;
 
-        let lo = a_lo.wrapping_mul(b_lo);
-        let mid1 = a_lo.wrapping_mul(b_hi);
-        let mid2 = a_hi.wrapping_mul(b_lo);
-        let hi = a_hi.wrapping_mul(b_hi);
+        let lo = a_lo * b_lo;
+        let mid1 = a_lo * b_hi;
+        let mid2 = a_hi * b_lo;
+        let hi = a_hi * b_hi;
 
-        let mid_sum = mid1.wrapping_add(mid2);
-        let hi_carry = mid_sum < mid1 || lo > (u64::MAX - mid_sum);
+        let (mid_sum, hi_carry) = mid1.overflowing_add(mid2);
+        let hi_carry = (hi_carry as u64) << 32;
 
-        let hi_result =
-            hi.wrapping_add((mid_sum >> U64_HALF_BITS_COUNT) + if hi_carry { 1 } else { 0 });
-        let lo_result = lo.wrapping_add((mid_sum & U64_LOW_PART_MASK) << 32);
+        let lo_result = lo.overflowing_add(mid_sum << 32);
+        let hi_result = hi + (mid_sum >> U64_HALF_BITS_COUNT) + hi_carry + lo_result.1 as u64;
 
-        (hi_result, lo_result)
+        (hi_result, lo_result.0)
     }
 
-    let mut result = [0u64; 4];
-    let x = [a0, a1, a2, a3];
-    let y = [b0, b1, b2, b3];
+    let mut res = [0u64; 4];
+    let av = [a0, a1, a2, a3];
+    let bv = [b0, b1, b2, b3];
 
-    for i in 0..3 {
-        let mut carry = 0u64;
-        let b = y[i];
+    for i in 0..4 {
+        let mut carry: u64 = 0;
+        let b = bv[i];
 
-        for j in 0..3 {
-            if i + j < 4 {
-                // Ensure not to go out of bounds
-                let a = x[j];
+        for j in 0..4 {
+            let res_cur_idx = i + j;
+            if res_cur_idx < 4 {
+                let a = av[j];
 
-                let (hi, low) = multiply_u64(a, b);
+                let (h, l) = multiply_u64(a, b);
 
-                let overflow = {
-                    let existing_low = &mut result[i + j];
-                    let (low, o) = low.overflowing_add(*existing_low);
-                    *existing_low = low;
-                    o
-                };
+                let res_chunk = &mut res[res_cur_idx];
+                let (l, o) = l.overflowing_add(*res_chunk);
+                carry += o as u64;
+                *res_chunk = l;
 
-                carry = {
-                    if i + j < 3 {
-                        let existing_hi = &mut result[i + j + 1];
-                        let hi = hi + overflow as u64;
-                        let (hi, o0) = hi.overflowing_add(carry);
-                        let (hi, o1) = hi.overflowing_add(*existing_hi);
-                        *existing_hi = hi;
-
-                        (o0 | o1) as u64
-                    } else {
-                        overflow as u64
-                    }
-                };
+                let res_next_idx = res_cur_idx + 1;
+                if res_next_idx < 4 {
+                    let res_chunk = &mut res[res_next_idx];
+                    let (h, o) = h.overflowing_add(carry);
+                    carry = o as u64;
+                    let (h, o) = h.overflowing_add(*res_chunk);
+                    carry += o as u64;
+                    *res_chunk = h;
+                }
             }
         }
     }
 
-    (result[0], result[1], result[2], result[3])
+    (res[0], res[1], res[2], res[3])
 }

@@ -166,10 +166,6 @@ mod evm_to_rwasm_tests {
                     global_memory_len = offset_end;
                 }
             }
-            debug!(
-                "global_memory (total len {}) {:?}",
-                global_memory_len, &global_memory
-            );
         }
         debug!(
             "global_memory (total len {}) {:?}",
@@ -792,6 +788,15 @@ mod evm_to_rwasm_tests {
                 x("0x0000000000000000000000000000000000000000000000000000000000000004"),
                 xr(
                     "0x0000000000000000000000000000000000000000000000000000000000000020",
+                    0,
+                ),
+            ),
+            // a=-1 b=-1 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
                     0,
                 ),
             ),
