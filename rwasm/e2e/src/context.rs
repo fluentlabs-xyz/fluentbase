@@ -616,7 +616,7 @@ impl TestContext<'_> {
             )))
             .map_err(|err| TestError::Compiler(err))?;
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), true).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
         let mut module_builder =
             reduced_module.to_module_builder(&self.engine, &import_linker, FuncType::new([], []));
 
@@ -724,7 +724,7 @@ impl TestContext<'_> {
 
         let mut compiler = Compiler::new_with_linker(
             wasm_binary.as_slice(),
-            CompilerConfig::default(),
+            CompilerConfig::default().fuel_consume(false),
             Some(&import_linker),
         )
         .unwrap();
@@ -743,7 +743,7 @@ impl TestContext<'_> {
         }
 
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), true).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
 
         let func_type = elem.ty().func();
         let global_type = elem

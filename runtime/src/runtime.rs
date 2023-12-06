@@ -46,6 +46,7 @@ impl<'t, T> Clone for RuntimeContext<'t, T> {
     fn clone(&self) -> Self {
         Self {
             context: None,
+            func_type: None,
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
@@ -725,11 +726,11 @@ impl<'t, T> Runtime<'t, T> {
         }
     }
 
-    pub fn data(&self) -> &RuntimeContext {
+    pub fn data(&self) -> &RuntimeContext<'t, T> {
         self.store.data()
     }
 
-    pub fn data_mut(&mut self) -> &mut RuntimeContext {
+    pub fn data_mut(&mut self) -> &mut RuntimeContext<'t, T> {
         self.store.data_mut()
     }
 }

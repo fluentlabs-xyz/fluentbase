@@ -4,7 +4,10 @@ use crate::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_rwasm::{rwasm::Compiler, Caller};
+use fluentbase_rwasm::{
+    rwasm::{Compiler, CompilerConfig},
+    Caller,
+};
 use fluentbase_rwasm_core::common::Trap;
 
 pub(crate) fn rwasm_compile<T>(
@@ -18,8 +21,13 @@ pub(crate) fn rwasm_compile<T>(
 
     // translate WASM binary to rWASM
     let import_linker = Runtime::<T>::new_linker();
-    let mut compiler =
-        Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true).unwrap();
+
+    let mut compiler = Compiler::new_with_linker(
+        input.as_ref(),
+        CompilerConfig::default().fuel_consume(true),
+        Some(&import_linker),
+    )
+    .unwrap();
     let compile_res = compiler.finalize();
     match compile_res {
         Ok(rwasm_bytecode) => {
