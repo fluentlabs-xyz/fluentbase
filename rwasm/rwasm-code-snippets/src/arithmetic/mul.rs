@@ -33,8 +33,8 @@ pub fn arithmetic_mul(
     }
 
     let mut result = [0u64; 4];
-    let x = [a3, a2, a1, a0];
-    let y = [b3, b2, b1, b0];
+    let x = [a0, a1, a2, a3];
+    let y = [b0, b1, b2, b3];
 
     for i in 0..3 {
         let mut carry = 0u64;
