@@ -753,7 +753,7 @@ impl<T> Linker<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{common::ValueType, Store};
+    use crate::Store;
     use fluentbase_rwasm_core::common::ValueType;
 
     struct HostState {

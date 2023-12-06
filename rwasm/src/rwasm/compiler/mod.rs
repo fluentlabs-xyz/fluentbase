@@ -235,7 +235,7 @@ impl<'linker> Compiler<'linker> {
         } else if self.config.translate_sections {
             self.translate_sections(main_index.unwrap_or_default())?;
         }
-
+        self.translate_imports_funcs()?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
         for i in 0..total_fns {

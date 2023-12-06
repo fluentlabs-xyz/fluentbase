@@ -1,8 +1,8 @@
 use crate::{runtime::Runtime, RuntimeContext, RuntimeError, SysFuncIdx};
 use eth_trie::DB;
 use fluentbase_rwasm::{
-    engine::bytecode::Instruction,
-    rwasm::{Compiler, FuncOrExport, ReducedModule},
+    engine::bytecode::{AddressOffset, Instruction},
+    rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule, RouterInstructions},
 };
 use fluentbase_rwasm_core::common::Trap;
 use keccak_hash::H256;
@@ -12,8 +12,12 @@ use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync
 pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
-    let mut compiler =
-        Compiler::new_with_linker(&wasm_binary, Some(&import_linker), consume_fuel).unwrap();
+    let mut compiler = Compiler::new_with_linker(
+        &wasm_binary,
+        CompilerConfig::default().fuel_consume(consume_fuel),
+        Some(&import_linker),
+    )
+    .unwrap();
     compiler.finalize().unwrap()
 }
 
@@ -21,8 +25,8 @@ fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_linker();
     Compiler::new_with_linker(
         &wasm_binary.to_vec(),
+        CompilerConfig::default().fuel_consume(inject_fuel_consumption),
         Some(&import_linker),
-        inject_fuel_consumption,
     )
     .unwrap()
     .finalize()
@@ -226,8 +230,12 @@ fn test_state() {
     )
     .unwrap();
     let import_linker = Runtime::<()>::new_linker();
-    let mut compiler =
-        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker), true).unwrap();
+    let mut compiler = Compiler::new_with_linker(
+        wasm_binary.as_slice(),
+        CompilerConfig::default().fuel_consume(true),
+        Some(&import_linker),
+    )
+    .unwrap();
     compiler
         .translate(Some(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
@@ -239,7 +247,7 @@ fn test_state() {
         )))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
-    let mut runtime = Runtime::new(
+    let mut runtime = Runtime::<()>::new(
         RuntimeContext::new(rwasm_bytecode).with_fuel_limit(1_000_000),
         &import_linker,
     )
@@ -267,44 +275,47 @@ fn test_input_output() {
     "#,
     )
     .unwrap();
-    let import_linker = Runtime::new_linker();
-    let mut compiler =
-        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
+    let import_linker = Runtime::<()>::new_linker();
+    let mut compiler = Compiler::new_with_linker(
+        wasm_binary.as_slice(),
+        CompilerConfig::default()
+            .with_state(true)
+            .fuel_consume(true),
+        Some(&import_linker),
+    )
+    .unwrap();
     compiler
-        .translate_with_state(
-            Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("main")],
-                RouterInstructions {
-                    state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                    input_ix: vec![
-                        Instruction::i32_const(1),
-                        Instruction::MemoryGrow,
-                        Instruction::Drop,
-                        Instruction::i32_const(0),
-                        Instruction::i32_const(0),
-                        Instruction::i32_const(8),
-                        Instruction::Call((SysFuncIdx::SYS_READ as u32).into()),
-                        Instruction::Drop,
-                        Instruction::i32_const(0),
-                        Instruction::I64Load(AddressOffset::from(0)),
-                    ],
-                    output_ix: vec![
-                        Instruction::local_get(1).unwrap(),
-                        Instruction::i32_const(0),
-                        Instruction::local_set(2).unwrap(),
-                        Instruction::I64Store(AddressOffset::from(0)),
-                        Instruction::i32_const(0),
-                        Instruction::i32_const(8),
-                        Instruction::Call((SysFuncIdx::SYS_WRITE as u32).into()),
-                    ],
-                },
-            )),
-            true,
-        )
+        .translate(Some(FuncOrExport::StateRouter(
+            vec![FuncOrExport::Export("main")],
+            RouterInstructions {
+                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                input_ix: vec![
+                    Instruction::i32_const(1),
+                    Instruction::MemoryGrow,
+                    Instruction::Drop,
+                    Instruction::i32_const(0),
+                    Instruction::i32_const(0),
+                    Instruction::i32_const(8),
+                    Instruction::Call((SysFuncIdx::SYS_READ as u32).into()),
+                    Instruction::Drop,
+                    Instruction::i32_const(0),
+                    Instruction::I64Load(AddressOffset::from(0)),
+                ],
+                output_ix: vec![
+                    Instruction::local_get(1).unwrap(),
+                    Instruction::i32_const(0),
+                    Instruction::local_set(2).unwrap(),
+                    Instruction::I64Store(AddressOffset::from(0)),
+                    Instruction::i32_const(0),
+                    Instruction::i32_const(8),
+                    Instruction::Call((SysFuncIdx::SYS_WRITE as u32).into()),
+                ],
+            },
+        )))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
-    let mut runtime = Runtime::new(
+    let mut runtime = Runtime::<()>::new(
         RuntimeContext::new(rwasm_bytecode.as_slice())
             .with_input(vec![64, 0, 0, 0, 0, 0, 0, 0])
             .with_state(0)
@@ -343,26 +354,28 @@ fn test_wrong_indirect_type() {
     "#,
     )
     .unwrap();
-    let import_linker = Runtime::new_linker();
-    let mut compiler =
-        Compiler::new_with_linker(wasm_binary.as_slice(), Some(&import_linker)).unwrap();
-
+    let import_linker = Runtime::<()>::new_linker();
+    let mut compiler = Compiler::new_with_linker(
+        wasm_binary.as_slice(),
+        CompilerConfig::default()
+            .fuel_consume(true)
+            .with_state(true),
+        Some(&import_linker),
+    )
+    .unwrap();
     compiler
-        .translate_with_state(
-            Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("main")],
-                RouterInstructions {
-                    state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                    input_ix: vec![],
-                    output_ix: vec![],
-                },
-            )),
-            true,
-        )
+        .translate(Some(FuncOrExport::StateRouter(
+            vec![FuncOrExport::Export("main")],
+            RouterInstructions {
+                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                input_ix: vec![],
+                output_ix: vec![],
+            },
+        )))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
-    let mut runtime = Runtime::new(
+    let mut runtime = Runtime::<()>::new(
         RuntimeContext::new(rwasm_bytecode.as_slice())
             .with_input(vec![1, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0])
             .with_fuel_limit(1_000_000)
