@@ -50,8 +50,14 @@ const main = async () => {
     const result = await web3.eth.call({
         to: contractAddress,
     });
-    const message = web3.utils.hexToAscii(result)
-    console.log(`Message: "${message}"`)
+    function isASCII(str) {
+        return /^[\x00-\x7F]*$/.test(str);
+    }
+    if (isASCII(web3.utils.hexToAscii(result))) {
+        console.log(`Message: "${web3.utils.hexToAscii(result)}"`)
+    } else {
+        console.log(`Message: "${result}"`)
+    }
 
     // const signedTransaction1 = await web3.eth.accounts.signTransaction({
     //     to: contractAddress,

@@ -112,6 +112,24 @@ fn test_keccak256_example() {
 }
 
 #[test]
+fn test_keccak256_empty() {
+    let rwasm_binary = translate_with_state(include_bytes!("../../examples/bin/keccak256.wasm"));
+    let input_data: &[u8] = "".as_bytes();
+    let ctx = RuntimeContext::new(rwasm_binary)
+        .with_state(STATE_MAIN)
+        .with_fuel_limit(100_000)
+        .with_input(input_data.to_vec());
+    let import_linker = Runtime::<()>::new_linker();
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    let output = runtime.call().unwrap();
+    assert_eq!(output.data().exit_code, 0);
+    assert_eq!(
+        output.data().output().clone(),
+        hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470").to_vec()
+    );
+}
+
+#[test]
 fn test_poseidon() {
     let wasm_binary = include_bytes!("../../examples/bin/poseidon.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);

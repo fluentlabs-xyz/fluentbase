@@ -241,16 +241,16 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             let instr = *self.ip.get();
             let meta = *self.ip.meta();
 
-            println!(
-                "{} {:?} {:?}",
-                self.ip.pc(),
-                instr,
-                self.value_stack
-                    .dump_stack(self.sp)
-                    .iter()
-                    .map(|v| v.as_u64())
-                    .collect::<Vec<_>>()
-            );
+            // println!(
+            //     "{} {:?} {:?}",
+            //     self.ip.pc(),
+            //     instr,
+            //     self.value_stack
+            //         .dump_stack(self.sp)
+            //         .iter()
+            //         .map(|v| v.as_u64())
+            //         .collect::<Vec<_>>()
+            // );
 
             // handle pre-instruction state
             let has_default_memory = {
