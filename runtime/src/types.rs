@@ -26,6 +26,9 @@ pub enum ExitCode {
     UnknownError = -2017,
 }
 
+pub const STATE_MAIN: u32 = 0;
+pub const STATE_DEPLOY: u32 = 1;
+
 impl From<TrapCode> for ExitCode {
     fn from(value: TrapCode) -> Self {
         match value {
