@@ -1,4 +1,8 @@
-use crate::{common::ValueType, module::ImportName, FuncType};
+use crate::{
+    common::{UntypedValue, ValueType},
+    module::ImportName,
+    FuncType,
+};
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 pub trait ImportHandler {

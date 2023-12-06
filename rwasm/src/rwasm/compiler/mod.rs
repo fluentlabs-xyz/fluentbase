@@ -1,6 +1,6 @@
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, UntypedValue, ValueType},
+    common::{Pages, UntypedValue, ValueType, F32},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -966,15 +966,14 @@ impl<'linker> Compiler<'linker> {
                 // self.code_section
                 //     .op_ref_func(REF_FUNC_FUNCTION_OFFSET + target - 1);
                 self.code_section.op_i32_const(target);
-                let fn_index = func_idx.into_usize() as u32;
+                let fn_index = func_idx.into_usize() as u32 + self.module.imports.len_funcs as u32;
 
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let idx = self.get_or_insert_check_idx(func_type.clone());
                 self.code_section.op_i32_const(idx);
 
-                self.code_section
-                    .op_call_internal(fn_index + self.module.imports.len_funcs as u32);
+                self.code_section.op_call_internal(fn_index);
                 // self.code_section.op_drop();
             }
             WI::CallIndirect(sig_index) => {
@@ -1120,6 +1119,7 @@ impl<'linker> Compiler<'linker> {
             match bytecode.instr[i] {
                 Instruction::CallInternal(func) => {
                     let func_idx = func.to_u32() + 1;
+
                     bytecode.instr[i] = Instruction::Br(BranchOffset::from(
                         self.function_beginning[&func_idx] as i32 - i as i32,
                     ));

@@ -1,6 +1,7 @@
 use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
+    common::{Trap, UntypedValue, ValueType, F32, F64},
     engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
     rwasm::{
         Compiler,
@@ -35,7 +36,6 @@ use fluentbase_rwasm::{
     TableType,
     Value,
 };
-use fluentbase_rwasm_core::common::{Trap, UntypedValue, ValueType, F32, F64};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use wast::token::{Id, Span};
 
