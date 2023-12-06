@@ -1,6 +1,5 @@
 use crate::{instruction::exported_memory_vec, runtime::RuntimeContext, ExitCode};
-use fluentbase_rwasm::Caller;
-use fluentbase_rwasm_core::common::Trap;
+use fluentbase_rwasm::{common::Trap, Caller};
 
 pub(crate) fn sys_halt<T>(
     mut caller: Caller<RuntimeContext<T>>,
@@ -21,13 +20,12 @@ pub(crate) fn sys_read<T>(
     length: u32,
 ) -> Result<u32, Trap> {
     let input = caller.data().input().clone();
-    if offset + length > input.len() as u32 {
+    if offset > input.len() as u32 {
         return Err(ExitCode::MemoryOutOfBounds.into());
     }
-    caller.write_memory(
-        target as usize,
-        &input.as_slice()[(offset as usize)..(offset as usize + length as usize)],
-    );
+    let input = &input.as_slice()[(offset as usize)..];
+    let copy_length = core::cmp::min(length, input.len() as u32);
+    caller.write_memory(target as usize, &input[..copy_length as usize]);
     Ok(input.len() as u32)
 }
 

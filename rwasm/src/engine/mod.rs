@@ -31,13 +31,21 @@ pub use self::{
     code_map::CompiledFunc,
     config::{Config, FuelConsumptionMode},
     func_builder::{
-        FuncBuilder, FuncTranslatorAllocations, Instr, RelativeDepth, TranslationError,
+        FuncBuilder,
+        FuncTranslatorAllocations,
+        Instr,
+        RelativeDepth,
+        TranslationError,
         ValueStackHeight,
     },
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
     tracer::{
-        Tracer, TracerFunctionMeta, TracerGlobalVariable, TracerInstrState, TracerMemoryState,
+        Tracer,
+        TracerFunctionMeta,
+        TracerGlobalVariable,
+        TracerInstrState,
+        TracerMemoryState,
     },
     traits::{CallParams, CallResults},
 };
@@ -48,13 +56,17 @@ pub(crate) use self::{
 };
 use crate::{
     arena::{ArenaIndex, GuardedEntity},
+    common::{Trap, TrapCode, UntypedValue},
     engine::{bytecode::InstrMeta, code_map::InstructionPtr},
     func::FuncEntity,
-    AsContext, AsContextMut, Func, FuncType, StoreContextMut,
+    AsContext,
+    AsContextMut,
+    Func,
+    FuncType,
+    StoreContextMut,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
-use fluentbase_rwasm_core::common::{Trap, TrapCode, UntypedValue};
 use spin::{Mutex, RwLock};
 
 /// A unique engine index.

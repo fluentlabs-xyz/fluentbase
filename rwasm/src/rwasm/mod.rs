@@ -11,6 +11,7 @@ pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, r
 #[cfg(test)]
 mod tests {
     use crate::{
+        common::ValueType,
         engine::bytecode::Instruction,
         rwasm::{
             compiler::Compiler,
@@ -30,7 +31,6 @@ mod tests {
         Store,
     };
     use alloc::string::ToString;
-    use fluentbase_rwasm_core::common::ValueType;
 
     #[derive(Default, Debug, Clone)]
     struct HostState {

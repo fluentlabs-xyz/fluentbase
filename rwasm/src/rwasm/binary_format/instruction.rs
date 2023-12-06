@@ -1,5 +1,6 @@
 use crate::engine::ConstRef;
 use crate::{
+    common::UntypedValue,
     engine::{
         bytecode::{
             AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
@@ -13,7 +14,6 @@ use crate::{
     },
 };
 use alloc::vec::Vec;
-use fluentbase_rwasm_core::common::UntypedValue;
 
 pub const INSTRUCTION_OPCODE_BYTES: usize = 1;
 pub const INSTRUCTION_AUX_BYTES: usize = 8;

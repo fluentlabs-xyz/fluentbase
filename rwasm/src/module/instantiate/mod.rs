@@ -7,6 +7,7 @@ mod tests;
 pub use self::{error::InstantiationError, pre::InstancePre};
 use super::{element::ElementSegmentKind, export, ConstExpr, DataSegmentKind, Module};
 use crate::{
+    common::{Trap, UntypedValue},
     func::WasmFuncEntity,
     memory::{DataSegment, MemoryError},
     module::FuncIdx,
@@ -27,7 +28,6 @@ use crate::{
     Table,
     Value,
 };
-use fluentbase_rwasm_core::common::{Trap, UntypedValue};
 
 impl Module {
     /// Instantiates a new [`Instance`] from the given compiled [`Module`].

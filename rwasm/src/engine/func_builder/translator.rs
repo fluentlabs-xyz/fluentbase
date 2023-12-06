@@ -14,6 +14,7 @@ use super::{
     TranslationError,
 };
 use crate::{
+    common::{UntypedValue, ValueType, F32, F64},
     engine::{
         bytecode::{
             self,
@@ -49,7 +50,6 @@ use crate::{
     Mutability,
 };
 use alloc::vec::Vec;
-use fluentbase_rwasm_core::common::{UntypedValue, ValueType, F32, F64};
 use wasmparser::VisitOperator;
 
 /// Reusable allocations of a [`FuncTranslator`].

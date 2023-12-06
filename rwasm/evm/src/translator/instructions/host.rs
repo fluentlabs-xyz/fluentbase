@@ -1,5 +1,9 @@
-use crate::translator::host::Host;
-use crate::translator::translator::Translator;
+use crate::translator::{
+    host::Host,
+    instructions::utilities::{wasm_call, SystemFuncs},
+    translator::Translator,
+};
+use log::debug;
 
 pub fn balance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "BALANCE";
@@ -32,14 +36,16 @@ pub fn blockhash<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn sload<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLOAD";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    wasm_call(host.instruction_set(), SystemFuncs::EvmSload, translator);
 }
 
-pub fn sstore<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SSTORE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    wasm_call(host.instruction_set(), SystemFuncs::EvmSstore, translator);
 }
 
 pub fn tstore<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

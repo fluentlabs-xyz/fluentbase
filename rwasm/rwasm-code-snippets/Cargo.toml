@@ -23,8 +23,7 @@ test = false
 proc-macro = false
 
 [features]
-default = []
-testing = ["fluentbase-runtime"]
+default = ["arithmetic_mul"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_shr = []
@@ -34,12 +33,16 @@ bitwise_lt = []
 bitwise_slt = []
 bitwise_sar = []
 bitwise_eq = []
+arithmetic_add = []
 arithmetic_sub = []
+arithmetic_sub_global = []
 arithmetic_mul = []
 arithmetic_div = []
+memory_mstore = []
+memory_mstore8 = []
 
 
-[profile.release]
-opt-level = 0
-lto = false
-strip = true
+#[profile.release]
+#opt-level = 0
+#lto = false
+#strip = true

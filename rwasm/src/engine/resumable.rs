@@ -1,5 +1,6 @@
 use super::Func;
 use crate::{
+    common::Trap,
     engine::Stack,
     func::CallResultsTuple,
     AsContextMut,
@@ -9,7 +10,6 @@ use crate::{
     WasmResults,
 };
 use core::{fmt, marker::PhantomData, mem::replace, ops::Deref};
-use fluentbase_rwasm_core::common::Trap;
 
 /// Returned by [`Engine`] methods for calling a function in a resumable way.
 ///
@@ -54,9 +54,8 @@ pub struct ResumableInvocation {
     ///
     /// # Note
     ///
-    /// - This handle is required to resolve function types
-    ///   of both `func` and `host_func` fields as well as in
-    ///   the `Drop` impl to recycle the stack.
+    /// - This handle is required to resolve function types of both `func` and `host_func` fields
+    ///   as well as in the `Drop` impl to recycle the stack.
     engine: Engine,
     /// The underlying root function to be executed.
     ///
@@ -69,11 +68,10 @@ pub struct ResumableInvocation {
     ///
     /// # Note
     ///
-    /// - This is required to receive its result values that are
-    ///   needed to be fed back in manually by the user. This way we
-    ///   avoid heap memory allocations.
-    /// - The results of this function must always match with the
-    ///   arguments given when resuming the call.
+    /// - This is required to receive its result values that are needed to be fed back in manually
+    ///   by the user. This way we avoid heap memory allocations.
+    /// - The results of this function must always match with the arguments given when resuming the
+    ///   call.
     host_func: Func,
     /// The host error that was returned by the `host_func` which
     /// caused the resumable function invocation to break.
@@ -88,11 +86,9 @@ pub struct ResumableInvocation {
     ///
     /// # Note
     ///
-    /// - We need to keep the stack around since the user might want to
-    ///   resume the execution.
-    /// - This stack is borrowed from the engine and needs to be given
-    ///   back to the engine when the [`ResumableInvocation`] goes out
-    ///   of scope.
+    /// - We need to keep the stack around since the user might want to resume the execution.
+    /// - This stack is borrowed from the engine and needs to be given back to the engine when the
+    ///   [`ResumableInvocation`] goes out of scope.
     pub(super) stack: Stack,
 }
 
@@ -166,10 +162,10 @@ impl ResumableInvocation {
     /// # Errors
     ///
     /// - If the function resumption returned a Wasm [`Trap`].
-    /// - If the types or the number of values in `inputs` does not match
-    ///   the types and number of result values of the errorneous host function.
-    /// - If the number of output values does not match the expected number of
-    ///   outputs required by the called function.
+    /// - If the types or the number of values in `inputs` does not match the types and number of
+    ///   result values of the errorneous host function.
+    /// - If the number of output values does not match the expected number of outputs required by
+    ///   the called function.
     pub fn resume<T>(
         self,
         mut ctx: impl AsContextMut<UserState = T>,
@@ -244,8 +240,8 @@ impl<Results> TypedResumableInvocation<Results> {
     /// # Errors
     ///
     /// - If the function resumption returned a Wasm [`Trap`].
-    /// - If the types or the number of values in `inputs` does not match
-    ///   the types and number of result values of the errorneous host function.
+    /// - If the types or the number of values in `inputs` does not match the types and number of
+    ///   result values of the errorneous host function.
     ///
     /// [`TypedFunc`]: [`crate::TypedFunc`]
     pub fn resume<T>(

@@ -22,10 +22,9 @@ use super::{
     StoreContext,
     Stored,
 };
-use crate::{arena::ArenaIndex, engine::ResumableCall, Engine, Error, Value};
+use crate::{arena::ArenaIndex, common::Trap, engine::ResumableCall, Engine, Error, Value};
 use alloc::{boxed::Box, sync::Arc};
 use core::{fmt, fmt::Debug, num::NonZeroU32};
-use fluentbase_rwasm_core::common::Trap;
 
 /// A raw index to a function entity.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

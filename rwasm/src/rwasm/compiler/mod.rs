@@ -1,5 +1,6 @@
 use crate::{
     arena::ArenaIndex,
+    common::{Pages, UntypedValue, ValueType},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -22,7 +23,6 @@ use crate::{
 };
 use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 use core::ops::Deref;
-use fluentbase_rwasm_core::common::{Pages, UntypedValue, ValueType, F32};
 use std::cell::RefCell;
 
 mod drop_keep;
@@ -137,6 +137,8 @@ pub struct Compiler<'linker> {
     func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
     global_start_index: u32,
     pub config: CompilerConfig,
+    translate_func_as_inline: bool,
+    swap_stack_params: bool,
 }
 
 const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
@@ -205,6 +207,8 @@ impl<'linker> Compiler<'linker> {
             func_type_check_idx: Default::default(),
             global_start_index: 0,
             config,
+            translate_func_as_inline: false,
+            swap_stack_params: true,
         })
     }
 
@@ -218,6 +222,10 @@ impl<'linker> Compiler<'linker> {
 
     pub fn set_func_type_check_idx(&mut self, func_type_check_idx: Rc<RefCell<Vec<FuncType>>>) {
         self.func_type_check_idx = func_type_check_idx;
+    }
+
+    pub fn swap_stack_params(&mut self, v: bool) {
+        self.swap_stack_params = v;
     }
 
     pub fn set_state(&mut self, with_state: bool) {
@@ -707,7 +715,7 @@ impl<'linker> Compiler<'linker> {
 
         self.code_section.op_type_check(idx);
 
-        if !self.config.translate_func_as_inline {
+        if !self.config.translate_func_as_inline && self.swap_stack_params {
             self.swap_stack_parameters(num_inputs.len() as u32);
         }
 

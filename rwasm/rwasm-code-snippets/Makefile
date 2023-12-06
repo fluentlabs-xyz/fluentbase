@@ -1,4 +1,6 @@
-FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar arithmetic_sub
+FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar \
+arithmetic_add arithmetic_sub arithmetic_sub_global arithmetic_mul arithmetic_div \
+memory_mstore memory_mstore8
 
 all: $(FILES)
 

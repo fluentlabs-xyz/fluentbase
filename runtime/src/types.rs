@@ -1,4 +1,4 @@
-use fluentbase_rwasm_core::common::{Trap, TrapCode};
+use fluentbase_rwasm::common::{Trap, TrapCode};
 
 pub const STACK_MAX_HEIGHT: usize = 1024;
 pub const RECURSIVE_MAX_DEPTH: usize = 1024;

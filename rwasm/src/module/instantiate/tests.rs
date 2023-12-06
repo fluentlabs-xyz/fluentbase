@@ -8,6 +8,7 @@
 //! those entities.
 
 use crate::{
+    common::ValueType,
     instance::InstanceEntity,
     Engine,
     Error,
@@ -21,7 +22,6 @@ use crate::{
     TableType,
     Value,
 };
-use fluentbase_rwasm_core::common::ValueType;
 
 fn try_instantiate_from_wat(wat: &str) -> Result<(Store<()>, Instance), Error> {
     let wasm = wat::parse_str(wat).unwrap();

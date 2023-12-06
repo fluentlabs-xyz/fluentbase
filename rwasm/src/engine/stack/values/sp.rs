@@ -1,5 +1,7 @@
-use crate::engine::DropKeep;
-use fluentbase_rwasm_core::common::{TrapCode, UntypedValue};
+use crate::{
+    common::{TrapCode, UntypedValue},
+    engine::DropKeep,
+};
 
 /// A pointer on the [`ValueStack`].
 ///

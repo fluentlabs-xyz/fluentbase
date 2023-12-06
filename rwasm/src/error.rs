@@ -8,7 +8,7 @@ use super::errors::{
     ModuleError,
     TableError,
 };
-use fluentbase_rwasm_core::common::Trap;
+use crate::common::Trap;
 use core::{fmt, fmt::Display};
 
 /// An error that may occur upon operating on Wasm modules or module instances.
