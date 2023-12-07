@@ -42,7 +42,7 @@ pub(super) fn preprocess_op_params(
     inject_return_offset: bool,
 ) {
     let opcode = translator.opcode_prev();
-    // hardcoded result place in memory
+    let i64_stack_params_count: usize;
     const MEM_RESULT_OFFSET: usize = 0;
     match opcode {
         // two u256 params
@@ -57,58 +57,67 @@ pub(super) fn preprocess_op_params(
         | opcode::SHR
         | opcode::SLT
         | opcode::ADD
+        | opcode::SIGNEXTEND
+        | opcode::AND
+        | opcode::OR
+        | opcode::XOR
         | opcode::SUB
         | opcode::MUL
+        | opcode::DIV
         | opcode::MSTORE
         | opcode::MSTORE8 => {
             // mem offset for the result
-            const I64_PARAMS_COUNT: usize = 8;
-            let instruction_set = host.instruction_set();
-            let mut aux_params_count = 0;
-            if inject_return_offset {
-                aux_params_count += 1;
-                instruction_set.op_i32_const(
-                    instruction_set.len() + 2 + if inject_memory_result_offset { 1 } else { 0 },
-                );
-            }
-            if inject_memory_result_offset {
-                aux_params_count += 1;
-                if memory_result_offset_is_first_param {
-                    let offset_instruction = instruction_set.instr
-                        [instruction_set.len() as usize - if inject_return_offset { 5 } else { 4 }];
-                    let offset = match offset_instruction {
-                        Instruction::I64Const(offset) => offset,
-                        x => {
-                            panic!("unexpected instruction: {:?}", x)
-                        }
-                    };
-                    let mem_result_offset = offset.as_usize();
-                    instruction_set.op_i32_const(mem_result_offset);
-                } else {
-                    instruction_set.op_i32_const(MEM_RESULT_OFFSET);
-                }
-            }
-            if aux_params_count > 0 {
-                let instruction_set_len = instruction_set.len() as usize;
-                let last_item_idx = instruction_set_len - 1;
-                let aux_params_start_idx = instruction_set_len - aux_params_count;
-                let aux_params_end_idx = last_item_idx;
-                let aux_params =
-                    instruction_set.instr[aux_params_start_idx..=aux_params_end_idx].to_vec();
-                let params_start_idx = instruction_set_len - I64_PARAMS_COUNT - aux_params_count;
-                let params_end_idx = params_start_idx + I64_PARAMS_COUNT;
-                let params = instruction_set.instr[params_start_idx..params_end_idx].to_vec();
+            i64_stack_params_count = 8;
+        }
 
-                instruction_set.instr[params_start_idx..params_start_idx + aux_params_count]
-                    .copy_from_slice(&aux_params);
-                instruction_set.instr[params_start_idx + aux_params_count
-                    ..params_start_idx + aux_params_count + I64_PARAMS_COUNT]
-                    .clone_from_slice(&params);
-            }
+        opcode::ISZERO | opcode::NOT => {
+            i64_stack_params_count = 4;
         }
         _ => {
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
         }
+    }
+
+    let instruction_set = host.instruction_set();
+    let mut aux_params_count = 0;
+    if inject_return_offset {
+        aux_params_count += 1;
+        instruction_set.op_i32_const(
+            instruction_set.len() + 2 + if inject_memory_result_offset { 1 } else { 0 },
+        );
+    }
+    if inject_memory_result_offset {
+        aux_params_count += 1;
+        if memory_result_offset_is_first_param {
+            let offset_instruction = instruction_set.instr
+                [instruction_set.len() as usize - if inject_return_offset { 5 } else { 4 }];
+            let offset = match offset_instruction {
+                Instruction::I64Const(offset) => offset,
+                x => {
+                    panic!("unexpected instruction: {:?}", x)
+                }
+            };
+            let mem_result_offset = offset.as_usize();
+            instruction_set.op_i32_const(mem_result_offset);
+        } else {
+            instruction_set.op_i32_const(MEM_RESULT_OFFSET);
+        }
+    }
+    if aux_params_count > 0 {
+        let instruction_set_len = instruction_set.len() as usize;
+        let last_item_idx = instruction_set_len - 1;
+        let aux_params_start_idx = instruction_set_len - aux_params_count;
+        let aux_params_end_idx = last_item_idx;
+        let aux_params = instruction_set.instr[aux_params_start_idx..=aux_params_end_idx].to_vec();
+        let params_start_idx = instruction_set_len - i64_stack_params_count - aux_params_count;
+        let params_end_idx = params_start_idx + i64_stack_params_count;
+        let params = instruction_set.instr[params_start_idx..params_end_idx].to_vec();
+
+        instruction_set.instr[params_start_idx..params_start_idx + aux_params_count]
+            .copy_from_slice(&aux_params);
+        instruction_set.instr[params_start_idx + aux_params_count
+            ..params_start_idx + aux_params_count + i64_stack_params_count]
+            .clone_from_slice(&params);
     }
 }
 

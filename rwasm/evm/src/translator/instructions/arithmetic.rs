@@ -1,21 +1,7 @@
-use crate::{
-    translator::{
-        host::Host,
-        instructions::utilities::{
-            assign_to_stack_and_drop,
-            duplicate_i64_part_of_evm_word,
-            duplicate_stack_value,
-            fetch_i64_part_as_i32,
-            preprocess_op_params,
-            replace_current_opcode_with_inline_func,
-            replace_current_opcode_with_subroutine,
-            split_i64_repr_of_i32_sum_into_overflow_and_normal_parts,
-            wasm_add,
-            wasm_drop_n,
-        },
-        translator::Translator,
-    },
-    utilities::WASM_I64_IN_EVM_WORD_COUNT,
+use crate::translator::{
+    host::Host,
+    instructions::utilities::replace_current_opcode_with_subroutine,
+    translator::Translator,
 };
 use log::debug;
 
@@ -100,7 +86,7 @@ pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn wrapping_mul<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MUL";
     debug!("op:{}", OP);
-    // replace_current_opcode_with_inline_func(translator, host, true);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
     replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
@@ -111,9 +97,10 @@ pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
-pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn div<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DIV";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
 pub fn sdiv<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -161,7 +148,8 @@ pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 /// `y | !mask` where `|` is the bitwise `OR` and `!` is bitwise negation. Similarly, if
 /// `b == 0` then the yellow paper says the output should start with all zeros, then end with
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
-pub fn signextend<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn signextend<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SIGNEXTEND";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }

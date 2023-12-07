@@ -1,9 +1,11 @@
 pub const U64_MSBIT_IS_1: u64 = 0x8000000000000000;
 pub const U64_ALL_BITS_ARE_1: u64 = 0xffffffffffffffff;
+pub const U64_ALL_BITS_ARE_0: u64 = 0;
 pub const U64_MAX_VAL: u64 = 0xffffffffffffffff;
 pub const U64_ALL_BITS_ARE_1_EXCEPT_MSB: u64 = 0xffffffffffffffff - U64_MSBIT_IS_1;
-pub const BYTE_MAX_VAL: u64 = 255;
-pub const U64_LSBYTE_MASK: u64 = 255;
+pub const BYTE_MAX_VAL: u64 = 0xff;
+pub const BYTE_SIGN_BIT_MASK: u64 = 0b10000000;
+pub const U64_LSBYTE_MASK: u64 = 0xff;
 pub const U64_LOW_PART_MASK: u64 = 0xffffffff;
 pub const BITS_IN_BYTE: u64 = 8;
 pub const U64_BYTES_COUNT: u64 = 8;
