@@ -37,16 +37,23 @@ fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
 
 fn translate_with_state(wasm_binary: &[u8]) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_linker();
-    let mut compiler =
-        Compiler::new_with_linker(&wasm_binary.to_vec(), Some(&import_linker), true).unwrap();
+    let mut compiler = Compiler::new_with_linker(
+        &wasm_binary.to_vec(),
+        CompilerConfig::default()
+            .fuel_consume(true)
+            .translate_sections(true),
+        Some(&import_linker),
+    )
+    .unwrap();
     compiler
-        .translate(
-            Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-                Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-            )),
-            true,
-        )
+        .translate(Some(FuncOrExport::StateRouter(
+            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+            RouterInstructions {
+                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
+                input_ix: vec![],
+                output_ix: vec![],
+            },
+        )))
         .unwrap();
     compiler.finalize().unwrap()
 }
@@ -89,6 +96,7 @@ fn test_greeting() {
         .with_input(input_data.to_vec());
     let import_linker = Runtime::<()>::new_linker();
     let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    runtime.data_mut().clean_output();
     let output = runtime.call().unwrap();
     assert_eq!(output.data().exit_code, 0);
     assert_eq!(
@@ -107,6 +115,7 @@ fn test_keccak256_example() {
         .with_input(input_data.to_vec());
     let import_linker = Runtime::<()>::new_linker();
     let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    runtime.data_mut().clean_output();
     let output = runtime.call().unwrap();
     assert_eq!(output.data().exit_code, 0);
     assert_eq!(
@@ -125,6 +134,7 @@ fn test_keccak256_empty() {
         .with_input(input_data.to_vec());
     let import_linker = Runtime::<()>::new_linker();
     let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    runtime.data_mut().clean_output();
     let output = runtime.call().unwrap();
     assert_eq!(output.data().exit_code, 0);
     assert_eq!(
