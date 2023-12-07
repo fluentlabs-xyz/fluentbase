@@ -1,3 +1,5 @@
+#[cfg(feature = "bitwise_and")]
+pub mod and;
 #[cfg(feature = "bitwise_byte")]
 pub mod byte;
 #[cfg(feature = "bitwise_eq")]
