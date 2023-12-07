@@ -184,6 +184,7 @@ impl<'a> Translator<'a> {
             (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
             (opcode::MUL, "../rwasm-code-snippets/bin/arithmetic_mul.wat"),
             (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
+            (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.wat"),
             (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
             (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),

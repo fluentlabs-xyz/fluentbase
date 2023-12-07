@@ -64,25 +64,27 @@ pub fn iszero<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     // }
 }
 
-pub fn bitand<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn bitand<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "AND";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-
-    let mut stack_post_shift = 0;
-    for _part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        duplicate_stack_value(
-            instruction_set,
-            &mut stack_post_shift,
-            WASM_I64_IN_EVM_WORD_COUNT + 1,
-        );
-        wasm_and(instruction_set, &mut stack_post_shift);
-        assign_to_stack_and_drop(
-            instruction_set,
-            &mut stack_post_shift,
-            WASM_I64_IN_EVM_WORD_COUNT + 1,
-        );
-    }
+    replace_current_opcode_with_subroutine(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    // let instruction_set = host.instruction_set();
+    //
+    // let mut stack_post_shift = 0;
+    // for _part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
+    //     duplicate_stack_value(
+    //         instruction_set,
+    //         &mut stack_post_shift,
+    //         WASM_I64_IN_EVM_WORD_COUNT + 1,
+    //     );
+    //     wasm_and(instruction_set, &mut stack_post_shift);
+    //     assign_to_stack_and_drop(
+    //         instruction_set,
+    //         &mut stack_post_shift,
+    //         WASM_I64_IN_EVM_WORD_COUNT + 1,
+    //     );
+    // }
 }
 
 pub fn bitor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
