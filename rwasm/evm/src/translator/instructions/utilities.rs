@@ -63,6 +63,7 @@ pub(super) fn preprocess_op_params(
         | opcode::XOR
         | opcode::SUB
         | opcode::MUL
+        | opcode::DIV
         | opcode::MSTORE
         | opcode::MSTORE8 => {
             // mem offset for the result
