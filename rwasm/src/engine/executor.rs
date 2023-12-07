@@ -274,10 +274,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 0
             };
             let consumed_fuel = self.ctx.fuel().fuel_consumed();
+            let stack = self.value_stack.dump_stack(self.sp);
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
                 instr,
-                self.value_stack.dump_stack(self.sp),
+                stack,
                 &meta,
                 memory_size,
                 consumed_fuel,

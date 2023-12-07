@@ -6,18 +6,25 @@ mod evm_to_rwasm_tests {
             instruction_result::InstructionResult,
             instructions::opcode::{
                 ADD,
+                AND,
                 BYTE,
+                DIV,
                 EQ,
                 GT,
+                ISZERO,
                 KECCAK256,
                 LT,
                 MSTORE,
                 MSTORE8,
                 MUL,
+                NOT,
+                OR,
                 PUSH32,
                 SHL,
                 SHR,
+                SIGNEXTEND,
                 SUB,
+                XOR,
             },
         },
         utilities::EVM_WORD_BYTES,
@@ -69,6 +76,14 @@ mod evm_to_rwasm_tests {
         evm_bytecode
     }
 
+    fn compile_unary_op(opcode: u8, a: &[u8]) -> Vec<u8> {
+        let mut evm_bytecode: Vec<u8> = vec![];
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(a);
+        evm_bytecode.push(opcode);
+        evm_bytecode
+    }
+
     /// @cases - &(a,b,result)
     fn test_binary_op(
         opcode: u8,
@@ -90,6 +105,32 @@ mod evm_to_rwasm_tests {
             if res_expected != res {
                 debug!("a=            {:?}", a);
                 debug!("b=            {:?}", b);
+                debug!("res_expected= {:?}", res_expected);
+                debug!("res=          {:?}", global_memory);
+            }
+            assert_eq!(res_expected, res);
+        }
+    }
+
+    /// @cases - &(a,b,result)
+    fn test_unary_op(
+        opcode: u8,
+        bytecode_preamble: Option<&[u8]>,
+        cases: &[(Vec<u8>, Vec<u8>)],
+        force_memory_result_size_to: Option<usize>,
+    ) {
+        for case in cases {
+            let a = &case.0;
+            let mut res_expected = case.1.clone();
+            let mut evm_bytecode: Vec<u8> = vec![];
+            bytecode_preamble.map(|v| evm_bytecode.extend(v));
+            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+            evm_bytecode.extend(compile_unary_op(opcode, a));
+
+            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+            let res = &global_memory[0..res_expected.len()];
+            if res_expected != res {
+                debug!("a=            {:?}", a);
                 debug!("res_expected= {:?}", res_expected);
                 debug!("res=          {:?}", global_memory);
             }
@@ -135,7 +176,7 @@ mod evm_to_rwasm_tests {
         let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result: ExecutionResult<()> = result.unwrap();
-        for (index, log) in execution_result.tracer().logs.iter().enumerate() {
+        for (idx, log) in execution_result.tracer().logs.iter().enumerate() {
             if log.memory_changes.len() <= 0 {
                 continue;
             };
@@ -155,8 +196,8 @@ mod evm_to_rwasm_tests {
             //     _ => {}
             // }
             debug!(
-                "opcode:{:x?} memory_changes:{:?}",
-                log.opcode, &memory_changes
+                "{}: opcode:{:x?} memory_changes:{:?}",
+                idx, log.opcode, &memory_changes
             );
             for change in &memory_changes {
                 let offset_start = change.offset as usize;
@@ -168,7 +209,7 @@ mod evm_to_rwasm_tests {
             }
         }
         debug!(
-            "global_memory part (total len {}) {:?}",
+            "global_memory (total len {}) {:?}",
             global_memory_len, &global_memory
         );
         let global_memory =
@@ -297,6 +338,55 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary_op(EQ, None, &cases, None);
+    }
+
+    #[test]
+    fn iszero() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_unary_op(ISZERO, None, &cases, None);
+    }
+
+    #[test]
+    fn not() {
+        let cases = [(
+            x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+            xr(
+                "fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef",
+                0,
+            ),
+        )];
+
+        test_unary_op(NOT, None, &cases, None);
     }
 
     #[test]
@@ -744,9 +834,118 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn signextend() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x00000000000000000000000000000000000000000000000000000000ff10aaaF"),
+                xr(
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffaaaf",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+                xr(
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x000000000000000000000000000000000000000000000000000000000000007f"),
+                xr(
+                    "0x000000000000000000000000000000000000000000000000000000000000007f",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000000000d"),
+                x("0x0000000000000000000000000000000000007F00000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000007F00000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000000000d"),
+                x("0x0000000000000000000000000000000000008F00000000000000000000000000"),
+                xr(
+                    "ffffffffffffffffffffffffffffffffffff8f00000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(SIGNEXTEND, None, &cases, None);
+    }
+
+    #[test]
     fn mul() {
         let cases = [
-            // // a=0 b=0 r=0
+            // a=0 b=0 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a= b= r=
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a= b= r=
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=1 b=1 r=1
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=9 b=9 r=81
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000008"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000004"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000020",
+                    0,
+                ),
+            ),
+            // a=-1 b=-1 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(MUL, None, &cases, None);
+    }
+
+    #[test]
+    fn div() {
+        let cases = [
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
@@ -755,25 +954,6 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // // a= b= r=
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // // a= b= r=
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // // a=1 b=1 r=1
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
             //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
@@ -782,18 +962,65 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // // a=9 b=9 r=81
             // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000008"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000009"),
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
             //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000048",
+            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0xefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+            //     xr(
+            //         "0x00000000000000000000000000000000000000000000000000000001116c3527",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+            //     xr(
+            //         "0x000000000000000000000000000000000000000000000000000000001116c352",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000010"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000010",
+            //         0,
+            //     ),
+            // ),
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
             //         0,
             //     ),
             // ),
         ];
 
-        test_binary_op(MUL, None, &cases, None);
+        test_binary_op(DIV, None, &cases, None);
     }
 
     #[test]
@@ -910,6 +1137,78 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary_op(GT, None, &cases, None);
+    }
+
+    #[test]
+    fn and() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+                x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+                xr(
+                    "0x0000010000000000000000010000a00080000000000000000000000020000001",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(AND, None, &cases, None);
+    }
+
+    #[test]
+    fn or() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+                x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+                xr(
+                    "0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(OR, None, &cases, None);
+    }
+
+    #[test]
+    fn xor() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+                x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+                xr(
+                    "0x000032000c0004300f000a060000100060000000f000300017002004100a0000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(XOR, None, &cases, None);
     }
 
     #[test]

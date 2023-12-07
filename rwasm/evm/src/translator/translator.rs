@@ -192,14 +192,27 @@ impl<'a> Translator<'a> {
 
         [
             (opcode::ADD, "../rwasm-code-snippets/bin/arithmetic_add.wat"),
+            (
+                opcode::SIGNEXTEND,
+                "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
+            ),
             (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
             (opcode::MUL, "../rwasm-code-snippets/bin/arithmetic_mul.wat"),
+            (opcode::DIV, "../rwasm-code-snippets/bin/arithmetic_div.wat"),
             (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
+            (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.wat"),
+            (opcode::OR, "../rwasm-code-snippets/bin/bitwise_or.wat"),
+            (opcode::XOR, "../rwasm-code-snippets/bin/bitwise_xor.wat"),
             (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
             (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
             (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
             (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
             (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            (
+                opcode::ISZERO,
+                "../rwasm-code-snippets/bin/bitwise_iszero.wat",
+            ),
+            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
             (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
             (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
             (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
