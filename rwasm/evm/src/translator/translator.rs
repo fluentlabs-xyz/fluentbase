@@ -196,6 +196,7 @@ impl<'a> Translator<'a> {
                 opcode::ISZERO,
                 "../rwasm-code-snippets/bin/bitwise_iszero.wat",
             ),
+            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
             (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
             (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
             (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),

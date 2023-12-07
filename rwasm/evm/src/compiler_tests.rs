@@ -16,6 +16,7 @@ mod evm_to_rwasm_tests {
                 MSTORE,
                 MSTORE8,
                 MUL,
+                NOT,
                 OR,
                 PUSH32,
                 SHL,
@@ -371,6 +372,19 @@ mod evm_to_rwasm_tests {
         ];
 
         test_unary_op(ISZERO, None, &cases, None);
+    }
+
+    #[test]
+    fn not() {
+        let cases = [(
+            x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+            xr(
+                "fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef",
+                0,
+            ),
+        )];
+
+        test_unary_op(NOT, None, &cases, None);
     }
 
     #[test]

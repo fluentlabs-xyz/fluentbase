@@ -10,6 +10,8 @@ pub mod gt;
 pub mod iszero;
 #[cfg(feature = "bitwise_lt")]
 pub mod lt;
+#[cfg(feature = "bitwise_not")]
+pub mod not;
 #[cfg(feature = "bitwise_or")]
 pub mod or;
 #[cfg(feature = "bitwise_sar")]
