@@ -136,7 +136,8 @@ impl<'a> Translator<'a> {
                 CompilerConfig::default()
                     .fuel_consume(self.inject_fuel_consumption)
                     .translate_sections(false)
-                    .translate_func_as_inline(true),
+                    .translate_func_as_inline(true)
+                    .type_check(false),
             )
             .unwrap();
             compiler.translate(Some(FuncOrExport::Func(0))).unwrap();
@@ -168,7 +169,8 @@ impl<'a> Translator<'a> {
                 wasm_binary,
                 CompilerConfig::default()
                     .fuel_consume(self.inject_fuel_consumption)
-                    .translate_sections(false),
+                    .translate_sections(false)
+                    .type_check(false),
             )
             .unwrap();
             compiler.swap_stack_params(false);

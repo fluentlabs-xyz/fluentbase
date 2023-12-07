@@ -70,6 +70,7 @@ pub struct CompilerConfig {
     pub translate_sections: bool,
     pub with_state: bool,
     pub translate_func_as_inline: bool,
+    pub type_check: bool,
 }
 
 impl Default for CompilerConfig {
@@ -81,6 +82,7 @@ impl Default for CompilerConfig {
             translate_sections: true,
             with_state: false,
             translate_func_as_inline: false,
+            type_check: true,
         }
     }
 }
@@ -88,6 +90,12 @@ impl Default for CompilerConfig {
 impl CompilerConfig {
     pub fn fuel_consume(mut self, value: bool) -> Self {
         self.fuel_consume = value;
+
+        self
+    }
+
+    pub fn type_check(mut self, value: bool) -> Self {
+        self.type_check = value;
 
         self
     }
@@ -713,7 +721,9 @@ impl<'linker> Compiler<'linker> {
         let num_inputs = func_type.params();
         let beginning_offset = self.code_section.len();
 
-        self.code_section.op_type_check(idx);
+        if self.config.type_check {
+            self.code_section.op_type_check(idx);
+        }
 
         if !self.config.translate_func_as_inline && self.swap_stack_params {
             self.swap_stack_parameters(num_inputs.len() as u32);
