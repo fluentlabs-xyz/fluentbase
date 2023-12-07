@@ -181,6 +181,10 @@ impl<'a> Translator<'a> {
 
         [
             (opcode::ADD, "../rwasm-code-snippets/bin/arithmetic_add.wat"),
+            (
+                opcode::SIGNEXTEND,
+                "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
+            ),
             (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
             (opcode::MUL, "../rwasm-code-snippets/bin/arithmetic_mul.wat"),
             (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),

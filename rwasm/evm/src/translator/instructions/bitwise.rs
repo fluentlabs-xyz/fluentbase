@@ -1,19 +1,10 @@
-use crate::{
-    translator::{
-        host::Host,
-        instructions::utilities::{
-            assign_to_stack_and_drop,
-            duplicate_stack_value,
-            replace_current_opcode_with_inline_func,
-            replace_current_opcode_with_subroutine,
-            wasm_and,
-            wasm_not,
-            wasm_or,
-            wasm_xor,
-        },
-        translator::Translator,
+use crate::translator::{
+    host::Host,
+    instructions::utilities::{
+        replace_current_opcode_with_inline_func,
+        replace_current_opcode_with_subroutine,
     },
-    utilities::WASM_I64_IN_EVM_WORD_COUNT,
+    translator::Translator,
 };
 use log::debug;
 

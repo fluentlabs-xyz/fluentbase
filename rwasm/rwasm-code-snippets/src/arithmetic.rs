@@ -4,6 +4,7 @@ pub mod add;
 pub mod div;
 #[cfg(feature = "arithmetic_mul")]
 pub mod mul;
+mod signextend;
 #[cfg(feature = "arithmetic_sub")]
 pub mod sub;
 #[cfg(feature = "arithmetic_sub_global")]

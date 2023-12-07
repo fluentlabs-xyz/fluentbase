@@ -147,7 +147,8 @@ pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 /// `y | !mask` where `|` is the bitwise `OR` and `!` is bitwise negation. Similarly, if
 /// `b == 0` then the yellow paper says the output should start with all zeros, then end with
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
-pub fn signextend<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn signextend<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SIGNEXTEND";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
