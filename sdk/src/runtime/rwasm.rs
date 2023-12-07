@@ -3,24 +3,31 @@ use alloc::vec;
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
-    rwasm::{Compiler, FuncOrExport},
+    rwasm::{Compiler, CompilerConfig, FuncOrExport, RouterInstructions},
 };
 
 impl RwasmPlatformSDK for SDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
         let import_linker = Runtime::<()>::new_linker();
-        let mut compiler = Compiler::new_with_linker(input.as_ref(), Some(&import_linker), true);
+        let mut compiler = Compiler::new_with_linker(
+            input.as_ref(),
+            CompilerConfig::default()
+                .fuel_consume(true)
+                .translate_sections(true),
+            Some(&import_linker),
+        );
         if compiler.is_err() {
             return -100;
         }
         let mut compiler = compiler.unwrap();
-        let res = compiler.translate(
-            Some(FuncOrExport::StateRouter(
-                vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
-                Instruction::Call(SysFuncIdx::SYS_STATE.into()),
-            )),
-            true,
-        );
+        let res = compiler.translate(Some(FuncOrExport::StateRouter(
+            vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
+            RouterInstructions {
+                state_ix: Instruction::Call(SysFuncIdx::SYS_STATE.into()),
+                input_ix: vec![],
+                output_ix: vec![],
+            },
+        )));
         if res.is_err() {
             return -101;
         }
