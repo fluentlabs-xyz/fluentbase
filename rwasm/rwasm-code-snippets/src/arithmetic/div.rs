@@ -1,13 +1,13 @@
 #[no_mangle]
-fn arithmetic_div(
-    mut a0: u64,
-    mut a1: u64,
-    mut a2: u64,
-    mut a3: u64,
-    mut b0: u64,
-    mut b1: u64,
-    mut b2: u64,
-    mut b3: u64,
+pub fn arithmetic_div(
+    b0: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
 ) -> (u64, u64, u64, u64) {
     fn bits_u64_limbs(x: (u64, u64, u64, u64)) -> usize {
         let limbs = [x.0, x.1, x.2, x.3];

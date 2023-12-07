@@ -1,9 +1,47 @@
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "arithmetic_mul")]
+    use crate::arithmetic::div::arithmetic_div;
+    #[cfg(feature = "arithmetic_mul")]
     use crate::arithmetic::mul::arithmetic_mul;
-    use crate::test_utils::{u256_from_be_u64, u256_from_le_u64, u256_into_le_tuple};
+    use crate::test_utils::{u256_from_le_u64, u256_into_le_tuple};
     use log::debug;
+
+    #[cfg(feature = "arithmetic_div")]
+    #[test]
+    fn test_arithmetic_div() {
+        use ethereum_types::U256;
+
+        let cases = [(
+            U256::from_dec_str("1").unwrap(),
+            U256::from_dec_str("1").unwrap(),
+            U256::from_dec_str("1").unwrap(),
+        )];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_div(a0, a1, a2, a3, b0, b1, b2, b3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = vec![0; 32];
+            case.2.to_big_endian(&mut expected_be);
+            let mut res_be = vec![0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != case.2 {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:x?})", case.2, expected_be);
+                debug!("res=     {} ({:x?})", res, res_be);
+            }
+            assert_eq!(case.2, res);
+        }
+    }
 
     #[cfg(feature = "arithmetic_mul")]
     #[test]

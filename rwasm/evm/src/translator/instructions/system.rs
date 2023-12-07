@@ -19,7 +19,7 @@ pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
     wasm_call(instruction_set, SystemFuncs::CryptoKeccak256, translator);
 
-    // remove params from stack
+    // remove params left on stack
     (0..8).for_each(|_| instruction_set.op_drop());
 }
 
