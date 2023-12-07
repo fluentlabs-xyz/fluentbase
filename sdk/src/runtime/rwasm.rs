@@ -21,7 +21,7 @@ impl RwasmPlatformSDK for SDK {
         }
         let mut compiler = compiler.unwrap();
         let res = compiler.translate(Some(FuncOrExport::StateRouter(
-            vec![FuncOrExport::Export("deploy"), FuncOrExport::Export("main")],
+            vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
             RouterInstructions {
                 state_ix: Instruction::Call(SysFuncIdx::SYS_STATE.into()),
                 input_ix: vec![],
