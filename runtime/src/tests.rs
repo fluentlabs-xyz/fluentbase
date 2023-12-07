@@ -347,7 +347,6 @@ fn test_wrong_indirect_type() {
 
     let mut runtime = Runtime::<()>::new(
         RuntimeContext::new(rwasm_bytecode.as_slice())
-            .with_input(vec![1, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0])
             .with_fuel_limit(1_000_000)
             .with_state(1000),
         &import_linker,

@@ -33,6 +33,7 @@ pub struct InstructionSet {
     total_locals: Vec<usize>,
     init_memory_size: u32,
     init_memory_pages: u32,
+    relative_offset: u32,
 }
 
 impl Into<Vec<u8>> for InstructionSet {
@@ -78,6 +79,7 @@ impl From<Vec<Instruction>> for InstructionSet {
             total_locals: vec![],
             init_memory_size: 0,
             init_memory_pages: 0,
+            relative_offset: 0,
         }
     }
 }
@@ -85,6 +87,13 @@ impl From<Vec<Instruction>> for InstructionSet {
 impl InstructionSet {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_relative_offset(relative_offset: u32) -> Self {
+        Self {
+            relative_offset,
+            ..Default::default()
+        }
     }
 
     pub fn push(&mut self, opcode: Instruction) -> u32 {
@@ -274,6 +283,10 @@ impl InstructionSet {
         &mut self.instr
     }
 
+    pub fn offset(&self, jump_dist: u32) -> u32 {
+        self.relative_offset + self.instr.len() as u32 + jump_dist
+    }
+
     pub fn len(&self) -> u32 {
         self.instr.len() as u32
     }
@@ -292,12 +305,17 @@ impl InstructionSet {
     impl_opcode!(op_return, Return, DropKeep::none());
     impl_opcode!(op_br_indirect, BrIndirect(BranchOffset));
     impl_opcode!(op_type_check, TypeCheck(SignatureIdx));
-
     impl_opcode!(op_return_if_nez, ReturnIfNez, DropKeep::none());
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
     impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
-    impl_opcode!(op_call_internal, CallInternal(CompiledFunc));
+    pub fn op_call_internal<I>(&mut self, fn_index: I, type_index: u32)
+    where
+        I: Into<CompiledFunc>,
+    {
+        self.push(Instruction::I32Const(type_index.into()));
+        self.push(Instruction::CallInternal(fn_index.into()));
+    }
     impl_opcode!(op_call, Call(FuncIdx));
     impl_opcode!(op_call_indirect, CallIndirect(SignatureIdx));
     impl_opcode!(op_drop, Drop);
@@ -343,11 +361,11 @@ impl InstructionSet {
     impl_opcode!(op_table_get, TableGet(TableIdx));
     impl_opcode!(op_table_set, TableSet(TableIdx));
     impl_opcode!(op_table_copy, TableCopy(TableIdx));
-    pub fn op_table_init<T: Into<TableIdx>, E: Into<ElementSegmentIdx>>(
-        &mut self,
-        table_idx: T,
-        elem_idx: E,
-    ) {
+    pub fn op_table_init<T, E>(&mut self, table_idx: T, elem_idx: E)
+    where
+        T: Into<TableIdx>,
+        E: Into<ElementSegmentIdx>,
+    {
         self.push(Instruction::TableInit(elem_idx.into()));
         self.push(Instruction::TableGet(table_idx.into()));
     }
