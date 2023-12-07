@@ -118,22 +118,9 @@ impl InstructionSet {
         self.init_memory_size = 0;
     }
 
-    pub fn add_memory(&mut self, mut offset: i32, mut bytes: &[u8], segment_idx: usize) -> bool {
-        #[cfg(feature = "e2e")]
-        {
-            self.op_i32_const(offset);
-            self.op_i32_const(0);
-            self.op_i32_const(0);
-            self.op_memory_init(0);
-
-            if offset < 0 {
-                return false;
-            }
-        }
-
-        let mut offset = offset as u32;
+    pub fn add_memory(&mut self, mut offset: i32, mut bytes: &[u8]) -> bool {
         // make sure we have enough allocated memory
-        let new_size = self.init_memory_size + offset + bytes.len() as u32;
+        let new_size = self.init_memory_size + offset as u32 + bytes.len() as u32;
         let total_pages = (new_size + N_BYTES_PER_MEMORY_PAGE - 1) / N_BYTES_PER_MEMORY_PAGE;
         if total_pages > N_MAX_MEMORY_PAGES {
             return false;
@@ -161,7 +148,7 @@ impl InstructionSet {
                     1 => self.op_i64_store8(0u32),
                     _ => unreachable!("not supported chunk size: {}", chunk_size),
                 }
-                offset += chunk_size as u32;
+                offset += chunk_size as i32;
             }
             bytes = it.remainder();
         });
@@ -169,7 +156,7 @@ impl InstructionSet {
         return true;
     }
 
-    pub fn add_data(&mut self, mut bytes: &[u8], segment_idx: usize) {
+    pub fn add_data(&mut self, mut bytes: &[u8], segment_idx: u32) {
         // translate input bytes
         [8, 4, 2, 1].iter().copied().for_each(|chunk_size| {
             let mut it = bytes.chunks_exact(chunk_size);
@@ -183,10 +170,10 @@ impl InstructionSet {
                 };
                 self.op_i64_const(value);
                 match chunk_size {
-                    8 => self.op_data_store64(segment_idx as u32),
-                    4 => self.op_data_store32(segment_idx as u32),
-                    2 => self.op_data_store16(segment_idx as u32),
-                    1 => self.op_data_store8(segment_idx as u32),
+                    8 => self.op_data_store64(segment_idx),
+                    4 => self.op_data_store32(segment_idx),
+                    2 => self.op_data_store16(segment_idx),
+                    1 => self.op_data_store8(segment_idx),
                     _ => unreachable!("not supported chunk size: {}", chunk_size),
                 }
             }
@@ -356,7 +343,14 @@ impl InstructionSet {
     impl_opcode!(op_table_get, TableGet(TableIdx));
     impl_opcode!(op_table_set, TableSet(TableIdx));
     impl_opcode!(op_table_copy, TableCopy(TableIdx));
-    impl_opcode!(op_table_init, TableInit(ElementSegmentIdx));
+    pub fn op_table_init<T: Into<TableIdx>, E: Into<ElementSegmentIdx>>(
+        &mut self,
+        table_idx: T,
+        elem_idx: E,
+    ) {
+        self.push(Instruction::TableInit(elem_idx.into()));
+        self.push(Instruction::TableGet(table_idx.into()));
+    }
     impl_opcode!(op_elem_store, ElemStore(ElementSegmentIdx));
     impl_opcode!(op_elem_drop, ElemDrop(ElementSegmentIdx));
     impl_opcode!(op_ref_func, RefFunc(FuncIdx));

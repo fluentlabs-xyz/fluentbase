@@ -119,7 +119,7 @@ fn execute_directives_with_state(wast: Wast, test_context: &mut TestContext) -> 
                 module,
             } => {
                 test_context.profile().bump_register();
-                let origin_module_name = module.map(|id| id.name());
+                let _origin_module_name = module.map(|id| id.name());
                 let instances = test_context
                     .compile_exports_module()
                     .unwrap_or_else(|error| {

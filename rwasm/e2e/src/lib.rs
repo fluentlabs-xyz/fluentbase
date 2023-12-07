@@ -13,6 +13,7 @@ use self::{
     profile::TestProfile,
 };
 use fluentbase_rwasm::Config;
+use serial_test::serial;
 
 macro_rules! define_tests {
     (
@@ -23,6 +24,7 @@ macro_rules! define_tests {
         $( $(#[$attr:meta])* fn $test_name:ident($file_name:expr); )*
     ) => {
         $(
+            #[serial]
             #[test]
             $( #[$attr] )*
             fn $test_name() {

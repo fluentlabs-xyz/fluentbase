@@ -1,7 +1,5 @@
-use fluentbase_rwasm::rwasm::CompilerError;
-use fluentbase_rwasm::Error as WasmiError;
+use fluentbase_rwasm::{rwasm::CompilerError, Error as WasmiError};
 use std::{error::Error, fmt, fmt::Display};
-use std::fmt::write;
 
 /// Errors that may occur upon Wasm spec test suite execution.
 #[derive(Debug)]
@@ -34,14 +32,20 @@ impl Display for TestError {
             Self::NoModuleInstancesFound => {
                 write!(f, "found no module instances registered so far")
             }
-            Self::FuncNotFound { module_name, func_name } => {
+            Self::FuncNotFound {
+                module_name,
+                func_name,
+            } => {
                 write!(f, "missing func exported as: {module_name:?}::{func_name}",)
             }
             Self::GlobalNotFound {
                 module_name,
                 global_name,
             } => {
-                write!(f, "missing global variable exported as: {module_name:?}::{global_name}",)
+                write!(
+                    f,
+                    "missing global variable exported as: {module_name:?}::{global_name}",
+                )
             }
             Self::Wasmi(wasmi_error) => Display::fmt(wasmi_error, f),
             Self::Compiler(_) => {

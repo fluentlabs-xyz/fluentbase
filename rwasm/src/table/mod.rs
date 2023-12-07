@@ -7,11 +7,9 @@ use crate::{
     arena::ArenaIndex,
     common::{TrapCode, UntypedValue, ValueType},
     engine::executor::EntityGrowError,
-    module::FuncIdx,
     store::ResourceLimiterRef,
     value::WithType,
     Func,
-    FuncRef,
     Value,
 };
 use alloc::vec::Vec;
@@ -346,7 +344,7 @@ impl TableEntity {
         element: &ElementSegmentEntity,
         src_index: u32,
         len: u32,
-        get_func: impl Fn(u32) -> Func,
+        _get_func: impl Fn(u32) -> Func,
     ) -> Result<(), TrapCode> {
         let table_type = self.ty();
         assert!(
@@ -382,6 +380,8 @@ impl TableEntity {
             ValueType::FuncRef => {
                 // Initialize element interpreted as Wasm `funrefs`.
                 dst_items.iter_mut().zip(src_items).for_each(|(dst, src)| {
+                    // let func_or_null = src.funcref().map(FuncIdx::into_u32).map(&get_func);
+                    // *dst = FuncRef::new(func_or_null).into();
                     *dst = src.funcref().unwrap().into_u32().into();
                 });
             }
