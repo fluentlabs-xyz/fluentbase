@@ -4,6 +4,8 @@ pub mod byte;
 pub mod eq;
 #[cfg(feature = "bitwise_gt")]
 pub mod gt;
+#[cfg(feature = "bitwise_iszero")]
+pub mod iszero;
 #[cfg(feature = "bitwise_lt")]
 pub mod lt;
 #[cfg(feature = "bitwise_sar")]
