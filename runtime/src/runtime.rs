@@ -567,7 +567,7 @@ impl<'t, T> Runtime<'t, T> {
         };
 
         let (module, bytecode) = {
-            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice(), false)
+            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
                 .map_err(Into::<RuntimeError>::into)?;
             let func_type = runtime_context
                 .func_type
@@ -578,7 +578,7 @@ impl<'t, T> Runtime<'t, T> {
             (module_builder.finish(), reduced_module.bytecode().clone())
         };
 
-        let mut linker = Linker::<RuntimeContext<T>>::new(&engine);
+        let linker = Linker::<RuntimeContext<T>>::new(&engine);
         let mut store = Store::<RuntimeContext<T>>::new(&engine, runtime_context);
 
         if fuel_limit > 0 {

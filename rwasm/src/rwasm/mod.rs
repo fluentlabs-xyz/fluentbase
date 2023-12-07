@@ -12,7 +12,7 @@ pub use self::{binary_format::*, compiler::*, instruction_set::*, platform::*, r
 mod tests {
     use crate::{
         common::ValueType,
-        engine::bytecode::Instruction,
+        instruction_set,
         rwasm::{
             compiler::Compiler,
             platform::ImportLinker,
@@ -20,7 +20,6 @@ mod tests {
             CompilerConfig,
             FuncOrExport,
             ImportFunc,
-            RouterInstructions,
         },
         AsContextMut,
         Caller,
@@ -39,7 +38,7 @@ mod tests {
 
     #[derive(Default)]
     struct RunConfig {
-        entrypoint: Option<FuncOrExport>,
+        entrypoint: FuncOrExport,
     }
 
     fn execute_binary_default(wat: &str) -> HostState {
@@ -69,7 +68,7 @@ mod tests {
         .unwrap();
         translator.translate(run_config.entrypoint).unwrap();
         let binary = translator.finalize().unwrap();
-        let reduced_module = ReducedModule::new(binary.as_slice(), false).unwrap();
+        let reduced_module = ReducedModule::new(binary.as_slice()).unwrap();
         // assert_eq!(translator.code_section, reduced_module.bytecode().clone());
         let _trace = reduced_module.trace();
 
@@ -282,14 +281,12 @@ mod tests {
       (export "deploy" (func $deploy)))
         "#,
             RunConfig {
-                entrypoint: Some(FuncOrExport::StateRouter(
+                entrypoint: FuncOrExport::StateRouter(
                     vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-                    RouterInstructions {
-                        state_ix: Instruction::I32Const(0.into()),
-                        input_ix: vec![],
-                        output_ix: vec![],
+                    instruction_set! {
+                        I32Const(0)
                     },
-                )),
+                ),
             },
         );
     }

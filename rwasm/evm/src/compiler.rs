@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use alloy_primitives::Bytes;
-use fluentbase_rwasm::rwasm::{instruction::INSTRUCTION_BYTES, ImportLinker, InstructionSet};
+use fluentbase_rwasm::rwasm::{instruction::INSTRUCTION_SIZE_BYTES, ImportLinker, InstructionSet};
 
 #[derive()]
 pub struct EvmCompiler<'a> {
@@ -54,16 +54,16 @@ impl<'a> EvmCompiler<'a> {
         self.instruction_set_entry_offset =
             Some(translator.subroutines_instruction_set().instr.len() + 1);
         self.instruction_set
-            .op_br(self.instruction_set_entry_offset.unwrap() as i32 * INSTRUCTION_BYTES as i32);
+            .op_br(self.instruction_set_entry_offset.unwrap() as i32);
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
-        for (_opcode, (offset_start, offset_end)) in translator.opcode_to_subroutine_meta() {
-            subroutines_instruction_set.fix_br_offsets(
-                Some(*offset_start),
-                Some(*offset_end),
-                ((self.instruction_set.len() + *offset_start as u32) as i32)
-                    * INSTRUCTION_BYTES as i32,
-            );
-        }
+        // for (_opcode, (offset_start, offset_end)) in translator.opcode_to_subroutine_meta() {
+        //     subroutines_instruction_set.fix_br_offsets(
+        //         Some(*offset_start),
+        //         Some(*offset_end),
+        //         ((self.instruction_set.len() + *offset_start as u32) as i32)
+        //             * INSTRUCTION_SIZE_BYTES as i32,
+        //     );
+        // }
         self.instruction_set
             .instr
             .extend(&subroutines_instruction_set.instr);

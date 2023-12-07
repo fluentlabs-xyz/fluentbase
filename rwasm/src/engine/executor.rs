@@ -1103,7 +1103,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .then_some(())
             .ok_or(TrapCode::IndirectCallToNull)?;
 
-        let offset = return_pointer as i32 - self.ip.pc() as i32;
+        let offset = return_pointer - self.ip.pc() as i32;
         self.branch_to(offset.into());
 
         Ok(())

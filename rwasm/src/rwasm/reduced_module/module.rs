@@ -24,16 +24,11 @@ pub struct ReducedModule {
 }
 
 impl ReducedModule {
-    pub fn new(
-        sink: &[u8],
-        do_not_rewrite_offsets: bool,
-    ) -> Result<ReducedModule, ReducedModuleError> {
+    pub fn new(sink: &[u8]) -> Result<ReducedModule, ReducedModuleError> {
         let mut reader = ReducedModuleReader::new(sink);
-        reader.do_not_rewrite_offsets(do_not_rewrite_offsets);
         reader
             .read_till_error()
             .map_err(|e| ReducedModuleError::BinaryFormat(e))?;
-
         Ok(ReducedModule {
             instruction_set: reader.instruction_set,
             relative_position: reader.relative_position,
@@ -102,17 +97,6 @@ impl ReducedModule {
             }
         }
         let import_len = import_mapping.len() as u32;
-
-        // reconstruct all functions and fix bytecode calls
-        for instr in code_section.instr.iter_mut() {
-            let func_offset = match instr {
-                Instruction::RefFunc(func) => func.to_u32(),
-                _ => continue,
-            };
-            if let Some(relative_pos) = self.relative_position.get(&func_offset) {
-                instr.update_call_index(*relative_pos);
-            }
-        }
 
         // push main functions (we collapse all functions into one)
         builder
