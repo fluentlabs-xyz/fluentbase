@@ -87,17 +87,19 @@ pub fn bitand<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     // }
 }
 
-pub fn bitor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn bitor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "OR";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-
-    let mut stack_post_shift = 0;
-    for _part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        duplicate_stack_value(instruction_set, &mut stack_post_shift, 5);
-        wasm_or(instruction_set, &mut stack_post_shift);
-        assign_to_stack_and_drop(instruction_set, &mut stack_post_shift, 5);
-    }
+    replace_current_opcode_with_subroutine(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    // let instruction_set = host.instruction_set();
+    //
+    // let mut stack_post_shift = 0;
+    // for _part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
+    //     duplicate_stack_value(instruction_set, &mut stack_post_shift, 5);
+    //     wasm_or(instruction_set, &mut stack_post_shift);
+    //     assign_to_stack_and_drop(instruction_set, &mut stack_post_shift, 5);
+    // }
 }
 
 pub fn bitxor<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
