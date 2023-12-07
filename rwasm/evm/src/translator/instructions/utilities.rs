@@ -10,7 +10,7 @@ use crate::{
 use fluentbase_rwasm::{
     engine::bytecode::Instruction,
     module::ImportName,
-    rwasm::{instruction::INSTRUCTION_BYTES, InstructionSet},
+    rwasm::{instruction::INSTRUCTION_SIZE_BYTES, InstructionSet},
 };
 
 pub(super) enum SystemFuncs {
@@ -132,7 +132,7 @@ pub(super) fn replace_current_opcode_with_inline_func(
     instruction_set_replace.fix_br_offsets(
         None,
         None,
-        instruction_set.len() as i32 * INSTRUCTION_BYTES as i32,
+        instruction_set.len() as i32 * INSTRUCTION_SIZE_BYTES as i32,
     );
     instruction_set
         .instr
@@ -159,7 +159,7 @@ pub(super) fn replace_current_opcode_with_subroutine(
         .subroutine_meta(opcode)
         .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
     let subroutine_entry = subroutine_meta.0 + 1;
-    instruction_set.op_br((subroutine_entry as i32) * INSTRUCTION_BYTES as i32);
+    instruction_set.op_br((subroutine_entry as i32) * INSTRUCTION_SIZE_BYTES as i32);
 }
 
 pub(super) fn duplicate_stack_value(

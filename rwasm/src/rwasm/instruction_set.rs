@@ -490,11 +490,10 @@ impl InstructionSet {
     impl_opcode!(op_i64_trunc_sat_f64s, I64TruncSatF64S);
     impl_opcode!(op_i64_trunc_sat_f64u, I64TruncSatF64U);
 
-    pub fn extend<I: Into<InstructionSet>>(&mut self, with: I) {
-        let o: InstructionSet = with.into();
-        self.instr.extend(o.instr);
+    pub fn extend(&mut self, with: &InstructionSet) {
+        self.instr.extend(&with.instr);
         if let Some(metas) = &mut self.metas {
-            metas.extend(o.metas.unwrap());
+            metas.extend(with.metas.as_ref().unwrap());
         }
     }
 

@@ -2,7 +2,8 @@ use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
     common::{Trap, UntypedValue, ValueType, F32, F64},
-    engine::bytecode::{BranchOffset, Instruction},
+    engine::bytecode::Instruction,
+    instruction_set,
     rwasm::{
         Compiler,
         CompilerConfig,
@@ -11,7 +12,6 @@ use fluentbase_rwasm::{
         ImportFunc,
         ImportLinker,
         ReducedModule,
-        RouterInstructions,
     },
     value::WithType,
     AsContext,
@@ -580,40 +580,38 @@ impl TestContext<'_> {
                 &[],
             ));
         }
-        let mut compiler = Compiler::new_with_linker(
-            wasm_binary.as_slice(),
-            CompilerConfig::default()
-                .fuel_consume(false)
-                .with_state(true),
-            Some(&import_linker),
-        )
-        .unwrap();
+        let config = CompilerConfig::default()
+            .with_input_code(instruction_set! {
+                Call(SYS_INPUT_LEN)
+                BrIfEqz(3)
+                Call(SYS_INPUT)
+                Br(-3)
+            })
+            .with_output_code(instruction_set! {
+                Call(SYS_OUTPUT_LEN)
+                BrIfEqz(3)
+                Call(SYS_OUTPUT)
+                Br(-3)
+            })
+            .fuel_consume(false)
+            .with_state(true)
+            .with_global_start_index(GLOBAL_START_INDEX);
+        let mut compiler =
+            Compiler::new_with_linker(wasm_binary.as_slice(), config, Some(&import_linker))
+                .unwrap();
 
         compiler.set_func_type_check_idx(self.func_type_check_idx.clone());
 
-        compiler.set_global_start_index(GLOBAL_START_INDEX);
         compiler
-            .translate(Some(FuncOrExport::StateRouter(
+            .translate(FuncOrExport::StateRouter(
                 exports,
-                RouterInstructions {
-                    state_ix: Instruction::Call((SYS_STATE).into()),
-                    input_ix: vec![
-                        Instruction::Call((SYS_INPUT_LEN).into()),
-                        Instruction::BrIfEqz(BranchOffset::from(3)),
-                        Instruction::Call((SYS_INPUT).into()),
-                        Instruction::Br(BranchOffset::from(-3)),
-                    ],
-                    output_ix: vec![
-                        Instruction::Call((SYS_OUTPUT_LEN).into()),
-                        Instruction::BrIfEqz(BranchOffset::from(3)),
-                        Instruction::Call((SYS_OUTPUT).into()),
-                        Instruction::Br(BranchOffset::from(-3)),
-                    ],
+                instruction_set! {
+                    Call(SYS_STATE)
                 },
-            )))
+            ))
             .map_err(|err| TestError::Compiler(err))?;
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
         let module_builder =
             reduced_module.to_module_builder(&self.engine, &import_linker, FuncType::new([], []));
         let module = module_builder.finish();
@@ -732,14 +730,14 @@ impl TestContext<'_> {
             .unwrap();
 
         if let Some(idx) = elem.index().into_func_idx() {
-            compiler.translate(Some(FuncOrExport::Func(idx))).unwrap();
+            compiler.translate(FuncOrExport::Func(idx)).unwrap();
         } else if let Some(ix) = module.get_global_init(elem.index()) {
             compiler.set_state(true);
-            compiler.translate(Some(FuncOrExport::Global(ix))).unwrap();
+            compiler.translate(FuncOrExport::Global(ix)).unwrap();
         }
 
         let rwasm_binary = compiler.finalize().unwrap();
-        let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
+        let reduced_module = ReducedModule::new(rwasm_binary.as_slice()).unwrap();
 
         let func_type = elem.ty().func();
         let global_type = elem

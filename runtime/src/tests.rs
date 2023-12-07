@@ -4,7 +4,8 @@ use fluentbase_poseidon::poseidon_hash;
 use fluentbase_rwasm::{
     common::Trap,
     engine::bytecode::{AddressOffset, Instruction},
-    rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule, RouterInstructions},
+    instruction_set,
+    rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule},
 };
 use hex_literal::hex;
 use keccak_hash::H256;
@@ -46,14 +47,12 @@ fn translate_with_state(wasm_binary: &[u8]) -> Vec<u8> {
     )
     .unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
+        .translate(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            RouterInstructions {
-                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                input_ix: vec![],
-                output_ix: vec![],
+            instruction_set! {
+                Call(SysFuncIdx::SYS_STATE)
             },
-        )))
+        ))
         .unwrap();
     compiler.finalize().unwrap()
 }
@@ -211,14 +210,12 @@ fn test_state() {
     )
     .unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
+        .translate(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            RouterInstructions {
-                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                input_ix: vec![],
-                output_ix: vec![],
+            instruction_set! {
+                Call(SysFuncIdx::SYS_STATE)
             },
-        )))
+        ))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
     let result = Runtime::<()>::run_with_context(
@@ -254,42 +251,39 @@ fn test_input_output() {
     )
     .unwrap();
     let import_linker = Runtime::<()>::new_linker();
-    let mut compiler = Compiler::new_with_linker(
-        wasm_binary.as_slice(),
-        CompilerConfig::default()
-            .with_state(true)
-            .fuel_consume(true),
-        Some(&import_linker),
-    )
-    .unwrap();
+    let config = CompilerConfig::default()
+        .with_state(true)
+        .fuel_consume(true)
+        .with_input_code(instruction_set! {
+            I32Const(1)
+            MemoryGrow
+            Drop
+            I32Const(0)
+            I32Const(0)
+            I32Const(8)
+            Call(SysFuncIdx::SYS_READ)
+            Drop
+            I32Const(0)
+            I64Load(0)
+        })
+        .with_output_code(instruction_set! {
+            LocalGet(1)
+            I32Const(0)
+            LocalSet(2)
+            I64Store(0)
+            I32Const(0)
+            I32Const(8)
+            Call(SysFuncIdx::SYS_WRITE)
+        });
+    let mut compiler =
+        Compiler::new_with_linker(wasm_binary.as_slice(), config, Some(&import_linker)).unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
+        .translate(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main")],
-            RouterInstructions {
-                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                input_ix: vec![
-                    Instruction::i32_const(1),
-                    Instruction::MemoryGrow,
-                    Instruction::Drop,
-                    Instruction::i32_const(0),
-                    Instruction::i32_const(0),
-                    Instruction::i32_const(8),
-                    Instruction::Call((SysFuncIdx::SYS_READ as u32).into()),
-                    Instruction::Drop,
-                    Instruction::i32_const(0),
-                    Instruction::I64Load(AddressOffset::from(0)),
-                ],
-                output_ix: vec![
-                    Instruction::local_get(1).unwrap(),
-                    Instruction::i32_const(0),
-                    Instruction::local_set(2).unwrap(),
-                    Instruction::I64Store(AddressOffset::from(0)),
-                    Instruction::i32_const(0),
-                    Instruction::i32_const(8),
-                    Instruction::Call((SysFuncIdx::SYS_WRITE as u32).into()),
-                ],
+            instruction_set! {
+                Call(SysFuncIdx::SYS_STATE)
             },
-        )))
+        ))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
@@ -342,14 +336,12 @@ fn test_wrong_indirect_type() {
     )
     .unwrap();
     compiler
-        .translate(Some(FuncOrExport::StateRouter(
+        .translate(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main")],
-            RouterInstructions {
-                state_ix: Instruction::Call((SysFuncIdx::SYS_STATE as u32).into()),
-                input_ix: vec![],
-                output_ix: vec![],
+            instruction_set! {
+                Call(SysFuncIdx::SYS_STATE)
             },
-        )))
+        ))
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
@@ -394,7 +386,7 @@ fn test_keccak256() {
         false,
     );
 
-    let module = ReducedModule::new(&rwasm_binary, false).unwrap();
+    let module = ReducedModule::new(&rwasm_binary).unwrap();
     println!("module.trace_binary(): {:?}", module.trace());
     let execution_result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
     println!(

@@ -1,23 +1,34 @@
-use crate::engine::ConstRef;
 use crate::{
     common::UntypedValue,
     engine::{
         bytecode::{
-            AddressOffset, BlockFuel, BranchOffset, BranchTableTargets, DataSegmentIdx,
-            ElementSegmentIdx, FuncIdx, GlobalIdx, Instruction, LocalDepth, SignatureIdx, TableIdx,
+            AddressOffset,
+            BlockFuel,
+            BranchOffset,
+            BranchTableTargets,
+            DataSegmentIdx,
+            ElementSegmentIdx,
+            FuncIdx,
+            GlobalIdx,
+            Instruction,
+            LocalDepth,
+            SignatureIdx,
+            TableIdx,
         },
+        ConstRef,
         DropKeep,
     },
     rwasm::binary_format::{
         reader_writer::{BinaryFormatReader, BinaryFormatWriter},
-        BinaryFormat, BinaryFormatError,
+        BinaryFormat,
+        BinaryFormatError,
     },
 };
 use alloc::vec::Vec;
 
 pub const INSTRUCTION_OPCODE_BYTES: usize = 1;
 pub const INSTRUCTION_AUX_BYTES: usize = 8;
-pub const INSTRUCTION_BYTES: usize = INSTRUCTION_OPCODE_BYTES + INSTRUCTION_AUX_BYTES;
+pub const INSTRUCTION_SIZE_BYTES: usize = INSTRUCTION_OPCODE_BYTES + INSTRUCTION_AUX_BYTES;
 
 impl<'a> BinaryFormat<'a> for Instruction {
     type SelfType = Instruction;
@@ -244,7 +255,7 @@ impl<'a> BinaryFormat<'a> for Instruction {
         if n == 1 {
             n += sink.write_u64_be(0)?;
         }
-        debug_assert_eq!(n, INSTRUCTION_BYTES);
+        debug_assert_eq!(n, INSTRUCTION_SIZE_BYTES);
         Ok(n)
     }
 

@@ -140,9 +140,9 @@ impl<'a> Translator<'a> {
                     .type_check(false),
             )
             .unwrap();
-            compiler.translate(Some(FuncOrExport::Func(0))).unwrap();
+            compiler.translate(FuncOrExport::Func(0)).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
-            let instruction_set = ReducedModule::new(&rwasm_binary, true)
+            let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
@@ -170,13 +170,13 @@ impl<'a> Translator<'a> {
                 CompilerConfig::default()
                     .fuel_consume(self.inject_fuel_consumption)
                     .translate_sections(false)
-                    .type_check(false),
+                    .type_check(false)
+                    .with_swap_stack_params(false),
             )
             .unwrap();
-            compiler.swap_stack_params(false);
-            compiler.translate(Some(FuncOrExport::Func(0))).unwrap();
+            compiler.translate(FuncOrExport::Func(0)).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
-            let instruction_set = ReducedModule::new(&rwasm_binary, true)
+            let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
@@ -224,9 +224,7 @@ impl<'a> Translator<'a> {
             let l = self.subroutines_instruction_set.instr.len();
             self.opcode_to_subroutine_meta
                 .insert(*opcode, (l, l + instruction_set.len() as usize - 1));
-            self.subroutines_instruction_set
-                .instr
-                .extend(&instruction_set.instr);
+            self.subroutines_instruction_set.extend(&instruction_set);
         }
     }
 

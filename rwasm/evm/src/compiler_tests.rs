@@ -122,7 +122,7 @@ mod evm_to_rwasm_tests {
             .unwrap();
         let rwasm_binary = binary_format_writer.to_vec();
 
-        let mut rmodule = ReducedModule::new(&rwasm_binary, false).unwrap();
+        let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
         let mut instruction_set = rmodule.bytecode().clone();
         debug!(
             "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",

@@ -1,6 +1,6 @@
 use crate::{
     common::UntypedValue,
-    engine::bytecode::{BranchOffset, InstrMeta, Instruction},
+    engine::bytecode::{InstrMeta, Instruction},
     rwasm::{BinaryFormat, BinaryFormatError, BinaryFormatReader, InstructionSet},
 };
 use alloc::{collections::BTreeMap, vec::Vec};
@@ -33,7 +33,6 @@ pub struct ReducedModuleReader<'a> {
     pub instruction_set: InstructionSet,
     pub relative_position: BTreeMap<u32, u32>,
     pub bytecode_length: usize,
-    pub do_not_rewrite_offsets: bool,
 }
 
 impl<'a> ReducedModuleReader<'a> {
@@ -43,7 +42,6 @@ impl<'a> ReducedModuleReader<'a> {
             instruction_set: InstructionSet::new(),
             relative_position: BTreeMap::new(),
             bytecode_length: sink.len(),
-            do_not_rewrite_offsets: true,
         }
     }
 
@@ -51,10 +49,6 @@ impl<'a> ReducedModuleReader<'a> {
         let mut reader = ReducedModuleReader::new(sink);
         reader.read_till_error()?;
         Ok(reader.instruction_set)
-    }
-
-    pub fn do_not_rewrite_offsets(&mut self, v: bool) {
-        self.do_not_rewrite_offsets = v
     }
 
     pub fn read_till_error(&mut self) -> Result<(), BinaryFormatError> {
@@ -68,9 +62,6 @@ impl<'a> ReducedModuleReader<'a> {
         }
         if let Some(last_trace) = last_trace {
             last_trace.instr?;
-        }
-        if !self.do_not_rewrite_offsets {
-            self.rewrite_offsets()?;
         }
         Ok(())
     }
@@ -116,20 +107,5 @@ impl<'a> ReducedModuleReader<'a> {
         }
 
         Some(trace)
-    }
-
-    pub fn rewrite_offsets(&mut self) -> Result<(), BinaryFormatError> {
-        for (index, opcode) in self.instruction_set.instr.iter_mut().enumerate() {
-            if let Some(jump_offset) = opcode.get_jump_offset() {
-                let jump_offset = jump_offset.to_i32();
-                let relative_offset = self.relative_position.get(&(jump_offset as u32));
-                let relative_offset =
-                    relative_offset.ok_or(BinaryFormatError::ReachedUnreachable)?;
-                opcode.update_branch_offset(BranchOffset::from(
-                    *relative_offset as i32 - index as i32,
-                ));
-            }
-        }
-        Ok(())
     }
 }

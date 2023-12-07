@@ -10,6 +10,7 @@ use crate::{
     rwasm::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         compiler::drop_keep::{translate_drop_keep, DropKeepWithReturnParam},
+        instruction::INSTRUCTION_SIZE_BYTES,
         instruction_set::InstructionSet,
         ImportLinker,
     },
@@ -61,13 +62,17 @@ pub trait Translator {
 
 #[derive(Debug, Clone)]
 pub struct CompilerConfig {
-    pub fuel_consume: bool,
-    pub tail_call: bool,
-    pub extended_const: bool,
-    pub translate_sections: bool,
-    pub with_state: bool,
-    pub translate_func_as_inline: bool,
-    pub type_check: bool,
+    fuel_consume: bool,
+    tail_call: bool,
+    extended_const: bool,
+    translate_sections: bool,
+    with_state: bool,
+    translate_func_as_inline: bool,
+    type_check: bool,
+    input_code: Option<InstructionSet>,
+    output_code: Option<InstructionSet>,
+    global_start_index: u32,
+    swap_stack_params: bool,
 }
 
 impl Default for CompilerConfig {
@@ -80,6 +85,10 @@ impl Default for CompilerConfig {
             with_state: false,
             translate_func_as_inline: false,
             type_check: true,
+            input_code: None,
+            output_code: None,
+            global_start_index: 0,
+            swap_stack_params: true,
         }
     }
 }
@@ -119,6 +128,26 @@ impl CompilerConfig {
         self.translate_func_as_inline = value;
         self
     }
+
+    pub fn with_input_code(mut self, input_code: InstructionSet) -> Self {
+        self.input_code = Some(input_code);
+        self
+    }
+
+    pub fn with_output_code(mut self, output_code: InstructionSet) -> Self {
+        self.output_code = Some(output_code);
+        self
+    }
+
+    pub fn with_global_start_index(mut self, global_start_index: u32) -> Self {
+        self.global_start_index = global_start_index;
+        self
+    }
+
+    pub fn with_swap_stack_params(mut self, swap_stack_params: bool) -> Self {
+        self.swap_stack_params = swap_stack_params;
+        self
+    }
 }
 
 pub struct Compiler<'linker> {
@@ -133,13 +162,8 @@ pub struct Compiler<'linker> {
     injection_segments: Vec<Injection>,
     br_table_status: Option<BrTableStatus>,
     func_type_check_idx: Rc<RefCell<Vec<FuncType>>>,
-    global_start_index: u32,
     pub config: CompilerConfig,
-    translate_func_as_inline: bool,
-    swap_stack_params: bool,
 }
-
-const REF_FUNC_FUNCTION_OFFSET: u32 = 0xff000000;
 
 #[derive(Debug)]
 pub struct Injection {
@@ -158,15 +182,8 @@ struct BrTableStatus {
 pub enum FuncOrExport {
     Export(&'static str),
     Func(u32),
+    StateRouter(Vec<FuncOrExport>, InstructionSet),
     Global(Instruction),
-    StateRouter(Vec<FuncOrExport>, RouterInstructions),
-}
-
-#[derive(Debug)]
-pub struct RouterInstructions {
-    pub state_ix: Instruction,
-    pub input_ix: Vec<Instruction>,
-    pub output_ix: Vec<Instruction>,
 }
 
 impl Default for FuncOrExport {
@@ -203,43 +220,27 @@ impl<'linker> Compiler<'linker> {
             injection_segments: vec![],
             br_table_status: None,
             func_type_check_idx: Default::default(),
-            global_start_index: 0,
             config,
-            translate_func_as_inline: false,
-            swap_stack_params: true,
         })
-    }
-
-    pub fn translate_func_as_inline(&mut self, v: bool) {
-        self.config.translate_func_as_inline = v;
-    }
-
-    pub fn set_global_start_index(&mut self, idx: u32) {
-        self.global_start_index = idx;
     }
 
     pub fn set_func_type_check_idx(&mut self, func_type_check_idx: Rc<RefCell<Vec<FuncType>>>) {
         self.func_type_check_idx = func_type_check_idx;
     }
 
-    pub fn swap_stack_params(&mut self, v: bool) {
-        self.swap_stack_params = v;
-    }
-
     pub fn set_state(&mut self, with_state: bool) {
         self.config.with_state = with_state;
     }
 
-    pub fn translate(&mut self, main_index: Option<FuncOrExport>) -> Result<(), CompilerError> {
+    pub fn translate(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         if self.is_translated {
             unreachable!("already translated");
         }
         // first we must translate all sections, this is an entrypoint
-
         if self.config.with_state {
-            self.translate_sections_with_state(main_index.unwrap_or_default())?;
+            self.translate_sections_with_state(main_index)?;
         } else if self.config.translate_sections {
-            self.translate_sections(main_index.unwrap_or_default())?;
+            self.translate_sections(main_index)?;
         }
         self.translate_imports_funcs()?;
         // translate rest functions
@@ -272,7 +273,7 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn resolve_global_ix(&self, export: &FuncOrExport) -> Option<Instruction> {
+    fn resolve_global_instr(&self, export: &FuncOrExport) -> Option<Instruction> {
         match export {
             FuncOrExport::Global(ix) => Some(ix.clone()),
             _ => None,
@@ -290,31 +291,42 @@ impl<'linker> Compiler<'linker> {
 
         match main_index {
             FuncOrExport::Export(_) => {
+                if let Some(input_code) = &self.config.input_code {
+                    router_opcodes.extend(&input_code);
+                }
                 let call_func_type = self.module.funcs[func_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let check_idx = self.get_or_insert_check_idx(func_type);
                 router_opcodes.op_i32_const(check_idx);
                 // router_opcodes.op_call_internal(func_index - num_imports);
                 router_opcodes.op_call_internal(func_index);
+                if let Some(output_code) = &self.config.output_code {
+                    router_opcodes.extend(&output_code);
+                }
             }
-            FuncOrExport::StateRouter(
-                states,
-                RouterInstructions {
-                    state_ix: check_instr,
-                    input_ix,
-                    output_ix,
-                },
-            ) => {
-                router_opcodes.extend(input_ix);
+            FuncOrExport::StateRouter(states, check_instr) => {
+                debug_assert_eq!(check_instr.len(), 1);
+
+                if let Some(input_code) = &self.config.input_code {
+                    router_opcodes.extend(&input_code);
+                }
+
+                let output_code_len = self
+                    .config
+                    .output_code
+                    .as_ref()
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+
                 for (state_value, state) in states.iter().enumerate() {
                     // push current and second states on the stack
-                    router_opcodes.push(check_instr);
+                    router_opcodes.extend(&check_instr);
                     router_opcodes.op_i32_const(state_value);
                     // if states are not equal then skip this call
                     router_opcodes.op_i32_eq();
 
                     if let Some(func_index) = self.resolve_func_index(state)? {
-                        router_opcodes.op_br_if_eqz(4_i32 + output_ix.len() as i32 + 1);
+                        router_opcodes.op_br_if_eqz(4_i32 + output_code_len as i32 + 1);
                         router_opcodes.op_i32_const(router_offset + router_opcodes.len() + 2 + 1);
 
                         let call_func_type = self.module.funcs[func_index as usize];
@@ -324,21 +336,24 @@ impl<'linker> Compiler<'linker> {
 
                         router_opcodes.op_i32_const(check_idx);
                         router_opcodes.op_call_internal(func_index);
-                        router_opcodes.extend(output_ix.clone());
-                    } else if let Some(instruction) = self.resolve_global_ix(state) {
-                        router_opcodes.op_br_if_eqz(2_i32 + output_ix.len() as i32 + 1);
+                        if let Some(output_code) = &self.config.output_code {
+                            router_opcodes.extend(&output_code);
+                        }
+                    } else if let Some(instruction) = self.resolve_global_instr(state) {
+                        router_opcodes.op_br_if_eqz(2_i32 + output_code_len as i32 + 1);
                         router_opcodes.push(instruction);
-                        router_opcodes.extend(output_ix.clone());
+                        if let Some(output_code) = &self.config.output_code {
+                            router_opcodes.extend(&output_code);
+                        }
                     } else {
                         unreachable!("not supported router state ({:?})", state)
                     }
-
                     router_opcodes.op_br_indirect(0);
                 }
 
                 const INIT_PRELUDE_VALUE: i32 = 1000;
 
-                router_opcodes.push(check_instr);
+                router_opcodes.extend(&check_instr);
                 router_opcodes.op_i32_const(INIT_PRELUDE_VALUE);
                 // if states are not equal then skip this call
                 router_opcodes.op_i32_eq();
@@ -346,19 +361,32 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_br_indirect(0);
             }
             FuncOrExport::Func(index) => {
+                if let Some(input_code) = &self.config.input_code {
+                    router_opcodes.extend(&input_code);
+                }
                 let call_func_type = self.module.funcs[index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let check_idx = self.get_or_insert_check_idx(func_type);
                 router_opcodes.op_i32_const(check_idx);
                 router_opcodes.op_call_internal(index);
+                if let Some(output_code) = &self.config.output_code {
+                    router_opcodes.extend(&output_code);
+                }
             }
             FuncOrExport::Global(instruction) => {
+                if let Some(input_code) = &self.config.input_code {
+                    router_opcodes.extend(&input_code);
+                }
                 router_opcodes.op_local_get(1);
                 router_opcodes.push(instruction);
                 router_opcodes.op_local_set(2);
                 router_opcodes.op_br_indirect(0);
+                if let Some(output_code) = &self.config.output_code {
+                    router_opcodes.extend(&output_code);
+                }
             }
         }
+
         Ok(router_opcodes)
     }
 
@@ -367,8 +395,7 @@ impl<'linker> Compiler<'linker> {
 
         for func_idx in 0..self.module.imports.len_funcs as u32 {
             let beginning_offset = self.code_section.len();
-            self.function_beginning
-                .insert(func_idx + 1, beginning_offset);
+            self.function_beginning.insert(func_idx, beginning_offset);
 
             let func_type = self.module.funcs[func_idx as usize];
             let func_type = self.engine.resolve_func_type(&func_type, Clone::clone);
@@ -401,7 +428,7 @@ impl<'linker> Compiler<'linker> {
     fn translate_sections(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
-        self.function_beginning.insert(0, 0);
+        // self.function_beginning.insert(0, 0);
         // translate global section (replaces with set/get global opcodes)
         let total_globals = self.module.globals.len();
         for i in 0..total_globals {
@@ -418,7 +445,7 @@ impl<'linker> Compiler<'linker> {
         // inject main function call with return
         let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
-        self.code_section.extend(router_opcodes);
+        self.code_section.extend(&router_opcodes);
         self.code_section.op_return();
         self.code_section.op_unreachable();
         // remember that this is injected and shifts br/br_if offset
@@ -436,12 +463,12 @@ impl<'linker> Compiler<'linker> {
     ) -> Result<(), CompilerError> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
-        self.function_beginning.insert(0, 0);
+        // self.function_beginning.insert(0, 0);
         let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
 
         let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         self.code_section.op_i32_const(return_offset);
-        self.code_section.extend(router_opcodes);
+        self.code_section.extend(&router_opcodes);
         self.code_section.op_return();
         self.code_section.op_unreachable();
 
@@ -550,7 +577,7 @@ impl<'linker> Compiler<'linker> {
 
         if global_index < len_globals as u32 {
             self.code_section
-                .op_call(self.global_start_index + global_index);
+                .op_call(self.config.global_start_index + global_index);
         } else {
             let global_inits = &self.module.globals_init;
             assert!(global_index as usize - len_globals < global_inits.len());
@@ -625,7 +652,7 @@ impl<'linker> Compiler<'linker> {
                 ElementSegmentKind::Passive => {
                     for (_, item) in e.items.items().iter().enumerate() {
                         if let Some(value) = item.funcref() {
-                            self.code_section.op_i32_const(value.into_u32());
+                            self.code_section.op_ref_func(value.into_u32());
                             self.code_section.op_elem_store(i as u32);
                         }
                     }
@@ -715,7 +742,7 @@ impl<'linker> Compiler<'linker> {
             self.code_section.op_type_check(idx);
         }
 
-        if !self.config.translate_func_as_inline && self.swap_stack_params {
+        if !self.config.translate_func_as_inline && self.config.swap_stack_params {
             self.swap_stack_parameters(num_inputs.len() as u32);
         }
 
@@ -739,8 +766,7 @@ impl<'linker> Compiler<'linker> {
             self.code_section.op_unreachable();
         }
         // remember function offset in the mapping (+1 because 0 is reserved for sections init)
-        self.function_beginning
-            .insert(fn_index + 1, beginning_offset);
+        self.function_beginning.insert(fn_index, beginning_offset);
         Ok(())
     }
 
@@ -1110,20 +1136,13 @@ impl<'linker> Compiler<'linker> {
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
         if !self.is_translated {
-            self.translate(None)?;
+            self.translate(Default::default())?;
         }
         let bytecode = &mut self.code_section;
 
         let mut i = 0;
         while i < bytecode.len() as usize {
             match bytecode.instr[i] {
-                Instruction::CallInternal(func) => {
-                    let func_idx = func.to_u32() + 1;
-
-                    bytecode.instr[i] = Instruction::Br(BranchOffset::from(
-                        self.function_beginning[&func_idx] as i32 - i as i32,
-                    ));
-                }
                 Instruction::Br(offset)
                 | Instruction::BrIfNez(offset)
                 | Instruction::BrAdjust(offset)
@@ -1157,76 +1176,33 @@ impl<'linker> Compiler<'linker> {
             i += 1;
         }
 
-        let mut states: Vec<(u32, u32, Vec<u8>)> = Vec::new();
-        let mut buffer_offset = 0u32;
-        for code in bytecode.instr.iter() {
-            let mut buffer: [u8; 100] = [0; 100];
-            let mut binary_writer = BinaryFormatWriter::new(&mut buffer[..]);
-            code.write_binary(&mut binary_writer)
-                .map_err(|e| CompilerError::BinaryFormat(e))?;
-            let buffer = binary_writer.to_vec();
-            let buffer_size = buffer.len() as u32;
-            states.push((buffer_offset, buffer_size, buffer));
-            buffer_offset += buffer_size;
-        }
+        let mut result = vec![0; (bytecode.len() as usize) * INSTRUCTION_SIZE_BYTES];
 
-        for i in 0..bytecode.instr.len() {
-            let mut code = bytecode.instr[i].clone();
-            let mut affected = false;
-            match code {
-                Instruction::CallInternal(func) | Instruction::ReturnCallInternal(func) => {
-                    let func_idx = func.to_u32() + 1;
-                    let func_offset = self
-                        .function_beginning
-                        .get(&func_idx)
-                        .ok_or(CompilerError::MissingFunction)?;
-                    let state = &states[*func_offset as usize];
-                    code.update_call_index(state.0);
-                    affected = true;
+        for (i, instr) in bytecode.instr.iter_mut().enumerate() {
+            match instr {
+                Instruction::CallInternal(func) => {
+                    let func_idx = func.to_u32();
+                    let relative_offset = self.function_beginning[&func_idx] as i32 - i as i32;
+                    *instr = Instruction::Br(BranchOffset::from(relative_offset));
                 }
                 Instruction::RefFunc(func_idx) => {
-                    // if ref func refers to host call
                     let func_offset = self
                         .function_beginning
-                        .get(&(func_idx.to_u32() + 1))
+                        .get(&func_idx.to_u32())
                         .ok_or(CompilerError::MissingFunction)?;
-                    let state = &states[*func_offset as usize];
-                    code.update_call_index(state.0);
-                    affected = true;
-                }
-                Instruction::I32Const(func_idx)
-                    if i < bytecode.instr.len() - 1
-                        && matches!(bytecode.instr[i + 1], Instruction::ElemStore(_)) =>
-                {
-                    if self.function_beginning.len() > 1 || func_idx.as_u32() != 0 {
-                        let func_offset = self
-                            .function_beginning
-                            .get(&(func_idx.as_u32() + 1))
-                            .ok_or(CompilerError::MissingFunction)?;
-                        code = Instruction::I32Const((*func_offset).into());
-                        affected = true;
-                    }
+                    instr.update_call_index(*func_offset);
                 }
                 _ => {}
             };
-            if let Some(jump_offset) = code.get_jump_offset() {
-                let jump_label = (jump_offset.to_i32() + i as i32) as usize;
-                let target_state = states.get(jump_label).ok_or(CompilerError::OutOfBuffer)?;
-                code.update_branch_offset(BranchOffset::from(target_state.0 as i32));
-                affected = true;
-            }
-            if affected {
-                let current_state = states.get_mut(i).ok_or(CompilerError::OutOfBuffer)?;
-                current_state.2.clear();
-                code.write_binary_to_vec(&mut current_state.2)
-                    .map_err(|e| CompilerError::BinaryFormat(e))?;
-            }
+            let mut binary_writer = BinaryFormatWriter::new(
+                &mut result.as_mut_slice()[(i * INSTRUCTION_SIZE_BYTES)
+                    ..(i * INSTRUCTION_SIZE_BYTES + INSTRUCTION_SIZE_BYTES)],
+            );
+            instr
+                .write_binary(&mut binary_writer)
+                .map_err(|e| CompilerError::BinaryFormat(e))?;
         }
 
-        let res = states.iter().fold(Vec::new(), |mut res, state| {
-            res.extend(&state.2);
-            res
-        });
-        Ok(res)
+        Ok(result)
     }
 }

@@ -2,8 +2,8 @@ use crate::{RwasmPlatformSDK, SDK};
 use alloc::vec;
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
-    engine::bytecode::Instruction,
-    rwasm::{Compiler, CompilerConfig, FuncOrExport, RouterInstructions},
+    instruction_set,
+    rwasm::{Compiler, CompilerConfig, FuncOrExport},
 };
 
 impl RwasmPlatformSDK for SDK {
@@ -20,14 +20,12 @@ impl RwasmPlatformSDK for SDK {
             return -100;
         }
         let mut compiler = compiler.unwrap();
-        let res = compiler.translate(Some(FuncOrExport::StateRouter(
+        let res = compiler.translate(FuncOrExport::StateRouter(
             vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
-            RouterInstructions {
-                state_ix: Instruction::Call(SysFuncIdx::SYS_STATE.into()),
-                input_ix: vec![],
-                output_ix: vec![],
+            instruction_set! {
+                Call(SysFuncIdx::SYS_STATE)
             },
-        )));
+        ));
         if res.is_err() {
             return -101;
         }
