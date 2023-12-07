@@ -1,5 +1,5 @@
 use crate::{
-    common::{Trap, F32},
+    common::Trap,
     func::{FuncEntity, HostFuncEntity, HostFuncTrampolineEntity},
     module::{ImportName, ImportType},
     AsContext,

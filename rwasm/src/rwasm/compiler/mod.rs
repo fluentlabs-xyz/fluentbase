@@ -1,6 +1,6 @@
 use crate::{
     arena::ArenaIndex,
-    common::{Pages, UntypedValue, ValueType, F32},
+    common::{Pages, UntypedValue, ValueType},
     engine::{
         bytecode::{BranchOffset, Instruction, LocalDepth, TableIdx},
         code_map::InstructionPtr,
@@ -11,19 +11,15 @@ use crate::{
         binary_format::{BinaryFormat, BinaryFormatError, BinaryFormatWriter},
         compiler::drop_keep::{translate_drop_keep, DropKeepWithReturnParam},
         instruction_set::InstructionSet,
-        FuncOrExport::Global,
         ImportLinker,
     },
     Config,
     Engine,
-    FuncRef,
     FuncType,
     Module,
-    Value,
 };
 use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
-use core::ops::Deref;
-use std::cell::RefCell;
+use core::{cell::RefCell, ops::Deref};
 
 mod drop_keep;
 use crate::value::WithType;
@@ -63,6 +59,7 @@ pub trait Translator {
     fn translate(&self, result: &mut InstructionSet) -> Result<(), CompilerError>;
 }
 
+#[derive(Debug, Clone)]
 pub struct CompilerConfig {
     pub fuel_consume: bool,
     pub tail_call: bool,
@@ -90,43 +87,36 @@ impl Default for CompilerConfig {
 impl CompilerConfig {
     pub fn fuel_consume(mut self, value: bool) -> Self {
         self.fuel_consume = value;
-
         self
     }
 
     pub fn type_check(mut self, value: bool) -> Self {
         self.type_check = value;
-
         self
     }
 
     pub fn tail_call(mut self, value: bool) -> Self {
         self.tail_call = value;
-
         self
     }
 
     pub fn extended_const(mut self, value: bool) -> Self {
         self.extended_const = value;
-
         self
     }
 
     pub fn translate_sections(mut self, value: bool) -> Self {
         self.translate_sections = value;
-
         self
     }
 
     pub fn with_state(mut self, value: bool) -> Self {
         self.with_state = value;
-
         self
     }
 
     pub fn translate_func_as_inline(mut self, value: bool) -> Self {
         self.translate_func_as_inline = value;
-
         self
     }
 }
@@ -295,9 +285,6 @@ impl<'linker> Compiler<'linker> {
         router_offset: u32,
     ) -> Result<InstructionSet, CompilerError> {
         let mut router_opcodes = InstructionSet::new();
-
-        // find main entrypoint (it must starts with `main` keyword)
-        let num_imports = self.module.imports.len_funcs as u32;
 
         let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
 
@@ -491,19 +478,17 @@ impl<'linker> Compiler<'linker> {
                     if seg.memory_index().into_u32() != 0 {
                         return Err(CompilerError::NotSupported("not zero index"));
                     }
-                    Ok((data_offset, memory.bytes(), true))
-                } else if let Some(data_offset) = seg.offset().eval_with_context(
-                    |index| Value::F32(F32::from(666)),
-                    |index| FuncRef::default(),
-                ) {
-                    #[cfg(feature = "e2e")]
                     return Ok((data_offset, memory.bytes(), true));
-
-                    #[cfg(not(feature = "e2e"))]
-                    return Err(CompilerError::NotSupported("can't eval offset"));
-                } else {
-                    Err(CompilerError::NotSupported("can't eval offset"))
                 }
+                // this is a mock case for e2e tests
+                #[cfg(feature = "e2e")]
+                if let Some(data_offset) = seg.offset().eval_with_context(
+                    |_| crate::Value::F32(crate::common::F32::from(666)),
+                    |_| crate::FuncRef::default(),
+                ) {
+                    return Ok((data_offset, memory.bytes(), true));
+                }
+                return Err(CompilerError::NotSupported("can't eval offset"));
             }
             DataSegmentKind::Passive => Ok((0.into(), memory.bytes(), false)),
         }
@@ -537,13 +522,20 @@ impl<'linker> Compiler<'linker> {
         for (idx, memory) in self.module.data_segments.iter().enumerate() {
             if let Ok((offset, bytes, is_active)) = Self::read_memory_segment(memory) {
                 if is_active {
-                    self.code_section.add_memory(
-                        offset.with_type(ValueType::I32).i32().unwrap(),
-                        bytes,
-                        idx,
-                    );
+                    let offset = offset.with_type(ValueType::I32).i32().unwrap();
+                    if cfg!(feature = "e2e") {
+                        self.code_section.op_i32_const(offset);
+                        self.code_section.op_i32_const(0);
+                        self.code_section.op_i32_const(0);
+                        self.code_section.op_memory_init(idx as u32);
+                        if offset >= 0 {
+                            self.code_section.add_memory(offset, bytes);
+                        }
+                    } else {
+                        self.code_section.add_memory(offset, bytes);
+                    }
                 } else {
-                    self.code_section.add_data(bytes, idx);
+                    self.code_section.add_data(bytes, idx as u32);
                 }
             }
         }
@@ -551,33 +543,35 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn translate_global(&mut self, global_index: u32) -> Result<(), CompilerError> {
-        let len_imported = self.module.imports.len_globals;
+        let len_globals = self.module.imports.len_globals;
 
         let globals = &self.module.globals;
         assert!(global_index < globals.len() as u32);
 
-        if global_index < len_imported as u32 {
+        if global_index < len_globals as u32 {
             self.code_section
                 .op_call(self.global_start_index + global_index);
         } else {
             let global_inits = &self.module.globals_init;
-            assert!(global_index as usize - len_imported < global_inits.len());
+            assert!(global_index as usize - len_globals < global_inits.len());
 
-            let global_expr = &global_inits[global_index as usize - len_imported];
+            let global_expr = &global_inits[global_index as usize - len_globals];
             if let Some(value) = global_expr.eval_const() {
                 self.code_section.op_i64_const(value);
             } else if let Some(value) = global_expr.funcref() {
                 self.code_section.op_ref_func(value.into_u32());
             } else if let Some(index) = global_expr.global() {
                 self.code_section.op_global_get(index.into_u32());
-            } else if let Some(value) = global_expr.eval_with_context(
-                |index| Value::F32(F32::from(666)),
-                |index| FuncRef::default(),
-            ) {
+            } else {
                 #[cfg(feature = "e2e")]
-                self.code_section.op_i64_const(value.to_bits());
+                if let Some(value) = global_expr.eval_with_context(
+                    |_| crate::Value::F32(crate::common::F32::from(666)),
+                    |_| crate::FuncRef::default(),
+                ) {
+                    self.code_section.op_i64_const(value.to_bits());
+                }
                 #[cfg(not(feature = "e2e"))]
-                self.code_section.op_unreachable();
+                return Err(CompilerError::NotSupported("not supported global expr"));
             }
         }
 
@@ -598,7 +592,7 @@ impl<'linker> Compiler<'linker> {
         #[cfg(feature = "e2e")]
         {
             let init_value = const_expr
-                .eval_with_context(|index| Value::I32(666), |index| FuncRef::default())
+                .eval_with_context(|_| crate::Value::I32(666), |_| crate::FuncRef::default())
                 .ok_or(CompilerError::NotSupported(
                     "only static global variables supported",
                 ))?;
@@ -612,10 +606,7 @@ impl<'linker> Compiler<'linker> {
             // don't use ref_func here due to the entrypoint section
             self.code_section.op_i32_const(0);
             if table_index < self.module.imports.len_tables {
-                #[cfg(not(feature = "e2e"))]
                 self.code_section.op_i64_const(table.minimum() as usize);
-                #[cfg(feature = "e2e")]
-                self.code_section.op_i64_const(10);
             } else {
                 self.code_section.op_i64_const(table.minimum() as usize);
             }
@@ -651,13 +642,12 @@ impl<'linker> Compiler<'linker> {
                         }
                         self.code_section.op_table_set(aes.table_index().into_u32());
                     }
-                    #[cfg(feature = "e2e")]
-                    {
+                    if cfg!(feature = "e2e") {
                         self.code_section.op_i64_const(dest_offset);
                         self.code_section.op_i64_const(0);
                         self.code_section.op_i64_const(0);
-                        self.code_section.op_table_init(i as u32);
-                        self.code_section.op_table_get(aes.table_index().into_u32());
+                        self.code_section
+                            .op_table_init(aes.table_index().into_u32(), i as u32);
                     }
                 }
                 _ => {}

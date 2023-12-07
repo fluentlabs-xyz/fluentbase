@@ -2,7 +2,7 @@ use super::{TestDescriptor, TestError, TestProfile, TestSpan};
 use anyhow::Result;
 use fluentbase_rwasm::{
     common::{Trap, UntypedValue, ValueType, F32, F64},
-    engine::bytecode::{BranchOffset, Instruction, Instruction::I32Const, LocalDepth},
+    engine::bytecode::{BranchOffset, Instruction},
     rwasm::{
         Compiler,
         CompilerConfig,
@@ -22,15 +22,12 @@ use fluentbase_rwasm::{
     ExternType,
     Func,
     FuncType,
-    Global,
     GlobalType,
-    ImportType,
     Instance,
     Linker,
     Memory,
     MemoryType,
     Module,
-    Mutability,
     Store,
     Table,
     TableType,
@@ -161,7 +158,7 @@ impl<'a> TestContext<'a> {
 
         let sys_input_len = Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
+            |caller: Caller<'_, DefaultImportHandler>| -> Result<u32, Trap> {
                 Ok(caller.data().input.len() as u32)
             },
         );
@@ -617,9 +614,8 @@ impl TestContext<'_> {
             .map_err(|err| TestError::Compiler(err))?;
         let rwasm_binary = compiler.finalize().unwrap();
         let reduced_module = ReducedModule::new(rwasm_binary.as_slice(), false).unwrap();
-        let mut module_builder =
+        let module_builder =
             reduced_module.to_module_builder(&self.engine, &import_linker, FuncType::new([], []));
-
         let module = module_builder.finish();
 
         self.store.data_mut().state = 1000;
