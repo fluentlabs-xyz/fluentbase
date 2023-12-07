@@ -117,21 +117,23 @@ pub fn bitxor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     // }
 }
 
-pub fn not<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn not<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "NOT";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-
-    let mut stack_post_shift = 0;
-    for part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        if part_idx > 0 {
-            duplicate_stack_value(instruction_set, &mut stack_post_shift, part_idx + 1);
-            wasm_not(instruction_set, &mut stack_post_shift);
-            assign_to_stack_and_drop(instruction_set, &mut stack_post_shift, part_idx + 2);
-        } else {
-            wasm_not(instruction_set, &mut stack_post_shift);
-        }
-    }
+    replace_current_opcode_with_subroutine(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    // let instruction_set = host.instruction_set();
+    //
+    // let mut stack_post_shift = 0;
+    // for part_idx in 0..WASM_I64_IN_EVM_WORD_COUNT {
+    //     if part_idx > 0 {
+    //         duplicate_stack_value(instruction_set, &mut stack_post_shift, part_idx + 1);
+    //         wasm_not(instruction_set, &mut stack_post_shift);
+    //         assign_to_stack_and_drop(instruction_set, &mut stack_post_shift, part_idx + 2);
+    //     } else {
+    //         wasm_not(instruction_set, &mut stack_post_shift);
+    //     }
+    // }
 }
 
 pub fn byte<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

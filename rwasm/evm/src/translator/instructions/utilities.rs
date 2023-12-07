@@ -68,7 +68,7 @@ pub(super) fn preprocess_op_params(
             i64_stack_params_count = 8;
         }
 
-        opcode::ISZERO => {
+        opcode::ISZERO | opcode::NOT => {
             i64_stack_params_count = 4;
         }
         _ => {
