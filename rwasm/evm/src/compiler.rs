@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use alloy_primitives::Bytes;
-use fluentbase_rwasm::rwasm::{instruction::INSTRUCTION_SIZE_BYTES, ImportLinker, InstructionSet};
+use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet};
 
 #[derive()]
 pub struct EvmCompiler<'a> {

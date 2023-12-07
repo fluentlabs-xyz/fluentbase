@@ -7,11 +7,7 @@ use crate::{
         WASM_I64_LOW_32_BIT_MASK,
     },
 };
-use fluentbase_rwasm::{
-    engine::bytecode::Instruction,
-    module::ImportName,
-    rwasm::{instruction::INSTRUCTION_SIZE_BYTES, InstructionSet},
-};
+use fluentbase_rwasm::{engine::bytecode::Instruction, module::ImportName, rwasm::InstructionSet};
 
 pub(super) enum SystemFuncs {
     CryptoKeccak256,
@@ -138,11 +134,7 @@ pub(super) fn replace_current_opcode_with_inline_func(
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
     let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
-    instruction_set_replace.fix_br_offsets(
-        None,
-        None,
-        instruction_set.len() as i32 * INSTRUCTION_SIZE_BYTES as i32,
-    );
+    // instruction_set_replace.fix_br_offsets(None, None, instruction_set.len() as i32);
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());
@@ -167,8 +159,9 @@ pub(super) fn replace_current_opcode_with_subroutine(
     let subroutine_meta = *translator
         .subroutine_meta(opcode)
         .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
-    let subroutine_entry = subroutine_meta.0 + 1;
-    instruction_set.op_br((subroutine_entry as i32) * INSTRUCTION_SIZE_BYTES as i32);
+
+    let subroutine_entry = subroutine_meta.0 as i32 - instruction_set.len() as i32 + 1;
+    instruction_set.op_br(subroutine_entry);
 }
 
 pub(super) fn duplicate_stack_value(
