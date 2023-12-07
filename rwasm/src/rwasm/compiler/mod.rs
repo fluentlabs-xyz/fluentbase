@@ -255,14 +255,14 @@ impl<'linker> Compiler<'linker> {
     }
 
     fn resolve_export_index(&self, name: &str) -> Result<u32, CompilerError> {
-        let main_index = self
+        let export_index = self
             .module
             .exports
             .get(name)
             .ok_or(CompilerError::MissingEntrypoint)?
             .into_func_idx()
             .ok_or(CompilerError::MissingEntrypoint)?;
-        Ok(main_index)
+        Ok(export_index)
     }
 
     fn resolve_func_index(&self, export: &FuncOrExport) -> Result<Option<u32>, CompilerError> {
@@ -285,7 +285,7 @@ impl<'linker> Compiler<'linker> {
         main_index: FuncOrExport,
         router_offset: u32,
     ) -> Result<InstructionSet, CompilerError> {
-        let mut router_opcodes = InstructionSet::new();
+        let mut router_opcodes = InstructionSet::with_relative_offset(0);
 
         let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
 
@@ -297,9 +297,7 @@ impl<'linker> Compiler<'linker> {
                 let call_func_type = self.module.funcs[func_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let check_idx = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_i32_const(check_idx);
-                // router_opcodes.op_call_internal(func_index - num_imports);
-                router_opcodes.op_call_internal(func_index);
+                router_opcodes.op_call_internal(func_index, check_idx);
                 if let Some(output_code) = &self.config.output_code {
                     router_opcodes.extend(&output_code);
                 }
@@ -332,10 +330,8 @@ impl<'linker> Compiler<'linker> {
                         let call_func_type = self.module.funcs[func_index as usize];
                         let func_type =
                             self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                        let check_idx = self.get_or_insert_check_idx(func_type);
-
-                        router_opcodes.op_i32_const(check_idx);
-                        router_opcodes.op_call_internal(func_index);
+                        let type_index = self.get_or_insert_check_idx(func_type);
+                        router_opcodes.op_call_internal(func_index, type_index);
                         if let Some(output_code) = &self.config.output_code {
                             router_opcodes.extend(&output_code);
                         }
@@ -366,9 +362,8 @@ impl<'linker> Compiler<'linker> {
                 }
                 let call_func_type = self.module.funcs[index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                let check_idx = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_i32_const(check_idx);
-                router_opcodes.op_call_internal(index);
+                let type_index = self.get_or_insert_check_idx(func_type);
+                router_opcodes.op_call_internal(index, type_index);
                 if let Some(output_code) = &self.config.output_code {
                     router_opcodes.extend(&output_code);
                 }
@@ -916,15 +911,14 @@ impl<'linker> Compiler<'linker> {
 
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                let idx = self.get_or_insert_check_idx(func_type.clone());
+                let type_index = self.get_or_insert_check_idx(func_type.clone());
                 let num_inputs = func_type.params();
 
                 Self::extract_drop_keep(instr_ptr).translate(&mut self.code_section)?;
 
                 self.swap_target(num_inputs.len() as u32);
 
-                self.code_section.op_i32_const(idx);
-                self.code_section.op_call_internal(func_idx);
+                self.code_section.op_call_internal(func_idx, type_index);
             }
             WI::ReturnCall(func) => {
                 self.code_section.op_unreachable();
@@ -986,21 +980,12 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
                 let target = self.code_section.len() + 2 + 1;
-                // we use this constant to remember ref func offset w/o moving function indices
-                // self.function_beginning
-                //     .insert(REF_FUNC_FUNCTION_OFFSET + target, target);
-                // self.code_section
-                //     .op_ref_func(REF_FUNC_FUNCTION_OFFSET + target - 1);
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32 + self.module.imports.len_funcs as u32;
-
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                let idx = self.get_or_insert_check_idx(func_type.clone());
-                self.code_section.op_i32_const(idx);
-
-                self.code_section.op_call_internal(fn_index);
-                // self.code_section.op_drop();
+                let type_index = self.get_or_insert_check_idx(func_type.clone());
+                self.code_section.op_call_internal(fn_index, type_index);
             }
             WI::CallIndirect(sig_index) => {
                 let table_idx = Self::extract_table(instr_ptr);

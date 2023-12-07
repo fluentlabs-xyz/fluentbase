@@ -289,6 +289,33 @@ mod tests {
                 ),
             },
         );
+        execute_binary(
+            r#"
+    (module
+      (type $check (func (param i32) (param i32) (result i32)))
+      (func $main
+        i32.const 100
+        drop
+        )
+      (func $deploy
+        )
+      (func $add (type $check)
+        local.get 0
+        local.get 1
+        i32.add
+        )
+      (export "main" (func $main))
+      (export "deploy" (func $deploy)))
+        "#,
+            RunConfig {
+                entrypoint: FuncOrExport::StateRouter(
+                    vec![FuncOrExport::Export("main"), FuncOrExport::Export("deploy")],
+                    instruction_set! {
+                        I32Const(1)
+                    },
+                ),
+            },
+        );
     }
 
     #[test]
