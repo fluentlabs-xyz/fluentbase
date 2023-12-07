@@ -9,8 +9,8 @@ mod runtime;
 #[cfg(not(feature = "runtime"))]
 mod rwasm;
 
-#[cfg(feature = "evm")]
-pub mod evm;
+// #[cfg(feature = "evm")]
+// pub mod evm;
 
 pub struct SDK;
 

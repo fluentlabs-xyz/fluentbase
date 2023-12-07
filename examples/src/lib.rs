@@ -16,11 +16,15 @@ mod rwasm;
 mod secp256k1;
 #[cfg(feature = "state")]
 mod state;
+#[cfg(feature = "storage")]
+mod storage;
 
 #[no_mangle]
 pub extern "C" fn deploy() {
     #[cfg(feature = "state")]
     state::deploy();
+    #[cfg(feature = "storage")]
+    storage::deploy();
 }
 
 #[no_mangle]
@@ -39,4 +43,6 @@ pub extern "C" fn main() {
     rwasm::main();
     #[cfg(feature = "state")]
     state::main();
+    #[cfg(feature = "storage")]
+    storage::main();
 }
