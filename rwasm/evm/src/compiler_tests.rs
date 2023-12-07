@@ -9,6 +9,7 @@ mod evm_to_rwasm_tests {
                 BYTE,
                 EQ,
                 GT,
+                ISZERO,
                 KECCAK256,
                 LT,
                 MSTORE,
@@ -69,6 +70,14 @@ mod evm_to_rwasm_tests {
         evm_bytecode
     }
 
+    fn compile_unary_op(opcode: u8, a: &[u8]) -> Vec<u8> {
+        let mut evm_bytecode: Vec<u8> = vec![];
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(a);
+        evm_bytecode.push(opcode);
+        evm_bytecode
+    }
+
     /// @cases - &(a,b,result)
     fn test_binary_op(
         opcode: u8,
@@ -90,6 +99,32 @@ mod evm_to_rwasm_tests {
             if res_expected != res {
                 debug!("a=            {:?}", a);
                 debug!("b=            {:?}", b);
+                debug!("res_expected= {:?}", res_expected);
+                debug!("res=          {:?}", global_memory);
+            }
+            assert_eq!(res_expected, res);
+        }
+    }
+
+    /// @cases - &(a,b,result)
+    fn test_unary_op(
+        opcode: u8,
+        bytecode_preamble: Option<&[u8]>,
+        cases: &[(Vec<u8>, Vec<u8>)],
+        force_memory_result_size_to: Option<usize>,
+    ) {
+        for case in cases {
+            let a = &case.0;
+            let mut res_expected = case.1.clone();
+            let mut evm_bytecode: Vec<u8> = vec![];
+            bytecode_preamble.map(|v| evm_bytecode.extend(v));
+            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+            evm_bytecode.extend(compile_unary_op(opcode, a));
+
+            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+            let res = &global_memory[0..res_expected.len()];
+            if res_expected != res {
+                debug!("a=            {:?}", a);
                 debug!("res_expected= {:?}", res_expected);
                 debug!("res=          {:?}", global_memory);
             }
@@ -297,6 +332,42 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary_op(EQ, None, &cases, None);
+    }
+
+    #[test]
+    fn iszero() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_unary_op(ISZERO, None, &cases, None);
     }
 
     #[test]

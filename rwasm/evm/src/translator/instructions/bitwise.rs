@@ -5,6 +5,7 @@ use crate::{
             assign_to_stack_and_drop,
             duplicate_stack_value,
             replace_current_opcode_with_inline_func,
+            replace_current_opcode_with_subroutine,
             wasm_and,
             wasm_not,
             wasm_or,
@@ -46,18 +47,21 @@ pub fn eq<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
-pub fn iszero<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn iszero<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ISZERO";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
 
-    for _part_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
-        instruction_set.op_i64_or();
-    }
-    instruction_set.op_i64_eqz();
-    for _part_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
-        instruction_set.op_i64_const(0);
-    }
+    replace_current_opcode_with_subroutine(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    // let instruction_set = host.instruction_set();
+    //
+    // for _part_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
+    //     instruction_set.op_i64_or();
+    // }
+    // instruction_set.op_i64_eqz();
+    // for _part_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
+    //     instruction_set.op_i64_const(0);
+    // }
 }
 
 pub fn bitand<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
