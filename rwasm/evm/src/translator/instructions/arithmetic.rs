@@ -97,9 +97,10 @@ pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
-pub fn div<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn div<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DIV";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
 pub fn sdiv<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
