@@ -59,6 +59,7 @@ pub(super) fn preprocess_op_params(
         | opcode::ADD
         | opcode::AND
         | opcode::OR
+        | opcode::XOR
         | opcode::SUB
         | opcode::MUL
         | opcode::MSTORE

@@ -22,3 +22,5 @@ pub mod shl;
 pub mod shr;
 #[cfg(feature = "bitwise_slt")]
 pub mod slt;
+#[cfg(feature = "bitwise_xor")]
+pub mod xor;
