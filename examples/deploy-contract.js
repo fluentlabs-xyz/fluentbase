@@ -47,11 +47,17 @@ const main = async () => {
     }
 
     // let contractAddress = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9';
-    // const result = await web3.eth.call({
-    //     to: contractAddress,
-    // });
-    // const message = web3.utils.hexToAscii(result)
-    // console.log(`Message: "${message}"`)
+    const result = await web3.eth.call({
+        to: contractAddress,
+    });
+    function isASCII(str) {
+        return /^[\x00-\x7F]*$/.test(str);
+    }
+    if (isASCII(web3.utils.hexToAscii(result))) {
+        console.log(`Message: "${web3.utils.hexToAscii(result)}"`)
+    } else {
+        console.log(`Message: "${result}"`)
+    }
 
     // const signedTransaction1 = await web3.eth.accounts.signTransaction({
     //     to: contractAddress,

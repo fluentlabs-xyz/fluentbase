@@ -1663,7 +1663,6 @@ dependencies = [
 name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
- "byteorder",
  "fluentbase-rwasm",
  "fluentbase-sdk",
  "wat",

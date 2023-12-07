@@ -60,7 +60,7 @@
       local.get 1
       call 0
     end
-    i32.const -1
+    i32.const -71
     call 1
     loop  ;; label = @1
       br 0 (;@1;)

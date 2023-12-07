@@ -1,7 +1,7 @@
 use crate::{SysPlatformSDK, SDK};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, SolValue};
+use alloy_sol_types::sol;
 use byteorder::{BigEndian, ByteOrder};
 
 sol! {
