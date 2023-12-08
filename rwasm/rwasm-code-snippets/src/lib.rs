@@ -1,6 +1,7 @@
 // #![no_std]
 
 extern crate alloc;
+extern crate core;
 #[cfg(test)]
 // #[macro_use]
 // extern crate std;

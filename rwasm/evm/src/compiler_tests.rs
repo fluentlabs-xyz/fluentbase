@@ -145,7 +145,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = 8 * 1024;
+        let virtual_stack_top = 1024;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -884,7 +884,6 @@ mod evm_to_rwasm_tests {
     #[test]
     fn mul() {
         let cases = [
-            // a=0 b=0 r=0
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
@@ -893,7 +892,6 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // a= b= r=
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
@@ -902,7 +900,6 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // a= b= r=
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
@@ -911,7 +908,6 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // a=1 b=1 r=1
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
@@ -920,7 +916,6 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // a=9 b=9 r=81
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000008"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000004"),
@@ -929,7 +924,6 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // a=-1 b=-1 r=1
             (
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
@@ -1023,6 +1017,14 @@ mod evm_to_rwasm_tests {
                 x("0x0000000000000000000000000000000000000000000000000000000000000002"),
                 xr(
                     "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
                     0,
                 ),
             ),
