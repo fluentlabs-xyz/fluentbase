@@ -145,7 +145,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = 300;
+        let virtual_stack_top = 8 * 1024;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -946,78 +946,86 @@ mod evm_to_rwasm_tests {
     #[test]
     fn div() {
         let cases = [
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
-            //     xr(
-            //         "0x00000000000000000000000000000000000000000000000000000001116c3527",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
-            //     xr(
-            //         "0x000000000000000000000000000000000000000000000000000000001116c352",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000010"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000010",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0xefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+                x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+                xr(
+                    "0x00000000000000000000000000000000000000000000000000000001116c3527",
+                    0,
+                ),
+            ),
+            (
+                x("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x00000000efaffffbffffffffffffffff1fff1fff2ffff5ffff8ffff2fff3ffff"),
+                xr(
+                    "0x000000000000000000000000000000000000000000000000000000001116c352",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000010"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000010",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
         ];
 
         test_binary_op(DIV, None, &cases, None);

@@ -23,7 +23,7 @@ test = false
 proc-macro = false
 
 [features]
-default = []
+default = ["arithmetic_div"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_and = []
@@ -47,8 +47,3 @@ arithmetic_div = []
 memory_mstore = []
 memory_mstore8 = []
 
-
-#[profile.release]
-#opt-level = 0
-#lto = false
-#strip = true
