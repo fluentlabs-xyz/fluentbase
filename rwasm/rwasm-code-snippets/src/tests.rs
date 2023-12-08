@@ -1,6 +1,6 @@
 #[cfg(test)]
-mod tests {
-    #[cfg(feature = "arithmetic_mul")]
+mod all_tests {
+    #[cfg(feature = "arithmetic_div")]
     use crate::arithmetic::div::arithmetic_div;
     #[cfg(feature = "arithmetic_mul")]
     use crate::arithmetic::mul::arithmetic_mul;
@@ -12,11 +12,51 @@ mod tests {
     fn test_arithmetic_div() {
         use ethereum_types::U256;
 
-        let cases = [(
-            U256::from_dec_str("1").unwrap(),
-            U256::from_dec_str("1").unwrap(),
-            U256::from_dec_str("1").unwrap(),
-        )];
+        let cases =
+            [
+                (
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("100").unwrap(),
+                    U256::from_dec_str("3").unwrap(),
+                    U256::from_dec_str("33").unwrap(),
+                ),
+                (
+                    // a=   0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3
+                    // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+                    // res= 0x000000000000000000000000000000000000000000008c790a73e76a20fb8aa4
+                    U256::from_dec_str("7435975337204372045884698348644506485689312179").
+                unwrap(),     U256::from_dec_str("11209492868993368627820").
+                unwrap(),     U256::from_dec_str("663364116834674892573348").
+                unwrap(), ),
+                (
+                    // a=   0x000000000000000000000000014d70ce7022e2de7e26734672778054107d2530
+                    // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+                    // res= 0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4
+                    U256::from_dec_str("7435974974357315440444149655801156533965628720").
+                unwrap(),     U256::from_dec_str("11209492868993368627820").
+                unwrap(),     U256::from_dec_str("663364084465052033976996").
+                unwrap(), ),
+                (
+                    // a=   0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530
+                    // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+                    // res= 0x000000000000000000000000000000000000000000008c790a00000000fb8aa4
+                    U256::from_dec_str("7435974971505144583019866185828197133679666480").unwrap(),
+                    U256::from_dec_str("11209492868993368627820").unwrap(),
+                    U256::from_dec_str("663364084210609581427364").unwrap(),
+                ),
+                (
+                    // a=   0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    // b=   0xefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    // res= 0x0000000000000000000000000000000000000000000000000000000000000001
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                    U256::from_dec_str("108555083659983933209597798445644913612440610624038028786991485007418559037439").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+            ];
 
         for case in &cases {
             let a = case.0;
@@ -25,19 +65,19 @@ mod tests {
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
 
-            let (res_0, res_1, res_2, res_3) = arithmetic_div(a0, a1, a2, a3, b0, b1, b2, b3);
+            let (res_0, res_1, res_2, res_3) = arithmetic_div(b0, b1, b2, b3, a0, a1, a2, a3);
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
-            let mut expected_be = vec![0; 32];
+            let mut expected_be = [0; 32];
             case.2.to_big_endian(&mut expected_be);
-            let mut res_be = vec![0; 32];
+            let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
             if res != case.2 {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:x?})", case.2, expected_be);
-                debug!("res=     {} ({:x?})", res, res_be);
+                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
             }
             assert_eq!(case.2, res);
         }

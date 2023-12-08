@@ -15,7 +15,7 @@ $(FILES):
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 
 test:
-	 cargo test --features=testing --release all_tests -- --nocapture
+	 cargo test --features=arithmetic_div --release test_arithmetic_div -- --nocapture
 
 clean:
 	cargo clean
