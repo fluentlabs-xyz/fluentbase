@@ -1,4 +1,3 @@
-workspace = { members = ["hello_world"] }
 [package]
 name = "fluentbase-runtime-example"
 version = "0.1.0"
