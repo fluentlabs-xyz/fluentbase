@@ -40,10 +40,6 @@ cargo new hello_world --lib
 
 Now put the following code into `src/lib.rs` file.
 
-AS you can see there two functions that must be exported with exact such names:
-- `deploy` - this function is called before creating app (similar to Solidity's constructor)
-- `main` - this one is getting called on each contract interaction
-
 ```rust
 #![no_std]
 extern crate alloc;
@@ -61,6 +57,10 @@ extern "C" fn main() {
     SDK::sys_write(str.as_bytes());
 }
 ```
+
+As you can see there two functions that must be exported with exact names:
+- `deploy` - this function is called before creating app (similar to Solidity's constructor)
+- `main` - this one is getting called on each contract interaction
 
 To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file:
 
