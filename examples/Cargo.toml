@@ -14,9 +14,21 @@ fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #wat = "1.0.77"
 #byteorder = { version = "1.5.0", default-features = false }
+alloy-sol-types = { version = "0.5.1", default-features = false }
+alloy-primitives = { version = "0.5.2", default-features = false }
+hex-literal = "0.4.1"
+
+[dev-dependencies]
+hex = "0.4.3"
+wat = "1.0.77"
 
 [lib]
 crate-type = ["cdylib"]
+
+[profile.dev]
+panic = "abort"
+[profile.test]
+panic = "abort"
 
 [profile.release]
 panic = "abort"
@@ -25,6 +37,11 @@ opt-level = 'z'
 strip = true
 
 [features]
+std = [
+    "alloy-sol-types/std",
+    "fluentbase-sdk/runtime"
+]
+erc20 = []
 greeting = []
 keccak256 = []
 panic = []
@@ -33,6 +50,3 @@ rwasm = []
 secp256k1 = []
 state = []
 storage = []
-
-[dev-dependencies]
-wat = "1.0.77"

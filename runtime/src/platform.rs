@@ -54,6 +54,9 @@ pub enum SysFuncIdx {
     // EVM
     EVM_SLOAD = 0xFF01,
     EVM_SSTORE = 0xFF02,
+    EVM_CALLER = 0xFF03,
+    EVM_CALLVALUE = 0xFF04,
+    EVM_ADDRESS = 0xFF05,
 }
 
 impl From<FuncIdx> for SysFuncIdx {

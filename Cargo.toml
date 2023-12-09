@@ -39,6 +39,11 @@ halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch =
 lto = "fat"
 codegen-units = 1
 
+[profile.dev]
+panic = "abort"
+[profile.test]
+panic = "abort"
+
 [profile.release]
 panic = "abort"
 lto = true
