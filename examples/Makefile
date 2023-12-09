@@ -1,4 +1,4 @@
-FILES = greeting secp256k1 keccak256 poseidon rwasm panic state storage
+FILES = erc20 greeting secp256k1 keccak256 poseidon rwasm panic state storage
 
 all: $(FILES)
 

@@ -11,8 +11,6 @@ We require to install `wasm32-unknown-unknown` compilation target, WASI support 
 rustup target add wasm32-unknown-unknown
 ```
 
-## Use one of 
-
 To compile examples (btw compiled artifacts are presented in the bin folder already) just run next command:
 You also can compile specific test by passing it to the make command:
 

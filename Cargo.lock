@@ -1676,8 +1676,12 @@ dependencies = [
 name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives 0.5.2",
+ "alloy-sol-types",
  "fluentbase-rwasm",
  "fluentbase-sdk",
+ "hex",
+ "hex-literal",
  "wat",
 ]
 
@@ -1749,7 +1753,7 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.4.2",
+ "alloy-primitives 0.5.2",
  "alloy-sol-types",
  "byteorder",
  "eth_trie",
