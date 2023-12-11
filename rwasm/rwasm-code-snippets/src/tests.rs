@@ -1,15 +1,17 @@
 #[cfg(test)]
 mod all_tests {
-    #[cfg(feature = "arithmetic_mod")]
-    use crate::arithmetic::a_mod::arithmetic_mod;
-    #[cfg(feature = "arithmetic_smod")]
-    use crate::arithmetic::a_smod::arithmetic_smod;
+    #[cfg(feature = "arithmetic_addmod")]
+    use crate::arithmetic::addmod::arithmetic_addmod;
     #[cfg(feature = "arithmetic_div")]
     use crate::arithmetic::div::arithmetic_div;
+    #[cfg(feature = "arithmetic_mod")]
+    use crate::arithmetic::mod_impl::arithmetic_mod;
     #[cfg(feature = "arithmetic_mul")]
     use crate::arithmetic::mul::arithmetic_mul;
     #[cfg(feature = "arithmetic_sdiv")]
     use crate::arithmetic::sdiv::arithmetic_sdiv;
+    #[cfg(feature = "arithmetic_smod")]
+    use crate::arithmetic::smod_impl::arithmetic_smod;
     use crate::test_utils::{u256_from_le_u64, u256_into_le_tuple};
     use log::debug;
 
@@ -215,6 +217,11 @@ mod all_tests {
             [
                 (
                     U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("1").unwrap(),
                     U256::from_dec_str("1").unwrap(),
                     U256::from_dec_str("0").unwrap(),
                 ),
@@ -245,6 +252,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -253,17 +261,66 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("expected={} ({:?})", r, expected_be);
                 debug!("res=     {} ({:?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
+        }
+    }
+
+    #[cfg(feature = "arithmetic_addmod")]
+    #[test]
+    fn test_arithmetic_addmod() {
+        use ethereum_types::U256;
+
+        let cases = [
+            (
+                U256::from_dec_str("10").unwrap(),
+                U256::from_dec_str("10").unwrap(),
+                U256::from_dec_str("8").unwrap(),
+                U256::from_dec_str("4").unwrap(),
+            ),
+            (
+                U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                U256::from_dec_str("2").unwrap(),
+                U256::from_dec_str("2").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+            ),
+        ];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+            let c = case.2;
+            let r = case.3;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+            let (c0, c1, c2, c3) = u256_into_le_tuple(c);
+
+            let (res_0, res_1, res_2, res_3) =
+                arithmetic_addmod(c0, c1, c2, c3, b0, b1, b2, b3, a0, a1, a2, a3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = [0; 32];
+            r.to_big_endian(&mut expected_be);
+            let mut res_be = [0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != r {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:?})", r, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
+            }
+            assert_eq!(r, res);
         }
     }
 
