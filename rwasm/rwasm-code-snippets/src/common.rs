@@ -107,7 +107,7 @@ pub(crate) fn try_divide_close_numbers(
     b_len: usize,
 ) -> u8 {
     let mut res: u8 = 0;
-    // const U128_BYTES_COUNT: usize = 16;
+    const U128_BYTES_COUNT: usize = 16;
     const U64_BYTES_COUNT: usize = 8;
     if a_len < U64_BYTES_COUNT && b_len < U64_BYTES_COUNT {
         let mut a_bytes = [0u8; U64_BYTES_COUNT];
@@ -144,7 +144,44 @@ pub(crate) fn try_divide_close_numbers(
                 *a_start_ptr.offset(i as isize) = v;
             };
         }
-    } else {
+    }
+    /*else if a_len < U128_BYTES_COUNT && b_len < U128_BYTES_COUNT {
+        let mut a_bytes = [0u8; U128_BYTES_COUNT];
+        let mut a_bytes_ptr = a_bytes.as_mut_ptr();
+        unsafe {
+            for i in 0..a_len {
+                *a_bytes_ptr.offset((U128_BYTES_COUNT - a_len + i) as isize) =
+                    *a_start_ptr.offset(i as isize);
+            }
+        }
+        let mut b_bytes = [0u8; U128_BYTES_COUNT];
+        let mut b_bytes_ptr = b_bytes.as_mut_ptr();
+        for i in 0..b_len {
+            unsafe {
+                *b_bytes_ptr.offset((U128_BYTES_COUNT - b_len + i) as isize) =
+                    *b_start_ptr.offset(i as isize);
+            }
+        }
+        let mut a: u128 = 0;
+        let mut b: u128 = 0;
+        for i in 0..U128_BYTES_COUNT {
+            a = a * 0x100 + unsafe { *a_bytes_ptr.offset(i as isize) as u128 };
+            b = b * 0x100 + unsafe { *b_bytes_ptr.offset(i as isize) as u128 };
+        }
+        if b != 0 {
+            res = (a / b) as u8;
+            a = a - b * res as u128;
+        }
+        a_bytes = a.to_be_bytes();
+        let mut a_bytes_ptr = a_bytes.as_ptr();
+        for i in 0..a_len {
+            unsafe {
+                let v = *a_bytes_ptr.offset((U128_BYTES_COUNT - a_len + i) as isize);
+                *a_start_ptr.offset(i as isize) = v;
+            };
+        }
+    }*/
+    else {
         while subtract_with_remainder(a_start_ptr, a_len, b_start_ptr, b_len) {
             res += 1;
         }
