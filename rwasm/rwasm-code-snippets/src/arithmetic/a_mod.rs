@@ -1,7 +1,7 @@
 use crate::{common::try_divide_close_numbers, consts::U256_BYTES_COUNT};
 
 #[no_mangle]
-pub fn arithmetic_div(
+pub fn arithmetic_mod(
     b0: u64,
     b1: u64,
     b2: u64,
@@ -61,8 +61,6 @@ pub fn arithmetic_div(
         }
 
         let mut a_pos_end = a_pos_start + b_bytes.len() - b_pos_start;
-        let a_bytes_ptr = a_bytes.as_mut_ptr();
-        let b_bytes_ptr = b_bytes.as_mut_ptr();
         loop {
             // debug!(
             //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
@@ -73,13 +71,11 @@ pub fn arithmetic_div(
             //     &b_bytes[b_pos_start..].len(),
             //     &b_bytes[b_pos_start..],
             // );
-            let a_len = a_pos_end - a_pos_start;
-            let b_len = b_bytes.len() - b_pos_start;
             let div_res = try_divide_close_numbers(
-                unsafe { a_bytes_ptr.offset(a_pos_start as isize) },
-                a_len,
-                unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
-                b_len,
+                unsafe { a_bytes.as_mut_ptr().offset(a_pos_start as isize) },
+                a_pos_end - a_pos_start,
+                unsafe { b_bytes.as_mut_ptr().offset(b_pos_start as isize) },
+                b_bytes.len() - b_pos_start,
             );
             // debug!(
             //     "a_chunk/b_bytes({}) = {:x?}",
@@ -107,20 +103,20 @@ pub fn arithmetic_div(
                 break;
             }
         }
-        let res_len = res.len();
-        let res_ptr: *mut u8 = res.as_mut_ptr();
-        let res_vec_ptr = res_vec.as_ptr();
-        for i in 0..res_vec_idx {
-            unsafe {
-                *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
-                    *res_vec_ptr.offset(i as isize);
-            }
-        }
+        // let res_len = res.len();
+        // let res_ptr: *mut u8 = res.as_mut_ptr();
+        // let res_vec_ptr = res_vec.as_ptr();
+        // for i in 0..res_vec_idx {
+        //     unsafe {
+        //         *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
+        //             *res_vec_ptr.offset(i as isize);
+        //     }
+        // }
         // println!("res {:?} \n\n", res);
         let mut v = [0u8; 8];
         for i in 0..4 {
-            v.clone_from_slice(&res[24 - i * 8..32 - i * 8]);
-            result[i] = u64::from_be_bytes(v);
+            v.clone_from_slice(&a_bytes[i * 8..(i + 1) * 8]);
+            result[3 - i] = u64::from_be_bytes(v);
         }
     }
 
