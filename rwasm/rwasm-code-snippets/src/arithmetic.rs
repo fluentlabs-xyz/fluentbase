@@ -14,3 +14,5 @@ pub mod sdiv;
 mod signextend;
 #[cfg(feature = "arithmetic_smod")]
 pub mod smod_impl;
+#[cfg(feature = "arithmetic_sub")]
+pub mod sub;
