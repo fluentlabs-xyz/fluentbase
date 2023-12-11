@@ -8,6 +8,8 @@ pub mod div;
 pub mod mod_impl;
 #[cfg(feature = "arithmetic_mul")]
 pub mod mul;
+#[cfg(feature = "arithmetic_mulmod")]
+pub mod mulmod;
 #[cfg(feature = "arithmetic_sdiv")]
 pub mod sdiv;
 #[cfg(feature = "arithmetic_signextend")]

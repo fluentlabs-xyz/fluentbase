@@ -17,6 +17,7 @@ mod evm_to_rwasm_tests {
                 MSTORE,
                 MSTORE8,
                 MUL,
+                MULMOD,
                 NOT,
                 OR,
                 PUSH32,
@@ -76,6 +77,18 @@ mod evm_to_rwasm_tests {
         evm_bytecode
     }
 
+    fn compile_ternary_op(opcode: u8, a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
+        let mut evm_bytecode: Vec<u8> = vec![];
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(c);
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(b);
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(a);
+        evm_bytecode.push(opcode);
+        evm_bytecode
+    }
+
     fn compile_unary_op(opcode: u8, a: &[u8]) -> Vec<u8> {
         let mut evm_bytecode: Vec<u8> = vec![];
         evm_bytecode.push(PUSH32);
@@ -99,6 +112,35 @@ mod evm_to_rwasm_tests {
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_binary_op(opcode, a, b));
+
+            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+            let res = &global_memory[0..res_expected.len()];
+            if res_expected != res {
+                debug!("a=            {:?}", a);
+                debug!("b=            {:?}", b);
+                debug!("res_expected= {:?}", res_expected);
+                debug!("res=          {:?}", global_memory);
+            }
+            assert_eq!(res_expected, res);
+        }
+    }
+
+    /// @cases - &(a,b,result)
+    fn test_ternary_op(
+        opcode: u8,
+        bytecode_preamble: Option<&[u8]>,
+        cases: &[(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)],
+        force_memory_result_size_to: Option<usize>,
+    ) {
+        for case in cases {
+            let a = &case.0;
+            let b = &case.1;
+            let c = &case.2;
+            let mut res_expected = case.3.clone();
+            let mut evm_bytecode: Vec<u8> = vec![];
+            bytecode_preamble.map(|v| evm_bytecode.extend(v));
+            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+            evm_bytecode.extend(compile_ternary_op(opcode, a, b, c));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
             let res = &global_memory[0..res_expected.len()];
@@ -935,6 +977,32 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary_op(MUL, None, &cases, None);
+    }
+
+    #[test]
+    fn mulmod() {
+        let cases = [
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000000000a"),
+                x("0x000000000000000000000000000000000000000000000000000000000000000a"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000008"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000004",
+                    0,
+                ),
+            ),
+            (
+                x("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x000000000000000000000000000000000000000000000000000000000000000c"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000009",
+                    0,
+                ),
+            ),
+        ];
+
+        test_ternary_op(MULMOD, None, &cases, None);
     }
 
     #[test]

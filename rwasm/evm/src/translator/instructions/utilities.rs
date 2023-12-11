@@ -69,6 +69,10 @@ pub(super) fn preprocess_op_params(
         opcode::ISZERO | opcode::NOT => {
             i64_stack_params_count = 4;
         }
+
+        opcode::MULMOD | opcode::ADDMOD => {
+            i64_stack_params_count = 12;
+        }
         _ => {
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
         }
