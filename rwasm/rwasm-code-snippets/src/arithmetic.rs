@@ -1,5 +1,7 @@
 #[cfg(feature = "arithmetic_mod")]
 pub mod a_mod;
+#[cfg(feature = "arithmetic_smod")]
+pub mod a_smod;
 #[cfg(feature = "arithmetic_add")]
 pub mod add;
 #[cfg(feature = "arithmetic_div")]
@@ -10,7 +12,3 @@ pub mod mul;
 pub mod sdiv;
 #[cfg(feature = "arithmetic_signextend")]
 mod signextend;
-#[cfg(feature = "arithmetic_sub")]
-pub mod sub;
-#[cfg(feature = "arithmetic_sub_global")]
-mod sub_global;

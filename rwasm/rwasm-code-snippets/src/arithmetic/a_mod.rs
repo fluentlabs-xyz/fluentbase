@@ -13,15 +13,10 @@ pub fn arithmetic_mod(
 ) -> (u64, u64, u64, u64) {
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
-    if b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1 {
-        result[0] = a0;
-        result[1] = a1;
-        result[2] = a2;
-        result[3] = a3;
-    } else if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
-        if a0 != 0 {
-            result[0] = 1
-        }
+    if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
+        result[0] = 0;
+    } else if b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1 {
+        result[0] = a0 % 2;
     } else if a3 > b3
         || (a3 == b3 && a2 > b2)
         || (a3 == b3 && a2 == b2 && a1 > b1)
@@ -61,6 +56,8 @@ pub fn arithmetic_mod(
         }
 
         let mut a_pos_end = a_pos_start + b_bytes.len() - b_pos_start;
+        let a_bytes_ptr = a_bytes.as_mut_ptr();
+        let b_bytes_ptr = b_bytes.as_mut_ptr();
         loop {
             // debug!(
             //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
@@ -71,11 +68,13 @@ pub fn arithmetic_mod(
             //     &b_bytes[b_pos_start..].len(),
             //     &b_bytes[b_pos_start..],
             // );
+            let a_len = a_pos_end - a_pos_start;
+            let b_len = b_bytes.len() - b_pos_start;
             let div_res = try_divide_close_numbers(
-                unsafe { a_bytes.as_mut_ptr().offset(a_pos_start as isize) },
-                a_pos_end - a_pos_start,
-                unsafe { b_bytes.as_mut_ptr().offset(b_pos_start as isize) },
-                b_bytes.len() - b_pos_start,
+                unsafe { a_bytes_ptr.offset(a_pos_start as isize) },
+                a_len,
+                unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
+                b_len,
             );
             // debug!(
             //     "a_chunk/b_bytes({}) = {:x?}",

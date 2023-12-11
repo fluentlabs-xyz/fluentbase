@@ -30,7 +30,7 @@
         block  ;; label = @3
           local.get 1
           i64.const 1
-          i64.ne
+          i64.gt_u
           br_if 0 (;@3;)
           local.get 3
           local.get 2
@@ -1606,6 +1606,9 @@
           br 0 (;@3;)
         end
       end
+      local.get 1
+      i64.eqz
+      br_if 0 (;@1;)
       block  ;; label = @2
         local.get 1
         i64.const -1
@@ -1614,8 +1617,8 @@
         local.get 8
         local.get 4
         i64.and
-        i64.const -1
-        i64.gt_s
+        i64.const 0
+        i64.ge_s
         br_if 0 (;@2;)
         block  ;; label = @3
           block  ;; label = @4
