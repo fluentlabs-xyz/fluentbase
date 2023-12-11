@@ -1,6 +1,6 @@
 (module
   (type (;0;) (func (param i32 i64 i64 i64 i64 i64 i64 i64 i64)))
-  (func $bitwise_shl (type 0) (param i32 i64 i64 i64 i64 i64 i64 i64 i64)
+  (func (;0;) (type 0) (param i32 i64 i64 i64 i64 i64 i64 i64 i64)
     (local i64)
     i64.const 0
     local.set 9
@@ -141,10 +141,10 @@
     local.get 6
     i64.store)
   (memory (;0;) 16)
-  (global $__stack_pointer (mut i32) (i32.const 1048576))
+  (global (;0;) (mut i32) (i32.const 1048576))
   (global (;1;) i32 (i32.const 1048576))
   (global (;2;) i32 (i32.const 1048576))
   (export "memory" (memory 0))
-  (export "bitwise_shl" (func $bitwise_shl))
+  (export "bitwise_shl" (func 0))
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2)))
