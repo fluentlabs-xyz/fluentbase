@@ -245,7 +245,7 @@ mod all_tests {
                 (
                     U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
                     U256::from_dec_str("1").unwrap(),
-                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
                 ),
             ];
 

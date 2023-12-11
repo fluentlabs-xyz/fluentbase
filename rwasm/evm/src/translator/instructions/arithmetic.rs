@@ -123,9 +123,10 @@ pub fn addmod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn mulmod<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn mulmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MULMOD";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
 pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

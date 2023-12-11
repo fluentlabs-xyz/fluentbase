@@ -24,6 +24,7 @@ proc-macro = false
 
 [features]
 default = []
+#default = ["arithmetic_mod", "arithmetic_addmod", "arithmetic_mulmod", "arithmetic_div", "arithmetic_sdiv", "arithmetic_smod", "arithmetic_mul"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_and = []
@@ -50,6 +51,14 @@ arithmetic_addmod = []
 arithmetic_mulmod = []
 memory_mstore = []
 memory_mstore8 = []
+# TODO
+arithmetic_exp = []
+arithmetic_address = []
+arithmetic_balance = []
+arithmetic_origin = []
+arithmetic_caller = []
+arithmetic_callvalue = []
+arithmetic_calldataload = []
 
 [profile.release]
 panic = "abort"
