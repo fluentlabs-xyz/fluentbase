@@ -27,38 +27,40 @@ pub fn arithmetic_sdiv(
     let mut b2 = b2;
     let mut b3 = b3;
 
-    if b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1
+    if b3 == 0 && b2 == 0 && b1 == 0 && (b0 == 1 || b0 == 0)
         || b3 == U64_ALL_BITS_ARE_1
             && b2 == U64_ALL_BITS_ARE_1
             && b1 == U64_ALL_BITS_ARE_1
             && b0 == U64_ALL_BITS_ARE_1
     {
-        if b0 == U64_ALL_BITS_ARE_1 && a_sign && b_sign {
-            if a0 == 0 {
-                a0 = U64_ALL_BITS_ARE_1;
-                if a1 == 0 {
-                    a1 = U64_ALL_BITS_ARE_1;
-                    if a2 == 0 {
-                        a2 = U64_ALL_BITS_ARE_1;
-                        a0 -= 1;
+        if b0 != 0 {
+            if b0 == U64_ALL_BITS_ARE_1 && a_sign && b_sign {
+                if a0 == 0 {
+                    a0 = U64_ALL_BITS_ARE_1;
+                    if a1 == 0 {
+                        a1 = U64_ALL_BITS_ARE_1;
+                        if a2 == 0 {
+                            a2 = U64_ALL_BITS_ARE_1;
+                            a0 -= 1;
+                        } else {
+                            a2 -= 1;
+                        }
                     } else {
-                        a2 -= 1;
+                        a1 -= 1;
                     }
                 } else {
-                    a1 -= 1;
+                    a0 -= 1;
                 }
-            } else {
-                a0 -= 1;
+                a0 = !a0;
+                a1 = !a1;
+                a2 = !a2;
+                a3 = !a3;
             }
-            a0 = !a0;
-            a1 = !a1;
-            a2 = !a2;
-            a3 = !a3;
+            result[0] = a0;
+            result[1] = a1;
+            result[2] = a2;
+            result[3] = a3;
         }
-        result[0] = a0;
-        result[1] = a1;
-        result[2] = a2;
-        result[3] = a3;
     } else if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
         if a0 != 0 {
             if a_sign == b_sign {
@@ -71,16 +73,14 @@ pub fn arithmetic_sdiv(
         }
     } else {
         if a_sign {
-            let mut borrow = 0;
             if a0 <= 0 {
                 a0 = U64_MSBIT_IS_1;
-                borrow = 1;
 
-                if a1 < borrow {
+                if a1 < 1 {
                     a1 = U64_MSBIT_IS_1;
-                    if a2 < borrow {
+                    if a2 < 1 {
                         a2 = U64_MSBIT_IS_1;
-                        if a3 < borrow {
+                        if a3 < 1 {
                             a3 = U64_MSBIT_IS_1;
                         } else {
                             a3 -= 1;
@@ -100,16 +100,14 @@ pub fn arithmetic_sdiv(
             a0 = !a0;
         }
         if b_sign {
-            let mut borrow = 0;
             if b0 <= 0 {
                 b0 = U64_MSBIT_IS_1;
-                borrow = 1;
 
-                if b1 < borrow {
+                if b1 < 1 {
                     b1 = U64_MSBIT_IS_1;
-                    if b2 < borrow {
+                    if b2 < 1 {
                         b2 = U64_MSBIT_IS_1;
-                        if b3 < borrow {
+                        if b3 < 1 {
                             b3 = U64_MSBIT_IS_1;
                         } else {
                             b3 -= 1;

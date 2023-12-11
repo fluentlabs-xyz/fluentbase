@@ -1,7 +1,10 @@
-use crate::{common::try_divide_close_numbers, consts::U256_BYTES_COUNT};
+use crate::{
+    common::try_divide_close_numbers,
+    consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_MSBIT_IS_1},
+};
 
 #[no_mangle]
-pub fn arithmetic_div(
+pub fn arithmetic_smod(
     b0: u64,
     b1: u64,
     b2: u64,
@@ -11,25 +14,78 @@ pub fn arithmetic_div(
     a2: u64,
     a3: u64,
 ) -> (u64, u64, u64, u64) {
+    let a_sign = a3 & U64_MSBIT_IS_1 > 0;
+    let b_sign = b3 & U64_MSBIT_IS_1 > 0;
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
-    if b3 == 0 && b2 == 0 && b1 == 0 && (b0 == 1 || b0 == 0) {
-        if b0 != 0 {
-            result[0] = a0;
-            result[1] = a1;
-            result[2] = a2;
-            result[3] = a3;
+    if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 || b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1 {
+        result[0] = 0;
+    } else {
+        let mut a0 = a0;
+        let mut a1 = a1;
+        let mut a2 = a2;
+        let mut a3 = a3;
+        let mut b0 = b0;
+        let mut b1 = b1;
+        let mut b2 = b2;
+        let mut b3 = b3;
+        if a_sign {
+            let mut borrow = 0;
+            if a0 <= 0 {
+                a0 = U64_MSBIT_IS_1;
+                borrow = 1;
+
+                if a1 < borrow {
+                    a1 = U64_MSBIT_IS_1;
+                    if a2 < borrow {
+                        a2 = U64_MSBIT_IS_1;
+                        if a3 < borrow {
+                            a3 = U64_MSBIT_IS_1;
+                        } else {
+                            a3 -= 1;
+                        }
+                    } else {
+                        a2 -= 1;
+                    }
+                } else {
+                    a1 -= 1;
+                }
+            } else {
+                a0 -= 1;
+            }
+            a3 = !a3;
+            a2 = !a2;
+            a1 = !a1;
+            a0 = !a0;
         }
-    } else if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
-        if a0 != 0 {
-            result[0] = 1
+        if b_sign {
+            if b0 <= 0 {
+                b0 = U64_MSBIT_IS_1;
+
+                if b1 < 1 {
+                    b1 = U64_MSBIT_IS_1;
+                    if b2 < 1 {
+                        b2 = U64_MSBIT_IS_1;
+                        if b3 < 1 {
+                            b3 = U64_MSBIT_IS_1;
+                        } else {
+                            b3 -= 1;
+                        }
+                    } else {
+                        b2 -= 1;
+                    }
+                } else {
+                    b1 -= 1;
+                }
+            } else {
+                b0 -= 1;
+            }
+            b3 = !b3;
+            b2 = !b2;
+            b1 = !b1;
+            b0 = !b0;
         }
-    } else if a3 > b3
-        || (a3 == b3 && a2 > b2)
-        || (a3 == b3 && a2 == b2 && a1 > b1)
-        || (a3 == b3 && a2 == b2 && a1 == b1 && a0 > b0)
-    {
-        let mut res = &mut [0u8; U256_BYTES_COUNT as usize];
+        // let mut res = &mut [0u8; U256_BYTES_COUNT as usize];
         let mut res_vec = [0u8; U256_BYTES_COUNT as usize];
         let mut res_vec_idx: usize = 0;
         let mut a_bytes = &mut [0u8; U256_BYTES_COUNT as usize];
@@ -109,20 +165,34 @@ pub fn arithmetic_div(
                 break;
             }
         }
-        let res_len = res.len();
-        let res_ptr: *mut u8 = res.as_mut_ptr();
-        let res_vec_ptr = res_vec.as_ptr();
-        for i in 0..res_vec_idx {
-            unsafe {
-                *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
-                    *res_vec_ptr.offset(i as isize);
+        // let res_len = res.len();
+        // let res_ptr: *mut u8 = res.as_mut_ptr();
+        // let res_vec_ptr = res_vec.as_ptr();
+        // for i in 0..res_vec_idx {
+        //     unsafe {
+        //         *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
+        //             *res_vec_ptr.offset(i as isize);
+        //     }
+        // }
+        // println!("res {:?} \n\n", res);
+        if a_sign {
+            let mut carry = true;
+            for i in (0..a_bytes.len()).rev() {
+                a_bytes[i] = !a_bytes[i];
+                if carry {
+                    if a_bytes[i] == BYTE_MAX_VAL as u8 {
+                        a_bytes[i] = 0;
+                    } else {
+                        a_bytes[i] += 1;
+                        carry = false;
+                    };
+                }
             }
         }
-        // println!("res {:?} \n\n", res);
         let mut v = [0u8; 8];
         for i in 0..4 {
-            v.clone_from_slice(&res[24 - i * 8..32 - i * 8]);
-            result[i] = u64::from_be_bytes(v);
+            v.clone_from_slice(&a_bytes[i * 8..(i + 1) * 8]);
+            result[3 - i] = u64::from_be_bytes(v);
         }
     }
 

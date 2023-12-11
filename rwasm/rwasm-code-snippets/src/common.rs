@@ -2,8 +2,6 @@
 
 use crate::consts::BYTE_MAX_VAL;
 
-pub const STACK_POINTER_DEFAULT_MEM_OFFSET: usize = 0;
-
 // #[no_mangle]
 // #[inline]
 // pub fn stack_pointer_value_get(mem_offset: usize) -> *mut i32 {
