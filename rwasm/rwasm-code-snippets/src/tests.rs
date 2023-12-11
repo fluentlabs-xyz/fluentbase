@@ -1,9 +1,13 @@
 #[cfg(test)]
 mod all_tests {
+    #[cfg(feature = "arithmetic_mod")]
+    use crate::arithmetic::a_mod::arithmetic_mod;
     #[cfg(feature = "arithmetic_div")]
     use crate::arithmetic::div::arithmetic_div;
     #[cfg(feature = "arithmetic_mul")]
     use crate::arithmetic::mul::arithmetic_mul;
+    #[cfg(feature = "arithmetic_sdiv")]
+    use crate::arithmetic::sdiv::arithmetic_sdiv;
     use crate::test_utils::{u256_from_le_u64, u256_into_le_tuple};
     use log::debug;
 
@@ -41,10 +45,10 @@ mod all_tests {
                 // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
                 // res= 0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4
                 (
-                    U256::from_dec_str("7435974974357315440444149655801156533965628720").
-                unwrap(),     U256::from_dec_str("11209492868993368627820").
-                unwrap(),     U256::from_dec_str("663364084465052033976996").
-                unwrap(), ),
+                    U256::from_dec_str("7435974974357315440444149655801156533965628720").unwrap(),
+                    U256::from_dec_str("11209492868993368627820").unwrap(),
+                    U256::from_dec_str("663364084465052033976996").unwrap(),
+                ),
                 // a=   0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530
                 // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
                 // res= 0x000000000000000000000000000000000000000000008c790a00000000fb8aa4
@@ -70,6 +74,11 @@ mod all_tests {
                     U256::from_dec_str("25242039884198893745110504204788847439224557211638529451980005572607").unwrap(),
                     U256::from_dec_str("4587271463").unwrap(),
                 ),
+                (
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("57896044618658097711785492504343953926634992332820282019728792003956564819967").unwrap(),
+                ),
             ];
 
         for case in &cases {
@@ -80,6 +89,165 @@ mod all_tests {
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
 
             let (res_0, res_1, res_2, res_3) = arithmetic_div(b0, b1, b2, b3, a0, a1, a2, a3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = [0; 32];
+            case.2.to_big_endian(&mut expected_be);
+            let mut res_be = [0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != case.2 {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
+            }
+            assert_eq!(case.2, res);
+        }
+    }
+
+    #[cfg(feature = "arithmetic_sdiv")]
+    #[test]
+    fn test_arithmetic_sdiv() {
+        use ethereum_types::U256;
+
+        let cases = [
+            (
+                U256::from_dec_str("1").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+            ),
+            (
+                U256::from_dec_str("100").unwrap(),
+                U256::from_dec_str("3").unwrap(),
+                U256::from_dec_str("33").unwrap(),
+            ),
+            // a=   0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3
+            // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+            // res= 0x000000000000000000000000000000000000000000008c790a73e76a20fb8aa4
+            (
+                U256::from_dec_str("7435975337204372045884698348644506485689312179").unwrap(),
+                U256::from_dec_str("11209492868993368627820").unwrap(),
+                U256::from_dec_str("663364116834674892573348").unwrap(),
+            ),
+            // a=   0x000000000000000000000000014d70ce7022e2de7e26734672778054107d2530
+            // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+            // res= 0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4
+            (
+                U256::from_dec_str("7435974974357315440444149655801156533965628720").unwrap(),
+                U256::from_dec_str("11209492868993368627820").unwrap(),
+                U256::from_dec_str("663364084465052033976996").unwrap(),
+            ),
+            // a=   0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530
+            // b=   0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c
+            // res= 0x000000000000000000000000000000000000000000008c790a00000000fb8aa4
+            (
+                U256::from_dec_str("7435974971505144583019866185828197133679666480").unwrap(),
+                U256::from_dec_str("11209492868993368627820").unwrap(),
+                U256::from_dec_str("663364084210609581427364").unwrap(),
+            ),
+            // a=   -1
+            // b=   -1
+            // res= 1
+            (
+                U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+            ),
+
+            // a=   -3494230947320957983274982734981728917359869856329843243
+            // b=   -1
+            // res= 3494230947320957983274982734981728917359869856329843243
+            (
+                U256::from_dec_str("115792089237316195423567490777740586895286709682905582310540224138056799796693").unwrap(),
+                U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                U256::from_dec_str("3494230947320957983274982734981728917359869856329843243").unwrap(),
+            ),
+
+            // a=   -437492374473294798249823982364926349823658375
+            // b=   -33424235324234
+            // res=
+            (
+                U256::from_dec_str("115792089237316195423570985008687470360895511370842314215475219081563305981561").unwrap(),
+                U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457583974488894315702").unwrap(),
+                U256::from_dec_str("13089076540700816492949964227746").unwrap(),
+            ),
+
+            // a=   -3494230947320957983274982734981728917359869856329843243
+            // b=   1
+            // res= -3494230947320957983274982734981728917359869856329843243
+            (
+                U256::from_dec_str("115792089237316195423567490777740586895286709682905582310540224138056799796693").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+                U256::from_dec_str("115792089237316195423567490777740586895286709682905582310540224138056799796693").unwrap(),
+            ),
+
+            // a= -437492374473294798249823982364926349823658375
+            // b= 439479274
+            // res=
+            (
+                U256::from_dec_str("115792089237316195423570985008687470360895511370842314215475219081563305981561").unwrap(),
+                U256::from_dec_str("439479274").unwrap(),
+                U256::from_dec_str("115792089237316195423570985008687907853268989186671803171798897050169668622137").unwrap(),
+            ),
+        ];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_sdiv(b0, b1, b2, b3, a0, a1, a2, a3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = [0; 32];
+            case.2.to_big_endian(&mut expected_be);
+            let mut res_be = [0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != case.2 {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
+            }
+            assert_eq!(case.2, res);
+        }
+    }
+
+    #[cfg(feature = "arithmetic_mod")]
+    #[test]
+    fn test_arithmetic_mod() {
+        use ethereum_types::U256;
+
+        let cases = [
+            // (
+            //     U256::from_dec_str("1").unwrap(),
+            //     U256::from_dec_str("1").unwrap(),
+            //     U256::from_dec_str("0").unwrap(),
+            // ),
+            (
+                U256::from_dec_str("100").unwrap(),
+                U256::from_dec_str("3").unwrap(),
+                U256::from_dec_str("1").unwrap(),
+            ),
+            // (
+            //     U256::from_dec_str("7435975337204372045884698348644506485689312179").unwrap(),
+            //     U256::from_dec_str("11209492868993368627820").unwrap(),
+            //     U256::from_dec_str("615931049874225970819").unwrap(),
+            // ),
+        ];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_mod(b0, b1, b2, b3, a0, a1, a2, a3);
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];

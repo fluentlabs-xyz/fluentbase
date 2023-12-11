@@ -1028,6 +1028,14 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    0,
+                ),
+            ),
         ];
 
         test_binary_op(DIV, None, &cases, None);
