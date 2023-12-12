@@ -4,6 +4,8 @@ mod all_tests {
     use crate::arithmetic::addmod::arithmetic_addmod;
     #[cfg(feature = "arithmetic_div")]
     use crate::arithmetic::div::arithmetic_div;
+    #[cfg(feature = "arithmetic_exp")]
+    use crate::arithmetic::exp::arithmetic_exp;
     #[cfg(feature = "arithmetic_mod")]
     use crate::arithmetic::mod_impl::arithmetic_mod;
     #[cfg(feature = "arithmetic_mul")]
@@ -102,6 +104,136 @@ mod all_tests {
                 debug!("res=     {} ({:?})", res, res_be);
             }
             assert_eq!(case.2, res);
+        }
+    }
+
+    #[cfg(feature = "arithmetic_exp")]
+    #[test]
+    fn test_arithmetic_exp() {
+        use ethereum_types::U256;
+
+        let cases =
+            [
+                (
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("43486284623783462873").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+
+                (
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("1").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("43486284623783462873").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("0").unwrap(),
+                    U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("10").unwrap(),
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("100").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("4").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("211").unwrap(),
+                    U256::from_dec_str("3291009114642412084309938365114701009965471731267159726697218048").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("252").unwrap(),
+                    U256::from_dec_str("7237005577332262213973186563042994240829374041602535252466099000494570602496").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("255").unwrap(),
+                    U256::from_dec_str("57896044618658097711785492504343953926634992332820282019728792003956564819968").unwrap(),
+                ),
+                // overflow
+                (
+                    U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("256").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("3").unwrap(),
+                    U256::from_dec_str("156").unwrap(),
+                    U256::from_dec_str("269721605590607563262106870407286853611938890184108047911269431464974473521").unwrap(),
+                ),
+                // overflow
+                (
+                    U256::from_dec_str("3").unwrap(),
+                    U256::from_dec_str("162").unwrap(),
+                    U256::from_dec_str("80834961238236718194504923518224208429833466278574202887857831530053261556873").unwrap(),
+                ),
+                // overflow
+                (
+                    U256::from_dec_str("100").unwrap(),
+                    U256::from_dec_str("100").unwrap(),
+                    U256::from_dec_str("59041770658110225754900818312084884949620587934026984283048776718299468660736").unwrap(),
+                ),
+                // overflow
+                (
+                    U256::from_dec_str("100").unwrap(),
+                    U256::from_dec_str("1000").unwrap(),
+                    U256::from_dec_str("0").unwrap(),
+                ),
+            ];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+            let r = case.2;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_exp(b0, b1, b2, b3, a0, a1, a2, a3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = [0; 32];
+            r.to_big_endian(&mut expected_be);
+            let mut res_be = [0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != r {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:?})", r, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
+            }
+            assert_eq!(r, res);
         }
     }
 
@@ -422,11 +554,32 @@ mod all_tests {
                 )
                 .unwrap(),
             ),
+            // overflow mul
             (
+                U256::from_dec_str("356811923176489970264571492362373784095686655").unwrap(),
+                U256::from_dec_str("356811923176489970264571492362373784095686655").unwrap(),
                 U256::from_dec_str(
-                    "7237005577332262213973186563042994240829374041602535252466099000494570602496",
+                    "115792089237316195423570985008687194229423631685700034896472859260344938266625",
                 )
                 .unwrap(),
+            ),
+            // overflowing mul
+            (
+                U256::from_dec_str("95780971304118053647396689196894323976171194868039680").unwrap(),
+                U256::from_dec_str("95780971304118053647396689196894323976171194868039680").unwrap(),
+                U256::from_dec_str(
+                    "115792089237316144001553568720999090510483029748437283328961855016136437923840",
+                )
+                .unwrap(),
+            ),
+            // overflowing mul
+            (
+                U256::from_dec_str("7236998675585915423409399128287131963803921590493563082079543837970346803200").unwrap(),
+                U256::from_dec_str("7236998675585915423409399128287131963803921590493563082079543837970346803200").unwrap(),
+                U256::from_dec_str("0").unwrap(),
+            ),
+            (
+                U256::from_dec_str("7237005577332262213973186563042994240829374041602535252466099000494570602496").unwrap(),
                 U256::from_dec_str("2").unwrap(),
                 U256::from_dec_str(
                     "14474011154664524427946373126085988481658748083205070504932198000989141204992",

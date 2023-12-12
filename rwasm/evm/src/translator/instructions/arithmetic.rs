@@ -129,9 +129,10 @@ pub fn mulmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
-pub fn exp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn exp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXP";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_subroutine(translator, host, true, false);
 }
 
 /// In the yellow paper `SIGNEXTEND` is defined to take two inputs, we will call them
