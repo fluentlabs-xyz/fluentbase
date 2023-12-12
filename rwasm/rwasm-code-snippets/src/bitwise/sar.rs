@@ -11,67 +11,60 @@ fn bitwise_sar(
     a2: u64,
     a3: u64,
 ) -> (u64, u64, u64, u64) {
-    let b0_sign = b0 & U64_MSBIT_IS_1;
-    if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {
+    let mut r = (0, 0, 0, 0);
+    let b0_sign = b3 & U64_MSBIT_IS_1;
+
+    if a3 != 0 || a2 != 0 || a1 != 0 || a0 > BYTE_MAX_VAL {
         if b0_sign > 0 {
-            return (
+            r = (
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
             );
         }
-        return (0, 0, 0, 0);
-    }
-
-    if a3 >= 192 {
-        let shift = a3 - 192;
+    } else if a0 >= 192 {
+        let shift = a0 - 192;
         let shift_inv = 64 - shift;
-        let s3 = b0 >> shift;
+        r.0 = b3 >> shift;
         if b0_sign > 0 {
-            let s3 = s3 | U64_ALL_BITS_ARE_1 << shift_inv;
+            r.0 = r.0 | U64_ALL_BITS_ARE_1 << shift_inv;
             return (
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
-                s3,
+                r.0,
             );
         }
-        return (0, 0, 0, s3);
-    }
-    if a3 >= 128 {
-        let shift = a3 - 128;
+    } else if a0 >= 128 {
+        let shift = a0 - 128;
         let shift_inv = 64 - shift;
-        let s2 = b0 >> shift;
-        let s3 = b0 << shift_inv | b1 >> shift;
+        r.1 = b3 >> shift;
+        r.0 = b3 << shift_inv | b2 >> shift;
         if b0_sign > 0 {
-            let s2 = s2 | U64_ALL_BITS_ARE_1 << shift_inv;
-            return (U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1, s2, s3);
+            r.1 = r.1 | U64_ALL_BITS_ARE_1 << shift_inv;
+            return (U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1, r.1, r.0);
         }
-        return (0, 0, s2, s3);
-    }
-    if a3 >= 64 {
-        let shift = a3 - 64;
+    } else if a0 >= 64 {
+        let shift = a0 - 64;
         let shift_inv = 64 - shift;
-        let s1 = b0 >> shift;
-        let s2 = b0 << shift_inv | b1 >> shift;
-        let s3 = b1 << shift_inv | b2 >> shift;
+        r.2 = b3 >> shift;
+        r.1 = b3 << shift_inv | b2 >> shift;
+        r.0 = b2 << shift_inv | b1 >> shift;
         if b0_sign > 0 {
-            let s1 = s1 | U64_ALL_BITS_ARE_1 << shift_inv;
-            return (U64_ALL_BITS_ARE_1, s1, s2, s3);
+            r.2 = r.2 | U64_ALL_BITS_ARE_1 << shift_inv;
+            return (U64_ALL_BITS_ARE_1, r.2, r.1, r.0);
         }
-        return (0, s1, s2, s3);
+    } else {
+        let shift = a0;
+        let shift_inv = 64 - shift;
+        r.3 = b3 >> shift;
+        r.2 = b3 << shift_inv | b2 >> shift;
+        r.1 = b2 << shift_inv | b1 >> shift;
+        r.0 = b1 << shift_inv | b0 >> shift;
+        if b0_sign > 0 {
+            r.3 = r.3 | U64_ALL_BITS_ARE_1 << shift_inv;
+        }
     }
-
-    let shift = a3;
-    let shift_inv = 64 - shift;
-    let s0 = b0 >> shift;
-    let s1 = b0 << shift_inv | b1 >> shift;
-    let s2 = b1 << shift_inv | b2 >> shift;
-    let s3 = b2 << shift_inv | b3 >> shift;
-    if b0_sign > 0 {
-        let s0 = s0 | U64_ALL_BITS_ARE_1 << shift_inv;
-        return (s0, s1, s2, s3);
-    }
-    return (s0, s1, s2, s3);
+    r
 }
