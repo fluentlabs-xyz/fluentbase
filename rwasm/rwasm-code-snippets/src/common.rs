@@ -1,5 +1,3 @@
-// use std::slice;
-
 use crate::consts::{
     BYTE_MAX_VAL,
     U256_BYTES_COUNT,
@@ -258,6 +256,68 @@ pub(crate) fn add(
     (s0, s1, s2, s3)
 }
 
+pub(crate) fn exp(
+    v0: u64,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+    exp0: u64,
+    exp1: u64,
+    exp2: u64,
+    exp3: u64,
+) -> (u64, u64, u64, u64) {
+    let mut r: (u64, u64, u64, u64) = (0, 0, 0, 0);
+
+    if v3 == 0 && v2 == 0 && v1 == 0 && (v0 == 0 || v0 == 1) {
+        if v0 == 0 {
+            if exp3 == 0 && exp2 == 0 && exp1 == 0 && exp0 == 0 {
+                r.0 = 1;
+            }
+        } else {
+            r.0 = 1
+        }
+    } else if exp3 == 0 && exp2 == 0 && exp1 == 0 && (exp0 == 0 || exp0 == 1) {
+        if exp0 == 1 {
+            r = (v0, v1, v2, v3);
+        } else {
+            r.0 = 1
+        }
+    } else {
+        let mut base: (u64, u64, u64, u64) = (v0, v1, v2, v3);
+        let mut rp: (u64, u64, u64, u64) = (1, 0, 0, 0);
+        let mut exp: (u64, u64, u64, u64) = (exp0, exp1, exp2, exp3);
+        r.0 = 1;
+        let mut c = 0;
+        loop {
+            c += 1;
+            // TODO wrong condition, fix it
+            if exp.0 & 1 > 0 {
+                // rX=rX*baseX
+                r = mul(r.0, r.1, r.2, r.3, base.0, base.1, base.2, base.3);
+
+                if r == rp {
+                    break;
+                }
+                rp = r;
+            }
+            // expX >>=1
+            exp.0 = (exp.0 >> 1) | (exp.1 << 63);
+            exp.1 = (exp.1 >> 1) | (exp.2 << 63);
+            exp.2 = (exp.2 >> 1) | (exp.3 << 63);
+            exp.3 = exp.3 >> 1;
+            if exp == (0, 0, 0, 0) {
+                break;
+            }
+            // baseX=baseX*baseX
+            base = mul(
+                base.0, base.1, base.2, base.3, base.0, base.1, base.2, base.3,
+            );
+        }
+    }
+
+    r
+}
+
 #[inline]
 pub(crate) fn mod_impl(
     a0: u64,
@@ -375,7 +435,7 @@ pub(crate) fn mod_impl(
     (result[0], result[1], result[2], result[3])
 }
 
-pub fn smod(
+pub(crate) fn smod(
     a0: u64,
     a1: u64,
     a2: u64,
@@ -570,7 +630,7 @@ pub fn smod(
     (result[0], result[1], result[2], result[3])
 }
 
-pub fn mul(
+pub(crate) fn mul(
     a0: u64,
     a1: u64,
     a2: u64,
@@ -634,4 +694,50 @@ pub fn mul(
     }
 
     (res[0], res[1], res[2], res[3])
+}
+
+pub(crate) fn shr(
+    shift0: u64,
+    shift1: u64,
+    shift2: u64,
+    shift3: u64,
+    v0: u64,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+) -> (u64, u64, u64, u64) {
+    let mut s0: u64 = 0;
+    let mut s1: u64 = 0;
+    let mut s2: u64 = 0;
+    let mut s3: u64 = 0;
+
+    if shift3 != 0 || shift2 != 0 || shift1 != 0 || shift0 > BYTE_MAX_VAL {
+        // return (0, 0, 0, 0);
+    } else if shift0 >= 192 {
+        let shift = shift0 - 192;
+        s0 = v3 >> shift;
+        // return (0, 0, 0, s3);
+    } else if shift0 >= 128 {
+        let shift = shift0 - 128;
+        let shift_inv = 64 - shift;
+        s1 = v3 >> shift;
+        s0 = v3 << shift_inv | v2 >> shift;
+        // return (0, 0, s2, s3);
+    } else if shift0 >= 64 {
+        let shift = shift0 - 64;
+        let shift_inv = 64 - shift;
+        s2 = v3 >> shift;
+        s1 = v3 << shift_inv | v2 >> shift;
+        s0 = v2 << shift_inv | v1 >> shift;
+        // return (0, s1, s2, s3);
+    } else {
+        let shift = shift0;
+        let shift_inv = 64 - shift;
+        s3 = v3 >> shift;
+        s2 = v3 << shift_inv | v2 >> shift;
+        s1 = v2 << shift_inv | v1 >> shift;
+        s0 = v1 << shift_inv | v0 >> shift;
+    }
+
+    (s0, s1, s2, s3)
 }

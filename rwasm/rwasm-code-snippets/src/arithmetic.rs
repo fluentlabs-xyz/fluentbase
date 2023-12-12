@@ -4,6 +4,8 @@ pub mod add;
 pub mod addmod;
 #[cfg(feature = "arithmetic_div")]
 pub mod div;
+#[cfg(feature = "arithmetic_exp")]
+pub mod exp;
 #[cfg(feature = "arithmetic_mod")]
 pub mod mod_impl;
 #[cfg(feature = "arithmetic_mul")]

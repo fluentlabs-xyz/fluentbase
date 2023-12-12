@@ -61,7 +61,8 @@ pub(super) fn preprocess_op_params(
         | opcode::MUL
         | opcode::DIV
         | opcode::MSTORE
-        | opcode::MSTORE8 => {
+        | opcode::MSTORE8
+        | opcode::EXP => {
             // mem offset for the result
             i64_stack_params_count = 8;
         }

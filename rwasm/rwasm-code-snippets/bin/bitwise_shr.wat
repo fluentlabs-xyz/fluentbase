@@ -1,32 +1,37 @@
 (module
   (type (;0;) (func (param i32 i64 i64 i64 i64 i64 i64 i64 i64)))
   (func (;0;) (type 0) (param i32 i64 i64 i64 i64 i64 i64 i64 i64)
-    (local i64)
+    (local i64 i64 i64 i64)
     i64.const 0
     local.set 9
     block  ;; label = @1
       block  ;; label = @2
-        block  ;; label = @3
-          local.get 5
-          i64.const 255
-          i64.gt_u
-          br_if 0 (;@3;)
-          local.get 7
-          local.get 6
-          i64.or
-          local.get 8
-          i64.or
-          i64.eqz
-          br_if 1 (;@2;)
-        end
+        local.get 5
+        i64.const 255
+        i64.le_u
+        br_if 0 (;@2;)
         i64.const 0
-        local.set 6
+        local.set 10
         i64.const 0
-        local.set 7
+        local.set 11
         i64.const 0
-        local.set 8
+        local.set 12
         br 1 (;@1;)
       end
+      i64.const 0
+      local.set 10
+      i64.const 0
+      local.set 11
+      i64.const 0
+      local.set 12
+      local.get 7
+      local.get 6
+      i64.or
+      local.get 8
+      i64.or
+      i64.const 0
+      i64.ne
+      br_if 0 (;@1;)
       block  ;; label = @2
         block  ;; label = @3
           local.get 5
@@ -42,36 +47,36 @@
           i64.const 0
           local.get 5
           i64.sub
-          local.set 6
+          local.set 10
           block  ;; label = @4
             local.get 5
             i64.const 63
             i64.gt_u
             br_if 0 (;@4;)
             local.get 2
-            local.get 6
+            local.get 10
             i64.shl
             local.get 1
             local.get 5
             i64.shr_u
             i64.or
-            local.set 8
+            local.set 12
             local.get 3
-            local.get 6
+            local.get 10
             i64.shl
             local.get 2
             local.get 5
             i64.shr_u
             i64.or
-            local.set 7
+            local.set 11
             local.get 4
-            local.get 6
+            local.get 10
             i64.shl
             local.get 3
             local.get 5
             i64.shr_u
             i64.or
-            local.set 6
+            local.set 10
             local.get 4
             local.get 5
             i64.shr_u
@@ -79,35 +84,37 @@
             br 3 (;@1;)
           end
           local.get 3
-          local.get 6
+          local.get 10
           i64.shl
           local.get 2
           local.get 5
           i64.shr_u
           i64.or
-          local.set 8
+          local.set 12
           local.get 4
-          local.get 6
+          local.get 10
           i64.shl
           local.get 3
           local.get 5
           i64.shr_u
           i64.or
-          local.set 7
+          local.set 11
           local.get 4
           local.get 5
           i64.shr_u
-          local.set 6
+          local.set 10
           br 2 (;@1;)
         end
         local.get 4
         local.get 5
         i64.shr_u
-        local.set 8
+        local.set 12
         i64.const 0
-        local.set 6
+        local.set 9
         i64.const 0
-        local.set 7
+        local.set 10
+        i64.const 0
+        local.set 11
         br 1 (;@1;)
       end
       i64.const 0
@@ -121,25 +128,25 @@
       local.get 5
       i64.shr_u
       i64.or
-      local.set 8
+      local.set 12
       local.get 4
       local.get 5
       i64.shr_u
-      local.set 7
+      local.set 11
       i64.const 0
-      local.set 6
+      local.set 10
     end
     local.get 0
     local.get 9
     i64.store offset=24
     local.get 0
-    local.get 6
+    local.get 10
     i64.store offset=16
     local.get 0
-    local.get 7
+    local.get 11
     i64.store offset=8
     local.get 0
-    local.get 8
+    local.get 12
     i64.store)
   (memory (;0;) 16)
   (global (;0;) (mut i32) (i32.const 1048576))
