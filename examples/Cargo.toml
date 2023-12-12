@@ -25,11 +25,6 @@ wat = "1.0.77"
 [lib]
 crate-type = ["cdylib"]
 
-[profile.dev]
-panic = "abort"
-[profile.test]
-panic = "abort"
-
 [profile.release]
 panic = "abort"
 lto = true
