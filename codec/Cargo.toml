@@ -1,0 +1,26 @@
+[package]
+name = "fluentbase-codec"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+byteorder = { version = "1.5.0", default-features = false }
+alloy-primitives = { version = "0.5.2", default-features = false }
+hashbrown = "0.14.3"
+
+[dev-dependencies]
+hex = "0.4.3"
+hex-literal = "0.4.1"
+
+[features]
+default = ["std"]
+std = [
+#    "byteorder/std",
+#    "alloy-primitives/std"
+]

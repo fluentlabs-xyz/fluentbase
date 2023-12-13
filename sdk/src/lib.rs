@@ -1,8 +1,10 @@
-// #![no_std]
 #![cfg_attr(not(feature = "runtime"), no_std)]
 
 extern crate alloc;
 extern crate wee_alloc;
+
+#[cfg(feature = "evm")]
+use alloy_primitives::{Address, U256};
 
 #[cfg(feature = "runtime")]
 mod runtime;
@@ -75,6 +77,9 @@ pub trait ZktriePlatformSDK {
 pub trait EvmPlatformSDK {
     fn evm_sload(key: &[u8], value: &mut [u8]);
     fn evm_sstore(key: &[u8], value: &[u8]);
+    fn evm_caller() -> Address;
+    fn evm_callvalue() -> U256;
+    fn evm_address() -> Address;
 }
 
 #[cfg(not(feature = "runtime"))]
