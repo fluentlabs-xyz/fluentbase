@@ -1,7 +1,10 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+#![allow(dead_code)]
 extern crate alloc;
 extern crate fluentbase_sdk;
 
+#[cfg(feature = "erc20")]
+mod erc20;
 #[cfg(feature = "greeting")]
 mod greeting;
 #[cfg(feature = "keccak256")]
@@ -19,16 +22,22 @@ mod state;
 #[cfg(feature = "storage")]
 mod storage;
 
+#[cfg(not(feature = "std"))]
 #[no_mangle]
 pub extern "C" fn deploy() {
+    #[cfg(feature = "erc20")]
+    erc20::deploy();
     #[cfg(feature = "state")]
     state::deploy();
     #[cfg(feature = "storage")]
     storage::deploy();
 }
 
+#[cfg(not(feature = "std"))]
 #[no_mangle]
 pub extern "C" fn main() {
+    #[cfg(feature = "erc20")]
+    erc20::main();
     #[cfg(feature = "greeting")]
     greeting::main();
     #[cfg(feature = "keccak256")]

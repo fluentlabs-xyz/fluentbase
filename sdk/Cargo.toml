@@ -12,12 +12,13 @@ k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], opt
 eth_trie = { version = "0.3.0", optional = true }
 keccak-hash = { version = "0.10.0", optional = true }
 halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde", optional = true }
-alloy-primitives = { version = "0.4.2", default-features = false }
+alloy-sol-types = { version = "0.5.1", default-features = false }
+alloy-primitives = { version = "0.5.2", default-features = false }
 #alloy-rlp = { version = "0.3.3", features = ["derive"] }
 #derive = "1.0.0"
 #solabi = "0.2.0"
 lazy_static = "1.4.0"
-alloy-sol-types = "0.5.1"
+#alloy-sol-types = "0.5.1"
 byteorder = { version = "1.5.0", default-features = false }
 wee_alloc = "0.4.5"
 

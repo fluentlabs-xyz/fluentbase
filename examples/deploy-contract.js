@@ -61,7 +61,7 @@ const main = async () => {
 
     // const signedTransaction1 = await web3.eth.accounts.signTransaction({
     //     to: contractAddress,
-    //     gas: 10_000_000,
+    //     gas: 1_000_000,
     // }, DEPLOYER_PRIVATE_KEY)
     // const receipt1 = await web3.eth.sendSignedTransaction(signedTransaction1.rawTransaction);
     // console.log(`Receipt: ${JSON.stringify(receipt1, null, 2)}`)

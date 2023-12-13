@@ -501,6 +501,30 @@ impl<'t, T> Runtime<'t, T> {
             &[ValueType::I32; 2],
             &[],
         ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_caller".to_string(),
+            SysFuncIdx::EVM_CALLER as u16,
+            FUEL_EVM_SSTORE,
+            &[ValueType::I32; 1],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_callvalue".to_string(),
+            SysFuncIdx::EVM_CALLVALUE as u16,
+            FUEL_EVM_SSTORE,
+            &[ValueType::I32; 1],
+            &[],
+        ));
+        import_linker.insert_function(ImportFunc::new_env(
+            "env".to_string(),
+            "_evm_address".to_string(),
+            SysFuncIdx::EVM_ADDRESS as u16,
+            FUEL_EVM_SSTORE,
+            &[ValueType::I32; 1],
+            &[],
+        ));
         import_linker
     }
 

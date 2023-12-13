@@ -7,13 +7,17 @@ lazy_static::lazy_static! {
     static ref STATE: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
 }
 
+#[allow(dead_code)]
 impl SDK {
     pub fn with_test_input(input: Vec<u8>) {
+        INPUT.lock().unwrap().clear();
         INPUT.lock().unwrap().extend(&input);
     }
 
     pub fn get_test_output() -> Vec<u8> {
-        OUTPUT.lock().unwrap().clone()
+        let result = OUTPUT.lock().unwrap().clone();
+        OUTPUT.lock().unwrap().clear();
+        result
     }
 
     pub(crate) fn with_test_state(state: u32) {

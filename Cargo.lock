@@ -1627,6 +1627,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-codec"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives 0.5.2",
+ "byteorder",
+ "hashbrown 0.14.3",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
@@ -1676,8 +1687,12 @@ dependencies = [
 name = "fluentbase-runtime-example"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives 0.5.2",
+ "alloy-sol-types",
  "fluentbase-rwasm",
  "fluentbase-sdk",
+ "hex",
+ "hex-literal",
  "wat",
 ]
 
@@ -1749,7 +1764,7 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.4.2",
+ "alloy-primitives 0.5.2",
  "alloy-sol-types",
  "byteorder",
  "eth_trie",
@@ -5278,13 +5293,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "halo2_proofs"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/halo2.git?branch=develop#5b9a3d71a325a9ecbad164aba90a7f6a8550a015"
-
-[[patch.unused]]
-name = "ethers-core"
-version = "0.17.0"
-source = "git+https://github.com/scroll-tech/ethers-rs.git?branch=v0.17.0#739ec9a0df8daf536937739c87e85612bd73212f"

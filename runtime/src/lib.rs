@@ -51,31 +51,3 @@ impl From<fluentbase_rwasm::Error> for RuntimeError {
         Self::Rwasm(value)
     }
 }
-
-pub trait StateHandler<D> {
-    // sys calls
-    fn sys_halt(&mut self, _caller: &Caller<D>, _exit_code: u32) {}
-    fn sys_write(&mut self, _caller: &Caller<D>, _offset: u32, _length: u32) {}
-    fn sys_read(&mut self, _caller: &Caller<D>, _target: u32, _offset: u32, _length: u32) {}
-    // evm calls
-    fn evm_return(&mut self, _caller: &Caller<D>, _offset: u32, _length: u32) {}
-}
-
-#[derive(Default, Debug)]
-#[allow(dead_code)]
-pub struct MemoryStateHandler {
-    input: Vec<u8>,
-    exit_code: u32,
-    output: Vec<u8>,
-}
-
-impl StateHandler<()> for MemoryStateHandler {
-    fn sys_halt(&mut self, _caller: &Caller<()>, exit_code: u32) {
-        self.exit_code = exit_code;
-    }
-
-    fn sys_write(&mut self, _caller: &Caller<()>, _offset: u32, _length: u32) {}
-    fn sys_read(&mut self, _caller: &Caller<()>, _target: u32, _offset: u32, _length: u32) {}
-
-    fn evm_return(&mut self, _caller: &Caller<()>, _offset: u32, _length: u32) {}
-}
