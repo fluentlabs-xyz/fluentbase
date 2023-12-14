@@ -10,3 +10,9 @@ pub use crate::{
 
 mod buffer;
 mod encoder;
+mod hash;
+mod primitive;
+mod serde;
+#[cfg(test)]
+mod tests;
+mod vec;
