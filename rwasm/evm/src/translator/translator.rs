@@ -196,11 +196,12 @@ impl<'a> Translator<'a> {
         };
 
         [
-            (opcode::EXP, "../rwasm-code-snippets/bin/arithmetic_exp.wat"),
-            // (
-            //     opcode::MULMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
-            // ),
+            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
+            // (opcode::EXP, "../rwasm-code-snippets/bin/arithmetic_exp.wat"),
+            (
+                opcode::MULMOD,
+                "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
+            ),
             // (opcode::ADD, "../rwasm-code-snippets/bin/arithmetic_add.wat"),
             // (
             //     opcode::SIGNEXTEND,
@@ -209,7 +210,6 @@ impl<'a> Translator<'a> {
             // (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
             // (opcode::MUL, "../rwasm-code-snippets/bin/arithmetic_mul.wat"),
             // (opcode::DIV, "../rwasm-code-snippets/bin/arithmetic_div.wat"),
-            // (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
             // (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
             // (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.wat"),
             // (opcode::OR, "../rwasm-code-snippets/bin/bitwise_or.wat"),

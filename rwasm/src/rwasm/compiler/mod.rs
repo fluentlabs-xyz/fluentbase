@@ -989,7 +989,7 @@ impl<'linker> Compiler<'linker> {
             }
             WI::CallInternal(func_idx) => {
                 let target =
-                    self.code_section.len() + 2 + 1/* + if self.config.type_check { 1 } else { 0 }*/;
+                    self.code_section.len() + 2 + if self.config.type_check { 1 } else { 0 };
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32 + self.module.imports.len_funcs as u32;
                 let call_func_type = self.module.funcs[fn_index as usize];
