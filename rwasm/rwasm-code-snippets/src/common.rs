@@ -191,6 +191,15 @@ pub(crate) fn try_divide_close_numbers(
     res
 }
 
+// #[no_mangle]
+pub(crate) fn mul_test(a: (u64, u64, u64, u64), b: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+    let mut r = a;
+    for i in 0..1 {
+        r = (r.0 * b.0, r.1 * b.1, r.2 * b.2, r.3 * b.3);
+    }
+    r
+}
+
 pub(crate) fn add(
     a0: u64,
     a1: u64,
@@ -256,6 +265,7 @@ pub(crate) fn add(
     (s0, s1, s2, s3)
 }
 
+// #[no_mangle]
 pub(crate) fn exp(
     v0: u64,
     v1: u64,

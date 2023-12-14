@@ -167,6 +167,11 @@ mod all_tests {
                 ),
                 (
                     U256::from_dec_str("2").unwrap(),
+                    U256::from_dec_str("3").unwrap(),
+                    U256::from_dec_str("8").unwrap(),
+                ),
+                (
+                    U256::from_dec_str("2").unwrap(),
                     U256::from_dec_str("211").unwrap(),
                     U256::from_dec_str("3291009114642412084309938365114701009965471731267159726697218048").unwrap(),
                 ),
