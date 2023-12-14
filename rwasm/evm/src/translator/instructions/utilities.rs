@@ -27,6 +27,7 @@ pub(super) fn wasm_call(
     };
     let import_fn_idx =
         translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name)].0;
+    // instruction_set.op_i32_const(instruction_set.len() + 2);
     instruction_set.op_call(import_fn_idx);
 }
 
@@ -81,7 +82,8 @@ pub(super) fn preprocess_op_params(
 
     let instruction_set = host.instruction_set();
     let mut aux_params_count = 0;
-    if inject_return_offset {
+    let inject_return_offset_at_the_beginning = false; // when using 'true' also need to disable params swap in translator (.with_swap_stack_params)
+    if inject_return_offset && inject_return_offset_at_the_beginning {
         aux_params_count += 1;
         instruction_set.op_i32_const(
             instruction_set.len() + 2 + if inject_memory_result_offset { 1 } else { 0 },
@@ -90,8 +92,13 @@ pub(super) fn preprocess_op_params(
     if inject_memory_result_offset {
         aux_params_count += 1;
         if memory_result_offset_is_first_param {
-            let offset_instruction = instruction_set.instr
-                [instruction_set.len() as usize - if inject_return_offset { 5 } else { 4 }];
+            let offset_instruction = instruction_set.instr[instruction_set.len() as usize
+                - 4
+                - if inject_return_offset && inject_return_offset_at_the_beginning {
+                    1
+                } else {
+                    0
+                }];
             let offset = match offset_instruction {
                 Instruction::I64Const(offset) => offset,
                 x => {
@@ -120,6 +127,10 @@ pub(super) fn preprocess_op_params(
             ..params_start_idx + aux_params_count + i64_stack_params_count]
             .clone_from_slice(&params);
     }
+    if inject_return_offset && !inject_return_offset_at_the_beginning {
+        // instruction_set.op_type_check(0);
+        instruction_set.op_i32_const(instruction_set.len() + 2);
+    }
 }
 
 pub(super) fn replace_current_opcode_with_inline_func(
@@ -145,7 +156,7 @@ pub(super) fn replace_current_opcode_with_inline_func(
         .extend(instruction_set_replace.instr.iter());
 }
 
-pub(super) fn replace_current_opcode_with_subroutine(
+pub(super) fn replace_current_opcode_with_call_to_subroutine(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
@@ -161,11 +172,12 @@ pub(super) fn replace_current_opcode_with_subroutine(
 
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
-    let subroutine_meta = *translator
+    let subroutine_meta = translator
         .subroutine_meta(opcode)
         .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
 
-    let subroutine_entry = subroutine_meta.0 as i32 - instruction_set.len() as i32 + 1;
+    let subroutine_entry = subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
+    // let subroutine_entry = -278;
     instruction_set.op_br(subroutine_entry);
 }
 

@@ -55,13 +55,13 @@ impl<'a> EvmCompiler<'a> {
             Some(translator.subroutines_instruction_set().instr.len() + 1);
         self.instruction_set
             .op_br(self.instruction_set_entry_offset.unwrap() as i32);
+
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
-        // for (_opcode, (offset_start, offset_end)) in translator.opcode_to_subroutine_meta() {
+        // for (_opcode, meta) in translator.opcode_to_subroutine_meta() {
         //     subroutines_instruction_set.fix_br_offsets(
-        //         Some(*offset_start),
-        //         Some(*offset_end),
-        //         ((self.instruction_set.len() + *offset_start as u32) as i32)
-        //             * INSTRUCTION_SIZE_BYTES as i32,
+        //         Some(meta.begin_offset),
+        //         Some(meta.end_offset),
+        //         (self.instruction_set.len() + meta.begin_offset as u32) as i32,
         //     );
         // }
         self.instruction_set

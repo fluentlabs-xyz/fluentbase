@@ -1,9 +1,6 @@
 use crate::translator::{
     host::Host,
-    instructions::utilities::{
-        replace_current_opcode_with_inline_func,
-        replace_current_opcode_with_subroutine,
-    },
+    instructions::utilities::replace_current_opcode_with_call_to_subroutine,
     translator::Translator,
 };
 use log::debug;
@@ -11,40 +8,43 @@ use log::debug;
 pub fn lt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "LT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
 }
 
 pub fn gt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
 }
 
 pub fn slt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn sgt<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SGT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn eq<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EQ";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
 }
 
 pub fn iszero<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ISZERO";
     debug!("op:{}", OP);
 
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
@@ -60,7 +60,7 @@ pub fn iszero<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn bitand<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "AND";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
@@ -83,7 +83,7 @@ pub fn bitand<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn bitor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "OR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
@@ -98,7 +98,7 @@ pub fn bitor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn bitxor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "XOR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
 
@@ -113,7 +113,7 @@ pub fn bitxor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn not<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "NOT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
@@ -132,24 +132,27 @@ pub fn not<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn byte<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BYTE";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
 }
 
 pub fn shl<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHL";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
 }
 
 pub fn shr<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SHR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_inline_func(translator, host, true, false);
+    // replace_current_opcode_with_inline_func(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
 }
 
 pub fn sar<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SAR";
     debug!("op:{}", OP);
-    replace_current_opcode_with_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
 }

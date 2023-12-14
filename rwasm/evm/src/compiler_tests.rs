@@ -45,8 +45,9 @@ mod evm_to_rwasm_tests {
     fn x(hex: &str) -> Vec<u8> {
         let mut h = hex.replace(" ", "");
         if !h.starts_with("0x") {
-            h = "0x".to_string();
-            h.push_str(hex);
+            let mut t = "0x".to_string();
+            t.push_str(&h);
+            h = t;
         }
         let res = hex::decode(h.clone());
         if let Err(v) = res {
@@ -191,7 +192,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = 1024;
+        let virtual_stack_top = 1024 * 8;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -424,13 +425,22 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn not() {
-        let cases = [(
-            x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
-            xr(
-                "fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef",
-                0,
+        let cases = [
+            (
+                x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+                xr(
+                    "fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef",
+                    0,
+                ),
             ),
-        )];
+            (
+                x("0x 0000000000000001 0000000000000002 0000000000000003 0000000000000004"),
+                xr(
+                    "fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb",
+                    0,
+                ),
+            ),
+        ];
 
         test_unary_op(NOT, None, &cases, None);
     }
@@ -1040,6 +1050,7 @@ mod evm_to_rwasm_tests {
         test_binary_op(MUL, None, &cases, None);
     }
 
+    // TODO debug
     #[test]
     fn mulmod() {
         let cases = [
@@ -1066,6 +1077,7 @@ mod evm_to_rwasm_tests {
         test_ternary_op(MULMOD, None, &cases, None);
     }
 
+    // TODO debug
     #[test]
     fn exp() {
         let cases = [
@@ -1133,7 +1145,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO stack overflow
             // (
             //     x("0x000000000000000000000000000000000000000000000000000000000000000a"),
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
@@ -1142,16 +1154,43 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO need correct subroutine entry (for 'exp' opcode it is 336 right now or '-278'
+            // as a relative offset)
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000004",
+                    0,
+                ),
+            ),
+            // TODO strange output result
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000003"),
             //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000004",
+            //         "0x0000000000000000000000000000000000000000000000000000000000000008",
             //         0,
             //     ),
             // ),
-            // TODO
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000004"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000010",
+            //         0,
+            //     ),
+            // ),
+            // TODO here
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000003"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000004"),
+            //     xr(
+            //         "0x0000000000000000000000000000000000000000000000000000000000000051",
+            //         0,
+            //     ),
+            // ),
+            // TODO strange output result
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
             //     x("0x00000000000000000000000000000000000000000000000000000000000000d3"),
@@ -1160,7 +1199,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
             //     x("0x00000000000000000000000000000000000000000000000000000000000000fc"),
@@ -1169,7 +1208,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
             //     x("0x00000000000000000000000000000000000000000000000000000000000000ff"),
@@ -1178,7 +1217,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // overflow
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000002"),
@@ -1188,7 +1227,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000003"),
             //     x("0x000000000000000000000000000000000000000000000000000000000000009c"),
@@ -1197,7 +1236,7 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // overflow
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000003"),
@@ -1207,19 +1246,18 @@ mod evm_to_rwasm_tests {
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // overflow
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000064"),
             //     x("0x0000000000000000000000000000000000000000000000000000000000000064"),
             //     xr(
             //         //
-            // 0x14e718d7d7625a2d96851f15802cac3b68141ee99b444273068ec13df249391fddba60c684d4546089e87de89b43a6bcd3f16938288753cb9b2e100000000000000000000000000000000000000000000000000
             //         "0x8288753cb9b2e100000000000000000000000000000000000000000000000000",
             //         0,
             //     ),
             // ),
-            // TODO
+            // TODO strange output result
             // overflow
             // (
             //     x("0x0000000000000000000000000000000000000000000000000000000000000064"),
@@ -1642,6 +1680,7 @@ mod evm_to_rwasm_tests {
         test_binary_op(LT, None, &cases, None);
     }
 
+    // TODO debug
     #[test]
     fn mstore() {
         let max_result_size = 40;
