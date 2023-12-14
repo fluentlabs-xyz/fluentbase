@@ -66,15 +66,6 @@ pub fn arithmetic_div(
         let a_bytes_ptr = a_bytes.as_mut_ptr();
         let b_bytes_ptr = b_bytes.as_mut_ptr();
         loop {
-            // debug!(
-            //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
-            //     a_pos_start,
-            //     a_pos_end,
-            //     a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            //     &b_bytes[b_pos_start..].len(),
-            //     &b_bytes[b_pos_start..],
-            // );
             let a_len = a_pos_end - a_pos_start;
             let b_len = b_bytes.len() - b_pos_start;
             let div_res = try_divide_close_numbers(
@@ -83,12 +74,6 @@ pub fn arithmetic_div(
                 unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
                 b_len,
             );
-            // debug!(
-            //     "a_chunk/b_bytes({}) = {:x?}",
-            //     &a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            // );
-            // debug!("div_res={:?}\n\n", div_res);
             let res_vec_ptr = res_vec.as_mut_ptr();
             unsafe {
                 *res_vec_ptr.offset(res_vec_idx as isize) = div_res;
@@ -118,7 +103,6 @@ pub fn arithmetic_div(
                     *res_vec_ptr.offset(i as isize);
             }
         }
-        // println!("res {:?} \n\n", res);
         let mut v = [0u8; 8];
         for i in 0..4 {
             v.clone_from_slice(&res[24 - i * 8..32 - i * 8]);
