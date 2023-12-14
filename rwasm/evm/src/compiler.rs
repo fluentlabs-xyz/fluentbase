@@ -50,20 +50,20 @@ impl<'a> EvmCompiler<'a> {
         let mut translator =
             Translator::new(self.import_linker, self.inject_fuel_consumption, contract);
 
-        // inject subroutines
         self.instruction_set_entry_offset =
             Some(translator.subroutines_instruction_set().instr.len() + 1);
         self.instruction_set
             .op_br(self.instruction_set_entry_offset.unwrap() as i32);
 
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
-        // for (_opcode, meta) in translator.opcode_to_subroutine_meta() {
-        //     subroutines_instruction_set.fix_br_offsets(
-        //         Some(meta.begin_offset),
-        //         Some(meta.end_offset),
-        //         (self.instruction_set.len() + meta.begin_offset as u32) as i32,
-        //     );
-        // }
+        for (_opcode, meta) in translator.opcode_to_subroutine_meta() {
+            subroutines_instruction_set.fix_br_indirect_offset(
+                Some(meta.begin_offset),
+                Some(meta.end_offset),
+                // 1,
+                (self.instruction_set.len() + meta.begin_offset as u32) as i32,
+            );
+        }
         self.instruction_set
             .instr
             .extend(&subroutines_instruction_set.instr);

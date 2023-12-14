@@ -517,7 +517,7 @@ impl InstructionSet {
         }
     }
 
-    pub fn fix_br_offsets(
+    pub fn fix_br_indirect_offset(
         &mut self,
         from_idx: Option<usize>,
         to_idx: Option<usize>,

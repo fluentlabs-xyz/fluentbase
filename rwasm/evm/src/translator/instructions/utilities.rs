@@ -129,7 +129,8 @@ pub(super) fn preprocess_op_params(
     }
     if inject_return_offset && !inject_return_offset_at_the_beginning {
         // instruction_set.op_type_check(0);
-        instruction_set.op_i32_const(instruction_set.len() + 2);
+        // TODO why +1? because we
+        instruction_set.op_i32_const(instruction_set.len() + 1);
     }
 }
 
