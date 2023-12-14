@@ -60,7 +60,6 @@ impl<'a> EvmCompiler<'a> {
             subroutines_instruction_set.fix_br_indirect_offset(
                 Some(meta.begin_offset),
                 Some(meta.end_offset),
-                // 1,
                 (self.instruction_set.len() + meta.begin_offset as u32) as i32,
             );
         }
