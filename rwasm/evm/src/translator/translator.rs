@@ -196,7 +196,6 @@ impl<'a> Translator<'a> {
         };
 
         [
-            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
             (opcode::EXP, "../rwasm-code-snippets/bin/arithmetic_exp.wat"),
             (opcode::MOD, "../rwasm-code-snippets/bin/arithmetic_mod.wat"),
             (
@@ -223,6 +222,7 @@ impl<'a> Translator<'a> {
                 opcode::SDIV,
                 "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
             ),
+            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
             (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
             (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.wat"),
             (opcode::OR, "../rwasm-code-snippets/bin/bitwise_or.wat"),
@@ -247,6 +247,7 @@ impl<'a> Translator<'a> {
                 opcode::MSTORE8,
                 "../rwasm-code-snippets/bin/memory_mstore8.wat",
             ),
+            (opcode::POP, "../rwasm-code-snippets/bin/stack_pop.wat"),
         ]
         .map(|v| {
             let bytecode = wat::parse_file(v.1).unwrap();

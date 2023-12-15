@@ -23,6 +23,7 @@ mod evm_to_rwasm_tests {
                 MULMOD,
                 NOT,
                 OR,
+                POP,
                 PUSH32,
                 SAR,
                 SDIV,
@@ -175,7 +176,6 @@ mod evm_to_rwasm_tests {
             let mut res_expected = case.1.clone();
             let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
-            // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_unary_op(opcode, a));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
@@ -2008,5 +2008,18 @@ mod evm_to_rwasm_tests {
         for case in cases {
             test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], None);
         }
+    }
+
+    #[test]
+    fn pop() {
+        let cases = [(
+            x("123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234"),
+            xr(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                0,
+            ),
+        )];
+
+        test_unary_op(POP, None, &cases, None);
     }
 }
