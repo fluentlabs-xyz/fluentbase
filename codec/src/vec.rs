@@ -9,16 +9,14 @@ use crate::{BufferDecoder, BufferEncoder, Encoder};
 /// - body
 /// - + raw bytes of the vector
 impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
-    fn header_size() -> usize {
-        // u32: length + values (bytes)
-        core::mem::size_of::<u32>() * 3
-    }
+    // u32: length + values (bytes)
+    const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         encoder.write_u32(field_offset, self.len() as u32);
-        let mut value_encoder = BufferEncoder::new(T::header_size() * self.len(), None);
+        let mut value_encoder = BufferEncoder::new(T::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.iter().enumerate() {
-            obj.encode(&mut value_encoder, T::header_size() * i);
+            obj.encode(&mut value_encoder, T::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 4, value_encoder.finalize().as_slice());
     }
@@ -30,7 +28,7 @@ impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
         *result = (0..input_len)
             .map(|i| {
                 let mut result = T::default();
-                T::decode(&mut value_decoder, T::header_size() * i, &mut result);
+                T::decode(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
                 result
             })
             .collect()

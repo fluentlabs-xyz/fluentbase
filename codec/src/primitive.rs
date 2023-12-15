@@ -1,9 +1,7 @@
 use crate::{BufferDecoder, BufferEncoder, Encoder};
 
 impl Encoder<u8> for u8 {
-    fn header_size() -> usize {
-        core::mem::size_of::<u8>()
-    }
+    const HEADER_SIZE: usize = core::mem::size_of::<u8>();
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         encoder.write_u8(field_offset, *self);
     }
@@ -15,9 +13,7 @@ impl Encoder<u8> for u8 {
 macro_rules! impl_le_int {
     ($typ:ty, $write_fn:ident, $read_fn:ident) => {
         impl Encoder<$typ> for $typ {
-            fn header_size() -> usize {
-                core::mem::size_of::<$typ>()
-            }
+            const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
             fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
                 encoder.$write_fn(field_offset, *self);
             }
@@ -36,19 +32,17 @@ impl_le_int!(i32, write_i32, read_i32);
 impl_le_int!(i64, write_i64, read_i64);
 
 impl<T: Sized + Encoder<T>, const N: usize> Encoder<[T; N]> for [T; N] {
-    fn header_size() -> usize {
-        T::header_size() * N
-    }
+    const HEADER_SIZE: usize = T::HEADER_SIZE * N;
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         (0..N).for_each(|i| {
-            self[i].encode(encoder, field_offset + i * T::header_size());
+            self[i].encode(encoder, field_offset + i * T::HEADER_SIZE);
         });
     }
 
     fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut [T; N]) {
         (0..N).for_each(|i| {
-            T::decode(decoder, field_offset + i * T::header_size(), &mut result[i]);
+            T::decode(decoder, field_offset + i * T::HEADER_SIZE, &mut result[i]);
         });
     }
 }
