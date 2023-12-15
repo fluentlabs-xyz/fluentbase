@@ -6,6 +6,7 @@ mod evm_to_rwasm_tests {
             instruction_result::InstructionResult,
             instructions::opcode::{
                 ADD,
+                ADDMOD,
                 AND,
                 BYTE,
                 DIV,
@@ -15,6 +16,7 @@ mod evm_to_rwasm_tests {
                 ISZERO,
                 KECCAK256,
                 LT,
+                MOD,
                 MSTORE,
                 MSTORE8,
                 MUL,
@@ -23,11 +25,13 @@ mod evm_to_rwasm_tests {
                 OR,
                 PUSH32,
                 SAR,
+                SDIV,
                 SGT,
                 SHL,
                 SHR,
                 SIGNEXTEND,
                 SLT,
+                SMOD,
                 SUB,
                 XOR,
             },
@@ -1497,6 +1501,272 @@ mod evm_to_rwasm_tests {
         ];
 
         test_binary_op(AND, None, &cases, None);
+    }
+
+    #[test]
+    fn mod_impl() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000064"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000003"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x00000000000000000000000000000000000000000000002163c2aa849ea53e83",
+                    0,
+                ),
+            ),
+            // -1 -1 0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // -1 1 1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(MOD, None, &cases, None);
+    }
+
+    #[test]
+    fn smod() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000064"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000003"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x00000000000000000000000000000000000000000000002163c2aa849ea53e83",
+                    0,
+                ),
+            ),
+            // -1 -1 0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // -1 1 0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // -8 -3 -2
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd"),
+                xr(
+                    "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+                    0,
+                ),
+            ),
+            // 11 -3 2
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000000000b"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000002",
+                    0,
+                ),
+            ),
+            // -11 3 -2
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000003"),
+                xr(
+                    "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(SMOD, None, &cases, None);
+    }
+
+    #[test]
+    fn sdiv() {
+        let cases = [
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000064"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000003"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000021",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a73e76a20fb8aa4",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70ce7022e2de7e26734672778054107d2530"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a00000000fb8aa4",
+                    0,
+                ),
+            ),
+            // a=   -1 -1 1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x000000000000000000247b41d58f447a82798e946efd4219e2b32d629d1d422b",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffe199d0539cb6"),
+                xr(
+                    "0x00000000000000000000000000000000000000a5351659c6d8046540172a84a2",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
+                x("0x000000000000000000000000000000000000000000000000000000001a31ebea"),
+                xr(
+                    "0xffffffffffffffffffffffffffffffffff404718f404baac20abf5a87e655739",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000001e15f"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(SDIV, None, &cases, None);
+    }
+
+    #[test]
+    fn addmod() {
+        let cases = [
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000000000a"),
+                x("0x000000000000000000000000000000000000000000000000000000000000000a"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000008"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000004",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+        ];
+
+        test_ternary_op(ADDMOD, None, &cases, None);
     }
 
     #[test]

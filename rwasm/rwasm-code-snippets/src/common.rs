@@ -1,6 +1,7 @@
 use crate::consts::{
     BYTE_MAX_VAL,
     U256_BYTES_COUNT,
+    U64_ALL_BITS_ARE_1,
     U64_HALF_BITS_COUNT,
     U64_LOW_PART_MASK,
     U64_MSBIT_IS_1,
@@ -462,62 +463,11 @@ pub(crate) fn smod(
         let mut b2 = b2;
         let mut b3 = b3;
         if a_sign {
-            let mut borrow = 0;
-            if a0 <= 0 {
-                a0 = U64_MSBIT_IS_1;
-                borrow = 1;
-
-                if a1 < borrow {
-                    a1 = U64_MSBIT_IS_1;
-                    if a2 < borrow {
-                        a2 = U64_MSBIT_IS_1;
-                        if a3 < borrow {
-                            a3 = U64_MSBIT_IS_1;
-                        } else {
-                            a3 -= 1;
-                        }
-                    } else {
-                        a2 -= 1;
-                    }
-                } else {
-                    a1 -= 1;
-                }
-            } else {
-                a0 -= 1;
-            }
-            a3 = !a3;
-            a2 = !a2;
-            a1 = !a1;
-            a0 = !a0;
+            (a3, a2, a1, a0) = change_sign_be((a3, a2, a1, a0));
         }
         if b_sign {
-            if b0 <= 0 {
-                b0 = U64_MSBIT_IS_1;
-
-                if b1 < 1 {
-                    b1 = U64_MSBIT_IS_1;
-                    if b2 < 1 {
-                        b2 = U64_MSBIT_IS_1;
-                        if b3 < 1 {
-                            b3 = U64_MSBIT_IS_1;
-                        } else {
-                            b3 -= 1;
-                        }
-                    } else {
-                        b2 -= 1;
-                    }
-                } else {
-                    b1 -= 1;
-                }
-            } else {
-                b0 -= 1;
-            }
-            b3 = !b3;
-            b2 = !b2;
-            b1 = !b1;
-            b0 = !b0;
+            (b3, b2, b1, b0) = change_sign_be((b3, b2, b1, b0));
         }
-        // let mut res = &mut [0u8; U256_BYTES_COUNT as usize];
         let mut res_vec = [0u8; U256_BYTES_COUNT as usize];
         let mut res_vec_idx: usize = 0;
         let mut a_bytes = &mut [0u8; U256_BYTES_COUNT as usize];
@@ -554,15 +504,6 @@ pub(crate) fn smod(
         let a_bytes_ptr = a_bytes.as_mut_ptr();
         let b_bytes_ptr = b_bytes.as_mut_ptr();
         loop {
-            // debug!(
-            //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
-            //     a_pos_start,
-            //     a_pos_end,
-            //     a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            //     &b_bytes[b_pos_start..].len(),
-            //     &b_bytes[b_pos_start..],
-            // );
             let a_len = a_pos_end - a_pos_start;
             let b_len = b_bytes.len() - b_pos_start;
             let div_res = try_divide_close_numbers(
@@ -571,12 +512,6 @@ pub(crate) fn smod(
                 unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
                 b_len,
             );
-            // debug!(
-            //     "a_chunk/b_bytes({}) = {:x?}",
-            //     &a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            // );
-            // debug!("div_res={:?}\n\n", div_res);
             let res_vec_ptr = res_vec.as_mut_ptr();
             unsafe {
                 *res_vec_ptr.offset(res_vec_idx as isize) = div_res;
@@ -597,16 +532,6 @@ pub(crate) fn smod(
                 break;
             }
         }
-        // let res_len = res.len();
-        // let res_ptr: *mut u8 = res.as_mut_ptr();
-        // let res_vec_ptr = res_vec.as_ptr();
-        // for i in 0..res_vec_idx {
-        //     unsafe {
-        //         *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
-        //             *res_vec_ptr.offset(i as isize);
-        //     }
-        // }
-        // println!("res {:?} \n\n", res);
         if a_sign {
             let mut carry = true;
             for i in (0..a_bytes.len()).rev() {
@@ -741,4 +666,58 @@ pub(crate) fn shr(
     }
 
     (s0, s1, s2, s3)
+}
+
+pub(crate) fn change_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+    let mut r = v;
+    let sign = v.0 & U64_MSBIT_IS_1 > 0;
+    if sign {
+        if r.3 < 1 {
+            r.3 = U64_ALL_BITS_ARE_1;
+
+            if r.2 < 1 {
+                r.2 = U64_ALL_BITS_ARE_1;
+                if r.1 < 1 {
+                    r.1 = U64_ALL_BITS_ARE_1;
+                    if r.0 < 1 {
+                        r.0 = U64_ALL_BITS_ARE_1;
+                    } else {
+                        r.0 -= 1;
+                    }
+                } else {
+                    r.1 -= 1;
+                }
+            } else {
+                r.2 -= 1;
+            }
+        } else {
+            r.3 -= 1;
+        }
+        r.0 = !r.0;
+        r.1 = !r.1;
+        r.2 = !r.2;
+        r.3 = !r.3;
+    } else {
+        r.0 = !r.0;
+        r.1 = !r.1;
+        r.2 = !r.2;
+        r.3 = !r.3;
+        if r.3 == U64_ALL_BITS_ARE_1 {
+            r.3 = 0;
+            if r.2 == U64_ALL_BITS_ARE_1 {
+                r.2 = 0;
+                if r.1 == U64_ALL_BITS_ARE_1 {
+                    r.1 = 0;
+                    r.0 += 1;
+                } else {
+                    r.1 += 1;
+                }
+            } else {
+                r.2 += 1;
+            }
+        } else {
+            r.3 += 1;
+        }
+    }
+    r
 }
