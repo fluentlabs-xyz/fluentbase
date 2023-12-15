@@ -1,5 +1,5 @@
 use crate::{
-    common::try_divide_close_numbers,
+    common::{change_sign_be, try_divide_close_numbers},
     consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1},
 };
 
@@ -16,7 +16,7 @@ pub fn arithmetic_sdiv(
 ) -> (u64, u64, u64, u64) {
     let a_sign = a3 & U64_MSBIT_IS_1 > 0;
     let b_sign = b3 & U64_MSBIT_IS_1 > 0;
-    let mut result = [0u64, 0u64, 0u64, 0u64];
+    let mut result = (0u64, 0u64, 0u64, 0u64);
 
     let mut a0 = a0;
     let mut a1 = a1;
@@ -35,96 +35,32 @@ pub fn arithmetic_sdiv(
     {
         if b0 != 0 {
             if b0 == U64_ALL_BITS_ARE_1 && a_sign && b_sign {
-                if a0 == 0 {
-                    a0 = U64_ALL_BITS_ARE_1;
-                    if a1 == 0 {
-                        a1 = U64_ALL_BITS_ARE_1;
-                        if a2 == 0 {
-                            a2 = U64_ALL_BITS_ARE_1;
-                            a0 -= 1;
-                        } else {
-                            a2 -= 1;
-                        }
-                    } else {
-                        a1 -= 1;
-                    }
-                } else {
-                    a0 -= 1;
-                }
-                a0 = !a0;
-                a1 = !a1;
-                a2 = !a2;
-                a3 = !a3;
+                (a3, a2, a1, a0) = change_sign_be((a3, a2, a1, a0));
             }
-            result[0] = a0;
-            result[1] = a1;
-            result[2] = a2;
-            result[3] = a3;
+            result.0 = a0;
+            result.1 = a1;
+            result.2 = a2;
+            result.3 = a3;
         }
     } else if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
         if a0 != 0 {
             if a_sign == b_sign {
-                result[0] = 1;
+                result.0 = 1;
             } else {
-                for i in 0..4 {
-                    result[i] = U64_ALL_BITS_ARE_1
-                }
+                result = (
+                    U64_ALL_BITS_ARE_1,
+                    U64_ALL_BITS_ARE_1,
+                    U64_ALL_BITS_ARE_1,
+                    U64_ALL_BITS_ARE_1,
+                )
             };
         }
     } else {
         if a_sign {
-            if a0 <= 0 {
-                a0 = U64_MSBIT_IS_1;
-
-                if a1 < 1 {
-                    a1 = U64_MSBIT_IS_1;
-                    if a2 < 1 {
-                        a2 = U64_MSBIT_IS_1;
-                        if a3 < 1 {
-                            a3 = U64_MSBIT_IS_1;
-                        } else {
-                            a3 -= 1;
-                        }
-                    } else {
-                        a2 -= 1;
-                    }
-                } else {
-                    a1 -= 1;
-                }
-            } else {
-                a0 -= 1;
-            }
-            a3 = !a3;
-            a2 = !a2;
-            a1 = !a1;
-            a0 = !a0;
+            (a3, a2, a1, a0) = change_sign_be((a3, a2, a1, a0));
         }
         if b_sign {
-            if b0 <= 0 {
-                b0 = U64_MSBIT_IS_1;
-
-                if b1 < 1 {
-                    b1 = U64_MSBIT_IS_1;
-                    if b2 < 1 {
-                        b2 = U64_MSBIT_IS_1;
-                        if b3 < 1 {
-                            b3 = U64_MSBIT_IS_1;
-                        } else {
-                            b3 -= 1;
-                        }
-                    } else {
-                        b2 -= 1;
-                    }
-                } else {
-                    b1 -= 1;
-                }
-            } else {
-                b0 -= 1;
-            }
-            b3 = !b3;
-            b2 = !b2;
-            b1 = !b1;
-            b0 = !b0;
+            (b3, b2, b1, b0) = change_sign_be((b3, b2, b1, b0));
         }
         if a3 > b3
             || (a3 == b3 && a2 > b2)
@@ -166,27 +102,12 @@ pub fn arithmetic_sdiv(
 
             let mut a_pos_end = a_pos_start + b_bytes.len() - b_pos_start;
             loop {
-                // debug!(
-                //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
-                //     a_pos_start,
-                //     a_pos_end,
-                //     a_bytes[a_pos_start..a_pos_end].len(),
-                //     &a_bytes[a_pos_start..a_pos_end],
-                //     &b_bytes[b_pos_start..].len(),
-                //     &b_bytes[b_pos_start..],
-                // );
                 let div_res = try_divide_close_numbers(
                     unsafe { a_bytes.as_mut_ptr().offset(a_pos_start as isize) },
                     a_pos_end - a_pos_start,
                     unsafe { b_bytes.as_mut_ptr().offset(b_pos_start as isize) },
                     b_bytes.len() - b_pos_start,
                 );
-                // debug!(
-                //     "a_chunk/b_bytes({}) = {:x?}",
-                //     &a_bytes[a_pos_start..a_pos_end].len(),
-                //     &a_bytes[a_pos_start..a_pos_end],
-                // );
-                // debug!("div_res={:?}\n\n", div_res);
                 let res_vec_ptr = res_vec.as_mut_ptr();
                 unsafe {
                     *res_vec_ptr.offset(res_vec_idx as isize) = div_res;
@@ -216,7 +137,6 @@ pub fn arithmetic_sdiv(
                         *res_vec_ptr.offset(i as isize);
                 }
             }
-            // println!("res {:?} \n\n", res);
 
             if a_sign != b_sign {
                 let mut carry = true;
@@ -233,12 +153,16 @@ pub fn arithmetic_sdiv(
                 }
             }
             let mut v = [0u8; 8];
-            for i in 0..4 {
-                v.clone_from_slice(&res[24 - i * 8..32 - i * 8]);
-                result[i] = u64::from_be_bytes(v);
-            }
+            v.clone_from_slice(&res[24..32]);
+            result.0 = u64::from_be_bytes(v);
+            v.clone_from_slice(&res[16..24]);
+            result.1 = u64::from_be_bytes(v);
+            v.clone_from_slice(&res[8..16]);
+            result.2 = u64::from_be_bytes(v);
+            v.clone_from_slice(&res[0..8]);
+            result.3 = u64::from_be_bytes(v);
         }
     }
 
-    (result[0], result[1], result[2], result[3])
+    result
 }
