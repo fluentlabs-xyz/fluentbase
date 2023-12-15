@@ -52,6 +52,7 @@ arithmetic_mulmod = []
 arithmetic_exp = []
 memory_mstore = []
 memory_mstore8 = []
+stack_pop = []
 # TODO
 arithmetic_address = []
 arithmetic_balance = []

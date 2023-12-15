@@ -42,7 +42,10 @@ pub(super) fn preprocess_op_params(
     let i64_stack_params_count: usize;
     const MEM_RESULT_OFFSET: usize = 0;
     match opcode {
-        // two u256 params
+        opcode::ISZERO | opcode::NOT | opcode::POP => {
+            i64_stack_params_count = 4;
+        }
+
         opcode::BYTE
         | opcode::EQ
         | opcode::GAS
@@ -67,12 +70,7 @@ pub(super) fn preprocess_op_params(
         | opcode::MOD
         | opcode::SMOD
         | opcode::SDIV => {
-            // mem offset for the result
             i64_stack_params_count = 8;
-        }
-
-        opcode::ISZERO | opcode::NOT => {
-            i64_stack_params_count = 4;
         }
 
         opcode::MULMOD | opcode::ADDMOD => {
@@ -143,7 +141,6 @@ pub(super) fn replace_current_opcode_with_inline_func(
     let instruction_set = host.instruction_set();
     let opcode = translator.opcode_prev();
     let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
-    // instruction_set_replace.fix_br_offsets(None, None, instruction_set.len() as i32);
     instruction_set
         .instr
         .extend(instruction_set_replace.instr.iter());

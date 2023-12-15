@@ -1,10 +1,8 @@
 //! EVM opcode definitions and utilities.
 
 use super::*;
-use crate::translator::host::Host;
-use crate::translator::translator::Translator;
-use alloc::boxed::Box;
-use alloc::sync::Arc;
+use crate::translator::{host::Host, translator::Translator};
+use alloc::{boxed::Box, sync::Arc};
 use core::fmt;
 
 /// EVM opcode function signature.
@@ -26,8 +24,9 @@ pub type BoxedInstructionTable<'a, H> = [BoxedInstruction<'a, H>; 256];
 /// Arc over instruction table
 pub type BoxedInstructionTableArc<'a, H> = Arc<BoxedInstructionTable<'a, H>>;
 
-/// Instruction set that contains plain instruction table that contains simple `fn` function pointer.
-/// and Boxed `Fn` variant that contains `Box<dyn Fn()>` function pointer that can be used with closured.
+/// Instruction set that contains plain instruction table that contains simple `fn` function
+/// pointer. and Boxed `Fn` variant that contains `Box<dyn Fn()>` function pointer that can be used
+/// with closured.
 ///
 /// Note that `Plain` variant gives us 10-20% faster Translator execution.
 ///
@@ -93,43 +92,43 @@ where
 // When adding new opcodes:
 // 1. add the opcode to the list below; make sure it's sorted by opcode value
 // 2. add its gas info in the `opcode_gas_info` function below
-// 3. implement the opcode in the corresponding module;
-//    the function signature must be the exact same as the others
+// 3. implement the opcode in the corresponding module; the function signature must be the exact
+//    same as the others
 opcodes! {
-    0x00 => STOP => control::stop,
+    0x00 => STOP => control::stop, // done
 
-    0x01 => ADD        => arithmetic::wrapped_add,
-    0x02 => MUL        => arithmetic::wrapping_mul,
-    0x03 => SUB        => arithmetic::wrapping_sub,
-    0x04 => DIV        => arithmetic::div,
-    0x05 => SDIV       => arithmetic::sdiv,
-    0x06 => MOD        => arithmetic::arithmetic_mod,
-    0x07 => SMOD       => arithmetic::smod,
-    0x08 => ADDMOD     => arithmetic::addmod,
-    0x09 => MULMOD     => arithmetic::mulmod,
-    0x0A => EXP        => arithmetic::exp::<H>,
-    0x0B => SIGNEXTEND => arithmetic::signextend,
+    0x01 => ADD        => arithmetic::wrapped_add, // done
+    0x02 => MUL        => arithmetic::wrapping_mul, // done
+    0x03 => SUB        => arithmetic::wrapping_sub, // done
+    0x04 => DIV        => arithmetic::div, // done
+    0x05 => SDIV       => arithmetic::sdiv, // done
+    0x06 => MOD        => arithmetic::arithmetic_mod, // done
+    0x07 => SMOD       => arithmetic::smod, // done
+    0x08 => ADDMOD     => arithmetic::addmod, // done
+    0x09 => MULMOD     => arithmetic::mulmod, // done
+    0x0A => EXP        => arithmetic::exp::<H>, // done
+    0x0B => SIGNEXTEND => arithmetic::signextend, // done
     // 0x0C
     // 0x0D
     // 0x0E
     // 0x0F
-    0x10 => LT     => bitwise::lt,
-    0x11 => GT     => bitwise::gt,
-    0x12 => SLT    => bitwise::slt,
-    0x13 => SGT    => bitwise::sgt,
-    0x14 => EQ     => bitwise::eq,
-    0x15 => ISZERO => bitwise::iszero,
-    0x16 => AND    => bitwise::bitand,
-    0x17 => OR     => bitwise::bitor,
-    0x18 => XOR    => bitwise::bitxor,
-    0x19 => NOT    => bitwise::not,
-    0x1A => BYTE   => bitwise::byte,
-    0x1B => SHL    => bitwise::shl::<H>,
-    0x1C => SHR    => bitwise::shr::<H>,
-    0x1D => SAR    => bitwise::sar::<H>,
+    0x10 => LT     => bitwise::lt, // done
+    0x11 => GT     => bitwise::gt, // done
+    0x12 => SLT    => bitwise::slt, // done
+    0x13 => SGT    => bitwise::sgt, // done
+    0x14 => EQ     => bitwise::eq, // done
+    0x15 => ISZERO => bitwise::iszero, // done
+    0x16 => AND    => bitwise::bitand, // done
+    0x17 => OR     => bitwise::bitor, // done
+    0x18 => XOR    => bitwise::bitxor, // done
+    0x19 => NOT    => bitwise::not, // done
+    0x1A => BYTE   => bitwise::byte, // done
+    0x1B => SHL    => bitwise::shl::<H>, // done
+    0x1C => SHR    => bitwise::shr::<H>, // done
+    0x1D => SAR    => bitwise::sar::<H>, // done
     // 0x1E
     // 0x1F
-    0x20 => KECCAK256 => system::keccak256,
+    0x20 => KECCAK256 => system::keccak256, // done
     // 0x21
     // 0x22
     // 0x23
@@ -178,10 +177,10 @@ opcodes! {
     // 0x4D
     // 0x4E
     // 0x4F
-    0x50 => POP      => stack::pop,
+    0x50 => POP      => stack::pop, // done
     0x51 => MLOAD    => memory::mload,
-    0x52 => MSTORE   => memory::mstore,
-    0x53 => MSTORE8  => memory::mstore8,
+    0x52 => MSTORE   => memory::mstore, // done
+    0x53 => MSTORE8  => memory::mstore8, // done
     0x54 => SLOAD    => host::sload::<H>,
     0x55 => SSTORE   => host::sstore::<H>,
     0x56 => JUMP     => control::jump,
@@ -194,39 +193,39 @@ opcodes! {
     0x5D => TSTORE   => host::tstore::<H>,
     0x5E => MCOPY    => memory::mcopy::<H>,
 
-    0x5F => PUSH0  => stack::push::<0, H>,
-    0x60 => PUSH1  => stack::push::<1, H>,
-    0x61 => PUSH2  => stack::push::<2, H>,
-    0x62 => PUSH3  => stack::push::<3, H>,
-    0x63 => PUSH4  => stack::push::<4, H>,
-    0x64 => PUSH5  => stack::push::<5, H>,
-    0x65 => PUSH6  => stack::push::<6, H>,
-    0x66 => PUSH7  => stack::push::<7, H>,
-    0x67 => PUSH8  => stack::push::<8, H>,
-    0x68 => PUSH9  => stack::push::<9, H>,
-    0x69 => PUSH10 => stack::push::<10, H>,
-    0x6A => PUSH11 => stack::push::<11, H>,
-    0x6B => PUSH12 => stack::push::<12, H>,
-    0x6C => PUSH13 => stack::push::<13, H>,
-    0x6D => PUSH14 => stack::push::<14, H>,
-    0x6E => PUSH15 => stack::push::<15, H>,
-    0x6F => PUSH16 => stack::push::<16, H>,
-    0x70 => PUSH17 => stack::push::<17, H>,
-    0x71 => PUSH18 => stack::push::<18, H>,
-    0x72 => PUSH19 => stack::push::<19, H>,
-    0x73 => PUSH20 => stack::push::<20, H>,
-    0x74 => PUSH21 => stack::push::<21, H>,
-    0x75 => PUSH22 => stack::push::<22, H>,
-    0x76 => PUSH23 => stack::push::<23, H>,
-    0x77 => PUSH24 => stack::push::<24, H>,
-    0x78 => PUSH25 => stack::push::<25, H>,
-    0x79 => PUSH26 => stack::push::<26, H>,
-    0x7A => PUSH27 => stack::push::<27, H>,
-    0x7B => PUSH28 => stack::push::<28, H>,
-    0x7C => PUSH29 => stack::push::<29, H>,
-    0x7D => PUSH30 => stack::push::<30, H>,
-    0x7E => PUSH31 => stack::push::<31, H>,
-    0x7F => PUSH32 => stack::push::<32, H>,
+    0x5F => PUSH0  => stack::push::<0, H>, // done
+    0x60 => PUSH1  => stack::push::<1, H>, // done
+    0x61 => PUSH2  => stack::push::<2, H>, // done
+    0x62 => PUSH3  => stack::push::<3, H>, // done
+    0x63 => PUSH4  => stack::push::<4, H>, // done
+    0x64 => PUSH5  => stack::push::<5, H>, // done
+    0x65 => PUSH6  => stack::push::<6, H>, // done
+    0x66 => PUSH7  => stack::push::<7, H>, // done
+    0x67 => PUSH8  => stack::push::<8, H>, // done
+    0x68 => PUSH9  => stack::push::<9, H>, // done
+    0x69 => PUSH10 => stack::push::<10, H>, // done
+    0x6A => PUSH11 => stack::push::<11, H>, // done
+    0x6B => PUSH12 => stack::push::<12, H>, // done
+    0x6C => PUSH13 => stack::push::<13, H>, // done
+    0x6D => PUSH14 => stack::push::<14, H>, // done
+    0x6E => PUSH15 => stack::push::<15, H>, // done
+    0x6F => PUSH16 => stack::push::<16, H>, // done
+    0x70 => PUSH17 => stack::push::<17, H>, // done
+    0x71 => PUSH18 => stack::push::<18, H>, // done
+    0x72 => PUSH19 => stack::push::<19, H>, // done
+    0x73 => PUSH20 => stack::push::<20, H>, // done
+    0x74 => PUSH21 => stack::push::<21, H>, // done
+    0x75 => PUSH22 => stack::push::<22, H>, // done
+    0x76 => PUSH23 => stack::push::<23, H>, // done
+    0x77 => PUSH24 => stack::push::<24, H>, // done
+    0x78 => PUSH25 => stack::push::<25, H>, // done
+    0x79 => PUSH26 => stack::push::<26, H>, // done
+    0x7A => PUSH27 => stack::push::<27, H>, // done
+    0x7B => PUSH28 => stack::push::<28, H>, // done
+    0x7C => PUSH29 => stack::push::<29, H>, // done
+    0x7D => PUSH30 => stack::push::<30, H>, // done
+    0x7E => PUSH31 => stack::push::<31, H>, // done
+    0x7F => PUSH32 => stack::push::<32, H>, // done
 
     0x80 => DUP1  => stack::dup::<1, H>,
     0x81 => DUP2  => stack::dup::<2, H>,

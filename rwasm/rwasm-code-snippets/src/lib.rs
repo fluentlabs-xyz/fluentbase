@@ -12,6 +12,7 @@ mod bitwise;
 pub(crate) mod common;
 pub(crate) mod consts;
 mod memory;
+mod stack;
 mod system;
 #[cfg(test)]
 pub(crate) mod test_helper;

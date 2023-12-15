@@ -1,5 +1,10 @@
 use crate::{
-    translator::{host::Host, instruction_result::InstructionResult, translator::Translator},
+    translator::{
+        host::Host,
+        instruction_result::InstructionResult,
+        instructions::utilities::replace_current_opcode_with_call_to_subroutine,
+        translator::Translator,
+    },
     utilities::{
         align_to_evm_word_array,
         iterate_over_wasm_i64_chunks,
@@ -8,13 +13,14 @@ use crate::{
 };
 use log::debug;
 
-pub fn pop<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    const OP: &str = "PUSH";
+pub fn pop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "POP";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-    for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_drop();
-    }
+    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    // let instruction_set = host.instruction_set();
+    // for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
+    //     instruction_set.op_drop();
+    // }
 }
 
 pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
