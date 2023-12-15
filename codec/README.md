@@ -26,3 +26,11 @@ We support next non-primitive types:
 - `Vec<T>` - vec of encodable elements
 - `HashMap<K,V>` - hashbrown hash map with encodable K & V 
 - `HashSet<T>` - hashbrown hash set with encodable T
+
+## Determinism
+
+Encoded binary is not deterministic, it can be used only for passing params.
+It means that you can encode fields in different way, but decoding result will be the same.
+It can happen if you encode non-primitive fields in different order because it affects data after header.
+
+Order of encoding is IMPORTANT.

@@ -1,9 +1,41 @@
 use crate::buffer::{BufferDecoder, BufferEncoder};
+use std::marker::PhantomData;
 
 pub trait Encoder<T: Sized> {
-    fn header_size() -> usize;
+    fn header_size() -> usize {
+        Self::HEADER_SIZE
+    }
+
+    const HEADER_SIZE: usize;
+
+    fn encode_to_vec(&self, field_offset: usize) -> Vec<u8> {
+        let mut buffer_encoder = BufferEncoder::new(Self::HEADER_SIZE, None);
+        self.encode(&mut buffer_encoder, field_offset);
+        buffer_encoder.finalize()
+    }
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize);
 
+    fn decode_from_slice(input: &[u8], field_offset: usize, result: &mut T) {
+        let mut buffer_decoder = BufferDecoder::new(input);
+        Self::decode(&mut buffer_decoder, field_offset, result)
+    }
+
     fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut T);
+}
+
+pub struct FieldEncoder<T: Sized + Encoder<T>, const FIELD_OFFSET: usize>(PhantomData<T>);
+
+impl<T: Sized + Encoder<T>, const FIELD_OFFSET: usize> FieldEncoder<T, FIELD_OFFSET> {
+    pub const FIELD_OFFSET: usize = FIELD_OFFSET;
+    pub const FIELD_SIZE: usize = T::HEADER_SIZE;
+
+    pub fn decode_field_from_slice(input: &[u8], result: &mut T) {
+        let mut buffer_decoder = BufferDecoder::new(input);
+        Self::decode_field(&mut buffer_decoder, result)
+    }
+
+    pub fn decode_field(buffer_decoder: &mut BufferDecoder, result: &mut T) {
+        <T as Encoder<T>>::decode(buffer_decoder, 0, result)
+    }
 }

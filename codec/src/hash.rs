@@ -5,24 +5,22 @@ use std::hash::Hash;
 impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V>>
     Encoder<HashMap<K, V>> for HashMap<K, V>
 {
-    fn header_size() -> usize {
-        // length + keys (bytes) + values (bytes)
-        4 + 8 + 8
-    }
+    // length + keys (bytes) + values (bytes)
+    const HEADER_SIZE: usize = 4 + 8 + 8;
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
         // encode keys
-        let mut key_encoder = BufferEncoder::new(K::header_size() * self.len(), None);
+        let mut key_encoder = BufferEncoder::new(K::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.keys().enumerate() {
-            obj.encode(&mut key_encoder, K::header_size() * i);
+            obj.encode(&mut key_encoder, K::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 4, key_encoder.finalize().as_slice());
         // encode values
-        let mut value_encoder = BufferEncoder::new(V::header_size() * self.len(), None);
+        let mut value_encoder = BufferEncoder::new(V::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.values().enumerate() {
-            obj.encode(&mut value_encoder, V::header_size() * i);
+            obj.encode(&mut value_encoder, V::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 12, value_encoder.finalize().as_slice());
     }
@@ -35,14 +33,14 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
         let mut key_decoder = BufferDecoder::new(key_bytes);
         let keys = (0..length).map(|i| {
             let mut result = Default::default();
-            K::decode(&mut key_decoder, K::header_size() * i, &mut result);
+            K::decode(&mut key_decoder, K::HEADER_SIZE * i, &mut result);
             result
         });
         // decode values
         let mut value_decoder = BufferDecoder::new(value_bytes);
         let values = (0..length).map(|i| {
             let mut result = Default::default();
-            V::decode(&mut value_decoder, V::header_size() * i, &mut result);
+            V::decode(&mut value_decoder, V::HEADER_SIZE * i, &mut result);
             result
         });
         // zip into map
@@ -51,18 +49,16 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
 }
 
 impl<T: Default + Sized + Encoder<T> + Eq + Hash> Encoder<HashSet<T>> for HashSet<T> {
-    fn header_size() -> usize {
-        // length + keys (bytes)
-        4 + 8
-    }
+    // length + keys (bytes)
+    const HEADER_SIZE: usize = 4 + 8;
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
         // encode values
-        let mut value_encoder = BufferEncoder::new(T::header_size() * self.len(), None);
+        let mut value_encoder = BufferEncoder::new(T::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.iter().enumerate() {
-            obj.encode(&mut value_encoder, T::header_size() * i);
+            obj.encode(&mut value_encoder, T::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 4, value_encoder.finalize().as_slice());
     }
@@ -75,7 +71,7 @@ impl<T: Default + Sized + Encoder<T> + Eq + Hash> Encoder<HashSet<T>> for HashSe
         let mut value_decoder = BufferDecoder::new(value_bytes);
         let values = (0..length).map(|i| {
             let mut result = Default::default();
-            T::decode(&mut value_decoder, T::header_size() * i, &mut result);
+            T::decode(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
             result
         });
         // zip into map

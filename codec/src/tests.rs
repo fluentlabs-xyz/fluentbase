@@ -66,9 +66,9 @@ fn test_map() {
 
 #[test]
 fn test_set() {
-    let mut values = HashSet::from([1, 2, 3]);
+    let values = HashSet::from([1, 2, 3]);
     let result = {
-        let mut buffer_encoder = BufferEncoder::new(HashSet::<i32>::header_size(), None);
+        let mut buffer_encoder = BufferEncoder::new(HashSet::<i32>::HEADER_SIZE, None);
         values.encode(&mut buffer_encoder, 0);
         buffer_encoder.finalize()
     };
@@ -87,7 +87,7 @@ fn test_nested_map() {
     values.insert(1000, HashMap::from([(7, 8), (9, 4)]));
     let result = {
         let mut buffer_encoder =
-            BufferEncoder::new(HashMap::<i32, HashMap<i32, i32>>::header_size(), None);
+            BufferEncoder::new(HashMap::<i32, HashMap<i32, i32>>::HEADER_SIZE, None);
         values.encode(&mut buffer_encoder, 0);
         buffer_encoder.finalize()
     };
@@ -105,7 +105,7 @@ fn test_vector_of_maps() {
     values.push(HashMap::new());
     values.push(HashMap::from([(7, 8), (9, 4)]));
     let result = {
-        let mut buffer_encoder = BufferEncoder::new(Vec::<HashMap<i32, i32>>::header_size(), None);
+        let mut buffer_encoder = BufferEncoder::new(Vec::<HashMap<i32, i32>>::HEADER_SIZE, None);
         values.encode(&mut buffer_encoder, 0);
         buffer_encoder.finalize()
     };
@@ -124,7 +124,7 @@ fn test_map_of_vectors() {
     values.insert(vec![0, 1, 6], vec![3, 4, 5]);
     let result = {
         let mut buffer_encoder =
-            BufferEncoder::new(HashMap::<Vec<i32>, Vec<i32>>::header_size(), None);
+            BufferEncoder::new(HashMap::<Vec<i32>, Vec<i32>>::HEADER_SIZE, None);
         values.encode(&mut buffer_encoder, 0);
         buffer_encoder.finalize()
     };
@@ -147,6 +147,21 @@ fn test_static_array() {
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
     <[i32; 3]>::decode(&mut buffer_decoder, 0, &mut values2);
+    assert_eq!(values, values2);
+}
+
+#[test]
+fn test_empty_static_array() {
+    let values: [u8; 0] = [];
+    let result = {
+        let mut buffer_encoder = BufferEncoder::new(0, None);
+        values.encode(&mut buffer_encoder, 0);
+        buffer_encoder.finalize()
+    };
+    println!("{}", hex::encode(&result));
+    let mut buffer_decoder = BufferDecoder::new(result.as_slice());
+    let mut values2 = Default::default();
+    <[u8; 0]>::decode(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
