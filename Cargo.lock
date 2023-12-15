@@ -1725,11 +1725,12 @@ dependencies = [
  "ctor",
  "env_logger",
  "ethereum-types 0.14.1",
- "fluentbase-runtime",
  "fluentbase-rwasm",
+ "fluentbase-sdk",
  "hex",
  "log",
  "wat",
+ "wee_alloc",
 ]
 
 [[package]]
