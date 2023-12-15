@@ -85,23 +85,10 @@ pub(super) fn preprocess_op_params(
 
     let instruction_set = host.instruction_set();
     let mut aux_params_count = 0;
-    let inject_return_offset_at_the_beginning = false; // when using 'true' also need to disable params swap in translator (.with_swap_stack_params)
-    if inject_return_offset && inject_return_offset_at_the_beginning {
-        aux_params_count += 1;
-        instruction_set.op_i32_const(
-            instruction_set.len() + 2 + if inject_memory_result_offset { 1 } else { 0 },
-        );
-    }
     if inject_memory_result_offset {
         aux_params_count += 1;
         if memory_result_offset_is_first_param {
-            let offset_instruction = instruction_set.instr[instruction_set.len() as usize
-                - 4
-                - if inject_return_offset && inject_return_offset_at_the_beginning {
-                    1
-                } else {
-                    0
-                }];
+            let offset_instruction = instruction_set.instr[instruction_set.len() as usize - 4];
             let offset = match offset_instruction {
                 Instruction::I64Const(offset) => offset,
                 x => {
@@ -130,7 +117,7 @@ pub(super) fn preprocess_op_params(
             ..params_start_idx + aux_params_count + i64_stack_params_count]
             .clone_from_slice(&params);
     }
-    if inject_return_offset && !inject_return_offset_at_the_beginning {
+    if inject_return_offset {
         let meta = translator
             .subroutine_meta(opcode)
             .expect(&format!("no meta found for 0x{:x?} opcode", opcode));
