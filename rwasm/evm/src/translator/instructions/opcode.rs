@@ -193,73 +193,73 @@ opcodes! {
     0x5D => TSTORE   => host::tstore::<H>,
     0x5E => MCOPY    => memory::mcopy::<H>,
 
-    0x5F => PUSH0  => stack::push::<0, H>, // done
-    0x60 => PUSH1  => stack::push::<1, H>, // done
-    0x61 => PUSH2  => stack::push::<2, H>, // done
-    0x62 => PUSH3  => stack::push::<3, H>, // done
-    0x63 => PUSH4  => stack::push::<4, H>, // done
-    0x64 => PUSH5  => stack::push::<5, H>, // done
-    0x65 => PUSH6  => stack::push::<6, H>, // done
-    0x66 => PUSH7  => stack::push::<7, H>, // done
-    0x67 => PUSH8  => stack::push::<8, H>, // done
-    0x68 => PUSH9  => stack::push::<9, H>, // done
-    0x69 => PUSH10 => stack::push::<10, H>, // done
-    0x6A => PUSH11 => stack::push::<11, H>, // done
-    0x6B => PUSH12 => stack::push::<12, H>, // done
-    0x6C => PUSH13 => stack::push::<13, H>, // done
-    0x6D => PUSH14 => stack::push::<14, H>, // done
-    0x6E => PUSH15 => stack::push::<15, H>, // done
-    0x6F => PUSH16 => stack::push::<16, H>, // done
-    0x70 => PUSH17 => stack::push::<17, H>, // done
-    0x71 => PUSH18 => stack::push::<18, H>, // done
-    0x72 => PUSH19 => stack::push::<19, H>, // done
-    0x73 => PUSH20 => stack::push::<20, H>, // done
-    0x74 => PUSH21 => stack::push::<21, H>, // done
-    0x75 => PUSH22 => stack::push::<22, H>, // done
-    0x76 => PUSH23 => stack::push::<23, H>, // done
-    0x77 => PUSH24 => stack::push::<24, H>, // done
-    0x78 => PUSH25 => stack::push::<25, H>, // done
-    0x79 => PUSH26 => stack::push::<26, H>, // done
-    0x7A => PUSH27 => stack::push::<27, H>, // done
-    0x7B => PUSH28 => stack::push::<28, H>, // done
-    0x7C => PUSH29 => stack::push::<29, H>, // done
-    0x7D => PUSH30 => stack::push::<30, H>, // done
-    0x7E => PUSH31 => stack::push::<31, H>, // done
-    0x7F => PUSH32 => stack::push::<32, H>, // done
+    0x5F => PUSH0  => stack::push::<0, H>, // manual impl
+    0x60 => PUSH1  => stack::push::<1, H>, // manual impl
+    0x61 => PUSH2  => stack::push::<2, H>, // manual impl
+    0x62 => PUSH3  => stack::push::<3, H>, // manual impl
+    0x63 => PUSH4  => stack::push::<4, H>, // manual impl
+    0x64 => PUSH5  => stack::push::<5, H>, // manual impl
+    0x65 => PUSH6  => stack::push::<6, H>, // manual impl
+    0x66 => PUSH7  => stack::push::<7, H>, // manual impl
+    0x67 => PUSH8  => stack::push::<8, H>, // manual impl
+    0x68 => PUSH9  => stack::push::<9, H>, // manual impl
+    0x69 => PUSH10 => stack::push::<10, H>, // manual impl
+    0x6A => PUSH11 => stack::push::<11, H>, // manual impl
+    0x6B => PUSH12 => stack::push::<12, H>, // manual impl
+    0x6C => PUSH13 => stack::push::<13, H>, // manual impl
+    0x6D => PUSH14 => stack::push::<14, H>, // manual impl
+    0x6E => PUSH15 => stack::push::<15, H>, // manual impl
+    0x6F => PUSH16 => stack::push::<16, H>, // manual impl
+    0x70 => PUSH17 => stack::push::<17, H>, // manual impl
+    0x71 => PUSH18 => stack::push::<18, H>, // manual impl
+    0x72 => PUSH19 => stack::push::<19, H>, // manual impl
+    0x73 => PUSH20 => stack::push::<20, H>, // manual impl
+    0x74 => PUSH21 => stack::push::<21, H>, // manual impl
+    0x75 => PUSH22 => stack::push::<22, H>, // manual impl
+    0x76 => PUSH23 => stack::push::<23, H>, // manual impl
+    0x77 => PUSH24 => stack::push::<24, H>, // manual impl
+    0x78 => PUSH25 => stack::push::<25, H>, // manual impl
+    0x79 => PUSH26 => stack::push::<26, H>, // manual impl
+    0x7A => PUSH27 => stack::push::<27, H>, // manual impl
+    0x7B => PUSH28 => stack::push::<28, H>, // manual impl
+    0x7C => PUSH29 => stack::push::<29, H>, // manual impl
+    0x7D => PUSH30 => stack::push::<30, H>, // manual impl
+    0x7E => PUSH31 => stack::push::<31, H>, // manual impl
+    0x7F => PUSH32 => stack::push::<32, H>, // manual impl
 
-    0x80 => DUP1  => stack::dup::<1, H>,
-    0x81 => DUP2  => stack::dup::<2, H>,
-    0x82 => DUP3  => stack::dup::<3, H>,
-    0x83 => DUP4  => stack::dup::<4, H>,
-    0x84 => DUP5  => stack::dup::<5, H>,
-    0x85 => DUP6  => stack::dup::<6, H>,
-    0x86 => DUP7  => stack::dup::<7, H>,
-    0x87 => DUP8  => stack::dup::<8, H>,
-    0x88 => DUP9  => stack::dup::<9, H>,
-    0x89 => DUP10 => stack::dup::<10, H>,
-    0x8A => DUP11 => stack::dup::<11, H>,
-    0x8B => DUP12 => stack::dup::<12, H>,
-    0x8C => DUP13 => stack::dup::<13, H>,
-    0x8D => DUP14 => stack::dup::<14, H>,
-    0x8E => DUP15 => stack::dup::<15, H>,
-    0x8F => DUP16 => stack::dup::<16, H>,
+    0x80 => DUP1  => stack::dup::<1, H>, // manual impl
+    0x81 => DUP2  => stack::dup::<2, H>, // manual impl
+    0x82 => DUP3  => stack::dup::<3, H>, // manual impl
+    0x83 => DUP4  => stack::dup::<4, H>, // manual impl
+    0x84 => DUP5  => stack::dup::<5, H>, // manual impl
+    0x85 => DUP6  => stack::dup::<6, H>, // manual impl
+    0x86 => DUP7  => stack::dup::<7, H>, // manual impl
+    0x87 => DUP8  => stack::dup::<8, H>, // manual impl
+    0x88 => DUP9  => stack::dup::<9, H>, // manual impl
+    0x89 => DUP10 => stack::dup::<10, H>, // manual impl
+    0x8A => DUP11 => stack::dup::<11, H>, // manual impl
+    0x8B => DUP12 => stack::dup::<12, H>, // manual impl
+    0x8C => DUP13 => stack::dup::<13, H>, // manual impl
+    0x8D => DUP14 => stack::dup::<14, H>, // manual impl
+    0x8E => DUP15 => stack::dup::<15, H>, // manual impl
+    0x8F => DUP16 => stack::dup::<16, H>, // manual impl
 
-    0x90 => SWAP1  => stack::swap::<1, H>,
-    0x91 => SWAP2  => stack::swap::<2, H>,
-    0x92 => SWAP3  => stack::swap::<3, H>,
-    0x93 => SWAP4  => stack::swap::<4, H>,
-    0x94 => SWAP5  => stack::swap::<5, H>,
-    0x95 => SWAP6  => stack::swap::<6, H>,
-    0x96 => SWAP7  => stack::swap::<7, H>,
-    0x97 => SWAP8  => stack::swap::<8, H>,
-    0x98 => SWAP9  => stack::swap::<9, H>,
-    0x99 => SWAP10 => stack::swap::<10, H>,
-    0x9A => SWAP11 => stack::swap::<11, H>,
-    0x9B => SWAP12 => stack::swap::<12, H>,
-    0x9C => SWAP13 => stack::swap::<13, H>,
-    0x9D => SWAP14 => stack::swap::<14, H>,
-    0x9E => SWAP15 => stack::swap::<15, H>,
-    0x9F => SWAP16 => stack::swap::<16, H>,
+    0x90 => SWAP1  => stack::swap::<1, H>, // manual impl
+    0x91 => SWAP2  => stack::swap::<2, H>, // manual impl
+    0x92 => SWAP3  => stack::swap::<3, H>, // manual impl
+    0x93 => SWAP4  => stack::swap::<4, H>, // manual impl
+    0x94 => SWAP5  => stack::swap::<5, H>, // manual impl
+    0x95 => SWAP6  => stack::swap::<6, H>, // manual impl
+    0x96 => SWAP7  => stack::swap::<7, H>, // manual impl
+    0x97 => SWAP8  => stack::swap::<8, H>, // manual impl
+    0x98 => SWAP9  => stack::swap::<9, H>, // manual impl
+    0x99 => SWAP10 => stack::swap::<10, H>, // manual impl
+    0x9A => SWAP11 => stack::swap::<11, H>, // manual impl
+    0x9B => SWAP12 => stack::swap::<12, H>, // manual impl
+    0x9C => SWAP13 => stack::swap::<13, H>, // manual impl
+    0x9D => SWAP14 => stack::swap::<14, H>, // manual impl
+    0x9E => SWAP15 => stack::swap::<15, H>, // manual impl
+    0x9F => SWAP16 => stack::swap::<16, H>, // manual impl
 
     0xA0 => LOG0 => host::log::<0, H>,
     0xA1 => LOG1 => host::log::<1, H>,
@@ -355,7 +355,7 @@ opcodes! {
     // 0xFB
     // 0xFC
     0xFD => REVERT       => control::revert::<H>,
-    0xFE => INVALID      => control::invalid,
+    0xFE => INVALID      => control::invalid, // done
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>,
 }
 
