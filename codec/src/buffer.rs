@@ -182,7 +182,7 @@ mod test {
             let mut offset = 0;
             offset += buffer.write_u32(offset, test.a);
             offset += buffer.write_u16(offset, test.b);
-            offset += buffer.write_u64(offset, test.c);
+            buffer.write_u64(offset, test.c);
             buffer.finalize()
         };
         println!("{}", hex::encode(&buffer));
