@@ -1,93 +1,109 @@
 (module
   (type (;0;) (func (param i32 i64 i64 i64 i64 i64 i64 i64 i64)))
   (func (;0;) (type 0) (param i32 i64 i64 i64 i64 i64 i64 i64 i64)
-    (local i64 i64)
+    (local i32 i32 i64)
     block  ;; label = @1
       block  ;; label = @2
         local.get 6
+        local.get 2
+        i64.gt_u
+        local.get 5
+        local.get 1
+        i64.ge_u
+        local.tee 9
+        local.get 6
+        local.get 2
+        i64.ge_u
+        i32.and
+        i32.or
+        local.tee 10
+        i32.const 1
+        i32.ne
+        br_if 0 (;@2;)
+        local.get 6
+        local.get 2
+        i64.sub
         local.get 5
         local.get 1
         i64.lt_u
         i64.extend_i32_u
-        local.tee 9
-        local.get 2
-        i64.add
-        local.tee 10
-        i64.ge_u
-        br_if 0 (;@2;)
-        i64.const 1
-        local.set 10
-        local.get 2
-        i64.const -1
-        i64.xor
-        local.get 6
-        i64.add
-        local.get 9
-        i64.const 1
-        i64.xor
-        i64.add
+        i64.sub
         local.set 2
+        i64.const 0
+        local.set 6
         br 1 (;@1;)
       end
+      local.get 2
+      i64.const -1
+      i64.xor
       local.get 6
-      local.get 10
-      i64.sub
+      i64.add
+      local.get 9
+      i64.extend_i32_u
+      i64.add
       local.set 2
-      i64.const 0
-      local.set 10
+      i64.const 1
+      local.set 6
     end
     block  ;; label = @1
       block  ;; label = @2
         local.get 7
-        local.get 10
         local.get 3
-        i64.add
-        local.tee 6
-        i64.ge_u
-        br_if 0 (;@2;)
-        i64.const 1
-        local.set 6
-        local.get 3
-        i64.const -1
-        i64.xor
+        i64.gt_u
         local.get 7
-        i64.add
+        local.get 3
+        i64.ge_u
         local.get 10
-        i64.const 1
-        i64.xor
+        i32.and
+        i32.or
+        local.tee 10
+        i32.const 1
+        i32.ne
+        br_if 0 (;@2;)
+        local.get 7
+        local.get 6
+        local.get 3
         i64.add
-        local.set 7
+        i64.sub
+        local.set 6
+        i64.const 0
+        local.set 11
         br 1 (;@1;)
       end
+      i64.const 1
+      local.set 11
+      local.get 3
+      i64.const -1
+      i64.xor
       local.get 7
+      i64.add
       local.get 6
-      i64.sub
-      local.set 7
-      i64.const 0
+      i64.const 1
+      i64.xor
+      i64.add
       local.set 6
     end
     block  ;; label = @1
       block  ;; label = @2
         block  ;; label = @3
           local.get 8
-          local.get 6
           local.get 4
-          i64.add
-          local.tee 3
-          i64.ge_u
+          i64.gt_u
           br_if 0 (;@3;)
           local.get 8
-          i64.const -1
-          i64.gt_s
+          local.get 4
+          i64.ge_u
+          local.get 10
+          i32.and
+          i32.eqz
           br_if 1 (;@2;)
-          i64.const -9223372036854775808
-          local.set 8
-          br 2 (;@1;)
         end
         local.get 8
-        local.get 3
+        local.get 11
+        local.get 4
+        i64.add
         i64.sub
-        local.set 8
+        local.set 7
         br 1 (;@1;)
       end
       local.get 4
@@ -95,17 +111,17 @@
       i64.xor
       local.get 8
       i64.add
-      local.get 6
+      local.get 11
       i64.const 1
       i64.xor
       i64.add
-      local.set 8
+      local.set 7
     end
     local.get 0
-    local.get 8
+    local.get 7
     i64.store offset=24
     local.get 0
-    local.get 7
+    local.get 6
     i64.store offset=16
     local.get 0
     local.get 2

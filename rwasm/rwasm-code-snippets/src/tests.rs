@@ -14,7 +14,11 @@ mod all_tests {
     use crate::arithmetic::sdiv::arithmetic_sdiv;
     #[cfg(feature = "arithmetic_smod")]
     use crate::arithmetic::smod_impl::arithmetic_smod;
-    use crate::test_utils::{u256_from_le_u64, u256_into_le_tuple};
+    use crate::{
+        arithmetic::sub::arithmetic_sub,
+        test_utils::{u256_from_le_u64, u256_into_le_tuple},
+    };
+    use ethereum_types::U256;
     use log::debug;
 
     #[cfg(feature = "arithmetic_div")]
@@ -328,6 +332,46 @@ mod all_tests {
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
 
             let (res_0, res_1, res_2, res_3) = arithmetic_sdiv(b0, b1, b2, b3, a0, a1, a2, a3);
+
+            let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
+            let mut expected_be = [0; 32];
+            case.2.to_big_endian(&mut expected_be);
+            let mut res_be = [0; 32];
+            res.to_big_endian(&mut res_be);
+            if res != case.2 {
+                debug!("case with error:");
+                debug!("a=       {}", a);
+                debug!("b=       {}", b);
+                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("res=     {} ({:?})", res, res_be);
+            }
+            assert_eq!(case.2, res);
+        }
+    }
+
+    #[cfg(feature = "arithmetic_sub")]
+    #[test]
+    fn test_arithmetic_sub() {
+        let cases = [(
+            U256::from_dec_str(
+                "57896044618658097711785492504343953926634992332820282019728792003956564819968",
+            )
+            .unwrap(),
+            U256::from_dec_str(
+                "57896044618658097711785492504343953926634992332820282019728792003956564819967",
+            )
+            .unwrap(),
+            U256::from_dec_str("1").unwrap(),
+        )];
+
+        for case in &cases {
+            let a = case.0;
+            let b = case.1;
+
+            let (a0, a1, a2, a3) = u256_into_le_tuple(a);
+            let (b0, b1, b2, b3) = u256_into_le_tuple(b);
+
+            let (res_0, res_1, res_2, res_3) = arithmetic_sub(b0, b1, b2, b3, a0, a1, a2, a3);
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];

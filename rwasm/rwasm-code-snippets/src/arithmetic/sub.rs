@@ -26,7 +26,7 @@ pub fn arithmetic_sub(
         borrow = 1;
     }
 
-    if a1 >= b1 + borrow {
+    if a1 > b1 || (a1 >= b1) && borrow <= 0 {
         s1 = a1 - b1 - borrow;
         borrow = 0;
     } else {
@@ -34,7 +34,7 @@ pub fn arithmetic_sub(
         borrow = 1;
     }
 
-    if a2 >= b2 + borrow {
+    if a2 > b2 || (a2 >= b2) && borrow <= 0 {
         s2 = a2 - b2 - borrow;
         borrow = 0;
     } else {
@@ -42,15 +42,10 @@ pub fn arithmetic_sub(
         borrow = 1;
     }
 
-    if a3 >= b3 + borrow {
+    if a3 > b3 || (a3 >= b3) && borrow <= 0 {
         s3 = a3 - b3 - borrow;
     } else {
-        if a3_sign > 0 {
-            // TODO process overflow
-            s3 = U64_MSBIT_IS_1;
-        } else {
-            s3 = U64_MAX_VAL - b3 + a3 + (1 - borrow);
-        }
+        s3 = U64_MAX_VAL - b3 + a3 + (1 - borrow);
     }
 
     (s0, s1, s2, s3)
