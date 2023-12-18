@@ -1658,6 +1658,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives 0.5.2",
+ "alloy-sol-types",
+ "fluentbase-rwasm",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+ "wat",
+]
+
+[[package]]
 name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
@@ -1701,19 +1714,6 @@ dependencies = [
  "wasi",
  "wat",
  "web3",
-]
-
-[[package]]
-name = "fluentbase-runtime-example"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives 0.5.2",
- "alloy-sol-types",
- "fluentbase-rwasm",
- "fluentbase-sdk",
- "hex",
- "hex-literal",
- "wat",
 ]
 
 [[package]]

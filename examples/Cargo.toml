@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-runtime-example"
+name = "fluentbase-example"
 version = "0.1.0"
 edition = "2021"
 
@@ -23,7 +23,8 @@ hex = "0.4.3"
 wat = "1.0.77"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["staticlib"]
+#crate-type = ["cdylib"]
 
 [profile.release]
 panic = "abort"
@@ -45,3 +46,4 @@ rwasm = []
 secp256k1 = []
 state = []
 storage = []
+stack = []
