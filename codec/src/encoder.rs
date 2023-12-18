@@ -1,5 +1,6 @@
 use crate::buffer::{BufferDecoder, BufferEncoder};
-use std::marker::PhantomData;
+use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 pub trait Encoder<T: Sized> {
     fn header_size() -> usize {
@@ -16,12 +17,15 @@ pub trait Encoder<T: Sized> {
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize);
 
-    fn decode_from_slice(input: &[u8], field_offset: usize, result: &mut T) {
-        let mut buffer_decoder = BufferDecoder::new(input);
-        Self::decode(&mut buffer_decoder, field_offset, result)
-    }
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut T,
+    ) -> (usize, usize);
 
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut T);
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut T) {
+        Self::decode_header(decoder, field_offset, result);
+    }
 }
 
 pub struct FieldEncoder<T: Sized + Encoder<T>, const FIELD_OFFSET: usize>(PhantomData<T>);
@@ -30,12 +34,25 @@ impl<T: Sized + Encoder<T>, const FIELD_OFFSET: usize> FieldEncoder<T, FIELD_OFF
     pub const FIELD_OFFSET: usize = FIELD_OFFSET;
     pub const FIELD_SIZE: usize = T::HEADER_SIZE;
 
-    pub fn decode_field_from_slice(input: &[u8], result: &mut T) {
-        let mut buffer_decoder = BufferDecoder::new(input);
-        Self::decode_field(&mut buffer_decoder, result)
+    pub fn decode_field_header(buffer: &[u8], result: &mut T) -> (usize, usize) {
+        Self::decode_field_header_at(buffer, Self::FIELD_OFFSET, result)
     }
 
-    pub fn decode_field(buffer_decoder: &mut BufferDecoder, result: &mut T) {
-        <T as Encoder<T>>::decode(buffer_decoder, 0, result)
+    pub fn decode_field_header_at(
+        buffer: &[u8],
+        field_offset: usize,
+        result: &mut T,
+    ) -> (usize, usize) {
+        let mut buffer_decoder = BufferDecoder::new(buffer);
+        <T as Encoder<T>>::decode_header(&mut buffer_decoder, field_offset, result)
+    }
+
+    pub fn decode_field_body(buffer: &[u8], result: &mut T) {
+        Self::decode_field_body_at(buffer, Self::FIELD_OFFSET, result)
+    }
+
+    pub fn decode_field_body_at(buffer: &[u8], field_offset: usize, result: &mut T) {
+        let mut buffer_decoder = BufferDecoder::new(buffer);
+        <T as Encoder<T>>::decode_body(&mut buffer_decoder, field_offset, result)
     }
 }

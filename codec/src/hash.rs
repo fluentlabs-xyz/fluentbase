@@ -1,6 +1,6 @@
 use crate::{BufferDecoder, BufferEncoder, Encoder};
+use core::hash::Hash;
 use hashbrown::{HashMap, HashSet};
-use std::hash::Hash;
 
 impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V>>
     Encoder<HashMap<K, V>> for HashMap<K, V>
@@ -25,7 +25,22 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
         encoder.write_bytes(field_offset + 12, value_encoder.finalize().as_slice());
     }
 
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut HashMap<K, V>) {
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut HashMap<K, V>,
+    ) -> (usize, usize) {
+        // read length and reserve required capacity in hashmap
+        let length = decoder.read_u32(field_offset) as usize;
+        result.reserve(length);
+        // read bytes header to calculate hint
+        let (keys_offset, keys_length) = decoder.read_bytes_header(field_offset + 4);
+        let (_, values_length) = decoder.read_bytes_header(field_offset + 12);
+        // sum of keys and values are total body length
+        (keys_offset, keys_length + values_length)
+    }
+
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut HashMap<K, V>) {
         // decode length, keys and values
         let length = decoder.read_u32(field_offset) as usize;
         let (key_bytes, value_bytes) = decoder.read_bytes2(field_offset + 4, field_offset + 12);
@@ -33,14 +48,14 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
         let mut key_decoder = BufferDecoder::new(key_bytes);
         let keys = (0..length).map(|i| {
             let mut result = Default::default();
-            K::decode(&mut key_decoder, K::HEADER_SIZE * i, &mut result);
+            K::decode_body(&mut key_decoder, K::HEADER_SIZE * i, &mut result);
             result
         });
         // decode values
         let mut value_decoder = BufferDecoder::new(value_bytes);
         let values = (0..length).map(|i| {
             let mut result = Default::default();
-            V::decode(&mut value_decoder, V::HEADER_SIZE * i, &mut result);
+            V::decode_body(&mut value_decoder, V::HEADER_SIZE * i, &mut result);
             result
         });
         // zip into map
@@ -63,7 +78,20 @@ impl<T: Default + Sized + Encoder<T> + Eq + Hash> Encoder<HashSet<T>> for HashSe
         encoder.write_bytes(field_offset + 4, value_encoder.finalize().as_slice());
     }
 
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut HashSet<T>) {
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut HashSet<T>,
+    ) -> (usize, usize) {
+        // read set size and reserve required memory
+        let length = decoder.read_u32(field_offset) as usize;
+        result.reserve(length);
+        // read bytes header
+        let (value_offset, value_length) = decoder.read_bytes_header(field_offset + 4);
+        (value_offset, value_length)
+    }
+
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut HashSet<T>) {
         // decode length, keys and values
         let length = decoder.read_u32(field_offset) as usize;
         let value_bytes = decoder.read_bytes(field_offset + 4);
@@ -71,7 +99,7 @@ impl<T: Default + Sized + Encoder<T> + Eq + Hash> Encoder<HashSet<T>> for HashSe
         let mut value_decoder = BufferDecoder::new(value_bytes);
         let values = (0..length).map(|i| {
             let mut result = Default::default();
-            T::decode(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
+            T::decode_body(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
             result
         });
         // zip into map

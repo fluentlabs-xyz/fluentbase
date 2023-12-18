@@ -12,7 +12,7 @@ fn test_vec() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    Vec::<i32>::decode(&mut buffer_decoder, 0, &mut values2);
+    Vec::<i32>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -27,7 +27,7 @@ fn test_nested_vec() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    Vec::<Vec<i32>>::decode(&mut buffer_decoder, 0, &mut values2);
+    Vec::<Vec<i32>>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -42,7 +42,7 @@ fn test_empty_vec() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    Vec::<u32>::decode(&mut buffer_decoder, 0, &mut values2);
+    Vec::<u32>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -60,7 +60,7 @@ fn test_map() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    HashMap::decode(&mut buffer_decoder, 0, &mut values2);
+    HashMap::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -75,7 +75,7 @@ fn test_set() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    HashSet::decode(&mut buffer_decoder, 0, &mut values2);
+    HashSet::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -94,7 +94,7 @@ fn test_nested_map() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    HashMap::decode(&mut buffer_decoder, 0, &mut values2);
+    HashMap::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -112,7 +112,7 @@ fn test_vector_of_maps() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    Vec::decode(&mut buffer_decoder, 0, &mut values2);
+    Vec::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -131,7 +131,7 @@ fn test_map_of_vectors() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    HashMap::decode(&mut buffer_decoder, 0, &mut values2);
+    HashMap::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -146,7 +146,7 @@ fn test_static_array() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    <[i32; 3]>::decode(&mut buffer_decoder, 0, &mut values2);
+    <[i32; 3]>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -161,7 +161,7 @@ fn test_empty_static_array() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    <[u8; 0]>::decode(&mut buffer_decoder, 0, &mut values2);
+    <[u8; 0]>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
@@ -176,6 +176,6 @@ fn test_static_array_of_arrays() {
     println!("{}", hex::encode(&result));
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
-    <[[i32; 3]; 3]>::decode(&mut buffer_decoder, 0, &mut values2);
+    <[[i32; 3]; 3]>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }

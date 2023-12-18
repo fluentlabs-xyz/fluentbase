@@ -10,11 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.5.2", default-features = false }
-hashbrown = "0.14.3"
-serde = { version = "1.0.193", default-features = false }
-casey = "0.4.0"
+byteorder = { workspace = true }
+alloy-primitives = { workspace = true }
+hashbrown = { workspace = true }
+serde = { workspace = true }
+casey = { workspace = true }
+paste = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -23,7 +24,7 @@ hex-literal = "0.4.1"
 [features]
 default = ["std"]
 std = [
-#    "byteorder/std",
-#    "alloy-primitives/std",
-#    "serde/std",
+    "byteorder/std",
+    "alloy-primitives/std",
+    "serde/std",
 ]

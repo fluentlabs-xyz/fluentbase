@@ -11,6 +11,7 @@ pub use crate::{
 
 mod buffer;
 mod encoder;
+mod evm;
 mod hash;
 mod macros;
 mod primitive;

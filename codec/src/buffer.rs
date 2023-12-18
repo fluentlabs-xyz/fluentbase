@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-use alloy_primitives::{Address, U160, U256};
 use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Default)]
@@ -14,15 +13,6 @@ macro_rules! encode_le_int {
             let offset = self.check_header_cap(field_offset, core::mem::size_of::<$typ>());
             LittleEndian::$write_fn(&mut self.buffer[offset..], value);
             core::mem::size_of::<$typ>()
-        }
-    };
-}
-macro_rules! encode_le_bigint {
-    ($typ:ty, $write_fn:ident) => {
-        pub fn $write_fn(&mut self, field_offset: usize, value: &$typ) -> usize {
-            let offset = self.check_header_cap(field_offset, <$typ>::BITS / 8);
-            self.buffer[offset..].copy_from_slice(value.as_le_slice());
-            <$typ>::BITS / 8
         }
     };
 }
@@ -54,15 +44,6 @@ impl BufferEncoder {
     encode_le_int!(i32, write_i32);
     encode_le_int!(u64, write_u64);
     encode_le_int!(i64, write_i64);
-
-    pub fn write_address(&mut self, field_offset: usize, address: &Address) -> usize {
-        let offset = self.check_header_cap(field_offset, Address::len_bytes());
-        self.buffer[offset..].copy_from_slice(address.as_slice());
-        Address::len_bytes()
-    }
-
-    encode_le_bigint!(U160, write_u160);
-    encode_le_bigint!(U256, write_u256);
 
     pub fn write_bytes(&mut self, field_offset: usize, bytes: &[u8]) -> usize {
         let data_offset = self.buffer.len();
@@ -99,19 +80,6 @@ macro_rules! decode_le_int {
         }
     };
 }
-macro_rules! decode_le_bigint {
-    ($typ:ty, $fn_name:ident) => {
-        pub fn $fn_name(&mut self, field_offset: usize) -> $typ {
-            let mut result = <$typ>::default();
-            unsafe {
-                result
-                    .as_le_slice_mut()
-                    .copy_from_slice(&self.buffer[field_offset..]);
-            }
-            result
-        }
-    };
-}
 
 impl<'a> BufferDecoder<'a> {
     pub fn new(input: &'a [u8]) -> Self {
@@ -132,28 +100,20 @@ impl<'a> BufferDecoder<'a> {
     decode_le_int!(i64, read_i64);
     decode_le_int!(u64, read_u64);
 
-    pub fn read_address(&mut self, field_offset: usize) -> Address {
-        let mut result = Address::default();
-        result
-            .as_mut_slice()
-            .copy_from_slice(&self.buffer[field_offset..]);
-        result
-    }
-
-    decode_le_bigint!(U160, read_u160);
-    decode_le_bigint!(U256, read_u256);
-
-    pub fn read_bytes(&mut self, field_offset: usize) -> &[u8] {
+    pub fn read_bytes_header(&mut self, field_offset: usize) -> (usize, usize) {
         let bytes_offset = self.read_u32(field_offset + 0) as usize;
         let bytes_length = self.read_u32(field_offset + 4) as usize;
+        (bytes_offset, bytes_length)
+    }
+
+    pub fn read_bytes(&mut self, field_offset: usize) -> &[u8] {
+        let (bytes_offset, bytes_length) = self.read_bytes_header(field_offset);
         &self.buffer[bytes_offset..(bytes_offset + bytes_length)]
     }
 
     pub fn read_bytes2(&mut self, field1_offset: usize, field2_offset: usize) -> (&[u8], &[u8]) {
-        let bytes1_offset = self.read_u32(field1_offset + 0) as usize;
-        let bytes1_length = self.read_u32(field1_offset + 4) as usize;
-        let bytes2_offset = self.read_u32(field2_offset + 0) as usize;
-        let bytes2_length = self.read_u32(field2_offset + 4) as usize;
+        let (bytes1_offset, bytes1_length) = self.read_bytes_header(field1_offset);
+        let (bytes2_offset, bytes2_length) = self.read_bytes_header(field2_offset);
         (
             &self.buffer[bytes1_offset..(bytes1_offset + bytes1_length)],
             &self.buffer[bytes2_offset..(bytes2_offset + bytes2_length)],
