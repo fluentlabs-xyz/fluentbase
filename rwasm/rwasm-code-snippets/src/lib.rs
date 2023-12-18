@@ -32,7 +32,12 @@ mod tests;
 //     }
 // }
 
-#[cfg(feature = "arithmetic_add")]
+#[cfg(any(
+    feature = "arithmetic_add",
+    feature = "arithmetic_mulmod",
+    feature = "arithmetic_div",
+    feature = "arithmetic_sdiv"
+))]
 #[panic_handler]
 #[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -45,6 +50,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-#[cfg(feature = "arithmetic_add")]
+#[cfg(any(
+    feature = "arithmetic_add",
+    feature = "arithmetic_mulmod",
+    feature = "arithmetic_div",
+    feature = "arithmetic_sdiv"
+))]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;

@@ -15,7 +15,6 @@ pub fn arithmetic_mulmod(
     a2: u64,
     a3: u64,
 ) -> (u64, u64, u64, u64) {
-    let r1 = mod_impl(a0, a1, a2, a3, n0, n1, n2, n3);
-    let r2 = mod_impl(b0, b1, b2, b3, n0, n1, n2, n3);
-    mul(r1.0, r1.1, r1.2, r1.3, r2.0, r2.1, r2.2, r2.3)
+    let r = mul(a0, a1, a2, a3, b0, b1, b2, b3);
+    mod_impl(r.0, r.1, r.2, r.3, n0, n1, n2, n3)
 }

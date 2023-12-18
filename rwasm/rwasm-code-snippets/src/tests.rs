@@ -14,10 +14,10 @@ mod all_tests {
     use crate::arithmetic::sdiv::arithmetic_sdiv;
     #[cfg(feature = "arithmetic_smod")]
     use crate::arithmetic::smod_impl::arithmetic_smod;
-    use crate::{
-        arithmetic::sub::arithmetic_sub,
-        test_utils::{u256_from_le_u64, u256_into_le_tuple},
-    };
+    #[cfg(feature = "arithmetic_sub")]
+    use crate::arithmetic::sub::arithmetic_sub;
+    use crate::test_utils::{u256_from_le_u64, u256_into_le_tuple};
+    use alloc::vec;
     use ethereum_types::U256;
     use log::debug;
 
@@ -89,6 +89,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -97,17 +98,17 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("expected={} ({:?})", r, expected_be);
                 debug!("res=     {} ({:?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
         }
     }
 
@@ -327,6 +328,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -335,17 +337,17 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("expected={} ({:?})", r, expected_be);
                 debug!("res=     {} ({:?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
         }
     }
 
@@ -367,6 +369,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -375,17 +378,17 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("expected={} ({:?})", r, expected_be);
                 debug!("res=     {} ({:?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
         }
     }
 
@@ -562,6 +565,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -570,17 +574,17 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = [0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = [0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:?})", case.2, expected_be);
+                debug!("expected={} ({:?})", r, expected_be);
                 debug!("res=     {} ({:?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
         }
     }
 
@@ -670,6 +674,7 @@ mod all_tests {
         for case in &cases {
             let a = case.0;
             let b = case.1;
+            let r = case.2;
 
             let (a0, a1, a2, a3) = u256_into_le_tuple(a);
             let (b0, b1, b2, b3) = u256_into_le_tuple(b);
@@ -678,17 +683,17 @@ mod all_tests {
 
             let res = u256_from_le_u64(res_0, res_1, res_2, res_3);
             let mut expected_be = vec![0; 32];
-            case.2.to_big_endian(&mut expected_be);
+            r.to_big_endian(&mut expected_be);
             let mut res_be = vec![0; 32];
             res.to_big_endian(&mut res_be);
-            if res != case.2 {
+            if res != r {
                 debug!("case with error:");
                 debug!("a=       {}", a);
                 debug!("b=       {}", b);
-                debug!("expected={} ({:x?})", case.2, expected_be);
+                debug!("expected={} ({:x?})", r, expected_be);
                 debug!("res=     {} ({:x?})", res, res_be);
             }
-            assert_eq!(case.2, res);
+            assert_eq!(r, res);
         }
     }
 }

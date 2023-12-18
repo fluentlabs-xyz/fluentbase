@@ -82,17 +82,17 @@ pub trait EvmPlatformSDK {
     fn evm_address() -> Address;
 }
 
-#[cfg(not(feature = "runtime"))]
-#[panic_handler]
-#[inline(always)]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-        SDK::sys_write(panic_message.as_bytes());
-    }
-    SDK::sys_halt(-71);
-    loop {}
-}
-
-#[cfg(not(feature = "runtime"))]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+// #[cfg(not(feature = "runtime"))]
+// #[panic_handler]
+// #[inline(always)]
+// fn panic(info: &core::panic::PanicInfo) -> ! {
+//     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
+//         SDK::sys_write(panic_message.as_bytes());
+//     }
+//     SDK::sys_halt(-71);
+//     loop {}
+// }
+//
+// #[cfg(not(feature = "runtime"))]
+// #[global_allocator]
+// static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
