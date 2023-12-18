@@ -100,6 +100,109 @@ pub(crate) fn subtract_with_remainder(
     res
 }
 
+pub(crate) fn div_le(a: (u64, u64, u64, u64), b: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+    let mut result = [0u64, 0u64, 0u64, 0u64];
+
+    if b.3 == 0 && b.2 == 0 && b.1 == 0 && (b.0 == 1 || b.0 == 0) {
+        if b.0 != 0 {
+            result[0] = a.0;
+            result[1] = a.1;
+            result[2] = a.2;
+            result[3] = a.3;
+        }
+    } else if a.3 == b.3 && a.2 == b.2 && a.1 == b.1 && a.0 == b.0 {
+        if a.0 != 0 {
+            result[0] = 1
+        }
+    } else if a.3 > b.3
+        || (a.3 == b.3 && a.2 > b.2)
+        || (a.3 == b.3 && a.2 == b.2 && a.1 > b.1)
+        || (a.3 == b.3 && a.2 == b.2 && a.1 == b.1 && a.0 > b.0)
+    {
+        let mut res = &mut [0u8; U256_BYTES_COUNT as usize];
+        let mut res_vec = [0u8; U256_BYTES_COUNT as usize];
+        let mut res_vec_idx: usize = 0;
+        let mut a_bytes = &mut [0u8; U256_BYTES_COUNT as usize];
+        let mut b_bytes = &mut [0u8; U256_BYTES_COUNT as usize];
+
+        for i in 0..8 {
+            a_bytes[i] = a.3.to_be_bytes().as_slice()[i];
+            b_bytes[i] = b.3.to_be_bytes().as_slice()[i];
+            a_bytes[i + 8] = a.2.to_be_bytes().as_slice()[i];
+            b_bytes[i + 8] = b.2.to_be_bytes().as_slice()[i];
+            a_bytes[i + 16] = a.1.to_be_bytes().as_slice()[i];
+            b_bytes[i + 16] = b.1.to_be_bytes().as_slice()[i];
+            a_bytes[i + 24] = a.0.to_be_bytes().as_slice()[i];
+            b_bytes[i + 24] = b.0.to_be_bytes().as_slice()[i];
+        }
+
+        let mut a_pos_start: usize = 0;
+        for i in 0..a_bytes.len() {
+            if a_bytes[i] != 0 {
+                a_pos_start = i;
+                break;
+            }
+        }
+
+        let mut b_pos_start = 0;
+        for i in 0..U256_BYTES_COUNT as usize {
+            if b_bytes[i] != 0 {
+                b_pos_start = i;
+                break;
+            }
+        }
+
+        let mut a_pos_end = a_pos_start + b_bytes.len() - b_pos_start;
+        let a_bytes_ptr = a_bytes.as_mut_ptr();
+        let b_bytes_ptr = b_bytes.as_mut_ptr();
+        loop {
+            let a_len = a_pos_end - a_pos_start;
+            let b_len = b_bytes.len() - b_pos_start;
+            let div_res = try_divide_close_numbers(
+                unsafe { a_bytes_ptr.offset(a_pos_start as isize) },
+                a_len,
+                unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
+                b_len,
+            );
+            let res_vec_ptr = res_vec.as_mut_ptr();
+            unsafe {
+                *res_vec_ptr.offset(res_vec_idx as isize) = div_res;
+            }
+            res_vec_idx += 1;
+
+            a_pos_end += 1;
+            if div_res > 0 {
+                for i in a_pos_start..a_bytes.len() {
+                    if a_bytes[i] != 0 {
+                        break;
+                    }
+                    a_pos_start += 1
+                }
+            }
+
+            if a_pos_end > a_bytes.len() {
+                break;
+            }
+        }
+        let res_len = res.len();
+        let res_ptr: *mut u8 = res.as_mut_ptr();
+        let res_vec_ptr = res_vec.as_ptr();
+        for i in 0..res_vec_idx {
+            unsafe {
+                *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
+                    *res_vec_ptr.offset(i as isize);
+            }
+        }
+        let mut v = [0u8; 8];
+        for i in 0..4 {
+            v.clone_from_slice(&res[24 - i * 8..32 - i * 8]);
+            result[i] = u64::from_be_bytes(v);
+        }
+    }
+
+    (result[0], result[1], result[2], result[3])
+}
+
 /// tries to divide two numbers which quotient must be less than u8::MAX.
 /// saves result in a. doesnt panic in any problems - instead UB in such situations.
 #[inline]
@@ -148,7 +251,7 @@ pub(crate) fn try_divide_close_numbers(
             };
         }
     }
-    /*else if a_len < U128_BYTES_COUNT && b_len < U128_BYTES_COUNT {
+    /*if a_len < U128_BYTES_COUNT && b_len < U128_BYTES_COUNT {
         let mut a_bytes = [0u8; U128_BYTES_COUNT];
         let mut a_bytes_ptr = a_bytes.as_mut_ptr();
         unsafe {
@@ -293,7 +396,7 @@ pub(crate) fn exp(
         loop {
             c += 1;
             // TODO wrong condition, fix it
-            if exp.0 & 1 > 0 {
+            if (exp.0 & 1) > 0 {
                 // rX=rX*baseX
                 r = mul(r.0, r.1, r.2, r.3, base.0, base.1, base.2, base.3);
 
@@ -374,15 +477,6 @@ pub(crate) fn mod_impl(
         let a_bytes_ptr = a_bytes.as_mut_ptr();
         let b_bytes_ptr = b_bytes.as_mut_ptr();
         loop {
-            // debug!(
-            //     "a_pos_start={} a_pos_end={} a_chunk({})={:x?} b_bytes({})={:x?}",
-            //     a_pos_start,
-            //     a_pos_end,
-            //     a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            //     &b_bytes[b_pos_start..].len(),
-            //     &b_bytes[b_pos_start..],
-            // );
             let a_len = a_pos_end - a_pos_start;
             let b_len = b_bytes.len() - b_pos_start;
             let div_res = try_divide_close_numbers(
@@ -391,12 +485,6 @@ pub(crate) fn mod_impl(
                 unsafe { b_bytes_ptr.offset(b_pos_start as isize) },
                 b_len,
             );
-            // debug!(
-            //     "a_chunk/b_bytes({}) = {:x?}",
-            //     &a_bytes[a_pos_start..a_pos_end].len(),
-            //     &a_bytes[a_pos_start..a_pos_end],
-            // );
-            // debug!("div_res={:?}\n\n", div_res);
             let res_vec_ptr = res_vec.as_mut_ptr();
             unsafe {
                 *res_vec_ptr.offset(res_vec_idx as isize) = div_res;
@@ -417,16 +505,6 @@ pub(crate) fn mod_impl(
                 break;
             }
         }
-        // let res_len = res.len();
-        // let res_ptr: *mut u8 = res.as_mut_ptr();
-        // let res_vec_ptr = res_vec.as_ptr();
-        // for i in 0..res_vec_idx {
-        //     unsafe {
-        //         *res_ptr.offset((res_len - res_vec_idx + i) as isize) =
-        //             *res_vec_ptr.offset(i as isize);
-        //     }
-        // }
-        // println!("res {:?} \n\n", res);
         let mut v = [0u8; 8];
         for i in 0..4 {
             v.clone_from_slice(&a_bytes[i * 8..(i + 1) * 8]);
@@ -463,10 +541,10 @@ pub(crate) fn smod(
         let mut b2 = b2;
         let mut b3 = b3;
         if a_sign {
-            (a3, a2, a1, a0) = change_sign_be((a3, a2, a1, a0));
+            (a3, a2, a1, a0) = convert_sign_be((a3, a2, a1, a0));
         }
         if b_sign {
-            (b3, b2, b1, b0) = change_sign_be((b3, b2, b1, b0));
+            (b3, b2, b1, b0) = convert_sign_be((b3, b2, b1, b0));
         }
         let mut res_vec = [0u8; U256_BYTES_COUNT as usize];
         let mut res_vec_idx: usize = 0;
@@ -668,7 +746,7 @@ pub(crate) fn shr(
     (s0, s1, s2, s3)
 }
 
-pub(crate) fn change_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+pub(crate) fn convert_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
     let mut r = v;
     let sign = v.0 & U64_MSBIT_IS_1 > 0;
     if sign {
@@ -717,6 +795,60 @@ pub(crate) fn change_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
             }
         } else {
             r.3 += 1;
+        }
+    }
+    r
+}
+
+pub(crate) fn convert_sign_le(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+    let mut r = v;
+    let sign = v.3 & U64_MSBIT_IS_1 > 0;
+    if sign {
+        if r.0 < 1 {
+            r.0 = U64_ALL_BITS_ARE_1;
+
+            if r.1 < 1 {
+                r.1 = U64_ALL_BITS_ARE_1;
+                if r.2 < 1 {
+                    r.2 = U64_ALL_BITS_ARE_1;
+                    if r.3 < 1 {
+                        r.3 = U64_ALL_BITS_ARE_1;
+                    } else {
+                        r.3 -= 1;
+                    }
+                } else {
+                    r.2 -= 1;
+                }
+            } else {
+                r.1 -= 1;
+            }
+        } else {
+            r.0 -= 1;
+        }
+        r.3 = !r.3;
+        r.2 = !r.2;
+        r.1 = !r.1;
+        r.0 = !r.0;
+    } else {
+        r.3 = !r.3;
+        r.2 = !r.2;
+        r.1 = !r.1;
+        r.0 = !r.0;
+        if r.0 == U64_ALL_BITS_ARE_1 {
+            r.0 = 0;
+            if r.1 == U64_ALL_BITS_ARE_1 {
+                r.1 = 0;
+                if r.2 == U64_ALL_BITS_ARE_1 {
+                    r.2 = 0;
+                    r.3 += 1;
+                } else {
+                    r.2 += 1;
+                }
+            } else {
+                r.1 += 1;
+            }
+        } else {
+            r.0 += 1;
         }
     }
     r
