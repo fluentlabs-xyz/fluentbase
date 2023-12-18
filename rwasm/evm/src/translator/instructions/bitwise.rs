@@ -60,7 +60,7 @@ pub fn iszero<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn bitand<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "AND";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //
@@ -113,7 +113,7 @@ pub fn bitxor<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn not<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "NOT";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, true, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
     // replace_current_opcode_with_inline_func(translator, host, true, false);
     // let instruction_set = host.instruction_set();
     //

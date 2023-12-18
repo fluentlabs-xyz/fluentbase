@@ -1,31 +1,14 @@
-use crate::consts::{
-    BYTE_MAX_VAL,
-    U256_BYTES_COUNT,
-    U64_ALL_BITS_ARE_1,
-    U64_HALF_BITS_COUNT,
-    U64_LOW_PART_MASK,
-    U64_MSBIT_IS_1,
+use crate::{
+    consts::{
+        BYTE_MAX_VAL,
+        U256_BYTES_COUNT,
+        U64_ALL_BITS_ARE_1,
+        U64_HALF_BITS_COUNT,
+        U64_LOW_PART_MASK,
+        U64_MSBIT_IS_1,
+    },
+    global_var,
 };
-
-// #[no_mangle]
-// #[inline]
-// pub fn stack_pointer_value_get(mem_offset: usize) -> *mut i32 {
-//     let mut mem: &mut [i32];
-//     unsafe {
-//         mem = slice::from_raw_parts_mut(mem_offset as *mut i32, 1);
-//     }
-//     mem[0] as *mut i32
-// }
-//
-// #[no_mangle]
-// #[inline]
-// pub fn stack_pointer_value_update(mem_offset: usize, value: i32) {
-//     let mut mem: &mut [i32];
-//     unsafe {
-//         mem = slice::from_raw_parts_mut(mem_offset as *mut i32, 1);
-//     }
-//     mem[0] = value;
-// }
 
 #[inline]
 pub(crate) fn subtract_with_remainder(
@@ -212,6 +195,7 @@ pub(crate) fn try_divide_close_numbers(
     b_start_ptr: *mut u8,
     b_len: usize,
 ) -> u8 {
+    unsafe { global_var = 654321 };
     let mut res: u8 = 0;
     const U128_BYTES_COUNT: usize = 16;
     const U64_BYTES_COUNT: usize = 8;
@@ -296,6 +280,71 @@ pub(crate) fn try_divide_close_numbers(
 }
 
 pub(crate) fn add(
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    b0: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+) -> (u64, u64, u64, u64) {
+    let mut a_part: u64 = 0;
+    let mut b_part: u64 = 0;
+    let mut part_sum: u64 = 0;
+    let mut carry: u64 = 0;
+    let mut s0: u64 = 0;
+    let mut s1: u64 = 0;
+    let mut s2: u64 = 0;
+    let mut s3: u64 = 0;
+
+    a_part = a0 & U64_LOW_PART_MASK;
+    b_part = b0 & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part;
+    s0 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = a0 >> U64_HALF_BITS_COUNT;
+    b_part = b0 >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s0 = s0 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = a1 & U64_LOW_PART_MASK;
+    b_part = b1 & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s1 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = a1 >> U64_HALF_BITS_COUNT;
+    b_part = b1 >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s1 = s1 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = a2 & U64_LOW_PART_MASK;
+    b_part = b2 & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s2 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = a2 >> U64_HALF_BITS_COUNT;
+    b_part = b2 >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s2 = s2 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = a3 & U64_LOW_PART_MASK;
+    b_part = b3 & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s3 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = a3 >> U64_HALF_BITS_COUNT;
+    b_part = b3 >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s3 = s3 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+
+    (s0, s1, s2, s3)
+}
+
+pub(crate) fn add_global_mem(
     a0: u64,
     a1: u64,
     a2: u64,

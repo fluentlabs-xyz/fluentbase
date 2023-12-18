@@ -1,4 +1,12 @@
+use crate::common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT};
+
 #[no_mangle]
-fn bitwise_not(a0: u64, a1: u64, a2: u64, a3: u64) -> (u64, u64, u64, u64) {
-    return (!a0, !a1, !a2, !a3);
+fn bitwise_not() {
+    let mut a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+
+    for i in 0..a.len() {
+        a[i] = !a[i];
+    }
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, a);
 }

@@ -31,10 +31,7 @@ pub fn arithmetic_sdiv(
             if b.0 == U64_ALL_BITS_ARE_1 && a_sign && b_sign {
                 a = convert_sign_le(a);
             }
-            result_le.0 = a.0;
-            result_le.1 = a.1;
-            result_le.2 = a.2;
-            result_le.3 = a.3;
+            result_le = a;
         }
     } else if a.3 == b.3 && a.2 == b.2 && a.1 == b.1 && a.0 == b.0 {
         if a.0 != 0 {

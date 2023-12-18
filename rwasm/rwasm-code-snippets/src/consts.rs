@@ -12,4 +12,3 @@ pub const U64_BYTES_COUNT: u64 = 8;
 pub const U256_BYTES_COUNT: u64 = 32;
 pub const U64_BITS_COUNT: u64 = 64;
 pub const U64_HALF_BITS_COUNT: u64 = U64_BITS_COUNT / 2;
-pub const STACK_POINTER_DEFAULT_MEM_OFFSET: usize = 0;
