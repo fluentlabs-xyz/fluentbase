@@ -19,6 +19,7 @@ env_logger = "0.10.1"
 
 [lib]
 crate-type = ["cdylib"]
+#crate-type = ["staticlib"]
 bench = false
 test = false
 proc-macro = false

@@ -36,7 +36,7 @@ pub(super) fn preprocess_op_params(
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
     memory_result_offset_is_first_param: bool,
-    inject_return_offset: bool,
+    // inject_return_offset: bool,
 ) {
     let opcode = translator.opcode_prev();
     let i64_stack_params_count: usize;
@@ -58,7 +58,6 @@ pub(super) fn preprocess_op_params(
         | opcode::SLT
         | opcode::ADD
         | opcode::SIGNEXTEND
-        | opcode::AND
         | opcode::OR
         | opcode::XOR
         | opcode::SUB
@@ -75,6 +74,10 @@ pub(super) fn preprocess_op_params(
 
         opcode::MULMOD | opcode::ADDMOD => {
             i64_stack_params_count = 12;
+        }
+
+        opcode::AND => {
+            i64_stack_params_count = 0;
         }
         _ => {
             panic!("no postprocessing defined for 0x{:x?} opcode", opcode)
@@ -115,36 +118,36 @@ pub(super) fn preprocess_op_params(
             ..params_start_idx + aux_params_count + i64_stack_params_count]
             .clone_from_slice(&params);
     }
-    if inject_return_offset {
-        let meta = translator
-            .subroutine_meta(opcode)
-            .expect(&format!("no meta found for 0x{:x?} opcode", opcode));
-        let prev_funcs_len = meta.begin_offset as u32;
-        instruction_set.op_i32_const(instruction_set.len() + 1 - prev_funcs_len);
-    }
+    // if inject_return_offset {
+    let meta = translator
+        .subroutine_meta(opcode)
+        .expect(&format!("no meta found for 0x{:x?} opcode", opcode));
+    let prev_funcs_len = meta.begin_offset as u32;
+    instruction_set.op_i32_const(instruction_set.len() + 1 - prev_funcs_len);
+    // }
 }
 
-pub(super) fn replace_current_opcode_with_inline_func(
-    translator: &mut Translator<'_>,
-    host: &mut dyn Host,
-    inject_memory_result_offset: bool,
-    memory_result_offset_is_first_param: bool,
-) {
-    preprocess_op_params(
-        translator,
-        host,
-        inject_memory_result_offset,
-        memory_result_offset_is_first_param,
-        false,
-    );
-
-    let instruction_set = host.instruction_set();
-    let opcode = translator.opcode_prev();
-    let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
-    instruction_set
-        .instr
-        .extend(instruction_set_replace.instr.iter());
-}
+// pub(super) fn replace_current_opcode_with_inline_func(
+//     translator: &mut Translator<'_>,
+//     host: &mut dyn Host,
+//     inject_memory_result_offset: bool,
+//     memory_result_offset_is_first_param: bool,
+// ) {
+//     preprocess_op_params(
+//         translator,
+//         host,
+//         inject_memory_result_offset,
+//         memory_result_offset_is_first_param,
+//         false,
+//     );
+//
+//     let instruction_set = host.instruction_set();
+//     let opcode = translator.opcode_prev();
+//     let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
+//     instruction_set
+//         .instr
+//         .extend(instruction_set_replace.instr.iter());
+// }
 
 pub(super) fn replace_current_opcode_with_call_to_subroutine(
     translator: &mut Translator<'_>,
@@ -157,7 +160,7 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         host,
         inject_memory_result_offset,
         memory_result_offset_is_first_param,
-        true,
+        // true,
     );
 
     let instruction_set = host.instruction_set();
@@ -167,7 +170,6 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
 
     let subroutine_entry = subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
-    // let subroutine_entry = -278;
     instruction_set.op_br(subroutine_entry);
 }
 

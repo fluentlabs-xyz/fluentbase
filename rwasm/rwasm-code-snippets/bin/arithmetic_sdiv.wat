@@ -1257,14 +1257,17 @@
                     i32.lt_u
                     br_if 0 (;@8;)
                   end
+                  i32.const 0
+                  local.set 11
+                  i32.const 0
+                  i64.const 654321
+                  i64.store
                   local.get 9
                   local.get 29
                   i32.sub
                   i32.const 31
                   i32.add
                   local.set 17
-                  i32.const 0
-                  local.set 11
                   block  ;; label = @8
                     loop  ;; label = @9
                       local.get 11
@@ -1700,6 +1703,9 @@
     local.get 0
     local.get 12
     i64.store
+    i32.const 0
+    i32.const 123456
+    i32.store offset=300
     local.get 9
     i32.const 144
     i32.add

@@ -10,6 +10,7 @@ extern crate wat;
 mod arithmetic;
 mod bitwise;
 pub(crate) mod common;
+pub mod common_sp;
 pub(crate) mod consts;
 mod host;
 mod memory;
@@ -20,6 +21,11 @@ pub(crate) mod test_helper;
 #[cfg(test)]
 mod test_utils;
 mod tests;
+
+extern "C" {
+    #[no_mangle]
+    static mut global_var: u64;
+}
 
 // #[cfg(test)]
 // #[ctor::ctor]
@@ -34,6 +40,8 @@ mod tests;
 
 #[cfg(any(
     feature = "arithmetic_add",
+    feature = "bitwise_and",
+    feature = "bitwise_not",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"
@@ -52,6 +60,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(any(
     feature = "arithmetic_add",
+    feature = "bitwise_and",
+    feature = "bitwise_not",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"

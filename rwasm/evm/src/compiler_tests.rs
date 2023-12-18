@@ -2,6 +2,7 @@
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
+        consts::SP_VAL_MEM_OFFSET_DEFAULT,
         translator::{
             instruction_result::InstructionResult,
             instructions::opcode::{
@@ -41,9 +42,11 @@ mod evm_to_rwasm_tests {
     };
     use alloy_primitives::{hex, Bytes};
     use fluentbase_runtime::{ExecutionResult, Runtime};
-    use fluentbase_rwasm::{
-        engine::bytecode::Instruction,
-        rwasm::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule},
+    use fluentbase_rwasm::rwasm::{
+        BinaryFormat,
+        BinaryFormatWriter,
+        InstructionSet,
+        ReducedModule,
     };
     use log::debug;
 
@@ -107,6 +110,34 @@ mod evm_to_rwasm_tests {
         evm_bytecode
     }
 
+    // /// @cases - &(a,b,result)
+    // fn test_binary_op(
+    //     opcode: u8,
+    //     bytecode_preamble: Option<&[u8]>,
+    //     cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+    //     force_memory_result_size_to: Option<usize>,
+    // ) {
+    //     for case in cases {
+    //         let a = &case.0;
+    //         let b = &case.1;
+    //         let mut res_expected = case.2.clone();
+    //         let mut evm_bytecode: Vec<u8> = vec![];
+    //         bytecode_preamble.map(|v| evm_bytecode.extend(v));
+    //         // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
+    //         evm_bytecode.extend(compile_binary_op(opcode, a, b));
+    //
+    //         let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+    //         let res = &global_memory[0..res_expected.len()];
+    //         if res_expected != res {
+    //             debug!("a=            {:?}", a);
+    //             debug!("b=            {:?}", b);
+    //             debug!("res_expected= {:?}", res_expected);
+    //             debug!("res=          {:?}", global_memory);
+    //         }
+    //         assert_eq!(res_expected, res);
+    //     }
+    // }
+
     /// @cases - &(a,b,result)
     fn test_binary_op(
         opcode: u8,
@@ -117,14 +148,15 @@ mod evm_to_rwasm_tests {
         for case in cases {
             let a = &case.0;
             let b = &case.1;
-            let mut res_expected = case.2.clone();
+            let res_expected = case.2.clone();
+            let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
             let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_binary_op(opcode, a, b));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
-            let res = &global_memory[0..res_expected.len()];
+            let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
             if res_expected != res {
                 debug!("a=            {:?}", a);
                 debug!("b=            {:?}", b);
@@ -174,12 +206,13 @@ mod evm_to_rwasm_tests {
         for case in cases {
             let a = &case.0;
             let mut res_expected = case.1.clone();
+            let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
             let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
             evm_bytecode.extend(compile_unary_op(opcode, a));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
-            let res = &global_memory[0..res_expected.len()];
+            let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
             if res_expected != res {
                 debug!("a=            {:?}", a);
                 debug!("res_expected= {:?}", res_expected);
@@ -196,7 +229,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = 1000;
+        let virtual_stack_top = SP_VAL_MEM_OFFSET_DEFAULT + 1024 * 8;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -264,7 +297,7 @@ mod evm_to_rwasm_tests {
             global_memory_len, &global_memory
         );
         let global_memory =
-            global_memory[0..force_memory_result_size.unwrap_or(EVM_WORD_BYTES)].to_vec();
+            global_memory[0..force_memory_result_size.unwrap_or(global_memory.len())].to_vec();
         // debug!(
         //     "\nexecution_result.tracer() (exit_code {}): \n{:#?}\n",
         //     execution_result.data().exit_code(),
@@ -432,17 +465,11 @@ mod evm_to_rwasm_tests {
         let cases = [
             (
                 x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
-                xr(
-                    "fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef",
-                    0,
-                ),
+                x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
             ),
             (
                 x("0x 0000000000000001 0000000000000002 0000000000000003 0000000000000004"),
-                xr(
-                    "fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb",
-                    0,
-                ),
+                x("fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb"),
             ),
         ];
 
@@ -1400,14 +1427,14 @@ mod evm_to_rwasm_tests {
     #[test]
     fn sdiv() {
         let cases = [
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
-            //         0,
-            //     ),
-            // ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000064"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000003"),
@@ -1416,87 +1443,87 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
-            // (
-            //     x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
-            //     x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
-            //     xr(
-            //         "0x000000000000000000000000000000000000000000008c790a73e76a20fb8aa4",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x000000000000000000000000014d70ce7022e2de7e26734672778054107d2530"),
-            //     x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
-            //     xr(
-            //         "0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530"),
-            //     x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
-            //     xr(
-            //         "0x000000000000000000000000000000000000000000008c790a00000000fb8aa4",
-            //         0,
-            //     ),
-            // ),
-            // // a=   -1 -1 1
-            // (
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000001",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     xr(
-            //         "0x000000000000000000247b41d58f447a82798e946efd4219e2b32d629d1d422b",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffe199d0539cb6"),
-            //     xr(
-            //         "0x00000000000000000000000000000000000000a5351659c6d8046540172a84a2",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     xr(
-            //         "0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
-            //     x("0x000000000000000000000000000000000000000000000000000000001a31ebea"),
-            //     xr(
-            //         "0xffffffffffffffffffffffffffffffffff404718f404baac20abf5a87e655739",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0x000000000000000000000000000000000000000000000000000000000001e15f"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
-            // (
-            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     xr(
-            //         "0x0000000000000000000000000000000000000000000000000000000000000000",
-            //         0,
-            //     ),
-            // ),
+            (
+                x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a73e76a20fb8aa4",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70ce7022e2de7e26734672778054107d2530"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a00e76a00fb8aa4",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000014d70ce6dfd93fd2450565b5f141b9c107d2530"),
+                x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
+                xr(
+                    "0x000000000000000000000000000000000000000000008c790a00000000fb8aa4",
+                    0,
+                ),
+            ),
+            // a=   -1 -1 1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                xr(
+                    "0x000000000000000000247b41d58f447a82798e946efd4219e2b32d629d1d422b",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffe199d0539cb6"),
+                xr(
+                    "0x00000000000000000000000000000000000000a5351659c6d8046540172a84a2",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0xffffffffffffffffffdb84be2a70bb857d86716b9102bde61d4cd29d62e2bdd5",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffec61d5769414ac99f25b30d9c6b44bfe9cb679"),
+                x("0x000000000000000000000000000000000000000000000000000000001a31ebea"),
+                xr(
+                    "0xffffffffffffffffffffffffffffffffff404718f404baac20abf5a87e655739",
+                    0,
+                ),
+            ),
+            (
+                x("0x000000000000000000000000000000000000000000000000000000000001e15f"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
         ];
 
         test_binary_op(SDIV, None, &cases, None);
@@ -1618,23 +1645,45 @@ mod evm_to_rwasm_tests {
         test_binary_op(GT, None, &cases, None);
     }
 
+    // #[test]
+    // fn and() {
+    //     let cases = [
+    //         (
+    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+    //             xr(
+    //                 "0x0000000000000000000000000000000000000000000000000000000000000000",
+    //                 0,
+    //             ),
+    //         ),
+    //         (
+    //             x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+    //             x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+    //             xr(
+    //                 "0x0000010000000000000000010000a00080000000000000000000000020000001",
+    //                 0,
+    //             ),
+    //         ),
+    //     ];
+    //
+    //     test_binary_op(AND, None, &cases, None);
+    // }
+
     #[test]
     fn and() {
         let cases = [
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                xr(
+                x(
                     "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
                 ),
             ),
             (
-                x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
-                x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
-                xr(
-                    "0x0000010000000000000000010000a00080000000000000000000000020000001",
-                    0,
+                x("0x00 00 31 00 08 00 00 30   0f 00 00 07 00 00 a0 00   c0 00 00 00 00 00 30 00   10 00 20 00 30 00 00 01"),
+                x("0x00 00 03 00 04 00 04 00   00 00 0a 01 00 00 b0 00   a0 00 00 00 f0 00 00 00   07 00 00 04 20 0a 00 01"),
+                x(
+                    "0x00 00 01 00 00 00 00 00   00 00 00 01 00 00 a0 00   80 00 00 00 00 00 00 00   00 00 00 00 20 00 00 01",
                 ),
             ),
         ];
