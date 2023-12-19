@@ -325,16 +325,16 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/bitwise_iszero.wat",
                 "bitwise_iszero",
             ),
-            // (
-            //     opcode::MSTORE,
-            //     "../rwasm-code-snippets/bin/memory_mstore.wat",
-            //     "memory_mstore",
-            // ),
-            // (
-            //     opcode::MSTORE8,
-            //     "../rwasm-code-snippets/bin/memory_mstore8.wat",
-            //     "memory_mstore8",
-            // ),
+            (
+                opcode::MSTORE,
+                "../rwasm-code-snippets/bin/memory_mstore.wat",
+                "memory_mstore",
+            ),
+            (
+                opcode::MSTORE8,
+                "../rwasm-code-snippets/bin/memory_mstore8.wat",
+                "memory_mstore8",
+            ),
             (
                 opcode::POP,
                 "../rwasm-code-snippets/bin/stack_pop.wat",

@@ -26,7 +26,7 @@ pub fn mload<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
 pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSTORE";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, true, true);
+    replace_current_opcode_with_call_to_subroutine(translator, host, false, true);
     // let instruction_set = host.instruction_set();
     // for i in 0..WASM_I64_IN_EVM_WORD_COUNT as u32 {
     //     // for offset
