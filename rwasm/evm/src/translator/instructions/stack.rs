@@ -6,11 +6,7 @@ use crate::{
         instructions::utilities::replace_current_opcode_with_call_to_subroutine,
         translator::Translator,
     },
-    utilities::{
-        align_to_evm_word_array,
-        iterate_over_wasm_i64_chunks,
-        WASM_I64_IN_EVM_WORD_COUNT,
-    },
+    utilities::{align_to_evm_word_array, WASM_I64_IN_EVM_WORD_COUNT},
 };
 use log::debug;
 
@@ -59,6 +55,10 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         is.op_i64_sub();
         is.op_i64_const(8 * i);
         is.op_i64_sub();
+
+        // is.op_global_get(0);
+        // is.op_i64_const(8 * i);
+        // is.op_i64_sub();
     }
     for chunk in data_padded.chunks(8) {
         let v = i64::from_le_bytes(chunk.try_into().unwrap());
@@ -73,6 +73,10 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
     is.op_i64_const(8 * 4);
     is.op_i64_add();
     is.op_i64_store(0);
+    // is.op_global_get(0);
+    // is.op_i64_const(8 * 4);
+    // is.op_i64_sub();
+    // is.op_global_set(0);
 
     translator.instruction_pointer = unsafe { ip.add(N) };
     translator.instruction_result = InstructionResult::Continue;

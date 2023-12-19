@@ -1,4 +1,5 @@
 pub const U64_MSBIT_IS_1: u64 = 0x8000000000000000;
+pub const U8_MSBIT_IS_1: u8 = 0x80;
 pub const U64_ALL_BITS_ARE_1: u64 = 0xffffffffffffffff;
 pub const U64_ALL_BITS_ARE_0: u64 = 0;
 pub const U64_MAX_VAL: u64 = 0xffffffffffffffff;

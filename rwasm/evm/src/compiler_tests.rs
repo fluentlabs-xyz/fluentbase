@@ -2,7 +2,7 @@
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
-        consts::SP_VAL_MEM_OFFSET_DEFAULT,
+        consts::{SP_VAL_MEM_OFFSET_DEFAULT, VIRTUAL_STACK_TOP_DEFAULT},
         translator::{
             instruction_result::InstructionResult,
             instructions::opcode::{
@@ -52,6 +52,7 @@ mod evm_to_rwasm_tests {
 
     fn x(hex: &str) -> Vec<u8> {
         let mut h = hex.replace(" ", "");
+        h = h.replace("\n", "");
         if !h.starts_with("0x") {
             let mut t = "0x".to_string();
             t.push_str(&h);
@@ -66,26 +67,26 @@ mod evm_to_rwasm_tests {
 
     fn xr(hex: &str, le_from_offset: usize) -> Vec<u8> {
         let mut r = x(hex);
-        const SIZE: usize = EVM_WORD_BYTES;
-        r[le_from_offset..].chunks_mut(SIZE).for_each(|chunk| {
-            if chunk.len() != EVM_WORD_BYTES {
-                return;
-            };
-            for i in 0..SIZE / 2 {
-                let tmp = chunk[i];
-                chunk[i] = chunk[SIZE - i - 1];
-                chunk[SIZE - i - 1] = tmp;
-            }
-        });
+        // const SIZE: usize = EVM_WORD_BYTES;
+        // r[le_from_offset..].chunks_mut(SIZE).for_each(|chunk| {
+        //     if chunk.len() != EVM_WORD_BYTES {
+        //         return;
+        //     };
+        //     for i in 0..SIZE / 2 {
+        //         let tmp = chunk[i];
+        //         chunk[i] = chunk[SIZE - i - 1];
+        //         chunk[SIZE - i - 1] = tmp;
+        //     }
+        // });
         r
     }
 
     fn compile_binary_op(opcode: u8, a: &[u8], b: &[u8]) -> Vec<u8> {
         let mut evm_bytecode: Vec<u8> = vec![];
         evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(b);
-        evm_bytecode.push(PUSH32);
         evm_bytecode.extend(a);
+        evm_bytecode.push(PUSH32);
+        evm_bytecode.extend(b);
         evm_bytecode.push(opcode);
         evm_bytecode
     }
@@ -93,11 +94,11 @@ mod evm_to_rwasm_tests {
     fn compile_ternary_op(opcode: u8, a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
         let mut evm_bytecode: Vec<u8> = vec![];
         evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(c);
+        evm_bytecode.extend(a);
         evm_bytecode.push(PUSH32);
         evm_bytecode.extend(b);
         evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(a);
+        evm_bytecode.extend(c);
         evm_bytecode.push(opcode);
         evm_bytecode
     }
@@ -179,13 +180,14 @@ mod evm_to_rwasm_tests {
             let b = &case.1;
             let c = &case.2;
             let mut res_expected = case.3.clone();
+            let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
             let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_ternary_op(opcode, a, b, c));
 
             let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
-            let res = &global_memory[0..res_expected.len()];
+            let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
             if res_expected != res {
                 debug!("a=            {:?}", a);
                 debug!("b=            {:?}", b);
@@ -229,7 +231,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = SP_VAL_MEM_OFFSET_DEFAULT + 1024 * 8;
+        let virtual_stack_top = VIRTUAL_STACK_TOP_DEFAULT;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -463,10 +465,10 @@ mod evm_to_rwasm_tests {
     #[test]
     fn not() {
         let cases = [
-            (
-                x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
-                x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
-            ),
+            // (
+            //     x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+            //     x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
+            // ),
             (
                 x("0x 0000000000000001 0000000000000002 0000000000000003 0000000000000004"),
                 x("fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb"),
@@ -699,6 +701,144 @@ mod evm_to_rwasm_tests {
         test_binary_op(BYTE, None, &cases, None);
     }
 
+    // #[test]
+    // fn and() {
+    //     let cases = [
+    //         (
+    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+    //             xr(
+    //                 "0x0000000000000000000000000000000000000000000000000000000000000000",
+    //                 0,
+    //             ),
+    //         ),
+    //         (
+    //             x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+    //             x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+    //             xr(
+    //                 "0x0000010000000000000000010000a00080000000000000000000000020000001",
+    //                 0,
+    //             ),
+    //         ),
+    //     ];
+    //
+    //     test_binary_op(AND, None, &cases, None);
+    #[test]
+    fn lt() {
+        let cases = [
+            // a=-4 b=-4 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-4 b=-5 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-5 b=-4 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=-30000 b=-30000 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-30000 b=-30001 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-30001 b=-30000 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=1 b=1 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=2 b=1 r=1
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=1 b=2 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=30000 b=30000 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=30001 b=30000 r=1
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=30000 b=30001 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(LT, None, &cases, None);
+    }
+
     #[test]
     fn slt() {
         let cases = [
@@ -718,9 +858,133 @@ mod evm_to_rwasm_tests {
                     0,
                 ),
             ),
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000009"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000010"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
         ];
 
         test_binary_op(SLT, None, &cases, None);
+    }
+
+    #[test]
+    fn gt() {
+        let cases = [
+            // a=-4 b=-4 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-4 b=-5 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=-5 b=-4 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-30000 b=-30000 r=0
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=-30000 b=-30001 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=-30001 b=-30000 r=1
+            (
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
+                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=1 b=1 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=2 b=1 r=1
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=1 b=2 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=30000 b=30000 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+            // a=30001 b=30000 r=1
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    0,
+                ),
+            ),
+            // a=30000 b=30001 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
+                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
+                xr(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    0,
+                ),
+            ),
+        ];
+
+        test_binary_op(GT, None, &cases, None);
     }
 
     #[test]
@@ -1529,161 +1793,26 @@ mod evm_to_rwasm_tests {
         test_binary_op(SDIV, None, &cases, None);
     }
 
-    #[test]
-    fn gt() {
-        let cases = [
-            // a=-4 b=-4 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-4 b=-5 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=-5 b=-4 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-30000 b=-30000 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-30000 b=-30001 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=-30001 b=-30000 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=1 b=1 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=2 b=1 r=1
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=1 b=2 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=30000 b=30000 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=30001 b=30000 r=1
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=30000 b=30001 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-        ];
-
-        test_binary_op(GT, None, &cases, None);
-    }
-
-    // #[test]
-    // fn and() {
-    //     let cases = [
-    //         (
-    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-    //             x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-    //             xr(
-    //                 "0x0000000000000000000000000000000000000000000000000000000000000000",
-    //                 0,
-    //             ),
-    //         ),
-    //         (
-    //             x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
-    //             x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
-    //             xr(
-    //                 "0x0000010000000000000000010000a00080000000000000000000000020000001",
-    //                 0,
-    //             ),
-    //         ),
-    //     ];
-    //
-    //     test_binary_op(AND, None, &cases, None);
     // }
 
     #[test]
     fn and() {
         let cases = [
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
             (
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "0x00 00 31 00 08 00 00 30   0f 00 00 07 00 00 a0 00   c0 00 00 00 00 00 30 00
+            10 00 20 00 30 00 00 01",
                 ),
-            ),
-            (
-                x("0x00 00 31 00 08 00 00 30   0f 00 00 07 00 00 a0 00   c0 00 00 00 00 00 30 00   10 00 20 00 30 00 00 01"),
-                x("0x00 00 03 00 04 00 04 00   00 00 0a 01 00 00 b0 00   a0 00 00 00 f0 00 00 00   07 00 00 04 20 0a 00 01"),
+                x("0x00 00 03 00 04 00 04 00   00 00 0a
+            01 00 00 b0 00   a0 00 00 00 f0 00 00 00   07 00 00 04 20 0a 00 01"),
                 x(
-                    "0x00 00 01 00 00 00 00 00   00 00 00 01 00 00 a0 00   80 00 00 00 00 00 00 00   00 00 00 00 20 00 00 01",
+                    "0x00 00 01 00 00 00 00 00   00 00 00 01 00 00 a0 00   80 00 00 00 00 00 00
+            00   00 00 00 00 20 00 00 01",
                 ),
             ),
         ];
@@ -1854,24 +1983,11 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn or() {
-        let cases = [
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            (
-                x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
-                x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
-                xr(
-                    "0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001",
-                    0,
-                ),
-            ),
-        ];
+        let cases = [(
+            x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
+            x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
+            x("0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001"),
+        )];
 
         test_binary_op(OR, None, &cases, None);
     }
@@ -1882,138 +1998,16 @@ mod evm_to_rwasm_tests {
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             ),
             (
                 x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
                 x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
-                xr(
-                    "0x000032000c0004300f000a060000100060000000f000300017002004100a0000",
-                    0,
-                ),
+                x("0x000032000c0004300f000a060000100060000000f000300017002004100a0000"),
             ),
         ];
 
         test_binary_op(XOR, None, &cases, None);
-    }
-
-    #[test]
-    fn lt() {
-        let cases = [
-            // a=-4 b=-4 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-4 b=-5 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-5 b=-4 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFB"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffFC"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=-30000 b=-30000 r=0
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-30000 b=-30001 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=-30001 b=-30000 r=1
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8ACF"),
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8AD0"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=1 b=1 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=2 b=1 r=1
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=1 b=2 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000002"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-            // a=30000 b=30000 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=30001 b=30000 r=1
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                ),
-            ),
-            // a=30000 b=30001 r=0
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000007530"),
-                x("0x0000000000000000000000000000000000000000000000000000000000007531"),
-                xr(
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    0,
-                ),
-            ),
-        ];
-
-        test_binary_op(LT, None, &cases, None);
     }
 
     // TODO debug

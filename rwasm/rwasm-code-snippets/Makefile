@@ -17,7 +17,7 @@ $(FILES):
 	cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
 	mkdir -p bin
 	#clang stack.s -c --target=wasm32-unknown-unknown
-	#wasm-ld --stack-first --allow-undefined --no-entry --export=main --export=deploy ../../target/${TARGET}/${PROFILE}/libfluentbase_rwasm_code_snippets.a ./stack.o -o ./bin/$@.wasm
+	#wasm-ld --stack-first --allow-undefined --no-entry --export=$@ ../../target/${TARGET}/${PROFILE}/libfluentbase_rwasm_code_snippets.a ./stack.o -o ./bin/$@.wasm
 	#wasm2wat ./bin/$@.wasm > ./bin/$@.wat
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 
