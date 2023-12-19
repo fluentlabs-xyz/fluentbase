@@ -1,11 +1,20 @@
+use crate::{
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    consts::U256_BYTES_COUNT,
+};
+
 #[no_mangle]
-fn bitwise_eq(a0: u64, a1: u64, a2: u64, a3: u64) -> (u64, u64, u64, u64) {
-    let s0;
-    if a0 == 0 && a1 == 0 && a2 == 0 && a3 == 0 {
-        s0 = 1;
-    } else {
-        s0 = 0;
+fn bitwise_iszero() {
+    let mut a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let mut r = [0u8; U256_BYTES_COUNT as usize];
+    r[r.len() - 1] = 1;
+
+    for i in 0..a.len() {
+        if a[i] != 0 {
+            r[r.len() - 1] = 0;
+            break;
+        }
     }
 
-    return (s0, 0, 0, 0);
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, r);
 }

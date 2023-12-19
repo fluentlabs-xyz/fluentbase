@@ -320,11 +320,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/bitwise_byte.wat",
             //     "bitwise_byte",
             // ),
-            // (
-            //     opcode::ISZERO,
-            //     "../rwasm-code-snippets/bin/bitwise_iszero.wat",
-            //     "bitwise_iszero",
-            // ),
+            (
+                opcode::ISZERO,
+                "../rwasm-code-snippets/bin/bitwise_iszero.wat",
+                "bitwise_iszero",
+            ),
             // (
             //     opcode::MSTORE,
             //     "../rwasm-code-snippets/bin/memory_mstore.wat",
