@@ -5,7 +5,7 @@ extern crate core;
 // #[cfg(test)]
 // #[macro_use]
 // extern crate std;
-// extern crate fluentbase_sdk;
+extern crate fluentbase_sdk;
 
 mod arithmetic;
 mod bitwise;
@@ -34,17 +34,17 @@ mod types;
 //     }
 // }
 //
-#[panic_handler]
-#[inline(always)]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-        // SDK::sys_write(panic_message.as_bytes());
-        panic!("panic: {}", panic_message);
-    }
-    // SDK::sys_halt(-71);
-    panic!("panic");
-    loop {}
-}
-
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+// #[panic_handler]
+// #[inline(always)]
+// fn panic(info: &core::panic::PanicInfo) -> ! {
+//     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
+//         // SDK::sys_write(panic_message.as_bytes());
+//         panic!("panic: {}", panic_message);
+//     }
+//     // SDK::sys_halt(-71);
+//     panic!("panic");
+//     loop {}
+// }
+//
+// #[global_allocator]
+// static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
