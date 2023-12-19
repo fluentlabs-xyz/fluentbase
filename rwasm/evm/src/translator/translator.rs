@@ -230,31 +230,31 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/arithmetic_add.wat",
                 "arithmetic_add",
             ),
-            // (
-            //     opcode::ADDMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
-            //     "arithmetic_addmod",
-            // ),
-            // (
-            //     opcode::SIGNEXTEND,
-            //     "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
-            //     "arithmetic_signextend",
-            // ),
-            // (
-            //     opcode::SUB,
-            //     "../rwasm-code-snippets/bin/arithmetic_sub.wat",
-            //     "arithmetic_sub",
-            // ),
-            // (
-            //     opcode::DIV,
-            //     "../rwasm-code-snippets/bin/arithmetic_div.wat",
-            //     "arithmetic_div",
-            // ),
-            // (
-            //     opcode::SDIV,
-            //     "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
-            //     "arithmetic_sdiv",
-            // ),
+            (
+                opcode::ADDMOD,
+                "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
+                "arithmetic_addmod",
+            ),
+            (
+                opcode::SIGNEXTEND,
+                "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
+                "arithmetic_signextend",
+            ),
+            (
+                opcode::SUB,
+                "../rwasm-code-snippets/bin/arithmetic_sub.wat",
+                "arithmetic_sub",
+            ),
+            (
+                opcode::DIV,
+                "../rwasm-code-snippets/bin/arithmetic_div.wat",
+                "arithmetic_div",
+            ),
+            (
+                opcode::SDIV,
+                "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
+                "arithmetic_sdiv",
+            ),
             (
                 opcode::SHL,
                 "../rwasm-code-snippets/bin/bitwise_shl.wat",

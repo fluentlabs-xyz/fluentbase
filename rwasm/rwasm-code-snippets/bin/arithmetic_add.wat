@@ -106,13 +106,13 @@
     i32.const 64
     i32.add
     local.get 0
+    i32.const 32
+    i32.add
     call 1
     local.get 0
     i32.const 96
     i32.add
     local.get 0
-    i32.const 32
-    i32.add
     call 1
     i32.const 0
     local.get 1

@@ -1,25 +1,23 @@
 use crate::{
-    common::{convert_sign_le, try_divide_close_numbers},
+    common::{convert_sign_le, try_divide_close_numbers, u256_be_to_tuple_le, u256_tuple_le_to_be},
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
     consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1},
 };
 
 #[no_mangle]
-pub fn arithmetic_sdiv(
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-) -> (u64, u64, u64, u64) {
-    let a_sign = a3 & U64_MSBIT_IS_1 > 0;
-    let b_sign = b3 & U64_MSBIT_IS_1 > 0;
+pub fn arithmetic_sdiv() {
+    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+
+    let a = u256_be_to_tuple_le(a);
+    let b = u256_be_to_tuple_le(b);
+
+    let a_sign = a.3 & U64_MSBIT_IS_1 > 0;
+    let b_sign = b.3 & U64_MSBIT_IS_1 > 0;
     let mut result_le = (0u64, 0u64, 0u64, 0u64);
 
-    let mut a = (a0, a1, a2, a3);
-    let mut b = (b0, b1, b2, b3);
+    let mut a = (a.0, a.1, a.2, a.3);
+    let mut b = (b.0, b.1, b.2, b.3);
 
     if b.3 == 0 && b.2 == 0 && b.1 == 0 && (b.0 == 1 || b.0 == 0)
         || b.3 == U64_ALL_BITS_ARE_1
@@ -155,5 +153,7 @@ pub fn arithmetic_sdiv(
         }
     }
 
-    result_le
+    let res = u256_tuple_le_to_be(result_le);
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
 }
