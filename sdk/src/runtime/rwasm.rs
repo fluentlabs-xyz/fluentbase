@@ -72,7 +72,7 @@ impl RwasmPlatformSDK for SDK {
 mod test {
     use crate::{RwasmPlatformSDK, SDK};
     use alloc::vec;
-    use fluentbase_runtime::{STATE_DEPLOY, STATE_MAIN};
+    use fluentbase_runtime::STATE_MAIN;
     use hex_literal::hex;
 
     #[test]

@@ -5,8 +5,13 @@ impl Encoder<u8> for u8 {
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         encoder.write_u8(field_offset, *self);
     }
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut u8) {
-        *result = decoder.read_u8(field_offset)
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut u8,
+    ) -> (usize, usize) {
+        *result = decoder.read_u8(field_offset);
+        (0, 0)
     }
 }
 
@@ -17,8 +22,13 @@ macro_rules! impl_le_int {
             fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
                 encoder.$write_fn(field_offset, *self);
             }
-            fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut $typ) {
+            fn decode_header(
+                decoder: &mut BufferDecoder,
+                field_offset: usize,
+                result: &mut $typ,
+            ) -> (usize, usize) {
                 *result = decoder.$read_fn(field_offset);
+                (0, 0)
             }
         }
     };
@@ -40,9 +50,14 @@ impl<T: Sized + Encoder<T>, const N: usize> Encoder<[T; N]> for [T; N] {
         });
     }
 
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut [T; N]) {
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut [T; N],
+    ) -> (usize, usize) {
         (0..N).for_each(|i| {
-            T::decode(decoder, field_offset + i * T::HEADER_SIZE, &mut result[i]);
+            T::decode_body(decoder, field_offset + i * T::HEADER_SIZE, &mut result[i]);
         });
+        (0, 0)
     }
 }
