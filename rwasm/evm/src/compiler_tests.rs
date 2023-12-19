@@ -38,9 +38,8 @@ mod evm_to_rwasm_tests {
                 XOR,
             },
         },
-        utilities::EVM_WORD_BYTES,
     };
-    use alloy_primitives::{hex, Bytes};
+    use alloy_primitives::{hex, Bytes, U256};
     use fluentbase_runtime::{ExecutionResult, Runtime};
     use fluentbase_rwasm::rwasm::{
         BinaryFormat,
@@ -140,11 +139,38 @@ mod evm_to_rwasm_tests {
     // }
 
     /// @cases - &(a,b,result)
+    fn test_unary_op(
+        opcode: u8,
+        bytecode_preamble: Option<&[u8]>,
+        cases: &[(Vec<u8>, Vec<u8>)],
+        force_memory_result_size_to: Option<usize>,
+        sp_is_zero: bool,
+    ) {
+        for case in cases {
+            let a = &case.0;
+            let res_expected = case.1.clone();
+
+            let mut evm_bytecode: Vec<u8> = vec![];
+            bytecode_preamble.map(|v| evm_bytecode.extend(v));
+            evm_bytecode.extend(compile_unary_op(opcode, a));
+
+            test_op(
+                opcode,
+                evm_bytecode,
+                res_expected,
+                force_memory_result_size_to,
+                sp_is_zero,
+            );
+        }
+    }
+
+    /// @cases - &(a,b,result)
     fn test_binary_op(
         opcode: u8,
         bytecode_preamble: Option<&[u8]>,
         cases: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
         force_memory_result_size_to: Option<usize>,
+        sp_is_zero: bool,
     ) {
         for case in cases {
             let a = &case.0;
@@ -156,15 +182,13 @@ mod evm_to_rwasm_tests {
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_binary_op(opcode, a, b));
 
-            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
-            let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
-            if res_expected != res {
-                debug!("a=            {:?}", a);
-                debug!("b=            {:?}", b);
-                debug!("res_expected= {:?}", res_expected);
-                debug!("res=          {:?}", global_memory);
-            }
-            assert_eq!(res_expected, res);
+            test_op(
+                opcode,
+                evm_bytecode,
+                res_expected,
+                force_memory_result_size_to,
+                sp_is_zero,
+            );
         }
     }
 
@@ -174,6 +198,7 @@ mod evm_to_rwasm_tests {
         bytecode_preamble: Option<&[u8]>,
         cases: &[(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)],
         force_memory_result_size_to: Option<usize>,
+        sp_is_zero: bool,
     ) {
         for case in cases {
             let a = &case.0;
@@ -186,41 +211,34 @@ mod evm_to_rwasm_tests {
             // TODO need evm preprocessing to automatically insert offset arg (PUSH0)
             evm_bytecode.extend(compile_ternary_op(opcode, a, b, c));
 
-            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
-            let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
-            if res_expected != res {
-                debug!("a=            {:?}", a);
-                debug!("b=            {:?}", b);
-                debug!("res_expected= {:?}", res_expected);
-                debug!("res=          {:?}", global_memory);
-            }
-            assert_eq!(res_expected, res);
+            test_op(
+                opcode,
+                evm_bytecode,
+                res_expected,
+                force_memory_result_size_to,
+                sp_is_zero,
+            );
         }
     }
 
-    /// @cases - &(a,b,result)
-    fn test_unary_op(
+    fn test_op(
         opcode: u8,
-        bytecode_preamble: Option<&[u8]>,
-        cases: &[(Vec<u8>, Vec<u8>)],
+        evm_bytecode: Vec<u8>,
+        res_expected: Vec<u8>,
         force_memory_result_size_to: Option<usize>,
+        sp_is_zero: bool,
     ) {
-        for case in cases {
-            let a = &case.0;
-            let mut res_expected = case.1.clone();
-            let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
-            let mut evm_bytecode: Vec<u8> = vec![];
-            bytecode_preamble.map(|v| evm_bytecode.extend(v));
-            evm_bytecode.extend(compile_unary_op(opcode, a));
+        let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
 
-            let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+        let mut global_memory = run_test(&evm_bytecode, force_memory_result_size_to);
+        let sp_mem = &global_memory[SP_VAL_MEM_OFFSET_DEFAULT..SP_VAL_MEM_OFFSET_DEFAULT + 8];
+        let sp_val = u64::from_le_bytes(sp_mem.try_into().unwrap());
+        if sp_is_zero {
+            assert_eq!(0, sp_val);
+        } else {
             let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
-            if res_expected != res {
-                debug!("a=            {:?}", a);
-                debug!("res_expected= {:?}", res_expected);
-                debug!("res=          {:?}", global_memory);
-            }
             assert_eq!(res_expected, res);
+            assert_eq!(res_expected.len() as u64, sp_val);
         }
     }
 
@@ -423,7 +441,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(EQ, None, &cases, None);
+        test_binary_op(EQ, None, &cases, None, false);
     }
 
     #[test]
@@ -459,7 +477,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_unary_op(ISZERO, None, &cases, None);
+        test_unary_op(ISZERO, None, &cases, None, false);
     }
 
     #[test]
@@ -475,7 +493,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_unary_op(NOT, None, &cases, None);
+        test_unary_op(NOT, None, &cases, None, false);
     }
 
     #[test]
@@ -547,7 +565,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SHL, None, &cases, None);
+        test_binary_op(SHL, None, &cases, None, false);
     }
 
     #[test]
@@ -655,7 +673,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SHR, None, &cases, None);
+        test_binary_op(SHR, None, &cases, None, false);
     }
 
     #[test]
@@ -698,7 +716,7 @@ mod evm_to_rwasm_tests {
             ));
         }
 
-        test_binary_op(BYTE, None, &cases, None);
+        test_binary_op(BYTE, None, &cases, None, false);
     }
 
     // #[test]
@@ -836,7 +854,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(LT, None, &cases, None);
+        test_binary_op(LT, None, &cases, None, false);
     }
 
     #[test]
@@ -868,7 +886,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SLT, None, &cases, None);
+        test_binary_op(SLT, None, &cases, None, false);
     }
 
     #[test]
@@ -984,7 +1002,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(GT, None, &cases, None);
+        test_binary_op(GT, None, &cases, None, false);
     }
 
     #[test]
@@ -1008,7 +1026,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SGT, None, &cases, None);
+        test_binary_op(SGT, None, &cases, None, false);
     }
 
     #[test]
@@ -1032,7 +1050,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SAR, None, &cases, None);
+        test_binary_op(SAR, None, &cases, None, false);
     }
 
     #[test]
@@ -1165,7 +1183,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SUB, None, &cases, None);
+        test_binary_op(SUB, None, &cases, None, false);
     }
 
     #[test]
@@ -1245,7 +1263,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(ADD, None, &cases, None);
+        test_binary_op(ADD, None, &cases, None, false);
     }
 
     #[test]
@@ -1293,7 +1311,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SIGNEXTEND, None, &cases, None);
+        test_binary_op(SIGNEXTEND, None, &cases, None, false);
     }
 
     #[test]
@@ -1357,7 +1375,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MUL, None, &cases, None);
+        test_binary_op(MUL, None, &cases, None, false);
     }
 
     // TODO debug
@@ -1403,7 +1421,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_ternary_op(MULMOD, None, &cases, None);
+        test_ternary_op(MULMOD, None, &cases, None, false);
     }
 
     // TODO debug
@@ -1581,7 +1599,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(EXP, None, &cases, None);
+        test_binary_op(EXP, None, &cases, None, false);
     }
 
     #[test]
@@ -1685,7 +1703,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(DIV, None, &cases, None);
+        test_binary_op(DIV, None, &cases, None, false);
     }
 
     #[test]
@@ -1790,7 +1808,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SDIV, None, &cases, None);
+        test_binary_op(SDIV, None, &cases, None, false);
     }
 
     // }
@@ -1817,7 +1835,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(AND, None, &cases, None);
+        test_binary_op(AND, None, &cases, None, false);
     }
 
     #[test]
@@ -1875,7 +1893,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MOD, None, &cases, None);
+        test_binary_op(MOD, None, &cases, None, false);
     }
 
     #[test]
@@ -1952,7 +1970,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(SMOD, None, &cases, None);
+        test_binary_op(SMOD, None, &cases, None, false);
     }
 
     #[test]
@@ -1978,7 +1996,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_ternary_op(ADDMOD, None, &cases, None);
+        test_ternary_op(ADDMOD, None, &cases, None, false);
     }
 
     #[test]
@@ -1989,7 +2007,7 @@ mod evm_to_rwasm_tests {
             x("0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001"),
         )];
 
-        test_binary_op(OR, None, &cases, None);
+        test_binary_op(OR, None, &cases, None, false);
     }
 
     #[test]
@@ -2007,7 +2025,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(XOR, None, &cases, None);
+        test_binary_op(XOR, None, &cases, None, false);
     }
 
     // TODO debug
@@ -2039,7 +2057,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MSTORE, None, &cases, Some(max_result_size));
+        test_binary_op(MSTORE, None, &cases, Some(max_result_size), false);
     }
 
     #[test]
@@ -2059,7 +2077,7 @@ mod evm_to_rwasm_tests {
             ),
         ];
 
-        test_binary_op(MSTORE8, None, &cases, None);
+        test_binary_op(MSTORE8, None, &cases, None, false);
     }
 
     #[test]
@@ -2067,7 +2085,7 @@ mod evm_to_rwasm_tests {
         // let max_result_size = 32; // multiple of 8
         // let max_result_size = (max_result_size + 7) / 8 * 8;
         // [(initial_bytecode, (a,b,result)), ...]
-        let cases: &[(Vec<u8>, (Vec<u8>, Vec<u8>, Vec<u8>))] = &[/*(
+        let cases: &[(Vec<u8>, (Vec<u8>, Vec<u8>, Vec<u8>))] = &[(
             compile_binary_op(
                 MSTORE,
                 &x("0000000000000000000000000000000000000000000000000000000000000000"),
@@ -2081,9 +2099,9 @@ mod evm_to_rwasm_tests {
                 x("0000000000000000000000000000000000000000000000000000000000000004"),
                 x("29045a592007d0c246ef02c2223570da9522d0cf0f73282c79a1bc8f0bb2c238"),
             ),
-        )*/];
+        )];
         for case in cases {
-            test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], None);
+            test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], None, false);
         }
     }
 
@@ -2091,12 +2109,9 @@ mod evm_to_rwasm_tests {
     fn pop() {
         let cases = [(
             x("123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234"),
-            xr(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                0,
-            ),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
         )];
 
-        test_unary_op(POP, None, &cases, None);
+        test_unary_op(POP, None, &cases, None, true);
     }
 }

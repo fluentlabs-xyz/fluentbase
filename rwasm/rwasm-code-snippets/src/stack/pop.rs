@@ -1,2 +1,6 @@
+use crate::common_sp::{u256_pop, SP_VAL_MEM_OFFSET_DEFAULT};
+
 #[no_mangle]
-pub fn arithmetic_pop(a0: u64, a1: u64, a2: u64, a3: u64) {}
+pub fn stack_pop() {
+    let v = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+}
