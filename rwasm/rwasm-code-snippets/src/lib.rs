@@ -21,6 +21,7 @@ pub(crate) mod test_helper;
 #[cfg(test)]
 mod test_utils;
 mod tests;
+mod types;
 
 // #[cfg(test)]
 // #[ctor::ctor]
@@ -49,10 +50,19 @@ mod tests;
     feature = "bitwise_sar",
     feature = "bitwise_shl",
     feature = "bitwise_shr",
-    feature = "arithmetic_add",
+    feature = "arithmetic_exp",
+    feature = "arithmetic_mod",
+    feature = "arithmetic_smod",
     feature = "arithmetic_mulmod",
+    feature = "arithmetic_add",
+    feature = "arithmetic_addmod",
+    feature = "arithmetic_signextend",
+    feature = "arithmetic_sub",
+    feature = "arithmetic_mul",
     feature = "arithmetic_div",
-    feature = "arithmetic_sdiv"
+    feature = "arithmetic_sdiv",
+    feature = "memory_mstore",
+    feature = "memory_mstore8",
 ))]
 #[panic_handler]
 #[inline(always)]
@@ -82,10 +92,19 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     feature = "bitwise_sar",
     feature = "bitwise_shl",
     feature = "bitwise_shr",
-    feature = "arithmetic_add",
+    feature = "arithmetic_exp",
+    feature = "arithmetic_mod",
+    feature = "arithmetic_smod",
     feature = "arithmetic_mulmod",
+    feature = "arithmetic_add",
+    feature = "arithmetic_addmod",
+    feature = "arithmetic_signextend",
+    feature = "arithmetic_sub",
+    feature = "arithmetic_mul",
     feature = "arithmetic_div",
-    feature = "arithmetic_sdiv"
+    feature = "arithmetic_sdiv",
+    feature = "memory_mstore",
+    feature = "memory_mstore8",
 ))]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;

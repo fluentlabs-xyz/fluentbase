@@ -1897,7 +1897,7 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn smod() {
+    fn smod_impl() {
         let cases = [
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
