@@ -1750,7 +1750,6 @@ dependencies = [
  "hex",
  "log",
  "wat",
- "wee_alloc",
 ]
 
 [[package]]

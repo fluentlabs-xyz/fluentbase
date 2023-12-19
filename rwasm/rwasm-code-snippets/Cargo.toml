@@ -7,7 +7,7 @@ edition = "2021"
 fluentbase-rwasm = { path = "..", default-features = false }
 fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
 hex = "0.4.3"
-wee_alloc = "0.4.5"
+#wee_alloc = "0.4.5"
 
 [dev-dependencies]
 wat = "1.0.77"
