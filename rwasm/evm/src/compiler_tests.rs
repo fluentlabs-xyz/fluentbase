@@ -1573,7 +1573,7 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn compund_add() {
+    fn compound_add() {
         let mut preamble = vec![];
         preamble.extend(compile_binary_op(
             ADD,
