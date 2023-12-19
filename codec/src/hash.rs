@@ -2,7 +2,7 @@ use crate::{BufferDecoder, BufferEncoder, Encoder};
 use core::hash::Hash;
 use hashbrown::{HashMap, HashSet};
 
-impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V>>
+impl<K: Default + Sized + Encoder<K> + Eq + Hash + Ord, V: Default + Sized + Encoder<V>>
     Encoder<HashMap<K, V>> for HashMap<K, V>
 {
     // length + keys (bytes) + values (bytes)
@@ -11,16 +11,19 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
+        // make sure keys & values are sorted
+        let mut entries: Vec<_> = self.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
         // encode keys
         let mut key_encoder = BufferEncoder::new(K::HEADER_SIZE * self.len(), None);
-        for (i, obj) in self.keys().enumerate() {
-            obj.encode(&mut key_encoder, K::HEADER_SIZE * i);
+        for (i, obj) in entries.iter().enumerate() {
+            obj.0.encode(&mut key_encoder, K::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 4, key_encoder.finalize().as_slice());
         // encode values
         let mut value_encoder = BufferEncoder::new(V::HEADER_SIZE * self.len(), None);
-        for (i, obj) in self.values().enumerate() {
-            obj.encode(&mut value_encoder, V::HEADER_SIZE * i);
+        for (i, obj) in entries.iter().enumerate() {
+            obj.1.encode(&mut value_encoder, V::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 12, value_encoder.finalize().as_slice());
     }
@@ -63,16 +66,19 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash, V: Default + Sized + Encoder<V
     }
 }
 
-impl<T: Default + Sized + Encoder<T> + Eq + Hash> Encoder<HashSet<T>> for HashSet<T> {
+impl<T: Default + Sized + Encoder<T> + Eq + Hash + Ord> Encoder<HashSet<T>> for HashSet<T> {
     // length + keys (bytes)
     const HEADER_SIZE: usize = 4 + 8;
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
+        // make sure set is sorted
+        let mut entries: Vec<_> = self.iter().collect();
+        entries.sort();
         // encode values
         let mut value_encoder = BufferEncoder::new(T::HEADER_SIZE * self.len(), None);
-        for (i, obj) in self.iter().enumerate() {
+        for (i, obj) in entries.iter().enumerate() {
             obj.encode(&mut value_encoder, T::HEADER_SIZE * i);
         }
         encoder.write_bytes(field_offset + 4, value_encoder.finalize().as_slice());

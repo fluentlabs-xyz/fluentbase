@@ -19,7 +19,7 @@ use crate::{
     FuncType,
     Module,
 };
-use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, rc::Rc, vec::Vec};
 use core::{cell::RefCell, ops::Deref};
 
 mod drop_keep;
@@ -252,6 +252,15 @@ impl<'linker> Compiler<'linker> {
         self.code_section.finalize(false);
         self.is_translated = true;
         Ok(())
+    }
+
+    pub fn resolve_any_export_func(&self) -> Option<Box<str>> {
+        self.module
+            .exports
+            .iter()
+            .filter(|(k, v)| v.into_func_idx().is_some())
+            .map(|(k, _)| k.clone())
+            .last()
     }
 
     fn resolve_export_index(&self, name: &str) -> Result<u32, CompilerError> {

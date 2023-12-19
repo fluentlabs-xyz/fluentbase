@@ -80,6 +80,23 @@ fn test_set() {
 }
 
 #[test]
+fn test_set_is_sorted() {
+    let result1 = {
+        let values = HashSet::from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let mut buffer_encoder = BufferEncoder::new(HashSet::<i32>::HEADER_SIZE, None);
+        values.encode(&mut buffer_encoder, 0);
+        buffer_encoder.finalize()
+    };
+    let result2 = {
+        let values = HashSet::from([8, 3, 2, 4, 5, 9, 7, 1, 6]);
+        let mut buffer_encoder = BufferEncoder::new(HashSet::<i32>::HEADER_SIZE, None);
+        values.encode(&mut buffer_encoder, 0);
+        buffer_encoder.finalize()
+    };
+    assert_eq!(result1, result2);
+}
+
+#[test]
 fn test_nested_map() {
     let mut values = HashMap::new();
     values.insert(100, HashMap::from([(1, 2), (3, 4)]));

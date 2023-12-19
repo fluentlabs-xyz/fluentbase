@@ -9,6 +9,9 @@ fluentbase-runtime = { path = "../../runtime", optional = true }
 hex = "0.4.3"
 wat = "1.0.77"
 
+[build-dependencies]
+fluentbase-rwasm = { path = "..", default-features = false }
+
 [dev-dependencies]
 wat = "1.0.77"
 ethereum-types = "0.14.1"
