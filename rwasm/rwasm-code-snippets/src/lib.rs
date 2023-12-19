@@ -2,10 +2,10 @@
 
 extern crate alloc;
 extern crate core;
-#[cfg(test)]
+// #[cfg(test)]
 // #[macro_use]
 // extern crate std;
-extern crate wat;
+// extern crate fluentbase_sdk;
 
 mod arithmetic;
 mod bitwise;
@@ -23,8 +23,6 @@ mod test_utils;
 mod tests;
 mod types;
 
-use fluentbase_sdk::SDK;
-
 // #[cfg(test)]
 // #[ctor::ctor]
 // fn log_init() {
@@ -36,17 +34,17 @@ use fluentbase_sdk::SDK;
 //     }
 // }
 //
-// #[panic_handler]
-// #[inline(always)]
-// fn panic(info: &core::panic::PanicInfo) -> ! {
-//     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-//         // SDK::sys_write(panic_message.as_bytes());
-//         panic!("panic: {}", panic_message);
-//     }
-//     // SDK::sys_halt(-71);
-//     panic!("panic");
-//     loop {}
-// }
+#[panic_handler]
+#[inline(always)]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
+        // SDK::sys_write(panic_message.as_bytes());
+        panic!("panic: {}", panic_message);
+    }
+    // SDK::sys_halt(-71);
+    panic!("panic");
+    loop {}
+}
 
-// #[global_allocator]
-// static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+#[global_allocator]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
