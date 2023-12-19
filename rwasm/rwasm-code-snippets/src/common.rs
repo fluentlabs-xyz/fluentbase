@@ -1,10 +1,14 @@
-use crate::consts::{
-    BYTE_MAX_VAL,
-    U256_BYTES_COUNT,
-    U64_ALL_BITS_ARE_1,
-    U64_HALF_BITS_COUNT,
-    U64_LOW_PART_MASK,
-    U64_MSBIT_IS_1,
+use crate::{
+    common_sp::{u256_pop, SP_VAL_MEM_OFFSET_DEFAULT},
+    consts::{
+        BYTE_MAX_VAL,
+        U256_BYTES_COUNT,
+        U64_ALL_BITS_ARE_1,
+        U64_HALF_BITS_COUNT,
+        U64_LOW_PART_MASK,
+        U64_MSBIT_IS_1,
+    },
+    types::U256TupleLE,
 };
 
 #[inline]
@@ -80,7 +84,7 @@ pub(crate) fn subtract_with_remainder(
     res
 }
 
-pub(crate) fn div_le(a: (u64, u64, u64, u64), b: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+pub(crate) fn div_le(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
     if b.3 == 0 && b.2 == 0 && b.1 == 0 && (b.0 == 1 || b.0 == 0) {
@@ -275,16 +279,7 @@ pub(crate) fn try_divide_close_numbers(
     res
 }
 
-pub(crate) fn add(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-) -> (u64, u64, u64, u64) {
+pub(crate) fn add(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
     let mut a_part: u64 = 0;
     let mut b_part: u64 = 0;
     let mut part_sum: u64 = 0;
@@ -294,148 +289,139 @@ pub(crate) fn add(
     let mut s2: u64 = 0;
     let mut s3: u64 = 0;
 
-    a_part = a0 & U64_LOW_PART_MASK;
-    b_part = b0 & U64_LOW_PART_MASK;
+    a_part = a.0 & U64_LOW_PART_MASK;
+    b_part = b.0 & U64_LOW_PART_MASK;
     part_sum = a_part + b_part;
     s0 = part_sum & U64_LOW_PART_MASK;
     carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a0 >> U64_HALF_BITS_COUNT;
-    b_part = b0 >> U64_HALF_BITS_COUNT;
+    a_part = a.0 >> U64_HALF_BITS_COUNT;
+    b_part = b.0 >> U64_HALF_BITS_COUNT;
     part_sum = a_part + b_part + carry;
     s0 = s0 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
     carry = part_sum >> U64_HALF_BITS_COUNT;
 
-    a_part = a1 & U64_LOW_PART_MASK;
-    b_part = b1 & U64_LOW_PART_MASK;
+    a_part = a.1 & U64_LOW_PART_MASK;
+    b_part = b.1 & U64_LOW_PART_MASK;
     part_sum = a_part + b_part + carry;
     s1 = part_sum & U64_LOW_PART_MASK;
     carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a1 >> U64_HALF_BITS_COUNT;
-    b_part = b1 >> U64_HALF_BITS_COUNT;
+    a_part = a.1 >> U64_HALF_BITS_COUNT;
+    b_part = b.1 >> U64_HALF_BITS_COUNT;
     part_sum = a_part + b_part + carry;
     s1 = s1 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
     carry = part_sum >> U64_HALF_BITS_COUNT;
 
-    a_part = a2 & U64_LOW_PART_MASK;
-    b_part = b2 & U64_LOW_PART_MASK;
+    a_part = a.2 & U64_LOW_PART_MASK;
+    b_part = b.2 & U64_LOW_PART_MASK;
     part_sum = a_part + b_part + carry;
     s2 = part_sum & U64_LOW_PART_MASK;
     carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a2 >> U64_HALF_BITS_COUNT;
-    b_part = b2 >> U64_HALF_BITS_COUNT;
+    a_part = a.2 >> U64_HALF_BITS_COUNT;
+    b_part = b.2 >> U64_HALF_BITS_COUNT;
     part_sum = a_part + b_part + carry;
     s2 = s2 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
     carry = part_sum >> U64_HALF_BITS_COUNT;
 
-    a_part = a3 & U64_LOW_PART_MASK;
-    b_part = b3 & U64_LOW_PART_MASK;
+    a_part = a.3 & U64_LOW_PART_MASK;
+    b_part = b.3 & U64_LOW_PART_MASK;
     part_sum = a_part + b_part + carry;
     s3 = part_sum & U64_LOW_PART_MASK;
     carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a3 >> U64_HALF_BITS_COUNT;
-    b_part = b3 >> U64_HALF_BITS_COUNT;
+    a_part = a.3 >> U64_HALF_BITS_COUNT;
+    b_part = b.3 >> U64_HALF_BITS_COUNT;
     part_sum = a_part + b_part + carry;
     s3 = s3 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
 
     (s0, s1, s2, s3)
 }
 
-pub(crate) fn add_global_mem(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-) -> (u64, u64, u64, u64) {
-    let mut a_part: u64 = 0;
-    let mut b_part: u64 = 0;
-    let mut part_sum: u64 = 0;
-    let mut carry: u64 = 0;
-    let mut s0: u64 = 0;
-    let mut s1: u64 = 0;
-    let mut s2: u64 = 0;
-    let mut s3: u64 = 0;
-
-    a_part = a0 & U64_LOW_PART_MASK;
-    b_part = b0 & U64_LOW_PART_MASK;
-    part_sum = a_part + b_part;
-    s0 = part_sum & U64_LOW_PART_MASK;
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a0 >> U64_HALF_BITS_COUNT;
-    b_part = b0 >> U64_HALF_BITS_COUNT;
-    part_sum = a_part + b_part + carry;
-    s0 = s0 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-
-    a_part = a1 & U64_LOW_PART_MASK;
-    b_part = b1 & U64_LOW_PART_MASK;
-    part_sum = a_part + b_part + carry;
-    s1 = part_sum & U64_LOW_PART_MASK;
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a1 >> U64_HALF_BITS_COUNT;
-    b_part = b1 >> U64_HALF_BITS_COUNT;
-    part_sum = a_part + b_part + carry;
-    s1 = s1 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-
-    a_part = a2 & U64_LOW_PART_MASK;
-    b_part = b2 & U64_LOW_PART_MASK;
-    part_sum = a_part + b_part + carry;
-    s2 = part_sum & U64_LOW_PART_MASK;
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a2 >> U64_HALF_BITS_COUNT;
-    b_part = b2 >> U64_HALF_BITS_COUNT;
-    part_sum = a_part + b_part + carry;
-    s2 = s2 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-
-    a_part = a3 & U64_LOW_PART_MASK;
-    b_part = b3 & U64_LOW_PART_MASK;
-    part_sum = a_part + b_part + carry;
-    s3 = part_sum & U64_LOW_PART_MASK;
-    carry = part_sum >> U64_HALF_BITS_COUNT;
-    a_part = a3 >> U64_HALF_BITS_COUNT;
-    b_part = b3 >> U64_HALF_BITS_COUNT;
-    part_sum = a_part + b_part + carry;
-    s3 = s3 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
-
-    (s0, s1, s2, s3)
-}
+// pub(crate) fn add_global_mem(
+//     a0: u64,
+//     a1: u64,
+//     a2: u64,
+//     a3: u64,
+//     b0: u64,
+//     b1: u64,
+//     b2: u64,
+//     b3: u64,
+// ) -> U256TupleLE {
+//     let mut a_part: u64 = 0;
+//     let mut b_part: u64 = 0;
+//     let mut part_sum: u64 = 0;
+//     let mut carry: u64 = 0;
+//     let mut s0: u64 = 0;
+//     let mut s1: u64 = 0;
+//     let mut s2: u64 = 0;
+//     let mut s3: u64 = 0;
+//
+//     a_part = a0 & U64_LOW_PART_MASK;
+//     b_part = b0 & U64_LOW_PART_MASK;
+//     part_sum = a_part + b_part;
+//     s0 = part_sum & U64_LOW_PART_MASK;
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//     a_part = a0 >> U64_HALF_BITS_COUNT;
+//     b_part = b0 >> U64_HALF_BITS_COUNT;
+//     part_sum = a_part + b_part + carry;
+//     s0 = s0 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//
+//     a_part = a1 & U64_LOW_PART_MASK;
+//     b_part = b1 & U64_LOW_PART_MASK;
+//     part_sum = a_part + b_part + carry;
+//     s1 = part_sum & U64_LOW_PART_MASK;
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//     a_part = a1 >> U64_HALF_BITS_COUNT;
+//     b_part = b1 >> U64_HALF_BITS_COUNT;
+//     part_sum = a_part + b_part + carry;
+//     s1 = s1 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//
+//     a_part = a2 & U64_LOW_PART_MASK;
+//     b_part = b2 & U64_LOW_PART_MASK;
+//     part_sum = a_part + b_part + carry;
+//     s2 = part_sum & U64_LOW_PART_MASK;
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//     a_part = a2 >> U64_HALF_BITS_COUNT;
+//     b_part = b2 >> U64_HALF_BITS_COUNT;
+//     part_sum = a_part + b_part + carry;
+//     s2 = s2 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//
+//     a_part = a3 & U64_LOW_PART_MASK;
+//     b_part = b3 & U64_LOW_PART_MASK;
+//     part_sum = a_part + b_part + carry;
+//     s3 = part_sum & U64_LOW_PART_MASK;
+//     carry = part_sum >> U64_HALF_BITS_COUNT;
+//     a_part = a3 >> U64_HALF_BITS_COUNT;
+//     b_part = b3 >> U64_HALF_BITS_COUNT;
+//     part_sum = a_part + b_part + carry;
+//     s3 = s3 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+//
+//     (s0, s1, s2, s3)
+// }
 
 // #[no_mangle]
-pub(crate) fn exp(
-    v0: u64,
-    v1: u64,
-    v2: u64,
-    v3: u64,
-    exp0: u64,
-    exp1: u64,
-    exp2: u64,
-    exp3: u64,
-) -> (u64, u64, u64, u64) {
-    let mut r: (u64, u64, u64, u64) = (0, 0, 0, 0);
+pub(crate) fn exp(v: U256TupleLE, degree: U256TupleLE) -> U256TupleLE {
+    let mut r: U256TupleLE = (0, 0, 0, 0);
 
-    if v3 == 0 && v2 == 0 && v1 == 0 && (v0 == 0 || v0 == 1) {
-        if v0 == 0 {
-            if exp3 == 0 && exp2 == 0 && exp1 == 0 && exp0 == 0 {
+    if v.3 == 0 && v.2 == 0 && v.1 == 0 && (v.0 == 0 || v.0 == 1) {
+        if v.0 == 0 {
+            if degree.3 == 0 && degree.2 == 0 && degree.1 == 0 && degree.0 == 0 {
                 r.0 = 1;
             }
         } else {
             r.0 = 1
         }
-    } else if exp3 == 0 && exp2 == 0 && exp1 == 0 && (exp0 == 0 || exp0 == 1) {
-        if exp0 == 1 {
-            r = (v0, v1, v2, v3);
+    } else if degree.3 == 0 && degree.2 == 0 && degree.1 == 0 && (degree.0 == 0 || degree.0 == 1) {
+        if degree.0 == 1 {
+            r = (v.0, v.1, v.2, v.3);
         } else {
             r.0 = 1
         }
     } else {
-        let mut base: (u64, u64, u64, u64) = (v0, v1, v2, v3);
-        let mut rp: (u64, u64, u64, u64) = (1, 0, 0, 0);
-        let mut exp: (u64, u64, u64, u64) = (exp0, exp1, exp2, exp3);
+        let mut base: U256TupleLE = (v.0, v.1, v.2, v.3);
+        let mut rp: U256TupleLE = (1, 0, 0, 0);
+        let mut exp: U256TupleLE = (degree.0, degree.1, degree.2, degree.3);
         r.0 = 1;
         let mut c = 0;
         loop {
@@ -443,7 +429,7 @@ pub(crate) fn exp(
             // TODO wrong condition, fix it
             if (exp.0 & 1) > 0 {
                 // rX=rX*baseX
-                r = mul(r.0, r.1, r.2, r.3, base.0, base.1, base.2, base.3);
+                r = mul(r, base);
 
                 if r == rp {
                     break;
@@ -459,9 +445,7 @@ pub(crate) fn exp(
                 break;
             }
             // baseX=baseX*baseX
-            base = mul(
-                base.0, base.1, base.2, base.3, base.0, base.1, base.2, base.3,
-            );
+            base = mul(base, base);
         }
     }
 
@@ -469,21 +453,16 @@ pub(crate) fn exp(
 }
 
 #[inline]
-pub(crate) fn mod_impl(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-) -> (u64, u64, u64, u64) {
+pub(crate) fn mod_impl(dividend: U256TupleLE, divisor: U256TupleLE) -> U256TupleLE {
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
-    if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 {
+    if dividend.3 == divisor.3
+        && dividend.2 == divisor.2
+        && dividend.1 == divisor.1
+        && dividend.0 == divisor.0
+    {
         result[0] = 0;
-    } else if b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1 {
+    } else if divisor.3 == 0 && divisor.2 == 0 && divisor.1 == 0 && divisor.0 == 1 {
         result[0] = 0;
     } else {
         let mut res_vec = [0u8; U256_BYTES_COUNT as usize];
@@ -492,14 +471,14 @@ pub(crate) fn mod_impl(
         let mut b_bytes = &mut [0u8; U256_BYTES_COUNT as usize];
 
         for i in 0..8 {
-            a_bytes[i] = a3.to_be_bytes().as_slice()[i];
-            b_bytes[i] = b3.to_be_bytes().as_slice()[i];
-            a_bytes[i + 8] = a2.to_be_bytes().as_slice()[i];
-            b_bytes[i + 8] = b2.to_be_bytes().as_slice()[i];
-            a_bytes[i + 16] = a1.to_be_bytes().as_slice()[i];
-            b_bytes[i + 16] = b1.to_be_bytes().as_slice()[i];
-            a_bytes[i + 24] = a0.to_be_bytes().as_slice()[i];
-            b_bytes[i + 24] = b0.to_be_bytes().as_slice()[i];
+            a_bytes[i] = dividend.3.to_be_bytes().as_slice()[i];
+            b_bytes[i] = divisor.3.to_be_bytes().as_slice()[i];
+            a_bytes[i + 8] = dividend.2.to_be_bytes().as_slice()[i];
+            b_bytes[i + 8] = divisor.2.to_be_bytes().as_slice()[i];
+            a_bytes[i + 16] = dividend.1.to_be_bytes().as_slice()[i];
+            b_bytes[i + 16] = divisor.1.to_be_bytes().as_slice()[i];
+            a_bytes[i + 24] = dividend.0.to_be_bytes().as_slice()[i];
+            b_bytes[i + 24] = divisor.0.to_be_bytes().as_slice()[i];
         }
 
         let mut a_pos_start: usize = 0;
@@ -560,31 +539,24 @@ pub(crate) fn mod_impl(
     (result[0], result[1], result[2], result[3])
 }
 
-pub(crate) fn smod(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-) -> (u64, u64, u64, u64) {
-    let a_sign = a3 & U64_MSBIT_IS_1 > 0;
-    let b_sign = b3 & U64_MSBIT_IS_1 > 0;
+pub(crate) fn smod(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
+    let a_sign = a.3 & U64_MSBIT_IS_1 > 0;
+    let b_sign = b.3 & U64_MSBIT_IS_1 > 0;
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
-    if a3 == b3 && a2 == b2 && a1 == b1 && a0 == b0 || b3 == 0 && b2 == 0 && b1 == 0 && b0 == 1 {
+    if a.3 == b.3 && a.2 == b.2 && a.1 == b.1 && a.0 == b.0
+        || b.3 == 0 && b.2 == 0 && b.1 == 0 && b.0 == 1
+    {
         result[0] = 0;
     } else {
-        let mut a0 = a0;
-        let mut a1 = a1;
-        let mut a2 = a2;
-        let mut a3 = a3;
-        let mut b0 = b0;
-        let mut b1 = b1;
-        let mut b2 = b2;
-        let mut b3 = b3;
+        let mut a0 = a.0;
+        let mut a1 = a.1;
+        let mut a2 = a.2;
+        let mut a3 = a.3;
+        let mut b0 = b.0;
+        let mut b1 = b.1;
+        let mut b2 = b.2;
+        let mut b3 = b.3;
         if a_sign {
             (a3, a2, a1, a0) = convert_sign_be((a3, a2, a1, a0));
         }
@@ -679,16 +651,7 @@ pub(crate) fn smod(
     (result[0], result[1], result[2], result[3])
 }
 
-pub(crate) fn mul(
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-) -> (u64, u64, u64, u64) {
+pub(crate) fn mul(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
     fn multiply_u64(a: u64, b: u64) -> (u64, u64) {
         let a_lo = a & U64_LOW_PART_MASK;
         let a_hi = a >> U64_HALF_BITS_COUNT;
@@ -710,8 +673,8 @@ pub(crate) fn mul(
     }
 
     let mut res = [0u64; 4];
-    let av = [a0, a1, a2, a3];
-    let bv = [b0, b1, b2, b3];
+    let av = [a.0, a.1, a.2, a.3];
+    let bv = [b.0, b.1, b.2, b.3];
 
     for i in 0..4 {
         let mut carry: u64 = 0;
@@ -754,7 +717,7 @@ pub(crate) fn shr(
     v1: u64,
     v2: u64,
     v3: u64,
-) -> (u64, u64, u64, u64) {
+) -> U256TupleLE {
     let mut s0: u64 = 0;
     let mut s1: u64 = 0;
     let mut s2: u64 = 0;
@@ -791,7 +754,7 @@ pub(crate) fn shr(
     (s0, s1, s2, s3)
 }
 
-pub(crate) fn convert_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+pub(crate) fn convert_sign_be(v: U256TupleLE) -> U256TupleLE {
     let mut r = v;
     let sign = v.0 & U64_MSBIT_IS_1 > 0;
     if sign {
@@ -845,7 +808,7 @@ pub(crate) fn convert_sign_be(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
     r
 }
 
-pub(crate) fn convert_sign_le(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
+pub(crate) fn convert_sign_le(v: U256TupleLE) -> U256TupleLE {
     let mut r = v;
     let sign = v.3 & U64_MSBIT_IS_1 > 0;
     if sign {
@@ -896,5 +859,30 @@ pub(crate) fn convert_sign_le(v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
             r.0 += 1;
         }
     }
+    r
+}
+
+pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256TupleLE {
+    let mut r = (0, 0, 0, 0);
+    let mut v = [0u8; 8];
+    v.clone_from_slice(&val[0..8]);
+    r.3 = u64::from_be_bytes(v);
+    v.clone_from_slice(&val[8..16]);
+    r.2 = u64::from_be_bytes(v);
+    v.clone_from_slice(&val[16..24]);
+    r.1 = u64::from_be_bytes(v);
+    v.clone_from_slice(&val[24..32]);
+    r.0 = u64::from_be_bytes(v);
+
+    r
+}
+
+pub(crate) fn u256_tuple_le_to_be(val: U256TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
+    let mut r = [0u8; U256_BYTES_COUNT as usize];
+    r[0..8].copy_from_slice(&val.3.to_be_bytes());
+    r[8..16].copy_from_slice(&val.2.to_be_bytes());
+    r[16..24].copy_from_slice(&val.1.to_be_bytes());
+    r[24..32].copy_from_slice(&val.0.to_be_bytes());
+
     r
 }

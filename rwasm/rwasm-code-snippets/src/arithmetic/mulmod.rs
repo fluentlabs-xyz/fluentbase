@@ -1,20 +1,22 @@
-use crate::common::{mod_impl, mul};
+use crate::{
+    common::{mod_impl, mul, u256_be_to_tuple_le, u256_tuple_le_to_be},
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+};
 
 #[no_mangle]
-pub fn arithmetic_mulmod(
-    n0: u64,
-    n1: u64,
-    n2: u64,
-    n3: u64,
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-) -> (u64, u64, u64, u64) {
-    let r = mul(a0, a1, a2, a3, b0, b1, b2, b3);
-    mod_impl(r.0, r.1, r.2, r.3, n0, n1, n2, n3)
+pub fn arithmetic_mulmod() {
+    let divisor = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let mul1 = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let mul2 = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+
+    let divisor = u256_be_to_tuple_le(divisor);
+    let mul1 = u256_be_to_tuple_le(mul1);
+    let mul2 = u256_be_to_tuple_le(mul2);
+
+    let dividend = mul(mul1, mul2);
+    let r = mod_impl(dividend, divisor);
+
+    let res = u256_tuple_le_to_be(r);
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
 }

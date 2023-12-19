@@ -200,31 +200,36 @@ impl<'a> Translator<'a> {
         };
 
         [
-            // (
-            //     opcode::EXP,
-            //     "../rwasm-code-snippets/bin/arithmetic_exp.wat",
-            //     "arithmetic_exp",
-            // ),
-            // (
-            //     opcode::MOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_mod.wat",
-            //     "arithmetic_mod",
-            // ),
-            // (
-            //     opcode::SMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_smod.wat",
-            //     "arithmetic_smod",
-            // ),
-            // (
-            //     opcode::MULMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
-            //     "arithmetic_mulmod",
-            // ),
-            // (
-            //     opcode::ADD,
-            //     "../rwasm-code-snippets/bin/arithmetic_add.wat",
-            //     "arithmetic_add",
-            // ),
+            (
+                opcode::EXP,
+                "../rwasm-code-snippets/bin/arithmetic_exp.wat",
+                "arithmetic_exp",
+            ),
+            (
+                opcode::MOD,
+                "../rwasm-code-snippets/bin/arithmetic_mod.wat",
+                "arithmetic_mod",
+            ),
+            (
+                opcode::SMOD,
+                "../rwasm-code-snippets/bin/arithmetic_smod.wat",
+                "arithmetic_smod",
+            ),
+            (
+                opcode::MUL,
+                "../rwasm-code-snippets/bin/arithmetic_mul.wat",
+                "arithmetic_mul",
+            ),
+            (
+                opcode::MULMOD,
+                "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
+                "arithmetic_mulmod",
+            ),
+            (
+                opcode::ADD,
+                "../rwasm-code-snippets/bin/arithmetic_add.wat",
+                "arithmetic_add",
+            ),
             // (
             //     opcode::ADDMOD,
             //     "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
@@ -241,11 +246,6 @@ impl<'a> Translator<'a> {
             //     "arithmetic_sub",
             // ),
             // (
-            //     opcode::MUL,
-            //     "../rwasm-code-snippets/bin/arithmetic_mul.wat",
-            //     "arithmetic_mul",
-            // ),
-            // (
             //     opcode::DIV,
             //     "../rwasm-code-snippets/bin/arithmetic_div.wat",
             //     "arithmetic_div",
@@ -255,11 +255,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
             //     "arithmetic_sdiv",
             // ),
-            // (
-            //     opcode::SHL,
-            //     "../rwasm-code-snippets/bin/bitwise_shl.wat",
-            //     "bitwise_shl",
-            // ),
+            (
+                opcode::SHL,
+                "../rwasm-code-snippets/bin/bitwise_shl.wat",
+                "bitwise_shl",
+            ),
             (
                 opcode::SHR,
                 "../rwasm-code-snippets/bin/bitwise_shr.wat",
