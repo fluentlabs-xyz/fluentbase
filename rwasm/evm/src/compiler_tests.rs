@@ -690,7 +690,7 @@ mod evm_to_rwasm_tests {
             let mut res = x("0x0000000000000000000000000000000000000000000000000000000000000000");
             let last_byte_idx = idx.len() - 1;
             idx[last_byte_idx] = i;
-            res[0] = i + 1; // because LE
+            res[31] = i + 1;
             cases.push((
                 idx,
                 x("0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"),

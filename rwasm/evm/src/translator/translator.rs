@@ -315,11 +315,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/bitwise_sar.wat",
             //     "bitwise_sar",
             // ),
-            // (
-            //     opcode::BYTE,
-            //     "../rwasm-code-snippets/bin/bitwise_byte.wat",
-            //     "bitwise_byte",
-            // ),
+            (
+                opcode::BYTE,
+                "../rwasm-code-snippets/bin/bitwise_byte.wat",
+                "bitwise_byte",
+            ),
             (
                 opcode::ISZERO,
                 "../rwasm-code-snippets/bin/bitwise_iszero.wat",
