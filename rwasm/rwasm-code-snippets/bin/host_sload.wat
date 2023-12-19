@@ -10,24 +10,6 @@
     local.tee 4
     global.set 0
     local.get 4
-    i32.const 56
-    i32.add
-    i64.const 0
-    i64.store
-    local.get 4
-    i32.const 48
-    i32.add
-    i64.const 0
-    i64.store
-    local.get 4
-    i32.const 40
-    i32.add
-    i64.const 0
-    i64.store
-    local.get 4
-    i64.const 0
-    i64.store offset=32
-    local.get 4
     local.get 0
     i64.const 56
     i64.shl
@@ -207,6 +189,24 @@
     i64.or
     i64.or
     i64.store
+    local.get 4
+    i32.const 56
+    i32.add
+    i64.const 0
+    i64.store
+    local.get 4
+    i32.const 48
+    i32.add
+    i64.const 0
+    i64.store
+    local.get 4
+    i32.const 40
+    i32.add
+    i64.const 0
+    i64.store
+    local.get 4
+    i64.const 0
+    i64.store offset=32
     local.get 4
     local.get 4
     i32.const 32

@@ -23,6 +23,8 @@ mod test_utils;
 mod tests;
 mod types;
 
+use fluentbase_sdk::SDK;
+
 // #[cfg(test)]
 // #[ctor::ctor]
 // fn log_init() {
@@ -30,81 +32,21 @@ mod types;
 //         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
 //             .try_init();
 //     if let Err(_) = init_res {
-//         println!("failed to init logger");
+//         // println!("failed to init logger");
 //     }
 // }
+//
+// #[panic_handler]
+// #[inline(always)]
+// fn panic(info: &core::panic::PanicInfo) -> ! {
+//     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
+//         // SDK::sys_write(panic_message.as_bytes());
+//         panic!("panic: {}", panic_message);
+//     }
+//     // SDK::sys_halt(-71);
+//     panic!("panic");
+//     loop {}
+// }
 
-#[cfg(any(
-    feature = "stack_pop",
-    feature = "bitwise_and",
-    feature = "bitwise_or",
-    feature = "bitwise_xor",
-    feature = "bitwise_not",
-    feature = "bitwise_eq",
-    feature = "bitwise_lt",
-    feature = "bitwise_slt",
-    feature = "bitwise_gt",
-    feature = "bitwise_sgt",
-    feature = "bitwise_iszero",
-    feature = "bitwise_byte",
-    feature = "bitwise_sar",
-    feature = "bitwise_shl",
-    feature = "bitwise_shr",
-    feature = "arithmetic_exp",
-    feature = "arithmetic_mod",
-    feature = "arithmetic_smod",
-    feature = "arithmetic_mulmod",
-    feature = "arithmetic_add",
-    feature = "arithmetic_addmod",
-    feature = "arithmetic_signextend",
-    feature = "arithmetic_sub",
-    feature = "arithmetic_mul",
-    feature = "arithmetic_div",
-    feature = "arithmetic_sdiv",
-    feature = "memory_mstore",
-    feature = "memory_mstore8",
-))]
-#[panic_handler]
-#[inline(always)]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-        // SDK::sys_write(panic_message.as_bytes());
-        panic!("panic: {}", panic_message);
-    }
-    // SDK::sys_halt(-71);
-    panic!("panic");
-    loop {}
-}
-
-#[cfg(any(
-    feature = "stack_pop",
-    feature = "bitwise_and",
-    feature = "bitwise_or",
-    feature = "bitwise_xor",
-    feature = "bitwise_not",
-    feature = "bitwise_eq",
-    feature = "bitwise_lt",
-    feature = "bitwise_slt",
-    feature = "bitwise_gt",
-    feature = "bitwise_sgt",
-    feature = "bitwise_iszero",
-    feature = "bitwise_byte",
-    feature = "bitwise_sar",
-    feature = "bitwise_shl",
-    feature = "bitwise_shr",
-    feature = "arithmetic_exp",
-    feature = "arithmetic_mod",
-    feature = "arithmetic_smod",
-    feature = "arithmetic_mulmod",
-    feature = "arithmetic_add",
-    feature = "arithmetic_addmod",
-    feature = "arithmetic_signextend",
-    feature = "arithmetic_sub",
-    feature = "arithmetic_mul",
-    feature = "arithmetic_div",
-    feature = "arithmetic_sdiv",
-    feature = "memory_mstore",
-    feature = "memory_mstore8",
-))]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+// #[global_allocator]
+// static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
