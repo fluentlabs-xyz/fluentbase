@@ -260,11 +260,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/bitwise_shl.wat",
             //     "bitwise_shl",
             // ),
-            // (
-            //     opcode::SHR,
-            //     "../rwasm-code-snippets/bin/bitwise_shr.wat",
-            //     "bitwise_shr",
-            // ),
+            (
+                opcode::SHR,
+                "../rwasm-code-snippets/bin/bitwise_shr.wat",
+                "bitwise_shr",
+            ),
             (
                 opcode::NOT,
                 "../rwasm-code-snippets/bin/bitwise_not.wat",

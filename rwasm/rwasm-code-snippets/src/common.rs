@@ -1,13 +1,10 @@
-use crate::{
-    consts::{
-        BYTE_MAX_VAL,
-        U256_BYTES_COUNT,
-        U64_ALL_BITS_ARE_1,
-        U64_HALF_BITS_COUNT,
-        U64_LOW_PART_MASK,
-        U64_MSBIT_IS_1,
-    },
-    global_var,
+use crate::consts::{
+    BYTE_MAX_VAL,
+    U256_BYTES_COUNT,
+    U64_ALL_BITS_ARE_1,
+    U64_HALF_BITS_COUNT,
+    U64_LOW_PART_MASK,
+    U64_MSBIT_IS_1,
 };
 
 #[inline]
@@ -195,7 +192,6 @@ pub(crate) fn try_divide_close_numbers(
     b_start_ptr: *mut u8,
     b_len: usize,
 ) -> u8 {
-    unsafe { global_var = 654321 };
     let mut res: u8 = 0;
     const U128_BYTES_COUNT: usize = 16;
     const U64_BYTES_COUNT: usize = 8;
