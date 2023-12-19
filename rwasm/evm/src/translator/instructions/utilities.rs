@@ -42,8 +42,9 @@ pub(super) fn preprocess_op_params(
     let i64_stack_params_count: usize;
     const MEM_RESULT_OFFSET: usize = 0;
     match opcode {
-        opcode::ISZERO | opcode::NOT | opcode::POP => {
-            i64_stack_params_count = 4;
+        opcode::ISZERO | opcode::POP => {
+            // i64_stack_params_count = 4;
+            i64_stack_params_count = 0;
         }
 
         opcode::BYTE
@@ -58,8 +59,6 @@ pub(super) fn preprocess_op_params(
         | opcode::SLT
         | opcode::ADD
         | opcode::SIGNEXTEND
-        | opcode::OR
-        | opcode::XOR
         | opcode::SUB
         | opcode::MUL
         | opcode::DIV
@@ -69,14 +68,16 @@ pub(super) fn preprocess_op_params(
         | opcode::MOD
         | opcode::SMOD
         | opcode::SDIV => {
-            i64_stack_params_count = 8;
+            // i64_stack_params_count = 8;
+            i64_stack_params_count = 0;
         }
 
         opcode::MULMOD | opcode::ADDMOD => {
-            i64_stack_params_count = 12;
+            // i64_stack_params_count = 12;
+            i64_stack_params_count = 0;
         }
 
-        opcode::AND => {
+        opcode::AND | opcode::NOT | opcode::OR | opcode::XOR => {
             i64_stack_params_count = 0;
         }
         _ => {
@@ -169,7 +170,9 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         .subroutine_meta(opcode)
         .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
 
-    let subroutine_entry = subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
+    let mut subroutine_entry =
+        subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
+    // subroutine_entry += 20;
     instruction_set.op_br(subroutine_entry);
 }
 

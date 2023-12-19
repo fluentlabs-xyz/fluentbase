@@ -41,7 +41,14 @@ extern "C" {
 #[cfg(any(
     feature = "arithmetic_add",
     feature = "bitwise_and",
+    feature = "bitwise_or",
+    feature = "bitwise_xor",
     feature = "bitwise_not",
+    feature = "bitwise_eq",
+    feature = "bitwise_lt",
+    feature = "bitwise_slt",
+    feature = "bitwise_gt",
+    feature = "bitwise_sgt",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"
@@ -61,7 +68,14 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[cfg(any(
     feature = "arithmetic_add",
     feature = "bitwise_and",
+    feature = "bitwise_or",
+    feature = "bitwise_xor",
     feature = "bitwise_not",
+    feature = "bitwise_eq",
+    feature = "bitwise_lt",
+    feature = "bitwise_slt",
+    feature = "bitwise_gt",
+    feature = "bitwise_sgt",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"

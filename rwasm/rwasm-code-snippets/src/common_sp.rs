@@ -1,7 +1,20 @@
 use crate::consts::U256_BYTES_COUNT;
 use core::slice;
 
-pub const SP_VAL_MEM_OFFSET_DEFAULT: usize = 1024 * 8;
+pub const SP_VAL_MEM_OFFSET_DEFAULT: usize = 500;
+
+// extern "C" {
+//     fn __get_stack_pointer() -> u32;
+//     fn __set_stack_pointer(v: i32) -> ();
+// }
+//
+// pub(crate) fn get_stack_pointer() -> i32 {
+//     unsafe { __get_stack_pointer() as i32 }
+// }
+//
+// pub(crate) fn set_stack_pointer(v: i32) -> () {
+//     unsafe { __set_stack_pointer(v) }
+// }
 
 pub(crate) fn sp_set(sp_mem_offset: usize, value: u64) {
     let mut mem: &mut [u64];
@@ -18,6 +31,14 @@ pub(crate) fn sp_get(sp_val_mem_offset: usize) -> u64 {
     }
     mem[0]
 }
+
+// pub(crate) fn sp_set(/* sp_mem_offset: usize, */ value: i32) {
+//     set_stack_pointer(value)
+// }
+//
+// pub(crate) fn sp_get() -> i32 {
+//     get_stack_pointer()
+// }
 
 pub(crate) fn sp_compute_mem_offset(sp_val_mem_offset: usize, sp: u64) -> u64 {
     sp_val_mem_offset as u64 - sp
@@ -36,6 +57,12 @@ pub(crate) fn sp_change(sp_val_mem_offset: usize, count_bytes: i32) -> u64 {
 
     sp
 }
+// pub(crate) fn sp_change(/* sp_val_mem_offset: usize, */ delta_bytes: i32) -> i32 {
+//     let mut sp = sp_get();
+//     sp += delta_bytes;
+//     set_stack_pointer(sp);
+//     sp
+// }
 
 pub(crate) fn sp_inc(sp_val_mem_offset: usize, count_bytes: u64) -> u64 {
     sp_change(sp_val_mem_offset, count_bytes as i32)

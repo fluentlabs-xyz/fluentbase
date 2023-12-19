@@ -10,9 +10,9 @@
     local.tee 1
     i32.const 8
     i32.add
-    i32.const 8200
+    i32.const 508
     i32.const 0
-    i64.load offset=8192
+    i64.load offset=500
     local.tee 2
     i32.wrap_i64
     local.tee 3
@@ -22,7 +22,7 @@
     local.get 1
     i32.const 16
     i32.add
-    i32.const 8208
+    i32.const 516
     local.get 3
     i32.sub
     i64.load align=1
@@ -30,12 +30,12 @@
     local.get 1
     i32.const 24
     i32.add
-    i32.const 8216
+    i32.const 524
     local.get 3
     i32.sub
     i64.load align=1
     i64.store
-    i32.const 8192
+    i32.const 500
     local.get 3
     i32.sub
     i64.load align=1
@@ -49,7 +49,7 @@
     i64.const 32
     i64.shr_s
     local.tee 2
-    i64.store offset=8192
+    i64.store offset=500
     local.get 1
     local.get 4
     i64.store
@@ -58,7 +58,7 @@
     i32.add
     i32.const 24
     i32.add
-    i32.const 8216
+    i32.const 524
     local.get 2
     i32.wrap_i64
     local.tee 3
@@ -70,7 +70,7 @@
     i32.add
     i32.const 16
     i32.add
-    i32.const 8208
+    i32.const 516
     local.get 3
     i32.sub
     i64.load align=1
@@ -80,13 +80,13 @@
     i32.add
     i32.const 8
     i32.add
-    i32.const 8200
+    i32.const 508
     local.get 3
     i32.sub
     i64.load align=1
     i64.store
     local.get 1
-    i32.const 8192
+    i32.const 500
     local.get 3
     i32.sub
     local.tee 5
@@ -100,15 +100,17 @@
         br_if 0 (;@2;)
         i32.const 0
         local.get 2
-        i64.store offset=8192
+        i64.store offset=500
         local.get 5
         local.get 1
-        i64.load
+        i64.load offset=32
         i64.store align=1
         local.get 5
         i32.const 24
         i32.add
         local.get 1
+        i32.const 32
+        i32.add
         i32.const 24
         i32.add
         i64.load
@@ -117,6 +119,8 @@
         i32.const 16
         i32.add
         local.get 1
+        i32.const 32
+        i32.add
         i32.const 16
         i32.add
         i64.load
@@ -125,6 +129,8 @@
         i32.const 8
         i32.add
         local.get 1
+        i32.const 32
+        i32.add
         i32.const 8
         i32.add
         i64.load
@@ -132,14 +138,14 @@
         return
       end
       local.get 1
+      i32.const 32
+      i32.add
       local.get 0
       i32.add
       local.tee 3
       local.get 3
       i32.load8_u
       local.get 1
-      i32.const 32
-      i32.add
       local.get 0
       i32.add
       i32.load8_u

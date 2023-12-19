@@ -36,11 +36,10 @@ pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::Stop;
-    // host.instruction_set().op_br(3);
-    host.instruction_set().op_return();
-    host.instruction_set().op_unreachable();
-    // host.instruction_set().op_br_indirect(0);
-    // host.instruction_set().op_unreachable();
+    let is = host.instruction_set();
+    // is.op_drop();
+    is.op_return();
+    is.op_unreachable();
 }
 
 pub fn invalid<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
