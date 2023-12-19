@@ -161,7 +161,6 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         host,
         inject_memory_result_offset,
         memory_result_offset_is_first_param,
-        // true,
     );
 
     let instruction_set = host.instruction_set();
@@ -172,7 +171,6 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
 
     let mut subroutine_entry =
         subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
-    // subroutine_entry += 20;
     instruction_set.op_br(subroutine_entry);
 }
 
