@@ -27,7 +27,6 @@ pub struct Translator<'a> {
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
-    opcode_to_inline_instruction_set: HashMap<u8, InstructionSet>,
     opcode_to_subroutine_instruction_set: HashMap<u8, InstructionSet>,
     inject_fuel_consumption: bool,
     opcode_to_subroutine_meta: HashMap<u8, SubroutineMeta>,
@@ -51,7 +50,6 @@ impl<'a> Translator<'a> {
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
-            opcode_to_inline_instruction_set: Default::default(),
             opcode_to_subroutine_instruction_set: Default::default(),
             inject_fuel_consumption,
             opcode_to_subroutine_meta: Default::default(),
@@ -129,37 +127,6 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let mut initiate_inlines = |opcode: u8, wasm_binary: &[u8]| {
-            if self.opcode_to_inline_instruction_set.contains_key(&opcode) {
-                panic!(
-                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
-                    opcode, opcode
-                );
-            }
-            let mut compiler = Compiler::new(
-                wasm_binary,
-                CompilerConfig::default()
-                    .fuel_consume(self.inject_fuel_consumption)
-                    .translate_sections(false)
-                    .translate_func_as_inline(true)
-                    .type_check(false),
-            )
-            .unwrap();
-            compiler.translate(FuncOrExport::Func(0)).unwrap();
-            let rwasm_binary = compiler.finalize().unwrap();
-            let instruction_set = ReducedModule::new(&rwasm_binary)
-                .unwrap()
-                .bytecode()
-                .clone();
-            // debug!(
-            //     "\ninline_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
-            //     opcode,
-            //     instruction_set.instr.len(),
-            //     instruction_set.trace(),
-            // );
-            self.opcode_to_inline_instruction_set
-                .insert(opcode, instruction_set);
-        };
         let mut initiate_subroutines = |opcode: u8, wasm_binary: &[u8], fn_name: &'static str| {
             if self
                 .opcode_to_subroutine_instruction_set
@@ -371,18 +338,6 @@ impl<'a> Translator<'a> {
 
     pub fn subroutine_meta(&self, opcode: u8) -> Option<&SubroutineMeta> {
         self.opcode_to_subroutine_meta.get(&opcode)
-    }
-
-    pub fn inline_instruction_set(&mut self, opcode: u8) -> &InstructionSet {
-        if let Some(is) = self.opcode_to_inline_instruction_set.get(&opcode) {
-            return is;
-        }
-        panic!(
-            "code snippet not found for opcode 0x{:x?} (decimal: {}) pc {}",
-            opcode,
-            opcode,
-            self.program_counter()
-        );
     }
 
     pub fn subroutines_instruction_set(&self) -> &InstructionSet {

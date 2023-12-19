@@ -2078,7 +2078,7 @@ mod evm_to_rwasm_tests {
     fn pop() {
         let cases = [(
             x("123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234"),
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
+            x(""),
         )];
 
         test_unary_op(POP, None, &cases, true, None);

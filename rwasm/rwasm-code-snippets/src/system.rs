@@ -4,3 +4,5 @@ mod address;
 mod caller;
 #[cfg(feature = "system_callvalue")]
 mod callvalue;
+#[cfg(feature = "system_keccak")]
+mod keccak;

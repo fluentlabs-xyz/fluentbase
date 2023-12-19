@@ -1,12 +1,4 @@
-use crate::{
-    translator::{host::Host, instructions::opcode, translator::Translator},
-    utilities::{
-        WASM_I64_BITS,
-        WASM_I64_HIGH_32_BIT_MASK,
-        WASM_I64_IN_EVM_WORD_COUNT,
-        WASM_I64_LOW_32_BIT_MASK,
-    },
-};
+use crate::translator::{host::Host, instructions::opcode, translator::Translator};
 use fluentbase_rwasm::{engine::bytecode::Instruction, module::ImportName, rwasm::InstructionSet};
 
 pub(super) enum SystemFuncs {
@@ -27,7 +19,6 @@ pub(super) fn wasm_call(
     };
     let import_fn_idx =
         translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name)].0;
-    // instruction_set.op_i32_const(instruction_set.len() + 2);
     instruction_set.op_call(import_fn_idx);
 }
 
@@ -36,7 +27,6 @@ pub(super) fn preprocess_op_params(
     host: &mut dyn Host,
     inject_memory_result_offset: bool,
     memory_result_offset_is_first_param: bool,
-    // inject_return_offset: bool,
 ) {
     let opcode = translator.opcode_prev();
     let i64_stack_params_count: usize;
@@ -128,28 +118,6 @@ pub(super) fn preprocess_op_params(
     // }
 }
 
-// pub(super) fn replace_current_opcode_with_inline_func(
-//     translator: &mut Translator<'_>,
-//     host: &mut dyn Host,
-//     inject_memory_result_offset: bool,
-//     memory_result_offset_is_first_param: bool,
-// ) {
-//     preprocess_op_params(
-//         translator,
-//         host,
-//         inject_memory_result_offset,
-//         memory_result_offset_is_first_param,
-//         false,
-//     );
-//
-//     let instruction_set = host.instruction_set();
-//     let opcode = translator.opcode_prev();
-//     let mut instruction_set_replace = translator.inline_instruction_set(opcode).clone();
-//     instruction_set
-//         .instr
-//         .extend(instruction_set_replace.instr.iter());
-// }
-
 pub(super) fn replace_current_opcode_with_call_to_subroutine(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
@@ -172,136 +140,4 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
     let mut subroutine_entry =
         subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
     instruction_set.op_br(subroutine_entry);
-}
-
-pub(super) fn duplicate_stack_value(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    item_stack_pos: usize,
-) {
-    instruction_set.op_local_get(item_stack_pos as u32);
-    *stack_pos_shift += 1;
-}
-
-pub(super) fn evm_word_param_stack_pos(
-    stack_pos_shift: i32,
-    part_idx: usize,
-    is_b_param: bool,
-    start_from_be: bool,
-) -> usize {
-    if start_from_be {
-        WASM_I64_IN_EVM_WORD_COUNT * if is_b_param { 0 } else { 1 }
-            + part_idx
-            + stack_pos_shift as usize
-    } else {
-        WASM_I64_IN_EVM_WORD_COUNT * if is_b_param { 1 } else { 2 } - part_idx
-            + stack_pos_shift as usize
-    }
-}
-
-pub(super) fn duplicate_i64_part_of_evm_word(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    part_idx: usize,
-    is_b_param: bool,
-    start_from_left: bool,
-) {
-    duplicate_stack_value(
-        instruction_set,
-        stack_pos_shift,
-        evm_word_param_stack_pos(*stack_pos_shift, part_idx, is_b_param, start_from_left),
-    );
-}
-pub(super) fn i64_shift_part(
-    instruction_set: &mut InstructionSet,
-    _stack_pos_shift: &mut i32,
-    shift_low_high: bool,
-) {
-    instruction_set.op_i64_const(WASM_I64_BITS / 2);
-    if shift_low_high {
-        // *stack_pos_shift += 1;
-        instruction_set.op_i64_shl();
-    // *stack_pos_shift -= 1;
-    } else {
-        // *stack_pos_shift += 1;
-        instruction_set.op_i64_shr_u();
-        // *stack_pos_shift -= 1;
-    }
-}
-pub(super) fn fetch_i64_part_as_i32(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    drop_high_part: bool,
-) {
-    instruction_set.op_i64_const(if drop_high_part {
-        WASM_I64_LOW_32_BIT_MASK
-    } else {
-        WASM_I64_HIGH_32_BIT_MASK
-    });
-    // *stack_pos_shift += 1;
-    instruction_set.op_i64_and();
-    // *stack_pos_shift -= 1;
-
-    if !drop_high_part {
-        i64_shift_part(instruction_set, stack_pos_shift, false);
-    }
-}
-pub(super) fn wasm_add(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
-    instruction_set.op_i64_add();
-    *stack_pos_shift -= 1;
-}
-pub(super) fn wasm_and(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
-    instruction_set.op_i64_and();
-    *stack_pos_shift -= 1;
-}
-pub(super) fn wasm_or(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
-    instruction_set.op_i64_or();
-    *stack_pos_shift -= 1;
-}
-pub(super) fn wasm_xor(instruction_set: &mut InstructionSet, stack_pos_shift: &mut i32) {
-    instruction_set.op_i64_xor();
-    *stack_pos_shift -= 1;
-}
-pub(super) fn wasm_not(instruction_set: &mut InstructionSet, _stack_pos_shift: &mut i32) {
-    instruction_set.op_i64_const(-1);
-    instruction_set.op_i64_sub();
-}
-pub(super) fn wasm_drop_n(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    count: usize,
-) {
-    for _ in 0..count {
-        instruction_set.op_drop();
-    }
-    *stack_pos_shift -= count as i32;
-}
-pub(super) fn assign_to_stack_and_drop(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    stack_pos: usize,
-) {
-    instruction_set.op_local_set(stack_pos as u32);
-    *stack_pos_shift -= 1;
-}
-pub(super) fn split_i64_repr_of_i32_sum_into_overflow_and_normal_parts(
-    instruction_set: &mut InstructionSet,
-    stack_pos_shift: &mut i32,
-    do_upgrade_to_high_part: bool,
-) {
-    // split value onto overflow part (which is greater 0xffffffffff) and normal and them on stack
-    // so overflow part is on top puts overflow value on top of the stack and normal value next
-    // to it
-    duplicate_stack_value(instruction_set, stack_pos_shift, 1);
-    // extract overflow part
-    fetch_i64_part_as_i32(instruction_set, stack_pos_shift, false);
-    duplicate_stack_value(instruction_set, stack_pos_shift, 2);
-    // extract normal part
-    fetch_i64_part_as_i32(instruction_set, stack_pos_shift, true);
-    if do_upgrade_to_high_part {
-        i64_shift_part(instruction_set, stack_pos_shift, true);
-    }
-    // replace initial value with normal part
-    instruction_set.op_local_set(3);
-    *stack_pos_shift += 1;
 }
