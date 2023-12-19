@@ -27,11 +27,16 @@ pub struct Translator<'a> {
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
-    opcode_to_subroutine_instruction_set: HashMap<u8, InstructionSet>,
+    opcode_to_subroutine_data: HashMap<u8, SubroutineData>,
     inject_fuel_consumption: bool,
     opcode_to_subroutine_meta: HashMap<u8, SubroutineMeta>,
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
+}
+
+pub struct SubroutineData {
+    pub entry_offset: u32,
+    pub instruction_set: InstructionSet,
 }
 
 pub struct SubroutineMeta {
@@ -50,7 +55,7 @@ impl<'a> Translator<'a> {
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
-            opcode_to_subroutine_instruction_set: Default::default(),
+            opcode_to_subroutine_data: Default::default(),
             inject_fuel_consumption,
             opcode_to_subroutine_meta: Default::default(),
             subroutines_instruction_set: Default::default(),
@@ -128,10 +133,7 @@ impl<'a> Translator<'a> {
 
     fn init_code_snippets(&mut self) {
         let mut initiate_subroutines = |opcode: u8, wasm_binary: &[u8], fn_name: &'static str| {
-            if self
-                .opcode_to_subroutine_instruction_set
-                .contains_key(&opcode)
-            {
+            if self.opcode_to_subroutine_data.contains_key(&opcode) {
                 panic!(
                     "code snippet for opcode 0x{:x?} already exists (decimal: {})",
                     opcode, opcode
@@ -151,19 +153,28 @@ impl<'a> Translator<'a> {
                 .unwrap()
                 .unwrap();
             compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+            let fn_beginning_offset = *compiler.resolve_func_beginning(fn_idx).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
             debug!(
-                "\nsubroutine_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
+                "\nsubroutine_instruction_set (fn_name '{}' opcode 0x{:x?} len {} fn_idx {} fn_beginning_offset {}): \n{}\n",
+                fn_name,
                 opcode,
                 instruction_set.instr.len(),
+                fn_idx,
+                fn_beginning_offset,
                 instruction_set.trace(),
             );
-            self.opcode_to_subroutine_instruction_set
-                .insert(opcode, instruction_set);
+            self.opcode_to_subroutine_data.insert(
+                opcode,
+                SubroutineData {
+                    entry_offset: fn_beginning_offset,
+                    instruction_set: instruction_set,
+                },
+            );
         };
 
         [
@@ -319,16 +330,17 @@ impl<'a> Translator<'a> {
     }
 
     fn init_subroutines(&mut self) {
-        for (opcode, instruction_set) in self.opcode_to_subroutine_instruction_set.iter() {
+        for (opcode, subroutine_data) in self.opcode_to_subroutine_data.iter() {
             let l = self.subroutines_instruction_set.instr.len();
             self.opcode_to_subroutine_meta.insert(
                 *opcode,
                 SubroutineMeta {
                     begin_offset: l,
-                    end_offset: l + instruction_set.len() as usize - 1,
+                    end_offset: l + subroutine_data.instruction_set.len() as usize - 1,
                 },
             );
-            self.subroutines_instruction_set.extend(&instruction_set);
+            self.subroutines_instruction_set
+                .extend(&subroutine_data.instruction_set);
         }
     }
 
@@ -338,6 +350,10 @@ impl<'a> Translator<'a> {
 
     pub fn subroutine_meta(&self, opcode: u8) -> Option<&SubroutineMeta> {
         self.opcode_to_subroutine_meta.get(&opcode)
+    }
+
+    pub fn subroutine_data(&self, opcode: u8) -> Option<&SubroutineData> {
+        self.opcode_to_subroutine_data.get(&opcode)
     }
 
     pub fn subroutines_instruction_set(&self) -> &InstructionSet {

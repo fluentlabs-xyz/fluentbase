@@ -135,9 +135,13 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
     let opcode = translator.opcode_prev();
     let subroutine_meta = translator
         .subroutine_meta(opcode)
-        .expect(format!("subroutine entry not found for opcode 0x{:x?}", opcode).as_str());
+        .expect(format!("subroutine meta not found for opcode 0x{:x?}", opcode).as_str());
+    let subroutine_data = translator
+        .subroutine_data(opcode)
+        .expect(format!("subroutine data not found for opcode 0x{:x?}", opcode).as_str());
 
-    let mut subroutine_entry =
-        subroutine_meta.begin_offset as i32 - instruction_set.len() as i32 + 1;
+    let subroutine_entry = subroutine_meta.begin_offset as i32 - instruction_set.len() as i32
+        + 1
+        + subroutine_data.entry_offset as i32;
     instruction_set.op_br(subroutine_entry);
 }
