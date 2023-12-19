@@ -1,4 +1,4 @@
-const {Web3} = require('web3');
+const {Web3, ETH_DATA_FORMAT} = require('web3');
 const fs = require('fs');
 
 const DEPLOYER_PRIVATE_KEY = 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -30,23 +30,28 @@ const main = async () => {
     let wasmBinary = fs.readFileSync(binaryPath).toString('hex');
     const web3 = new Web3(web3Url);
     let privateKey = process.env.DEPLOYER_PRIVATE_KEY || DEPLOYER_PRIVATE_KEY;
+    let account = web3.eth.accounts.privateKeyToAccount('0x' + privateKey);
 
     console.log('Signing transaction...');
+    const gasPrice = await web3.eth.getGasPrice(ETH_DATA_FORMAT)
     const signedTransaction = await web3.eth.accounts.signTransaction({
         data: '0x' + wasmBinary,
+        gasPrice,
         gas: 1_000_000,
+        from: account.address,
     }, privateKey)
 
+    let contractAddress = '';
     console.log('Sending transaction...');
-    const receipt = await web3.eth.sendSignedTransaction(signedTransaction.rawTransaction);
-    console.log(`Receipt: ${JSON.stringify(receipt, null, 2)}`)
+    await web3.eth.sendSignedTransaction(signedTransaction.rawTransaction)
+       .on('confirmation', confirmation => {
+           contractAddress = confirmation.receipt.contractAddress;
+           console.log(confirmation)
+           if (contractAddress) {
+               console.log(`Contract address is: ${contractAddress}`);
+           }
+       });
 
-    const {contractAddress} = receipt;
-    if (contractAddress) {
-        console.log(`Contract address is: ${contractAddress}`);
-    }
-
-    // let contractAddress = '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9';
     const result = await web3.eth.call({
         to: contractAddress,
     });
@@ -68,6 +73,8 @@ const main = async () => {
 
     const latestMinedBlockNumber = await web3.eth.getBlockNumber();
     console.log(`Latest block number: ${latestMinedBlockNumber}`);
+
+    process.exit(0)
 }
 
 main().then(console.log).catch(console.error);
