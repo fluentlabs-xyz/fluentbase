@@ -22,11 +22,6 @@ pub(crate) mod test_helper;
 mod test_utils;
 mod tests;
 
-extern "C" {
-    #[no_mangle]
-    static mut global_var: u64;
-}
-
 // #[cfg(test)]
 // #[ctor::ctor]
 // fn log_init() {
@@ -52,6 +47,8 @@ extern "C" {
     feature = "bitwise_iszero",
     feature = "bitwise_byte",
     feature = "bitwise_sar",
+    feature = "bitwise_shl",
+    feature = "bitwise_shr",
     feature = "arithmetic_add",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
@@ -83,6 +80,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     feature = "bitwise_iszero",
     feature = "bitwise_byte",
     feature = "bitwise_sar",
+    feature = "bitwise_shl",
+    feature = "bitwise_shr",
     feature = "arithmetic_add",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
