@@ -318,6 +318,11 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/stack_pop.wat",
                 "stack_pop",
             ),
+            // (
+            //     opcode::KECCAK256,
+            //     "../rwasm-code-snippets/bin/system_keccak.wat",
+            //     "system_keccak",
+            // ),
         ]
         .map(|v| {
             let opcode = v.0;
