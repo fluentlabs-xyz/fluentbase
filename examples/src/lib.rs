@@ -17,6 +17,8 @@ mod poseidon;
 mod rwasm;
 #[cfg(feature = "secp256k1")]
 mod secp256k1;
+#[cfg(feature = "stack")]
+mod stack;
 #[cfg(feature = "state")]
 mod state;
 #[cfg(feature = "storage")]
@@ -31,6 +33,8 @@ pub extern "C" fn deploy() {
     state::deploy();
     #[cfg(feature = "storage")]
     storage::deploy();
+    #[cfg(feature = "stack")]
+    stack::deploy();
 }
 
 #[cfg(not(feature = "std"))]
@@ -54,4 +58,6 @@ pub extern "C" fn main() {
     state::main();
     #[cfg(feature = "storage")]
     storage::main();
+    #[cfg(feature = "stack")]
+    stack::main();
 }

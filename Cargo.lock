@@ -115,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e40cea54ac58080a1b88ea6556866eac1902b321186c77d53ad2b5ebbbf0e038"
+checksum = "a8c9d43ca0a56b356f35775deecc8f660ac99e34cbf4a33462d4bd8addd9ab6f"
 dependencies = [
  "const-hex",
  "dunce",
@@ -140,7 +140,6 @@ dependencies = [
  "alloy-primitives 0.5.2",
  "alloy-sol-macro",
  "const-hex",
- "serde",
 ]
 
 [[package]]
@@ -1645,6 +1644,7 @@ dependencies = [
  "hashbrown 0.14.3",
  "hex",
  "hex-literal",
+ "paste",
  "serde",
 ]
 
@@ -1655,6 +1655,19 @@ dependencies = [
  "quote",
  "serde",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "fluentbase-example"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types",
+ "byteorder",
+ "fluentbase-rwasm",
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+ "wat",
 ]
 
 [[package]]
@@ -1701,19 +1714,6 @@ dependencies = [
  "wasi",
  "wat",
  "web3",
-]
-
-[[package]]
-name = "fluentbase-runtime-example"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives 0.5.2",
- "alloy-sol-types",
- "fluentbase-rwasm",
- "fluentbase-sdk",
- "hex",
- "hex-literal",
- "wat",
 ]
 
 [[package]]
@@ -1786,9 +1786,9 @@ name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives 0.5.2",
- "alloy-sol-types",
  "byteorder",
  "eth_trie",
+ "fluentbase-codec",
  "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-rwasm",
@@ -1798,6 +1798,7 @@ dependencies = [
  "k256",
  "keccak-hash",
  "lazy_static",
+ "paste",
  "sha2",
  "wee_alloc",
 ]
@@ -4238,9 +4239,9 @@ dependencies = [
 
 [[package]]
 name = "syn-solidity"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2c7ad08db24862d5b787a94714ff6b047935c3e3f60af944ac969404debd7ff"
+checksum = "c4e95b65f5854377a31ebfa69d71b87c9d0d9922fddbfeb91a8eda4a0c5868eb"
 dependencies = [
  "paste",
  "proc-macro2",

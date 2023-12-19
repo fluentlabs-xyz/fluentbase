@@ -1,6 +1,11 @@
-use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolType, SolValue};
-use fluentbase_sdk::{CryptoPlatformSDK, EvmPlatformSDK, SysPlatformSDK, SDK};
+use fluentbase_sdk::{
+    evm::{Address, Bytes, U256},
+    CryptoPlatformSDK,
+    EvmPlatformSDK,
+    SysPlatformSDK,
+    SDK,
+};
 use hex_literal::hex;
 
 sol! {

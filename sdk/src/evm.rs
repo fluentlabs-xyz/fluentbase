@@ -1,163 +1,66 @@
 use crate::{SysPlatformSDK, SDK};
 use alloc::{vec, vec::Vec};
-use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::sol;
-use byteorder::{BigEndian, ByteOrder};
+pub use alloy_primitives::{Address, Bytes, B256, U256};
+use fluentbase_codec::define_codec_struct;
 
-sol! {
-    struct ContractInput {
-        bytes input;
-        bytes bytecode;
-        bytes32 hash;
-        address address;
-        address caller;
-        uint256 value;
-        bytes32 block_hash;
-        uint256 balance;
-        bytes env;
+define_codec_struct! {
+    pub struct ContractInput {
+        input: Vec<u8>,
+        bytecode: Vec<u8>,
+        hash: B256,
+        address: Address,
+        caller: Address,
+        value: U256,
+        block_hash: B256,
+        balance: U256,
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum ContractError {
-    InputDecodeFailure = -3001,
+macro_rules! impl_reader_helper {
+    ($fn_name:ident, $input_type:ty, $return_typ:ty) => {
+        pub fn $fn_name() -> $return_typ {
+            let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
+            SDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
+            let mut result: $return_typ = Default::default();
+            let (offset, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+            if length > 0 {
+                let mut buffer2 = vec![0; offset + length];
+                buffer2[0..<$input_type>::FIELD_SIZE].copy_from_slice(&buffer);
+                SDK::sys_read(
+                    &mut buffer2.as_mut_slice()[offset..(offset + length)],
+                    offset as u32,
+                );
+                <$input_type>::decode_field_body_at(&buffer2, 0, &mut result);
+            }
+            result
+        }
+    };
 }
 
-#[derive(Debug, Copy, Clone)]
-enum ContractInputFields {
-    InputOffset = 0,
-    InputLength,
-    BytecodeOffset,
-    BytecodeLength,
-    Hash,
-    Address,
-    Caller,
-    Value,
-    BlockHash,
-    Balance,
-    EnvOffset,
-    EnvLength,
-    _MaxFields,
-}
-
-const N_WORD_SIZE: usize = 32;
-
-impl ContractInputFields {
-    fn read_u256_word(self) -> [u8; N_WORD_SIZE] {
-        let mut buffer: [u8; N_WORD_SIZE] = [0; N_WORD_SIZE];
-        SDK::sys_read(buffer.as_mut_slice(), self as u32 * (N_WORD_SIZE as u32));
-        buffer
-    }
-
-    fn input_size() -> u32 {
-        Self::_MaxFields as u32 * (N_WORD_SIZE as u32)
-    }
-}
-
-pub fn contract_read_input() -> Vec<u8> {
-    // read offset and length
-    let offset = ContractInputFields::InputOffset.read_u256_word();
-    let offset = BigEndian::read_u32(&offset[28..]);
-    let length = ContractInputFields::InputLength.read_u256_word();
-    let length = BigEndian::read_u32(&length[28..]);
-    // read input itself
-    let mut buffer = vec![0; length as usize];
-    SDK::sys_read(buffer.as_mut_slice(), offset);
-    buffer
-}
-
-pub fn contract_read_bytecode() -> Vec<u8> {
-    // read offset and length
-    let offset = ContractInputFields::BytecodeOffset.read_u256_word();
-    let offset = BigEndian::read_u32(&offset[28..]);
-    let length = ContractInputFields::BytecodeLength.read_u256_word();
-    let length = BigEndian::read_u32(&length[28..]);
-    // read input itself
-    let mut buffer = vec![0; length as usize];
-    SDK::sys_read(buffer.as_mut_slice(), offset);
-    buffer
-}
-
-pub fn contract_read_env() -> Vec<u8> {
-    // read offset and length
-    let offset = ContractInputFields::EnvOffset.read_u256_word();
-    let offset = BigEndian::read_u32(&offset[28..]);
-    let length = ContractInputFields::EnvLength.read_u256_word();
-    let length = BigEndian::read_u32(&length[28..]);
-    // read input itself
-    let mut buffer = vec![0; length as usize];
-    SDK::sys_read(buffer.as_mut_slice(), offset);
-    buffer
-}
-
-pub fn contract_read_hash() -> B256 {
-    let hash = ContractInputFields::Hash.read_u256_word();
-    B256::from(hash)
-}
-
-pub fn contract_read_address() -> Address {
-    let hash = ContractInputFields::Address.read_u256_word();
-    Address::from_slice(&hash[12..])
-}
-
-pub fn contract_read_caller() -> Address {
-    let hash = ContractInputFields::Caller.read_u256_word();
-    Address::from_slice(&hash[12..])
-}
-
-pub fn contract_read_value() -> U256 {
-    let hash = ContractInputFields::Value.read_u256_word();
-    U256::from_be_slice(&hash[..])
-}
-
-pub fn contract_read_block_hash() -> B256 {
-    let hash = ContractInputFields::BlockHash.read_u256_word();
-    B256::from(hash)
-}
-
-pub fn contract_read_balance() -> U256 {
-    let hash = ContractInputFields::Balance.read_u256_word();
-    U256::from_be_slice(&hash[..])
-}
-
-#[cfg(feature = "runtime")]
-impl ContractInput {
-    pub fn encode(&self) -> Vec<u8> {
-        let mut result = vec![];
-        // encode ABI data
-        let input_offset = ContractInputFields::input_size();
-        let input_length = self.input.len() as u32;
-        result.extend(&input_offset.abi_encode());
-        result.extend(&input_length.abi_encode());
-        let bytecode_offset = input_offset + input_length;
-        let bytecode_length = self.bytecode.len() as u32;
-        result.extend(&bytecode_offset.abi_encode());
-        result.extend(&bytecode_length.abi_encode());
-        result.extend(&self.hash.abi_encode());
-        result.extend(&self.address.abi_encode());
-        result.extend(&self.caller.abi_encode());
-        result.extend(&self.value.abi_encode());
-        result.extend(&self.block_hash.abi_encode());
-        result.extend(&self.balance.abi_encode());
-        let env_offset = bytecode_offset + bytecode_length;
-        let env_length = self.env.len() as u32;
-        result.extend(&env_offset.abi_encode());
-        result.extend(&env_length.abi_encode());
-        // encode raw data
-        result.extend(&self.input);
-        result.extend(&self.bytecode);
-        result.extend(&self.env);
-        result
-    }
-}
+impl_reader_helper!(contract_read_input, ContractInput::Input, Vec<u8>);
+impl_reader_helper!(contract_read_bytecode, ContractInput::Bytecode, Vec<u8>);
+impl_reader_helper!(contract_read_hash, ContractInput::Hash, B256);
+impl_reader_helper!(contract_read_address, ContractInput::Address, Address);
+impl_reader_helper!(contract_read_caller, ContractInput::Caller, Address);
+impl_reader_helper!(contract_read_value, ContractInput::Value, U256);
+impl_reader_helper!(contract_read_block_hash, ContractInput::BlockHash, B256);
+impl_reader_helper!(contract_read_balance, ContractInput::Balance, U256);
 
 #[cfg(test)]
 mod test {
     use crate::{
-        evm::{contract_read_bytecode, contract_read_env, contract_read_input, ContractInput},
+        evm::{
+            contract_read_block_hash,
+            contract_read_bytecode,
+            contract_read_input,
+            ContractInput,
+        },
         SDK,
+        U256,
     };
     use alloc::vec;
+    use alloy_primitives::B256;
+    use fluentbase_codec::Encoder;
 
     #[test]
     fn test_encode_decode() {
@@ -169,11 +72,10 @@ mod test {
             address: Default::default(),
             caller: Default::default(),
             value: Default::default(),
-            block_hash: Default::default(),
+            block_hash: B256::from(U256::from(7)),
             balance: Default::default(),
-            env: vec![10, 20, 30],
         };
-        let encoded_input = contract_input.encode();
+        let encoded_input = contract_input.encode_to_vec(0);
         // for chunk in encoded_input.chunks(32) {
         //     println!("{}", hex::encode(chunk));
         // }
@@ -183,7 +85,7 @@ mod test {
         assert_eq!(input, contract_input.input);
         let bytecode = contract_read_bytecode();
         assert_eq!(bytecode, contract_input.bytecode);
-        let env = contract_read_env();
-        assert_eq!(env, contract_input.env);
+        let block_hash = contract_read_block_hash();
+        assert_eq!(block_hash, contract_input.block_hash);
     }
 }

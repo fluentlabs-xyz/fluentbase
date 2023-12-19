@@ -1,18 +1,19 @@
 #![cfg_attr(not(feature = "runtime"), no_std)]
+#![feature(inherent_associated_types)]
 
 extern crate alloc;
 extern crate wee_alloc;
-
-#[cfg(feature = "evm")]
-use alloy_primitives::{Address, U256};
 
 #[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(not(feature = "runtime"))]
 mod rwasm;
 
-// #[cfg(feature = "evm")]
-// pub mod evm;
+#[cfg(feature = "evm")]
+pub mod evm;
+
+#[cfg(feature = "evm")]
+use evm::{Address, U256};
 
 pub struct SDK;
 

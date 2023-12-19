@@ -1,43 +1,45 @@
+#[macro_export]
 macro_rules! derive_header_size {
-    // for an empty input just return 0 size, because there is no fields
     () => (0);
     ($val:ident: $typ:ty) => {
         <$typ as $crate::Encoder<$typ>>::HEADER_SIZE
     };
     ($val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        derive_header_size!($val_x:$typ_x) + derive_header_size!($($val_y:$typ_y),+)
+        $crate::derive_header_size!($val_x:$typ_x) + $crate::derive_header_size!($($val_y:$typ_y),+)
     };
 }
+#[macro_export]
 macro_rules! derive_encode {
-    // for an empty input just do nothing, because there is no fields
     () => ();
     ($self:expr, $encoder:expr, $field_offset:expr, $val:ident: $typ:ty) => {
         $self.$val.encode($encoder, $field_offset)
     };
     ($self:expr, $encoder:expr, $field_offset:expr, $val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        derive_encode!($self, $encoder, $field_offset, $val_x:$typ_x);
-        $field_offset += derive_header_size!($val_x:$typ_x);
-        derive_encode!($self, $encoder, $field_offset, $($val_y:$typ_y),+)
+        $crate::derive_encode!($self, $encoder, $field_offset, $val_x:$typ_x);
+        $field_offset += $crate::derive_header_size!($val_x:$typ_x);
+        $crate::derive_encode!($self, $encoder, $field_offset, $($val_y:$typ_y),+)
     };
 }
+#[macro_export]
 macro_rules! derive_decode {
-    // for an empty input just do nothing, because there is no fields
     () => ();
     ($self:expr, $decoder:expr, $field_offset:expr, $val:ident: $typ:ty) => {
-        <$typ as $crate::Encoder<$typ>>::decode($decoder, $field_offset, &mut $self.$val)
+        <$typ as $crate::Encoder<$typ>>::decode_body($decoder, $field_offset, &mut $self.$val)
     };
     ($self:expr, $decoder:expr, $field_offset:expr, $val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        derive_decode!($self, $decoder, $field_offset, $val_x:$typ_x);
-        $field_offset += derive_header_size!($val_x:$typ_x);
-        derive_decode!($self, $decoder, $field_offset, $($val_y:$typ_y),+)
+        $crate::derive_decode!($self, $decoder, $field_offset, $val_x:$typ_x);
+        $field_offset += $crate::derive_header_size!($val_x:$typ_x);
+        $crate::derive_decode!($self, $decoder, $field_offset, $($val_y:$typ_y),+)
     };
 }
+#[macro_export]
 macro_rules! derive_types {
-    // for an empty input just do nothing
     ($field_offset:expr,) => {};
     ($field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
-        type $val_head = $crate::FieldEncoder<$typ_head, { $field_offset }>;
-        derive_types!($field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
+        paste::paste! {
+            type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
+        }
+        $crate::derive_types!($field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
     };
 }
 
@@ -46,19 +48,20 @@ macro_rules! define_codec_struct {
     (pub struct $struct_type:ident { $($element:ident: $ty:ty),* $(,)? }) => {
         #[derive(Debug, Default, PartialEq)]
         pub struct $struct_type {
-            $($element: $ty),*
+            $(pub $element: $ty),*
         }
         impl $crate::Encoder<$struct_type> for $struct_type {
-            const HEADER_SIZE: usize = derive_header_size!($($element:$ty),*);
+            const HEADER_SIZE: usize = $crate::derive_header_size!($($element:$ty),*);
             fn encode(&self, encoder: &mut $crate::BufferEncoder, mut field_offset: usize) {
-                derive_encode!(self, encoder, field_offset, $($element:$ty),*);
+                $crate::derive_encode!(self, encoder, field_offset, $($element:$ty),*);
             }
-            fn decode(decoder: &mut $crate::BufferDecoder, mut field_offset: usize, result: &mut $struct_type) {
-                derive_decode!(result, decoder, field_offset, $($element:$ty),*);
+            fn decode_header(decoder: &mut $crate::BufferDecoder, mut field_offset: usize, result: &mut $struct_type) -> (usize, usize) {
+                $crate::derive_decode!(result, decoder, field_offset, $($element:$ty),*);
+                (0, 0)
             }
         }
         impl $struct_type {
-            derive_types!(0, $($element:$ty,)*);
+            $crate::derive_types!(0, $($element:$ty,)*);
         }
     };
 }
@@ -92,7 +95,7 @@ mod tests {
         println!("{}", hex::encode(&encoded_value));
         let mut buffer_decoder = BufferDecoder::new(encoded_value.as_slice());
         let mut value1 = Default::default();
-        SimpleType::decode(&mut buffer_decoder, 0, &mut value1);
+        SimpleType::decode_body(&mut buffer_decoder, 0, &mut value1);
         assert_eq!(value0, value1);
     }
 
@@ -111,44 +114,32 @@ mod tests {
             c: 3,
         };
         // check offsets
-        assert_eq!(SimpleType::a::FIELD_OFFSET, 0);
-        assert_eq!(SimpleType::b::FIELD_OFFSET, 8);
-        assert_eq!(SimpleType::c::FIELD_OFFSET, 8 + 4);
+        assert_eq!(SimpleType::A::FIELD_OFFSET, 0);
+        assert_eq!(SimpleType::B::FIELD_OFFSET, 8);
+        assert_eq!(SimpleType::C::FIELD_OFFSET, 8 + 4);
         // check sizes
-        assert_eq!(SimpleType::a::FIELD_SIZE, 8);
-        assert_eq!(SimpleType::b::FIELD_SIZE, 4);
-        assert_eq!(SimpleType::c::FIELD_SIZE, 2);
+        assert_eq!(SimpleType::A::FIELD_SIZE, 8);
+        assert_eq!(SimpleType::B::FIELD_SIZE, 4);
+        assert_eq!(SimpleType::C::FIELD_SIZE, 2);
         // encode entire struct
         let encoded_value = value.encode_to_vec(0);
-        let encoded_value = encoded_value.as_slice();
+        let mut encoded_value = encoded_value.as_slice();
         // decode only field `a`
         {
             let mut a: u64 = 0;
-            SimpleType::a::decode_field_from_slice(
-                &encoded_value[SimpleType::a::FIELD_OFFSET
-                    ..(SimpleType::a::FIELD_OFFSET + SimpleType::a::FIELD_SIZE)],
-                &mut a,
-            );
+            SimpleType::A::decode_field_header(&mut encoded_value, &mut a);
             assert_eq!(a, value.a);
         }
         // decode only field `b`
         {
             let mut b: u32 = 0;
-            SimpleType::b::decode_field_from_slice(
-                &encoded_value[SimpleType::b::FIELD_OFFSET
-                    ..(SimpleType::b::FIELD_OFFSET + SimpleType::b::FIELD_SIZE)],
-                &mut b,
-            );
+            SimpleType::B::decode_field_header(&mut encoded_value, &mut b);
             assert_eq!(b, value.b);
         }
         // decode only field `c`
         {
             let mut c: u16 = 0;
-            SimpleType::c::decode_field_from_slice(
-                &encoded_value[SimpleType::c::FIELD_OFFSET
-                    ..(SimpleType::c::FIELD_OFFSET + SimpleType::c::FIELD_SIZE)],
-                &mut c,
-            );
+            SimpleType::C::decode_field_header(&mut encoded_value, &mut c);
             assert_eq!(c, value.c);
         }
     }
@@ -191,7 +182,7 @@ mod tests {
         println!("{}", hex::encode(&encoded_value));
         let mut buffer_decoder = BufferDecoder::new(encoded_value.as_slice());
         let mut value1 = Default::default();
-        ComplicatedType::decode(&mut buffer_decoder, 0, &mut value1);
+        ComplicatedType::decode_body(&mut buffer_decoder, 0, &mut value1);
         assert_eq!(value0, value1);
     }
 }

@@ -1,4 +1,5 @@
 use crate::{BufferDecoder, BufferEncoder, Encoder};
+use alloc::vec::Vec;
 
 ///
 /// We encode dynamic arrays as following:
@@ -21,14 +22,25 @@ impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
         encoder.write_bytes(field_offset + 4, value_encoder.finalize().as_slice());
     }
 
-    fn decode(decoder: &mut BufferDecoder, field_offset: usize, result: &mut Vec<T>) {
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut Vec<T>,
+    ) -> (usize, usize) {
+        let input_len = decoder.read_u32(field_offset) as usize;
+        result.reserve(input_len);
+        let (offset, length) = decoder.read_bytes_header(field_offset + 4);
+        (offset, length)
+    }
+
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut Vec<T>) {
         let input_len = decoder.read_u32(field_offset) as usize;
         let input_bytes = decoder.read_bytes(field_offset + 4);
         let mut value_decoder = BufferDecoder::new(input_bytes);
         *result = (0..input_len)
             .map(|i| {
                 let mut result = T::default();
-                T::decode(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
+                T::decode_body(&mut value_decoder, T::HEADER_SIZE * i, &mut result);
                 result
             })
             .collect()
