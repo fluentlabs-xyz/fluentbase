@@ -39,7 +39,7 @@ extern "C" {
 // }
 
 #[cfg(any(
-    feature = "arithmetic_add",
+    feature = "stack_pop",
     feature = "bitwise_and",
     feature = "bitwise_or",
     feature = "bitwise_xor",
@@ -51,6 +51,8 @@ extern "C" {
     feature = "bitwise_sgt",
     feature = "bitwise_iszero",
     feature = "bitwise_byte",
+    feature = "bitwise_sar",
+    feature = "arithmetic_add",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"
@@ -68,7 +70,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(any(
-    feature = "arithmetic_add",
+    feature = "stack_pop",
     feature = "bitwise_and",
     feature = "bitwise_or",
     feature = "bitwise_xor",
@@ -80,6 +82,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     feature = "bitwise_sgt",
     feature = "bitwise_iszero",
     feature = "bitwise_byte",
+    feature = "bitwise_sar",
+    feature = "arithmetic_add",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"

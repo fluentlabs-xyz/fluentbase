@@ -310,11 +310,11 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/bitwise_sgt.wat",
                 "bitwise_sgt",
             ),
-            // (
-            //     opcode::SAR,
-            //     "../rwasm-code-snippets/bin/bitwise_sar.wat",
-            //     "bitwise_sar",
-            // ),
+            (
+                opcode::SAR,
+                "../rwasm-code-snippets/bin/bitwise_sar.wat",
+                "bitwise_sar",
+            ),
             (
                 opcode::BYTE,
                 "../rwasm-code-snippets/bin/bitwise_byte.wat",
@@ -335,11 +335,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/memory_mstore8.wat",
             //     "memory_mstore8",
             // ),
-            // (
-            //     opcode::POP,
-            //     "../rwasm-code-snippets/bin/stack_pop.wat",
-            //     "stack_pop",
-            // ),
+            (
+                opcode::POP,
+                "../rwasm-code-snippets/bin/stack_pop.wat",
+                "stack_pop",
+            ),
         ]
         .map(|v| {
             let opcode = v.0;
