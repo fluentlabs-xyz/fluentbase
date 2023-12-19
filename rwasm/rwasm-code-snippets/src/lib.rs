@@ -49,6 +49,7 @@ extern "C" {
     feature = "bitwise_slt",
     feature = "bitwise_gt",
     feature = "bitwise_sgt",
+    feature = "bitwise_iszero",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"
@@ -76,6 +77,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     feature = "bitwise_slt",
     feature = "bitwise_gt",
     feature = "bitwise_sgt",
+    feature = "bitwise_iszero",
     feature = "arithmetic_mulmod",
     feature = "arithmetic_div",
     feature = "arithmetic_sdiv"
