@@ -621,6 +621,11 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
+        instance
+            .get_func(&mut self.store, "main")
+            .unwrap()
+            .call(&mut self.store, &[], &mut [])
+            .unwrap();
         if let Some(name) = name {
             self.instances.insert(name.to_string(), instance);
         }
@@ -756,36 +761,13 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
+        instance
+            .get_func(&mut self.store, "main")
+            .unwrap()
+            .call(&mut self.store, &[], &mut [])
+            .unwrap();
         self.last_instance = Some(instance);
         Ok(instance)
-    }
-
-    pub fn compile_and_instantiate_(
-        &mut self,
-        mut module: wast::core::Module,
-    ) -> Result<(), TestError> {
-        let module_name = module.id.map(|id| id.name());
-        let wasm = module.encode().unwrap_or_else(|error| {
-            panic!(
-                "encountered unexpected failure to encode `.wast` module into `.wasm`:{}: {}",
-                self.test_path(),
-                error
-            )
-        });
-        let module = Module::new(self.engine(), &wasm[..])?;
-        let instance_pre = self.linker.instantiate(&mut self.store, &module)?;
-        let instance = instance_pre.start(&mut self.store)?;
-        self.modules.push(module);
-        if let Some(module_name) = module_name {
-            self.instances.insert(module_name.to_string(), instance);
-            self.last_instance = Some(instance);
-            for export in instance.exports(&self.store) {
-                self.linker
-                    .define(module_name, export.name(), export.into_extern())?;
-            }
-        }
-        self.last_instance = Some(instance);
-        Ok(())
     }
 
     /// Loads the Wasm module instance with the given name.

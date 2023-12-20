@@ -309,13 +309,17 @@ impl InstructionSet {
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
     impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
-    pub fn op_call_internal<I>(&mut self, fn_index: I, type_index: u32, type_check_enabled: bool)
+    pub fn op_call_internal<I>(&mut self, fn_index: I, type_index: u32)
     where
         I: Into<CompiledFunc>,
     {
-        if type_check_enabled {
-            self.push(Instruction::I32Const(type_index.into()));
-        }
+        self.push(Instruction::I32Const(type_index.into()));
+        self.push(Instruction::CallInternal(fn_index.into()));
+    }
+    pub fn op_call_internal_unsafe<I>(&mut self, fn_index: I)
+    where
+        I: Into<CompiledFunc>,
+    {
         self.push(Instruction::CallInternal(fn_index.into()));
     }
     impl_opcode!(op_call, Call(FuncIdx));

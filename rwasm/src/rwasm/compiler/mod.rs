@@ -236,12 +236,20 @@ impl<'linker> Compiler<'linker> {
         if self.is_translated {
             unreachable!("already translated");
         }
+        // lets reserve 0 index and offset for sections init
+        assert_eq!(self.code_section.len(), 0, "code section must be empty");
         // first we must translate all sections, this is an entrypoint
         if self.config.with_state {
-            self.translate_sections_with_state(main_index)?;
-        } else if self.config.translate_sections {
-            self.translate_sections(main_index)?;
+            self.translate_entrypoint_with_state(main_index)?;
+        } else {
+            self.translate_entrypoint(main_index)?;
         }
+        // remember that this is injected and shifts br/br_if offset
+        self.injection_segments.push(Injection {
+            begin: 0,
+            end: self.code_section.len() as i32,
+            origin_len: 0,
+        });
         self.translate_imports_funcs()?;
         // translate rest functions
         let total_fns = self.module.funcs.len();
@@ -293,7 +301,7 @@ impl<'linker> Compiler<'linker> {
         }
     }
 
-    fn translate_router(
+    fn create_router(
         &mut self,
         main_index: FuncOrExport,
         router_offset: u32,
@@ -303,14 +311,18 @@ impl<'linker> Compiler<'linker> {
         let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
 
         match main_index {
-            FuncOrExport::Export(_) => {
+            FuncOrExport::Export(_) | FuncOrExport::Func(_) => {
                 if let Some(input_code) = &self.config.input_code {
                     router_opcodes.extend(&input_code);
                 }
-                let call_func_type = self.module.funcs[func_index as usize];
-                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                let check_idx = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_call_internal(func_index, check_idx, self.config.type_check);
+                if self.config.type_check {
+                    let call_func_type = self.module.funcs[func_index as usize];
+                    let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
+                    router_opcodes
+                        .op_call_internal(func_index, self.get_or_insert_check_idx(func_type));
+                } else {
+                    router_opcodes.op_call_internal_unsafe(func_index);
+                }
                 if let Some(output_code) = &self.config.output_code {
                     router_opcodes.extend(&output_code);
                 }
@@ -344,11 +356,11 @@ impl<'linker> Compiler<'linker> {
                         let func_type =
                             self.engine.resolve_func_type(&call_func_type, Clone::clone);
                         let type_index = self.get_or_insert_check_idx(func_type);
-                        router_opcodes.op_call_internal(
-                            func_index,
-                            type_index,
-                            self.config.type_check,
-                        );
+                        if self.config.type_check {
+                            router_opcodes.op_call_internal(func_index, type_index);
+                        } else {
+                            router_opcodes.op_call_internal_unsafe(func_index);
+                        }
                         if let Some(output_code) = &self.config.output_code {
                             router_opcodes.extend(&output_code);
                         }
@@ -372,18 +384,6 @@ impl<'linker> Compiler<'linker> {
                 router_opcodes.op_i32_eq();
                 router_opcodes.op_br_if_nez(4);
                 router_opcodes.op_br_indirect(0);
-            }
-            FuncOrExport::Func(index) => {
-                if let Some(input_code) = &self.config.input_code {
-                    router_opcodes.extend(&input_code);
-                }
-                let call_func_type = self.module.funcs[index as usize];
-                let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
-                let type_index = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_call_internal(index, type_index, self.config.type_check);
-                if let Some(output_code) = &self.config.output_code {
-                    router_opcodes.extend(&output_code);
-                }
             }
             FuncOrExport::Global(instruction) => {
                 if let Some(input_code) = &self.config.input_code {
@@ -437,53 +437,33 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_sections(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
-        // lets reserve 0 index and offset for sections init
-        assert_eq!(self.code_section.len(), 0, "code section must be empty");
-        // self.function_beginning.insert(0, 0);
-        // translate global section (replaces with set/get global opcodes)
-        let total_globals = self.module.globals.len();
-        for i in 0..total_globals {
-            self.translate_global(i as u32)?;
+    fn translate_entrypoint(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
+        // translate sections only if its needed
+        if self.config.translate_sections {
+            self.translate_sections()?;
         }
-        // translate table section (replace with grow/set table opcodes)
-        self.translate_table()?;
-
-        // translate memory section (replace with grow/load memory opcodes)
-        self.translate_memory()?;
-        self.translate_data()?;
-        // translate router into separate instruction set
-        let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
-        // inject main function call with return
-        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
-        self.code_section.op_i32_const(return_offset);
-        self.code_section.extend(&router_opcodes);
-        self.code_section.op_return();
-        self.code_section.op_unreachable();
-        // remember that this is injected and shifts br/br_if offset
-        self.injection_segments.push(Injection {
-            begin: 0,
-            end: self.code_section.len() as i32,
-            origin_len: 0,
-        });
+        // translate router for main index
+        self.translate_router(main_index)?;
         Ok(())
     }
 
-    fn translate_sections_with_state(
+    fn translate_entrypoint_with_state(
         &mut self,
         main_index: FuncOrExport,
     ) -> Result<(), CompilerError> {
-        // lets reserve 0 index and offset for sections init
-        assert_eq!(self.code_section.len(), 0, "code section must be empty");
-        // self.function_beginning.insert(0, 0);
-        let router_opcodes = self.translate_router(main_index, self.code_section.len() + 1)?;
+        // translate router for main index
+        self.translate_router(main_index)?;
+        // translate sections only if its needed
+        if self.config.translate_sections {
+            self.translate_sections()?;
+        }
+        // translate router into separate instruction set
+        // inject main function call with return
+        self.code_section.op_br_indirect(0);
+        Ok(())
+    }
 
-        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
-        self.code_section.op_i32_const(return_offset);
-        self.code_section.extend(&router_opcodes);
-        self.code_section.op_return();
-        self.code_section.op_unreachable();
-
+    fn translate_sections(&mut self) -> Result<(), CompilerError> {
         // translate global section (replaces with set/get global opcodes)
         let total_globals = self.module.globals.len();
         for i in 0..total_globals {
@@ -494,17 +474,18 @@ impl<'linker> Compiler<'linker> {
         // translate memory section (replace with grow/load memory opcodes)
         self.translate_memory()?;
         self.translate_data()?;
+        Ok(())
+    }
+
+    fn translate_router(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         // translate router into separate instruction set
+        let router_opcodes = self.create_router(main_index, self.code_section.len() + 1)?;
+        let return_offset = self.code_section.len() + router_opcodes.len() + 1;
         // inject main function call with return
-        self.code_section.op_br_indirect(0);
-
-        // remember that this is injected and shifts br/br_if offset
-        self.injection_segments.push(Injection {
-            begin: 0,
-            end: self.code_section.len() as i32,
-            origin_len: 0,
-        });
-
+        self.code_section.op_i32_const(return_offset);
+        self.code_section.extend(&router_opcodes);
+        self.code_section.op_return();
+        self.code_section.op_unreachable();
         Ok(())
     }
 
@@ -935,8 +916,11 @@ impl<'linker> Compiler<'linker> {
 
                 self.swap_target(num_inputs.len() as u32);
 
-                self.code_section
-                    .op_call_internal(func_idx, type_index, self.config.type_check);
+                if self.config.type_check {
+                    self.code_section.op_call_internal(func_idx, type_index);
+                } else {
+                    self.code_section.op_call_internal_unsafe(func_idx);
+                }
             }
             WI::ReturnCall(func) => {
                 self.code_section.op_unreachable();
@@ -1004,8 +988,11 @@ impl<'linker> Compiler<'linker> {
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let type_index = self.get_or_insert_check_idx(func_type.clone());
-                self.code_section
-                    .op_call_internal(fn_index, type_index, self.config.type_check);
+                if self.config.type_check {
+                    self.code_section.op_call_internal(fn_index, type_index);
+                } else {
+                    self.code_section.op_call_internal_unsafe(fn_index);
+                }
             }
             WI::CallIndirect(sig_index) => {
                 let table_idx = Self::extract_table(instr_ptr);
