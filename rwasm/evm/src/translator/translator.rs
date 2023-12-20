@@ -5,6 +5,7 @@ use crate::translator::{
     translator::contract::Contract,
 };
 pub use analysis::BytecodeLocked;
+use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::{
     BinaryFormat,
     Compiler,
@@ -29,14 +30,15 @@ pub struct Translator<'a> {
     import_linker: &'a ImportLinker,
     opcode_to_subroutine_data: HashMap<u8, SubroutineData>,
     inject_fuel_consumption: bool,
-    opcode_to_subroutine_meta: HashMap<u8, SubroutineMeta>,
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
 }
 
 pub struct SubroutineData {
-    pub entry_offset: u32,
+    pub rel_entry_offset: u32,
     pub instruction_set: InstructionSet,
+    pub begin_offset: usize,
+    pub end_offset: usize,
 }
 
 pub struct SubroutineMeta {
@@ -57,12 +59,10 @@ impl<'a> Translator<'a> {
             import_linker,
             opcode_to_subroutine_data: Default::default(),
             inject_fuel_consumption,
-            opcode_to_subroutine_meta: Default::default(),
             subroutines_instruction_set: Default::default(),
             _lifetime: Default::default(),
         };
         s.init_code_snippets();
-        s.init_subroutines();
         s
     }
 
@@ -139,13 +139,14 @@ impl<'a> Translator<'a> {
                     opcode, opcode
                 );
             }
-            let mut compiler = Compiler::new(
+            let import_linker = Runtime::<()>::new_linker();
+            let mut compiler = Compiler::new_with_linker(
                 wasm_binary,
                 CompilerConfig::default()
                     .fuel_consume(self.inject_fuel_consumption)
                     .translate_sections(false)
                     .type_check(false),
-                // .with_swap_stack_params(false)
+                Some(&import_linker),
             )
             .unwrap();
             let fn_idx = compiler
@@ -168,13 +169,17 @@ impl<'a> Translator<'a> {
                 fn_beginning_offset,
                 instruction_set.trace(),
             );
-            self.opcode_to_subroutine_data.insert(
-                opcode,
-                SubroutineData {
-                    entry_offset: fn_beginning_offset,
-                    instruction_set: instruction_set,
-                },
-            );
+            let l = self.subroutines_instruction_set.instr.len();
+            let subroutine_data = SubroutineData {
+                rel_entry_offset: fn_beginning_offset,
+                begin_offset: l,
+                end_offset: l + instruction_set.len() as usize - 1,
+                instruction_set,
+            };
+            self.subroutines_instruction_set
+                .extend(&subroutine_data.instruction_set);
+            self.opcode_to_subroutine_data
+                .insert(opcode, subroutine_data);
         };
 
         [
@@ -318,43 +323,23 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/stack_pop.wat",
                 "stack_pop",
             ),
-            // (
-            //     opcode::KECCAK256,
-            //     "../rwasm-code-snippets/bin/system_keccak.wat",
-            //     "system_keccak",
-            // ),
+            (
+                opcode::KECCAK256,
+                "../rwasm-code-snippets/bin/system_keccak.wat",
+                "system_keccak",
+            ),
         ]
         .map(|v| {
             let opcode = v.0;
             let file_path = v.1;
             let fn_name = v.2;
             let bytecode = wat::parse_file(file_path).unwrap();
-            // initiate_inlines(v.0, &bytecode);
             initiate_subroutines(opcode, &bytecode, fn_name);
         });
     }
 
-    fn init_subroutines(&mut self) {
-        for (opcode, subroutine_data) in self.opcode_to_subroutine_data.iter() {
-            let l = self.subroutines_instruction_set.instr.len();
-            self.opcode_to_subroutine_meta.insert(
-                *opcode,
-                SubroutineMeta {
-                    begin_offset: l,
-                    end_offset: l + subroutine_data.instruction_set.len() as usize - 1,
-                },
-            );
-            self.subroutines_instruction_set
-                .extend(&subroutine_data.instruction_set);
-        }
-    }
-
-    pub fn opcode_to_subroutine_meta(&self) -> &HashMap<u8, SubroutineMeta> {
-        &self.opcode_to_subroutine_meta
-    }
-
-    pub fn subroutine_meta(&self, opcode: u8) -> Option<&SubroutineMeta> {
-        self.opcode_to_subroutine_meta.get(&opcode)
+    pub fn opcode_to_subroutine_data(&self) -> &HashMap<u8, SubroutineData> {
+        &self.opcode_to_subroutine_data
     }
 
     pub fn subroutine_data(&self, opcode: u8) -> Option<&SubroutineData> {

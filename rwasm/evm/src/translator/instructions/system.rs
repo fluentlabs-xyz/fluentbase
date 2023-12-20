@@ -12,7 +12,7 @@ use log::debug;
 pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "KECCAK256";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn address<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

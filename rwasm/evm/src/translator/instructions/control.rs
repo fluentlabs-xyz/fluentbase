@@ -37,7 +37,6 @@ pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::Stop;
     let is = host.instruction_set();
-    // is.op_drop();
     is.op_return();
     is.op_unreachable();
 }

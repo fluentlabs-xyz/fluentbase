@@ -56,11 +56,11 @@ impl<'a> EvmCompiler<'a> {
             .op_br(self.instruction_set_entry_offset.unwrap() as i32);
 
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
-        for (_opcode, meta) in translator.opcode_to_subroutine_meta() {
+        for (_opcode, data) in translator.opcode_to_subroutine_data() {
             subroutines_instruction_set.fix_br_indirect_offset(
-                Some(meta.begin_offset),
-                Some(meta.end_offset),
-                (self.instruction_set.len() + meta.begin_offset as u32) as i32,
+                Some(data.begin_offset),
+                Some(data.end_offset),
+                (self.instruction_set.len() + data.begin_offset as u32) as i32,
             );
         }
         self.instruction_set

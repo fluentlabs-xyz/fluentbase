@@ -8,63 +8,62 @@ use log::debug;
 pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADD";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn wrapping_mul<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MUL";
     debug!("op:{}", OP);
-    // replace_current_opcode_with_inline_func(translator, host, true, false);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
     debug!("op:{}", OP);
     // replace_current_opcode_with_code_snippet(translator, host, true);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn div<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DIV";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn sdiv<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SDIV";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn arithmetic_mod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MOD";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn smod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SMOD";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn addmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADDMOD";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn mulmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MULMOD";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn exp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXP";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 /// In the yellow paper `SIGNEXTEND` is defined to take two inputs, we will call them
@@ -85,5 +84,5 @@ pub fn exp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn signextend<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SIGNEXTEND";
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host, false, false);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }

@@ -1558,7 +1558,7 @@ mod evm_to_rwasm_tests {
             ),
         )];
         for case in cases {
-            // test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], false, None);
+            test_binary_op(KECCAK256, Some(&case.0), &[case.1.clone()], false, None);
         }
     }
 
@@ -1586,13 +1586,35 @@ mod evm_to_rwasm_tests {
             &x("0000000000000000000000000000000000000000000000000000000000000004"),
         ));
         preamble.push(ADD);
-        // result must be 10 on stack
-
         let cases = &[(
             x("0000000000000000000000000000000000000000000000000000000000000005"),
             x("000000000000000000000000000000000000000000000000000000000000000f"),
         )];
 
         test_unary_op(ADD, Some(&preamble), cases, false, None);
+    }
+
+    #[test]
+    fn compound_mul_add_div() {
+        let mut preamble = vec![];
+        // 2*3=6
+        preamble.extend(compile_binary_op(
+            MUL,
+            &x("0000000000000000000000000000000000000000000000000000000000000002"),
+            &x("0000000000000000000000000000000000000000000000000000000000000003"),
+        ));
+        //6+7=12
+        preamble.extend(compile_unary_op(
+            ADD,
+            &x("0000000000000000000000000000000000000000000000000000000000000007"),
+        ));
+
+        //12/5=2
+        let cases = &[(
+            x("0000000000000000000000000000000000000000000000000000000000000005"),
+            x("0000000000000000000000000000000000000000000000000000000000000002"),
+        )];
+
+        test_unary_op(DIV, Some(&preamble), cases, false, None);
     }
 }
