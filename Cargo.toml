@@ -6,6 +6,7 @@ members = [
     "poseidon",
     "runtime",
     "rwasm",
+    "rwasm/bin",
     "rwasm/e2e",
     "rwasm/evm",
     "rwasm/rwasm-code-snippets",
