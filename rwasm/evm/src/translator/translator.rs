@@ -155,6 +155,7 @@ impl<'a> Translator<'a> {
                 .unwrap();
             compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
             let fn_beginning_offset = *compiler.resolve_func_beginning(fn_idx).unwrap();
+            let fn_beginning_offset = 0;
             let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()

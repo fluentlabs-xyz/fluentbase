@@ -1,7 +1,7 @@
 (module
   (type (;0;) (func (param i32)))
   (type (;1;) (func))
-  (func $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h7186133f9456cbb5E (type 0) (param i32)
+  (func $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h2e719c5b10f9b2fbE (type 0) (param i32)
     (local i64 i32)
     local.get 0
     i32.const 500
@@ -54,11 +54,11 @@
     local.tee 0
     global.set $__stack_pointer
     local.get 0
-    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h7186133f9456cbb5E
+    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h2e719c5b10f9b2fbE
     local.get 0
     i32.const 32
     i32.add
-    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h7186133f9456cbb5E
+    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h2e719c5b10f9b2fbE
     local.get 0
     i64.load offset=56
     local.tee 1
