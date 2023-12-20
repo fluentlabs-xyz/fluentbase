@@ -323,6 +323,21 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/stack_pop.wat",
                 "stack_pop",
             ),
+            // (
+            //     opcode::ADDRESS,
+            //     "../rwasm-code-snippets/bin/system_address.wat",
+            //     "system_address",
+            // ),
+            // (
+            //     opcode::CALLER,
+            //     "../rwasm-code-snippets/bin/system_caller.wat",
+            //     "system_caller",
+            // ),
+            // (
+            //     opcode::CALLVALUE,
+            //     "../rwasm-code-snippets/bin/system_callvalue.wat",
+            //     "system_callvalue",
+            // ),
             (
                 opcode::KECCAK256,
                 "../rwasm-code-snippets/bin/system_keccak.wat",
