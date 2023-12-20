@@ -75,6 +75,7 @@ pub trait ZktriePlatformSDK {
 }
 
 #[cfg(feature = "evm")]
+#[deprecated(note = "this SDK extension will be removed in the future, use on your own risk")]
 pub trait EvmPlatformSDK {
     fn evm_sload(key: &[u8], value: &mut [u8]);
     fn evm_sstore(key: &[u8], value: &[u8]);

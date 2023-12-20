@@ -61,3 +61,46 @@ impl<T: Sized + Encoder<T>, const N: usize> Encoder<[T; N]> for [T; N] {
         (0, 0)
     }
 }
+
+impl<T: Sized + Encoder<T> + Default> Encoder<Option<T>> for Option<T> {
+    const HEADER_SIZE: usize = 1 + T::HEADER_SIZE;
+
+    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+        let option_flag = if self.is_some() { 1u8 } else { 0u8 };
+        option_flag.encode(encoder, field_offset);
+        if let Some(value) = &self {
+            value.encode(encoder, field_offset + 1);
+        } else {
+            T::default().encode(encoder, field_offset + 1);
+        }
+    }
+
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut Option<T>,
+    ) -> (usize, usize) {
+        let mut option_flag: u8 = 0;
+        u8::decode_header(decoder, field_offset, &mut option_flag);
+        *result = if option_flag != 0 {
+            let mut result_inner: T = Default::default();
+            T::decode_header(decoder, field_offset + 1, &mut result_inner);
+            Some(result_inner)
+        } else {
+            None
+        };
+        (0, 0)
+    }
+
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut Option<T>) {
+        let mut option_flag: u8 = 0;
+        u8::decode_header(decoder, field_offset, &mut option_flag);
+        *result = if option_flag != 0 {
+            let mut result_inner: T = Default::default();
+            T::decode_body(decoder, field_offset + 1, &mut result_inner);
+            Some(result_inner)
+        } else {
+            None
+        };
+    }
+}
