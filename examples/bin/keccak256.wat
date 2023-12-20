@@ -6,24 +6,24 @@
   (type (;4;) (func (param i32)))
   (type (;5;) (func))
   (type (;6;) (func (param i32 i32 i32 i32) (result i32)))
-  (import "env" "_sys_read" (func (;0;) (type 0)))
-  (import "env" "_crypto_keccak256" (func (;1;) (type 2)))
-  (import "env" "_sys_write" (func (;2;) (type 3)))
-  (import "env" "_sys_halt" (func (;3;) (type 4)))
-  (func (;4;) (type 5))
-  (func (;5;) (type 5)
+  (import "env" "_sys_read" (func $_sys_read (type 0)))
+  (import "env" "_crypto_keccak256" (func $_crypto_keccak256 (type 2)))
+  (import "env" "_sys_write" (func $_sys_write (type 3)))
+  (import "env" "_sys_halt" (func $_sys_halt (type 4)))
+  (func $deploy (type 5))
+  (func $main (type 5)
     (local i32 i32)
-    global.get 0
+    global.get $__stack_pointer
     i32.const 1072
     i32.sub
     local.tee 0
-    global.set 0
+    global.set $__stack_pointer
     local.get 0
     i32.const 8
     i32.add
     i32.const 0
     i32.const 1024
-    call 11
+    call $memset
     drop
     block  ;; label = @1
       local.get 0
@@ -31,7 +31,7 @@
       i32.add
       i32.const 0
       i32.const 1024
-      call 0
+      call $_sys_read
       local.tee 1
       i32.const 1025
       i32.lt_u
@@ -61,7 +61,7 @@
       local.get 0
       i32.const 1040
       i32.add
-      call 7
+      call $_ZN4core9panicking9panic_fmt17h78607b33a29a727dE
       unreachable
     end
     local.get 0
@@ -89,23 +89,23 @@
     local.get 0
     i32.const 1040
     i32.add
-    call 1
+    call $_crypto_keccak256
     local.get 0
     i32.const 1040
     i32.add
     i32.const 32
-    call 2
+    call $_sys_write
     local.get 0
     i32.const 1072
     i32.add
-    global.set 0)
-  (func (;6;) (type 1) (param i32 i32) (result i32)
+    global.set $__stack_pointer)
+  (func $_ZN4core3fmt3num3imp52_$LT$impl$u20$core..fmt..Display$u20$for$u20$u32$GT$3fmt17he696c0e431156bceE (type 1) (param i32 i32) (result i32)
     (local i32 i32 i64 i64 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
-    global.get 0
+    global.get $__stack_pointer
     i32.const 48
     i32.sub
     local.tee 2
-    global.set 0
+    global.set $__stack_pointer
     i32.const 39
     local.set 3
     block  ;; label = @1
@@ -297,7 +297,7 @@
         local.tee 0
         local.get 9
         local.get 10
-        call 9
+        call $_ZN4core3fmt9Formatter12pad_integral12write_prefix17h43684999422d0638E
         br_if 1 (;@1;)
         local.get 3
         local.get 11
@@ -328,7 +328,7 @@
         local.tee 0
         local.get 9
         local.get 10
-        call 9
+        call $_ZN4core3fmt9Formatter12pad_integral12write_prefix17h43684999422d0638E
         br_if 1 (;@1;)
         local.get 3
         local.get 11
@@ -367,7 +367,7 @@
         local.tee 15
         local.get 9
         local.get 10
-        call 9
+        call $_ZN4core3fmt9Formatter12pad_integral12write_prefix17h43684999422d0638E
         br_if 1 (;@1;)
         local.get 3
         local.get 12
@@ -482,7 +482,7 @@
       local.get 0
       local.get 9
       local.get 10
-      call 9
+      call $_ZN4core3fmt9Formatter12pad_integral12write_prefix17h43684999422d0638E
       br_if 0 (;@1;)
       local.get 6
       local.get 11
@@ -527,18 +527,18 @@
     local.get 2
     i32.const 48
     i32.add
-    global.set 0
+    global.set $__stack_pointer
     local.get 7)
-  (func (;7;) (type 4) (param i32)
+  (func $_ZN4core9panicking9panic_fmt17h78607b33a29a727dE (type 4) (param i32)
     (local i32)
-    global.get 0
+    global.get $__stack_pointer
     i32.const 16
     i32.sub
     local.tee 1
-    global.set 0
+    global.set $__stack_pointer
     local.get 1
     i32.const 1048628
-    call 8
+    call $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17hed637ffe26dba6a3E
     block  ;; label = @1
       local.get 1
       i64.load
@@ -556,21 +556,21 @@
       br_if 0 (;@1;)
       local.get 1
       local.get 1
-      call 2
+      call $_sys_write
     end
     i32.const -71
-    call 3
+    call $_sys_halt
     loop  ;; label = @1
       br 0 (;@1;)
     end)
-  (func (;8;) (type 3) (param i32 i32)
+  (func $_ZN36_$LT$T$u20$as$u20$core..any..Any$GT$7type_id17hed637ffe26dba6a3E (type 3) (param i32 i32)
     local.get 0
     i64.const 568815540544143123
     i64.store offset=8
     local.get 0
     i64.const 5657071353825360256
     i64.store)
-  (func (;9;) (type 6) (param i32 i32 i32 i32) (result i32)
+  (func $_ZN4core3fmt9Formatter12pad_integral12write_prefix17h43684999422d0638E (type 6) (param i32 i32 i32 i32) (result i32)
     (local i32)
     block  ;; label = @1
       block  ;; label = @2
@@ -602,7 +602,7 @@
     local.get 1
     i32.load offset=12
     call_indirect (type 0))
-  (func (;10;) (type 0) (param i32 i32 i32) (result i32)
+  (func $_ZN17compiler_builtins3mem6memset17h7e84e2271aaccac9E (type 0) (param i32 i32 i32) (result i32)
     (local i32 i32 i32)
     block  ;; label = @1
       block  ;; label = @2
@@ -703,20 +703,20 @@
       end
     end
     local.get 0)
-  (func (;11;) (type 0) (param i32 i32 i32) (result i32)
+  (func $memset (type 0) (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     local.get 2
-    call 10)
+    call $_ZN17compiler_builtins3mem6memset17h7e84e2271aaccac9E)
   (table (;0;) 2 2 funcref)
   (memory (;0;) 17)
-  (global (;0;) (mut i32) (i32.const 1048576))
+  (global $__stack_pointer (mut i32) (i32.const 1048576))
   (global (;1;) i32 (i32.const 1048828))
   (global (;2;) i32 (i32.const 1048832))
   (export "memory" (memory 0))
-  (export "deploy" (func 4))
-  (export "main" (func 5))
+  (export "deploy" (func $deploy))
+  (export "main" (func $main))
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2))
-  (elem (;0;) (i32.const 1) func 6)
-  (data (;0;) (i32.const 1048576) "buffer is limited with  bytes\00\00\00\00\00\10\00\17\00\00\00\17\00\10\00\06\00\00\00\00\04\00\0000010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"))
+  (elem (;0;) (i32.const 1) func $_ZN4core3fmt3num3imp52_$LT$impl$u20$core..fmt..Display$u20$for$u20$u32$GT$3fmt17he696c0e431156bceE)
+  (data $.rodata (i32.const 1048576) "buffer is limited with  bytes\00\00\00\00\00\10\00\17\00\00\00\17\00\10\00\06\00\00\00\00\04\00\0000010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"))
