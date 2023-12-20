@@ -29,7 +29,7 @@ pub(super) fn preprocess_op_params(translator: &mut Translator<'_>, host: &mut d
         .subroutine_data(opcode)
         .expect(&format!("no meta found for 0x{:x?} opcode", opcode));
     let prev_funcs_len = meta.begin_offset as u32;
-    instruction_set.op_i32_const(instruction_set.len() + 1 - prev_funcs_len);
+    // instruction_set.op_i32_const(instruction_set.len() + 1 - prev_funcs_len);
 }
 
 pub(super) fn replace_current_opcode_with_call_to_subroutine(
