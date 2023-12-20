@@ -196,3 +196,38 @@ fn test_static_array_of_arrays() {
     <[[i32; 3]; 3]>::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
+
+#[test]
+fn test_option() {
+    let value1 = Some(0x7bu32);
+    let value2 = None;
+    let result = {
+        let mut buffer_encoder = BufferEncoder::new(5 + 5, None);
+        value1.encode(&mut buffer_encoder, 0);
+        value2.encode(&mut buffer_encoder, 5);
+        buffer_encoder.finalize()
+    };
+    println!("{}", hex::encode(&result));
+    let mut buffer_decoder = BufferDecoder::new(result.as_slice());
+    let mut decoded1 = Default::default();
+    let mut decoded2 = Default::default();
+    Option::<u32>::decode_header(&mut buffer_decoder, 0, &mut decoded1);
+    Option::<u32>::decode_header(&mut buffer_decoder, 5, &mut decoded2);
+    assert_eq!(value1, decoded1);
+    assert_eq!(value2, decoded2);
+}
+
+#[test]
+fn test_option_non_primitive() {
+    let value = Some(vec![1, 2, 3]);
+    let result = {
+        let mut buffer_encoder = BufferEncoder::new(value.header_size(), None);
+        value.encode(&mut buffer_encoder, 0);
+        buffer_encoder.finalize()
+    };
+    println!("{}", hex::encode(&result));
+    let mut buffer_decoder = BufferDecoder::new(result.as_slice());
+    let mut decoded_value = Default::default();
+    Option::<Vec<u32>>::decode_body(&mut buffer_decoder, 0, &mut decoded_value);
+    assert_eq!(value, decoded_value);
+}

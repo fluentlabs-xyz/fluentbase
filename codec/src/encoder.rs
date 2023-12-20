@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 pub trait Encoder<T: Sized> {
-    fn header_size() -> usize {
+    fn header_size(&self) -> usize {
         Self::HEADER_SIZE
     }
 
