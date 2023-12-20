@@ -1,27 +1,27 @@
+use crate::{
+    common::{div_le, u256_be_to_tuple_le, u256_tuple_le_to_be},
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+};
+
 #[no_mangle]
-pub fn arithmetic_div(
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-) -> (u64, u64, u64, u64) {
-    let mut result = [0u64, 0u64, 0u64, 0u64];
+pub fn arithmetic_div(// b0: u64,
+    // b1: u64,
+    // b2: u64,
+    // b3: u64,
+    // a0: u64,
+    // a1: u64,
+    // a2: u64,
+    // a3: u64,
+) {
+    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
 
-    if a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3 {
-        if a0 != 0 {
-            result[0] = 1
-        }
-    } else if a0 < b0 {
-    } else if a1 < b1 {
-    } else if a2 < b2 {
-    } else if a3 < b3 {
-    } else {
-        // need specific processing
-    }
+    let a = u256_be_to_tuple_le(a);
+    let b = u256_be_to_tuple_le(b);
 
-    (result[0], result[1], result[2], result[3])
+    let r = div_le(a, b);
+
+    let res = u256_tuple_le_to_be(r);
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
 }

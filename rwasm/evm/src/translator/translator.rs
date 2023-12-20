@@ -5,6 +5,7 @@ use crate::translator::{
     translator::contract::Contract,
 };
 pub use analysis::BytecodeLocked;
+use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::{
     BinaryFormat,
     Compiler,
@@ -27,12 +28,22 @@ pub struct Translator<'a> {
     pub instruction_pointer: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
-    opcode_to_inline_instruction_set: HashMap<u8, InstructionSet>,
-    opcode_to_subroutine_instruction_set: HashMap<u8, InstructionSet>,
+    opcode_to_subroutine_data: HashMap<u8, SubroutineData>,
     inject_fuel_consumption: bool,
-    opcode_to_subroutine_meta: HashMap<u8, (usize, usize)>,
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
+}
+
+pub struct SubroutineData {
+    pub rel_entry_offset: u32,
+    pub instruction_set: InstructionSet,
+    pub begin_offset: usize,
+    pub end_offset: usize,
+}
+
+pub struct SubroutineMeta {
+    pub begin_offset: usize,
+    pub end_offset: usize,
 }
 
 impl<'a> Translator<'a> {
@@ -46,15 +57,12 @@ impl<'a> Translator<'a> {
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
-            opcode_to_inline_instruction_set: Default::default(),
-            opcode_to_subroutine_instruction_set: Default::default(),
+            opcode_to_subroutine_data: Default::default(),
             inject_fuel_consumption,
-            opcode_to_subroutine_meta: Default::default(),
             subroutines_instruction_set: Default::default(),
             _lifetime: Default::default(),
         };
         s.init_code_snippets();
-        s.init_subroutines();
         s
     }
 
@@ -124,141 +132,233 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let mut initiate_inlines = |opcode: u8, wasm_binary: &[u8]| {
-            if self.opcode_to_inline_instruction_set.contains_key(&opcode) {
+        let mut initiate_subroutines = |opcode: u8, wasm_binary: &[u8], fn_name: &'static str| {
+            if self.opcode_to_subroutine_data.contains_key(&opcode) {
                 panic!(
                     "code snippet for opcode 0x{:x?} already exists (decimal: {})",
                     opcode, opcode
                 );
             }
-            let mut compiler = Compiler::new(
+            let import_linker = Runtime::<()>::new_linker();
+            let mut compiler = Compiler::new_with_linker(
                 wasm_binary,
                 CompilerConfig::default()
                     .fuel_consume(self.inject_fuel_consumption)
                     .translate_sections(false)
-                    .translate_func_as_inline(true)
                     .type_check(false),
+                Some(&import_linker),
             )
             .unwrap();
-            compiler.translate(FuncOrExport::Func(0)).unwrap();
+            let fn_idx = compiler
+                .resolve_func_index(&FuncOrExport::Export(fn_name))
+                .unwrap()
+                .unwrap();
+            compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+            let fn_beginning_offset = *compiler.resolve_func_beginning(fn_idx).unwrap();
             let rwasm_binary = compiler.finalize().unwrap();
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
             debug!(
-                "\ninline_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
+                "\nsubroutine_instruction_set (fn_name '{}' opcode 0x{:x?} len {} fn_idx {} fn_beginning_offset {}): \n{}\n",
+                fn_name,
                 opcode,
                 instruction_set.instr.len(),
+                fn_idx,
+                fn_beginning_offset,
                 instruction_set.trace(),
             );
-            self.opcode_to_inline_instruction_set
-                .insert(opcode, instruction_set);
-        };
-        let mut initiate_subroutines = |opcode: u8, wasm_binary: &[u8]| {
-            if self
-                .opcode_to_subroutine_instruction_set
-                .contains_key(&opcode)
-            {
-                panic!(
-                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
-                    opcode, opcode
-                );
-            }
-            let mut compiler = Compiler::new(
-                wasm_binary,
-                CompilerConfig::default()
-                    .fuel_consume(self.inject_fuel_consumption)
-                    .translate_sections(false)
-                    .type_check(false)
-                    .with_swap_stack_params(false),
-            )
-            .unwrap();
-            compiler.translate(FuncOrExport::Func(0)).unwrap();
-            let rwasm_binary = compiler.finalize().unwrap();
-            let instruction_set = ReducedModule::new(&rwasm_binary)
-                .unwrap()
-                .bytecode()
-                .clone();
-            debug!(
-                "\nsubroutine_instruction_set (opcode 0x{:x?} len {}): \n{}\n",
-                opcode,
-                instruction_set.instr.len(),
-                instruction_set.trace(),
-            );
-            self.opcode_to_subroutine_instruction_set
-                .insert(opcode, instruction_set);
+            let l = self.subroutines_instruction_set.instr.len();
+            let subroutine_data = SubroutineData {
+                rel_entry_offset: fn_beginning_offset,
+                begin_offset: l,
+                end_offset: l + instruction_set.len() as usize - 1,
+                instruction_set,
+            };
+            self.subroutines_instruction_set
+                .extend(&subroutine_data.instruction_set);
+            self.opcode_to_subroutine_data
+                .insert(opcode, subroutine_data);
         };
 
         [
-            (opcode::ADD, "../rwasm-code-snippets/bin/arithmetic_add.wat"),
+            (
+                opcode::EXP,
+                "../rwasm-code-snippets/bin/arithmetic_exp.wat",
+                "arithmetic_exp",
+            ),
+            (
+                opcode::MOD,
+                "../rwasm-code-snippets/bin/arithmetic_mod.wat",
+                "arithmetic_mod",
+            ),
+            (
+                opcode::SMOD,
+                "../rwasm-code-snippets/bin/arithmetic_smod.wat",
+                "arithmetic_smod",
+            ),
+            (
+                opcode::MUL,
+                "../rwasm-code-snippets/bin/arithmetic_mul.wat",
+                "arithmetic_mul",
+            ),
+            (
+                opcode::MULMOD,
+                "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
+                "arithmetic_mulmod",
+            ),
+            (
+                opcode::ADD,
+                "../rwasm-code-snippets/bin/arithmetic_add.wat",
+                "arithmetic_add",
+            ),
+            (
+                opcode::ADDMOD,
+                "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
+                "arithmetic_addmod",
+            ),
             (
                 opcode::SIGNEXTEND,
                 "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
+                "arithmetic_signextend",
             ),
-            (opcode::SUB, "../rwasm-code-snippets/bin/arithmetic_sub.wat"),
-            (opcode::MUL, "../rwasm-code-snippets/bin/arithmetic_mul.wat"),
-            (opcode::DIV, "../rwasm-code-snippets/bin/arithmetic_div.wat"),
-            (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.wat"),
-            (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.wat"),
-            (opcode::OR, "../rwasm-code-snippets/bin/bitwise_or.wat"),
-            (opcode::XOR, "../rwasm-code-snippets/bin/bitwise_xor.wat"),
-            (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.wat"),
-            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.wat"),
-            (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.wat"),
-            (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.wat"),
-            (opcode::BYTE, "../rwasm-code-snippets/bin/bitwise_byte.wat"),
+            (
+                opcode::SUB,
+                "../rwasm-code-snippets/bin/arithmetic_sub.wat",
+                "arithmetic_sub",
+            ),
+            (
+                opcode::DIV,
+                "../rwasm-code-snippets/bin/arithmetic_div.wat",
+                "arithmetic_div",
+            ),
+            (
+                opcode::SDIV,
+                "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
+                "arithmetic_sdiv",
+            ),
+            (
+                opcode::SHL,
+                "../rwasm-code-snippets/bin/bitwise_shl.wat",
+                "bitwise_shl",
+            ),
+            (
+                opcode::SHR,
+                "../rwasm-code-snippets/bin/bitwise_shr.wat",
+                "bitwise_shr",
+            ),
+            (
+                opcode::NOT,
+                "../rwasm-code-snippets/bin/bitwise_not.wat",
+                "bitwise_not",
+            ),
+            (
+                opcode::AND,
+                "../rwasm-code-snippets/bin/bitwise_and.wat",
+                "bitwise_and",
+            ),
+            (
+                opcode::OR,
+                "../rwasm-code-snippets/bin/bitwise_or.wat",
+                "bitwise_or",
+            ),
+            (
+                opcode::XOR,
+                "../rwasm-code-snippets/bin/bitwise_xor.wat",
+                "bitwise_xor",
+            ),
+            (
+                opcode::EQ,
+                "../rwasm-code-snippets/bin/bitwise_eq.wat",
+                "bitwise_eq",
+            ),
+            (
+                opcode::LT,
+                "../rwasm-code-snippets/bin/bitwise_lt.wat",
+                "bitwise_lt",
+            ),
+            (
+                opcode::SLT,
+                "../rwasm-code-snippets/bin/bitwise_slt.wat",
+                "bitwise_slt",
+            ),
+            (
+                opcode::GT,
+                "../rwasm-code-snippets/bin/bitwise_gt.wat",
+                "bitwise_gt",
+            ),
+            (
+                opcode::SGT,
+                "../rwasm-code-snippets/bin/bitwise_sgt.wat",
+                "bitwise_sgt",
+            ),
+            (
+                opcode::SAR,
+                "../rwasm-code-snippets/bin/bitwise_sar.wat",
+                "bitwise_sar",
+            ),
+            (
+                opcode::BYTE,
+                "../rwasm-code-snippets/bin/bitwise_byte.wat",
+                "bitwise_byte",
+            ),
             (
                 opcode::ISZERO,
                 "../rwasm-code-snippets/bin/bitwise_iszero.wat",
+                "bitwise_iszero",
             ),
-            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.wat"),
-            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.wat"),
-            (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.wat"),
-            (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.wat"),
             (
                 opcode::MSTORE,
                 "../rwasm-code-snippets/bin/memory_mstore.wat",
+                "memory_mstore",
             ),
             (
                 opcode::MSTORE8,
                 "../rwasm-code-snippets/bin/memory_mstore8.wat",
+                "memory_mstore8",
+            ),
+            (
+                opcode::POP,
+                "../rwasm-code-snippets/bin/stack_pop.wat",
+                "stack_pop",
+            ),
+            // (
+            //     opcode::ADDRESS,
+            //     "../rwasm-code-snippets/bin/system_address.wat",
+            //     "system_address",
+            // ),
+            // (
+            //     opcode::CALLER,
+            //     "../rwasm-code-snippets/bin/system_caller.wat",
+            //     "system_caller",
+            // ),
+            // (
+            //     opcode::CALLVALUE,
+            //     "../rwasm-code-snippets/bin/system_callvalue.wat",
+            //     "system_callvalue",
+            // ),
+            (
+                opcode::KECCAK256,
+                "../rwasm-code-snippets/bin/system_keccak.wat",
+                "system_keccak",
             ),
         ]
         .map(|v| {
-            let bytecode = wat::parse_file(v.1).unwrap();
-            initiate_inlines(v.0, &bytecode);
-            initiate_subroutines(v.0, &bytecode);
+            let opcode = v.0;
+            let file_path = v.1;
+            let fn_name = v.2;
+            let bytecode = wat::parse_file(file_path).unwrap();
+            initiate_subroutines(opcode, &bytecode, fn_name);
         });
     }
 
-    fn init_subroutines(&mut self) {
-        for (opcode, instruction_set) in self.opcode_to_subroutine_instruction_set.iter() {
-            let l = self.subroutines_instruction_set.instr.len();
-            self.opcode_to_subroutine_meta
-                .insert(*opcode, (l, l + instruction_set.len() as usize - 1));
-            self.subroutines_instruction_set.extend(&instruction_set);
-        }
+    pub fn opcode_to_subroutine_data(&self) -> &HashMap<u8, SubroutineData> {
+        &self.opcode_to_subroutine_data
     }
 
-    pub fn opcode_to_subroutine_meta(&self) -> &HashMap<u8, (usize, usize)> {
-        &self.opcode_to_subroutine_meta
-    }
-
-    pub fn subroutine_meta(&self, opcode: u8) -> Option<&(usize, usize)> {
-        self.opcode_to_subroutine_meta.get(&opcode)
-    }
-
-    pub fn inline_instruction_set(&mut self, opcode: u8) -> &InstructionSet {
-        if let Some(is) = self.opcode_to_inline_instruction_set.get(&opcode) {
-            return is;
-        }
-        panic!(
-            "code snippet not found for opcode 0x{:x?} (decimal: {}) pc {}",
-            opcode,
-            opcode,
-            self.program_counter()
-        );
+    pub fn subroutine_data(&self, opcode: u8) -> Option<&SubroutineData> {
+        self.opcode_to_subroutine_data.get(&opcode)
     }
 
     pub fn subroutines_instruction_set(&self) -> &InstructionSet {

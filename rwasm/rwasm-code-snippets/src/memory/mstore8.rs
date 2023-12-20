@@ -1,17 +1,15 @@
-use crate::consts::BYTE_MAX_VAL;
+use crate::{
+    common::u256_be_to_tuple_le,
+    common_sp::{u256_pop, SP_VAL_MEM_OFFSET_DEFAULT},
+};
 
 #[no_mangle]
-fn memory_mstore8(
-    value0: u64,
-    value1: u64,
-    value2: u64,
-    value3: u64,
-    offset0: u64,
-    offset1: u64,
-    offset2: u64,
-    offset3: u64,
-) {
-    let v = (value0 & BYTE_MAX_VAL) as u8;
-    let ptr = offset0 as *mut u8;
-    unsafe { *ptr = v };
+fn memory_mstore8() {
+    let value = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let offset = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+
+    let offset = u256_be_to_tuple_le(offset);
+
+    let mem_chunk = offset.0 as *mut u8;
+    unsafe { *mem_chunk = value[value.len() - 1] };
 }

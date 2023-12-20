@@ -27,7 +27,7 @@ pub fn test_binary_cases(
         debug!("res_tuple {:?}", res_tuple);
         debug!("res_expected {:?}", res_expected);
 
-        let mut res_be = vec![0u8; 32];
+        let mut res_be = [0u8; 32];
         res.to_big_endian(&mut res_be);
         debug!("res_be {:x?}", res_be);
 

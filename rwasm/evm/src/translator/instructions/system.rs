@@ -1,6 +1,10 @@
 use crate::translator::{
     host::Host,
-    instructions::utilities::{wasm_call, SystemFuncs},
+    instructions::utilities::{
+        replace_current_opcode_with_call_to_subroutine,
+        wasm_call,
+        SystemFuncs,
+    },
     translator::Translator,
 };
 use log::debug;
@@ -8,19 +12,7 @@ use log::debug;
 pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "KECCAK256";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-
-    // data offset
-    instruction_set.op_i64_const(4);
-    // data len
-    instruction_set.op_i64_const(4);
-    // out offset
-    instruction_set.op_i64_const(0);
-
-    wasm_call(instruction_set, SystemFuncs::CryptoKeccak256, translator);
-
-    // remove params left on stack
-    (0..8).for_each(|_| instruction_set.op_drop());
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn address<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

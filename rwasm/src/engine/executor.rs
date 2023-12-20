@@ -1093,8 +1093,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
 
     #[inline(always)]
     fn visit_br_indirect(&mut self, offset: BranchOffset) -> Result<(), TrapCode> {
-        assert_eq!(offset.to_i32(), 0);
-        let return_pointer = self.sp.pop_as::<i32>();
+        // assert_eq!(offset.to_i32(), 0);
+        let return_pointer = self.sp.pop_as::<i32>() + offset.to_i32();
         // let return_pointer = self.sp.nth_back(offset.to_i32() as usize);
         // let drop_keep = DropKeep::new(1, offset.to_i32() as usize).unwrap();
         // self.sp.drop_keep(drop_keep);
@@ -1104,8 +1104,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .then_some(())
             .ok_or(TrapCode::IndirectCallToNull)?;
 
-        let offset = return_pointer - self.ip.pc() as i32;
-        self.branch_to(offset.into());
+        let offset_result = return_pointer - self.ip.pc() as i32;
+        self.branch_to(offset_result.into());
 
         Ok(())
     }

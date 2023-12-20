@@ -1,77 +1,101 @@
-use crate::consts::{BYTE_MAX_VAL, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1};
+use crate::{
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1},
+};
 
 #[no_mangle]
-fn bitwise_sar(
-    b0: u64,
-    b1: u64,
-    b2: u64,
-    b3: u64,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-) -> (u64, u64, u64, u64) {
-    let b0_sign = b0 & U64_MSBIT_IS_1;
-    if a0 != 0 || a1 != 0 || a2 != 0 || a3 > BYTE_MAX_VAL {
+fn bitwise_sar(// b0: u64,
+    // b1: u64,
+    // b2: u64,
+    // b3: u64,
+    // a0: u64,
+    // a1: u64,
+    // a2: u64,
+    // a3: u64,
+) /* -> (u64, u64, u64, u64) */
+{
+    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let mut res = [0u8; U256_BYTES_COUNT as usize];
+
+    let mut v = [0u8; 8];
+
+    v.clone_from_slice(&a[0..8]);
+    let mut a3: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&a[8..16]);
+    let mut a2: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&a[16..24]);
+    let mut a1: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&a[24..32]);
+    let mut a0: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&b[0..8]);
+    let mut b3: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&b[8..16]);
+    let mut b2: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&b[16..24]);
+    let mut b1: u64 = u64::from_be_bytes(v);
+    v.clone_from_slice(&b[24..32]);
+    let mut b0: u64 = u64::from_be_bytes(v);
+
+    let mut r = (0, 0, 0, 0);
+    let b0_sign = b3 & U64_MSBIT_IS_1;
+
+    if a3 != 0 || a2 != 0 || a1 != 0 || a0 > BYTE_MAX_VAL {
         if b0_sign > 0 {
-            return (
+            r = (
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
             );
         }
-        return (0, 0, 0, 0);
-    }
-
-    if a3 >= 192 {
-        let shift = a3 - 192;
+    } else if a0 >= 192 {
+        let shift = a0 - 192;
         let shift_inv = 64 - shift;
-        let s3 = b0 >> shift;
+        r.0 = b3 >> shift;
         if b0_sign > 0 {
-            let s3 = s3 | U64_ALL_BITS_ARE_1 << shift_inv;
-            return (
+            r = (
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
                 U64_ALL_BITS_ARE_1,
-                s3,
+                r.0 | U64_ALL_BITS_ARE_1 << shift_inv,
             );
         }
-        return (0, 0, 0, s3);
-    }
-    if a3 >= 128 {
-        let shift = a3 - 128;
+    } else if a0 >= 128 {
+        let shift = a0 - 128;
         let shift_inv = 64 - shift;
-        let s2 = b0 >> shift;
-        let s3 = b0 << shift_inv | b1 >> shift;
+        r.1 = b3 >> shift;
+        r.0 = b3 << shift_inv | b2 >> shift;
         if b0_sign > 0 {
-            let s2 = s2 | U64_ALL_BITS_ARE_1 << shift_inv;
-            return (U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1, s2, s3);
+            r.1 = r.1 | U64_ALL_BITS_ARE_1 << shift_inv;
+            r = (U64_ALL_BITS_ARE_1, U64_ALL_BITS_ARE_1, r.1, r.0);
         }
-        return (0, 0, s2, s3);
-    }
-    if a3 >= 64 {
-        let shift = a3 - 64;
+    } else if a0 >= 64 {
+        let shift = a0 - 64;
         let shift_inv = 64 - shift;
-        let s1 = b0 >> shift;
-        let s2 = b0 << shift_inv | b1 >> shift;
-        let s3 = b1 << shift_inv | b2 >> shift;
+        r.2 = b3 >> shift;
+        r.1 = b3 << shift_inv | b2 >> shift;
+        r.0 = b2 << shift_inv | b1 >> shift;
         if b0_sign > 0 {
-            let s1 = s1 | U64_ALL_BITS_ARE_1 << shift_inv;
-            return (U64_ALL_BITS_ARE_1, s1, s2, s3);
+            r.2 = r.2 | U64_ALL_BITS_ARE_1 << shift_inv;
+            r = (U64_ALL_BITS_ARE_1, r.2, r.1, r.0);
         }
-        return (0, s1, s2, s3);
+    } else {
+        let shift = a0;
+        let shift_inv = 64 - shift;
+        r.3 = b3 >> shift;
+        r.2 = b3 << shift_inv | b2 >> shift;
+        r.1 = b2 << shift_inv | b1 >> shift;
+        r.0 = b1 << shift_inv | b0 >> shift;
+        if b0_sign > 0 {
+            r.3 = r.3 | U64_ALL_BITS_ARE_1 << shift_inv;
+        }
     }
 
-    let shift = a3;
-    let shift_inv = 64 - shift;
-    let s0 = b0 >> shift;
-    let s1 = b0 << shift_inv | b1 >> shift;
-    let s2 = b1 << shift_inv | b2 >> shift;
-    let s3 = b2 << shift_inv | b3 >> shift;
-    if b0_sign > 0 {
-        let s0 = s0 | U64_ALL_BITS_ARE_1 << shift_inv;
-        return (s0, s1, s2, s3);
-    }
-    return (s0, s1, s2, s3);
+    res[0..8].copy_from_slice(&r.3.to_be_bytes());
+    res[8..16].copy_from_slice(&r.2.to_be_bytes());
+    res[16..24].copy_from_slice(&r.1.to_be_bytes());
+    res[24..32].copy_from_slice(&r.0.to_be_bytes());
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
 }
