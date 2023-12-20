@@ -9,6 +9,9 @@ fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["ev
 hex = "0.4.3"
 #wee_alloc = "0.4.5"
 
+[build-dependencies]
+fluentbase-rwasm = { path = "..", default-features = false }
+
 [dev-dependencies]
 wat = "1.0.77"
 ethereum-types = "0.14.1"
