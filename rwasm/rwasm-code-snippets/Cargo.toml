@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-rwasm = { path = ".." }
-fluentbase-runtime = { path = "../../runtime", optional = true }
+fluentbase-rwasm = { path = "..", default-features = false }
+fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
 hex = "0.4.3"
-wat = "1.0.77"
 
 [build-dependencies]
 fluentbase-rwasm = { path = "..", default-features = false }
@@ -21,12 +20,14 @@ env_logger = "0.10.1"
 
 [lib]
 crate-type = ["cdylib"]
+#crate-type = ["staticlib"]
 bench = false
 test = false
 proc-macro = false
 
 [features]
 default = []
+#default = ["arithmetic_sub", "arithmetic_mod", "arithmetic_addmod", "arithmetic_mulmod", "arithmetic_div", "arithmetic_sdiv", "arithmetic_smod", "arithmetic_mul", "arithmetic_exp"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_and = []
@@ -44,14 +45,30 @@ bitwise_iszero = []
 arithmetic_add = []
 arithmetic_sub = []
 arithmetic_signextend = []
-arithmetic_sub_global = []
 arithmetic_mul = []
 arithmetic_div = []
+arithmetic_sdiv = []
+arithmetic_mod = []
+arithmetic_smod = []
+arithmetic_addmod = []
+arithmetic_mulmod = []
+arithmetic_exp = []
 memory_mstore = []
 memory_mstore8 = []
+stack_pop = []
+system_keccak = []
+system_address = []
+system_balance = []
+system_origin = []
+system_caller = []
+system_callvalue = []
+system_calldataload = []
+host_sstore = []
+host_sload = []
 
+[profile.release]
+#panic = "abort"
+lto = true
+opt-level = 'z'
+strip = true
 
-#[profile.release]
-#opt-level = 0
-#lto = false
-#strip = true

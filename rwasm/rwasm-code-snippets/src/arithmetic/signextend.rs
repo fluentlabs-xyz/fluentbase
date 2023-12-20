@@ -1,38 +1,39 @@
-use crate::consts::{
-    BITS_IN_BYTE,
-    BYTE_SIGN_BIT_MASK,
-    U64_ALL_BITS_ARE_0,
-    U64_ALL_BITS_ARE_1,
-    U64_BYTES_COUNT,
-    U64_HALF_BITS_COUNT,
-    U64_LSBYTE_MASK,
+use crate::{
+    common::{u256_be_to_tuple_le, u256_tuple_le_to_be},
+    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    consts::{
+        BITS_IN_BYTE,
+        BYTE_SIGN_BIT_MASK,
+        U64_ALL_BITS_ARE_0,
+        U64_ALL_BITS_ARE_1,
+        U64_BYTES_COUNT,
+        U64_HALF_BITS_COUNT,
+        U64_LSBYTE_MASK,
+    },
 };
 
 #[no_mangle]
-pub fn arithmetic_signextend(
-    value0: u64,
-    value1: u64,
-    value2: u64,
-    value3: u64,
-    size0: u64,
-    size1: u64,
-    size2: u64,
-    size3: u64,
-) -> (u64, u64, u64, u64) {
-    let mut res = [value0, value1, value2, value3];
+pub fn arithmetic_signextend() {
+    let value = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let size = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
 
-    if size0 < U64_HALF_BITS_COUNT && size1 == 0 && size2 == 0 && size3 == 0 {
+    let size = u256_be_to_tuple_le(size);
+    let value = u256_be_to_tuple_le(value);
+
+    let mut res = [value.0, value.1, value.2, value.3];
+
+    if size.0 < U64_HALF_BITS_COUNT && size.1 == 0 && size.2 == 0 && size.3 == 0 {
         let mut byte_value: u8 = 0;
-        let res_idx = size0 as usize / 8;
+        let res_idx = size.0 as usize / 8;
         let filler: u64;
-        let shift = (size0 - res_idx as u64 * U64_BYTES_COUNT) * BITS_IN_BYTE;
+        let shift = (size.0 - res_idx as u64 * U64_BYTES_COUNT) * BITS_IN_BYTE;
         byte_value = ((res[res_idx] >> shift) & U64_LSBYTE_MASK) as u8;
         if byte_value >= BYTE_SIGN_BIT_MASK as u8 {
             let shift = shift + BITS_IN_BYTE;
             res[res_idx] = (U64_ALL_BITS_ARE_1 << shift) | res[res_idx];
             filler = U64_ALL_BITS_ARE_1;
         } else {
-            let shift = (7 - size0) * BITS_IN_BYTE;
+            let shift = (7 - size.0) * BITS_IN_BYTE;
             res[res_idx] = (U64_ALL_BITS_ARE_1 >> shift) & res[res_idx];
             filler = U64_ALL_BITS_ARE_0;
         }
@@ -41,5 +42,9 @@ pub fn arithmetic_signextend(
         }
     }
 
-    (res[0], res[1], res[2], res[3])
+    let r = (res[0], res[1], res[2], res[3]);
+
+    let res = u256_tuple_le_to_be(r);
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
 }

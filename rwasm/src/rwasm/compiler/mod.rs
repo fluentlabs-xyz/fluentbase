@@ -274,12 +274,16 @@ impl<'linker> Compiler<'linker> {
         Ok(export_index)
     }
 
-    fn resolve_func_index(&self, export: &FuncOrExport) -> Result<Option<u32>, CompilerError> {
+    pub fn resolve_func_index(&self, export: &FuncOrExport) -> Result<Option<u32>, CompilerError> {
         match export {
             FuncOrExport::Export(name) => Some(self.resolve_export_index(name)).transpose(),
             FuncOrExport::Func(index) => Ok(Some(*index)),
             _ => Ok(None),
         }
+    }
+
+    pub fn resolve_func_beginning(&self, func_idx: u32) -> Option<&u32> {
+        self.function_beginning.get(&func_idx)
     }
 
     fn resolve_global_instr(&self, export: &FuncOrExport) -> Option<Instruction> {
@@ -306,7 +310,7 @@ impl<'linker> Compiler<'linker> {
                 let call_func_type = self.module.funcs[func_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let check_idx = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_call_internal(func_index, check_idx);
+                router_opcodes.op_call_internal(func_index, check_idx, self.config.type_check);
                 if let Some(output_code) = &self.config.output_code {
                     router_opcodes.extend(&output_code);
                 }
@@ -340,7 +344,11 @@ impl<'linker> Compiler<'linker> {
                         let func_type =
                             self.engine.resolve_func_type(&call_func_type, Clone::clone);
                         let type_index = self.get_or_insert_check_idx(func_type);
-                        router_opcodes.op_call_internal(func_index, type_index);
+                        router_opcodes.op_call_internal(
+                            func_index,
+                            type_index,
+                            self.config.type_check,
+                        );
                         if let Some(output_code) = &self.config.output_code {
                             router_opcodes.extend(&output_code);
                         }
@@ -372,7 +380,7 @@ impl<'linker> Compiler<'linker> {
                 let call_func_type = self.module.funcs[index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let type_index = self.get_or_insert_check_idx(func_type);
-                router_opcodes.op_call_internal(index, type_index);
+                router_opcodes.op_call_internal(index, type_index, self.config.type_check);
                 if let Some(output_code) = &self.config.output_code {
                     router_opcodes.extend(&output_code);
                 }
@@ -409,7 +417,7 @@ impl<'linker> Compiler<'linker> {
 
             self.code_section.op_type_check(idx);
             self.swap_stack_parameters(num_inputs.len() as u32);
-            self.translate_host_call(func_idx as u32)?;
+            self.translate_host_call(func_idx)?;
             if num_outputs.len() > 0 {
                 DropKeepWithReturnParam(
                     DropKeep::new(0, num_outputs.len())
@@ -753,7 +761,7 @@ impl<'linker> Compiler<'linker> {
         let func_body = self
             .module
             .compiled_funcs
-            .get(fn_index as usize - import_len as usize)
+            .get(fn_index as usize - import_len)
             .ok_or(CompilerError::MissingFunction)?;
 
         // reserve stack for locals
@@ -927,7 +935,8 @@ impl<'linker> Compiler<'linker> {
 
                 self.swap_target(num_inputs.len() as u32);
 
-                self.code_section.op_call_internal(func_idx, type_index);
+                self.code_section
+                    .op_call_internal(func_idx, type_index, self.config.type_check);
             }
             WI::ReturnCall(func) => {
                 self.code_section.op_unreachable();
@@ -988,13 +997,15 @@ impl<'linker> Compiler<'linker> {
                 self.code_section.op_br_indirect(0);
             }
             WI::CallInternal(func_idx) => {
-                let target = self.code_section.len() + 2 + 1;
+                let target =
+                    self.code_section.len() + 2 + if self.config.type_check { 1 } else { 0 };
                 self.code_section.op_i32_const(target);
                 let fn_index = func_idx.into_usize() as u32 + self.module.imports.len_funcs as u32;
                 let call_func_type = self.module.funcs[fn_index as usize];
                 let func_type = self.engine.resolve_func_type(&call_func_type, Clone::clone);
                 let type_index = self.get_or_insert_check_idx(func_type.clone());
-                self.code_section.op_call_internal(fn_index, type_index);
+                self.code_section
+                    .op_call_internal(fn_index, type_index, self.config.type_check);
             }
             WI::CallIndirect(sig_index) => {
                 let table_idx = Self::extract_table(instr_ptr);

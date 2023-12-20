@@ -309,11 +309,13 @@ impl InstructionSet {
     impl_opcode!(op_return_call_internal, ReturnCallInternal(CompiledFunc));
     impl_opcode!(op_return_call, ReturnCall(FuncIdx));
     impl_opcode!(op_return_call_indirect, ReturnCallIndirect(SignatureIdx));
-    pub fn op_call_internal<I>(&mut self, fn_index: I, type_index: u32)
+    pub fn op_call_internal<I>(&mut self, fn_index: I, type_index: u32, type_check_enabled: bool)
     where
         I: Into<CompiledFunc>,
     {
-        self.push(Instruction::I32Const(type_index.into()));
+        if type_check_enabled {
+            self.push(Instruction::I32Const(type_index.into()));
+        }
         self.push(Instruction::CallInternal(fn_index.into()));
     }
     impl_opcode!(op_call, Call(FuncIdx));
@@ -515,7 +517,7 @@ impl InstructionSet {
         }
     }
 
-    pub fn fix_br_offsets(
+    pub fn fix_br_indirect_offset(
         &mut self,
         from_idx: Option<usize>,
         to_idx: Option<usize>,
@@ -525,13 +527,14 @@ impl InstructionSet {
             let instr = &mut self.instr[offset];
             match instr {
                 // Instruction::BrTable(_) |
-                Instruction::Br(offset)
-                // | Instruction::BrIndirect(offset)
-                | Instruction::BrIfEqz(offset)
-                | Instruction::BrAdjust(offset)
-                | Instruction::BrAdjustIfNez(offset)
-                | Instruction::BrIfEqz(offset)
-                | Instruction::BrIfNez(offset) => {
+                // Instruction::Br(offset)
+                | Instruction::BrIndirect(offset)
+                // | Instruction::BrIfEqz(offset)
+                // | Instruction::BrAdjust(offset)
+                // | Instruction::BrAdjustIfNez(offset)
+                // | Instruction::BrIfEqz(offset)
+                // | Instruction::BrIfNez(offset) 
+                => {
                     *offset = BranchOffset::from(offset.to_i32() + offset_change)
                 }
                 _ => {}

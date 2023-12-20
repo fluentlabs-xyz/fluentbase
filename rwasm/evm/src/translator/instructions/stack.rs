@@ -1,27 +1,26 @@
 use crate::{
-    translator::{host::Host, instruction_result::InstructionResult, translator::Translator},
-    utilities::{
-        align_to_evm_word_array,
-        iterate_over_wasm_i64_chunks,
-        WASM_I64_IN_EVM_WORD_COUNT,
+    consts::SP_VAL_MEM_OFFSET_DEFAULT,
+    translator::{
+        host::Host,
+        instruction_result::InstructionResult,
+        instructions::utilities::replace_current_opcode_with_call_to_subroutine,
+        translator::Translator,
     },
+    utilities::{align_to_evm_word_array, WASM_I64_IN_EVM_WORD_COUNT},
 };
 use log::debug;
 
-pub fn pop<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
-    const OP: &str = "PUSH";
+pub fn pop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "POP";
     debug!("op:{}", OP);
-    let instruction_set = host.instruction_set();
-    for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_drop();
-    }
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "PUSH";
     let ip = translator.instruction_pointer;
     let data = unsafe { core::slice::from_raw_parts(ip, N) };
-    debug!("op:{}{} data:{:x?}", OP, N, data);
+    debug!("op:{}{} data:{:?}", OP, N, data);
 
     let instruction_set = host.instruction_set();
 
@@ -37,11 +36,28 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         return;
     }
     let data_padded = data_padded.unwrap();
-    // in LE chunks
-    for bytes in iterate_over_wasm_i64_chunks(&data_padded).rev() {
-        let v = i64::from_be_bytes(bytes.try_into().unwrap());
-        instruction_set.op_i64_const(v);
+
+    let is = host.instruction_set();
+    for i in 1..=4 {
+        is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+        is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+        is.op_i64_load(0);
+        is.op_i64_sub();
+        is.op_i64_const(8 * i);
+        is.op_i64_sub();
     }
+    for chunk in data_padded.chunks(8) {
+        let v = i64::from_le_bytes(chunk.try_into().unwrap());
+        is.op_i64_const(v);
+        is.op_i64_store(0);
+    }
+    // TODO compute new SP and update it in memory
+    is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+    is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+    is.op_i64_load(0);
+    is.op_i64_const(32);
+    is.op_i64_add();
+    is.op_i64_store(0);
 
     translator.instruction_pointer = unsafe { ip.add(N) };
     translator.instruction_result = InstructionResult::Continue;

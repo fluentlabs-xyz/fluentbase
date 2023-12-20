@@ -1,4 +1,5 @@
 use crate::{BufferDecoder, BufferEncoder, Encoder};
+use alloc::vec::Vec;
 use core::hash::Hash;
 use hashbrown::{HashMap, HashSet};
 

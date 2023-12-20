@@ -5,6 +5,7 @@ pub mod compiler;
 
 #[cfg(test)]
 mod compiler_tests;
+pub(crate) mod consts;
 pub mod macros;
 pub mod primitives;
 pub mod translator;
