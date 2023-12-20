@@ -15,14 +15,16 @@ pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn address<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn address<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADDRESS";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn caller<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn caller<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLER";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn codesize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -45,9 +47,10 @@ pub fn calldatasize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn callvalue<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn callvalue<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLVALUE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn calldatacopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

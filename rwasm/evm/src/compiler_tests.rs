@@ -8,8 +8,11 @@ mod evm_to_rwasm_tests {
             instructions::opcode::{
                 ADD,
                 ADDMOD,
+                ADDRESS,
                 AND,
                 BYTE,
+                CALLER,
+                CALLVALUE,
                 DIV,
                 EQ,
                 EXP,
@@ -40,6 +43,7 @@ mod evm_to_rwasm_tests {
         },
     };
     use alloy_primitives::{hex, Bytes};
+    use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
     use fluentbase_rwasm::rwasm::{
         BinaryFormat,
@@ -47,6 +51,7 @@ mod evm_to_rwasm_tests {
         InstructionSet,
         ReducedModule,
     };
+    use fluentbase_sdk::evm::{Address, ContractInput};
     use log::debug;
 
     #[derive(Clone)]
@@ -104,18 +109,20 @@ mod evm_to_rwasm_tests {
 
     fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
         let mut evm_bytecode: Vec<u8> = vec![];
-        evm_bytecode.push(PUSH32);
         match case {
             Case::NoArgs(args) => {}
             Case::Unary(args) => {
+                evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.0.clone());
             }
             Case::Binary(args) => {
+                evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.0.clone());
                 evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.1.clone());
             }
             Case::Ternary(args) => {
+                evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.0.clone());
                 evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.1.clone());
@@ -217,7 +224,14 @@ mod evm_to_rwasm_tests {
 
         let mut global_memory = vec![0u8; virtual_stack_top];
         let mut global_memory_len: usize = 0;
-        let ctx = RuntimeContext::new(rwasm_binary);
+        let mut ctx = RuntimeContext::new(rwasm_binary);
+
+        // TODO make customizable
+        let mut contract_input = ContractInput::default();
+        contract_input.contract_caller = Address::new([1u8; 20]);
+        let ci = contract_input.encode_to_vec(0);
+        ctx = ctx.with_input(ci);
+
         let runtime = Runtime::new(ctx, &import_linker);
         let result = runtime.unwrap().call();
         // let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
@@ -1493,6 +1507,31 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn address() {
+        let cases = [Case::NoArgs(x(
+            "123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
+        ))];
+
+        test_op_cases(ADDRESS, None, &cases, true, None);
+    }
+
+    #[test]
+    fn caller() {
+        let cases = [Case::NoArgs(x(
+            "123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
+        ))];
+
+        test_op_cases(CALLER, None, &cases, true, None);
+    }
+
+    // #[test]
+    // fn callvalue() {
+    //     let cases = [Case::NoArgs(x(""))];
+    //
+    //     test_op_cases(CALLVALUE, None, &cases, true, None);
+    // }
+
+    #[test]
     fn keccak256() {
         let cases = [(
             compile_binary_op(
@@ -1520,15 +1559,6 @@ mod evm_to_rwasm_tests {
 
         test_op_cases(POP, None, &cases, true, None);
     }
-
-    // #[test]
-    // fn address() {
-    //     let cases = [Case::NoArgs(x(
-    //         "123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
-    //     ))];
-    //
-    //     test_op_cases(ADDRESS, None, &cases, true, None);
-    // }
 
     #[test]
     fn compound_add() {

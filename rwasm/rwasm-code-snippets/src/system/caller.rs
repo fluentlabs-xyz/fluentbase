@@ -1,9 +1,6 @@
-use fluentbase_sdk::{EvmPlatformSDK, SDK};
+use fluentbase_sdk::evm::ExecutionContext;
 
 #[no_mangle]
 fn system_caller() -> [u8; 20] {
-    let mut res = [0u8; 20];
-    let v = SDK::evm_caller();
-    res.copy_from_slice(v.as_slice());
-    res
+    ExecutionContext::contract_caller().into_array()
 }

@@ -38,14 +38,12 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
 ) {
     preprocess_op_params(translator, host);
 
-    let instruction_set = host.instruction_set();
-    let opcode = translator.opcode_prev();
-    let subroutine_data = translator
-        .subroutine_data(opcode)
-        .expect(format!("subroutine data not found for opcode 0x{:x?}", opcode).as_str());
+    let is = host.instruction_set();
+    let op = translator.opcode_prev();
+    let sd = translator
+        .subroutine_data(op)
+        .expect(format!("subroutine data not found for opcode 0x{:x?}", op).as_str());
 
-    let subroutine_entry = subroutine_data.begin_offset as i32 - instruction_set.len() as i32
-        + 1
-        + subroutine_data.rel_entry_offset as i32;
-    instruction_set.op_br(subroutine_entry);
+    let se = sd.begin_offset as i32 - is.len() as i32 + 1 + sd.rel_entry_offset as i32;
+    is.op_br(se);
 }

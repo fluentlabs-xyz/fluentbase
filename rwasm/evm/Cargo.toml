@@ -6,15 +6,15 @@ edition = "2021"
 [dependencies]
 fluentbase-rwasm = { path = ".." }
 fluentbase-runtime = { path = "../../runtime" }
+fluentbase-sdk = { path = "../../sdk" }
+fluentbase-codec = { path = "../../codec", default-features = false }
 
 #[dev-dependencies]
 ctor = "0.2.5"
 env_logger = "0.10.1"
 log = "0.4.20"
 
-alloy-primitives = { version = "0.4", default-features = false, features = [
-    "rlp",
-] }
+alloy-primitives = { workspace = true }
 hashbrown = "0.14"
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 wat = "1.0.80"

@@ -67,23 +67,6 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 
 [[package]]
 name = "alloy-primitives"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0628ec0ba5b98b3370bb6be17b12f23bfce8ee4ad83823325a20546d9b03b78"
-dependencies = [
- "alloy-rlp",
- "bytes",
- "cfg-if 1.0.0",
- "const-hex",
- "derive_more",
- "hex-literal",
- "itoa",
- "ruint",
- "tiny-keccak",
-]
-
-[[package]]
-name = "alloy-primitives"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08ca2c09d5911548a5cb620382ea0e1af99d3c898ce0efecbbd274a4676cf53e"
@@ -137,7 +120,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f81aa34725607be118c395d62c1d8d97c8a343dd1ada5370ed508ed5232eab6a"
 dependencies = [
- "alloy-primitives 0.5.2",
+ "alloy-primitives",
  "alloy-sol-macro",
  "const-hex",
 ]
@@ -1638,7 +1621,7 @@ dependencies = [
 name = "fluentbase-codec"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.5.2",
+ "alloy-primitives",
  "byteorder",
  "casey",
  "hashbrown 0.14.3",
@@ -1768,12 +1751,14 @@ dependencies = [
 name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.4.2",
+ "alloy-primitives",
  "bitvec 1.0.1",
  "ctor",
  "env_logger",
+ "fluentbase-codec",
  "fluentbase-runtime",
  "fluentbase-rwasm",
+ "fluentbase-sdk",
  "hashbrown 0.14.3",
  "hex",
  "log",
@@ -1784,7 +1769,7 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.5.2",
+ "alloy-primitives",
  "byteorder",
  "eth_trie",
  "fluentbase-codec",
