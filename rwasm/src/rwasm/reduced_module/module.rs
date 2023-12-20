@@ -157,6 +157,8 @@ impl ReducedModule {
             .unwrap();
         // set 0 function as an entrypoint (it goes right after import section)
         let main_index = import_mapping.len() as u32;
+        #[cfg(feature = "e2e")]
+        builder.set_start(FuncIdx::from(main_index));
         builder
             .push_export(
                 "main".to_string().into_boxed_str(),

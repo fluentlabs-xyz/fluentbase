@@ -621,11 +621,6 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
-        instance
-            .get_func(&mut self.store, "main")
-            .unwrap()
-            .call(&mut self.store, &[], &mut [])
-            .unwrap();
         if let Some(name) = name {
             self.instances.insert(name.to_string(), instance);
         }
@@ -761,11 +756,6 @@ impl TestContext<'_> {
             .linker
             .instantiate(&mut self.store, &module)?
             .start(&mut self.store)?;
-        instance
-            .get_func(&mut self.store, "main")
-            .unwrap()
-            .call(&mut self.store, &[], &mut [])
-            .unwrap();
         self.last_instance = Some(instance);
         Ok(instance)
     }
