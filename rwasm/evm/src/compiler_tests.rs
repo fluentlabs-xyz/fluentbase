@@ -12,6 +12,7 @@ mod evm_to_rwasm_tests {
                 AND,
                 BYTE,
                 CALLER,
+                CALLVALUE,
                 DIV,
                 EQ,
                 EXP,
@@ -1507,30 +1508,32 @@ mod evm_to_rwasm_tests {
         test_op_cases(MSTORE8, None, &cases, true, Some(0));
     }
 
-    // #[test]
-    // fn address() {
-    //     let cases = [Case::NoArgs(x(
-    //         "123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
-    //     ))];
-    //
-    //     test_op_cases(ADDRESS, None, &cases, true, None);
-    // }
+    #[test]
+    fn address() {
+        let cases = [Case::NoArgs(x(
+            "0000000000000000000000000202020202020202020202020202020202020202",
+        ))];
 
-    // #[test]
-    // fn caller() {
-    //     let cases = [Case::NoArgs(x(
-    //         "123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234",
-    //     ))];
-    //
-    //     test_op_cases(CALLER, None, &cases, true, None);
-    // }
+        test_op_cases(ADDRESS, None, &cases, false, None);
+    }
 
-    // #[test]
-    // fn callvalue() {
-    //     let cases = [Case::NoArgs(x(""))];
-    //
-    //     test_op_cases(CALLVALUE, None, &cases, true, None);
-    // }
+    #[test]
+    fn caller() {
+        let cases = [Case::NoArgs(x(
+            "0000000000000000000000000101010101010101010101010101010101010101",
+        ))];
+
+        test_op_cases(CALLER, None, &cases, false, None);
+    }
+
+    #[test]
+    fn callvalue() {
+        let cases = [Case::NoArgs(x(
+            "0303030303030303030303030303030303030303030303030303030303030303",
+        ))];
+
+        test_op_cases(CALLVALUE, None, &cases, false, None);
+    }
 
     #[test]
     fn keccak256() {
