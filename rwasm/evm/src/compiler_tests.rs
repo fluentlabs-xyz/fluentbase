@@ -1561,6 +1561,25 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn compound_or() {
+        let mut preamble = vec![];
+        // 1|0=1
+        preamble.extend(compile_binary_op(
+            OR,
+            &x("0000000000000000000000000000000000000000000000000000000000000001"),
+            &x("0000000000000000000000000000000000000000000000000000000000000000"),
+        ));
+        // 1|2=3
+        preamble.push(OR);
+        let cases = &[Case::Unary((
+            x("0000000000000000000000000000000000000000000000000000000000000002"),
+            x("0000000000000000000000000000000000000000000000000000000000000003"),
+        ))];
+
+        test_op_cases(OR, Some(&preamble), cases, false, None);
+    }
+
+    #[test]
     fn compound_add() {
         let mut preamble = vec![];
         preamble.extend(compile_binary_op(
