@@ -5,28 +5,10 @@ use std::collections::HashMap;
 #[derive(Default)]
 struct EvmContext {
     storage: HashMap<[u8; 32], [u8; 32]>,
-    caller: Address,
-    value: U256,
-    address: Address,
 }
 
 lazy_static::lazy_static! {
     static ref CONTEXT: std::sync::Mutex<EvmContext> = std::sync::Mutex::new(EvmContext::default());
-}
-
-#[allow(dead_code)]
-impl SDK {
-    pub fn with_caller(value: Address) {
-        CONTEXT.lock().unwrap().caller = value;
-    }
-
-    pub fn with_callvalue(value: U256) {
-        CONTEXT.lock().unwrap().value = value;
-    }
-
-    pub fn with_address(value: Address) {
-        CONTEXT.lock().unwrap().address = value;
-    }
 }
 
 const EMPTY_SLOT: [u8; 32] = [0; 32];
@@ -46,18 +28,6 @@ impl EvmPlatformSDK for SDK {
         let mut value32: [u8; 32] = [0; 32];
         value32.copy_from_slice(value);
         CONTEXT.lock().unwrap().storage.insert(key32, value32);
-    }
-
-    fn evm_caller() -> Address {
-        CONTEXT.lock().unwrap().caller
-    }
-
-    fn evm_callvalue() -> U256 {
-        CONTEXT.lock().unwrap().value
-    }
-
-    fn evm_address() -> Address {
-        CONTEXT.lock().unwrap().address
     }
 }
 

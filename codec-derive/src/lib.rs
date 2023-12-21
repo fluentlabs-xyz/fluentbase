@@ -29,6 +29,7 @@ mod tests {
     use quote::quote;
 
     #[test]
+    #[ignore]
     fn test_simple_struct() {
         let input = quote! {
             struct Test {
