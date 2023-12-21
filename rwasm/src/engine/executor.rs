@@ -275,6 +275,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             };
             let consumed_fuel = self.ctx.fuel().fuel_consumed();
             let stack = self.value_stack.dump_stack(self.sp);
+            // println!("pc {} instr {:?} stack {:?}", self.ip.pc(), instr, stack);
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
                 instr,
@@ -1094,7 +1095,8 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn visit_br_indirect(&mut self, offset: BranchOffset) -> Result<(), TrapCode> {
         // assert_eq!(offset.to_i32(), 0);
-        let return_pointer = self.sp.pop_as::<i32>() + offset.to_i32();
+        let sp = self.sp.pop_as::<i32>();
+        let return_pointer = sp + offset.to_i32();
         // let return_pointer = self.sp.nth_back(offset.to_i32() as usize);
         // let drop_keep = DropKeep::new(1, offset.to_i32() as usize).unwrap();
         // self.sp.drop_keep(drop_keep);
@@ -1105,6 +1107,13 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .ok_or(TrapCode::IndirectCallToNull)?;
 
         let offset_result = return_pointer - self.ip.pc() as i32;
+        println!(
+            "visit_br_indirect: pc {} offset {} return_pointer {} offset_result {}",
+            self.ip.pc(),
+            offset.to_i32(),
+            return_pointer,
+            offset_result,
+        );
         self.branch_to(offset_result.into());
 
         Ok(())
