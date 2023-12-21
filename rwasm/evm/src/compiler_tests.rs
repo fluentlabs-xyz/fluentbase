@@ -54,6 +54,10 @@ mod evm_to_rwasm_tests {
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
     use log::debug;
 
+    static CONTRACT_ADDRESS: [u8; 20] = [1u8; 20];
+    static CONTRACT_CALLER: [u8; 20] = [2u8; 20];
+    static CONTRACT_VALUE: [u8; 32] = [3u8; 32];
+
     #[derive(Clone)]
     enum Case {
         NoArgs(Vec<u8>),
@@ -83,18 +87,6 @@ mod evm_to_rwasm_tests {
         evm_bytecode.extend(a);
         evm_bytecode.push(PUSH32);
         evm_bytecode.extend(b);
-        evm_bytecode.push(opcode);
-        evm_bytecode
-    }
-
-    fn compile_ternary_op(opcode: u8, a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
-        let mut evm_bytecode: Vec<u8> = vec![];
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(a);
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(b);
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(c);
         evm_bytecode.push(opcode);
         evm_bytecode
     }
@@ -228,9 +220,9 @@ mod evm_to_rwasm_tests {
 
         // TODO make it customizable
         let mut contract_input = ContractInput::default();
-        contract_input.contract_caller = Address::new([1u8; 20]);
-        contract_input.contract_address = Address::new([2u8; 20]);
-        contract_input.contract_value = U256::from_be_bytes([3u8; 32]);
+        contract_input.contract_address = Address::new(CONTRACT_ADDRESS);
+        contract_input.contract_caller = Address::new(CONTRACT_CALLER);
+        contract_input.contract_value = U256::from_be_bytes(CONTRACT_VALUE);
         let ci = contract_input.encode_to_vec(0);
         ctx = ctx.with_input(ci);
 
@@ -1509,28 +1501,30 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn address() {
-        let cases = [Case::NoArgs(x(
-            "0000000000000000000000000202020202020202020202020202020202020202",
-        ))];
-
-        test_op_cases(ADDRESS, None, &cases, false, None);
-    }
-
-    #[test]
     fn caller() {
-        let cases = [Case::NoArgs(x(
-            "0000000000000000000000000101010101010101010101010101010101010101",
-        ))];
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
+            v.extend(&CONTRACT_CALLER);
+            v
+        })];
 
         test_op_cases(CALLER, None, &cases, false, None);
     }
 
     #[test]
+    fn address() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
+            v.extend(&CONTRACT_ADDRESS);
+            v
+        })];
+
+        test_op_cases(ADDRESS, None, &cases, false, None);
+    }
+
+    #[test]
     fn callvalue() {
-        let cases = [Case::NoArgs(x(
-            "0303030303030303030303030303030303030303030303030303030303030303",
-        ))];
+        let cases = [Case::NoArgs(CONTRACT_VALUE.to_vec())];
 
         test_op_cases(CALLVALUE, None, &cases, false, None);
     }
