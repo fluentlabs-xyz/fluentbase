@@ -1,25 +1,33 @@
-use crate::translator::host::Host;
-use crate::translator::translator::Translator;
+use crate::translator::{
+    host::Host,
+    instructions::utilities::replace_current_opcode_with_call_to_subroutine,
+    translator::Translator,
+};
+use log::debug;
 
 /// EIP-1344: ChainID opcode
-pub fn chainid<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn chainid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CHAINID";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn coinbase<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn coinbase<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "COINBASE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn timestamp<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn timestamp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TIMESTAMP";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn number<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn number<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "NUMBER";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn difficulty<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -27,9 +35,10 @@ pub fn difficulty<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn gaslimit<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn gaslimit<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GASLIMIT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn gasprice<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -37,9 +46,10 @@ pub fn gasprice<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn basefee<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn basefee<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BASEFEE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn origin<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

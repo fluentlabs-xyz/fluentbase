@@ -886,3 +886,9 @@ pub(crate) fn u256_tuple_le_to_be(val: U256TupleLE) -> [u8; U256_BYTES_COUNT as 
 
     r
 }
+
+pub(crate) fn u256_from_slice(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
+    let mut r = [0u8; U256_BYTES_COUNT as usize];
+    r[U256_BYTES_COUNT as usize - v.len()..].copy_from_slice(v);
+    r
+}

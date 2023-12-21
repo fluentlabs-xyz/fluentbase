@@ -1,6 +1,10 @@
 use crate::translator::{
     host::Host,
-    instructions::utilities::{wasm_call, SystemFuncs},
+    instructions::utilities::{
+        replace_current_opcode_with_call_to_subroutine,
+        wasm_call,
+        SystemFuncs,
+    },
     translator::Translator,
 };
 use log::debug;
@@ -31,9 +35,10 @@ pub fn extcodecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn blockhash<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BLOCKHASH";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
