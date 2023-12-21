@@ -443,7 +443,8 @@ impl<'linker> Compiler<'linker> {
             self.translate_sections()?;
         }
         // translate router for main index
-        self.translate_router(main_index)?;
+        // self.translate_router(main_index)?;
+        self.translate_subroutine_router(main_index)?;
         Ok(())
     }
 
@@ -485,6 +486,21 @@ impl<'linker> Compiler<'linker> {
         self.code_section.op_i32_const(return_offset);
         self.code_section.extend(&router_opcodes);
         self.code_section.op_return();
+        self.code_section.op_unreachable();
+        Ok(())
+    }
+
+    fn translate_subroutine_router(
+        &mut self,
+        main_index: FuncOrExport,
+    ) -> Result<(), CompilerError> {
+        // translate router into separate instruction set
+        let return_offset = self.code_section.len() + 2;
+        let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
+        // inject main function call with return
+        self.code_section.op_i32_const(return_offset);
+        self.code_section.op_call_internal_unsafe(func_index);
+        self.code_section.op_br_indirect(0);
         self.code_section.op_unreachable();
         Ok(())
     }
