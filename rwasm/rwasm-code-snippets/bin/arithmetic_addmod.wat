@@ -2,42 +2,42 @@
   (type (;0;) (func))
   (type (;1;) (func (param i32)))
   (type (;2;) (func (param i32 i32)))
-  (func (;0;) (type 0)
+  (func $arithmetic_addmod (type 0)
     (local i32 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
-    global.get 0
+    global.get $__stack_pointer
     i32.const 304
     i32.sub
     local.tee 0
-    global.set 0
+    global.set $__stack_pointer
     local.get 0
-    call 1
+    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h0056ba261e3317e6E
     local.get 0
     i32.const 32
     i32.add
-    call 1
+    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h0056ba261e3317e6E
     local.get 0
     i32.const 64
     i32.add
-    call 1
+    call $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h0056ba261e3317e6E
     local.get 0
     i32.const 96
     i32.add
     local.get 0
     i32.const 64
     i32.add
-    call 2
+    call $_ZN30fluentbase_rwasm_code_snippets6common19u256_be_to_tuple_le17h447f757667c83329E
     local.get 0
     i32.const 128
     i32.add
     local.get 0
     i32.const 32
     i32.add
-    call 2
+    call $_ZN30fluentbase_rwasm_code_snippets6common19u256_be_to_tuple_le17h447f757667c83329E
     local.get 0
     i32.const 160
     i32.add
     local.get 0
-    call 2
+    call $_ZN30fluentbase_rwasm_code_snippets6common19u256_be_to_tuple_le17h447f757667c83329E
     local.get 0
     i64.load offset=152
     local.set 1
@@ -1631,8 +1631,8 @@
     local.get 0
     i32.const 304
     i32.add
-    global.set 0)
-  (func (;1;) (type 1) (param i32)
+    global.set $__stack_pointer)
+  (func $_ZN30fluentbase_rwasm_code_snippets9common_sp8u256_pop17h0056ba261e3317e6E (type 1) (param i32)
     (local i64 i32)
     local.get 0
     i32.const 500
@@ -1677,7 +1677,7 @@
     i64.const 32
     i64.shr_s
     i64.store offset=500)
-  (func (;2;) (type 2) (param i32 i32)
+  (func $_ZN30fluentbase_rwasm_code_snippets6common19u256_be_to_tuple_le17h447f757667c83329E (type 2) (param i32 i32)
     (local i64)
     local.get 0
     local.get 1
@@ -1868,10 +1868,10 @@
     i64.or
     i64.store)
   (memory (;0;) 16)
-  (global (;0;) (mut i32) (i32.const 1048576))
+  (global $__stack_pointer (mut i32) (i32.const 1048576))
   (global (;1;) i32 (i32.const 1048576))
   (global (;2;) i32 (i32.const 1048576))
   (export "memory" (memory 0))
-  (export "arithmetic_addmod" (func 0))
+  (export "arithmetic_addmod" (func $arithmetic_addmod))
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2)))

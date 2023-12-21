@@ -1,9 +1,9 @@
-use fluentbase_sdk::{EvmPlatformSDK, SDK};
+use crate::common_sp::{u256_push, SP_VAL_MEM_OFFSET_DEFAULT};
+use fluentbase_sdk::evm::ExecutionContext;
 
 #[no_mangle]
-fn system_callvalue() -> [u8; 32] {
-    let mut res = [0u8; 32];
-    let v = SDK::evm_callvalue();
-    res.copy_from_slice(&v.to_be_bytes::<32>());
-    res
+fn system_callvalue() {
+    let v = ExecutionContext::contract_value().to_be_bytes();
+
+    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, v);
 }

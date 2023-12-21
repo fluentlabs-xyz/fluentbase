@@ -275,7 +275,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             };
             let consumed_fuel = self.ctx.fuel().fuel_consumed();
             let stack = self.value_stack.dump_stack(self.sp);
-            // println!("pc {} instr {:?} stack {:?}", self.ip.pc(), instr, stack);
+            // println!("pc:{} instr:{:?} stack:{:?}", self.ip.pc(), instr, stack);
             self.tracer.pre_opcode_state(
                 self.ip.pc(),
                 instr,
