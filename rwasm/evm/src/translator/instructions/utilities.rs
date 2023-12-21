@@ -44,6 +44,6 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         .subroutine_data(op)
         .expect(format!("subroutine data not found for opcode 0x{:x?}", op).as_str());
 
-    let se = sd.begin_offset as i32 - is.len() as i32 + 1/* + sd.rel_entry_offset as i32*/;
+    let se = sd.begin_offset as i32 - is.len() as i32 + 1 + sd.rel_entry_offset as i32;
     is.op_br(se);
 }

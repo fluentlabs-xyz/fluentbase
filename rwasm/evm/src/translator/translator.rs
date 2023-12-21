@@ -184,146 +184,146 @@ impl<'a> Translator<'a> {
         };
 
         [
-            // (
-            //     opcode::EXP,
-            //     "../rwasm-code-snippets/bin/arithmetic_exp.wat",
-            //     "arithmetic_exp",
-            // ),
-            // (
-            //     opcode::MOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_mod.wat",
-            //     "arithmetic_mod",
-            // ),
-            // (
-            //     opcode::SMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_smod.wat",
-            //     "arithmetic_smod",
-            // ),
-            // (
-            //     opcode::MUL,
-            //     "../rwasm-code-snippets/bin/arithmetic_mul.wat",
-            //     "arithmetic_mul",
-            // ),
-            // (
-            //     opcode::MULMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
-            //     "arithmetic_mulmod",
-            // ),
-            // (
-            //     opcode::ADD,
-            //     "../rwasm-code-snippets/bin/arithmetic_add.wat",
-            //     "arithmetic_add",
-            // ),
-            // (
-            //     opcode::ADDMOD,
-            //     "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
-            //     "arithmetic_addmod",
-            // ),
-            // (
-            //     opcode::SIGNEXTEND,
-            //     "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
-            //     "arithmetic_signextend",
-            // ),
-            // (
-            //     opcode::SUB,
-            //     "../rwasm-code-snippets/bin/arithmetic_sub.wat",
-            //     "arithmetic_sub",
-            // ),
-            // (
-            //     opcode::DIV,
-            //     "../rwasm-code-snippets/bin/arithmetic_div.wat",
-            //     "arithmetic_div",
-            // ),
-            // (
-            //     opcode::SDIV,
-            //     "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
-            //     "arithmetic_sdiv",
-            // ),
-            // (
-            //     opcode::SHL,
-            //     "../rwasm-code-snippets/bin/bitwise_shl.wat",
-            //     "bitwise_shl",
-            // ),
-            // (
-            //     opcode::SHR,
-            //     "../rwasm-code-snippets/bin/bitwise_shr.wat",
-            //     "bitwise_shr",
-            // ),
-            // (
-            //     opcode::NOT,
-            //     "../rwasm-code-snippets/bin/bitwise_not.wat",
-            //     "bitwise_not",
-            // ),
-            // (
-            //     opcode::AND,
-            //     "../rwasm-code-snippets/bin/bitwise_and.wat",
-            //     "bitwise_and",
-            // ),
+            (
+                opcode::EXP,
+                "../rwasm-code-snippets/bin/arithmetic_exp.wat",
+                "arithmetic_exp",
+            ),
+            (
+                opcode::MOD,
+                "../rwasm-code-snippets/bin/arithmetic_mod.wat",
+                "arithmetic_mod",
+            ),
+            (
+                opcode::SMOD,
+                "../rwasm-code-snippets/bin/arithmetic_smod.wat",
+                "arithmetic_smod",
+            ),
+            (
+                opcode::MUL,
+                "../rwasm-code-snippets/bin/arithmetic_mul.wat",
+                "arithmetic_mul",
+            ),
+            (
+                opcode::MULMOD,
+                "../rwasm-code-snippets/bin/arithmetic_mulmod.wat",
+                "arithmetic_mulmod",
+            ),
+            (
+                opcode::ADD,
+                "../rwasm-code-snippets/bin/arithmetic_add.wat",
+                "arithmetic_add",
+            ),
+            (
+                opcode::ADDMOD,
+                "../rwasm-code-snippets/bin/arithmetic_addmod.wat",
+                "arithmetic_addmod",
+            ),
+            (
+                opcode::SIGNEXTEND,
+                "../rwasm-code-snippets/bin/arithmetic_signextend.wat",
+                "arithmetic_signextend",
+            ),
+            (
+                opcode::SUB,
+                "../rwasm-code-snippets/bin/arithmetic_sub.wat",
+                "arithmetic_sub",
+            ),
+            (
+                opcode::DIV,
+                "../rwasm-code-snippets/bin/arithmetic_div.wat",
+                "arithmetic_div",
+            ),
+            (
+                opcode::SDIV,
+                "../rwasm-code-snippets/bin/arithmetic_sdiv.wat",
+                "arithmetic_sdiv",
+            ),
+            (
+                opcode::SHL,
+                "../rwasm-code-snippets/bin/bitwise_shl.wat",
+                "bitwise_shl",
+            ),
+            (
+                opcode::SHR,
+                "../rwasm-code-snippets/bin/bitwise_shr.wat",
+                "bitwise_shr",
+            ),
+            (
+                opcode::NOT,
+                "../rwasm-code-snippets/bin/bitwise_not.wat",
+                "bitwise_not",
+            ),
+            (
+                opcode::AND,
+                "../rwasm-code-snippets/bin/bitwise_and.wat",
+                "bitwise_and",
+            ),
             (
                 opcode::OR,
                 "../rwasm-code-snippets/bin/bitwise_or.wat",
                 "bitwise_or",
             ),
-            // (
-            //     opcode::XOR,
-            //     "../rwasm-code-snippets/bin/bitwise_xor.wat",
-            //     "bitwise_xor",
-            // ),
-            // (
-            //     opcode::EQ,
-            //     "../rwasm-code-snippets/bin/bitwise_eq.wat",
-            //     "bitwise_eq",
-            // ),
-            // (
-            //     opcode::LT,
-            //     "../rwasm-code-snippets/bin/bitwise_lt.wat",
-            //     "bitwise_lt",
-            // ),
-            // (
-            //     opcode::SLT,
-            //     "../rwasm-code-snippets/bin/bitwise_slt.wat",
-            //     "bitwise_slt",
-            // ),
-            // (
-            //     opcode::GT,
-            //     "../rwasm-code-snippets/bin/bitwise_gt.wat",
-            //     "bitwise_gt",
-            // ),
-            // (
-            //     opcode::SGT,
-            //     "../rwasm-code-snippets/bin/bitwise_sgt.wat",
-            //     "bitwise_sgt",
-            // ),
-            // (
-            //     opcode::SAR,
-            //     "../rwasm-code-snippets/bin/bitwise_sar.wat",
-            //     "bitwise_sar",
-            // ),
-            // (
-            //     opcode::BYTE,
-            //     "../rwasm-code-snippets/bin/bitwise_byte.wat",
-            //     "bitwise_byte",
-            // ),
-            // (
-            //     opcode::ISZERO,
-            //     "../rwasm-code-snippets/bin/bitwise_iszero.wat",
-            //     "bitwise_iszero",
-            // ),
-            // (
-            //     opcode::MSTORE,
-            //     "../rwasm-code-snippets/bin/memory_mstore.wat",
-            //     "memory_mstore",
-            // ),
-            // (
-            //     opcode::MSTORE8,
-            //     "../rwasm-code-snippets/bin/memory_mstore8.wat",
-            //     "memory_mstore8",
-            // ),
-            // (
-            //     opcode::POP,
-            //     "../rwasm-code-snippets/bin/stack_pop.wat",
-            //     "stack_pop",
-            // ),
+            (
+                opcode::XOR,
+                "../rwasm-code-snippets/bin/bitwise_xor.wat",
+                "bitwise_xor",
+            ),
+            (
+                opcode::EQ,
+                "../rwasm-code-snippets/bin/bitwise_eq.wat",
+                "bitwise_eq",
+            ),
+            (
+                opcode::LT,
+                "../rwasm-code-snippets/bin/bitwise_lt.wat",
+                "bitwise_lt",
+            ),
+            (
+                opcode::SLT,
+                "../rwasm-code-snippets/bin/bitwise_slt.wat",
+                "bitwise_slt",
+            ),
+            (
+                opcode::GT,
+                "../rwasm-code-snippets/bin/bitwise_gt.wat",
+                "bitwise_gt",
+            ),
+            (
+                opcode::SGT,
+                "../rwasm-code-snippets/bin/bitwise_sgt.wat",
+                "bitwise_sgt",
+            ),
+            (
+                opcode::SAR,
+                "../rwasm-code-snippets/bin/bitwise_sar.wat",
+                "bitwise_sar",
+            ),
+            (
+                opcode::BYTE,
+                "../rwasm-code-snippets/bin/bitwise_byte.wat",
+                "bitwise_byte",
+            ),
+            (
+                opcode::ISZERO,
+                "../rwasm-code-snippets/bin/bitwise_iszero.wat",
+                "bitwise_iszero",
+            ),
+            (
+                opcode::MSTORE,
+                "../rwasm-code-snippets/bin/memory_mstore.wat",
+                "memory_mstore",
+            ),
+            (
+                opcode::MSTORE8,
+                "../rwasm-code-snippets/bin/memory_mstore8.wat",
+                "memory_mstore8",
+            ),
+            (
+                opcode::POP,
+                "../rwasm-code-snippets/bin/stack_pop.wat",
+                "stack_pop",
+            ),
             // (
             //     opcode::ADDRESS,
             //     "../rwasm-code-snippets/bin/system_address.wat",
@@ -339,11 +339,11 @@ impl<'a> Translator<'a> {
             //     "../rwasm-code-snippets/bin/system_callvalue.wat",
             //     "system_callvalue",
             // ),
-            // (
-            //     opcode::KECCAK256,
-            //     "../rwasm-code-snippets/bin/system_keccak.wat",
-            //     "system_keccak",
-            // ),
+            (
+                opcode::KECCAK256,
+                "../rwasm-code-snippets/bin/system_keccak.wat",
+                "system_keccak",
+            ),
         ]
         .map(|v| {
             let opcode = v.0;
