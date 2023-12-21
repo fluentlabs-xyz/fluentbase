@@ -10,12 +10,18 @@ mod evm_to_rwasm_tests {
                 ADDMOD,
                 ADDRESS,
                 AND,
+                BASEFEE,
+                BLOCKHASH,
                 BYTE,
                 CALLER,
                 CALLVALUE,
+                CHAINID,
+                CODESIZE,
+                COINBASE,
                 DIV,
                 EQ,
                 EXP,
+                GASLIMIT,
                 GT,
                 ISZERO,
                 KECCAK256,
@@ -26,6 +32,7 @@ mod evm_to_rwasm_tests {
                 MUL,
                 MULMOD,
                 NOT,
+                NUMBER,
                 OR,
                 POP,
                 PUSH32,
@@ -38,11 +45,12 @@ mod evm_to_rwasm_tests {
                 SLT,
                 SMOD,
                 SUB,
+                TIMESTAMP,
                 XOR,
             },
         },
     };
-    use alloy_primitives::{hex, Bytes};
+    use alloy_primitives::{hex, Bytes, B256};
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
     use fluentbase_rwasm::rwasm::{
@@ -54,9 +62,17 @@ mod evm_to_rwasm_tests {
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
     use log::debug;
 
-    static CONTRACT_ADDRESS: [u8; 20] = [1u8; 20];
-    static CONTRACT_CALLER: [u8; 20] = [2u8; 20];
-    static CONTRACT_VALUE: [u8; 32] = [3u8; 32];
+    static CONTRACT_ADDRESS: [u8; 20] = [1u8; 20]; // Address - 20 bytes
+    static CONTRACT_CALLER: [u8; 20] = [2u8; 20]; // Address - 20 bytes
+    static CONTRACT_VALUE: [u8; 32] = [3u8; 32]; // U256 - 32 bytes
+    static SYSTEM_CODESIZE: [u8; 4] = [4u8; 4]; // u32 - 4 bytes
+    static HOST_CHAINID: [u8; 8] = [5u8; 8]; // u64 - 8 bytes
+    static HOST_BASEFEE: [u8; 32] = [6u8; 32]; // U256 - 32 bytes
+    static HOST_BLOCKHASH: [u8; 32] = [7u8; 32]; // B256 - 32 bytes
+    static HOST_COINBASE: [u8; 20] = [8u8; 20]; // Address - 20 bytes
+    static HOST_GASLIMIT: [u8; 8] = [9u8; 8]; // u64 - 8 bytes
+    static HOST_NUMBER: [u8; 8] = [10u8; 8]; // u64 - 8 bytes
+    static HOST_TIMESTAMP: [u8; 8] = [11u8; 8]; // u64 - 8 bytes
 
     #[derive(Clone)]
     enum Case {
@@ -223,6 +239,14 @@ mod evm_to_rwasm_tests {
         contract_input.contract_address = Address::new(CONTRACT_ADDRESS);
         contract_input.contract_caller = Address::new(CONTRACT_CALLER);
         contract_input.contract_value = U256::from_be_bytes(CONTRACT_VALUE);
+        contract_input.contract_code_size = u32::from_be_bytes(SYSTEM_CODESIZE);
+        contract_input.env_chain_id = u64::from_be_bytes(HOST_CHAINID);
+        contract_input.block_base_fee = U256::from_be_bytes(HOST_BASEFEE);
+        contract_input.block_hash = B256::new(HOST_BLOCKHASH);
+        contract_input.block_coinbase = Address::from(HOST_COINBASE);
+        contract_input.block_gas_limit = u64::from_be_bytes(HOST_GASLIMIT);
+        contract_input.block_number = u64::from_be_bytes(HOST_NUMBER);
+        contract_input.block_timestamp = u64::from_be_bytes(HOST_TIMESTAMP);
         let ci = contract_input.encode_to_vec(0);
         ctx = ctx.with_input(ci);
 
@@ -1546,6 +1570,87 @@ mod evm_to_rwasm_tests {
         for case in cases {
             test_op_cases(KECCAK256, Some(&case.0), &[case.1.clone()], false, None);
         }
+    }
+
+    #[test]
+    fn codesize() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - SYSTEM_CODESIZE.len()];
+            v.extend(&SYSTEM_CODESIZE);
+            v
+        })];
+
+        test_op_cases(CODESIZE, None, &cases, false, None);
+    }
+    #[test]
+    fn chainid() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_CHAINID.len()];
+            v.extend(&HOST_CHAINID);
+            v
+        })];
+
+        test_op_cases(CHAINID, None, &cases, false, None);
+    }
+    #[test]
+    fn basefee() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_BASEFEE.len()];
+            v.extend(&HOST_BASEFEE);
+            v
+        })];
+
+        test_op_cases(BASEFEE, None, &cases, false, None);
+    }
+    #[test]
+    fn blockhash() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_BLOCKHASH.len()];
+            v.extend(&HOST_BLOCKHASH);
+            v
+        })];
+
+        test_op_cases(BLOCKHASH, None, &cases, false, None);
+    }
+    #[test]
+    fn coinbase() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_COINBASE.len()];
+            v.extend(&HOST_COINBASE);
+            v
+        })];
+
+        test_op_cases(COINBASE, None, &cases, false, None);
+    }
+    #[test]
+    fn gaslimit() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_GASLIMIT.len()];
+            v.extend(&HOST_GASLIMIT);
+            v
+        })];
+
+        test_op_cases(GASLIMIT, None, &cases, false, None);
+    }
+    #[test]
+    fn number() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_NUMBER.len()];
+            v.extend(&HOST_NUMBER);
+            v
+        })];
+
+        test_op_cases(NUMBER, None, &cases, false, None);
+    }
+    #[test]
+    fn timestamp() {
+        let cases = [Case::NoArgs({
+            let mut v = vec![0; 32 - HOST_TIMESTAMP.len()];
+            v.extend(&HOST_TIMESTAMP);
+            v
+        })];
+
+        test_op_cases(TIMESTAMP, None, &cases, false, None);
     }
 
     #[test]

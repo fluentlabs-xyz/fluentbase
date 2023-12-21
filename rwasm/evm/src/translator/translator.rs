@@ -272,6 +272,38 @@ impl<'a> Translator<'a> {
                 opcode::CALLVALUE,
                 "../rwasm-code-snippets/bin/system_callvalue.rwasm",
             ),
+            (
+                opcode::CODESIZE,
+                "../rwasm-code-snippets/bin/system_codesize.rwasm",
+            ),
+            (
+                opcode::CHAINID,
+                "../rwasm-code-snippets/bin/host_chainid.rwasm",
+            ),
+            (
+                opcode::BASEFEE,
+                "../rwasm-code-snippets/bin/host_basefee.rwasm",
+            ),
+            (
+                opcode::BLOCKHASH,
+                "../rwasm-code-snippets/bin/host_blockhash.rwasm",
+            ),
+            (
+                opcode::COINBASE,
+                "../rwasm-code-snippets/bin/host_coinbase.rwasm",
+            ),
+            (
+                opcode::GASLIMIT,
+                "../rwasm-code-snippets/bin/host_gaslimit.rwasm",
+            ),
+            (
+                opcode::NUMBER,
+                "../rwasm-code-snippets/bin/host_number.rwasm",
+            ),
+            (
+                opcode::TIMESTAMP,
+                "../rwasm-code-snippets/bin/host_timestamp.rwasm",
+            ),
         ]
         .map(|v| {
             let opcode = v.0;

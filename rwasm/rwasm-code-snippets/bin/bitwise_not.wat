@@ -1,10 +1,10 @@
 (module
   (type (;0;) (func))
-  (func (;0;) (type 0)
+  (func $bitwise_not (type 0)
     (local i32 i32 i64 i32 i32)
     i32.const 0
     local.set 0
-    global.get 0
+    global.get $__stack_pointer
     i32.const 32
     i32.sub
     local.tee 1
@@ -98,10 +98,10 @@
       br 0 (;@1;)
     end)
   (memory (;0;) 16)
-  (global (;0;) (mut i32) (i32.const 1048576))
+  (global $__stack_pointer (mut i32) (i32.const 1048576))
   (global (;1;) i32 (i32.const 1048576))
   (global (;2;) i32 (i32.const 1048576))
   (export "memory" (memory 0))
-  (export "bitwise_not" (func 0))
+  (export "bitwise_not" (func $bitwise_not))
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2)))
