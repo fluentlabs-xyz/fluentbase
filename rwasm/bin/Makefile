@@ -9,16 +9,8 @@ all: $(FILES)
 
 TARGET=wasm32-unknown-unknown
 PROFILE=release
+TEST_CASE=arithmetic_sdiv
 
 .PHONY: $(FILES)
 $(FILES):
-	set -ex
-	cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
-	mkdir -p bin
-	#clang stack.s -c --target=wasm32-unknown-unknown
-	#wasm-ld --stack-first --allow-undefined --no-entry --export=$@ ../../target/${TARGET}/${PROFILE}/libfluentbase_rwasm_code_snippets.a ./stack.o -o ./bin/$@.wasm
-	#wasm2wat ./bin/$@.wasm > ./bin/$@.wat
-	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
-
-clean:
-	cargo clean
+	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --file-in-path=/home/bfday/gitANKR/wasm0/fluentbase/rwasm/rwasm-code-snippets/bin/$@.wat
