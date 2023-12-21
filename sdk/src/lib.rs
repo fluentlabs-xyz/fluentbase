@@ -2,7 +2,7 @@
 #![feature(inherent_associated_types)]
 
 extern crate alloc;
-extern crate wee_alloc;
+extern crate lol_alloc;
 
 #[cfg(feature = "runtime")]
 mod runtime;
@@ -13,7 +13,7 @@ mod rwasm;
 pub mod evm;
 
 #[cfg(feature = "evm")]
-use evm::{Address, U256};
+use evm::U256;
 
 pub struct SDK;
 
@@ -79,9 +79,6 @@ pub trait ZktriePlatformSDK {
 pub trait EvmPlatformSDK {
     fn evm_sload(key: &[u8], value: &mut [u8]);
     fn evm_sstore(key: &[u8], value: &[u8]);
-    fn evm_caller() -> Address;
-    fn evm_callvalue() -> U256;
-    fn evm_address() -> Address;
 }
 
 #[cfg(not(feature = "runtime"))]
@@ -97,4 +94,4 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(not(feature = "runtime"))]
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+static ALLOC: lol_alloc::LeakingPageAllocator = lol_alloc::LeakingPageAllocator;

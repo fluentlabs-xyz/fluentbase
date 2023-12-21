@@ -1,6 +1,6 @@
 use alloy_sol_types::{sol, SolCall, SolType, SolValue};
 use fluentbase_sdk::{
-    evm::{Address, Bytes, U256},
+    evm::{Address, Bytes, ContractInput, ExecutionContext, U256},
     CryptoPlatformSDK,
     EvmPlatformSDK,
     SysPlatformSDK,
@@ -39,7 +39,7 @@ fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
 }
 
 pub fn deploy() {
-    let owner_address = SDK::evm_caller();
+    let owner_address = ExecutionContext::contract_caller();
     let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
     // mint balance to owner
     let storage_key = storage_mapping_key(&STORAGE_BALANCES, owner_address.abi_encode().as_slice());
@@ -76,7 +76,7 @@ impl ERC20 {
 
     fn transfer(to: Address, value: U256) -> U256 {
         // sender is a caller
-        let from = SDK::evm_caller();
+        let from = ExecutionContext::contract_caller();
         // check from/to addresses
         if from.is_zero() {
             panic!("invalid sender");
@@ -119,9 +119,8 @@ macro_rules! forward_evm_call {
     ($func_type:ty, $input:expr, $fn_name:expr, 1) => {{
         let args_length =
             <<$func_type as SolCall>::Parameters<'_> as SolType>::ENCODED_SIZE.unwrap_or_default();
-        SDK::sys_read(&mut $input[0..args_length], 4);
         let input =
-            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input, false)
+            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input[4..], false)
                 .unwrap();
         let output = $fn_name(input.0);
         SDK::sys_write(output.abi_encode().as_slice());
@@ -129,9 +128,8 @@ macro_rules! forward_evm_call {
     ($func_type:ty, $input:expr, $fn_name:expr, 2) => {{
         let args_length =
             <<$func_type as SolCall>::Parameters<'_> as SolType>::ENCODED_SIZE.unwrap_or_default();
-        SDK::sys_read(&mut $input[0..args_length], 4);
         let input =
-            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input, false)
+            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input[4..], false)
                 .unwrap();
         let output = $fn_name(input.0, input.1);
         SDK::sys_write(output.abi_encode().as_slice());
@@ -139,16 +137,16 @@ macro_rules! forward_evm_call {
 }
 
 pub fn main() {
+    let input = ExecutionContext::contract_input();
     let mut selector: [u8; 4] = [0; 4];
-    SDK::sys_read(&mut selector, 0);
+    selector.copy_from_slice(&input[0..4]);
     // max number of inputs is 3 for ERC20 contract
-    let mut input: [u8; 3 * 32] = [0; 3 * 32];
     match selector {
-        nameCall::SELECTOR => forward_evm_call!(balanceOfCall, input, ERC20::name, 0),
-        symbolCall::SELECTOR => forward_evm_call!(balanceOfCall, input, ERC20::symbol, 0),
-        decimalsCall::SELECTOR => forward_evm_call!(balanceOfCall, input, ERC20::decimals, 0),
+        nameCall::SELECTOR => forward_evm_call!(nameCall, input, ERC20::name, 0),
+        symbolCall::SELECTOR => forward_evm_call!(symbolCall, input, ERC20::symbol, 0),
+        decimalsCall::SELECTOR => forward_evm_call!(decimalsCall, input, ERC20::decimals, 0),
         totalSupplyCall::SELECTOR => {
-            forward_evm_call!(balanceOfCall, input, ERC20::total_supply, 0)
+            forward_evm_call!(totalSupplyCall, input, ERC20::total_supply, 0)
         }
         balanceOfCall::SELECTOR => forward_evm_call!(balanceOfCall, input, ERC20::balance_of, 1),
         transferCall::SELECTOR => forward_evm_call!(transferCall, input, ERC20::transfer, 2),
@@ -159,27 +157,44 @@ pub fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
+    use fluentbase_codec::Encoder;
     use fluentbase_sdk::SDK;
     use hex_literal::hex;
+    use serial_test::serial;
 
+    fn with_test_input(input: Vec<u8>, caller: Option<Address>) {
+        let mut contract_input = ContractInput::default();
+        contract_input.contract_input = input;
+        contract_input.contract_caller = caller.unwrap_or_default();
+        SDK::with_test_input(contract_input.encode_to_vec(0));
+    }
+
+    #[serial]
     #[test]
     pub fn test_total_supply() {
+        with_test_input(vec![], None);
         deploy();
-        SDK::with_test_input(hex!("18160ddd").to_vec());
+        with_test_input(hex!("18160ddd").to_vec(), None);
         main();
     }
 
+    #[serial]
     #[test]
     pub fn test_balance_of() {
+        with_test_input(
+            vec![],
+            Some(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266").into()),
+        );
         deploy();
-        SDK::with_test_input(
+        with_test_input(
             hex!("70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
                 .to_vec(),
+            None,
         );
         main();
         let result = SDK::get_test_output();
         assert_eq!(
-            U256::from_le_slice(&result).to_string(),
+            U256::from_be_slice(&result).to_string(),
             "1000000000000000000000000",
         );
     }
@@ -187,25 +202,26 @@ mod test {
     fn get_balance(address: Address) -> U256 {
         let mut input = hex!("70a08231").to_vec();
         input.extend(address.abi_encode());
-        SDK::with_test_input(input);
+        with_test_input(input, None);
         main();
         let result = SDK::get_test_output();
         U256::abi_decode(&result, false).unwrap()
     }
 
+    #[serial]
     #[test]
     pub fn test_transfer() {
         let from = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let to = Address::from(hex!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"));
         let value = U256::from_str_radix("100000000000000000000", 10).unwrap();
         // run constructor
-        SDK::with_caller(from);
+        with_test_input(vec![], Some(from));
         deploy();
         // check balances
         assert_eq!(get_balance(from).to_string(), "1000000000000000000000000");
         assert_eq!(get_balance(to).to_string(), "0");
         // transfer funds (100 tokens)
-        SDK::with_test_input(transferCall { to, value }.abi_encode());
+        with_test_input(transferCall { to, value }.abi_encode(), Some(from));
         main();
         SDK::get_test_output();
         // check balances again

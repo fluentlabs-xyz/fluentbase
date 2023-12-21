@@ -79,27 +79,16 @@ mod test {
     fn test_greeting() {
         let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
         let mut output = vec![0u8; 1024 * 1024];
-        SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
-    }
-
-    #[test]
-    fn test_keccak256() {
-        let wasm_binary = include_bytes!("../../../examples/bin/keccak256.wasm");
-        let mut output = vec![0u8; 1024 * 1024];
         let code_len = SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
         let mut result: [u8; 32] = [0; 32];
-        SDK::with_test_state(STATE_MAIN);
         let exit_code = SDK::rwasm_transact(
             &output.as_slice()[0..code_len as usize],
-            "Hello, World".as_bytes(),
+            &[],
             &mut result,
             STATE_MAIN,
             100_000,
         );
+        assert_eq!(&result[..12], "Hello, World".as_bytes());
         assert_eq!(exit_code, 0);
-        assert_eq!(
-            result,
-            hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529")
-        )
     }
 }

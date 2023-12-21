@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #revm = { version = "3.3.0", default-features = false }
@@ -15,10 +16,11 @@ fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #wat = "1.0.77"
 alloy-sol-types = { version = "0.5.1", default-features = false }
 byteorder = { workspace = true }
-hex-literal = "0.4.1"
 
 [dev-dependencies]
+hex-literal = "0.4.1"
 hex = "0.4.3"
+serial_test = "2.0.0"
 wat = "1.0.77"
 
 [lib]
@@ -31,6 +33,7 @@ opt-level = 'z'
 strip = true
 
 [features]
+default = ["std"]
 std = [
     "fluentbase-sdk/runtime"
 ]
