@@ -37,7 +37,7 @@ macro_rules! derive_types {
     ($field_offset:expr,) => {};
     ($field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
         paste::paste! {
-            type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
+            pub type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
         }
         $crate::derive_types!($field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
     };

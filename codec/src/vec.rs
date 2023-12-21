@@ -18,9 +18,6 @@ impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
 
     fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
         encoder.write_u32(field_offset, self.len() as u32);
-        if self.is_empty() {
-            return;
-        }
         let mut value_encoder = BufferEncoder::new(T::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.iter().enumerate() {
             obj.encode(&mut value_encoder, T::HEADER_SIZE * i);
@@ -34,11 +31,9 @@ impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
         result: &mut Vec<T>,
     ) -> (usize, usize) {
         let count = decoder.read_u32(field_offset) as usize;
-        if count == 0 {
-            result.clear();
-            return (0, 0);
+        if count > result.capacity() {
+            result.reserve(count - result.capacity());
         }
-        result.reserve(count);
         let (offset, length) = decoder.read_bytes_header(field_offset + 4);
         (offset, length)
     }
