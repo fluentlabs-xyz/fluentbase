@@ -1,5 +1,5 @@
 use super::{Mds, Spec};
-use halo2curves::FieldExt;
+use crate::FieldExt;
 use std::marker::PhantomData;
 
 /// The trait required for fields can handle a pow5 sbox, 3 field, 2 rate permutation

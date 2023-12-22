@@ -7,6 +7,9 @@ use halo2curves::bn256::Fr;
 use poseidon::Poseidon;
 pub use septidon::*;
 
+mod compat;
+pub use compat::FieldExt;
+
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
     const CHUNK_LEN: usize = 32;

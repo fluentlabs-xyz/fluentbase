@@ -13,7 +13,7 @@ k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], opt
 eth_trie = { version = "0.3.0", optional = true }
 keccak-hash = { version = "0.10.0", optional = true }
 #halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde", optional = true }
-halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "3c268b46c218fdcf27d57428a27029f0f6a40a9e" }
+halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "3c268b46c218fdcf27d57428a27029f0f6a40a9e", optional = true }
 #alloy-sol-types = { version = "0.5.1", default-features = false }
 alloy-primitives = { workspace = true }
 lazy_static = "1.4.0"

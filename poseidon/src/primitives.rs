@@ -1,7 +1,6 @@
 //! The Poseidon algebraic hash function.
 
-// use halo2_proofs::arithmetic::FieldExt;
-use halo2curves::FieldExt;
+use crate::FieldExt;
 use std::{convert::TryInto, fmt, iter, marker::PhantomData};
 
 //pub(crate) mod fp;

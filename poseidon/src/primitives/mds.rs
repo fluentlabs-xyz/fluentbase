@@ -1,5 +1,5 @@
 use super::{grain::Grain, Mds};
-use halo2curves::FieldExt;
+use crate::FieldExt;
 
 pub(crate) fn generate_mds<F: FieldExt, const T: usize>(
     grain: &mut Grain<F>,

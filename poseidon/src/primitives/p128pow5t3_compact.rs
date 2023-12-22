@@ -1,5 +1,5 @@
 use super::{p128pow5t3::P128Pow5T3Constants, Mds, Spec};
-use halo2curves::FieldExt;
+use crate::FieldExt;
 use std::marker::PhantomData;
 
 /// Poseidon-128 using the $x^5$ S-box, with a width of 3 field elements, and the
