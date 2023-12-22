@@ -146,16 +146,16 @@ opcodes! {
     // 0x2F
     0x30 => ADDRESS   => system::address, // done
     0x31 => BALANCE   => host::balance::<H>, // TODO
-    0x32 => ORIGIN    => host_env::origin, // TODO
+    0x32 => ORIGIN    => host_env::origin, // TODO tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
-    0x35 => CALLDATALOAD => system::calldataload, // TODO
-    0x36 => CALLDATASIZE => system::calldatasize, // TODO
-    0x37 => CALLDATACOPY => system::calldatacopy, // TODO
+    0x35 => CALLDATALOAD => system::calldataload, // TODO from contract_input
+    0x36 => CALLDATASIZE => system::calldatasize, // TODO from contract_input
+    0x37 => CALLDATACOPY => system::calldatacopy, // TODO from contract_input
     0x38 => CODESIZE     => system::codesize, // done
     0x39 => CODECOPY     => system::codecopy, // TODO
 
-    0x3A => GASPRICE       => host_env::gasprice, // TODO
+    0x3A => GASPRICE       => host_env::gasprice, // TODO tx_gas_price
     0x3B => EXTCODESIZE    => host::extcodesize::<H>, // TODO
     0x3C => EXTCODECOPY    => host::extcodecopy::<H>, // TODO
     0x3D => RETURNDATASIZE => system::returndatasize::<H>, // TODO
@@ -165,67 +165,67 @@ opcodes! {
     0x41 => COINBASE       => host_env::coinbase, // done
     0x42 => TIMESTAMP      => host_env::timestamp, // done
     0x43 => NUMBER         => host_env::number, // done
-    0x44 => DIFFICULTY     => host_env::difficulty::<H>, // TODO
+    0x44 => DIFFICULTY     => host_env::difficulty::<H>, // TODO block_difficulty
     0x45 => GASLIMIT       => host_env::gaslimit, // done
     0x46 => CHAINID        => host_env::chainid::<H>, // done
     0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
     0x48 => BASEFEE        => host_env::basefee::<H>, // done
-    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO
-    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // TODO
+    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO tx_blob_hashes
+    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // TODO tx_blob_gas_price
     // 0x4B
     // 0x4C
     // 0x4D
     // 0x4E
     // 0x4F
     0x50 => POP      => stack::pop, // done
-    0x51 => MLOAD    => memory::mload, // TODO
+    0x51 => MLOAD    => memory::mload, // TODO load 32 bytes from mem
     0x52 => MSTORE   => memory::mstore, // done
     0x53 => MSTORE8  => memory::mstore8, // done
-    0x54 => SLOAD    => host::sload::<H>, // TODO
-    0x55 => SSTORE   => host::sstore::<H>, // TODO
-    0x56 => JUMP     => control::jump, // TODO
-    0x57 => JUMPI    => control::jumpi, // TODO
+    0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload
+    0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore
+    0x56 => JUMP     => control::jump, // TODO replace with br
+    0x57 => JUMPI    => control::jumpi, // TODO replace with br
     0x58 => PC       => control::pc, // TODO
-    0x59 => MSIZE    => memory::msize, // TODO
-    0x5A => GAS      => system::gas, // TODO
+    0x59 => MSIZE    => memory::msize, // TODO memory.size
+    0x5A => GAS      => system::gas, // TODO return 0
     0x5B => JUMPDEST => control::jumpdest, // TODO
-    0x5C => TLOAD    => host::tload::<H>, // TODO
-    0x5D => TSTORE   => host::tstore::<H>, // TODO
-    0x5E => MCOPY    => memory::mcopy::<H>, // TODO
+    0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap
+    0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap
+    0x5E => MCOPY    => memory::mcopy::<H>, // TODO memory.copy (new release)
 
-    0x5F => PUSH0  => stack::push::<0, H>, // manual impl
-    0x60 => PUSH1  => stack::push::<1, H>, // manual impl
-    0x61 => PUSH2  => stack::push::<2, H>, // manual impl
-    0x62 => PUSH3  => stack::push::<3, H>, // manual impl
-    0x63 => PUSH4  => stack::push::<4, H>, // manual impl
-    0x64 => PUSH5  => stack::push::<5, H>, // manual impl
-    0x65 => PUSH6  => stack::push::<6, H>, // manual impl
-    0x66 => PUSH7  => stack::push::<7, H>, // manual impl
-    0x67 => PUSH8  => stack::push::<8, H>, // manual impl
-    0x68 => PUSH9  => stack::push::<9, H>, // manual impl
-    0x69 => PUSH10 => stack::push::<10, H>, // manual impl
-    0x6A => PUSH11 => stack::push::<11, H>, // manual impl
-    0x6B => PUSH12 => stack::push::<12, H>, // manual impl
-    0x6C => PUSH13 => stack::push::<13, H>, // manual impl
-    0x6D => PUSH14 => stack::push::<14, H>, // manual impl
-    0x6E => PUSH15 => stack::push::<15, H>, // manual impl
-    0x6F => PUSH16 => stack::push::<16, H>, // manual impl
-    0x70 => PUSH17 => stack::push::<17, H>, // manual impl
-    0x71 => PUSH18 => stack::push::<18, H>, // manual impl
-    0x72 => PUSH19 => stack::push::<19, H>, // manual impl
-    0x73 => PUSH20 => stack::push::<20, H>, // manual impl
-    0x74 => PUSH21 => stack::push::<21, H>, // manual impl
-    0x75 => PUSH22 => stack::push::<22, H>, // manual impl
-    0x76 => PUSH23 => stack::push::<23, H>, // manual impl
-    0x77 => PUSH24 => stack::push::<24, H>, // manual impl
-    0x78 => PUSH25 => stack::push::<25, H>, // manual impl
-    0x79 => PUSH26 => stack::push::<26, H>, // manual impl
-    0x7A => PUSH27 => stack::push::<27, H>, // manual impl
-    0x7B => PUSH28 => stack::push::<28, H>, // manual impl
-    0x7C => PUSH29 => stack::push::<29, H>, // manual impl
-    0x7D => PUSH30 => stack::push::<30, H>, // manual impl
-    0x7E => PUSH31 => stack::push::<31, H>, // manual impl
-    0x7F => PUSH32 => stack::push::<32, H>, // manual impl
+    0x5F => PUSH0  => stack::push::<0, H>, // manually implemented
+    0x60 => PUSH1  => stack::push::<1, H>, // manually implemented
+    0x61 => PUSH2  => stack::push::<2, H>, // manually implemented
+    0x62 => PUSH3  => stack::push::<3, H>, // manually implemented
+    0x63 => PUSH4  => stack::push::<4, H>, // manually implemented
+    0x64 => PUSH5  => stack::push::<5, H>, // manually implemented
+    0x65 => PUSH6  => stack::push::<6, H>, // manually implemented
+    0x66 => PUSH7  => stack::push::<7, H>, // manually implemented
+    0x67 => PUSH8  => stack::push::<8, H>, // manually implemented
+    0x68 => PUSH9  => stack::push::<9, H>, // manually implemented
+    0x69 => PUSH10 => stack::push::<10, H>, // manually implemented
+    0x6A => PUSH11 => stack::push::<11, H>, // manually implemented
+    0x6B => PUSH12 => stack::push::<12, H>, // manually implemented
+    0x6C => PUSH13 => stack::push::<13, H>, // manually implemented
+    0x6D => PUSH14 => stack::push::<14, H>, // manually implemented
+    0x6E => PUSH15 => stack::push::<15, H>, // manually implemented
+    0x6F => PUSH16 => stack::push::<16, H>, // manually implemented
+    0x70 => PUSH17 => stack::push::<17, H>, // manually implemented
+    0x71 => PUSH18 => stack::push::<18, H>, // manually implemented
+    0x72 => PUSH19 => stack::push::<19, H>, // manually implemented
+    0x73 => PUSH20 => stack::push::<20, H>, // manually implemented
+    0x74 => PUSH21 => stack::push::<21, H>, // manually implemented
+    0x75 => PUSH22 => stack::push::<22, H>, // manually implemented
+    0x76 => PUSH23 => stack::push::<23, H>, // manually implemented
+    0x77 => PUSH24 => stack::push::<24, H>, // manually implemented
+    0x78 => PUSH25 => stack::push::<25, H>, // manually implemented
+    0x79 => PUSH26 => stack::push::<26, H>, // manually implemented
+    0x7A => PUSH27 => stack::push::<27, H>, // manually implemented
+    0x7B => PUSH28 => stack::push::<28, H>, // manually implemented
+    0x7C => PUSH29 => stack::push::<29, H>, // manually implemented
+    0x7D => PUSH30 => stack::push::<30, H>, // manually implemented
+    0x7E => PUSH31 => stack::push::<31, H>, // manually implemented
+    0x7F => PUSH32 => stack::push::<32, H>, // manually implemented
 
     0x80 => DUP1  => stack::dup::<1, H>,  // done
     0x81 => DUP2  => stack::dup::<2, H>,  // done
@@ -344,7 +344,7 @@ opcodes! {
     0xF0 => CREATE       => host::create::<false, H>, // TODO
     0xF1 => CALL         => host::call::<H>, // TODO
     0xF2 => CALLCODE     => host::call_code::<H>, // TODO
-    0xF3 => RETURN       => control::ret, // TODO
+    0xF3 => RETURN       => control::ret, // TODO sdk sys_write + return
     0xF4 => DELEGATECALL => host::delegate_call::<H>, // TODO
     0xF5 => CREATE2      => host::create::<true, H>, // TODO
     // 0xF6
@@ -354,8 +354,8 @@ opcodes! {
     0xFA => STATICCALL   => host::static_call::<H>, // TODO
     // 0xFB
     // 0xFC
-    0xFD => REVERT       => control::revert::<H>, // TODO
-    0xFE => INVALID      => control::invalid, // TODO
+    0xFD => REVERT       => control::revert::<H>, // TODO sys_write + sys_halt
+    0xFE => INVALID      => control::invalid, // TODO sys_halt
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
 }
 

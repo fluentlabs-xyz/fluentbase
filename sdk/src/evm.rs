@@ -24,6 +24,7 @@ define_codec_struct! {
         block_gas_limit: u64,
         block_base_fee: U256,
         // tx info
+        tx_gas_price: U256,
         tx_gas_priority_fee: Option<U256>,
         tx_caller: Address,
         tx_blob_hashes: Vec<B256>,
@@ -80,6 +81,7 @@ impl ExecutionContext {
     impl_reader_func!(fn block_gas_limit() -> u64, ContractInput::BlockGasLimit);
     impl_reader_func!(fn block_base_fee() -> U256, ContractInput::BlockBaseFee);
     // tx info
+    impl_reader_func!(fn tx_gas_price() -> U256, ContractInput::TxGasPrice);
     impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, ContractInput::TxGasPriorityFee);
     impl_reader_func!(fn tx_caller() -> Address, ContractInput::TxCaller);
     impl_reader_func!(fn tx_blob_hashes() -> Vec<B256>, ContractInput::TxBlobHashes);
