@@ -144,54 +144,54 @@ opcodes! {
     // 0x2D
     // 0x2E
     // 0x2F
-    0x30 => ADDRESS   => system::address,
-    0x31 => BALANCE   => host::balance::<H>,
-    0x32 => ORIGIN    => host_env::origin,
-    0x33 => CALLER    => system::caller,
-    0x34 => CALLVALUE => system::callvalue,
-    0x35 => CALLDATALOAD => system::calldataload,
-    0x36 => CALLDATASIZE => system::calldatasize,
-    0x37 => CALLDATACOPY => system::calldatacopy,
-    0x38 => CODESIZE     => system::codesize,
-    0x39 => CODECOPY     => system::codecopy,
+    0x30 => ADDRESS   => system::address, // done
+    0x31 => BALANCE   => host::balance::<H>, // TODO
+    0x32 => ORIGIN    => host_env::origin, // TODO
+    0x33 => CALLER    => system::caller, // done
+    0x34 => CALLVALUE => system::callvalue, // done
+    0x35 => CALLDATALOAD => system::calldataload, // TODO
+    0x36 => CALLDATASIZE => system::calldatasize, // TODO
+    0x37 => CALLDATACOPY => system::calldatacopy, // TODO
+    0x38 => CODESIZE     => system::codesize, // done
+    0x39 => CODECOPY     => system::codecopy, // TODO
 
-    0x3A => GASPRICE       => host_env::gasprice,
-    0x3B => EXTCODESIZE    => host::extcodesize::<H>,
-    0x3C => EXTCODECOPY    => host::extcodecopy::<H>,
-    0x3D => RETURNDATASIZE => system::returndatasize::<H>,
-    0x3E => RETURNDATACOPY => system::returndatacopy::<H>,
-    0x3F => EXTCODEHASH    => host::extcodehash::<H>,
-    0x40 => BLOCKHASH      => host::blockhash,
-    0x41 => COINBASE       => host_env::coinbase,
-    0x42 => TIMESTAMP      => host_env::timestamp,
-    0x43 => NUMBER         => host_env::number,
-    0x44 => DIFFICULTY     => host_env::difficulty::<H>,
-    0x45 => GASLIMIT       => host_env::gaslimit,
-    0x46 => CHAINID        => host_env::chainid::<H>,
-    0x47 => SELFBALANCE    => host::selfbalance::<H>,
-    0x48 => BASEFEE        => host_env::basefee::<H>,
-    0x49 => BLOBHASH       => host_env::blob_hash::<H>,
-    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>,
+    0x3A => GASPRICE       => host_env::gasprice, // TODO
+    0x3B => EXTCODESIZE    => host::extcodesize::<H>, // TODO
+    0x3C => EXTCODECOPY    => host::extcodecopy::<H>, // TODO
+    0x3D => RETURNDATASIZE => system::returndatasize::<H>, // TODO
+    0x3E => RETURNDATACOPY => system::returndatacopy::<H>, // TODO
+    0x3F => EXTCODEHASH    => host::extcodehash::<H>, // TODO
+    0x40 => BLOCKHASH      => host::blockhash, // done
+    0x41 => COINBASE       => host_env::coinbase, // done
+    0x42 => TIMESTAMP      => host_env::timestamp, // done
+    0x43 => NUMBER         => host_env::number, // done
+    0x44 => DIFFICULTY     => host_env::difficulty::<H>, // TODO
+    0x45 => GASLIMIT       => host_env::gaslimit, // done
+    0x46 => CHAINID        => host_env::chainid::<H>, // done
+    0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
+    0x48 => BASEFEE        => host_env::basefee::<H>, // done
+    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO
+    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // TODO
     // 0x4B
     // 0x4C
     // 0x4D
     // 0x4E
     // 0x4F
     0x50 => POP      => stack::pop, // done
-    0x51 => MLOAD    => memory::mload,
+    0x51 => MLOAD    => memory::mload, // TODO
     0x52 => MSTORE   => memory::mstore, // done
     0x53 => MSTORE8  => memory::mstore8, // done
-    0x54 => SLOAD    => host::sload::<H>,
-    0x55 => SSTORE   => host::sstore::<H>,
-    0x56 => JUMP     => control::jump,
-    0x57 => JUMPI    => control::jumpi,
-    0x58 => PC       => control::pc,
-    0x59 => MSIZE    => memory::msize,
-    0x5A => GAS      => system::gas,
-    0x5B => JUMPDEST => control::jumpdest,
-    0x5C => TLOAD    => host::tload::<H>,
-    0x5D => TSTORE   => host::tstore::<H>,
-    0x5E => MCOPY    => memory::mcopy::<H>,
+    0x54 => SLOAD    => host::sload::<H>, // TODO
+    0x55 => SSTORE   => host::sstore::<H>, // TODO
+    0x56 => JUMP     => control::jump, // TODO
+    0x57 => JUMPI    => control::jumpi, // TODO
+    0x58 => PC       => control::pc, // TODO
+    0x59 => MSIZE    => memory::msize, // TODO
+    0x5A => GAS      => system::gas, // TODO
+    0x5B => JUMPDEST => control::jumpdest, // TODO
+    0x5C => TLOAD    => host::tload::<H>, // TODO
+    0x5D => TSTORE   => host::tstore::<H>, // TODO
+    0x5E => MCOPY    => memory::mcopy::<H>, // TODO
 
     0x5F => PUSH0  => stack::push::<0, H>, // manual impl
     0x60 => PUSH1  => stack::push::<1, H>, // manual impl
@@ -227,45 +227,45 @@ opcodes! {
     0x7E => PUSH31 => stack::push::<31, H>, // manual impl
     0x7F => PUSH32 => stack::push::<32, H>, // manual impl
 
-    0x80 => DUP1  => stack::dup::<1, H>, // manual impl
-    0x81 => DUP2  => stack::dup::<2, H>, // manual impl
-    0x82 => DUP3  => stack::dup::<3, H>, // manual impl
-    0x83 => DUP4  => stack::dup::<4, H>, // manual impl
-    0x84 => DUP5  => stack::dup::<5, H>, // manual impl
-    0x85 => DUP6  => stack::dup::<6, H>, // manual impl
-    0x86 => DUP7  => stack::dup::<7, H>, // manual impl
-    0x87 => DUP8  => stack::dup::<8, H>, // manual impl
-    0x88 => DUP9  => stack::dup::<9, H>, // manual impl
-    0x89 => DUP10 => stack::dup::<10, H>, // manual impl
-    0x8A => DUP11 => stack::dup::<11, H>, // manual impl
-    0x8B => DUP12 => stack::dup::<12, H>, // manual impl
-    0x8C => DUP13 => stack::dup::<13, H>, // manual impl
-    0x8D => DUP14 => stack::dup::<14, H>, // manual impl
-    0x8E => DUP15 => stack::dup::<15, H>, // manual impl
-    0x8F => DUP16 => stack::dup::<16, H>, // manual impl
+    0x80 => DUP1  => stack::dup::<1, H>,  // done
+    0x81 => DUP2  => stack::dup::<2, H>,  // done
+    0x82 => DUP3  => stack::dup::<3, H>,  // TODO
+    0x83 => DUP4  => stack::dup::<4, H>,  // TODO
+    0x84 => DUP5  => stack::dup::<5, H>,  // TODO
+    0x85 => DUP6  => stack::dup::<6, H>,  // TODO
+    0x86 => DUP7  => stack::dup::<7, H>,  // TODO
+    0x87 => DUP8  => stack::dup::<8, H>,  // TODO
+    0x88 => DUP9  => stack::dup::<9, H>,  // TODO
+    0x89 => DUP10 => stack::dup::<10, H>,  // TODO
+    0x8A => DUP11 => stack::dup::<11, H>,  // TODO
+    0x8B => DUP12 => stack::dup::<12, H>,  // TODO
+    0x8C => DUP13 => stack::dup::<13, H>,  // TODO
+    0x8D => DUP14 => stack::dup::<14, H>,  // TODO
+    0x8E => DUP15 => stack::dup::<15, H>,  // TODO
+    0x8F => DUP16 => stack::dup::<16, H>,  // TODO
 
-    0x90 => SWAP1  => stack::swap::<1, H>, // manual impl
-    0x91 => SWAP2  => stack::swap::<2, H>, // manual impl
-    0x92 => SWAP3  => stack::swap::<3, H>, // manual impl
-    0x93 => SWAP4  => stack::swap::<4, H>, // manual impl
-    0x94 => SWAP5  => stack::swap::<5, H>, // manual impl
-    0x95 => SWAP6  => stack::swap::<6, H>, // manual impl
-    0x96 => SWAP7  => stack::swap::<7, H>, // manual impl
-    0x97 => SWAP8  => stack::swap::<8, H>, // manual impl
-    0x98 => SWAP9  => stack::swap::<9, H>, // manual impl
-    0x99 => SWAP10 => stack::swap::<10, H>, // manual impl
-    0x9A => SWAP11 => stack::swap::<11, H>, // manual impl
-    0x9B => SWAP12 => stack::swap::<12, H>, // manual impl
-    0x9C => SWAP13 => stack::swap::<13, H>, // manual impl
-    0x9D => SWAP14 => stack::swap::<14, H>, // manual impl
-    0x9E => SWAP15 => stack::swap::<15, H>, // manual impl
-    0x9F => SWAP16 => stack::swap::<16, H>, // manual impl
+    0x90 => SWAP1  => stack::swap::<1, H>,  // TODO
+    0x91 => SWAP2  => stack::swap::<2, H>,  // TODO
+    0x92 => SWAP3  => stack::swap::<3, H>,  // TODO
+    0x93 => SWAP4  => stack::swap::<4, H>,  // TODO
+    0x94 => SWAP5  => stack::swap::<5, H>,  // TODO
+    0x95 => SWAP6  => stack::swap::<6, H>,  // TODO
+    0x96 => SWAP7  => stack::swap::<7, H>,  // TODO
+    0x97 => SWAP8  => stack::swap::<8, H>,  // TODO
+    0x98 => SWAP9  => stack::swap::<9, H>,  // TODO
+    0x99 => SWAP10 => stack::swap::<10, H>,  // TODO
+    0x9A => SWAP11 => stack::swap::<11, H>,  // TODO
+    0x9B => SWAP12 => stack::swap::<12, H>,  // TODO
+    0x9C => SWAP13 => stack::swap::<13, H>,  // TODO
+    0x9D => SWAP14 => stack::swap::<14, H>,  // TODO
+    0x9E => SWAP15 => stack::swap::<15, H>,  // TODO
+    0x9F => SWAP16 => stack::swap::<16, H>,  // TODO
 
-    0xA0 => LOG0 => host::log::<0, H>,
-    0xA1 => LOG1 => host::log::<1, H>,
-    0xA2 => LOG2 => host::log::<2, H>,
-    0xA3 => LOG3 => host::log::<3, H>,
-    0xA4 => LOG4 => host::log::<4, H>,
+    0xA0 => LOG0 => host::log::<0, H>, // TODO
+    0xA1 => LOG1 => host::log::<1, H>, // TODO
+    0xA2 => LOG2 => host::log::<2, H>, // TODO
+    0xA3 => LOG3 => host::log::<3, H>, // TODO
+    0xA4 => LOG4 => host::log::<4, H>, // TODO
     // 0xA5
     // 0xA6
     // 0xA7
@@ -341,22 +341,22 @@ opcodes! {
     // 0xED
     // 0xEE
     // 0xEF
-    0xF0 => CREATE       => host::create::<false, H>,
-    0xF1 => CALL         => host::call::<H>,
-    0xF2 => CALLCODE     => host::call_code::<H>,
-    0xF3 => RETURN       => control::ret,
-    0xF4 => DELEGATECALL => host::delegate_call::<H>,
-    0xF5 => CREATE2      => host::create::<true, H>,
+    0xF0 => CREATE       => host::create::<false, H>, // TODO
+    0xF1 => CALL         => host::call::<H>, // TODO
+    0xF2 => CALLCODE     => host::call_code::<H>, // TODO
+    0xF3 => RETURN       => control::ret, // TODO
+    0xF4 => DELEGATECALL => host::delegate_call::<H>, // TODO
+    0xF5 => CREATE2      => host::create::<true, H>, // TODO
     // 0xF6
     // 0xF7
     // 0xF8
     // 0xF9
-    0xFA => STATICCALL   => host::static_call::<H>,
+    0xFA => STATICCALL   => host::static_call::<H>, // TODO
     // 0xFB
     // 0xFC
-    0xFD => REVERT       => control::revert::<H>,
+    0xFD => REVERT       => control::revert::<H>, // TODO
     0xFE => INVALID      => control::invalid, // done
-    0xFF => SELFDESTRUCT => host::selfdestruct::<H>,
+    0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
 }
 
 /// An EVM opcode.

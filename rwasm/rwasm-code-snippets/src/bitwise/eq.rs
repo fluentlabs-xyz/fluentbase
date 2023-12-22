@@ -1,4 +1,4 @@
-use crate::common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT};
+use crate::common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT};
 
 #[no_mangle]
 fn bitwise_eq(// b0: u64,
@@ -18,8 +18,8 @@ fn bitwise_eq(// b0: u64,
     //     s0 = 0;
     // }
     let mut is = true;
-    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let mut a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let mut a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     for i in 0..a.len() {
         if is && a[i] != b[i] {
             is = false;
@@ -27,7 +27,7 @@ fn bitwise_eq(// b0: u64,
         a[i] = 0;
     }
     a[a.len() - 1] = is as u8;
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, a);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, a);
 
     // return (s0, 0, 0, 0);
 }

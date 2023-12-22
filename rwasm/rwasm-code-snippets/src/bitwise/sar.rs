@@ -1,5 +1,5 @@
 use crate::{
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1},
 };
 
@@ -14,8 +14,8 @@ fn bitwise_sar(// b0: u64,
     // a3: u64,
 ) /* -> (u64, u64, u64, u64) */
 {
-    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mut res = [0u8; U256_BYTES_COUNT as usize];
 
     let mut v = [0u8; 8];
@@ -97,5 +97,5 @@ fn bitwise_sar(// b0: u64,
     res[16..24].copy_from_slice(&r.1.to_be_bytes());
     res[24..32].copy_from_slice(&r.0.to_be_bytes());
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }

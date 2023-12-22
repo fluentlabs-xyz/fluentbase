@@ -1,5 +1,11 @@
 use crate::{
-    common_sp::{u256_pop, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{
+        stack_peek_u256,
+        stack_pop_u256,
+        stack_push_u256,
+        stack_write_u256,
+        SP_BASE_MEM_OFFSET_DEFAULT,
+    },
     consts::{
         BYTE_MAX_VAL,
         U256_BYTES_COUNT,
@@ -891,4 +897,16 @@ pub(crate) fn u256_from_slice(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[U256_BYTES_COUNT as usize - v.len()..].copy_from_slice(v);
     r
+}
+
+pub(crate) fn swap_n(first_param_idx: usize, second_param_idx: usize) {
+    let v0 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, first_param_idx);
+    let v1 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, second_param_idx);
+    stack_write_u256(SP_BASE_MEM_OFFSET_DEFAULT, &v0, second_param_idx);
+    stack_write_u256(SP_BASE_MEM_OFFSET_DEFAULT, &v1, first_param_idx);
+}
+
+pub(crate) fn dup_n(param_idx: usize) {
+    let v = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, param_idx);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, v);
 }

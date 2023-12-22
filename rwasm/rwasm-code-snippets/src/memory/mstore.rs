@@ -1,14 +1,14 @@
 use crate::{
     common::u256_be_to_tuple_le,
-    common_sp::{u256_pop, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
 use core::slice;
 
 #[no_mangle]
 fn memory_mstore() {
-    let value = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let offset = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let value = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let offset = u256_be_to_tuple_le(offset);
 

@@ -2,7 +2,7 @@
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
-        consts::{SP_VAL_MEM_OFFSET_DEFAULT, VIRTUAL_STACK_TOP_DEFAULT},
+        consts::{SP_BASE_MEM_OFFSET_DEFAULT, VIRTUAL_STACK_TOP_DEFAULT},
         translator::{
             instruction_result::InstructionResult,
             instructions::opcode::{
@@ -19,6 +19,8 @@ mod evm_to_rwasm_tests {
                 CODESIZE,
                 COINBASE,
                 DIV,
+                DUP1,
+                DUP2,
                 EQ,
                 EXP,
                 GASLIMIT,
@@ -45,6 +47,8 @@ mod evm_to_rwasm_tests {
                 SLT,
                 SMOD,
                 SUB,
+                SWAP1,
+                SWAP2,
                 TIMESTAMP,
                 XOR,
             },
@@ -95,24 +99,6 @@ mod evm_to_rwasm_tests {
             panic!("failed to decode hex value '{:?}'", hex);
         }
         res.unwrap()
-    }
-
-    fn compile_binary_op(opcode: u8, a: &[u8], b: &[u8]) -> Vec<u8> {
-        let mut evm_bytecode: Vec<u8> = vec![];
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(a);
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(b);
-        evm_bytecode.push(opcode);
-        evm_bytecode
-    }
-
-    fn compile_unary_op(opcode: u8, a: &[u8]) -> Vec<u8> {
-        let mut evm_bytecode: Vec<u8> = vec![];
-        evm_bytecode.push(PUSH32);
-        evm_bytecode.extend(a);
-        evm_bytecode.push(opcode);
-        evm_bytecode
     }
 
     fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
@@ -180,7 +166,7 @@ mod evm_to_rwasm_tests {
         res_is_in_memory_offset: Option<usize>,
     ) {
         let mut global_memory = run_test(&evm_bytecode);
-        let sp_mem = &global_memory[SP_VAL_MEM_OFFSET_DEFAULT..SP_VAL_MEM_OFFSET_DEFAULT + 8];
+        let sp_mem = &global_memory[SP_BASE_MEM_OFFSET_DEFAULT..SP_BASE_MEM_OFFSET_DEFAULT + 8];
         let sp_val = u64::from_le_bytes(sp_mem.try_into().unwrap());
         if sp_is_zero {
             assert_eq!(0, sp_val);
@@ -190,7 +176,7 @@ mod evm_to_rwasm_tests {
             let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
             assert_eq!(res_expected, res);
         } else {
-            let res_expected_offset = SP_VAL_MEM_OFFSET_DEFAULT - res_expected.len();
+            let res_expected_offset = SP_BASE_MEM_OFFSET_DEFAULT - res_expected.len();
             let res = &global_memory[res_expected_offset..res_expected_offset + res_expected.len()];
             assert_eq!(res_expected, res);
             assert_eq!(res_expected.len() as u64, sp_val);
@@ -1556,10 +1542,13 @@ mod evm_to_rwasm_tests {
     #[test]
     fn keccak256() {
         let cases = [(
-            compile_binary_op(
+            compile_op_bytecode(
                 MSTORE,
-                &x("0000000000000000000000000000000000000000000000000000000000000000"),
-                &x("FFFFFFFF00000000000000000000000000000000000000000000000000000000"),
+                &Case::Binary((
+                    x("0000000000000000000000000000000000000000000000000000000000000000"),
+                    x("FFFFFFFF00000000000000000000000000000000000000000000000000000000"),
+                    vec![],
+                )),
             ),
             Case::Binary((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
@@ -1664,13 +1653,96 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn dup() {
+        let mut res_mem = vec![];
+        let mut preamble_bytecode = vec![];
+        let mut val = [0u8; 32];
+        let val_last_idx = val.len() - 1;
+
+        for dup_case in 1..=2 {
+            preamble_bytecode.clear();
+            res_mem.clear();
+
+            val[val_last_idx] = 1;
+            res_mem.extend(&val);
+            for v in 1..=dup_case {
+                val[val_last_idx] = v;
+
+                preamble_bytecode.push(PUSH32);
+                preamble_bytecode.extend(&val);
+            }
+            for v in (1..=dup_case).rev() {
+                val[val_last_idx] = v;
+                res_mem.extend(&val);
+            }
+            let cases = [Case::NoArgs(res_mem.clone())];
+
+            let op = match dup_case {
+                1 => DUP1,
+                2 => DUP2,
+                _ => {
+                    panic!("unsupported DUP{}", dup_case)
+                }
+            };
+
+            test_op_cases(op, Some(&preamble_bytecode), &cases, false, None);
+        }
+    }
+
+    #[test]
+    fn swap() {
+        let mut res_mem = vec![];
+        let mut preamble_bytecode = vec![];
+        let mut val = [0u8; 32];
+        let val_last_idx = val.len() - 1;
+
+        for swap_case in 1..=2 {
+            preamble_bytecode.clear();
+            res_mem.clear();
+
+            for i in 0..=swap_case {
+                let v = i + 1;
+                val[val_last_idx] = v;
+
+                preamble_bytecode.push(PUSH32);
+                preamble_bytecode.extend(&val);
+            }
+            for i in (0..=swap_case).rev() {
+                let v = if i == 0 {
+                    swap_case + 1
+                } else if i == swap_case {
+                    1
+                } else {
+                    i + 1
+                };
+                val[val_last_idx] = v;
+                res_mem.extend(&val);
+            }
+            let cases = [Case::NoArgs(res_mem.clone())];
+
+            let op = match swap_case {
+                1 => SWAP1,
+                2 => SWAP2,
+                _ => {
+                    panic!("unsupported SWAP{}", swap_case)
+                }
+            };
+
+            test_op_cases(op, Some(&preamble_bytecode), &cases, false, None);
+        }
+    }
+
+    #[test]
     fn compound_or() {
         let mut preamble = vec![];
         // 1|0=1
-        preamble.extend(compile_binary_op(
+        preamble.extend(compile_op_bytecode(
             OR,
-            &x("0000000000000000000000000000000000000000000000000000000000000001"),
-            &x("0000000000000000000000000000000000000000000000000000000000000000"),
+            &Case::Binary((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                vec![],
+            )),
         ));
         // 1|2=3
         let cases = &[Case::Unary((
@@ -1684,15 +1756,21 @@ mod evm_to_rwasm_tests {
     #[test]
     fn compound_add() {
         let mut preamble = vec![];
-        preamble.extend(compile_binary_op(
+        preamble.extend(compile_op_bytecode(
             ADD,
-            &x("0000000000000000000000000000000000000000000000000000000000000001"),
-            &x("0000000000000000000000000000000000000000000000000000000000000002"),
+            &Case::Binary((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                vec![],
+            )),
         ));
-        preamble.extend(compile_binary_op(
+        preamble.extend(compile_op_bytecode(
             ADD,
-            &x("0000000000000000000000000000000000000000000000000000000000000003"),
-            &x("0000000000000000000000000000000000000000000000000000000000000004"),
+            &Case::Binary((
+                x("0000000000000000000000000000000000000000000000000000000000000003"),
+                x("0000000000000000000000000000000000000000000000000000000000000004"),
+                vec![],
+            )),
         ));
         preamble.push(ADD);
         let cases = &[Case::Unary((
@@ -1707,15 +1785,21 @@ mod evm_to_rwasm_tests {
     fn compound_mul_add_div() {
         let mut preamble = vec![];
         // 2*3=6
-        preamble.extend(compile_binary_op(
+        preamble.extend(compile_op_bytecode(
             MUL,
-            &x("0000000000000000000000000000000000000000000000000000000000000002"),
-            &x("0000000000000000000000000000000000000000000000000000000000000003"),
+            &Case::Binary((
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                x("0000000000000000000000000000000000000000000000000000000000000003"),
+                vec![],
+            )),
         ));
         //6+7=12
-        preamble.extend(compile_unary_op(
+        preamble.extend(compile_op_bytecode(
             ADD,
-            &x("0000000000000000000000000000000000000000000000000000000000000007"),
+            &Case::Unary((
+                x("0000000000000000000000000000000000000000000000000000000000000007"),
+                vec![],
+            )),
         ));
 
         //12/5=2

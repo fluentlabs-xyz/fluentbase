@@ -1,6 +1,6 @@
 use crate::{
     common::shr,
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
 
@@ -15,8 +15,8 @@ fn bitwise_shr(// v0: u64,
     // shift3: u64,
 ) /* -> (u64, u64, u64, u64) */
 {
-    let val = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let shift = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let val = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let shift = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mut res = [0u8; U256_BYTES_COUNT as usize];
 
     let mut v = [0u8; 8];
@@ -44,5 +44,5 @@ fn bitwise_shr(// v0: u64,
     res[16..24].copy_from_slice(&r.1.to_be_bytes());
     res[24..32].copy_from_slice(&r.0.to_be_bytes());
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }
