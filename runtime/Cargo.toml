@@ -28,7 +28,8 @@ strum = "0.25.0"
 bincode = "1.3.3"
 hex-literal = "0.4.1"
 bytes = "1.5.0"
-halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+#halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
+halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "3c268b46c218fdcf27d57428a27029f0f6a40a9e" }
 strum_macros = "0.25.2"
 wasi = "0.11.0"
 wat = "1.0.69"
