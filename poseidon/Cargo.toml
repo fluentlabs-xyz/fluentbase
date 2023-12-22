@@ -14,7 +14,7 @@ poseidon = {git = "https://github.com/scroll-tech/poseidon" }
 #poseidon = {git = "https://github.com/scroll-tech/poseidon", rev = "0b9965fbcd9e03559088b8f68489592286bc55e0"}
 lazy_static = "1.4.0"
 #halo2curves = { git = "https://github.com/scroll-tech/halo2curves", branch = "0.3.1-derive-serde" }
-halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "3c268b46c218fdcf27d57428a27029f0f6a40a9e" }
+halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "eeb2045155ee410395c2c156be38146bd1b14f78" }
 bitvec = "1"
 ff = { version = "0.13", default-features = false }
 group = { version = "0.13", default-features = false }

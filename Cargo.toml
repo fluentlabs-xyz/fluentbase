@@ -35,7 +35,7 @@ categories = ["wasm", "no-std", "virtualization"]
 #[patch."https://github.com/privacy-scaling-explorations/poseidon.git"]
 #poseidon = { git = "https://github.com/scroll-tech/poseidon.git", branch = "scroll-dev-0220" }
 [patch."https://github.com/privacy-scaling-explorations/halo2curves.git"]
-halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "3c268b46c218fdcf27d57428a27029f0f6a40a9e" }
+halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", rev = "eeb2045155ee410395c2c156be38146bd1b14f78" }
 #halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
 #[patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
 #maingate = { git = "https://github.com/scroll-tech/halo2wrong", branch = "halo2-ecc-snark-verifier-0323" }
