@@ -244,8 +244,8 @@ opcodes! {
     0x8E => DUP15 => stack::dup::<15, H>,  // TODO
     0x8F => DUP16 => stack::dup::<16, H>,  // TODO
 
-    0x90 => SWAP1  => stack::swap::<1, H>,  // TODO
-    0x91 => SWAP2  => stack::swap::<2, H>,  // TODO
+    0x90 => SWAP1  => stack::swap::<1, H>,  // done
+    0x91 => SWAP2  => stack::swap::<2, H>,  // done
     0x92 => SWAP3  => stack::swap::<3, H>,  // TODO
     0x93 => SWAP4  => stack::swap::<4, H>,  // TODO
     0x94 => SWAP5  => stack::swap::<5, H>,  // TODO
@@ -355,7 +355,7 @@ opcodes! {
     // 0xFB
     // 0xFC
     0xFD => REVERT       => control::revert::<H>, // TODO
-    0xFE => INVALID      => control::invalid, // done
+    0xFE => INVALID      => control::invalid, // TODO
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
 }
 
