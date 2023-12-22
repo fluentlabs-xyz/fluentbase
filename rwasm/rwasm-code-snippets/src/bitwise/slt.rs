@@ -1,5 +1,5 @@
 use crate::{
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::{U256_BYTES_COUNT, U64_MSBIT_IS_1, U8_MSBIT_IS_1},
 };
 
@@ -30,8 +30,8 @@ fn bitwise_slt(// b0: u64,
     // }
     // r
     let mut r = [0u8; U256_BYTES_COUNT as usize];
-    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let mut a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let mut a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let a_sign = a[0] & U8_MSBIT_IS_1;
     let b_sign = b[0] & U8_MSBIT_IS_1;
     if a_sign < b_sign {
@@ -56,5 +56,5 @@ fn bitwise_slt(// b0: u64,
         }
     }
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, r);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, r);
 }

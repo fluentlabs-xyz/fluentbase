@@ -1,13 +1,13 @@
 use crate::{
     common::{convert_sign_le, try_divide_close_numbers, u256_be_to_tuple_le, u256_tuple_le_to_be},
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::{BYTE_MAX_VAL, U256_BYTES_COUNT, U64_ALL_BITS_ARE_1, U64_MSBIT_IS_1},
 };
 
 #[no_mangle]
 pub fn arithmetic_sdiv() {
-    let b = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let a = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let a = u256_be_to_tuple_le(a);
     let b = u256_be_to_tuple_le(b);
@@ -155,5 +155,5 @@ pub fn arithmetic_sdiv() {
 
     let res = u256_tuple_le_to_be(result_le);
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }

@@ -1,5 +1,5 @@
 use crate::{
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
 
@@ -35,8 +35,8 @@ fn bitwise_byte(// b0: u64,
     // }
     //
     // (s0, s1, s2, s3)
-    let bytes = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let mut byte_index_arg = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let bytes = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let mut byte_index_arg = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mut r = [0u8; U256_BYTES_COUNT as usize];
 
     let bi = byte_index_arg[byte_index_arg.len() - 1];
@@ -53,5 +53,5 @@ fn bitwise_byte(// b0: u64,
         }
     }
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, r);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, r);
 }

@@ -1,6 +1,6 @@
 use crate::{
     common::{u256_be_to_tuple_le, u256_tuple_le_to_be},
-    common_sp::{u256_pop, u256_push, SP_VAL_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::{
         BITS_IN_BYTE,
         BYTE_SIGN_BIT_MASK,
@@ -14,8 +14,8 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_signextend() {
-    let value = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
-    let size = u256_pop(SP_VAL_MEM_OFFSET_DEFAULT);
+    let value = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let size = u256_be_to_tuple_le(size);
     let value = u256_be_to_tuple_le(value);
@@ -46,5 +46,5 @@ pub fn arithmetic_signextend() {
 
     let res = u256_tuple_le_to_be(r);
 
-    u256_push(SP_VAL_MEM_OFFSET_DEFAULT, res);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }

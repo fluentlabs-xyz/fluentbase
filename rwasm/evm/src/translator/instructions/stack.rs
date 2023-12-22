@@ -1,5 +1,5 @@
 use crate::{
-    consts::SP_VAL_MEM_OFFSET_DEFAULT,
+    consts::SP_BASE_MEM_OFFSET_DEFAULT,
     translator::{
         host::Host,
         instruction_result::InstructionResult,
@@ -39,8 +39,8 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
 
     let is = host.instruction_set();
     for i in 1..=4 {
-        is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
-        is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+        is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
+        is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
         is.op_i64_load(0);
         is.op_i64_sub();
         is.op_i64_const(8 * i);
@@ -51,9 +51,9 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         is.op_i64_const(v);
         is.op_i64_store(0);
     }
-    // TODO compute new SP and update it in memory
-    is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
-    is.op_i64_const(SP_VAL_MEM_OFFSET_DEFAULT);
+    // compute new SP and update it in memory
+    is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
+    is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
     is.op_i64_load(0);
     is.op_i64_const(32);
     is.op_i64_add();
@@ -63,32 +63,14 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
     translator.instruction_result = InstructionResult::Continue;
 }
 
-pub fn dup<const N: usize, H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn dup<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DUP";
     debug!("op:{}{}", OP, N);
-    let instruction_set = host.instruction_set();
-    for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_local_get((WASM_I64_IN_EVM_WORD_COUNT * N) as u32);
-    }
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn swap<const N: usize, H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
+pub fn swap<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SWAP";
     debug!("op:{}{}", OP, N);
-    let instruction_set = host.instruction_set();
-    // TODO to reduce computation we need swap function inside rwasm so we can decrease number of
-    // ops to x/2
-    for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_local_get((1 + i * 2) as u32);
-    }
-    for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_local_get((1 + (N + 1) * WASM_I64_IN_EVM_WORD_COUNT + i * 2) as u32);
-    }
-
-    for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_local_set((WASM_I64_IN_EVM_WORD_COUNT * 3 - i * 2) as u32)
-    }
-    for i in 0..WASM_I64_IN_EVM_WORD_COUNT {
-        instruction_set.op_local_set(((N + 1) * WASM_I64_IN_EVM_WORD_COUNT - i * 2) as u32)
-    }
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }

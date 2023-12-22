@@ -5,16 +5,7 @@ use crate::translator::{
     translator::contract::Contract,
 };
 pub use analysis::BytecodeLocked;
-use fluentbase_runtime::Runtime;
-use fluentbase_rwasm::rwasm::{
-    BinaryFormat,
-    Compiler,
-    CompilerConfig,
-    FuncOrExport,
-    ImportLinker,
-    InstructionSet,
-    ReducedModule,
-};
+use fluentbase_rwasm::rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule};
 use hashbrown::HashMap;
 use log::debug;
 use std::{fs, marker::PhantomData};
@@ -132,55 +123,37 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let mut initiate_subroutines =
-            |opcode: u8, rwasm_binary: &[u8] /* , fn_name: &'static str */| {
-                if self.opcode_to_subroutine_data.contains_key(&opcode) {
-                    panic!(
-                        "code snippet for opcode 0x{:x?} already exists (decimal: {})",
-                        opcode, opcode
-                    );
-                }
-                // let import_linker = Runtime::<()>::new_linker();
-                // let mut compiler = Compiler::new_with_linker(
-                //     wasm_binary,
-                //     CompilerConfig::default()
-                //         .fuel_consume(self.inject_fuel_consumption)
-                //         .translate_sections(false)
-                //         .type_check(false),
-                //     Some(&import_linker),
-                // )
-                // .unwrap();
-                // let fn_idx = compiler
-                //     .resolve_func_index(&FuncOrExport::Export(fn_name))
-                //     .unwrap()
-                //     .unwrap();
-                // compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
-                // let fn_beginning_offset = *compiler.resolve_func_beginning(fn_idx).unwrap();
-                let fn_beginning_offset = 0;
-                // let rwasm_binary = compiler.finalize().unwrap();
-                let instruction_set = ReducedModule::new(&rwasm_binary)
-                    .unwrap()
-                    .bytecode()
-                    .clone();
-                debug!(
+        let mut initiate_subroutines = |opcode: u8, rwasm_binary: &[u8]| {
+            if self.opcode_to_subroutine_data.contains_key(&opcode) {
+                panic!(
+                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
+                    opcode, opcode
+                );
+            }
+            let fn_beginning_offset = 0;
+            let instruction_set = ReducedModule::new(&rwasm_binary)
+                .unwrap()
+                .bytecode()
+                .clone();
+            debug!(
                 "\nsubroutine_instruction_set (opcode 0x{:x?} len {} fn_beginning_offset {}): \n{}\n",
                 opcode,
                 instruction_set.instr.len(),
                 fn_beginning_offset,
                 instruction_set.trace(),
             );
-                let l = self.subroutines_instruction_set.instr.len();
-                let subroutine_data = SubroutineData {
-                    rel_entry_offset: fn_beginning_offset,
-                    begin_offset: l,
-                    end_offset: l + instruction_set.len() as usize - 1,
-                    instruction_set,
-                };
-                self.subroutines_instruction_set
-                    .extend(&subroutine_data.instruction_set);
-                self.opcode_to_subroutine_data
-                    .insert(opcode, subroutine_data);
+            let l = self.subroutines_instruction_set.instr.len();
+            let subroutine_data = SubroutineData {
+                rel_entry_offset: fn_beginning_offset,
+                begin_offset: l,
+                end_offset: l + instruction_set.len() as usize - 1,
+                instruction_set,
             };
+            self.subroutines_instruction_set
+                .extend(&subroutine_data.instruction_set);
+            self.opcode_to_subroutine_data
+                .insert(opcode, subroutine_data);
+        };
 
         [
             (
@@ -255,7 +228,6 @@ impl<'a> Translator<'a> {
                 opcode::MSTORE8,
                 "../rwasm-code-snippets/bin/memory_mstore8.rwasm",
             ),
-            (opcode::POP, "../rwasm-code-snippets/bin/stack_pop.rwasm"),
             (
                 opcode::KECCAK256,
                 "../rwasm-code-snippets/bin/system_keccak.rwasm",
@@ -304,13 +276,23 @@ impl<'a> Translator<'a> {
                 opcode::TIMESTAMP,
                 "../rwasm-code-snippets/bin/host_timestamp.rwasm",
             ),
+            (opcode::POP, "../rwasm-code-snippets/bin/stack_pop.rwasm"),
+            (opcode::DUP1, "../rwasm-code-snippets/bin/stack_dup1.rwasm"),
+            (opcode::DUP2, "../rwasm-code-snippets/bin/stack_dup2.rwasm"),
+            (
+                opcode::SWAP1,
+                "../rwasm-code-snippets/bin/stack_swap1.rwasm",
+            ),
+            (
+                opcode::SWAP2,
+                "../rwasm-code-snippets/bin/stack_swap2.rwasm",
+            ),
         ]
         .map(|v| {
             let opcode = v.0;
             let file_path = v.1;
-            // let fn_name = v.2;
             let bytecode = fs::read(file_path).unwrap();
-            initiate_subroutines(opcode, &bytecode /* , fn_name */);
+            initiate_subroutines(opcode, &bytecode);
         });
     }
 
