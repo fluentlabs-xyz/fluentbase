@@ -27,6 +27,7 @@ impl<T> FieldExt for T
     /// byte representation of an integer.
     fn from_bytes_wide(bytes: &[u8; 64]) -> Self { unimplemented!() }
 
+/*
     /// Exponentiates `self` by `by`, where `by` is a little-endian order
     /// integer exponent.
     fn pow(&self, by: &[u64; 4]) -> Self {
@@ -41,6 +42,7 @@ impl<T> FieldExt for T
         }
         res
     }
+*/
 
     /// Gets the lower 128 bits of this field element when expressed
     /// canonically.
@@ -76,6 +78,7 @@ pub trait FieldExt: From<bool> + Ord + ff::WithSmallOrderMulGroup<3> {
     /// byte representation of an integer.
     fn from_bytes_wide(bytes: &[u8; 64]) -> Self;
 
+/*
     /// Exponentiates `self` by `by`, where `by` is a little-endian order
     /// integer exponent.
     fn pow(&self, by: &[u64; 4]) -> Self {
@@ -90,6 +93,7 @@ pub trait FieldExt: From<bool> + Ord + ff::WithSmallOrderMulGroup<3> {
         }
         res
     }
+*/
 
     /// Gets the lower 128 bits of this field element when expressed
     /// canonically.
