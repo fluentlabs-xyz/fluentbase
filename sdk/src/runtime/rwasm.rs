@@ -73,16 +73,15 @@ mod test {
     use crate::{RwasmPlatformSDK, SDK};
     use alloc::vec;
     use fluentbase_runtime::STATE_MAIN;
-    use hex_literal::hex;
 
     #[test]
     fn test_greeting() {
         let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
-        let mut output = vec![0u8; 1024 * 1024];
-        let code_len = SDK::rwasm_compile(wasm_binary, output.as_mut_slice());
+        let mut rwasm_binary = vec![0u8; 1024 * 1024];
+        let code_len = SDK::rwasm_compile(wasm_binary, rwasm_binary.as_mut_slice());
         let mut result: [u8; 32] = [0; 32];
         let exit_code = SDK::rwasm_transact(
-            &output.as_slice()[0..code_len as usize],
+            &rwasm_binary.as_slice()[0..code_len as usize],
             &[],
             &mut result,
             STATE_MAIN,

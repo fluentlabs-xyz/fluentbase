@@ -1,6 +1,6 @@
-use fluentbase_sdk::{SysPlatformSDK, SDK};
+use fluentbase_sdk::evm::ExecutionContext;
 
 pub fn main() {
-    let str = "Hello, World";
-    SDK::sys_write(str.as_bytes());
+    let mut ctx = ExecutionContext::default();
+    ctx.return_and_exit("Hello, World".as_bytes(), 0);
 }

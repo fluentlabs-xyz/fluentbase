@@ -1,5 +1,4 @@
 use crate::{EvmPlatformSDK, SDK};
-use alloy_primitives::{Address, U256};
 
 extern "C" {
     fn _evm_sload(key_ptr: *const u8, value_ptr: *mut u8);
