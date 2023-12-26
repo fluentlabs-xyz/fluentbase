@@ -37,9 +37,7 @@ impl SysPlatformSDK for SDK {
         OUTPUT.lock().unwrap().extend(value);
     }
 
-    fn sys_halt(exit_code: i32) {
-        unreachable!("program has exited with code: {}", exit_code)
-    }
+    fn sys_halt(_exit_code: i32) {}
 
     fn sys_state() -> u32 {
         *STATE.lock().unwrap()

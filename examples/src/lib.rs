@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 extern crate alloc;
+extern crate core;
 extern crate fluentbase_sdk;
 
 #[cfg(feature = "erc20")]
@@ -26,6 +27,7 @@ mod storage;
 
 #[cfg(not(feature = "std"))]
 #[no_mangle]
+#[cfg(target_arch = "wasm32")]
 pub extern "C" fn deploy() {
     #[cfg(feature = "erc20")]
     erc20::deploy();
@@ -39,6 +41,7 @@ pub extern "C" fn deploy() {
 
 #[cfg(not(feature = "std"))]
 #[no_mangle]
+#[cfg(target_arch = "wasm32")]
 pub extern "C" fn main() {
     #[cfg(feature = "erc20")]
     erc20::main();

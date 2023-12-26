@@ -1,8 +1,9 @@
-use fluentbase_sdk::{evm::ExecutionContext, CryptoPlatformSDK, SysPlatformSDK, SDK};
+use fluentbase_sdk::{evm::ExecutionContext, CryptoPlatformSDK, SDK};
 
 pub fn main() {
     let input = ExecutionContext::contract_input();
     let mut output = [0u8; 32];
     SDK::crypto_poseidon(&input, &mut output);
-    SDK::sys_write(&output);
+    let mut ctx = ExecutionContext::default();
+    ctx.return_and_exit(output.as_slice(), 0);
 }

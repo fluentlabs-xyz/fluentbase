@@ -12,9 +12,6 @@ mod rwasm;
 #[cfg(feature = "evm")]
 pub mod evm;
 
-#[cfg(feature = "evm")]
-use evm::U256;
-
 pub struct SDK;
 
 pub trait CryptoPlatformSDK {
@@ -74,8 +71,8 @@ pub trait ZktriePlatformSDK {
     fn zktrie_get_store(key: &[u8]) -> [u8; 32];
 }
 
+// #[deprecated(note = "this SDK extension will be removed in the future, use on your own risk")]
 #[cfg(feature = "evm")]
-#[deprecated(note = "this SDK extension will be removed in the future, use on your own risk")]
 pub trait EvmPlatformSDK {
     fn evm_sload(key: &[u8], value: &mut [u8]);
     fn evm_sstore(key: &[u8], value: &[u8]);
@@ -83,6 +80,7 @@ pub trait EvmPlatformSDK {
 
 #[cfg(not(feature = "runtime"))]
 #[panic_handler]
+#[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
@@ -94,4 +92,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(not(feature = "runtime"))]
 #[global_allocator]
-static ALLOC: lol_alloc::LeakingPageAllocator = lol_alloc::LeakingPageAllocator;
+#[cfg(target_arch = "wasm32")]
+static ALLOCATOR: lol_alloc::AssumeSingleThreaded<lol_alloc::LeakingAllocator> =
+    unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::LeakingAllocator::new()) };

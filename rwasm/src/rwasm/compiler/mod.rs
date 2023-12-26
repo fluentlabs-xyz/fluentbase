@@ -73,6 +73,7 @@ pub struct CompilerConfig {
     output_code: Option<InstructionSet>,
     global_start_index: u32,
     swap_stack_params: bool,
+    with_router: bool,
 }
 
 impl Default for CompilerConfig {
@@ -89,6 +90,7 @@ impl Default for CompilerConfig {
             output_code: None,
             global_start_index: 0,
             swap_stack_params: true,
+            with_router: true,
         }
     }
 }
@@ -266,7 +268,7 @@ impl<'linker> Compiler<'linker> {
         self.module
             .exports
             .iter()
-            .filter(|(k, v)| v.into_func_idx().is_some())
+            .filter(|(_k, v)| v.into_func_idx().is_some())
             .map(|(k, _)| k.clone())
             .last()
     }
@@ -443,8 +445,11 @@ impl<'linker> Compiler<'linker> {
             self.translate_sections()?;
         }
         // translate router for main index
-        // self.translate_router(main_index)?;
-        self.translate_subroutine_router(main_index)?;
+        if self.config.with_router {
+            self.translate_router(main_index)?;
+        } else {
+            self.translate_subroutine(main_index)?;
+        }
         Ok(())
     }
 
@@ -490,10 +495,7 @@ impl<'linker> Compiler<'linker> {
         Ok(())
     }
 
-    fn translate_subroutine_router(
-        &mut self,
-        main_index: FuncOrExport,
-    ) -> Result<(), CompilerError> {
+    fn translate_subroutine(&mut self, main_index: FuncOrExport) -> Result<(), CompilerError> {
         // translate router into separate instruction set
         let return_offset = self.code_section.len() + 2;
         let func_index = self.resolve_func_index(&main_index)?.unwrap_or_default();
