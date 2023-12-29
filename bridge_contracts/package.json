@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.1",
-    "@openzeppelin/contracts-upgradeable": "^v4.9.3"
+    "@openzeppelin/contracts-upgradeable": "^v4.9.3",
+    "solc": "^0.8.23-fixed"
   }
 }
