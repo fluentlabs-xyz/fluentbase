@@ -7,19 +7,28 @@ describe("Bridge", function () {
   let erc20Gateway;
   let erc20GatewayAbi;
   let token;
+  let tokenFactory;
+
   before(async function () {
     const BridgeContract = await ethers.getContractFactory("Bridge");
     const accounts = await hre.ethers.getSigners();
     bridge = await BridgeContract.deploy(accounts[0].address);
     await bridge.deployed();
 
+    const TokenFactoryContract = await ethers.getContractFactory("ERC20TokenFactory");
+    tokenFactory = await TokenFactoryContract.deploy(accounts[0].address);
+    await tokenFactory.deployed();
+
     const ERC20GatewayContract =
       await ethers.getContractFactory("ERC20Gateway");
     erc20GatewayAbi = ERC20GatewayContract.interface.format();
-    erc20Gateway = await ERC20GatewayContract.deploy(bridge.address, {
+    erc20Gateway = await ERC20GatewayContract.deploy(bridge.address, tokenFactory.address, {
       value: ethers.utils.parseEther("1000"),
     });
-    await erc20Gateway.deployed();
+
+
+
+
 
     Token = await ethers.getContractFactory("MockERC20Token");
     token = await Token.deploy(
@@ -29,6 +38,17 @@ describe("Bridge", function () {
       accounts[0].address,
     ); // Adjust initial supply as needed
     await token.deployed();
+
+    await erc20Gateway.deployed();
+
+    const contractWithSigner = erc20Gateway.connect(accounts[0]);
+
+    const updateMappingTx = await contractWithSigner.updateTokenMapping(
+        token.address,
+        "0x1111111111111111111111111111111111111111",
+    );
+
+    await updateMappingTx.wait();
   });
 
   it("Send tokens test", async function () {
@@ -45,6 +65,7 @@ describe("Bridge", function () {
       token.address,
       accounts[3].address,
       100,
+      []
     );
 
     await send_tx.wait();
