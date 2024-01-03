@@ -1,3 +1,4 @@
+#![feature(adt_const_params)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 extern crate core;

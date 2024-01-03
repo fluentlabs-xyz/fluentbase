@@ -4,9 +4,10 @@ use fluentbase_rwasm::{
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use std::marker::ConstParamTy;
 
 #[allow(non_camel_case_types)]
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, EnumIter, ConstParamTy)]
 pub enum SysFuncIdx {
     #[default]
     UNKNOWN = 0x0000,
