@@ -10,6 +10,12 @@ import {IERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract ERC20Gateway is Ownable {
+    struct TokenMetadata {
+        string symbol;
+        string name;
+        uint8 decimals;
+    }
+
     modifier onlyBridgeSender() {
         require(msg.sender == bridgeContract, "call only from bridge");
         _;
@@ -22,9 +28,13 @@ contract ERC20Gateway is Ownable {
     address public tokenFactory;
 
     event ReceivedTokens(address source, address target, uint256 amount);
-    event UpdateTokenMapping(address indexed _originToken, address indexed _oldPeggedToken, address indexed _newPeggedToken);
+    event UpdateTokenMapping(
+        address indexed _originToken,
+        address indexed _oldPeggedToken,
+        address indexed _newPeggedToken
+    );
 
-    constructor(address _bridgeContract, address _tokenFactory) Ownable(msg.sender) payable {
+    constructor(address _bridgeContract, address _tokenFactory) payable Ownable(msg.sender) {
         bridgeContract = _bridgeContract;
         tokenFactory = _tokenFactory;
     }
@@ -33,7 +43,8 @@ contract ERC20Gateway is Ownable {
         address _token,
         address _to,
         uint256 _amount,
-        bytes calldata _tokenMetadata
+        //TODO: Add validation for token metadata
+        TokenMetadata calldata _tokenMetadata
     ) external payable {
         bytes memory _message;
 
@@ -52,18 +63,19 @@ contract ERC20Gateway is Ownable {
             address _peggedToken = tokenMapping[_token];
             require(_peggedToken != address(0), "no corresponding l2 token");
 
-            IERC20Upgradeable(_token).transferFrom(
-                msg.sender,
-                address(this),
-                _amount
+            IERC20Upgradeable(_token).transferFrom(msg.sender, address(this), _amount);
+
+            bytes memory rawTokenMetadata = abi.encode(
+                _tokenMetadata.symbol,
+                _tokenMetadata.name,
+                _tokenMetadata.decimals
             );
 
             _message = abi.encodeCall(
                 ERC20Gateway.receivePeggedTokens,
-                (_token, _peggedToken, msg.sender, _to, _amount, _tokenMetadata)
+                (_token, _peggedToken, msg.sender, _to, _amount, rawTokenMetadata)
             );
         }
-
 
         IBridge(bridgeContract).sendMessage{value: msg.value}(_to, _message);
     }
@@ -78,11 +90,16 @@ contract ERC20Gateway is Ownable {
     ) external payable onlyBridgeSender {
         require(msg.value == 0, "Message value have to equal zero");
 
-        if (_peggedToken.code.length > 0) {
-            // first deposit,  mapping
-            tokenMapping[_peggedToken] = _originToken;
+        if (_peggedToken.code.length == 0) {
+            address new_pegged_token = _deployL2Token(_tokenMetadata, _originToken);
+            require(new_pegged_token == _peggedToken, "321Wrong pegged token provided as argument");
 
-            _deployL2Token(_tokenMetadata, _originToken);
+            tokenMapping[_peggedToken] = _originToken;
+        } else {
+            require(
+                tokenMapping[_peggedToken] == _originToken,
+                "123Failed while token mapping check. Origin or pegged token is wrong"
+            );
         }
 
         ERC20PeggedToken(_peggedToken).mint(_to, _amount);
@@ -111,12 +128,14 @@ contract ERC20Gateway is Ownable {
         emit UpdateTokenMapping(_originToken, _oldPeggedToken, _peggedToken);
     }
 
-    function _deployL2Token(bytes memory _tokenMetadata, address _originToken) internal {
+    function _deployL2Token(bytes memory _tokenMetadata, address _originToken) internal returns (address) {
         address _peggedToken = ERC20TokenFactory(tokenFactory).deployPeggedToken(address(this), _originToken);
         (string memory _symbol, string memory _name, uint8 _decimals) = abi.decode(
             _tokenMetadata,
             (string, string, uint8)
         );
         ERC20PeggedToken(_peggedToken).initialize(_name, _symbol, _decimals, address(this), _originToken);
+
+        return _peggedToken;
     }
 }
