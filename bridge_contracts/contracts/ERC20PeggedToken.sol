@@ -5,7 +5,6 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ERC20PeggedToken is ERC20 {
-
     // we store symbol and name as bytes32
     string internal _symbol;
     string internal _name;
@@ -19,8 +18,7 @@ contract ERC20PeggedToken is ERC20 {
 
     uint8 private _decimals;
 
-    constructor() ERC20("", "") {
-    }
+    constructor() ERC20("", "") {}
 
     function initialize(
         string memory name_,
@@ -66,5 +64,4 @@ contract ERC20PeggedToken is ERC20 {
     function symbol() public view override returns (string memory) {
         return _symbol;
     }
-
 }
