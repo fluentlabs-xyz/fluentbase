@@ -37,21 +37,12 @@ contract Bridge {
         bridgeAuthority = _bridgeAuthority;
     }
 
-    function sendMessage(
-        address _to,
-        bytes calldata _message
-    ) external payable {
+    function sendMessage(address _to, bytes calldata _message) external payable {
         address from = msg.sender;
         uint256 value = msg.value;
         uint256 messageNonce = _takeNextNonce();
 
-        bytes memory encodedMessage = _encodeMessage(
-            from,
-            _to,
-            value,
-            messageNonce,
-            _message
-        );
+        bytes memory encodedMessage = _encodeMessage(from, _to, value, messageNonce, _message);
 
         bytes32 messageHash = keccak256(encodedMessage);
 
@@ -65,13 +56,7 @@ contract Bridge {
         uint256 _nonce,
         bytes calldata _message
     ) external payable onlyBridgeSender {
-        bytes memory encodedMessage = _encodeMessage(
-            _from,
-            _to,
-            _value,
-            _nonce,
-            _message
-        );
+        bytes memory encodedMessage = _encodeMessage(_from, _to, _value, _nonce, _message);
 
         bytes32 messageHash = keccak256(encodedMessage);
 
