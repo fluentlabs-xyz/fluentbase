@@ -3,12 +3,7 @@
 pragma solidity ^0.8.0;
 
 interface IBridge {
-    event SentMessage(
-        address indexed sender,
-        address indexed to,
-        uint256 value,
-        bytes32 messageHash
-    );
+    event SentMessage(address indexed sender, address indexed to, uint256 value, bytes32 messageHash);
 
     event ReceivedMessage(bytes32 messageHash, bool successfulCall);
 
