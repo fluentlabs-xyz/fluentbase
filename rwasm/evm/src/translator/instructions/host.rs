@@ -44,7 +44,7 @@ pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLOAD";
     debug!("op:{}", OP);
-    wasm_call(host.instruction_set(), SystemFuncs::EvmSload, translator);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

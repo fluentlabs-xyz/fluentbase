@@ -5,6 +5,8 @@ pub(super) enum SystemFuncs {
     CryptoKeccak256,
     EvmSstore,
     EvmSload,
+    SysHalt,
+    SysWrite,
 }
 
 pub(super) fn wasm_call(
@@ -16,6 +18,8 @@ pub(super) fn wasm_call(
         SystemFuncs::CryptoKeccak256 => "_crypto_keccak256",
         SystemFuncs::EvmSstore => "_evm_sstore",
         SystemFuncs::EvmSload => "_evm_sload",
+        SystemFuncs::SysHalt => "_sys_halt",
+        SystemFuncs::SysWrite => "_sys_write",
     };
     let import_fn_idx =
         translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name)].0;

@@ -146,7 +146,7 @@ opcodes! {
     // 0x2F
     0x30 => ADDRESS   => system::address, // done
     0x31 => BALANCE   => host::balance::<H>, // TODO
-    0x32 => ORIGIN    => host_env::origin, // TODO tx_caller
+    0x32 => ORIGIN    => host_env::origin, // tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
     0x35 => CALLDATALOAD => system::calldataload, // TODO from contract_input
@@ -155,7 +155,7 @@ opcodes! {
     0x38 => CODESIZE     => system::codesize, // done
     0x39 => CODECOPY     => system::codecopy, // TODO
 
-    0x3A => GASPRICE       => host_env::gasprice, // TODO tx_gas_price
+    0x3A => GASPRICE       => host_env::gasprice, // tx_gas_price
     0x3B => EXTCODESIZE    => host::extcodesize::<H>, // TODO
     0x3C => EXTCODECOPY    => host::extcodecopy::<H>, // TODO
     0x3D => RETURNDATASIZE => system::returndatasize::<H>, // TODO
@@ -165,29 +165,29 @@ opcodes! {
     0x41 => COINBASE       => host_env::coinbase, // done
     0x42 => TIMESTAMP      => host_env::timestamp, // done
     0x43 => NUMBER         => host_env::number, // done
-    0x44 => DIFFICULTY     => host_env::difficulty::<H>, // TODO block_difficulty
+    0x44 => DIFFICULTY     => host_env::difficulty::<H>, // block_difficulty
     0x45 => GASLIMIT       => host_env::gaslimit, // done
     0x46 => CHAINID        => host_env::chainid::<H>, // done
     0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
     0x48 => BASEFEE        => host_env::basefee::<H>, // done
     0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO tx_blob_hashes
-    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // TODO tx_blob_gas_price
+    0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // tx_blob_gas_price
     // 0x4B
     // 0x4C
     // 0x4D
     // 0x4E
     // 0x4F
     0x50 => POP      => stack::pop, // done
-    0x51 => MLOAD    => memory::mload, // TODO load 32 bytes from mem
+    0x51 => MLOAD    => memory::mload, // load 32 bytes from mem
     0x52 => MSTORE   => memory::mstore, // done
     0x53 => MSTORE8  => memory::mstore8, // done
-    0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload
-    0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore
+    0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload (need bindings for runtime)
+    0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore (need bindings for runtime)
     0x56 => JUMP     => control::jump, // TODO replace with br
     0x57 => JUMPI    => control::jumpi, // TODO replace with br
     0x58 => PC       => control::pc, // TODO
     0x59 => MSIZE    => memory::msize, // TODO memory.size
-    0x5A => GAS      => system::gas, // TODO return 0
+    0x5A => GAS      => system::gas, // return 0
     0x5B => JUMPDEST => control::jumpdest, // TODO
     0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap
     0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap
@@ -344,7 +344,7 @@ opcodes! {
     0xF0 => CREATE       => host::create::<false, H>, // TODO
     0xF1 => CALL         => host::call::<H>, // TODO
     0xF2 => CALLCODE     => host::call_code::<H>, // TODO
-    0xF3 => RETURN       => control::ret, // TODO sdk sys_write + return
+    0xF3 => RETURN       => control::ret, // sdk sys_write + return
     0xF4 => DELEGATECALL => host::delegate_call::<H>, // TODO
     0xF5 => CREATE2      => host::create::<true, H>, // TODO
     // 0xF6
@@ -355,7 +355,7 @@ opcodes! {
     // 0xFB
     // 0xFC
     0xFD => REVERT       => control::revert::<H>, // TODO sys_write + sys_halt
-    0xFE => INVALID      => control::invalid, // TODO sys_halt
+    0xFE => INVALID      => control::invalid, // sys_halt
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
 }
 
