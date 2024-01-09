@@ -8,7 +8,6 @@ use crate::{
     },
 };
 use alloy_primitives::Bytes;
-// use alloy_primitives::Bytes;
 use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet};
 
 #[derive()]

@@ -1,10 +1,6 @@
 use crate::translator::{
     host::Host,
-    instructions::utilities::{
-        replace_current_opcode_with_call_to_subroutine,
-        wasm_call,
-        SystemFuncs,
-    },
+    instructions::utilities::replace_current_opcode_with_call_to_subroutine,
     translator::Translator,
 };
 use log::debug;
@@ -38,25 +34,28 @@ pub fn codecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn calldataload<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn calldataload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLDATALOAD";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn calldatasize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn calldatasize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLDATASIZE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
+}
+
+pub fn calldatacopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "CALLDATACOPY";
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn callvalue<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLVALUE";
     debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
-}
-
-pub fn calldatacopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
-    const OP: &str = "CALLDATACOPY";
-    panic!("op:{} not implemented", OP);
 }
 
 pub fn returndatasize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -69,7 +68,8 @@ pub fn returndatacopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) 
     panic!("op:{} not implemented", OP);
 }
 
-pub fn gas<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn gas<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GAS";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }

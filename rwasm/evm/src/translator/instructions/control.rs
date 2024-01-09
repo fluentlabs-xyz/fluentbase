@@ -1,8 +1,14 @@
 use crate::translator::{
     host::Host,
     instruction_result::InstructionResult,
+    instructions::utilities::{
+        replace_current_opcode_with_call_to_subroutine,
+        wasm_call,
+        SystemFuncs,
+    },
     translator::Translator,
 };
+use log::debug;
 
 pub fn jump<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "JUMP";
@@ -24,9 +30,10 @@ pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     panic!("op:{} not implemented", OP);
 }
 
-pub fn ret<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "RET";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -41,8 +48,9 @@ pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     is.op_unreachable();
 }
 
-pub fn invalid<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn invalid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::InvalidFEOpcode;
+    wasm_call(host.instruction_set(), SystemFuncs::SysHalt, translator)
 }
 
 pub fn not_found<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {

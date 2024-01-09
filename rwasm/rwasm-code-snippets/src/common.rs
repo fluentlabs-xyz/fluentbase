@@ -14,7 +14,7 @@ use crate::{
         U64_LOW_PART_MASK,
         U64_MSBIT_IS_1,
     },
-    types::U256TupleLE,
+    types::U256AsU64TupleLE,
 };
 
 #[inline]
@@ -90,7 +90,7 @@ pub(crate) fn subtract_with_remainder(
     res
 }
 
-pub(crate) fn div_le(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
+pub(crate) fn div_le(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
     if b.3 == 0 && b.2 == 0 && b.1 == 0 && (b.0 == 1 || b.0 == 0) {
@@ -285,7 +285,7 @@ pub(crate) fn try_divide_close_numbers(
     res
 }
 
-pub(crate) fn add(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
+pub(crate) fn add(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut a_part: u64 = 0;
     let mut b_part: u64 = 0;
     let mut part_sum: u64 = 0;
@@ -407,8 +407,8 @@ pub(crate) fn add(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
 // }
 
 // #[no_mangle]
-pub(crate) fn exp(v: U256TupleLE, degree: U256TupleLE) -> U256TupleLE {
-    let mut r: U256TupleLE = (0, 0, 0, 0);
+pub(crate) fn exp(v: U256AsU64TupleLE, degree: U256AsU64TupleLE) -> U256AsU64TupleLE {
+    let mut r: U256AsU64TupleLE = (0, 0, 0, 0);
 
     if v.3 == 0 && v.2 == 0 && v.1 == 0 && (v.0 == 0 || v.0 == 1) {
         if v.0 == 0 {
@@ -425,9 +425,9 @@ pub(crate) fn exp(v: U256TupleLE, degree: U256TupleLE) -> U256TupleLE {
             r.0 = 1
         }
     } else {
-        let mut base: U256TupleLE = (v.0, v.1, v.2, v.3);
-        let mut rp: U256TupleLE = (1, 0, 0, 0);
-        let mut exp: U256TupleLE = (degree.0, degree.1, degree.2, degree.3);
+        let mut base: U256AsU64TupleLE = (v.0, v.1, v.2, v.3);
+        let mut rp: U256AsU64TupleLE = (1, 0, 0, 0);
+        let mut exp: U256AsU64TupleLE = (degree.0, degree.1, degree.2, degree.3);
         r.0 = 1;
         let mut c = 0;
         loop {
@@ -459,7 +459,7 @@ pub(crate) fn exp(v: U256TupleLE, degree: U256TupleLE) -> U256TupleLE {
 }
 
 #[inline]
-pub(crate) fn mod_impl(dividend: U256TupleLE, divisor: U256TupleLE) -> U256TupleLE {
+pub(crate) fn mod_impl(dividend: U256AsU64TupleLE, divisor: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut result = [0u64, 0u64, 0u64, 0u64];
 
     if dividend.3 == divisor.3
@@ -545,7 +545,7 @@ pub(crate) fn mod_impl(dividend: U256TupleLE, divisor: U256TupleLE) -> U256Tuple
     (result[0], result[1], result[2], result[3])
 }
 
-pub(crate) fn smod(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
+pub(crate) fn smod(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let a_sign = a.3 & U64_MSBIT_IS_1 > 0;
     let b_sign = b.3 & U64_MSBIT_IS_1 > 0;
     let mut result = [0u64, 0u64, 0u64, 0u64];
@@ -657,7 +657,7 @@ pub(crate) fn smod(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
     (result[0], result[1], result[2], result[3])
 }
 
-pub(crate) fn mul(a: U256TupleLE, b: U256TupleLE) -> U256TupleLE {
+pub(crate) fn mul(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE {
     fn multiply_u64(a: u64, b: u64) -> (u64, u64) {
         let a_lo = a & U64_LOW_PART_MASK;
         let a_hi = a >> U64_HALF_BITS_COUNT;
@@ -723,7 +723,7 @@ pub(crate) fn shr(
     v1: u64,
     v2: u64,
     v3: u64,
-) -> U256TupleLE {
+) -> U256AsU64TupleLE {
     let mut s0: u64 = 0;
     let mut s1: u64 = 0;
     let mut s2: u64 = 0;
@@ -760,7 +760,7 @@ pub(crate) fn shr(
     (s0, s1, s2, s3)
 }
 
-pub(crate) fn convert_sign_be(v: U256TupleLE) -> U256TupleLE {
+pub(crate) fn convert_sign_be(v: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut r = v;
     let sign = v.0 & U64_MSBIT_IS_1 > 0;
     if sign {
@@ -814,7 +814,7 @@ pub(crate) fn convert_sign_be(v: U256TupleLE) -> U256TupleLE {
     r
 }
 
-pub(crate) fn convert_sign_le(v: U256TupleLE) -> U256TupleLE {
+pub(crate) fn convert_sign_le(v: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut r = v;
     let sign = v.3 & U64_MSBIT_IS_1 > 0;
     if sign {
@@ -868,7 +868,7 @@ pub(crate) fn convert_sign_le(v: U256TupleLE) -> U256TupleLE {
     r
 }
 
-pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256TupleLE {
+pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256AsU64TupleLE {
     let mut r = (0, 0, 0, 0);
     let mut v = [0u8; 8];
     v.clone_from_slice(&val[0..8]);
@@ -883,7 +883,7 @@ pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256T
     r
 }
 
-pub(crate) fn u256_tuple_le_to_be(val: U256TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
+pub(crate) fn u256_tuple_le_to_be(val: U256AsU64TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[0..8].copy_from_slice(&val.3.to_be_bytes());
     r[8..16].copy_from_slice(&val.2.to_be_bytes());
@@ -893,7 +893,7 @@ pub(crate) fn u256_tuple_le_to_be(val: U256TupleLE) -> [u8; U256_BYTES_COUNT as 
     r
 }
 
-pub(crate) fn u256_from_slice(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
+pub(crate) fn u256_from_be_slice(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[U256_BYTES_COUNT as usize - v.len()..].copy_from_slice(v);
     r
