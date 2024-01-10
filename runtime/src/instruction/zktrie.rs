@@ -98,7 +98,7 @@ thread_local! {
     static TRIES: RefCell<HashMap<TrieId, Rc<RefCell<ZkTrie>>>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn zktrie_open(_caller: Caller<'_, RuntimeContext>) -> Result<(), Trap> {
+pub(crate) fn zktrie_open<T>(caller: Caller<RuntimeContext<T>>) -> Result<(), Trap> {
     DB.with(|db| {
         let root_zero: Hash = [0; FIELDSIZE];
         let zk_trie: ZkTrie = db
@@ -187,8 +187,8 @@ pub fn get_store_data(key: &[u8], trie: &ZkTrie) -> Option<StoreData> {
 
 macro_rules! impl_update {
     ($fn_name:ident, $data_extractor:ident, $field_updater:ident, $trie_updater:ident, ) => {
-        pub fn $fn_name(
-            mut caller: Caller<'_, RuntimeContext>,
+        pub fn $fn_name<T>(
+            mut caller: Caller<'_, RuntimeContext<T>>,
             key_offset: i32,
             key_len: i32,
             value_offset: i32,
@@ -219,8 +219,8 @@ macro_rules! impl_update {
 
 macro_rules! impl_get {
     ($fn_name:ident, $data_extractor:ident, $data_fetcher:ident, ) => {
-        pub fn $fn_name(
-            mut caller: Caller<'_, RuntimeContext>,
+        pub fn $fn_name<T>(
+            mut caller: Caller<'_, RuntimeContext<T>>,
             key_offset: i32,
             key_len: i32,
             output_offset: i32,

@@ -14,6 +14,7 @@ mod instruction;
 mod macros;
 mod platform;
 mod runtime;
+mod storage;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -22,6 +23,7 @@ mod types;
 pub enum RuntimeError {
     ReducedModule(ReducedModuleError),
     Rwasm(fluentbase_rwasm::Error),
+    StorageError(String),
 }
 
 impl From<ReducedModuleError> for RuntimeError {

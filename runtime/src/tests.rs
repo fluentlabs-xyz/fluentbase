@@ -213,9 +213,8 @@ fn test_keccak256() {
     println!("module.trace_binary(): {:?}", module.trace());
     let execution_result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
     println!(
-        "execution_result (exit_code {}): {:?}",
+        "execution_result (exit_code {})",
         execution_result.data().exit_code,
-        execution_result
     );
     match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
         Ok(answer) => {

@@ -1,7 +1,8 @@
-use crate::{instruction::exported_memory_vec, RuntimeContext};
+use crate::{instruction::exported_memory_vec, ExitCode, RuntimeContext};
 use fluentbase_poseidon::{poseidon_hash, Hashable};
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
+use k256::elliptic_curve::subtle::CtOption;
 use keccak_hash::write_keccak;
 
 pub(crate) fn crypto_keccak256<T>(
@@ -33,44 +34,29 @@ pub(crate) fn crypto_poseidon2<T>(
     mut caller: Caller<'_, RuntimeContext<T>>,
     fa_offset: i32,
     fb_offset: i32,
-    domain_offset: i32,
+    fd_offset: i32,
     output_offset: i32,
 ) -> Result<(), Trap> {
-    let fa_data =
-        TryInto::<[u8; 32]>::try_into(exported_memory_vec(&mut caller, fa_offset as usize, 32))
-            .map_err(|_e| Trap::new(format!("failed to get fa_offset param")))?;
-    let fb_data =
-        TryInto::<[u8; 32]>::try_into(exported_memory_vec(&mut caller, fb_offset as usize, 32))
-            .map_err(|_e| Trap::new(format!("failed to get fb_offset param")))?;
-    let fdomain_data =
-        TryInto::<[u8; 32]>::try_into(exported_memory_vec(&mut caller, domain_offset as usize, 32))
-            .map_err(|_e| Trap::new(format!("failed to get fdomain_offset param")))?;
+    let mut fr_from_bytes = |offset| -> Result<Fr, Trap> {
+        let fr_data: [u8; 32] = exported_memory_vec(&mut caller, offset as usize, 32)
+            .try_into()
+            .map_err(|_| <ExitCode as Into<Trap>>::into(ExitCode::PoseidonError))?;
+        let fr = Fr::from_bytes(&fr_data);
+        if fr.is_none().into() {
+            return Err(<ExitCode as Into<Trap>>::into(ExitCode::PoseidonError));
+        }
+        Ok(fr.unwrap())
+    };
 
-    let fa = Fr::from_bytes(&fa_data);
-    let fa = if fa.is_some().into() {
-        fa.unwrap()
-    } else {
-        return Err(Trap::new(format!("failed to get fa param")));
-    };
-    let fb = Fr::from_bytes(&fb_data);
-    let fb = if fb.is_some().into() {
-        fb.unwrap()
-    } else {
-        return Err(Trap::new(format!("failed to get fb param")));
-    };
-    let fdomain = Fr::from_bytes(&fdomain_data);
-    let fdomain = if fdomain.is_some().into() {
-        fdomain.unwrap()
-    } else {
-        return Err(Trap::new(format!("failed to get fdomain param")));
-    };
+    let fa = fr_from_bytes(fa_offset)?;
+    let fb = fr_from_bytes(fb_offset)?;
+    let fd = fr_from_bytes(fd_offset)?;
 
     let hasher = Fr::hasher();
-    let h2 = hasher.hash([fa, fb], fdomain);
+    let h2 = hasher.hash([fa, fb], fd);
     let hash = h2.to_repr();
 
     caller.write_memory(output_offset as usize, hash.as_slice());
-
     Ok(())
 }
 
@@ -79,6 +65,7 @@ mod keccak_tests {
     extern crate alloc;
 
     use alloc::{vec, vec::Vec};
+    use fluentbase_poseidon::poseidon_hash;
     use keccak_hash::{keccak, write_keccak, H256, KECCAK_EMPTY};
 
     #[test]
@@ -87,7 +74,7 @@ mod keccak_tests {
     }
 
     #[test]
-    fn with_content() {
+    fn test_keccak256() {
         let data: Vec<u8> = From::from("hello world");
         let expected = vec![
             0x47, 0x17, 0x32, 0x85, 0xa8, 0xd7, 0x34, 0x1e, 0x5e, 0x97, 0x2f, 0xc6, 0x77, 0x28,
@@ -96,7 +83,17 @@ mod keccak_tests {
         ];
         let mut dest = [0u8; 32];
         write_keccak(data, &mut dest);
-
         assert_eq!(dest, expected.as_ref());
+    }
+
+    #[test]
+    fn test_poseidon() {
+        let data: Vec<u8> = From::from("hello world");
+        let expected = vec![
+            13, 147, 215, 180, 93, 24, 214, 147, 24, 205, 39, 124, 162, 132, 216, 125, 204, 48,
+            249, 43, 252, 181, 68, 137, 189, 87, 214, 31, 48, 215, 193, 14,
+        ];
+        let hash = poseidon_hash(data.as_slice());
+        assert_eq!(hash.as_slice(), expected.as_slice());
     }
 }
