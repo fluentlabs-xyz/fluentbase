@@ -10,5 +10,9 @@ mod coinbase;
 mod gaslimit;
 #[cfg(feature = "host_number")]
 mod number;
+#[cfg(feature = "host_sload")]
+mod sload;
+#[cfg(feature = "host_sstore")]
+mod sstore;
 #[cfg(feature = "host_timestamp")]
 mod timestamp;

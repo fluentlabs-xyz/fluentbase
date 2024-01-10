@@ -27,6 +27,9 @@ struct Args {
     #[arg(long, default_value_t = false)]
     do_not_inject_fuel: bool,
 
+    #[arg(long, default_value_t = false)]
+    use_subroutine_router: bool,
+
     #[arg(long, default_value = "")]
     entry_fn_name: String,
 
@@ -62,7 +65,8 @@ fn main() {
         CompilerConfig::default()
             .translate_sections(!args.skip_translate_sections)
             .type_check(!args.skip_type_check)
-            .fuel_consume(!args.do_not_inject_fuel),
+            .fuel_consume(!args.do_not_inject_fuel)
+            .with_router(!args.use_subroutine_router),
         Some(&import_linker),
     )
     .unwrap();

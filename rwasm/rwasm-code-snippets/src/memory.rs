@@ -1,3 +1,5 @@
+#[cfg(feature = "memory_mload")]
+mod mload;
 #[cfg(feature = "memory_mstore")]
 mod mstore;
 #[cfg(feature = "memory_mstore8")]
