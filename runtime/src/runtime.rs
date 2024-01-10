@@ -1,6 +1,7 @@
 use crate::{
     fuel::*,
     macros::{forward_call, forward_call_args},
+    storage::PersistentStorage,
     ExitCode,
     RuntimeError,
     SysFuncIdx,
@@ -25,12 +26,12 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use std::{cell::RefCell, mem::take};
+use std::{cell::RefCell, marker::PhantomData, mem::take, rc::Rc};
 
-#[derive(Debug)]
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
     pub(crate) func_type: Option<FuncType>,
+    pub(crate) persistent_storage: Option<Rc<dyn PersistentStorage>>,
     // context inputs
     pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
@@ -42,11 +43,12 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) output: Vec<u8>,
 }
 
-impl<'t, T> Clone for RuntimeContext<'t, T> {
+impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
     fn clone(&self) -> Self {
         Self {
             context: None,
             func_type: None,
+            persistent_storage: self.persistent_storage.clone(),
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
@@ -61,8 +63,9 @@ impl<'t, T> Clone for RuntimeContext<'t, T> {
 impl<'t, T> Default for RuntimeContext<'t, T> {
     fn default() -> Self {
         Self {
-            func_type: None,
             context: None,
+            func_type: None,
+            persistent_storage: None,
             bytecode: vec![],
             fuel_limit: 0,
             state: 0,
@@ -154,7 +157,6 @@ impl<'t, T> RuntimeContext<'t, T> {
     }
 }
 
-#[derive(Debug)]
 pub struct ExecutionResult<'t, T> {
     runtime_context: RuntimeContext<'t, T>,
     tracer: Tracer,
@@ -734,7 +736,7 @@ impl<'t, T> Runtime<'t, T> {
     pub fn catch_trap(err: RuntimeError) -> i32 {
         let err = match err {
             RuntimeError::Rwasm(err) => err,
-            RuntimeError::ReducedModule(_) => return ExitCode::UnknownError as i32,
+            _ => return ExitCode::UnknownError as i32,
         };
         let err = match err {
             fluentbase_rwasm::Error::Trap(err) => err,
