@@ -126,6 +126,11 @@ impl CompilerConfig {
         self
     }
 
+    pub fn with_router(mut self, value: bool) -> Self {
+        self.with_router = value;
+        self
+    }
+
     pub fn translate_func_as_inline(mut self, value: bool) -> Self {
         self.translate_func_as_inline = value;
         self

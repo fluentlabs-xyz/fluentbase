@@ -6,9 +6,8 @@ use crate::translator::{
 };
 pub use analysis::BytecodeLocked;
 use fluentbase_rwasm::rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule};
-use hashbrown::HashMap;
 use log::debug;
-use std::{fs, marker::PhantomData};
+use std::{collections::HashMap, fs, marker::PhantomData};
 
 pub mod analysis;
 pub mod contract;
@@ -229,6 +228,10 @@ impl<'a> Translator<'a> {
                 "../rwasm-code-snippets/bin/memory_mstore8.rwasm",
             ),
             (
+                opcode::MLOAD,
+                "../rwasm-code-snippets/bin/memory_mload.rwasm",
+            ),
+            (
                 opcode::KECCAK256,
                 "../rwasm-code-snippets/bin/system_keccak.rwasm",
             ),
@@ -247,6 +250,19 @@ impl<'a> Translator<'a> {
             (
                 opcode::CODESIZE,
                 "../rwasm-code-snippets/bin/system_codesize.rwasm",
+            ),
+            (opcode::GAS, "../rwasm-code-snippets/bin/system_gas.rwasm"),
+            (
+                opcode::CALLDATALOAD,
+                "../rwasm-code-snippets/bin/system_calldataload.rwasm",
+            ),
+            (
+                opcode::CALLDATACOPY,
+                "../rwasm-code-snippets/bin/system_calldatacopy.rwasm",
+            ),
+            (
+                opcode::CALLDATASIZE,
+                "../rwasm-code-snippets/bin/system_calldatasize.rwasm",
             ),
             (
                 opcode::CHAINID,
@@ -276,6 +292,9 @@ impl<'a> Translator<'a> {
                 opcode::TIMESTAMP,
                 "../rwasm-code-snippets/bin/host_timestamp.rwasm",
             ),
+            // (opcode::SLOAD, "../rwasm-code-snippets/bin/host_sload.rwasm"), // TODO need runtime
+            // binding // binding (opcode::SSTORE, "../rwasm-code-snippets/bin/
+            // host_sstore.rwasm"), // TODO need runtime binding runtime
             (opcode::POP, "../rwasm-code-snippets/bin/stack_pop.rwasm"),
             (opcode::DUP1, "../rwasm-code-snippets/bin/stack_dup1.rwasm"),
             (opcode::DUP2, "../rwasm-code-snippets/bin/stack_dup2.rwasm"),
@@ -286,6 +305,26 @@ impl<'a> Translator<'a> {
             (
                 opcode::SWAP2,
                 "../rwasm-code-snippets/bin/stack_swap2.rwasm",
+            ),
+            (
+                opcode::DIFFICULTY,
+                "../rwasm-code-snippets/bin/host_env_block_difficulty.rwasm",
+            ),
+            (
+                opcode::BLOBBASEFEE,
+                "../rwasm-code-snippets/bin/host_env_blobbasefee.rwasm",
+            ),
+            (
+                opcode::GASPRICE,
+                "../rwasm-code-snippets/bin/host_env_gasprice.rwasm",
+            ),
+            (
+                opcode::ORIGIN,
+                "../rwasm-code-snippets/bin/host_env_origin.rwasm",
+            ),
+            (
+                opcode::RETURN,
+                "../rwasm-code-snippets/bin/control_return.rwasm",
             ),
         ]
         .map(|v| {
