@@ -12,6 +12,7 @@ mod evm_to_rwasm_tests {
                 AND,
                 BASEFEE,
                 BLOBBASEFEE,
+                BLOBHASH,
                 BLOCKHASH,
                 BYTE,
                 CALLDATACOPY,
@@ -67,7 +68,7 @@ mod evm_to_rwasm_tests {
             },
         },
     };
-    use alloy_primitives::{hex, Bytes, B256};
+    use alloy_primitives::{hex, Bytes, FixedBytes, B256};
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
     use fluentbase_rwasm::rwasm::{
@@ -85,6 +86,7 @@ mod evm_to_rwasm_tests {
     static SYSTEM_CODESIZE: [u8; 4] = [4; 4]; // u32 - 4 bytes
     static CONTRACT_INPUT: &[u8] = &[
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32, 33, 34, 25, 26, 37, 38, 39, 40, 41,
     ];
     static HOST_CHAINID: [u8; 8] = [5; 8]; // u64 - 8 bytes
     static HOST_BASEFEE: [u8; 32] = [6; 32]; // U256 - 32 bytes
@@ -97,6 +99,7 @@ mod evm_to_rwasm_tests {
     static HOST_ENV_BLOBBASEFEE: [u8; 8] = [13; 8]; // u64 - 8 bytes
     static HOST_ENV_GASPRICE: [u8; 32] = [14; 32]; // u256 - 32 bytes
     static HOST_ENV_ORIGIN: [u8; 20] = [15; 20]; // Address - 20 bytes
+    static HOST_ENV_BLOB_HASHES: &[[u8; 32]] = &[[1; 32], [2; 32], [3; 32]];
 
     #[derive(Clone)]
     enum Case {
@@ -250,7 +253,7 @@ mod evm_to_rwasm_tests {
             instruction_set.trace()
         );
 
-        let mut global_memory = vec![0u8; virtual_stack_top];
+        let mut global_memory = vec![];
         let mut global_memory_len: usize = 0;
         let mut ctx = RuntimeContext::new(rwasm_binary);
 
@@ -272,6 +275,10 @@ mod evm_to_rwasm_tests {
         contract_input.tx_blob_gas_price = u64::from_be_bytes(HOST_ENV_BLOBBASEFEE);
         contract_input.tx_gas_price = U256::from_be_bytes(HOST_ENV_GASPRICE);
         contract_input.tx_caller = Address::new(HOST_ENV_ORIGIN);
+        contract_input.tx_blob_hashes = HOST_ENV_BLOB_HASHES
+            .iter()
+            .map(|v| B256::from_slice(v))
+            .collect();
         let ci = contract_input.encode_to_vec(0);
         ctx = ctx.with_input(ci);
 
@@ -307,16 +314,16 @@ mod evm_to_rwasm_tests {
             for change in &memory_changes {
                 let offset_start = change.offset as usize;
                 let offset_end = offset_start + change.len as usize;
+                if global_memory.len() <= offset_end {
+                    global_memory.resize(offset_end + 1, 0);
+                }
                 global_memory[offset_start..offset_end].copy_from_slice(&change.data);
                 if offset_end > global_memory_len {
                     global_memory_len = offset_end;
                 }
             }
         }
-        debug!(
-            "global_memory (total len {}) {:?}",
-            global_memory_len, &global_memory
-        );
+        debug!("global_memory total len {}", global_memory_len,);
         // let global_memory =
         //     global_memory[0..force_memory_result_size.unwrap_or(global_memory.len())].to_vec();
         debug!(
@@ -1738,21 +1745,22 @@ mod evm_to_rwasm_tests {
         test_op_cases(ADDRESS, None, &cases, false, ResultLocation::Stack);
     }
 
-    #[ignore]
+    // #[ignore]
     #[test]
     fn calldatasize() {
-        let cases = [Case::NoArgs(x(
-            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-        ))];
+        let mut cases = vec![];
+        let mut v = [0u8; 32];
+        let len_be = CONTRACT_INPUT.len().to_be_bytes();
+        v[32 - len_be.len()..].copy_from_slice(&len_be);
+        cases.push(Case::NoArgs(v.to_vec()));
 
         test_op_cases(CALLDATASIZE, None, &cases, false, ResultLocation::Stack);
     }
 
-    #[ignore]
     #[test]
     fn calldataload() {
         let cases = [Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
             x("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
         ))];
 
@@ -1981,6 +1989,29 @@ mod evm_to_rwasm_tests {
         })];
 
         test_op_cases(BLOBBASEFEE, None, &cases, false, ResultLocation::Stack);
+    }
+    #[test]
+    fn blobhash() {
+        let cases = [
+            Case::Unary((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                HOST_ENV_BLOB_HASHES[0].to_vec(),
+            )),
+            Case::Unary((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                HOST_ENV_BLOB_HASHES[1].to_vec(),
+            )),
+            Case::Unary((
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                HOST_ENV_BLOB_HASHES[2].to_vec(),
+            )),
+            Case::Unary((
+                x("0000000000000000000000000000000000000000000000000000000000000003"),
+                vec![0; 32],
+            )),
+        ];
+
+        test_op_cases(BLOBHASH, None, &cases, false, ResultLocation::Stack);
     }
 
     #[test]

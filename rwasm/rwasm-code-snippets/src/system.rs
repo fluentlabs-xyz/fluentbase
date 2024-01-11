@@ -14,5 +14,5 @@ mod callvalue;
 mod codesize;
 #[cfg(feature = "system_gas")]
 mod gas;
-#[cfg(feature = "system_keccak")]
-mod keccak;
+#[cfg(feature = "system_keccak256")]
+mod keccak256;
