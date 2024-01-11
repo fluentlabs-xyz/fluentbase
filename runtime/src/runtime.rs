@@ -681,6 +681,9 @@ impl<'t, T> Runtime<'t, T> {
         forward_call!(linker, store, "env", "_sys_state", fn sys_state() -> u32);
         forward_call!(linker, store, "env", "_sys_read", fn sys_read(target: u32, offset: u32, length: u32) -> u32);
         forward_call!(linker, store, "env", "_sys_write", fn sys_write(offset: u32, length: u32) -> ());
+        // evm
+        forward_call!(linker, store, "env", "_evm_sload", fn sload(key_ptr: u32, val_ptr: u32) -> ());
+        forward_call!(linker, store, "env", "_evm_sstore", fn sstore(key_ptr: u32, val_ptr: u32) -> ());
         // wasi
         forward_call!(linker, store, "wasi_snapshot_preview1", "proc_exit", fn wasi_proc_exit(exit_code: i32) -> ());
         forward_call!(linker, store, "wasi_snapshot_preview1", "fd_write", fn wasi_fd_write(fd: i32, iovs_ptr: i32, iovs_len: i32, rp0_ptr: i32) -> i32);

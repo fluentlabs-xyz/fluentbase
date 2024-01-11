@@ -1,5 +1,4 @@
 use crate::{EvmPlatformSDK, SDK};
-use alloy_primitives::{Address, U256};
 use std::collections::HashMap;
 
 #[derive(Default)]

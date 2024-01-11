@@ -1,4 +1,4 @@
-use crate::translator::{host::Host, translator::Translator};
+use crate::translator::{host::Host, instructions::opcode, translator::Translator};
 use fluentbase_rwasm::{module::ImportName, rwasm::InstructionSet};
 
 pub(super) enum SystemFuncs {

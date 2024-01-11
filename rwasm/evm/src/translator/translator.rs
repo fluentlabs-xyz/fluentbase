@@ -6,8 +6,7 @@ use crate::translator::{
 };
 pub use analysis::BytecodeLocked;
 use fluentbase_rwasm::rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule};
-use log::debug;
-use std::{collections::HashMap, fs, marker::PhantomData};
+use std::{collections::HashMap, marker::PhantomData};
 
 pub mod analysis;
 pub mod contract;
@@ -26,7 +25,6 @@ pub struct Translator<'a> {
 
 pub struct SubroutineData {
     pub rel_entry_offset: u32,
-    pub instruction_set: InstructionSet,
     pub begin_offset: usize,
     pub end_offset: usize,
 }
@@ -122,217 +120,96 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let mut initiate_subroutines = |opcode: u8, rwasm_binary: &[u8]| {
-            if self.opcode_to_subroutine_data.contains_key(&opcode) {
-                panic!(
-                    "code snippet for opcode 0x{:x?} already exists (decimal: {})",
-                    opcode, opcode
-                );
-            }
-            let fn_beginning_offset = 0;
+        let opcode_to_beginning: &[(u8, u32)] = &[
+            (opcode::BYTE, 8134),
+            (opcode::SHL, 9675),
+            (opcode::SHR, 10258),
+            (opcode::AND, 8030),
+            (opcode::OR, 8749),
+            (opcode::XOR, 10989),
+            (opcode::NOT, 8655),
+            (opcode::GT, 8359),
+            (opcode::LT, 8550),
+            (opcode::SGT, 9530),
+            (opcode::SLT, 10844),
+            (opcode::EQ, 8239),
+            (opcode::SAR, 8853),
+            (opcode::ISZERO, 8464),
+            (opcode::ADD, 395),
+            (opcode::SUB, 7798),
+            (opcode::MUL, 4563),
+            (opcode::DIV, 2127),
+            (opcode::SDIV, 4793),
+            (opcode::MOD, 4460),
+            (opcode::SMOD, 6564),
+            (opcode::EXP, 3700),
+            (opcode::ADDMOD, 1113),
+            (opcode::MULMOD, 4666),
+            (opcode::SIGNEXTEND, 6314),
+            (opcode::MSTORE, 13677),
+            (opcode::MSTORE8, 13740),
+            (opcode::MLOAD, 13501),
+            (opcode::MSIZE, 13580),
+            (opcode::POP, 13786),
+            (opcode::DUP1, 13776),
+            (opcode::DUP2, 13781),
+            (opcode::SWAP1, 13804),
+            (opcode::SWAP2, 13809),
+            (opcode::KECCAK256, 15185),
+            (opcode::ADDRESS, 13814),
+            (opcode::CALLER, 14619),
+            (opcode::CALLVALUE, 14772),
+            (opcode::CODESIZE, 14938),
+            (opcode::GAS, 15118),
+            (opcode::CALLDATALOAD, 14394),
+            (opcode::CALLDATASIZE, 14518),
+            (opcode::CALLDATACOPY, 13965),
+            (opcode::CHAINID, 12036),
+            (opcode::BASEFEE, 11619),
+            (opcode::BLOCKHASH, 11819),
+            (opcode::COINBASE, 12195),
+            (opcode::GASLIMIT, 12367),
+            (opcode::NUMBER, 12506),
+            (opcode::TIMESTAMP, 12782),
+            (opcode::SLOAD, 12645),
+            (opcode::SSTORE, 12754),
+            (opcode::DIFFICULTY, 13060),
+            (opcode::BLOBBASEFEE, 12921),
+            (opcode::GASPRICE, 13199),
+            (opcode::ORIGIN, 13365),
+            (opcode::RETURN, 11525),
+            (opcode::REVERT, 11571),
+        ];
+        let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
-            debug!(
-                "\nsubroutine_instruction_set (opcode 0x{:x?} len {} fn_beginning_offset {}): \n{}\n",
-                opcode,
-                instruction_set.instr.len(),
-                fn_beginning_offset,
-                instruction_set.trace(),
-            );
             let l = self.subroutines_instruction_set.instr.len();
-            let subroutine_data = SubroutineData {
-                rel_entry_offset: fn_beginning_offset,
-                begin_offset: l,
-                end_offset: l + instruction_set.len() as usize - 1,
-                instruction_set,
-            };
-            self.subroutines_instruction_set
-                .extend(&subroutine_data.instruction_set);
-            self.opcode_to_subroutine_data
-                .insert(opcode, subroutine_data);
+            for opcode_meta in opcode_to_beginning {
+                let opcode = opcode_meta.0;
+                let fn_beginning_offset = opcode_meta.1;
+                let subroutine_data = SubroutineData {
+                    rel_entry_offset: fn_beginning_offset,
+                    begin_offset: l,
+                    end_offset: instruction_set.len() as usize - 1 + l,
+                };
+
+                if self.opcode_to_subroutine_data.contains_key(&opcode) {
+                    panic!(
+                        "code snippet for opcode 0x{:x?} already exists (decimal: {})",
+                        opcode, opcode
+                    );
+                }
+                self.opcode_to_subroutine_data
+                    .insert(opcode, subroutine_data);
+            }
+            self.subroutines_instruction_set.extend(&instruction_set);
         };
 
-        [
-            (
-                opcode::EXP,
-                "../rwasm-code-snippets/bin/arithmetic_exp.rwasm",
-            ),
-            (
-                opcode::MOD,
-                "../rwasm-code-snippets/bin/arithmetic_mod.rwasm",
-            ),
-            (
-                opcode::SMOD,
-                "../rwasm-code-snippets/bin/arithmetic_smod.rwasm",
-            ),
-            (
-                opcode::MUL,
-                "../rwasm-code-snippets/bin/arithmetic_mul.rwasm",
-            ),
-            (
-                opcode::MULMOD,
-                "../rwasm-code-snippets/bin/arithmetic_mulmod.rwasm",
-            ),
-            (
-                opcode::ADD,
-                "../rwasm-code-snippets/bin/arithmetic_add.rwasm",
-            ),
-            (
-                opcode::ADDMOD,
-                "../rwasm-code-snippets/bin/arithmetic_addmod.rwasm",
-            ),
-            (
-                opcode::SIGNEXTEND,
-                "../rwasm-code-snippets/bin/arithmetic_signextend.rwasm",
-            ),
-            (
-                opcode::SUB,
-                "../rwasm-code-snippets/bin/arithmetic_sub.rwasm",
-            ),
-            (
-                opcode::DIV,
-                "../rwasm-code-snippets/bin/arithmetic_div.rwasm",
-            ),
-            (
-                opcode::SDIV,
-                "../rwasm-code-snippets/bin/arithmetic_sdiv.rwasm",
-            ),
-            (opcode::SHL, "../rwasm-code-snippets/bin/bitwise_shl.rwasm"),
-            (opcode::SHR, "../rwasm-code-snippets/bin/bitwise_shr.rwasm"),
-            (opcode::NOT, "../rwasm-code-snippets/bin/bitwise_not.rwasm"),
-            (opcode::AND, "../rwasm-code-snippets/bin/bitwise_and.rwasm"),
-            (opcode::OR, "../rwasm-code-snippets/bin/bitwise_or.rwasm"),
-            (opcode::XOR, "../rwasm-code-snippets/bin/bitwise_xor.rwasm"),
-            (opcode::EQ, "../rwasm-code-snippets/bin/bitwise_eq.rwasm"),
-            (opcode::LT, "../rwasm-code-snippets/bin/bitwise_lt.rwasm"),
-            (opcode::SLT, "../rwasm-code-snippets/bin/bitwise_slt.rwasm"),
-            (opcode::GT, "../rwasm-code-snippets/bin/bitwise_gt.rwasm"),
-            (opcode::SGT, "../rwasm-code-snippets/bin/bitwise_sgt.rwasm"),
-            (opcode::SAR, "../rwasm-code-snippets/bin/bitwise_sar.rwasm"),
-            (
-                opcode::BYTE,
-                "../rwasm-code-snippets/bin/bitwise_byte.rwasm",
-            ),
-            (
-                opcode::ISZERO,
-                "../rwasm-code-snippets/bin/bitwise_iszero.rwasm",
-            ),
-            (
-                opcode::MSTORE,
-                "../rwasm-code-snippets/bin/memory_mstore.rwasm",
-            ),
-            (
-                opcode::MSTORE8,
-                "../rwasm-code-snippets/bin/memory_mstore8.rwasm",
-            ),
-            (
-                opcode::MLOAD,
-                "../rwasm-code-snippets/bin/memory_mload.rwasm",
-            ),
-            (
-                opcode::KECCAK256,
-                "../rwasm-code-snippets/bin/system_keccak.rwasm",
-            ),
-            (
-                opcode::ADDRESS,
-                "../rwasm-code-snippets/bin/system_address.rwasm",
-            ),
-            (
-                opcode::CALLER,
-                "../rwasm-code-snippets/bin/system_caller.rwasm",
-            ),
-            (
-                opcode::CALLVALUE,
-                "../rwasm-code-snippets/bin/system_callvalue.rwasm",
-            ),
-            (
-                opcode::CODESIZE,
-                "../rwasm-code-snippets/bin/system_codesize.rwasm",
-            ),
-            (opcode::GAS, "../rwasm-code-snippets/bin/system_gas.rwasm"),
-            (
-                opcode::CALLDATALOAD,
-                "../rwasm-code-snippets/bin/system_calldataload.rwasm",
-            ),
-            (
-                opcode::CALLDATACOPY,
-                "../rwasm-code-snippets/bin/system_calldatacopy.rwasm",
-            ),
-            (
-                opcode::CALLDATASIZE,
-                "../rwasm-code-snippets/bin/system_calldatasize.rwasm",
-            ),
-            (
-                opcode::CHAINID,
-                "../rwasm-code-snippets/bin/host_chainid.rwasm",
-            ),
-            (
-                opcode::BASEFEE,
-                "../rwasm-code-snippets/bin/host_basefee.rwasm",
-            ),
-            (
-                opcode::BLOCKHASH,
-                "../rwasm-code-snippets/bin/host_blockhash.rwasm",
-            ),
-            (
-                opcode::COINBASE,
-                "../rwasm-code-snippets/bin/host_coinbase.rwasm",
-            ),
-            (
-                opcode::GASLIMIT,
-                "../rwasm-code-snippets/bin/host_gaslimit.rwasm",
-            ),
-            (
-                opcode::NUMBER,
-                "../rwasm-code-snippets/bin/host_number.rwasm",
-            ),
-            (
-                opcode::TIMESTAMP,
-                "../rwasm-code-snippets/bin/host_timestamp.rwasm",
-            ),
-            // (opcode::SLOAD, "../rwasm-code-snippets/bin/host_sload.rwasm"), // TODO need runtime
-            // binding // binding (opcode::SSTORE, "../rwasm-code-snippets/bin/
-            // host_sstore.rwasm"), // TODO need runtime binding runtime
-            (opcode::POP, "../rwasm-code-snippets/bin/stack_pop.rwasm"),
-            (opcode::DUP1, "../rwasm-code-snippets/bin/stack_dup1.rwasm"),
-            (opcode::DUP2, "../rwasm-code-snippets/bin/stack_dup2.rwasm"),
-            (
-                opcode::SWAP1,
-                "../rwasm-code-snippets/bin/stack_swap1.rwasm",
-            ),
-            (
-                opcode::SWAP2,
-                "../rwasm-code-snippets/bin/stack_swap2.rwasm",
-            ),
-            (
-                opcode::DIFFICULTY,
-                "../rwasm-code-snippets/bin/host_env_block_difficulty.rwasm",
-            ),
-            (
-                opcode::BLOBBASEFEE,
-                "../rwasm-code-snippets/bin/host_env_blobbasefee.rwasm",
-            ),
-            (
-                opcode::GASPRICE,
-                "../rwasm-code-snippets/bin/host_env_gasprice.rwasm",
-            ),
-            (
-                opcode::ORIGIN,
-                "../rwasm-code-snippets/bin/host_env_origin.rwasm",
-            ),
-            (
-                opcode::RETURN,
-                "../rwasm-code-snippets/bin/control_return.rwasm",
-            ),
-        ]
-        .map(|v| {
-            let opcode = v.0;
-            let file_path = v.1;
-            let bytecode = fs::read(file_path).unwrap();
-            initiate_subroutines(opcode, &bytecode);
-        });
+        initiate_subroutines_solid_file(
+            include_bytes!("../../../rwasm-code-snippets/bin/solid_file.rwasm").as_slice(),
+        );
     }
 
     pub fn opcode_to_subroutine_data(&self) -> &HashMap<u8, SubroutineData> {

@@ -56,6 +56,8 @@ arithmetic_exp = []
 memory_mstore = []
 memory_mstore8 = []
 memory_mload = []
+memory_msize = []
+memory_mcopy = []
 stack_pop = []
 stack_dup1 = []
 stack_dup2 = []
@@ -83,9 +85,11 @@ host_number = []
 host_timestamp = []
 host_env_block_difficulty = []
 host_env_blobbasefee = []
+host_env_blobhash = []
 host_env_gasprice = []
 host_env_origin = []
 control_return = []
+control_revert = []
 
 [profile.release]
 #panic = "abort"
@@ -93,3 +97,5 @@ lto = true
 opt-level = 'z'
 strip = true
 
+[build]
+target = "wasm32-unknown-unknown"
