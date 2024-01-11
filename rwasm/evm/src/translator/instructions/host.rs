@@ -53,14 +53,16 @@ pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     wasm_call(host.instruction_set(), SystemFuncs::EvmSstore, translator);
 }
 
-pub fn tstore<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TSTORE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn tload<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TLOAD";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn log<const N: usize, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
