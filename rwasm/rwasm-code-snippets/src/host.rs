@@ -16,3 +16,7 @@ mod sload;
 mod sstore;
 #[cfg(feature = "host_timestamp")]
 mod timestamp;
+#[cfg(feature = "host_tload")]
+mod tload;
+#[cfg(feature = "host_tstore")]
+mod tstore;

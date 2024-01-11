@@ -64,6 +64,7 @@ mod evm_to_rwasm_tests {
                 SWAP1,
                 SWAP2,
                 TIMESTAMP,
+                TSTORE,
                 XOR,
             },
         },
@@ -2005,6 +2006,19 @@ mod evm_to_rwasm_tests {
         ))];
 
         test_op_cases(SSTORE, None, &cases, false, ResultLocation::Stack);
+    }
+
+    // TODO
+    #[ignore]
+    #[test]
+    fn tstore() {
+        let cases = [Case::Args2((
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
+        ))];
+
+        test_op_cases(TSTORE, None, &cases, false, ResultLocation::Stack);
     }
     #[test]
     fn ret() {

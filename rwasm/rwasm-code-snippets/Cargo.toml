@@ -7,6 +7,7 @@ edition = "2021"
 fluentbase-rwasm = { path = "..", default-features = false }
 fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
 hex = "0.4.3"
+hashbrown = { workspace = true }
 
 [build-dependencies]
 fluentbase-rwasm = { path = "..", default-features = false }
@@ -88,6 +89,8 @@ host_env_blobbasefee = []
 host_env_blobhash = []
 host_env_gasprice = []
 host_env_origin = []
+host_tstore = []
+host_tload = []
 control_return = []
 control_revert = []
 
@@ -97,5 +100,5 @@ lto = true
 opt-level = 'z'
 strip = true
 
-[build]
-target = "wasm32-unknown-unknown"
+#[build]
+#target = "wasm32-unknown-unknown"

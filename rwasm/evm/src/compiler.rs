@@ -62,7 +62,8 @@ impl<'a> EvmCompiler<'a> {
                 Some(data.end_offset),
                 (self.instruction_set.len() + data.begin_offset as u32) as i32,
             );
-            break; // no need todo it many times because 'end_offset' is incorrect now
+            break; // break because 'end_offset' points to the end of 1 solid file and not to the 1
+                   // of 1 specific func
         }
         self.instruction_set
             .instr

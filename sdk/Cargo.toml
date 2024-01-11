@@ -42,3 +42,5 @@ runtime = [
     "dep:keccak-hash",
     "dep:halo2curves",
 ]
+disable_panic_handler = []
+disable_allocator = []
