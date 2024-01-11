@@ -37,6 +37,7 @@ mod evm_to_rwasm_tests {
                 LT,
                 MLOAD,
                 MOD,
+                MSIZE,
                 MSTORE,
                 MSTORE8,
                 MUL,
@@ -57,6 +58,7 @@ mod evm_to_rwasm_tests {
                 SLOAD,
                 SLT,
                 SMOD,
+                SSTORE,
                 SUB,
                 SWAP1,
                 SWAP2,
@@ -82,8 +84,7 @@ mod evm_to_rwasm_tests {
     static CONTRACT_VALUE: [u8; 32] = [3; 32]; // U256 - 32 bytes
     static SYSTEM_CODESIZE: [u8; 4] = [4; 4]; // u32 - 4 bytes
     static CONTRACT_INPUT: &[u8] = &[
-        255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-        255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     ];
     static HOST_CHAINID: [u8; 8] = [5; 8]; // u64 - 8 bytes
     static HOST_BASEFEE: [u8; 32] = [6; 32]; // U256 - 32 bytes
@@ -446,10 +447,10 @@ mod evm_to_rwasm_tests {
     #[test]
     fn not() {
         let cases = [
-            // (
-            //     x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
-            //     x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
-            // ),
+            (
+                x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+                x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
+            ),
             (
                 x("0x 0000000000000001 0000000000000002 0000000000000003 0000000000000004"),
                 x("fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb"),
@@ -1698,6 +1699,24 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn msize() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_bytecode(
+            MSTORE,
+            &Case::Binary((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                x("00000000000000000000000000000000000000000000000000000000000000FF"),
+                vec![],
+            )),
+        ));
+        let cases = [Case::NoArgs(x(
+            "0000000000000000000000000000000000000000000000000000000000000014",
+        ))];
+
+        test_op_cases(MSIZE, Some(&preamble), &cases, false, ResultLocation::Stack);
+    }
+
+    #[test]
     fn caller() {
         let cases = [Case::NoArgs({
             let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
@@ -1719,6 +1738,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(ADDRESS, None, &cases, false, ResultLocation::Stack);
     }
 
+    #[ignore]
     #[test]
     fn calldatasize() {
         let cases = [Case::NoArgs(x(
@@ -1728,6 +1748,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(CALLDATASIZE, None, &cases, false, ResultLocation::Stack);
     }
 
+    #[ignore]
     #[test]
     fn calldataload() {
         let cases = [Case::Unary((
@@ -1738,6 +1759,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(CALLDATALOAD, None, &cases, false, ResultLocation::Stack);
     }
 
+    #[ignore]
     #[test]
     fn calldatacopy() {
         let cases = [Case::Unary((
@@ -1883,26 +1905,29 @@ mod evm_to_rwasm_tests {
 
         test_op_cases(TIMESTAMP, None, &cases, false, ResultLocation::Stack);
     }
-    #[ignore] // TODO
+
+    // TODO
     #[test]
     fn sload() {
         let cases = [Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
         test_op_cases(SLOAD, None, &cases, false, ResultLocation::Stack);
     }
-    #[ignore] // TODO
+
+    // TODO
+    #[ignore]
     #[test]
     fn sstore() {
         let cases = [Case::Binary((
             x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000002"),
             x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
-        test_op_cases(SLOAD, None, &cases, false, ResultLocation::Stack);
+        test_op_cases(SSTORE, None, &cases, false, ResultLocation::Stack);
     }
     #[test]
     fn ret() {

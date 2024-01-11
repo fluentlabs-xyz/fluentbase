@@ -1,9 +1,9 @@
 use crate::runtime::RuntimeContext;
 use fluentbase_rwasm::{AsContextMut, Caller, Extern, Memory};
-pub(crate) use mpt::*;
 
 mod crypto;
 mod ecc;
+mod evm;
 mod mpt;
 mod rwasm;
 mod sys;
@@ -12,6 +12,7 @@ mod wasi;
 
 pub(crate) use crypto::*;
 pub(crate) use ecc::*;
+pub(crate) use evm::*;
 pub(crate) use mpt::*;
 pub(crate) use rwasm::*;
 pub(crate) use sys::*;
