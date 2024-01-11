@@ -1772,6 +1772,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bitvec 1.0.1",
+ "byteorder",
  "bytes",
  "eth_trie",
  "ethereum",
@@ -1780,12 +1781,14 @@ dependencies = [
  "ethers-core",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
+ "fluentbase-zktrie",
  "halo2curves 0.3.1",
  "hex",
  "hex-literal",
  "k256",
  "keccak-hash",
  "lazy_static",
+ "once_cell",
  "parity-scale-codec 3.6.9",
  "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
  "rlp",
@@ -1800,6 +1803,7 @@ dependencies = [
  "wasi",
  "wat",
  "web3",
+ "zktrie",
 ]
 
 [[package]]
@@ -1900,6 +1904,18 @@ dependencies = [
  "lol_alloc",
  "paste",
  "sha2",
+]
+
+[[package]]
+name = "fluentbase-zktrie"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "fluentbase-poseidon",
+ "halo2curves 0.3.1",
+ "hex",
+ "lazy_static",
+ "uint",
 ]
 
 [[package]]
@@ -2119,6 +2135,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gobuild"
+version = "0.1.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2187,8 +2212,25 @@ dependencies = [
 
 [[package]]
 name = "halo2curves"
+version = "0.2.1"
+source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=0.3.0#83c72d49762343ffc9576ca11a2aa615efe1029b"
+dependencies = [
+ "ff 0.12.1",
+ "group 0.12.1",
+ "lazy_static",
+ "num-bigint",
+ "num-traits",
+ "pasta_curves 0.4.1",
+ "rand",
+ "rand_core",
+ "static_assertions",
+ "subtle",
+]
+
+[[package]]
+name = "halo2curves"
 version = "0.3.1"
-source = "git+https://github.com/scroll-tech/halo2curves.git?branch=0.3.1-derive-serde#969f1e44d9713ee4cd552563bd0c762c5d53b56e"
+source = "git+https://github.com/scroll-tech/halo2curves?branch=0.3.1-derive-serde#969f1e44d9713ee4cd552563bd0c762c5d53b56e"
 dependencies = [
  "ff 0.12.1",
  "group 0.12.1",
@@ -3300,7 +3342,7 @@ version = "0.2.0"
 source = "git+https://github.com/scroll-tech/poseidon?rev=0b9965fbcd9e03559088b8f68489592286bc55e0#0b9965fbcd9e03559088b8f68489592286bc55e0"
 dependencies = [
  "group 0.12.1",
- "halo2curves 0.3.1",
+ "halo2curves 0.2.1",
  "subtle",
 ]
 
@@ -5361,6 +5403,14 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
+]
+
+[[package]]
+name = "zktrie"
+version = "0.2.0"
+source = "git+https://github.com/scroll-tech/zktrie.git?tag=v0.6.0#83318659773604fa565e2ebeb810a6d3746f0af4"
+dependencies = [
+ "gobuild",
 ]
 
 [[package]]
