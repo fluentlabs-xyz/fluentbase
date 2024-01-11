@@ -34,7 +34,6 @@ pub(crate) fn sys_write<T>(
     offset: u32,
     length: u32,
 ) -> Result<(), Trap> {
-    // TODO: "add out of memory check"
     let memory = exported_memory_vec(&mut caller, offset as usize, length as usize);
     caller.data_mut().extend_return_data(memory.as_slice());
     Ok(())

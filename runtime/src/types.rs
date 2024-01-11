@@ -11,6 +11,7 @@ pub enum ExitCode {
     TransactError = -1004,
     TransactOutputOverflow = -1005,
     InputDecodeFailure = -1006,
+    PoseidonError = -1007,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,

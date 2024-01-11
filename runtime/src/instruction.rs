@@ -8,7 +8,7 @@ mod mpt;
 mod rwasm;
 mod sys;
 mod wasi;
-// mod zktrie;
+mod zktrie;
 
 pub(crate) use crypto::*;
 pub(crate) use ecc::*;
