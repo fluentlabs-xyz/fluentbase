@@ -149,9 +149,9 @@ opcodes! {
     0x32 => ORIGIN    => host_env::origin, // tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
-    0x35 => CALLDATALOAD => system::calldataload, // TODO from contract_input (get rid of vec usage?)
-    0x36 => CALLDATASIZE => system::calldatasize, // TODO from contract_input (get rid of vec usage?)
-    0x37 => CALLDATACOPY => system::calldatacopy, // TODO from contract_input (get rid of vec usage?)
+    0x35 => CALLDATALOAD => system::calldataload, // from contract_input
+    0x36 => CALLDATASIZE => system::calldatasize, // from contract_input
+    0x37 => CALLDATACOPY => system::calldatacopy, // from contract_input
     0x38 => CODESIZE     => system::codesize, // done
     0x39 => CODECOPY     => system::codecopy, // TODO
 
@@ -170,7 +170,7 @@ opcodes! {
     0x46 => CHAINID        => host_env::chainid::<H>, // done
     0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
     0x48 => BASEFEE        => host_env::basefee::<H>, // done
-    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO tx_blob_hashes (renamed from DATAHASH)
+    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // tx_blob_hashes (renamed from DATAHASH)
     0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // tx_blob_gas_price
     // 0x4B
     // 0x4C
