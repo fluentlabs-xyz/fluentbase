@@ -13,5 +13,5 @@ pub fn host_tstore() {
     let index = U256::from_be_bytes(index);
 
     // let contract_address = ExecutionContext::contract_address();
-    // ts_set(index, value);
+    ts_set(index, value);
 }
