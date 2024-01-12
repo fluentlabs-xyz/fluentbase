@@ -29,7 +29,8 @@ pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn mcopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MCOPY";
-    panic!("op:{} not implemented", OP);
+    let is = host.instruction_set();
+    // is.op_memory_copy();
 }

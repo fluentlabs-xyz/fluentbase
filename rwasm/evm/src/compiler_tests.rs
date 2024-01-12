@@ -36,6 +36,7 @@ mod evm_to_rwasm_tests {
                 ISZERO,
                 KECCAK256,
                 LT,
+                MCOPY,
                 MLOAD,
                 MOD,
                 MSIZE,
@@ -105,9 +106,13 @@ mod evm_to_rwasm_tests {
 
     #[derive(Clone)]
     enum Case {
+        // result_expected
         Args0(Vec<u8>),
+        // result_expected a
         Args1((Vec<u8>, Vec<u8>)),
+        // result_expected a b
         Args2((Vec<u8>, Vec<u8>, Vec<u8>)),
+        // result_expected a b c
         Args3((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
     }
 
@@ -116,6 +121,33 @@ mod evm_to_rwasm_tests {
         Stack,
         Memory(usize),
         Output(usize),
+    }
+
+    fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
+        let mut evm_bytecode: Vec<u8> = vec![];
+        match case {
+            Case::Args0(args) => {}
+            Case::Args1(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+            Case::Args2(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.1.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+            Case::Args3(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.2.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.1.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+        }
+        evm_bytecode.push(opcode);
+        evm_bytecode
     }
 
     fn x(hex: &str) -> Vec<u8> {
@@ -131,33 +163,6 @@ mod evm_to_rwasm_tests {
             panic!("failed to decode hex value '{:?}'", hex);
         }
         res.unwrap()
-    }
-
-    fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
-        let mut evm_bytecode: Vec<u8> = vec![];
-        match case {
-            Case::Args0(args) => {}
-            Case::Args1(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-            }
-            Case::Args2(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.1.clone());
-            }
-            Case::Args3(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.1.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.2.clone());
-            }
-        }
-        evm_bytecode.push(opcode);
-        evm_bytecode
     }
 
     fn test_op_cases(
@@ -295,20 +300,6 @@ mod evm_to_rwasm_tests {
                 continue;
             };
             let memory_changes = log.memory_changes.clone();
-            // let prev_opcode = if index > 0 {
-            //     Some(execution_result.tracer().logs[index - 1].opcode)
-            // } else {
-            //     None
-            // };
-            // match prev_opcode {
-            //     Some(Instruction::I64Store(_)) => {
-            //         for change in &mut memory_changes {
-            //             let v = i64::from_le_bytes(change.data.as_slice().try_into().unwrap());
-            //             change.data.clone_from_slice(v.to_be_bytes().as_slice());
-            //         }
-            //     }
-            //     _ => {}
-            // }
             debug!(
                 "{}: opcode:{:x?} memory_changes:{:?}",
                 idx, log.opcode, &memory_changes
@@ -326,8 +317,6 @@ mod evm_to_rwasm_tests {
             }
         }
         debug!("global_memory total len {}", global_memory_len,);
-        // let global_memory =
-        //     global_memory[0..force_memory_result_size.unwrap_or(global_memory.len())].to_vec();
         debug!(
             "\nruntime.store.data().output() {:?}\n",
             runtime.data().output()
@@ -1725,6 +1714,32 @@ mod evm_to_rwasm_tests {
         test_op_cases(MSIZE, Some(&preamble), &cases, false, ResultLocation::Stack);
     }
 
+    #[ignore]
+    #[test]
+    fn mcopy() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_bytecode(
+            MSTORE,
+            &Case::Args3((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                x("00000000000000000000000000000000000000000000000000000000000000FF"),
+                vec![],
+            )),
+        ));
+        let cases = [Case::Args0(x(
+            "0000000000000000000000000000000000000000000000000000000000000014",
+        ))];
+
+        test_op_cases(
+            MCOPY,
+            Some(&preamble),
+            &cases,
+            true,
+            ResultLocation::Memory(0),
+        );
+    }
+
     #[test]
     fn caller() {
         let cases = [Case::Args0({
@@ -2260,7 +2275,7 @@ mod evm_to_rwasm_tests {
                 vec![],
             )),
         ));
-        //6+7=12
+        //6+7=13
         preamble.extend(compile_op_bytecode(
             ADD,
             &Case::Args1((
@@ -2269,9 +2284,9 @@ mod evm_to_rwasm_tests {
             )),
         ));
 
-        //12/5=2
+        //27/13=2
         let cases = &[Case::Args1((
-            x("0000000000000000000000000000000000000000000000000000000000000005"),
+            x("000000000000000000000000000000000000000000000000000000000000001b"),
             x("0000000000000000000000000000000000000000000000000000000000000002"),
         ))];
 

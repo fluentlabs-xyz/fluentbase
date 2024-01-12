@@ -4,38 +4,11 @@ use crate::{
 };
 
 #[no_mangle]
-fn bitwise_lt(// b0: u64,
-    // b1: u64,
-    // b2: u64,
-    // b3: u64,
-    // a0: u64,
-    // a1: u64,
-    // a2: u64,
-    // a3: u64,
-) /* -> (u64, u64, u64, u64) */
-{
-    // let mut s0 = 0;
-    // if a3 < b3 {
-    //     s0 = 1;
-    // } else if a3 > b3 {
-    //     s0 = 0;
-    // } else if a2 < b2 {
-    //     s0 = 1;
-    // } else if a2 > b2 {
-    //     s0 = 0;
-    // } else if a1 < b1 {
-    //     s0 = 1;
-    // } else if a1 > b1 {
-    //     s0 = 0;
-    // } else if a0 < b0 {
-    //     s0 = 1;
-    // }
-    //
-    // return (s0, 0, 0, 0);
+fn bitwise_lt() {
+    let mut a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let mut r = [0u8; U256_BYTES_COUNT as usize];
-    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
-    let mut a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     for i in 0..a.len() {
         if a[i] != b[i] {
             if a[i] < b[i] {
