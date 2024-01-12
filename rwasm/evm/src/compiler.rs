@@ -50,6 +50,8 @@ impl<'a> EvmCompiler<'a> {
         let mut translator =
             Translator::new(self.import_linker, self.inject_fuel_consumption, contract);
 
+        self.instruction_set.op_magic_prefix(0x0061736d00000000u64); // https://eips.ethereum.org/EIPS/eip-3541
+
         self.instruction_set_entry_offset =
             Some(translator.subroutines_instruction_set().instr.len() + 1);
         self.instruction_set
@@ -62,6 +64,9 @@ impl<'a> EvmCompiler<'a> {
                 Some(data.end_offset),
                 (self.instruction_set.len() + data.begin_offset as u32) as i32,
             );
+            // 'end_offset' now points to the end of 1 solid file and not to the 1 of 1 specific
+            // func
+            break;
         }
         self.instruction_set
             .instr

@@ -78,6 +78,7 @@ pub trait EvmPlatformSDK {
     fn evm_sstore(key: &[u8], value: &[u8]);
 }
 
+#[cfg(not(feature = "disable_panic_handler"))]
 #[cfg(not(feature = "runtime"))]
 #[panic_handler]
 #[cfg(target_arch = "wasm32")]
@@ -90,6 +91,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
+#[cfg(not(feature = "disable_allocator"))]
 #[cfg(not(feature = "runtime"))]
 #[global_allocator]
 #[cfg(target_arch = "wasm32")]

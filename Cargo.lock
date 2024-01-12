@@ -1847,6 +1847,7 @@ dependencies = [
  "ethereum-types 0.14.1",
  "fluentbase-rwasm",
  "fluentbase-sdk",
+ "hashbrown 0.14.3",
  "hex",
  "log",
  "wat",
@@ -1879,6 +1880,7 @@ dependencies = [
  "hashbrown 0.14.3",
  "hex",
  "log",
+ "once_cell",
  "wat",
 ]
 

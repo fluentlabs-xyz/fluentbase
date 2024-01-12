@@ -5,8 +5,9 @@ use crate::{
 
 #[no_mangle]
 fn bitwise_shl() {
-    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
     let mut res = [0u8; U256_BYTES_COUNT as usize];
 
     let mut v = [0u8; 8];

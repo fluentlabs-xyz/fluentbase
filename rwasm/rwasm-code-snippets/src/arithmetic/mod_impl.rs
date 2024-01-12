@@ -5,8 +5,8 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_mod() {
-    let divisor = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let dividend = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let divisor = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let divisor = u256_be_to_tuple_le(divisor);
     let dividend = u256_be_to_tuple_le(dividend);

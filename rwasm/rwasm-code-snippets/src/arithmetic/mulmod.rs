@@ -5,9 +5,9 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_mulmod() {
-    let divisor = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mul1 = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mul2 = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let divisor = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let divisor = u256_be_to_tuple_le(divisor);
     let mul1 = u256_be_to_tuple_le(mul1);

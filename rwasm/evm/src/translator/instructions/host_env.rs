@@ -66,7 +66,8 @@ pub fn origin<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn blob_hash<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn blob_hash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BLOB_HASH";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
