@@ -291,7 +291,10 @@ impl InstructionSet {
         self.instr.len() as u32
     }
 
-    impl_opcode!(op_magic_prefix, MagicPrefix(UntypedValue));
+    pub fn op_magic_prefix(&mut self, value: [u8; 8]) {
+        let value = byteorder::BigEndian::read_u64(&value);
+        self.push(Instruction::MagicPrefix(value.into()));
+    }
     impl_opcode!(op_local_get, LocalGet(LocalDepth));
     impl_opcode!(op_local_set, LocalSet(LocalDepth));
     impl_opcode!(op_local_tee, LocalTee(LocalDepth));
