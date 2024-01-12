@@ -60,6 +60,14 @@ macro_rules! define_codec_struct {
                 (0, 0)
             }
         }
+        impl From<Vec<u8>> for $struct_type {
+            fn from(value: Vec<u8>) -> Self {
+                let mut result = Self::default();
+                let mut buffer_decoder = BufferDecoder::new(value.as_slice());
+                Self::decode_body(&mut buffer_decoder, 0, &mut result);
+                result
+            }
+        }
         impl $struct_type {
             $crate::derive_types!(0, $($element:$ty,)*);
         }
