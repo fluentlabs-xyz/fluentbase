@@ -899,6 +899,12 @@ pub(crate) fn u256_from_be_slice(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
     r
 }
 
+pub(crate) fn u256_from_be_slice_align_left(v: &[u8]) -> [u8; U256_BYTES_COUNT as usize] {
+    let mut r = [0u8; U256_BYTES_COUNT as usize];
+    r[0..v.len()].copy_from_slice(v);
+    r
+}
+
 pub(crate) fn swap_n(first_param_idx: usize, second_param_idx: usize) {
     let v0 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, first_param_idx);
     let v1 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, second_param_idx);

@@ -12,6 +12,7 @@ mod evm_to_rwasm_tests {
                 AND,
                 BASEFEE,
                 BLOBBASEFEE,
+                BLOBHASH,
                 BLOCKHASH,
                 BYTE,
                 CALLDATACOPY,
@@ -35,8 +36,10 @@ mod evm_to_rwasm_tests {
                 ISZERO,
                 KECCAK256,
                 LT,
+                MCOPY,
                 MLOAD,
                 MOD,
+                MSIZE,
                 MSTORE,
                 MSTORE8,
                 MUL,
@@ -57,13 +60,16 @@ mod evm_to_rwasm_tests {
                 SLOAD,
                 SLT,
                 SMOD,
+                SSTORE,
                 SUB,
                 SWAP1,
                 SWAP2,
                 TIMESTAMP,
+                TSTORE,
                 XOR,
             },
         },
+        utilities::EVM_WORD_BYTES,
     };
     use alloy_primitives::{hex, Bytes, B256};
     use fluentbase_codec::Encoder;
@@ -82,8 +88,8 @@ mod evm_to_rwasm_tests {
     static CONTRACT_VALUE: [u8; 32] = [3; 32]; // U256 - 32 bytes
     static SYSTEM_CODESIZE: [u8; 4] = [4; 4]; // u32 - 4 bytes
     static CONTRACT_INPUT: &[u8] = &[
-        255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-        255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32, 33, 34, 25, 26, 37, 38, 39, 40, 41,
     ];
     static HOST_CHAINID: [u8; 8] = [5; 8]; // u64 - 8 bytes
     static HOST_BASEFEE: [u8; 32] = [6; 32]; // U256 - 32 bytes
@@ -96,13 +102,18 @@ mod evm_to_rwasm_tests {
     static HOST_ENV_BLOBBASEFEE: [u8; 8] = [13; 8]; // u64 - 8 bytes
     static HOST_ENV_GASPRICE: [u8; 32] = [14; 32]; // u256 - 32 bytes
     static HOST_ENV_ORIGIN: [u8; 20] = [15; 20]; // Address - 20 bytes
+    static HOST_ENV_BLOB_HASHES: &[[u8; 32]] = &[[1; 32], [2; 32], [3; 32]];
 
     #[derive(Clone)]
     enum Case {
-        NoArgs(Vec<u8>),
-        Unary((Vec<u8>, Vec<u8>)),
-        Binary((Vec<u8>, Vec<u8>, Vec<u8>)),
-        Ternary((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
+        // result_expected
+        Args0(Vec<u8>),
+        // result_expected a
+        Args1((Vec<u8>, Vec<u8>)),
+        // result_expected a b
+        Args2((Vec<u8>, Vec<u8>, Vec<u8>)),
+        // result_expected a b c
+        Args3((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
     }
 
     #[derive(Clone)]
@@ -110,6 +121,33 @@ mod evm_to_rwasm_tests {
         Stack,
         Memory(usize),
         Output(usize),
+    }
+
+    fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
+        let mut evm_bytecode: Vec<u8> = vec![];
+        match case {
+            Case::Args0(args) => {}
+            Case::Args1(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+            Case::Args2(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.1.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+            Case::Args3(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.2.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.1.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+        }
+        evm_bytecode.push(opcode);
+        evm_bytecode
     }
 
     fn x(hex: &str) -> Vec<u8> {
@@ -127,33 +165,6 @@ mod evm_to_rwasm_tests {
         res.unwrap()
     }
 
-    fn compile_op_bytecode(opcode: u8, case: &Case) -> Vec<u8> {
-        let mut evm_bytecode: Vec<u8> = vec![];
-        match case {
-            Case::NoArgs(args) => {}
-            Case::Unary(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-            }
-            Case::Binary(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.1.clone());
-            }
-            Case::Ternary(args) => {
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.0.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.1.clone());
-                evm_bytecode.push(PUSH32);
-                evm_bytecode.extend(args.2.clone());
-            }
-        }
-        evm_bytecode.push(opcode);
-        evm_bytecode
-    }
-
     fn test_op_cases(
         opcode: u8,
         bytecode_preamble: Option<&[u8]>,
@@ -163,10 +174,10 @@ mod evm_to_rwasm_tests {
     ) {
         for case in cases {
             let res_expected = match case {
-                Case::NoArgs(v) => v.clone(),
-                Case::Unary(v) => v.1.clone(),
-                Case::Binary(v) => v.2.clone(),
-                Case::Ternary(v) => v.3.clone(),
+                Case::Args0(v) => v.clone(),
+                Case::Args1(v) => v.1.clone(),
+                Case::Args2(v) => v.2.clone(),
+                Case::Args3(v) => v.3.clone(),
             };
 
             let mut evm_bytecode: Vec<u8> = vec![];
@@ -249,7 +260,7 @@ mod evm_to_rwasm_tests {
             instruction_set.trace()
         );
 
-        let mut global_memory = vec![0u8; virtual_stack_top];
+        let mut global_memory = vec![];
         let mut global_memory_len: usize = 0;
         let mut ctx = RuntimeContext::new(rwasm_binary);
 
@@ -271,6 +282,10 @@ mod evm_to_rwasm_tests {
         contract_input.tx_blob_gas_price = u64::from_be_bytes(HOST_ENV_BLOBBASEFEE);
         contract_input.tx_gas_price = U256::from_be_bytes(HOST_ENV_GASPRICE);
         contract_input.tx_caller = Address::new(HOST_ENV_ORIGIN);
+        contract_input.tx_blob_hashes = HOST_ENV_BLOB_HASHES
+            .iter()
+            .map(|v| B256::from_slice(v))
+            .collect();
         let ci = contract_input.encode_to_vec(0);
         ctx = ctx.with_input(ci);
 
@@ -285,20 +300,6 @@ mod evm_to_rwasm_tests {
                 continue;
             };
             let memory_changes = log.memory_changes.clone();
-            // let prev_opcode = if index > 0 {
-            //     Some(execution_result.tracer().logs[index - 1].opcode)
-            // } else {
-            //     None
-            // };
-            // match prev_opcode {
-            //     Some(Instruction::I64Store(_)) => {
-            //         for change in &mut memory_changes {
-            //             let v = i64::from_le_bytes(change.data.as_slice().try_into().unwrap());
-            //             change.data.clone_from_slice(v.to_be_bytes().as_slice());
-            //         }
-            //     }
-            //     _ => {}
-            // }
             debug!(
                 "{}: opcode:{:x?} memory_changes:{:?}",
                 idx, log.opcode, &memory_changes
@@ -306,18 +307,16 @@ mod evm_to_rwasm_tests {
             for change in &memory_changes {
                 let offset_start = change.offset as usize;
                 let offset_end = offset_start + change.len as usize;
+                if global_memory.len() <= offset_end {
+                    global_memory.resize(offset_end + 1, 0);
+                }
                 global_memory[offset_start..offset_end].copy_from_slice(&change.data);
                 if offset_end > global_memory_len {
                     global_memory_len = offset_end;
                 }
             }
         }
-        debug!(
-            "global_memory (total len {}) {:?}",
-            global_memory_len, &global_memory
-        );
-        // let global_memory =
-        //     global_memory[0..force_memory_result_size.unwrap_or(global_memory.len())].to_vec();
+        debug!("global_memory total len {}", global_memory_len,);
         debug!(
             "\nruntime.store.data().output() {:?}\n",
             runtime.data().output()
@@ -407,7 +406,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             EQ,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -420,24 +419,24 @@ mod evm_to_rwasm_tests {
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
             ),
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
-            (
-                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
         ];
 
         test_op_cases(
             ISZERO,
             None,
-            &cases.map(|v| Case::Unary(v)),
+            &cases.map(|v| Case::Args1(v)),
             false,
             ResultLocation::Stack,
         );
@@ -446,10 +445,10 @@ mod evm_to_rwasm_tests {
     #[test]
     fn not() {
         let cases = [
-            // (
-            //     x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
-            //     x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
-            // ),
+            (
+                x("0x000f00100300c000b0000a0000030000200001000600008000d0000200030010"),
+                x("fff0ffeffcff3fff4ffff5fffffcffffdffffefff9ffff7fff2ffffdfffcffef"),
+            ),
             (
                 x("0x 0000000000000001 0000000000000002 0000000000000003 0000000000000004"),
                 x("fffffffffffffffe fffffffffffffffd fffffffffffffffc fffffffffffffffb"),
@@ -459,7 +458,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             NOT,
             None,
-            &cases.map(|v| Case::Unary(v)),
+            &cases.map(|v| Case::Args1(v)),
             false,
             ResultLocation::Stack,
         );
@@ -516,7 +515,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SHL,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -597,7 +596,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SHR,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -608,13 +607,13 @@ mod evm_to_rwasm_tests {
         // [(idx, value, r), ...]
         let mut cases = vec![
             // shift=32 value=0xff..ff r=0
-            Case::Binary((
+            Case::Args2((
                 x("0x0000000000000000000000000000000000000000000000000000000000000020"),
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             )),
             // shift=33 value=0xff..ff r=0
-            Case::Binary((
+            Case::Args2((
                 x("0x0000000000000000000000000000000000000000000000000000000000000021"),
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
@@ -630,7 +629,7 @@ mod evm_to_rwasm_tests {
             let last_byte_idx = idx.len() - 1;
             idx[last_byte_idx] = i;
             res[31] = i + 1;
-            cases.push(Case::Binary((
+            cases.push(Case::Args2((
                 idx,
                 x("0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"),
                 res,
@@ -719,7 +718,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             LT,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -748,7 +747,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SLT,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -834,7 +833,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             GT,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -858,7 +857,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SGT,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -882,7 +881,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SAR,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -944,7 +943,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             ADD,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1041,7 +1040,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SUB,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1067,7 +1066,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             ADDMOD,
             None,
-            &cases.map(|v| Case::Ternary(v)),
+            &cases.map(|v| Case::Args3(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1106,7 +1105,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SIGNEXTEND,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1155,7 +1154,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             MUL,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1194,7 +1193,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             MULMOD,
             None,
-            &cases.map(|v| Case::Ternary(v)),
+            &cases.map(|v| Case::Args3(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1316,7 +1315,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             EXP,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1390,7 +1389,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             DIV,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1465,7 +1464,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             SDIV,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1498,7 +1497,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             AND,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1544,7 +1543,7 @@ mod evm_to_rwasm_tests {
         test_op_cases(
             MOD,
             None,
-            &cases.map(|v| Case::Binary(v)),
+            &cases.map(|v| Case::Args2(v)),
             false,
             ResultLocation::Stack,
         );
@@ -1553,42 +1552,42 @@ mod evm_to_rwasm_tests {
     #[test]
     fn smod_impl() {
         let cases = [
-            Case::Binary((
+            Case::Args2((
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0x0000000000000000000000000000000000000000000000000000000000000064"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000003"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0x000000000000000000000000014d70cf811caff6fb45deb45abffe262f2263b3"),
                 x("0x00000000000000000000000000000000000000000000025faaf6a5e9300e9a6c"),
                 x("0x00000000000000000000000000000000000000000000002163c2aa849ea53e83"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8"),
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd"),
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0x000000000000000000000000000000000000000000000000000000000000000b"),
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000002"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000003"),
                 x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
@@ -1600,7 +1599,7 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn or() {
-        let cases = [Case::Binary((
+        let cases = [Case::Args2((
             x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
             x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
             x("0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001"),
@@ -1612,12 +1611,12 @@ mod evm_to_rwasm_tests {
     #[test]
     fn xor() {
         let cases = [
-            Case::Binary((
+            Case::Args2((
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0x00003100080000300f0000070000a000c0000000000030001000200030000001"),
                 x("0x000003000400040000000a010000b000a0000000f000000007000004200a0001"),
                 x("0x000032000c0004300f000a060000100060000000f000300017002004100a0000"),
@@ -1630,17 +1629,17 @@ mod evm_to_rwasm_tests {
     #[test]
     fn mstore() {
         let cases = [
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000008"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
                 x("0000000000000000000000000f00000100000000f0000000100000000f00000000000000000f0000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000003"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f0000"),
                 x("000000000000000f00000100000000f0000000100000000f00000000000000000f0000"),
@@ -1653,12 +1652,12 @@ mod evm_to_rwasm_tests {
     #[test]
     fn mstore8() {
         let cases = [
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f0032"),
                 x("3200000000000000000000000000000000000000000000000000000000000000"),
             )),
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000008"),
                 x("000000000f00000100000000f0000000100000000f00000000000000000f00af"),
                 x("0000000000000000af0000000000000000000000000000000000000000000000"),
@@ -1673,22 +1672,22 @@ mod evm_to_rwasm_tests {
         let mut preamble = vec![];
         preamble.extend(compile_op_bytecode(
             MSTORE,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("00000000000000000000000000000000000000000000000000000000000000FF"),
                 vec![],
             )),
         ));
         let cases = [
-            Case::Unary((
+            Case::Args1((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("00000000000000000000000000000000000000000000000000000000000000FF"),
             )),
-            Case::Unary((
+            Case::Args1((
                 x("0000000000000000000000000000000000000000000000000000000000000001"),
                 x("000000000000000000000000000000000000000000000000000000000000FF00"),
             )),
-            Case::Unary((
+            Case::Args1((
                 x("0000000000000000000000000000000000000000000000000000000000000002"),
                 x("0000000000000000000000000000000000000000000000000000000000FF0000"),
             )),
@@ -1698,8 +1697,52 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
+    fn msize() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_bytecode(
+            MSTORE,
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                x("00000000000000000000000000000000000000000000000000000000000000FF"),
+                vec![],
+            )),
+        ));
+        let cases = [Case::Args0(x(
+            "0000000000000000000000000000000000000000000000000000000000000014",
+        ))];
+
+        test_op_cases(MSIZE, Some(&preamble), &cases, false, ResultLocation::Stack);
+    }
+
+    // #[test]
+    // fn mcopy() {
+    //     let mut preamble = vec![];
+    //     preamble.extend(compile_op_bytecode(
+    //         MSTORE,
+    //         &Case::Args3((
+    //             // dest src len
+    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("00000000000000000000000000000000000000000000000000000000000000FF"),
+    //             vec![],
+    //         )),
+    //     ));
+    //     let cases = [Case::Args0(x(
+    //         "0000000000000000000000000000000000000000000000000000000000000014",
+    //     ))];
+    //
+    //     test_op_cases(
+    //         MCOPY,
+    //         Some(&preamble),
+    //         &cases,
+    //         true,
+    //         ResultLocation::Memory(0),
+    //     );
+    // }
+
+    #[test]
     fn caller() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
             v.extend(&CONTRACT_CALLER);
             v
@@ -1710,7 +1753,7 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn address() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
             v.extend(&CONTRACT_ADDRESS);
             v
@@ -1719,38 +1762,110 @@ mod evm_to_rwasm_tests {
         test_op_cases(ADDRESS, None, &cases, false, ResultLocation::Stack);
     }
 
+    // #[ignore]
     #[test]
     fn calldatasize() {
-        let cases = [Case::NoArgs(x(
-            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-        ))];
+        let mut cases = vec![];
+        let len_be = CONTRACT_INPUT.len().to_be_bytes();
+        let mut v = [0u8; 32];
+        v[32 - len_be.len()..].copy_from_slice(&len_be);
+        cases.push(Case::Args0(v.to_vec()));
 
         test_op_cases(CALLDATASIZE, None, &cases, false, ResultLocation::Stack);
     }
 
     #[test]
     fn calldataload() {
-        let cases = [Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
-            x("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-        ))];
+        let mut cases = vec![];
+
+        let start_idx = 1;
+        for idx in start_idx..CONTRACT_INPUT.len() - 1 {
+            let mut v = [0u8; EVM_WORD_BYTES];
+            let idx_be = idx.to_be_bytes();
+            v[EVM_WORD_BYTES - idx_be.len()..].copy_from_slice(&idx_be);
+
+            let start_idx = idx;
+            let end_idx = idx
+                + if CONTRACT_INPUT.len() - idx >= EVM_WORD_BYTES {
+                    EVM_WORD_BYTES
+                } else {
+                    CONTRACT_INPUT.len() - idx
+                };
+            let mut res_expected = CONTRACT_INPUT[start_idx..end_idx].to_vec();
+            res_expected.resize(EVM_WORD_BYTES, 0);
+            cases.push(Case::Args1((v.to_vec(), res_expected)));
+        }
 
         test_op_cases(CALLDATALOAD, None, &cases, false, ResultLocation::Stack);
     }
 
     #[test]
     fn calldatacopy() {
-        let cases = [Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
-            x("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-        ))];
+        let mut cases = vec![];
 
-        test_op_cases(CALLDATACOPY, None, &cases, false, ResultLocation::Stack);
+        let mut dest_offset = [0u8; EVM_WORD_BYTES];
+        let mut offset = [0u8; EVM_WORD_BYTES];
+        let mut size = [0u8; EVM_WORD_BYTES];
+
+        let mut res_expected = [0u8; EVM_WORD_BYTES];
+        cases.push(Case::Args3((
+            dest_offset.to_vec(),
+            offset.to_vec(),
+            size.to_vec(),
+            res_expected.to_vec(),
+        )));
+
+        size[EVM_WORD_BYTES - 1] = EVM_WORD_BYTES as u8;
+        let mut res_expected = vec![];
+        let res = &CONTRACT_INPUT[offset[0] as usize..size[EVM_WORD_BYTES - 1] as usize];
+        res_expected = res.to_vec();
+        res_expected.resize(
+            (res_expected.len() + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES,
+            0,
+        );
+        cases.push(Case::Args3((
+            dest_offset.to_vec(),
+            offset.to_vec(),
+            size.to_vec(),
+            res_expected,
+        )));
+
+        size[EVM_WORD_BYTES - 1] = EVM_WORD_BYTES as u8 + 1;
+        let mut res_expected = vec![];
+        let res = &CONTRACT_INPUT[offset[0] as usize..size[EVM_WORD_BYTES - 1] as usize];
+        res_expected = res.to_vec();
+        res_expected.resize(
+            (res_expected.len() + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES,
+            0,
+        );
+        cases.push(Case::Args3((
+            dest_offset.to_vec(),
+            offset.to_vec(),
+            size.to_vec(),
+            res_expected,
+        )));
+
+        size[EVM_WORD_BYTES - 1] = 13;
+        let mut res_expected = vec![];
+        let res = &CONTRACT_INPUT[offset[0] as usize..size[EVM_WORD_BYTES - 1] as usize];
+        res_expected = res.to_vec();
+        res_expected.resize(
+            (res_expected.len() + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES,
+            0,
+        );
+        cases.push(Case::Args3((
+            dest_offset.to_vec(),
+            offset.to_vec(),
+            size.to_vec(),
+            res_expected,
+        )));
+
+        test_op_cases(CALLDATACOPY, None, &cases, true, ResultLocation::Memory(0));
     }
 
     #[test]
     fn callvalue() {
-        let cases = [Case::NoArgs(CONTRACT_VALUE.to_vec())];
+        let cases = [Case::Args0(CONTRACT_VALUE.to_vec())];
 
         test_op_cases(CALLVALUE, None, &cases, false, ResultLocation::Stack);
     }
@@ -1760,13 +1875,13 @@ mod evm_to_rwasm_tests {
         let cases = [(
             compile_op_bytecode(
                 MSTORE,
-                &Case::Binary((
+                &Case::Args2((
                     x("0000000000000000000000000000000000000000000000000000000000000000"),
                     x("FFFFFFFF00000000000000000000000000000000000000000000000000000000"),
                     vec![],
                 )),
             ),
-            Case::Binary((
+            Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0000000000000000000000000000000000000000000000000000000000000004"),
                 x("29045a592007d0c246ef02c2223570da9522d0cf0f73282c79a1bc8f0bb2c238"),
@@ -1785,7 +1900,7 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn codesize() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - SYSTEM_CODESIZE.len()];
             v.extend(&SYSTEM_CODESIZE);
             v
@@ -1795,7 +1910,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn chainid() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_CHAINID.len()];
             v.extend(&HOST_CHAINID);
             v
@@ -1805,7 +1920,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn basefee() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_BASEFEE.len()];
             v.extend(&HOST_BASEFEE);
             v
@@ -1815,7 +1930,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn blockhash() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_BLOCKHASH.len()];
             v.extend(&HOST_BLOCKHASH);
             v
@@ -1825,7 +1940,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn coinbase() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_COINBASE.len()];
             v.extend(&HOST_COINBASE);
             v
@@ -1835,7 +1950,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn gasprice() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_ENV_GASPRICE.len()];
             v.extend(&HOST_ENV_GASPRICE);
             v
@@ -1845,7 +1960,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn origin() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_ENV_ORIGIN.len()];
             v.extend(&HOST_ENV_ORIGIN);
             v
@@ -1855,7 +1970,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn gaslimit() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_GASLIMIT.len()];
             v.extend(&HOST_GASLIMIT);
             v
@@ -1865,7 +1980,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn number() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_NUMBER.len()];
             v.extend(&HOST_NUMBER);
             v
@@ -1875,7 +1990,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn timestamp() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_TIMESTAMP.len()];
             v.extend(&HOST_TIMESTAMP);
             v
@@ -1883,39 +1998,55 @@ mod evm_to_rwasm_tests {
 
         test_op_cases(TIMESTAMP, None, &cases, false, ResultLocation::Stack);
     }
-    #[ignore] // TODO
+
+    // TODO
     #[test]
     fn sload() {
-        let cases = [Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
+        let cases = [Case::Args1((
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
         test_op_cases(SLOAD, None, &cases, false, ResultLocation::Stack);
     }
-    #[ignore] // TODO
+
+    // TODO
+    #[ignore]
     #[test]
     fn sstore() {
-        let cases = [Case::Binary((
+        let cases = [Case::Args2((
             x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000002"),
             x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
-        test_op_cases(SLOAD, None, &cases, false, ResultLocation::Stack);
+        test_op_cases(SSTORE, None, &cases, false, ResultLocation::Stack);
+    }
+
+    // TODO
+    #[ignore]
+    #[test]
+    fn tstore() {
+        let cases = [Case::Args2((
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000000"),
+        ))];
+
+        test_op_cases(TSTORE, None, &cases, false, ResultLocation::Stack);
     }
     #[test]
     fn ret() {
         let mut preamble = vec![];
         preamble.extend(compile_op_bytecode(
             MSTORE,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0000000000000000000000000000000000000e0d0c0b0a090807060504030201"),
                 vec![],
             )),
         ));
-        let cases = [Case::Binary((
+        let cases = [Case::Args2((
             x("0000000000000000000000000000000000000000000000000000000000000012"),
             x("000000000000000000000000000000000000000000000000000000000000000e"),
             x("0e0d0c0b0a090807060504030201"),
@@ -1931,7 +2062,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn gas() {
-        let cases = [Case::NoArgs(x(
+        let cases = [Case::Args0(x(
             "0000000000000000000000000000000000000000000000000000000000000000",
         ))];
 
@@ -1939,7 +2070,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn difficulty() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_ENV_DIFFICULTY.len()];
             v.extend(&HOST_ENV_DIFFICULTY);
             v
@@ -1949,7 +2080,7 @@ mod evm_to_rwasm_tests {
     }
     #[test]
     fn blobbasefee() {
-        let cases = [Case::NoArgs({
+        let cases = [Case::Args0({
             let mut v = vec![0; 32 - HOST_ENV_BLOBBASEFEE.len()];
             v.extend(&HOST_ENV_BLOBBASEFEE);
             v
@@ -1957,10 +2088,33 @@ mod evm_to_rwasm_tests {
 
         test_op_cases(BLOBBASEFEE, None, &cases, false, ResultLocation::Stack);
     }
+    #[test]
+    fn blobhash() {
+        let cases = [
+            Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                HOST_ENV_BLOB_HASHES[0].to_vec(),
+            )),
+            Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                HOST_ENV_BLOB_HASHES[1].to_vec(),
+            )),
+            Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                HOST_ENV_BLOB_HASHES[2].to_vec(),
+            )),
+            Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000003"),
+                vec![0; 32],
+            )),
+        ];
+
+        test_op_cases(BLOBHASH, None, &cases, false, ResultLocation::Stack);
+    }
 
     #[test]
     fn pop() {
-        let cases = [Case::Unary((
+        let cases = [Case::Args1((
             x("123456789abcdef123456789abcdef123456789abcdef123456789abcdef1234"),
             x(""),
         ))];
@@ -1991,7 +2145,7 @@ mod evm_to_rwasm_tests {
                 val[val_last_idx] = v;
                 res_mem.extend(&val);
             }
-            let cases = [Case::NoArgs(res_mem.clone())];
+            let cases = [Case::Args0(res_mem.clone())];
 
             let op = match dup_case {
                 1 => DUP1,
@@ -2040,7 +2194,7 @@ mod evm_to_rwasm_tests {
                 val[val_last_idx] = v;
                 res_mem.extend(&val);
             }
-            let cases = [Case::NoArgs(res_mem.clone())];
+            let cases = [Case::Args0(res_mem.clone())];
 
             let op = match swap_case {
                 1 => SWAP1,
@@ -2066,14 +2220,14 @@ mod evm_to_rwasm_tests {
         // 1|0=1
         preamble.extend(compile_op_bytecode(
             OR,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0000000000000000000000000000000000000000000000000000000000000000"),
                 vec![],
             )),
         ));
         // 1|2=3
-        let cases = &[Case::Unary((
+        let cases = &[Case::Args1((
             x("0000000000000000000000000000000000000000000000000000000000000002"),
             x("0000000000000000000000000000000000000000000000000000000000000003"),
         ))];
@@ -2086,7 +2240,7 @@ mod evm_to_rwasm_tests {
         let mut preamble = vec![];
         preamble.extend(compile_op_bytecode(
             ADD,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0000000000000000000000000000000000000000000000000000000000000002"),
                 vec![],
@@ -2094,14 +2248,14 @@ mod evm_to_rwasm_tests {
         ));
         preamble.extend(compile_op_bytecode(
             ADD,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000003"),
                 x("0000000000000000000000000000000000000000000000000000000000000004"),
                 vec![],
             )),
         ));
         preamble.push(ADD);
-        let cases = &[Case::Unary((
+        let cases = &[Case::Args1((
             x("0000000000000000000000000000000000000000000000000000000000000005"),
             x("000000000000000000000000000000000000000000000000000000000000000f"),
         ))];
@@ -2115,24 +2269,24 @@ mod evm_to_rwasm_tests {
         // 2*3=6
         preamble.extend(compile_op_bytecode(
             MUL,
-            &Case::Binary((
+            &Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000002"),
                 x("0000000000000000000000000000000000000000000000000000000000000003"),
                 vec![],
             )),
         ));
-        //6+7=12
+        //6+7=13
         preamble.extend(compile_op_bytecode(
             ADD,
-            &Case::Unary((
+            &Case::Args1((
                 x("0000000000000000000000000000000000000000000000000000000000000007"),
                 vec![],
             )),
         ));
 
-        //12/5=2
-        let cases = &[Case::Unary((
-            x("0000000000000000000000000000000000000000000000000000000000000005"),
+        //27/13=2
+        let cases = &[Case::Args1((
+            x("000000000000000000000000000000000000000000000000000000000000001b"),
             x("0000000000000000000000000000000000000000000000000000000000000002"),
         ))];
 

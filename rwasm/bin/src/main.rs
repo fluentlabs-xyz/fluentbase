@@ -6,7 +6,7 @@ use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig, FuncOrExport};
-use std::{fs, path::Path};
+use std::{fs, io::BufRead, path::Path};
 
 /// Command line utility which takes input WAT/WASM file and converts it into RWASM
 #[derive(Parser, Debug)]
@@ -32,6 +32,9 @@ struct Args {
 
     #[arg(long, default_value = "")]
     entry_fn_name: String,
+
+    #[arg(long, default_value = "")]
+    entry_fn_name_beginnings_for: String,
 
     #[arg(long, default_value_t = false)]
     entry_fn_name_matches_file_in_name: bool,
@@ -66,7 +69,8 @@ fn main() {
             .translate_sections(!args.skip_translate_sections)
             .type_check(!args.skip_type_check)
             .fuel_consume(!args.do_not_inject_fuel)
-            .with_router(!args.use_subroutine_router),
+            .with_router(!args.use_subroutine_router)
+            .with_magic_prefix(false),
         Some(&import_linker),
     )
     .unwrap();
@@ -86,6 +90,34 @@ fn main() {
             .unwrap();
     };
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+    if args.entry_fn_name_beginnings_for != "" {
+        let mut as_rust_vec: Vec<String> = vec![];
+        for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
+            let fn_name = Box::new(fn_name.to_string());
+            let fn_idx = compiler
+                .resolve_func_index(&FuncOrExport::Export(Box::leak(fn_name.clone())))
+                .unwrap_or(None);
+            let fn_beginning = if fn_idx.is_some() {
+                *compiler
+                    .resolve_func_beginning(fn_idx.unwrap())
+                    .unwrap_or(&0)
+            } else {
+                0
+            };
+            println!(
+                "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
+                fn_idx, fn_beginning
+            );
+            let fn_name = fn_name.to_uppercase();
+            let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
+            let opcode_name = fn_name_split[fn_name_split.len() - 1];
+            as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
+        }
+        println!(
+            "rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]",
+            as_rust_vec.join(",")
+        )
+    }
     let rwasm_binary = compiler.finalize().unwrap();
     let file_out_path;
     if args.file_out_path != "" {

@@ -4,18 +4,10 @@ use crate::{
 };
 
 #[no_mangle]
-fn bitwise_sar(// b0: u64,
-    // b1: u64,
-    // b2: u64,
-    // b3: u64,
-    // a0: u64,
-    // a1: u64,
-    // a2: u64,
-    // a3: u64,
-) /* -> (u64, u64, u64, u64) */
-{
-    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+fn bitwise_sar() {
     let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
     let mut res = [0u8; U256_BYTES_COUNT as usize];
 
     let mut v = [0u8; 8];

@@ -36,9 +36,10 @@ pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn revert<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn revert<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "REVERT";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

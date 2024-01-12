@@ -1109,10 +1109,11 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             .then_some(())
             .ok_or(TrapCode::IndirectCallToNull)?;
 
-        let offset_result = return_pointer - self.ip.pc() as i32;
+        let pc = self.ip.pc() as i32;
+        let offset_result = return_pointer - pc;
         // println!(
         //     "visit_br_indirect: pc {} offset {} return_pointer {} offset_result {}",
-        //     self.ip.pc(),
+        //     pc,
         //     offset.to_i32(),
         //     return_pointer,
         //     offset_result,

@@ -6,8 +6,8 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_sub() {
-    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let a = u256_be_to_tuple_le(a);
     let b = u256_be_to_tuple_le(b);

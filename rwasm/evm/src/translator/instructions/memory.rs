@@ -23,12 +23,15 @@ pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn msize<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSIZE";
-    panic!("op:{} not implemented", OP);
+    debug!("op:{}", OP);
+    replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
-pub fn mcopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MCOPY";
-    panic!("op:{} not implemented", OP);
+    let is = host.instruction_set();
+    // SP_BASE_MEM_OFFSET_DEFAULT
+    // is.op_memory_copy();
 }

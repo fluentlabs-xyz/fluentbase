@@ -6,6 +6,7 @@ use crate::{
 #[no_mangle]
 fn bitwise_iszero() {
     let mut a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[r.len() - 1] = 1;
 

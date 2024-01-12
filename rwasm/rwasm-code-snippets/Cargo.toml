@@ -7,6 +7,7 @@ edition = "2021"
 fluentbase-rwasm = { path = "..", default-features = false }
 fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
 hex = "0.4.3"
+hashbrown = { workspace = true }
 
 [build-dependencies]
 fluentbase-rwasm = { path = "..", default-features = false }
@@ -27,7 +28,6 @@ proc-macro = false
 
 [features]
 default = []
-#default = ["arithmetic_sub", "arithmetic_mod", "arithmetic_addmod", "arithmetic_mulmod", "arithmetic_div", "arithmetic_sdiv", "arithmetic_smod", "arithmetic_mul", "arithmetic_exp"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_and = []
@@ -56,12 +56,14 @@ arithmetic_exp = []
 memory_mstore = []
 memory_mstore8 = []
 memory_mload = []
+memory_msize = []
+memory_mcopy = []
 stack_pop = []
 stack_dup1 = []
 stack_dup2 = []
 stack_swap1 = []
 stack_swap2 = []
-system_keccak = []
+system_keccak256 = []
 system_address = []
 system_balance = []
 system_origin = []
@@ -83,9 +85,13 @@ host_number = []
 host_timestamp = []
 host_env_block_difficulty = []
 host_env_blobbasefee = []
+host_env_blobhash = []
 host_env_gasprice = []
 host_env_origin = []
+host_tstore = []
+host_tload = []
 control_return = []
+control_revert = []
 
 [profile.release]
 #panic = "abort"
@@ -93,3 +99,5 @@ lto = true
 opt-level = 'z'
 strip = true
 
+#[build]
+#target = "wasm32-unknown-unknown"

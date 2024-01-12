@@ -149,9 +149,9 @@ opcodes! {
     0x32 => ORIGIN    => host_env::origin, // tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
-    0x35 => CALLDATALOAD => system::calldataload, // TODO from contract_input
-    0x36 => CALLDATASIZE => system::calldatasize, // TODO from contract_input
-    0x37 => CALLDATACOPY => system::calldatacopy, // TODO from contract_input
+    0x35 => CALLDATALOAD => system::calldataload, // from contract_input
+    0x36 => CALLDATASIZE => system::calldatasize, // from contract_input
+    0x37 => CALLDATACOPY => system::calldatacopy, // from contract_input
     0x38 => CODESIZE     => system::codesize, // done
     0x39 => CODECOPY     => system::codecopy, // TODO
 
@@ -170,7 +170,7 @@ opcodes! {
     0x46 => CHAINID        => host_env::chainid::<H>, // done
     0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
     0x48 => BASEFEE        => host_env::basefee::<H>, // done
-    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // TODO tx_blob_hashes
+    0x49 => BLOBHASH       => host_env::blob_hash::<H>, // tx_blob_hashes (renamed from DATAHASH)
     0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // tx_blob_gas_price
     // 0x4B
     // 0x4C
@@ -183,14 +183,14 @@ opcodes! {
     0x53 => MSTORE8  => memory::mstore8, // done
     0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload (need bindings for runtime)
     0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore (need bindings for runtime)
-    0x56 => JUMP     => control::jump, // TODO replace with br
-    0x57 => JUMPI    => control::jumpi, // TODO replace with br
+    0x56 => JUMP     => control::jump, // TODO replace with BrIndirect (think on it)
+    0x57 => JUMPI    => control::jumpi, // TODO replace with BrIndirect (think on it)
     0x58 => PC       => control::pc, // TODO
-    0x59 => MSIZE    => memory::msize, // TODO memory.size
+    0x59 => MSIZE    => memory::msize, // memory.size
     0x5A => GAS      => system::gas, // return 0
     0x5B => JUMPDEST => control::jumpdest, // TODO
-    0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap
-    0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap
+    0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap (temp store, use RAM)
+    0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap (temp store, use RAM)
     0x5E => MCOPY    => memory::mcopy::<H>, // TODO memory.copy (new release)
 
     0x5F => PUSH0  => stack::push::<0, H>, // manually implemented
@@ -229,37 +229,37 @@ opcodes! {
 
     0x80 => DUP1  => stack::dup::<1, H>,  // done
     0x81 => DUP2  => stack::dup::<2, H>,  // done
-    0x82 => DUP3  => stack::dup::<3, H>,  // TODO
-    0x83 => DUP4  => stack::dup::<4, H>,  // TODO
-    0x84 => DUP5  => stack::dup::<5, H>,  // TODO
-    0x85 => DUP6  => stack::dup::<6, H>,  // TODO
-    0x86 => DUP7  => stack::dup::<7, H>,  // TODO
-    0x87 => DUP8  => stack::dup::<8, H>,  // TODO
-    0x88 => DUP9  => stack::dup::<9, H>,  // TODO
-    0x89 => DUP10 => stack::dup::<10, H>,  // TODO
-    0x8A => DUP11 => stack::dup::<11, H>,  // TODO
-    0x8B => DUP12 => stack::dup::<12, H>,  // TODO
-    0x8C => DUP13 => stack::dup::<13, H>,  // TODO
-    0x8D => DUP14 => stack::dup::<14, H>,  // TODO
-    0x8E => DUP15 => stack::dup::<15, H>,  // TODO
-    0x8F => DUP16 => stack::dup::<16, H>,  // TODO
+    0x82 => DUP3  => stack::dup::<3, H>,  // TODO distribute existing solution
+    0x83 => DUP4  => stack::dup::<4, H>,  // TODO distribute existing solution
+    0x84 => DUP5  => stack::dup::<5, H>,  // TODO distribute existing solution
+    0x85 => DUP6  => stack::dup::<6, H>,  // TODO distribute existing solution
+    0x86 => DUP7  => stack::dup::<7, H>,  // TODO distribute existing solution
+    0x87 => DUP8  => stack::dup::<8, H>,  // TODO distribute existing solution
+    0x88 => DUP9  => stack::dup::<9, H>,  // TODO distribute existing solution
+    0x89 => DUP10 => stack::dup::<10, H>,  // TODO distribute existing solution
+    0x8A => DUP11 => stack::dup::<11, H>,  // TODO distribute existing solution
+    0x8B => DUP12 => stack::dup::<12, H>,  // TODO distribute existing solution
+    0x8C => DUP13 => stack::dup::<13, H>,  // TODO distribute existing solution
+    0x8D => DUP14 => stack::dup::<14, H>,  // TODO distribute existing solution
+    0x8E => DUP15 => stack::dup::<15, H>,  // TODO distribute existing solution
+    0x8F => DUP16 => stack::dup::<16, H>,  // TODO distribute existing solution
 
     0x90 => SWAP1  => stack::swap::<1, H>,  // done
     0x91 => SWAP2  => stack::swap::<2, H>,  // done
-    0x92 => SWAP3  => stack::swap::<3, H>,  // TODO
-    0x93 => SWAP4  => stack::swap::<4, H>,  // TODO
-    0x94 => SWAP5  => stack::swap::<5, H>,  // TODO
-    0x95 => SWAP6  => stack::swap::<6, H>,  // TODO
-    0x96 => SWAP7  => stack::swap::<7, H>,  // TODO
-    0x97 => SWAP8  => stack::swap::<8, H>,  // TODO
-    0x98 => SWAP9  => stack::swap::<9, H>,  // TODO
-    0x99 => SWAP10 => stack::swap::<10, H>,  // TODO
-    0x9A => SWAP11 => stack::swap::<11, H>,  // TODO
-    0x9B => SWAP12 => stack::swap::<12, H>,  // TODO
-    0x9C => SWAP13 => stack::swap::<13, H>,  // TODO
-    0x9D => SWAP14 => stack::swap::<14, H>,  // TODO
-    0x9E => SWAP15 => stack::swap::<15, H>,  // TODO
-    0x9F => SWAP16 => stack::swap::<16, H>,  // TODO
+    0x92 => SWAP3  => stack::swap::<3, H>,  // TODO distribute existing solution
+    0x93 => SWAP4  => stack::swap::<4, H>,  // TODO distribute existing solution
+    0x94 => SWAP5  => stack::swap::<5, H>,  // TODO distribute existing solution
+    0x95 => SWAP6  => stack::swap::<6, H>,  // TODO distribute existing solution
+    0x96 => SWAP7  => stack::swap::<7, H>,  // TODO distribute existing solution
+    0x97 => SWAP8  => stack::swap::<8, H>,  // TODO distribute existing solution
+    0x98 => SWAP9  => stack::swap::<9, H>,  // TODO distribute existing solution
+    0x99 => SWAP10 => stack::swap::<10, H>,  // TODO distribute existing solution
+    0x9A => SWAP11 => stack::swap::<11, H>,  // TODO distribute existing solution
+    0x9B => SWAP12 => stack::swap::<12, H>,  // TODO distribute existing solution
+    0x9C => SWAP13 => stack::swap::<13, H>,  // TODO distribute existing solution
+    0x9D => SWAP14 => stack::swap::<14, H>,  // TODO distribute existing solution
+    0x9E => SWAP15 => stack::swap::<15, H>,  // TODO distribute existing solution
+    0x9F => SWAP16 => stack::swap::<16, H>,  // TODO distribute existing solution
 
     0xA0 => LOG0 => host::log::<0, H>, // TODO
     0xA1 => LOG1 => host::log::<1, H>, // TODO
@@ -354,7 +354,7 @@ opcodes! {
     0xFA => STATICCALL   => host::static_call::<H>, // TODO
     // 0xFB
     // 0xFC
-    0xFD => REVERT       => control::revert::<H>, // TODO sys_write + sys_halt
+    0xFD => REVERT       => control::revert::<H>, // sys_write + sys_halt
     0xFE => INVALID      => control::invalid, // sys_halt
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
 }

@@ -2,9 +2,6 @@
 
 extern crate alloc;
 extern crate core;
-// #[cfg(test)]
-// #[macro_use]
-// extern crate std;
 extern crate fluentbase_sdk;
 
 mod arithmetic;
@@ -24,6 +21,39 @@ pub(crate) mod test_helper;
 mod test_utils;
 mod tests;
 mod types;
+
+// lazy_static! {
+//     static ref TRANSIENT_STORAGE: Mutex<HashMap<U256, U256>> = Mutex::new(HashMap::new());
+// pub fn get_transient_storage() -> &'static mut HashMap<U256, U256> {
+//     static TRANSIENT_STORAGE: HashMap<_, _> = HashMap::new();
+// }
+
+// static mut TRANSIENT_STORAGE: *mut HashMap<U256, U256> = 0xB8000 as _;
+// static TRANSIENT_STORAGE_MARK: *mut HashMap<U256, U256> = unsafe { TRANSIENT_STORAGE.clone() };
+//
+// #[no_mangle]
+// pub fn ts_set(index: U256, value: U256) {
+//     unsafe {
+//         if TRANSIENT_STORAGE == TRANSIENT_STORAGE_MARK {
+//             TRANSIENT_STORAGE = &mut HashMap::new() as *mut HashMap<U256, U256>;
+//         }
+//         let ts = TRANSIENT_STORAGE;
+//         (*ts).insert(index, value);
+//     }
+// }
+//
+// pub fn ts_get(index: U256) -> Option<U256> {
+//     unsafe {
+//         if TRANSIENT_STORAGE == null_mut() {
+//             return None;
+//         }
+//         let res = (*TRANSIENT_STORAGE).get(&index);
+//         if res.is_some() {
+//             return Some(*res.unwrap());
+//         }
+//         return None;
+//     }
+// }
 
 // #[cfg(test)]
 // #[ctor::ctor]

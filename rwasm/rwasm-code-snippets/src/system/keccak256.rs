@@ -7,9 +7,9 @@ use core::slice;
 use fluentbase_sdk::{CryptoPlatformSDK, SDK};
 
 #[no_mangle]
-fn system_keccak() {
-    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+fn system_keccak256() {
     let offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let offset = u256_be_to_tuple_le(offset);
     let size = u256_be_to_tuple_le(size);

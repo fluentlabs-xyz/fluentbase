@@ -5,8 +5,8 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_exp() {
-    let degree = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let val = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let degree = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let degree = u256_be_to_tuple_le(degree);
     let val = u256_be_to_tuple_le(val);

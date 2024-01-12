@@ -1,5 +1,5 @@
 use crate::{
-    common::{u256_be_to_tuple_le, u256_from_be_slice},
+    common::{u256_be_to_tuple_le, u256_from_be_slice_align_left},
     common_sp::{stack_pop_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
@@ -8,29 +8,45 @@ use fluentbase_sdk::evm::ExecutionContext;
 
 #[no_mangle]
 fn system_calldatacopy() {
-    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
-    let size = u256_be_to_tuple_le(size).0;
-    let offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
-    let offset = u256_be_to_tuple_le(offset).0;
     let dest_offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
-    let dest_offset = u256_be_to_tuple_le(dest_offset).0;
+    let offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
+    let mut dest_offset = u256_be_to_tuple_le(dest_offset).0 as usize;
+    let mut offset = u256_be_to_tuple_le(offset).0 as usize;
+    let mut size = u256_be_to_tuple_le(size).0 as usize;
 
     let ci = ExecutionContext::contract_input();
-    let ci_ptr = ci.as_ptr();
 
-    let dest =
-        unsafe { slice::from_raw_parts_mut(dest_offset as *mut u8, U256_BYTES_COUNT as usize) };
+    let mut shift = 0;
 
-    let v = if offset < ci.len() as u64 {
-        if offset + size < ci.len() as u64 {
-            unsafe { slice::from_raw_parts(ci_ptr, U256_BYTES_COUNT as usize) }
+    while size > 0 {
+        let data_size = if size >= U256_BYTES_COUNT as usize {
+            U256_BYTES_COUNT as usize
         } else {
-            unsafe { slice::from_raw_parts(ci_ptr, ci.len() - size as usize) }
-        }
-    } else {
-        &[]
-    };
-    let v = &u256_from_be_slice(v);
+            size
+        };
 
-    dest.copy_from_slice(v);
+        let offset = offset + shift;
+        let dest_offset = dest_offset + shift;
+
+        let dest =
+            unsafe { slice::from_raw_parts_mut(dest_offset as *mut u8, U256_BYTES_COUNT as usize) };
+
+        let v = if offset < ci.len() {
+            if offset + data_size < ci.len() {
+                &ci[offset..offset + data_size]
+            } else {
+                &ci[offset..ci.len()]
+            }
+        } else {
+            &[]
+        };
+        let v = &u256_from_be_slice_align_left(v);
+
+        dest.copy_from_slice(v);
+
+        shift += data_size;
+        size -= data_size;
+    }
 }
