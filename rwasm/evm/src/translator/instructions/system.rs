@@ -5,11 +5,11 @@ use crate::translator::{
 };
 use log::debug;
 
-pub fn magic_prefix<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn magic_prefix<H: Host>(_translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MAGIC_PREFIX";
     debug!("op:{}", OP);
     // https://eips.ethereum.org/EIPS/eip-3541
-    // DO NOTHING
+    host.instruction_set().op_magic_prefix(0);
 }
 
 pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
