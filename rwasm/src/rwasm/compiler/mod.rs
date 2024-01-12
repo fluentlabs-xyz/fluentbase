@@ -253,8 +253,7 @@ impl<'linker> Compiler<'linker> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
         if self.config.with_magic_prefix {
-            self.code_section
-                .op_magic_prefix([0x00, 0x61, 0x73, 0x6d, 0x00, 0x00, 0x00, 0x00]);
+            self.code_section.op_magic_prefix([0x00; 8]);
         }
         // first we must translate all sections, this is an entrypoint
         if self.config.with_state {
