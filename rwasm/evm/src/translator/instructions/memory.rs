@@ -32,5 +32,6 @@ pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MCOPY";
     let is = host.instruction_set();
+    // SP_BASE_MEM_OFFSET_DEFAULT
     // is.op_memory_copy();
 }

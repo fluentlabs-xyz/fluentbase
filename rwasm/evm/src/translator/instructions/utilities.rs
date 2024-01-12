@@ -33,7 +33,9 @@ pub(super) fn preprocess_op_params(translator: &mut Translator<'_>, host: &mut d
         .subroutine_data(opcode)
         .expect(&format!("no meta found for 0x{:x?} opcode", opcode));
     let prev_funcs_len = meta.begin_offset as u32;
-    instruction_set.op_i32_const(instruction_set.len() + 1 - prev_funcs_len);
+    let is_len = instruction_set.len();
+    let return_offset = is_len - prev_funcs_len;
+    instruction_set.op_i32_const(return_offset);
 }
 
 pub(super) fn replace_current_opcode_with_call_to_subroutine(
@@ -48,6 +50,7 @@ pub(super) fn replace_current_opcode_with_call_to_subroutine(
         .subroutine_data(op)
         .expect(format!("subroutine data not found for opcode 0x{:x?}", op).as_str());
 
-    let se = sd.begin_offset as i32 - is.len() as i32 + 1 + sd.rel_entry_offset as i32;
+    let is_len = is.len();
+    let se = sd.begin_offset as i32 - is_len as i32 + 2 + sd.rel_entry_offset as i32;
     is.op_br(se);
 }

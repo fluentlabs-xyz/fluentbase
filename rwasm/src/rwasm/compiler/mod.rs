@@ -74,6 +74,7 @@ pub struct CompilerConfig {
     global_start_index: u32,
     swap_stack_params: bool,
     with_router: bool,
+    with_magic_prefix: bool,
 }
 
 impl Default for CompilerConfig {
@@ -91,6 +92,7 @@ impl Default for CompilerConfig {
             global_start_index: 0,
             swap_stack_params: true,
             with_router: true,
+            with_magic_prefix: true,
         }
     }
 }
@@ -128,6 +130,11 @@ impl CompilerConfig {
 
     pub fn with_router(mut self, value: bool) -> Self {
         self.with_router = value;
+        self
+    }
+
+    pub fn with_magic_prefix(mut self, value: bool) -> Self {
+        self.with_magic_prefix = value;
         self
     }
 
@@ -245,7 +252,9 @@ impl<'linker> Compiler<'linker> {
         }
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
-        self.code_section.op_magic_prefix(0x0061736d00000000u64);
+        if self.config.with_magic_prefix {
+            self.code_section.op_magic_prefix(0x0061736d00000000u64);
+        }
         // first we must translate all sections, this is an entrypoint
         if self.config.with_state {
             self.translate_entrypoint_with_state(main_index)?;

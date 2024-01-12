@@ -69,7 +69,8 @@ fn main() {
             .translate_sections(!args.skip_translate_sections)
             .type_check(!args.skip_type_check)
             .fuel_consume(!args.do_not_inject_fuel)
-            .with_router(!args.use_subroutine_router),
+            .with_router(!args.use_subroutine_router)
+            .with_magic_prefix(false),
         Some(&import_linker),
     )
     .unwrap();
