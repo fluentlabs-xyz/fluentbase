@@ -249,6 +249,9 @@ impl<'a> BinaryFormat<'a> for Instruction {
             Instruction::I64TruncSatF64S => sink.write_u8(0xc4)?,
             Instruction::I64TruncSatF64U => sink.write_u8(0xc5)?,
             Instruction::TypeCheck(sig_idx) => sink.write_u8(0xc6)? + sig_idx.write_binary(sink)?,
+            Instruction::MagicPrefix(version) => {
+                sink.write_u8(0xef)? + version.write_binary(sink)?
+            }
             _ => unreachable!("not supported opcode: {:?}", self),
         };
         // we align all opcodes to 9 bytes
@@ -465,6 +468,8 @@ impl<'a> BinaryFormat<'a> for Instruction {
             0xc4 => Instruction::I64TruncSatF64S,
             0xc5 => Instruction::I64TruncSatF64U,
             0xc6 => Instruction::TypeCheck(SignatureIdx::read_binary(sink)?),
+            // this opcode must always be 0xEF
+            0xef => Instruction::MagicPrefix(UntypedValue::read_binary(sink)?),
 
             _ => return Err(BinaryFormatError::IllegalOpcode(byte)),
         };
@@ -552,6 +557,7 @@ impl Instruction {
 #[cfg(test)]
 mod tests {
     use crate::{
+        common::UntypedValue,
         engine::bytecode::Instruction,
         rwasm::binary_format::{
             instruction::INSTRUCTION_AUX_BYTES,
@@ -588,5 +594,13 @@ mod tests {
             let opcode2 = Instruction::read_binary(&mut reader).unwrap();
             assert_eq!(opcode, opcode2);
         }
+    }
+
+    #[test]
+    fn test_magic_is_always_0xef() {
+        assert_eq!(
+            Instruction::MagicPrefix(UntypedValue::default()).code_value(),
+            0xEf
+        );
     }
 }
