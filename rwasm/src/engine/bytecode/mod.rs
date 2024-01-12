@@ -41,6 +41,14 @@ use strum_macros::EnumIter;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "std", derive(EnumIter))]
 pub enum Instruction {
+    /// This opcode does nothing, but it must be placed as the first instruction in the rWASM
+    /// binary to be used as a magic signature. It must be encoded using 0xEF (execution
+    /// format) opcode since its chosen as reserved byte for EVM smart contracts and there is
+    /// no collisions in the mainnet today. For more info read EIP-3541.
+    ///
+    /// A signature inside opcode can store any information. We can use this info to determine
+    /// compiler version or some other info. It is not checked somehow, just 8 bytes.
+    MagicPrefix(UntypedValue),
     LocalGet(LocalDepth),
     LocalSet(LocalDepth),
     LocalTee(LocalDepth),

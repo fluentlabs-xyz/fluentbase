@@ -291,6 +291,7 @@ impl InstructionSet {
         self.instr.len() as u32
     }
 
+    impl_opcode!(op_magic_prefix, MagicPrefix(UntypedValue));
     impl_opcode!(op_local_get, LocalGet(LocalDepth));
     impl_opcode!(op_local_set, LocalSet(LocalDepth));
     impl_opcode!(op_local_tee, LocalTee(LocalDepth));
