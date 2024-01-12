@@ -245,6 +245,7 @@ impl<'linker> Compiler<'linker> {
         }
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
+        self.code_section.op_magic_prefix(0x0061736d00000000u64);
         // first we must translate all sections, this is an entrypoint
         if self.config.with_state {
             self.translate_entrypoint_with_state(main_index)?;
