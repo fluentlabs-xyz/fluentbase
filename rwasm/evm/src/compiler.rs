@@ -50,7 +50,8 @@ impl<'a> EvmCompiler<'a> {
         let mut translator =
             Translator::new(self.import_linker, self.inject_fuel_consumption, contract);
 
-        self.instruction_set.op_magic_prefix(0x0061736d00000000u64); // https://eips.ethereum.org/EIPS/eip-3541
+        self.instruction_set
+            .op_magic_prefix([0x00, 0x61, 0x73, 0x6d, 0x00, 0x00, 0x00, 0x00]); // https://eips.ethereum.org/EIPS/eip-3541
 
         self.instruction_set_entry_offset =
             Some(translator.subroutines_instruction_set().instr.len() + 1);
