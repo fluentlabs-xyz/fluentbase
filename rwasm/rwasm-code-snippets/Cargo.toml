@@ -28,7 +28,6 @@ proc-macro = false
 
 [features]
 default = []
-#default = ["arithmetic_sub", "arithmetic_mod", "arithmetic_addmod", "arithmetic_mulmod", "arithmetic_div", "arithmetic_sdiv", "arithmetic_smod", "arithmetic_mul", "arithmetic_exp"]
 bitwise_byte = []
 bitwise_shl = []
 bitwise_and = []

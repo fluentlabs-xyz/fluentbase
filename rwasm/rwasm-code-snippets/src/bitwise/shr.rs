@@ -5,18 +5,10 @@ use crate::{
 };
 
 #[no_mangle]
-fn bitwise_shr(// v0: u64,
-    // v1: u64,
-    // v2: u64,
-    // v3: u64,
-    // shift0: u64,
-    // shift1: u64,
-    // shift2: u64,
-    // shift3: u64,
-) /* -> (u64, u64, u64, u64) */
-{
-    let val = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+fn bitwise_shr() {
     let shift = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let val = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
     let mut res = [0u8; U256_BYTES_COUNT as usize];
 
     let mut v = [0u8; 8];

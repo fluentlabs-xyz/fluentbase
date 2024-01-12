@@ -22,39 +22,38 @@ mod test_utils;
 mod tests;
 mod types;
 
-use core::ptr::null_mut;
-use fluentbase_sdk::evm::U256;
-use hashbrown::HashMap;
-
 // lazy_static! {
 //     static ref TRANSIENT_STORAGE: Mutex<HashMap<U256, U256>> = Mutex::new(HashMap::new());
 // pub fn get_transient_storage() -> &'static mut HashMap<U256, U256> {
 //     static TRANSIENT_STORAGE: HashMap<_, _> = HashMap::new();
 // }
 
-const TRANSIENT_STORAGE: *mut HashMap<U256, U256> = null_mut();
-
-pub fn ts_set(/* hp_ptr: *mut HashMap<U256, U256>, */ index: U256, value: U256) {
-    unsafe {
-        if TRANSIENT_STORAGE == null_mut() {
-            *TRANSIENT_STORAGE = HashMap::new();
-        }
-        (*TRANSIENT_STORAGE).insert(index, value);
-    }
-}
-
-pub fn ts_get(/* hp_ptr: *mut HashMap<U256, U256>, */ index: U256) -> Option<U256> {
-    unsafe {
-        if TRANSIENT_STORAGE == null_mut() {
-            return None;
-        }
-        let res = (*TRANSIENT_STORAGE).get(&index);
-        if res.is_some() {
-            return Some(*res.unwrap());
-        }
-        return None;
-    }
-}
+// static mut TRANSIENT_STORAGE: *mut HashMap<U256, U256> = 0xB8000 as _;
+// static TRANSIENT_STORAGE_MARK: *mut HashMap<U256, U256> = unsafe { TRANSIENT_STORAGE.clone() };
+//
+// #[no_mangle]
+// pub fn ts_set(index: U256, value: U256) {
+//     unsafe {
+//         if TRANSIENT_STORAGE == TRANSIENT_STORAGE_MARK {
+//             TRANSIENT_STORAGE = &mut HashMap::new() as *mut HashMap<U256, U256>;
+//         }
+//         let ts = TRANSIENT_STORAGE;
+//         (*ts).insert(index, value);
+//     }
+// }
+//
+// pub fn ts_get(index: U256) -> Option<U256> {
+//     unsafe {
+//         if TRANSIENT_STORAGE == null_mut() {
+//             return None;
+//         }
+//         let res = (*TRANSIENT_STORAGE).get(&index);
+//         if res.is_some() {
+//             return Some(*res.unwrap());
+//         }
+//         return None;
+//     }
+// }
 
 // #[cfg(test)]
 // #[ctor::ctor]

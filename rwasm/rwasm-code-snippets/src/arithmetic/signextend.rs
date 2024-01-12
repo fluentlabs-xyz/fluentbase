@@ -14,8 +14,8 @@ use crate::{
 
 #[no_mangle]
 pub fn arithmetic_signextend() {
-    let value = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let value = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
     let size = u256_be_to_tuple_le(size);
     let value = u256_be_to_tuple_le(value);
