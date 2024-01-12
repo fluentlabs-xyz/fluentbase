@@ -340,7 +340,7 @@ opcodes! {
     // 0xEC
     // 0xED
     // 0xEE
-    // 0xEF
+    0xEF => MAGIC_PREFIX => system::magic_prefix::<H>,
     0xF0 => CREATE       => host::create::<false, H>, // TODO
     0xF1 => CALL         => host::call::<H>, // TODO
     0xF2 => CALLCODE     => host::call_code::<H>, // TODO

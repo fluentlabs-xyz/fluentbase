@@ -180,7 +180,7 @@ mod evm_to_rwasm_tests {
                 Case::Args3(v) => v.3.clone(),
             };
 
-            let mut evm_bytecode: Vec<u8> = vec![];
+            let mut evm_bytecode: Vec<u8> = vec![0xEF]; // https://eips.ethereum.org/EIPS/eip-3541
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
 
             evm_bytecode.extend(compile_op_bytecode(opcode, case));
