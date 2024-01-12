@@ -6,6 +6,8 @@ system_keccak256 system_address system_caller system_callvalue system_codesize s
 host_chainid host_basefee host_blockhash host_coinbase host_gaslimit host_number host_timestamp host_sload host_sstore host_tstore host_tload \
 host_env_block_difficulty host_env_blobbasefee host_env_gasprice host_env_origin host_env_blobhash \
 control_return control_revert
+# test
+#FILES = bitwise_iszero bitwise_or
 
 all: $(FILES)
 

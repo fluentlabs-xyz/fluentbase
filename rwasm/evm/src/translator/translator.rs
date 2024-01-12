@@ -95,7 +95,7 @@ impl<'a> Translator<'a> {
         self.instruction_pointer_inc(1);
 
         // execute instruction.
-        (instruction_table[opcode as usize])(self, host)
+        instruction_table[opcode as usize](self, host)
     }
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {
@@ -211,6 +211,7 @@ impl<'a> Translator<'a> {
         };
 
         initiate_subroutines_solid_file(
+            // include_bytes!("../../../rwasm-code-snippets/bin/bitwise_iszero.rwasm").as_slice(),
             include_bytes!("../../../rwasm-code-snippets/bin/solid_file.rwasm").as_slice(),
         );
     }

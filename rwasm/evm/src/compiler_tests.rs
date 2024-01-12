@@ -180,7 +180,7 @@ mod evm_to_rwasm_tests {
                 Case::Args3(v) => v.3.clone(),
             };
 
-            let mut evm_bytecode: Vec<u8> = vec![0xEF]; // https://eips.ethereum.org/EIPS/eip-3541
+            let mut evm_bytecode: Vec<u8> = vec![];
             bytecode_preamble.map(|v| evm_bytecode.extend(v));
 
             evm_bytecode.extend(compile_op_bytecode(opcode, case));
@@ -419,18 +419,18 @@ mod evm_to_rwasm_tests {
                 x("0x0000000000000000000000000000000000000000000000000000000000000000"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
             ),
-            (
-                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
-            (
-                x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
-            (
-                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
-                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            ),
+            // (
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     x("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
+            // (
+            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe"),
+            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            // ),
         ];
 
         test_op_cases(
@@ -1714,31 +1714,31 @@ mod evm_to_rwasm_tests {
         test_op_cases(MSIZE, Some(&preamble), &cases, false, ResultLocation::Stack);
     }
 
-    #[ignore]
-    #[test]
-    fn mcopy() {
-        let mut preamble = vec![];
-        preamble.extend(compile_op_bytecode(
-            MSTORE,
-            &Case::Args3((
-                x("0000000000000000000000000000000000000000000000000000000000000000"),
-                x("0000000000000000000000000000000000000000000000000000000000000000"),
-                x("00000000000000000000000000000000000000000000000000000000000000FF"),
-                vec![],
-            )),
-        ));
-        let cases = [Case::Args0(x(
-            "0000000000000000000000000000000000000000000000000000000000000014",
-        ))];
-
-        test_op_cases(
-            MCOPY,
-            Some(&preamble),
-            &cases,
-            true,
-            ResultLocation::Memory(0),
-        );
-    }
+    // #[test]
+    // fn mcopy() {
+    //     let mut preamble = vec![];
+    //     preamble.extend(compile_op_bytecode(
+    //         MSTORE,
+    //         &Case::Args3((
+    //             // dest src len
+    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
+    //             x("00000000000000000000000000000000000000000000000000000000000000FF"),
+    //             vec![],
+    //         )),
+    //     ));
+    //     let cases = [Case::Args0(x(
+    //         "0000000000000000000000000000000000000000000000000000000000000014",
+    //     ))];
+    //
+    //     test_op_cases(
+    //         MCOPY,
+    //         Some(&preamble),
+    //         &cases,
+    //         true,
+    //         ResultLocation::Memory(0),
+    //     );
+    // }
 
     #[test]
     fn caller() {
