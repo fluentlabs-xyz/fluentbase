@@ -1,7 +1,4 @@
-use fluentbase_rwasm::{
-    engine::{bytecode::FuncIdx, CompiledFunc},
-    RwOp,
-};
+use fluentbase_rwasm::engine::{bytecode::FuncIdx, CompiledFunc};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -49,14 +46,49 @@ pub enum SysFuncIdx {
     CRYPTO_KECCAK256 = 0xE001,
     CRYPTO_POSEIDON = 0xE002,
     CRYPTO_POSEIDON2 = 0xE003,
-    ECC_SECP256K1_VERIFY = 0xE104,
-    ECC_SECP256K1_RECOVER = 0xE105,
-    // EVM
-    EVM_SLOAD = 0xFF01,
-    EVM_SSTORE = 0xFF02,
-    EVM_CALLER = 0xFF03,
-    EVM_CALLVALUE = 0xFF04,
-    EVM_ADDRESS = 0xFF05,
+    CRYPTO_ECRECOVER = 0xE004,
+}
+
+impl SysFuncIdx {
+    pub fn fuel_cost(&self) -> u32 {
+        match self {
+            SysFuncIdx::SYS_HALT => 1,
+            SysFuncIdx::SYS_STATE => 1,
+            SysFuncIdx::SYS_READ => 1,
+            SysFuncIdx::SYS_INPUT => 1,
+            SysFuncIdx::SYS_WRITE => 1,
+            SysFuncIdx::WASI_PROC_EXIT => 1,
+            SysFuncIdx::WASI_FD_WRITE => 1,
+            SysFuncIdx::WASI_ENVIRON_SIZES_GET => 1,
+            SysFuncIdx::WASI_ENVIRON_GET => 1,
+            SysFuncIdx::WASI_ARGS_SIZES_GET => 1,
+            SysFuncIdx::WASI_ARGS_GET => 1,
+            SysFuncIdx::RWASM_TRANSACT => 1,
+            SysFuncIdx::RWASM_COMPILE => 1,
+            SysFuncIdx::ZKTRIE_OPEN => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_NONCE => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_BALANCE => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_STORAGE_ROOT => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_CODE_HASH => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_CODE_SIZE => 1,
+            SysFuncIdx::ZKTRIE_GET_NONCE => 1,
+            SysFuncIdx::ZKTRIE_GET_BALANCE => 1,
+            SysFuncIdx::ZKTRIE_GET_STORAGE_ROOT => 1,
+            SysFuncIdx::ZKTRIE_GET_CODE_HASH => 1,
+            SysFuncIdx::ZKTRIE_GET_CODE_SIZE => 1,
+            SysFuncIdx::ZKTRIE_UPDATE_STORE => 1,
+            SysFuncIdx::ZKTRIE_GET_STORE => 1,
+            SysFuncIdx::MPT_OPEN => 1,
+            SysFuncIdx::MPT_UPDATE => 1,
+            SysFuncIdx::MPT_GET => 1,
+            SysFuncIdx::MPT_GET_ROOT => 1,
+            SysFuncIdx::CRYPTO_KECCAK256 => 1,
+            SysFuncIdx::CRYPTO_POSEIDON => 1,
+            SysFuncIdx::CRYPTO_POSEIDON2 => 1,
+            SysFuncIdx::CRYPTO_ECRECOVER => 1,
+            _ => unreachable!("not configured fuel for opcode: {:?}", self),
+        }
+    }
 }
 
 impl From<FuncIdx> for SysFuncIdx {
@@ -81,63 +113,3 @@ impl Into<FuncIdx> for SysFuncIdx {
         FuncIdx::from(self as u16)
     }
 }
-
-impl SysFuncIdx {
-    pub fn get_rw_rows(&self) -> Vec<RwOp> {
-        match self {
-            SysFuncIdx::SYS_HALT => {
-                vec![RwOp::StackRead(0)]
-            }
-            _ => vec![],
-        }
-    }
-}
-
-// SYS host functions (starts with 0xAA00)
-// pub const IMPORT_SYS_HALT: u16 = 0xAA01;
-// pub const IMPORT_SYS_WRITE: u16 = 0xAA02;
-// pub const IMPORT_SYS_READ: u16 = 0xAA03;
-
-// EVM-compatible host functions (starts with 0xEE00)
-// pub const IMPORT_EVM_STOP: u16 = 0xEE01;
-// pub const IMPORT_EVM_RETURN: u16 = 0xEE02;
-// pub const IMPORT_EVM_KECCAK256: u16 = 0xEE03;
-// pub const IMPORT_EVM_ADDRESS: u16 = 0xEE04;
-// pub const IMPORT_EVM_BALANCE: u16 = 0xEE05;
-// pub const IMPORT_EVM_ORIGIN: u16 = 0xEE06;
-// pub const IMPORT_EVM_CALLER: u16 = 0xEE07;
-// pub const IMPORT_EVM_CALLVALUE: u16 = 0xEE08;
-// pub const IMPORT_EVM_CALLDATALOAD: u16 = 0xEE09;
-// pub const IMPORT_EVM_CALLDATASIZE: u16 = 0xEE0A;
-// pub const IMPORT_EVM_CALLDATACOPY: u16 = 0xEE0B;
-// pub const IMPORT_EVM_CODESIZE: u16 = 0xEE0C;
-// pub const IMPORT_EVM_CODECOPY: u16 = 0xEE0D;
-// pub const IMPORT_EVM_GASPRICE: u16 = 0xEE0E;
-// pub const IMPORT_EVM_EXTCODESIZE: u16 = 0xEE0F;
-// pub const IMPORT_EVM_EXTCODECOPY: u16 = 0xEE10;
-// pub const IMPORT_EVM_EXTCODEHASH: u16 = 0xEE11;
-// pub const IMPORT_EVM_RETURNDATASIZE: u16 = 0xEE12;
-// pub const IMPORT_EVM_RETURNDATACOPY: u16 = 0xEE13;
-// pub const IMPORT_EVM_BLOCKHASH: u16 = 0xEE14;
-// pub const IMPORT_EVM_COINBASE: u16 = 0xEE15;
-// pub const IMPORT_EVM_TIMESTAMP: u16 = 0xEE16;
-// pub const IMPORT_EVM_NUMBER: u16 = 0xEE17;
-// pub const IMPORT_EVM_DIFFICULTY: u16 = 0xEE18;
-// pub const IMPORT_EVM_GASLIMIT: u16 = 0xEE19;
-// pub const IMPORT_EVM_CHAINID: u16 = 0xEE1A;
-// pub const IMPORT_EVM_BASEFEE: u16 = 0xEE1B;
-// pub const IMPORT_EVM_SLOAD: u16 = 0xEE1C;
-// pub const IMPORT_EVM_SSTORE: u16 = 0xEE1D;
-// pub const IMPORT_EVM_LOG0: u16 = 0xEE1E;
-// pub const IMPORT_EVM_LOG1: u16 = 0xEE1F;
-// pub const IMPORT_EVM_LOG2: u16 = 0xEE20;
-// pub const IMPORT_EVM_LOG3: u16 = 0xEE21;
-// pub const IMPORT_EVM_LOG4: u16 = 0xEE22;
-// pub const IMPORT_EVM_CREATE: u16 = 0xEE23;
-// pub const IMPORT_EVM_CALL: u16 = 0xEE24;
-// pub const IMPORT_EVM_CALLCODE: u16 = 0xEE25;
-// pub const IMPORT_EVM_DELEGATECALL: u16 = 0xEE26;
-// pub const IMPORT_EVM_CREATE2: u16 = 0xEE27;
-// pub const IMPORT_EVM_STATICCALL: u16 = 0xEE28;
-// pub const IMPORT_EVM_REVERT: u16 = 0xEE29;
-// pub const IMPORT_EVM_SELFDESTRUCT: u16 = 0xEE2A;

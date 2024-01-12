@@ -39,8 +39,8 @@ pub enum CompilerError {
     DropKeepOutOfBounds,
 }
 
-impl Into<i32> for CompilerError {
-    fn into(self) -> i32 {
+impl CompilerError {
+    pub fn into_i32(self) -> i32 {
         match self {
             CompilerError::ModuleError(_) => -1,
             CompilerError::MissingEntrypoint => -2,
@@ -53,6 +53,12 @@ impl Into<i32> for CompilerError {
             CompilerError::MemoryUsageTooBig => -9,
             CompilerError::DropKeepOutOfBounds => -10,
         }
+    }
+}
+
+impl Into<i32> for CompilerError {
+    fn into(self) -> i32 {
+        self.into_i32()
     }
 }
 

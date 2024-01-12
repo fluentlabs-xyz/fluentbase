@@ -1,4 +1,4 @@
-use crate::{RwasmPlatformSDK, SDK};
+use crate::{LowLevelRwasmSDK, LowLevelSDK};
 use alloc::vec;
 use fluentbase_runtime::{ExitCode, Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
@@ -6,7 +6,7 @@ use fluentbase_rwasm::{
     rwasm::{Compiler, CompilerConfig, FuncOrExport},
 };
 
-impl RwasmPlatformSDK for SDK {
+impl LowLevelRwasmSDK for LowLevelSDK {
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
         let import_linker = Runtime::<()>::new_linker();
         let compiler = Compiler::new_with_linker(
@@ -60,7 +60,7 @@ impl RwasmPlatformSDK for SDK {
         let execution_result = result.unwrap();
         let execution_output = execution_result.data().output();
         if execution_output.len() > output.len() {
-            return ExitCode::TransactOutputOverflow.into();
+            return ExitCode::RwasmOutputOverflow.into();
         }
         let len = execution_output.len();
         output[0..len].copy_from_slice(execution_output.as_slice());
@@ -70,7 +70,7 @@ impl RwasmPlatformSDK for SDK {
 
 #[cfg(test)]
 mod test {
-    use crate::{RwasmPlatformSDK, SDK};
+    use crate::{LowLevelRwasmSDK, LowLevelSDK};
     use alloc::vec;
     use fluentbase_runtime::STATE_MAIN;
 
@@ -78,9 +78,9 @@ mod test {
     fn test_greeting() {
         let wasm_binary = include_bytes!("../../../examples/bin/greeting.wasm");
         let mut rwasm_binary = vec![0u8; 1024 * 1024];
-        let code_len = SDK::rwasm_compile(wasm_binary, rwasm_binary.as_mut_slice());
+        let code_len = LowLevelSDK::rwasm_compile(wasm_binary, rwasm_binary.as_mut_slice());
         let mut result: [u8; 32] = [0; 32];
-        let exit_code = SDK::rwasm_transact(
+        let exit_code = LowLevelSDK::rwasm_transact(
             &rwasm_binary.as_slice()[0..code_len as usize],
             &[],
             &mut result,

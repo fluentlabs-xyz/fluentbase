@@ -1,13 +1,12 @@
-use crate::{SysPlatformSDK, SDK};
+use crate::{
+    rwasm::{
+        bindings::{_sys_halt, _sys_read, _sys_state, _sys_write},
+        LowLevelSDK,
+    },
+    sdk::LowLevelSysSDK,
+};
 
-extern "C" {
-    fn _sys_halt(code: i32);
-    fn _sys_read(target: *mut u8, offset: u32, length: u32) -> u32;
-    fn _sys_write(offset: *const u8, length: u32);
-    fn _sys_state() -> u32;
-}
-
-impl SysPlatformSDK for SDK {
+impl LowLevelSysSDK for LowLevelSDK {
     fn sys_read(target: &mut [u8], offset: u32) -> u32 {
         unsafe { _sys_read(target.as_mut_ptr(), offset, target.len() as u32) }
     }

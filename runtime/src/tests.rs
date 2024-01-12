@@ -1,24 +1,8 @@
-use crate::{
-    runtime::Runtime,
-    ExecutionResult,
-    RuntimeContext,
-    RuntimeError,
-    SysFuncIdx,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
-use eth_trie::DB;
-use fluentbase_poseidon::poseidon_hash;
+use crate::{runtime::Runtime, RuntimeContext, SysFuncIdx};
 use fluentbase_rwasm::{
-    common::Trap,
-    engine::bytecode::{AddressOffset, Instruction},
     instruction_set,
     rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule},
 };
-use hex_literal::hex;
-use keccak_hash::H256;
-use serde_json::from_str;
-use std::{borrow::BorrowMut, cell::RefMut, env, fs::File, io::Read, rc::Rc, sync::Arc};
 
 pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_linker();
@@ -57,7 +41,9 @@ fn test_simple() {
     "#,
         true,
     );
-    Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 10_000_000).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
+    let import_linker = Runtime::<()>::new_linker();
+    Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
 }
 
 #[test]
@@ -211,7 +197,9 @@ fn test_keccak256() {
 
     let module = ReducedModule::new(&rwasm_binary).unwrap();
     println!("module.trace_binary(): {:?}", module.trace());
-    let execution_result = Runtime::<()>::run(rwasm_binary.as_slice(), &Vec::new(), 0).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary);
+    let import_linker = Runtime::<()>::new_linker();
+    let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
     println!(
         "execution_result (exit_code {})",
         execution_result.data().exit_code,

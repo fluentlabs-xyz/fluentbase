@@ -53,7 +53,7 @@ impl<H: HashScheme> ZkTrie<H> {
         &self.root
     }
 
-    pub fn get_data<D>(&self, db: &mut D, key: &[u8]) -> Result<TrieData<H>, Error>
+    pub fn get_data<D>(&self, db: &D, key: &[u8]) -> Result<TrieData<H>, Error>
     where
         D: Database<Node = Node<H>>,
     {
@@ -67,7 +67,7 @@ impl<H: HashScheme> ZkTrie<H> {
         }
     }
 
-    pub(crate) fn try_get_node<D>(&self, db: &mut D, node_key: &Hash) -> Result<Arc<Node<H>>, Error>
+    pub(crate) fn try_get_node<D>(&self, db: &D, node_key: &Hash) -> Result<Arc<Node<H>>, Error>
     where
         D: Database<Node = Node<H>>,
     {
@@ -256,7 +256,7 @@ impl<H: HashScheme> ZkTrie<H> {
     // GetNode gets a node by node hash from the MT.  Empty nodes are not stored in the
     // tree; they are all the same and assumed to always exist.
     // <del>for non exist key, return (NewEmptyNode(), nil)</del>
-    pub(crate) fn get_node<D>(&self, db: &mut D, hash: &Hash) -> Result<Option<Arc<Node<H>>>, Error>
+    pub(crate) fn get_node<D>(&self, db: &D, hash: &Hash) -> Result<Option<Arc<Node<H>>>, Error>
     where
         D: Database<Node = Node<H>>,
     {
@@ -458,14 +458,14 @@ impl<H: HashScheme> ZkTrie<H> {
 
     pub fn walk<F, D>(
         &self,
-        db: &mut D,
+        db: &D,
         key_hash: &Hash,
         mut from_level: usize,
         mut write_node: F,
     ) -> Result<(), Error>
     where
         D: Database<Node = Node<H>>,
-        F: FnMut(&mut D, Arc<Node<H>>) -> Result<(), Error>,
+        F: FnMut(&D, Arc<Node<H>>) -> Result<(), Error>,
     {
         let path = get_path(self.max_level, key_hash.raw_bytes());
         let mut nodes = Vec::new();
@@ -505,7 +505,7 @@ impl<H: HashScheme> ZkTrie<H> {
         Ok(())
     }
 
-    pub fn proof<D>(&self, db: &mut D, key: &[u8]) -> Result<Vec<Vec<u8>>, Error>
+    pub fn proof<D>(&self, db: &D, key: &[u8]) -> Result<Vec<Vec<u8>>, Error>
     where
         D: Database<Node = Node<H>>,
     {
@@ -523,14 +523,14 @@ impl<H: HashScheme> ZkTrie<H> {
     // Prove is a simlified calling of ProveWithDeletion
     pub fn prove<D, F>(
         &self,
-        db: &mut D,
+        db: &D,
         key: &[u8],
         from_level: usize,
         write_node: F,
     ) -> Result<(), Error>
     where
         D: Database<Node = Node<H>>,
-        F: FnMut(&mut D, Arc<Node<H>>) -> Result<(), Error>,
+        F: FnMut(&D, Arc<Node<H>>) -> Result<(), Error>,
     {
         type N<H> = fn(Arc<Node<H>>, Option<Arc<Node<H>>>);
         return self.prove_with_deletion::<D, F, N<H>>(db, key, from_level, write_node, None);
@@ -551,7 +551,7 @@ impl<H: HashScheme> ZkTrie<H> {
     // Also notice the sibling can be nil if the trie has only one leaf
     pub fn prove_with_deletion<D, F, N>(
         &self,
-        db: &mut D,
+        db: &D,
         key: &[u8],
         from_level: usize,
         mut write_node: F,
@@ -559,7 +559,7 @@ impl<H: HashScheme> ZkTrie<H> {
     ) -> Result<(), Error>
     where
         D: Database<Node = Node<H>>,
-        F: FnMut(&mut D, Arc<Node<H>>) -> Result<(), Error>,
+        F: FnMut(&D, Arc<Node<H>>) -> Result<(), Error>,
         N: Fn(Arc<Node<H>>, Option<Arc<Node<H>>>),
     {
         if key.len() != 32 {
