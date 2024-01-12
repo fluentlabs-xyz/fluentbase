@@ -1,106 +1,101 @@
 use crate::{
-    storage::{PersistentDatabase, PersistentStorage},
+    storage::{KeyValueDb, TrieDb},
     RuntimeError,
 };
-use fluentbase_poseidon::Hashable;
-use halo2curves::{bn256::Fr, group::ff::PrimeField};
-use lazy_static::lazy_static;
-use once_cell::race::OnceBox;
-use zktrie::{Hash, ZkMemoryDb, ZkTrie};
+use fluentbase_zktrie::{
+    Byte32,
+    Database,
+    Error,
+    Hash,
+    Node,
+    PoseidonHash,
+    PreimageDatabase,
+    TrieData,
+    ZkTrie,
+};
+use halo2curves::bn256::Fr;
+use std::sync::Arc;
+
+struct NodeDb<'a, DB>(&'a mut DB);
+
+const STORAGE_PREFIX_NODE: u8 = 0x01;
+const STORAGE_PREFIX_PREIMAGE: u8 = 0x02;
+
+impl<'a, DB: KeyValueDb> Database for NodeDb<'a, DB> {
+    type Node = Node<PoseidonHash>;
+
+    fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
+        let storage_key = {
+            let mut storage_key = [0u8; 33];
+            storage_key[0] = STORAGE_PREFIX_NODE;
+            storage_key[1..].copy_from_slice(key.raw_bytes());
+            storage_key
+        };
+        match self.0.get(&storage_key[..]) {
+            Some(value) => Ok(Some(Arc::new(Node::from_bytes(value.as_slice())?))),
+            None => Ok(None),
+        }
+    }
+
+    fn update_node(&mut self, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
+        let storage_key = {
+            let mut storage_key = [0u8; 33];
+            storage_key[0] = STORAGE_PREFIX_NODE;
+            storage_key[1..].copy_from_slice(node.hash().raw_bytes());
+            storage_key
+        };
+        self.0.put(&storage_key[..], &node.canonical_value());
+        Ok(Arc::new(node))
+    }
+}
+
+impl<'a, DB: KeyValueDb> PreimageDatabase for NodeDb<'a, DB> {
+    fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
+        let storage_key = {
+            let mut storage_key = [0u8; 33];
+            storage_key[0] = STORAGE_PREFIX_PREIMAGE;
+            storage_key[1..].copy_from_slice(&hash_field.to_bytes());
+            storage_key
+        };
+        self.0.put(&storage_key[..], &preimage.to_vec());
+    }
+
+    fn preimage(&self, key: &Fr) -> Vec<u8> {
+        let storage_key = {
+            let mut storage_key = [0u8; 33];
+            storage_key[0] = STORAGE_PREFIX_PREIMAGE;
+            storage_key[1..].copy_from_slice(&key.to_bytes());
+            storage_key
+        };
+        self.0.get(&storage_key[..]).unwrap_or_default()
+    }
+}
 
 pub struct ZkTriePersistentStorage<'a, DB> {
-    storage: &'a mut DB,
-    db: ZkMemoryDb,
-    trie: ZkTrie,
+    storage: NodeDb<'a, DB>,
+    trie: ZkTrie<PoseidonHash>,
 }
 
-static FILED_ERROR_READ: &str = "invalid input field";
-static FILED_ERROR_OUT: &str = "output field fail";
+const MAX_LEVEL: usize = 31 * 8;
 
-extern "C" fn hash_scheme(
-    a: *const u8,
-    b: *const u8,
-    domain: *const u8,
-    out: *mut u8,
-) -> *const i8 {
-    use std::slice;
-    let a: [u8; 32] =
-        TryFrom::try_from(unsafe { slice::from_raw_parts(a, 32) }).expect("length specified");
-    let b: [u8; 32] =
-        TryFrom::try_from(unsafe { slice::from_raw_parts(b, 32) }).expect("length specified");
-    let domain: [u8; 32] =
-        TryFrom::try_from(unsafe { slice::from_raw_parts(domain, 32) }).expect("length specified");
-    let out = unsafe { slice::from_raw_parts_mut(out, 32) };
-
-    let fa = Fr::from_bytes(&a);
-    let fa = if fa.is_some().into() {
-        fa.unwrap()
-    } else {
-        return FILED_ERROR_READ.as_ptr().cast();
-    };
-    let fb = Fr::from_bytes(&b);
-    let fb = if fb.is_some().into() {
-        fb.unwrap()
-    } else {
-        return FILED_ERROR_READ.as_ptr().cast();
-    };
-    let fdomain = Fr::from_bytes(&domain);
-    let fdomain = if fdomain.is_some().into() {
-        fdomain.unwrap()
-    } else {
-        return FILED_ERROR_READ.as_ptr().cast();
-    };
-
-    let hasher = Fr::hasher();
-    let h = hasher.hash([fa, fb], fdomain);
-    let repr_h = h.to_repr();
-
-    if repr_h.len() == 32 {
-        out.copy_from_slice(repr_h.as_ref());
-        std::ptr::null()
-    } else {
-        FILED_ERROR_OUT.as_ptr().cast()
-    }
-}
-
-lazy_static! {
-    /// Use this boolean to initialize the hash scheme.
-    pub static ref HASH_SCHEME_DONE: bool = {
-        zktrie::init_hash_scheme(hash_scheme);
-        true
-    };
-}
-
-impl<'a, DB: PersistentDatabase> ZkTriePersistentStorage<'a, DB> {
+impl<'a, DB: KeyValueDb> ZkTriePersistentStorage<'a, DB> {
     pub fn empty(storage: &'a mut DB) -> Self {
-        _ = HASH_SCHEME_DONE.clone();
-        let mut db = ZkMemoryDb::new();
         let root = [0u8; 32];
-        // we can safely unwrap here because for empty root leave doesn't have to exist
-        let trie = db.new_trie(&root).unwrap();
-        Self { storage, db, trie }
+        Self {
+            storage: NodeDb(storage),
+            trie: ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root)),
+        }
     }
 
-    pub fn new(
-        storage: &'a mut DB,
-        root: &[u8; 32],
-        nodes: &Vec<Vec<u8>>,
-    ) -> Result<Self, RuntimeError> {
-        _ = HASH_SCHEME_DONE.clone();
-        let mut db = ZkMemoryDb::new();
-
-        for node in nodes.iter() {
-            db.add_node_bytes(node.as_slice())
-                .map_err(|err| RuntimeError::StorageError(err.to_string()))?;
-        }
-        let trie = db
-            .new_trie(&root)
-            .ok_or(RuntimeError::StorageError("can't open zktrie".to_string()))?;
-        Ok(Self { storage, db, trie })
+    pub fn new(storage: &'a mut DB, root: &[u8; 32]) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            storage: NodeDb(storage),
+            trie: ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root[..])),
+        })
     }
 }
 
-impl<'a, DB: PersistentDatabase> PersistentStorage for ZkTriePersistentStorage<'a, DB> {
+impl<'a, DB: KeyValueDb> TrieDb for ZkTriePersistentStorage<'a, DB> {
     fn open(&self, _key: &[u8; 32]) -> Result<Self, RuntimeError>
     where
         Self: Sized,
@@ -109,23 +104,47 @@ impl<'a, DB: PersistentDatabase> PersistentStorage for ZkTriePersistentStorage<'
     }
 
     fn compute_root(&self) -> [u8; 32] {
-        self.trie.root()
+        self.trie.hash().bytes()
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<[u8; 32]> {
-        self.trie.get_store(key)
+    fn get(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
+        if let Ok(val) = self.trie.get_data(&self.storage, &key[..]) {
+            match val {
+                TrieData::Node(node) => Some(node.data().to_vec()),
+                TrieData::NotFound => None,
+            }
+        } else {
+            None
+        }
     }
 
-    fn update(&mut self, key: &[u8; 32], value: &[u8; 32]) -> Result<(), RuntimeError> {
+    fn update(
+        &mut self,
+        key: &[u8; 32],
+        value_flags: u32,
+        value: &Vec<[u8; 32]>,
+    ) -> Result<(), RuntimeError> {
         self.trie
-            .update_store(key, &value)
-            .map_err(|err| RuntimeError::StorageError(err.to_string()))
+            .update(
+                &mut self.storage,
+                &key[..],
+                value_flags,
+                value.iter().map(|v| Byte32::from(*v)).collect(),
+            )
+            .map_err(|err| RuntimeError::StorageError(format!("can't update value ({:?})", err)))
+    }
+
+    fn proof(&self, key: &[u8; 32]) -> Option<Vec<Vec<u8>>> {
+        match self.trie.proof(&self.storage, &key[..]) {
+            Ok(result) => Some(result),
+            Err(_) => None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{zktrie::ZkTriePersistentStorage, InMemoryDatabase, PersistentStorage};
+    use crate::storage::{zktrie::ZkTriePersistentStorage, InMemoryDb, TrieDb};
 
     macro_rules! bytes32 {
         ($val:expr) => {{
@@ -140,20 +159,22 @@ mod tests {
     }
 
     #[test]
-    fn test_zktrie() {
-        let mut db = InMemoryDatabase::default();
-
+    fn test_simple() {
+        let mut db = InMemoryDb::default();
+        // create new zkt
         let mut zkt = ZkTriePersistentStorage::empty(&mut db);
-        (0..100).for_each(|i| {
-            zkt.update(bytes32!(format!("key{}", i)), bytes32!("some_value"))
-                .unwrap();
-        });
+        zkt.update(
+            bytes32!("key1"),
+            0,
+            &vec![*bytes32!("value1"), *bytes32!("value2")],
+        )
+        .unwrap();
         let root = zkt.compute_root();
-        let proof0 = zkt.trie.prove(&root).unwrap();
-        println!("{}", proof0.len());
-        // let proof1 = zkt.trie.prove(bytes32!("key1")).unwrap();
-        // let proof2 = zkt.trie.prove(bytes32!("key7")).unwrap();
-        let mut zkt2 = ZkTriePersistentStorage::new(&mut db, &root, &proof0).unwrap();
-        assert_eq!(zkt2.get(bytes32!("key1")).unwrap(), *bytes32!("value1"));
+        println!("root: {:?}", hex::encode(root));
+        // open and read value
+        let zkt2 = ZkTriePersistentStorage::new(&mut db, &root).unwrap();
+        let data = zkt2.get(bytes32!("key1")).unwrap();
+        assert_eq!(data[0..32], *bytes32!("value1"));
+        assert_eq!(data[32..64], *bytes32!("value2"));
     }
 }

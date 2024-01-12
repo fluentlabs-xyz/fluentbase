@@ -1,18 +1,18 @@
 (module
   (type (;0;) (func (param i32 i32 i32) (result i32)))
-  (type (;1;) (func (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (type (;1;) (func (param i32 i32 i32 i32)))
   (type (;2;) (func (param i32 i32)))
   (type (;3;) (func (param i32)))
   (type (;4;) (func))
   (import "env" "_sys_read" (func (;0;) (type 0)))
-  (import "env" "_ecc_secp256k1_verify" (func (;1;) (type 1)))
+  (import "env" "_crypto_ecrecover" (func (;1;) (type 1)))
   (import "env" "_sys_write" (func (;2;) (type 2)))
   (import "env" "_sys_halt" (func (;3;) (type 3)))
   (func (;4;) (type 4))
   (func (;5;) (type 4)
     (local i32)
     global.get 0
-    i32.const 160
+    i32.const 256
     i32.sub
     local.tee 0
     global.set 0
@@ -40,14 +40,14 @@
     call 0
     drop
     local.get 0
-    i32.const 38
+    i32.const 37
     i32.add
     i32.const 0
     i32.const 64
-    call 9
+    call 11
     drop
     local.get 0
-    i32.const 38
+    i32.const 37
     i32.add
     i32.const 32
     i32.const 64
@@ -55,65 +55,78 @@
     drop
     local.get 0
     i32.const 0
-    i32.store8 offset=102
+    i32.store8 offset=101
     local.get 0
-    i32.const 102
+    i32.const 101
     i32.add
     i32.const 96
     i32.const 1
     call 0
     drop
     local.get 0
-    i32.const 103
+    i32.const 102
     i32.add
     i32.const 0
-    i32.const 33
-    call 9
+    i32.const 65
+    call 11
     drop
     local.get 0
-    i32.const 103
+    i32.const 102
     i32.add
     i32.const 97
-    i32.const 33
+    i32.const 65
     call 0
     drop
+    local.get 0
+    i32.const 167
+    i32.add
+    i32.const 0
+    i32.const 65
+    call 11
+    drop
+    local.get 0
+    local.get 0
+    i32.const 37
+    i32.add
+    local.get 0
+    i32.const 167
+    i32.add
+    local.get 0
+    i32.load8_u offset=101
+    call 1
     block  ;; label = @1
       local.get 0
-      i32.const 32
-      local.get 0
-      i32.const 38
+      i32.const 102
       i32.add
-      i32.const 64
       local.get 0
-      i32.const 103
+      i32.const 167
       i32.add
-      i32.const 33
-      local.get 0
-      i32.load8_u offset=102
-      call 1
+      i32.const 65
+      call 10
+      i32.eqz
       br_if 0 (;@1;)
       local.get 0
-      i32.const 148
+      i32.const 244
       i32.add
       i64.const 0
       i64.store align=4
       local.get 0
       i32.const 1
-      i32.store offset=140
+      i32.store offset=236
       local.get 0
       i32.const 1048596
-      i32.store offset=136
+      i32.store offset=232
       local.get 0
       i32.const 1048604
-      i32.store offset=144
+      i32.store offset=240
       local.get 0
-      i32.const 136
+      i32.const 232
       i32.add
       call 6
       unreachable
     end
     local.get 0
-    i32.const 160
+    i32.const 256
     i32.add
     global.set 0)
   (func (;6;) (type 3) (param i32)
@@ -259,6 +272,52 @@
     end
     local.get 0)
   (func (;9;) (type 0) (param i32 i32 i32) (result i32)
+    (local i32 i32 i32)
+    i32.const 0
+    local.set 3
+    block  ;; label = @1
+      local.get 2
+      i32.eqz
+      br_if 0 (;@1;)
+      block  ;; label = @2
+        loop  ;; label = @3
+          local.get 0
+          i32.load8_u
+          local.tee 4
+          local.get 1
+          i32.load8_u
+          local.tee 5
+          i32.ne
+          br_if 1 (;@2;)
+          local.get 0
+          i32.const 1
+          i32.add
+          local.set 0
+          local.get 1
+          i32.const 1
+          i32.add
+          local.set 1
+          local.get 2
+          i32.const -1
+          i32.add
+          local.tee 2
+          i32.eqz
+          br_if 2 (;@1;)
+          br 0 (;@3;)
+        end
+      end
+      local.get 4
+      local.get 5
+      i32.sub
+      local.set 3
+    end
+    local.get 3)
+  (func (;10;) (type 0) (param i32 i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    local.get 2
+    call 9)
+  (func (;11;) (type 0) (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     local.get 2

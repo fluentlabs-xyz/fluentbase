@@ -104,9 +104,9 @@ impl ImportFunc {
         module_name: String,
         fn_name: String,
         index: u16,
-        fuel_amount: u32,
         input: &'a [ValueType],
         output: &'a [ValueType],
+        fuel_amount: u32,
     ) -> Self {
         let func_type = FuncType::new_with_refs(input, output);
         Self::new(

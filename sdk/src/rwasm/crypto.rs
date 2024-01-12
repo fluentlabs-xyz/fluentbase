@@ -1,37 +1,50 @@
-use crate::{CryptoPlatformSDK, SDK};
+use crate::{
+    rwasm::{
+        bindings::{_crypto_ecrecover, _crypto_keccak256, _crypto_poseidon, _crypto_poseidon2},
+        LowLevelSDK,
+    },
+    sdk::LowLevelCryptoSDK,
+    types::Bytes32,
+};
 
-extern "C" {
-    fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
-    fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
-    fn _crypto_poseidon2(
-        fa_offset: *const u8,
-        fb_offset: *const u8,
-        domain_offset: *const u8,
-        output_offset: *mut u8,
-    );
-}
-
-impl CryptoPlatformSDK for SDK {
+impl LowLevelCryptoSDK for LowLevelSDK {
     fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
         unsafe { _crypto_keccak256(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
     }
 
-    fn crypto_poseidon(data: &[u8], output: &mut [u8]) {
-        unsafe { _crypto_poseidon(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
+    fn crypto_poseidon(fr32_data: &[u8], output: &mut [u8]) {
+        unsafe {
+            _crypto_poseidon(
+                fr32_data.as_ptr(),
+                fr32_data.len() as i32,
+                output.as_mut_ptr(),
+            )
+        }
     }
 
     fn crypto_poseidon2(
-        fa_data: &[u8; 32],
-        fb_data: &[u8; 32],
-        domain_data: &[u8; 32],
-        output: &mut [u8],
-    ) {
+        fa32_data: &Bytes32,
+        fb32_data: &Bytes32,
+        fd32_data: &Bytes32,
+        output32: &mut [u8],
+    ) -> bool {
         unsafe {
             _crypto_poseidon2(
-                fa_data.as_ptr(),
-                fb_data.as_ptr(),
-                domain_data.as_ptr(),
+                fa32_data.as_ptr(),
+                fb32_data.as_ptr(),
+                fd32_data.as_ptr(),
+                output32.as_mut_ptr(),
+            )
+        }
+    }
+
+    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
+        unsafe {
+            _crypto_ecrecover(
+                digest.as_ptr(),
+                sig.as_ptr(),
                 output.as_mut_ptr(),
+                rec_id as u32,
             )
         }
     }
