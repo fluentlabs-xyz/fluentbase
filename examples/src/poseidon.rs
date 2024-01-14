@@ -1,4 +1,4 @@
-use fluentbase_sdk::{evm::ExecutionContext, LowLevelCryptoSDK, LowLevelSDK};
+use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 
 pub fn main() {
     let input = ExecutionContext::contract_input();

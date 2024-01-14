@@ -1,4 +1,4 @@
-use fluentbase_sdk::{LowLevelCryptoSDK, LowLevelSDK, LowLevelSysSDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 pub fn main() {
     const DIGEST_OFFSET: usize = 0;
