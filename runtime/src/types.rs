@@ -68,6 +68,12 @@ pub enum ExitCode {
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
 
+impl ExitCode {
+    pub fn into_trap(self) -> Trap {
+        Trap::i32_exit(self as i32)
+    }
+}
+
 impl From<TrapCode> for ExitCode {
     fn from(value: TrapCode) -> Self {
         match value {
@@ -88,7 +94,7 @@ impl From<TrapCode> for ExitCode {
 
 impl Into<Trap> for ExitCode {
     fn into(self) -> Trap {
-        Trap::i32_exit(self as i32)
+        self.into_trap()
     }
 }
 

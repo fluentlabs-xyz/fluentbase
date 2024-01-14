@@ -8,11 +8,11 @@ pub enum SysFuncIdx {
     #[default]
     UNKNOWN = 0x0000,
     // SYS host functions (starts with 0xAA00)
-    SYS_HALT = 0xA001,  // env::_sys_halt
-    SYS_STATE = 0xA002, // env::_sys_state
-    SYS_READ = 0xA003,  // env::_sys_read
-    SYS_INPUT = 0xA004, // env::_sys_input
-    SYS_WRITE = 0xA005, // env::_sys_write
+    SYS_HALT = 0xA001,       // fluentbase_v1alpha::_sys_halt
+    SYS_STATE = 0xA002,      // fluentbase_v1alpha::_sys_state
+    SYS_READ = 0xA003,       // fluentbase_v1alpha::_sys_read
+    SYS_INPUT_SIZE = 0xA004, // fluentbase_v1alpha::_sys_input_size
+    SYS_WRITE = 0xA005,      // fluentbase_v1alpha::_sys_write
     // WASI runtime
     WASI_PROC_EXIT = 0xB001,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0xB002,          // wasi_snapshot_preview1::fd_write
@@ -21,8 +21,8 @@ pub enum SysFuncIdx {
     WASI_ARGS_SIZES_GET = 0xB005,    // wasi_snapshot_preview1::args_sizes_get
     WASI_ARGS_GET = 0xB006,          // wasi_snapshot_preview1::args_get
     // RWASM runtime
-    RWASM_TRANSACT = 0xC001, // env::_rwasm_transact
-    RWASM_COMPILE = 0xC002,  // env::_rwasm_compile
+    RWASM_TRANSACT = 0xC001, // fluentbase_v1alpha::_rwasm_transact
+    RWASM_COMPILE = 0xC002,  // fluentbase_v1alpha::_rwasm_compile
     // zktrie functions
     ZKTRIE_OPEN = 0xDD01,
     ZKTRIE_UPDATE_NONCE = 0xDD02,
@@ -55,7 +55,7 @@ impl SysFuncIdx {
             SysFuncIdx::SYS_HALT => 1,
             SysFuncIdx::SYS_STATE => 1,
             SysFuncIdx::SYS_READ => 1,
-            SysFuncIdx::SYS_INPUT => 1,
+            SysFuncIdx::SYS_INPUT_SIZE => 1,
             SysFuncIdx::SYS_WRITE => 1,
             SysFuncIdx::WASI_PROC_EXIT => 1,
             SysFuncIdx::WASI_FD_WRITE => 1,

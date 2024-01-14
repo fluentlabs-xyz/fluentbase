@@ -10,10 +10,10 @@
   (type (;8;) (func (param i32 i32 i32 i32)))
   (type (;9;) (func (param i32) (result i32)))
   (type (;10;) (func (param i32 i32 i32 i32) (result i32)))
-  (import "env" "_sys_read" (func (;0;) (type 0)))
-  (import "env" "_crypto_poseidon" (func (;1;) (type 2)))
-  (import "env" "_sys_write" (func (;2;) (type 3)))
-  (import "env" "_sys_halt" (func (;3;) (type 4)))
+  (import "fluentbase_v1alpha" "_sys_read" (func (;0;) (type 2)))
+  (import "fluentbase_v1alpha" "_crypto_poseidon" (func (;1;) (type 2)))
+  (import "fluentbase_v1alpha" "_sys_write" (func (;2;) (type 3)))
+  (import "fluentbase_v1alpha" "_sys_halt" (func (;3;) (type 4)))
   (func (;4;) (type 5))
   (func (;5;) (type 5)
     (local i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
@@ -36,7 +36,6 @@
     i32.const 96
     i32.const 12
     call 0
-    drop
     local.get 0
     i32.const 0
     i32.store offset=72
@@ -132,7 +131,6 @@
           local.get 0
           i32.load offset=36
           call 0
-          drop
           block  ;; label = @4
             local.get 3
             local.get 1

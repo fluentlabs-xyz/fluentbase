@@ -1,4 +1,4 @@
-FILES = erc20 keccak256 greeting secp256k1 poseidon rwasm panic state
+FILES = keccak256 greeting secp256k1 poseidon rwasm panic state
 MANUAL = stack
 
 all: $(FILES) $(MANUAL)

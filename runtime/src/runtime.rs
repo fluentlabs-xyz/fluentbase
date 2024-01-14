@@ -1,6 +1,5 @@
 use crate::{
     instruction::{runtime_register_handlers, runtime_register_linkers},
-    storage::TrieDb,
     ExitCode,
     RuntimeError,
     RECURSIVE_MAX_DEPTH,
@@ -22,12 +21,11 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use std::{mem::take, rc::Rc};
+use std::mem::take;
 
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
     pub(crate) func_type: Option<FuncType>,
-    pub(crate) persistent_storage: Option<Rc<dyn TrieDb>>,
     // context inputs
     pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
@@ -44,7 +42,6 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
         Self {
             context: None,
             func_type: None,
-            persistent_storage: self.persistent_storage.clone(),
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
@@ -61,7 +58,6 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
         Self {
             context: None,
             func_type: None,
-            persistent_storage: None,
             bytecode: vec![],
             fuel_limit: 0,
             state: 0,
@@ -111,7 +107,15 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub(crate) fn extend_return_data(&mut self, value: &[u8]) {
+    pub fn read_input(&self, offset: u32, length: u32) -> Result<&[u8], ExitCode> {
+        if offset + length <= self.input.len() as u32 {
+            Ok(&self.input[(offset as usize)..(offset as usize + length as usize)])
+        } else {
+            Err(ExitCode::MemoryOutOfBounds)
+        }
+    }
+
+    pub fn extend_return_data(&mut self, value: &[u8]) {
         self.output.extend(value);
     }
 
@@ -122,6 +126,10 @@ impl<'t, T> RuntimeContext<'t, T> {
         if let Some(context) = &self.context {
             func(context)
         }
+    }
+
+    pub fn set_exit_code(&mut self, exit_code: i32) {
+        self.exit_code = exit_code;
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -146,6 +154,10 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn output(&self) -> &Vec<u8> {
         &self.output
+    }
+
+    pub fn state(&self) -> u32 {
+        self.state
     }
 
     pub fn clean_output(&mut self) {
