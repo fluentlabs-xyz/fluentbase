@@ -5,24 +5,23 @@ extern crate alloc;
 extern crate core;
 extern crate lol_alloc;
 
-#[cfg(feature = "runtime")]
-mod runtime;
-#[cfg(not(feature = "runtime"))]
-mod rwasm;
-
-#[cfg(feature = "runtime")]
-pub use runtime::LowLevelSDK;
-#[cfg(not(feature = "runtime"))]
-pub use rwasm::LowLevelSDK;
+pub struct LowLevelSDK;
 
 #[cfg(feature = "evm")]
 pub mod evm;
 
 mod sdk;
-pub use sdk::*;
+pub use sdk::LowLevelAPI;
 
+#[cfg(not(feature = "runtime"))]
+mod bindings;
+#[cfg(feature = "runtime")]
+mod runtime;
+#[cfg(not(feature = "runtime"))]
+mod rwasm;
 mod types;
-pub use types::*;
+
+pub use types::Bytes32;
 
 #[cfg(not(feature = "runtime"))]
 #[panic_handler]

@@ -1,4 +1,4 @@
-use fluentbase_sdk::{LowLevelSDK, LowLevelSysSDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 pub fn deploy() {
     let buf: [u8; 1] = [100];

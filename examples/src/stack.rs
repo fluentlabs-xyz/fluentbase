@@ -1,4 +1,4 @@
-use fluentbase_sdk::{LowLevelSDK, LowLevelSysSDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 extern "C" {
     fn __get_stack_pointer() -> u32;

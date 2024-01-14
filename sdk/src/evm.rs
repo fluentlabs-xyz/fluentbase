@@ -1,4 +1,4 @@
-use crate::{sdk::LowLevelSysSDK, LowLevelSDK};
+use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
 pub use alloy_primitives::{Address, Bytes, B256, U256};
 use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
