@@ -2,7 +2,7 @@
   (type (;0;) (func (param i32)))
   (type (;1;) (func (result i32)))
   (type (;2;) (func))
-  (import "env" "_sys_halt" (func (;0;) (type 0)))
+  (import "fluentbase_v1alpha" "_sys_halt" (func (;0;) (type 0)))
   (func (;1;) (type 1) (result i32)
     global.get 0)
   (func (;2;) (type 2))

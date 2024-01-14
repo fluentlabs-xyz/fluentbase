@@ -1,13 +1,14 @@
 (module
-  (type (;0;) (func (param i32 i32 i32) (result i32)))
+  (type (;0;) (func (param i32 i32 i32)))
   (type (;1;) (func (param i32 i32 i32 i32)))
   (type (;2;) (func (param i32 i32)))
   (type (;3;) (func (param i32)))
   (type (;4;) (func))
-  (import "env" "_sys_read" (func (;0;) (type 0)))
-  (import "env" "_crypto_ecrecover" (func (;1;) (type 1)))
-  (import "env" "_sys_write" (func (;2;) (type 2)))
-  (import "env" "_sys_halt" (func (;3;) (type 3)))
+  (type (;5;) (func (param i32 i32 i32) (result i32)))
+  (import "fluentbase_v1alpha" "_sys_read" (func (;0;) (type 0)))
+  (import "fluentbase_v1alpha" "_crypto_ecrecover" (func (;1;) (type 1)))
+  (import "fluentbase_v1alpha" "_sys_write" (func (;2;) (type 2)))
+  (import "fluentbase_v1alpha" "_sys_halt" (func (;3;) (type 3)))
   (func (;4;) (type 4))
   (func (;5;) (type 4)
     (local i32)
@@ -38,7 +39,6 @@
     i32.const 0
     i32.const 32
     call 0
-    drop
     local.get 0
     i32.const 37
     i32.add
@@ -52,7 +52,6 @@
     i32.const 32
     i32.const 64
     call 0
-    drop
     local.get 0
     i32.const 0
     i32.store8 offset=101
@@ -62,7 +61,6 @@
     i32.const 96
     i32.const 1
     call 0
-    drop
     local.get 0
     i32.const 102
     i32.add
@@ -76,7 +74,6 @@
     i32.const 97
     i32.const 65
     call 0
-    drop
     local.get 0
     i32.const 167
     i32.add
@@ -170,7 +167,7 @@
     local.get 0
     i64.const 5657071353825360256
     i64.store)
-  (func (;8;) (type 0) (param i32 i32 i32) (result i32)
+  (func (;8;) (type 5) (param i32 i32 i32) (result i32)
     (local i32 i32 i32)
     block  ;; label = @1
       block  ;; label = @2
@@ -271,7 +268,7 @@
       end
     end
     local.get 0)
-  (func (;9;) (type 0) (param i32 i32 i32) (result i32)
+  (func (;9;) (type 5) (param i32 i32 i32) (result i32)
     (local i32 i32 i32)
     i32.const 0
     local.set 3
@@ -312,12 +309,12 @@
       local.set 3
     end
     local.get 3)
-  (func (;10;) (type 0) (param i32 i32 i32) (result i32)
+  (func (;10;) (type 5) (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     local.get 2
     call 9)
-  (func (;11;) (type 0) (param i32 i32 i32) (result i32)
+  (func (;11;) (type 5) (param i32 i32 i32) (result i32)
     local.get 0
     local.get 1
     local.get 2

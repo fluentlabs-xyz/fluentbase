@@ -3,7 +3,7 @@ use fluentbase_sdk::{evm::ExecutionContext, LowLevelSDK, LowLevelSysSDK};
 
 pub fn main() {
     let mut wasm_bytecode: [u8; 0x600] = [0; 0x600];
-    let size = LowLevelSDK::sys_read(&mut wasm_bytecode, 0) as usize;
+    let size = LowLevelSDK::sys_input_size() as usize;
     let mut compiler = Compiler::new(&wasm_bytecode[0..size], CompilerConfig::default()).unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
     let mut ctx = ExecutionContext::default();

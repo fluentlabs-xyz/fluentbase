@@ -1,3 +1,4 @@
+#[link(wasm_import_module = "fluentbase_v1alpha")]
 extern "C" {
     pub(crate) fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
     pub(crate) fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
@@ -16,7 +17,8 @@ extern "C" {
 
     pub(crate) fn _sys_halt(code: i32);
     pub(crate) fn _sys_write(offset: *const u8, length: u32);
-    pub(crate) fn _sys_read(target: *mut u8, offset: u32, length: u32) -> u32;
+    pub(crate) fn _sys_input_size() -> u32;
+    pub(crate) fn _sys_read(target: *mut u8, offset: u32, length: u32);
     pub(crate) fn _sys_state() -> u32;
 
     pub(crate) fn _mpt_open();
