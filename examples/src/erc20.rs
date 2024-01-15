@@ -1,9 +1,8 @@
 use alloy_sol_types::{sol, SolCall, SolEvent, SolType, SolValue};
 use fluentbase_sdk::{
     evm::{Address, Bytes, ExecutionContext, U256},
-    CryptoPlatformSDK,
-    EvmPlatformSDK,
-    SDK,
+    LowLevelCryptoSDK,
+    LowLevelSDK,
 };
 use hex_literal::hex;
 
@@ -33,7 +32,7 @@ fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
     raw_storage_key[0..32].copy_from_slice(slot);
     raw_storage_key[32..64].copy_from_slice(value);
     let mut storage_key: [u8; 32] = [0; 32];
-    SDK::crypto_keccak256(&raw_storage_key, &mut storage_key);
+    LowLevelSDK::crypto_keccak256(&raw_storage_key, &mut storage_key);
     storage_key
 }
 
@@ -43,7 +42,7 @@ pub fn deploy() {
     let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
     // mint balance to owner
     let storage_key = storage_mapping_key(&STORAGE_BALANCES, owner_address.abi_encode().as_slice());
-    SDK::evm_sstore(&storage_key, owner_balance.as_le_slice())
+    LowLevelSDK::evm_sstore(&storage_key, owner_balance.as_le_slice())
 }
 
 struct ERC20<'a>(&'a mut ExecutionContext);
@@ -69,7 +68,7 @@ impl<'a> ERC20<'a> {
         let mut balance = U256::from(0);
         let storage_key = storage_mapping_key(&STORAGE_BALANCES, address.abi_encode().as_slice());
         unsafe {
-            SDK::evm_sload(&storage_key, balance.as_le_slice_mut());
+            LowLevelSDK::evm_sload(&storage_key, balance.as_le_slice_mut());
         }
         balance
     }
@@ -89,23 +88,23 @@ impl<'a> ERC20<'a> {
             let from_balance_key =
                 storage_mapping_key(&STORAGE_BALANCES, from.abi_encode().as_slice());
             unsafe {
-                SDK::evm_sload(&from_balance_key, from_balance.as_le_slice_mut());
+                LowLevelSDK::evm_sload(&from_balance_key, from_balance.as_le_slice_mut());
             }
             if from_balance < value {
                 panic!("insufficient balance");
             }
             let from_balance = from_balance - value;
-            SDK::evm_sstore(&from_balance_key, from_balance.as_le_slice());
+            LowLevelSDK::evm_sstore(&from_balance_key, from_balance.as_le_slice());
         }
         // update to balance
         {
             let mut to_balance = U256::from(0);
             let to_balance_key = storage_mapping_key(&STORAGE_BALANCES, to.abi_encode().as_slice());
             unsafe {
-                SDK::evm_sload(&to_balance_key, to_balance.as_le_slice_mut());
+                LowLevelSDK::evm_sload(&to_balance_key, to_balance.as_le_slice_mut());
             }
             let to_balance = to_balance + value;
-            SDK::evm_sstore(&to_balance_key, to_balance.as_le_slice());
+            LowLevelSDK::evm_sstore(&to_balance_key, to_balance.as_le_slice());
         }
         // emit event
         let transfer_event = Transfer {
@@ -173,7 +172,10 @@ pub fn main() {
 mod test {
     use super::*;
     use fluentbase_codec::{BufferDecoder, Encoder};
-    use fluentbase_sdk::{evm::ContractOutput, SDK};
+    use fluentbase_sdk::{
+        evm::{ContractInput, ContractOutput},
+        LowLevelSDK,
+    };
     use hex_literal::hex;
     use serial_test::serial;
 
@@ -181,12 +183,12 @@ mod test {
         let mut contract_input = ContractInput::default();
         contract_input.contract_input = input;
         contract_input.contract_caller = caller.unwrap_or_default();
-        SDK::with_test_input(contract_input.encode_to_vec(0));
+        LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
     }
 
     fn get_output() -> ContractOutput {
         let mut contract_output = ContractOutput::default();
-        let output = SDK::get_test_output();
+        let output = LowLevelSDK::get_test_output();
         let mut buffer_decoder = BufferDecoder::new(output.as_slice());
         ContractOutput::decode_body(&mut buffer_decoder, 0, &mut contract_output);
         contract_output

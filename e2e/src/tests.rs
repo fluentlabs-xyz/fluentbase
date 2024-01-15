@@ -12,7 +12,7 @@ use fluentbase_rwasm::{
     instruction_set,
     rwasm::{Compiler, CompilerConfig, FuncOrExport},
 };
-use fluentbase_sdk::evm::ContractInput;
+use fluentbase_sdk::evm::{ContractInput, ContractOutput};
 use hex_literal::hex;
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
@@ -52,10 +52,8 @@ fn test_greeting() {
         "Hello, World".as_bytes(),
     );
     assert_eq!(output.data().exit_code(), 0);
-    assert_eq!(
-        output.data().output().clone(),
-        "Hello, World".as_bytes().to_vec()
-    );
+    let output = ContractOutput::from(output.data().output().clone());
+    assert_eq!(output.return_data, "Hello, World".as_bytes().to_vec());
 }
 
 #[test]
@@ -65,8 +63,9 @@ fn test_keccak256() {
         "Hello, World".as_bytes(),
     );
     assert_eq!(output.data().exit_code(), 0);
+    let output = ContractOutput::from(output.data().output().clone());
     assert_eq!(
-        output.data().output().clone(),
+        output.return_data,
         hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529").to_vec()
     );
 }
@@ -79,10 +78,8 @@ fn test_poseidon() {
         input_data,
     );
     assert_eq!(output.data().exit_code(), 0);
-    assert_eq!(
-        output.data().output().clone(),
-        poseidon_hash(input_data).to_vec()
-    );
+    let output = ContractOutput::from(output.data().output().clone());
+    assert_eq!(output.return_data, poseidon_hash(input_data).to_vec());
 }
 
 #[test]
@@ -112,9 +109,13 @@ fn test_secp256k1_verify() {
     ];
 
     for input_data in input_datas {
-        let output =
-            Runtime::<()>::run(rwasm_binary.as_slice(), &input_data.to_vec(), 10_000_000).unwrap();
-        assert_eq!(output.data().output().clone(), Vec::<u8>::new());
+        let ctx = RuntimeContext::new(rwasm_binary.as_slice())
+            .with_input(input_data.to_vec())
+            .with_fuel_limit(10_000_000);
+        let import_linker = Runtime::<()>::new_linker();
+        let output = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
+        let output = ContractOutput::from(output.data().output().clone());
+        assert_eq!(output.return_data, Vec::<u8>::new());
     }
 }
 

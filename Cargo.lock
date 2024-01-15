@@ -1658,7 +1658,6 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ded41244b729663b1e574f1b4fb731469f69f79c17667b5d776b16cda0479449"
 dependencies = [
- "bitvec 1.0.1",
  "rand_core",
  "subtle",
 ]
@@ -1763,7 +1762,7 @@ dependencies = [
  "bitvec 1.0.1",
  "halo2curves 0.3.1",
  "lazy_static",
- "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon?rev=0b9965fbcd9e03559088b8f68489592286bc55e0)",
+ "poseidon",
 ]
 
 [[package]]
@@ -1789,8 +1788,6 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "once_cell",
- "parity-scale-codec 3.6.9",
- "poseidon 0.2.0 (git+https://github.com/scroll-tech/poseidon)",
  "rlp",
  "serde",
  "serde_json",
@@ -1803,7 +1800,6 @@ dependencies = [
  "wasi",
  "wat",
  "web3",
- "zktrie",
 ]
 
 [[package]]
@@ -2135,15 +2131,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gobuild"
-version = "0.1.0-alpha.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2192,26 +2179,6 @@ checksum = "eabb4a44450da02c90444cf74558da904edde8fb4e9035a9a6a4e15445af0bd7"
 
 [[package]]
 name = "halo2curves"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b1142bd1059aacde1b477e0c80c142910f1ceae67fc619311d6a17428007ab"
-dependencies = [
- "blake2b_simd",
- "ff 0.13.0",
- "group 0.13.0",
- "lazy_static",
- "num-bigint",
- "num-traits",
- "pasta_curves 0.5.1",
- "paste",
- "rand",
- "rand_core",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
-name = "halo2curves"
 version = "0.2.1"
 source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=0.3.0#83c72d49762343ffc9576ca11a2aa615efe1029b"
 dependencies = [
@@ -2220,7 +2187,7 @@ dependencies = [
  "lazy_static",
  "num-bigint",
  "num-traits",
- "pasta_curves 0.4.1",
+ "pasta_curves",
  "rand",
  "rand_core",
  "static_assertions",
@@ -2237,7 +2204,7 @@ dependencies = [
  "lazy_static",
  "num-bigint",
  "num-traits",
- "pasta_curves 0.4.1",
+ "pasta_curves",
  "paste",
  "rand",
  "rand_core",
@@ -3143,21 +3110,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pasta_curves"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
-dependencies = [
- "blake2b_simd",
- "ff 0.13.0",
- "group 0.13.0",
- "lazy_static",
- "rand",
- "static_assertions",
- "subtle",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3343,15 +3295,6 @@ source = "git+https://github.com/scroll-tech/poseidon?rev=0b9965fbcd9e03559088b8
 dependencies = [
  "group 0.12.1",
  "halo2curves 0.2.1",
- "subtle",
-]
-
-[[package]]
-name = "poseidon"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon#5787dd3d2ce7a9e9601a035c396ac0c03449b54d"
-dependencies = [
- "halo2curves 0.1.0",
  "subtle",
 ]
 
@@ -5403,14 +5346,6 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
-]
-
-[[package]]
-name = "zktrie"
-version = "0.2.0"
-source = "git+https://github.com/scroll-tech/zktrie.git?tag=v0.6.0#83318659773604fa565e2ebeb810a6d3746f0af4"
-dependencies = [
- "gobuild",
 ]
 
 [[package]]
