@@ -1,4 +1,6 @@
+use crate::consts::SP_BASE_MEM_OFFSET_DEFAULT;
 use core::slice::Chunks;
+use fluentbase_rwasm::rwasm::InstructionSet;
 
 pub const EVM_WORD_BYTES: usize = 32;
 pub const WASM_I64_BITS: usize = 64;
@@ -30,4 +32,64 @@ pub fn align_to_evm_word_array(
 
 pub fn iterate_over_wasm_i64_chunks(data: &[u8; EVM_WORD_BYTES]) -> Chunks<u8> {
     data.chunks(WASM_I64_BYTES).into_iter()
+}
+
+pub fn store_i64_const(is: &mut InstructionSet, offset: Option<u64>, value: Option<u64>) {
+    if let Some(offset) = offset {
+        is.op_i64_const(offset);
+    }
+    if let Some(value) = value {
+        is.op_i64_const(value);
+    }
+    is.op_i64_store(0);
+}
+
+pub fn load_i64_const(is: &mut InstructionSet, offset: Option<u64>) {
+    if let Some(offset) = offset {
+        is.op_i64_const(offset);
+    }
+    is.op_i64_load(0);
+}
+
+pub fn load_i64_const_be(is: &mut InstructionSet, offset: Option<u64>) {
+    if let Some(offset) = offset {
+        is.op_i64_const(offset);
+    }
+    is.op_local_get(1);
+    let mut pow: u64 = 72057594037927936;
+    for i in 0..WASM_I64_BYTES {
+        if i > 0 {
+            pow /= 256;
+            is.op_local_get(2); // duplicate offset
+            is.op_i64_const(i);
+            is.op_i64_add();
+        }
+        is.op_i64_load8_u(0);
+        is.op_i64_const(pow);
+        is.op_i64_mul();
+        if i > 0 {
+            is.op_i64_add();
+        }
+    }
+    is.op_local_set(1); // replace offset left on stack with resulting value
+}
+
+pub fn sp_set_value_i64_const(
+    is: &mut InstructionSet,
+    use_sp_base_offset: bool,
+    value: Option<u64>,
+) {
+    store_i64_const(
+        is,
+        if use_sp_base_offset {
+            Some(SP_BASE_MEM_OFFSET_DEFAULT as u64)
+        } else {
+            None
+        },
+        value,
+    );
+}
+
+pub fn sp_get_value_i64_const(is: &mut InstructionSet) {
+    load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64))
 }

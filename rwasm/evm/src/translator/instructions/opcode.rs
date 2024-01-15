@@ -191,7 +191,7 @@ opcodes! {
     0x5B => JUMPDEST => control::jumpdest, // TODO
     0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap (temp store, use RAM)
     0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap (temp store, use RAM)
-    0x5E => MCOPY    => memory::mcopy::<H>, // TODO memory.copy (new release)
+    0x5E => MCOPY    => memory::mcopy::<H>, // memory.copy
 
     0x5F => PUSH0  => stack::push::<0, H>, // manually implemented
     0x60 => PUSH1  => stack::push::<1, H>, // manually implemented

@@ -1,7 +1,8 @@
-use crate::translator::{host::Host, instructions::opcode, translator::Translator};
+use crate::translator::{host::Host, translator::Translator};
 use fluentbase_rwasm::{module::ImportName, rwasm::InstructionSet};
 
-pub(super) enum SystemFuncs {
+#[derive(Clone)]
+pub(super) enum SystemFunc {
     CryptoKeccak256,
     EvmSstore,
     EvmSload,
@@ -9,21 +10,50 @@ pub(super) enum SystemFuncs {
     SysWrite,
 }
 
+impl SystemFunc {
+    fn to_str(&self) -> &str {
+        match self {
+            SystemFunc::CryptoKeccak256 => "_crypto_keccak256",
+            SystemFunc::EvmSstore => "_evm_sstore",
+            SystemFunc::EvmSload => "_evm_sload",
+            SystemFunc::SysHalt => "_sys_halt",
+            SystemFunc::SysWrite => "_sys_write",
+        }
+    }
+    fn set_from_str(&mut self, fn_name: &str) {
+        match fn_name {
+            "_crypto_keccak256" => *self = SystemFunc::CryptoKeccak256,
+            "_evm_sstore" => *self = SystemFunc::EvmSstore,
+            "_evm_sload" => *self = SystemFunc::EvmSload,
+            "_sys_halt" => *self = SystemFunc::SysHalt,
+            "_sys_write" => *self = SystemFunc::SysWrite,
+            _ => panic!("unknown func name '{}'", fn_name),
+        }
+    }
+    fn from_str(fn_name: &str) -> SystemFunc {
+        match fn_name {
+            "_crypto_keccak256" => SystemFunc::CryptoKeccak256,
+            "_evm_sstore" => SystemFunc::EvmSstore,
+            "_evm_sload" => SystemFunc::EvmSload,
+            "_sys_halt" => SystemFunc::SysHalt,
+            "_sys_write" => SystemFunc::SysWrite,
+            _ => panic!("unknown func name '{}'", fn_name),
+        }
+    }
+}
+
 pub(super) fn wasm_call(
-    instruction_set: &mut InstructionSet,
-    fn_name: SystemFuncs,
     translator: &mut Translator,
-) {
-    let fn_name = match fn_name {
-        SystemFuncs::CryptoKeccak256 => "_crypto_keccak256",
-        SystemFuncs::EvmSstore => "_evm_sstore",
-        SystemFuncs::EvmSload => "_evm_sload",
-        SystemFuncs::SysHalt => "_sys_halt",
-        SystemFuncs::SysWrite => "_sys_write",
-    };
+    is: &mut InstructionSet,
+    fn_name: SystemFunc,
+) -> u64 {
+    let mut ops_count = is.len() as u64;
     let import_fn_idx =
-        translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name)].0;
-    instruction_set.op_call(import_fn_idx);
+        translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name.to_str())].0;
+    is.op_call(import_fn_idx);
+
+    ops_count = is.len() as u64 - ops_count;
+    ops_count
 }
 
 pub(super) fn preprocess_op_params(translator: &mut Translator<'_>, host: &mut dyn Host) {
