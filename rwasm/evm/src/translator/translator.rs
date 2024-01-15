@@ -1,11 +1,19 @@
-use crate::translator::{
-    host::Host,
-    instruction_result::InstructionResult,
-    instructions::opcode,
-    translator::contract::Contract,
+use crate::{
+    translator::{
+        host::Host,
+        instruction_result::InstructionResult,
+        instructions::opcode,
+        translator::contract::Contract,
+    },
+    utilities::form_sp_drop_u256,
 };
 pub use analysis::BytecodeLocked;
-use fluentbase_rwasm::rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule};
+use fluentbase_rwasm::{
+    common::UntypedValue,
+    engine::bytecode::Instruction,
+    rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule},
+};
+use log::debug;
 use std::{collections::HashMap, marker::PhantomData};
 
 pub mod analysis;
@@ -21,6 +29,8 @@ pub struct Translator<'a> {
     inject_fuel_consumption: bool,
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
+    native_offset_to_rwasm_instr_offset: HashMap<usize, (usize, usize)>,
+    jumps_to_process: Vec<(usize, usize)>,
 }
 
 pub struct SubroutineData {
@@ -48,10 +58,41 @@ impl<'a> Translator<'a> {
             opcode_to_subroutine_data: Default::default(),
             inject_fuel_consumption,
             subroutines_instruction_set: Default::default(),
+            native_offset_to_rwasm_instr_offset: Default::default(),
             _lifetime: Default::default(),
+            jumps_to_process: Default::default(),
         };
         s.init_code_snippets();
         s
+    }
+
+    pub fn jumps_to_process_add(&mut self, from_pc: usize, to_pc: usize) -> usize {
+        self.jumps_to_process.push((from_pc, to_pc));
+        self.jumps_to_process.len()
+    }
+
+    pub fn jumps_to_process_reset(&mut self) {
+        self.jumps_to_process.clear()
+    }
+
+    fn jumps_to_process_apply(&mut self, host: &mut dyn Host) {
+        for (pc_from, pc_to) in self.jumps_to_process.iter() {
+            let is_offsets_from = self
+                .native_offset_to_rwasm_instr_offset
+                .get(pc_from)
+                .unwrap();
+            let is_offsets_to = self.native_offset_to_rwasm_instr_offset.get(pc_to).unwrap();
+            let jump_rel_offset = is_offsets_to.0 - is_offsets_from.1 - 1;
+
+            let is = host.instruction_set();
+            let is_idx = is_offsets_from.0 + form_sp_drop_u256(1).len() as usize; // TODO parametrize magic const
+            if let Instruction::I64Const(v) = is.instr[is_idx] {
+                let val_new = UntypedValue::from(v.as_usize() + jump_rel_offset);
+                is.instr[is_idx] = Instruction::I64Const(val_new);
+            } else {
+                panic!("expected Instruction::I64Const");
+            }
+        }
     }
 
     pub fn get_import_linker(&self) -> &'a ImportLinker {
@@ -89,13 +130,20 @@ impl<'a> Translator<'a> {
     where
         FN: Fn(&mut Translator<'_>, &mut H),
     {
-        // Get current opcode.
-        let opcode = unsafe { *self.instruction_pointer };
+        let opcode = self.opcode_cur();
+        let pc = self.program_counter();
 
         self.instruction_pointer_inc(1);
 
-        // execute instruction.
-        instruction_table[opcode as usize](self, host)
+        let is_offset_start = host.instruction_set().len() as usize;
+        instruction_table[opcode as usize](self, host);
+        let is_offset_end = host.instruction_set().len() as usize - 1;
+        self.native_offset_to_rwasm_instr_offset
+            .insert(pc, (is_offset_start, is_offset_end));
+        debug!(
+            "translator opcode:{} pc:{} is_offset(start:{}..end:{})",
+            opcode, pc, is_offset_start, is_offset_end
+        );
     }
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {
@@ -103,6 +151,26 @@ impl<'a> Translator<'a> {
         // byte instruction is STOP so we are safe to just increment program_counter bcs on last
         // instruction it will do noop and just stop execution of this contract
         self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset as isize) };
+    }
+
+    pub fn get_bytecode_slice(
+        &self,
+        instruction_pointer_rel_offset: Option<isize>,
+        len: usize,
+    ) -> &[u8] {
+        if let Some(offset) = instruction_pointer_rel_offset {
+            unsafe { core::slice::from_raw_parts(self.instruction_pointer.offset(offset), len) }
+        } else {
+            unsafe { core::slice::from_raw_parts(self.instruction_pointer, len) }
+        }
+    }
+
+    pub fn get_bytecode_byte(&self, instruction_pointer_offset: Option<isize>) -> u8 {
+        if let Some(offset) = instruction_pointer_offset {
+            unsafe { *self.instruction_pointer.offset(offset) }
+        } else {
+            unsafe { *self.instruction_pointer }
+        }
     }
 
     pub fn run<FN, H: Host>(
@@ -116,6 +184,7 @@ impl<'a> Translator<'a> {
         while self.instruction_result == InstructionResult::Continue {
             self.step(instruction_table, host);
         }
+        self.jumps_to_process_apply(host);
         self.instruction_result
     }
 
