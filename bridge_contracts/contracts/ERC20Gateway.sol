@@ -8,6 +8,7 @@ import {ERC20PeggedToken} from "./ERC20PeggedToken.sol";
 import {ERC20TokenFactory} from "./ERC20TokenFactory.sol";
 import {IERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ERC20Gateway is Ownable {
     struct TokenMetadata {
@@ -26,6 +27,9 @@ contract ERC20Gateway is Ownable {
     address public bridgeContract;
     address public gatewayAuthority;
     address public tokenFactory;
+    address public otherSide;
+    address public otherSideTokenImplementation;
+    address public otherSideFactory;
 
     event ReceivedTokens(address source, address target, uint256 amount);
     event UpdateTokenMapping(
@@ -39,19 +43,44 @@ contract ERC20Gateway is Ownable {
         tokenFactory = _tokenFactory;
     }
 
+    function setOtherSide(address _otherSide, address _otherSideTokenImplementation, address _otherSideFactory) external payable onlyOwner {
+        otherSide = _otherSide;
+        otherSideTokenImplementation = _otherSideTokenImplementation;
+        otherSideFactory = _otherSideFactory;
+    }
+
+    function computePeggedTokenAddress(address _token) external view returns (address) {
+        return ERC20TokenFactory(tokenFactory).computePeggedTokenAddress(address(this), _token);
+    }
+
+    function computeOtherSidePeggedTokenAddress(address _token) external view returns (address) {
+        return ERC20TokenFactory(tokenFactory).computeOtherSidePeggedTokenAddress(otherSide, _token, otherSideTokenImplementation, otherSideFactory);
+    }
+
     function sendTokens(
         address _token,
         address _to,
-        uint256 _amount,
-        //TODO: Add validation for token metadata
-        TokenMetadata calldata _tokenMetadata
+        uint256 _amount
     ) external payable {
         bytes memory _message;
 
         if (tokenMapping[_token] == address(0)) {
-            (address originGateway, address originAddress) = ERC20PeggedToken(_token).getOrigin();
+            IERC20Upgradeable(_token).transferFrom(msg.sender, address(this), _amount);
 
-            require(tokenMapping[originAddress] == _token);
+            bytes memory rawTokenMetadata = abi.encode(
+                ERC20(_token).symbol(),
+                ERC20(_token).name(),
+                ERC20(_token).decimals()
+            );
+
+            address peggedToken = ERC20TokenFactory(tokenFactory).computeOtherSidePeggedTokenAddress(otherSide, _token, otherSideTokenImplementation, otherSideFactory);
+            _message = abi.encodeCall(
+                ERC20Gateway.receivePeggedTokens,
+                (_token, peggedToken, msg.sender, _to, _amount, rawTokenMetadata)
+            );
+        } else {
+            (address originGateway, address originAddress) = ERC20PeggedToken(_token).getOrigin();
+            require(tokenMapping[_token] == originAddress);
 
             ERC20PeggedToken(_token).burn(msg.sender, _amount);
 
@@ -59,25 +88,9 @@ contract ERC20Gateway is Ownable {
                 ERC20Gateway.receiveNativeTokens,
                 (_token, originAddress, msg.sender, _to, _amount)
             );
-        } else {
-            address _peggedToken = tokenMapping[_token];
-            require(_peggedToken != address(0), "no corresponding l2 token");
-
-            IERC20Upgradeable(_token).transferFrom(msg.sender, address(this), _amount);
-
-            bytes memory rawTokenMetadata = abi.encode(
-                _tokenMetadata.symbol,
-                _tokenMetadata.name,
-                _tokenMetadata.decimals
-            );
-
-            _message = abi.encodeCall(
-                ERC20Gateway.receivePeggedTokens,
-                (_token, _peggedToken, msg.sender, _to, _amount, rawTokenMetadata)
-            );
         }
 
-        IBridge(bridgeContract).sendMessage{value: msg.value}(_to, _message);
+        IBridge(bridgeContract).sendMessage{value: msg.value}(otherSide, _message);
     }
 
     function receivePeggedTokens(
@@ -89,6 +102,7 @@ contract ERC20Gateway is Ownable {
         bytes calldata _tokenMetadata
     ) external payable onlyBridgeSender {
         require(msg.value == 0, "Message value have to equal zero");
+        require(_originToken != address(0), "Origin token can't be equal zero");
 
         if (_peggedToken.code.length == 0) {
             address new_pegged_token = _deployL2Token(_tokenMetadata, _originToken);
@@ -112,7 +126,7 @@ contract ERC20Gateway is Ownable {
         address _from,
         address _to,
         uint256 _amount
-    ) external payable onlyBridgeSender {
+    ) external payable  {
         require(msg.value == 0, "Message value have to equal zero");
 
         IERC20Upgradeable(_originToken).transfer(_to, _amount);
