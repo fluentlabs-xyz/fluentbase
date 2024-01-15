@@ -16,7 +16,7 @@ describe("Bridge", function () {
 
         const BridgeContract = await ethers.getContractFactory("Bridge");
         const accounts = await hre.ethers.getSigners();
-        bridge = await BridgeContract.deploy(accounts[0].address);
+        bridge = await BridgeContract.deploy(accounts[0].address, accounts[1].address);
         await bridge.deployed();
 
         const TokenFactoryContract = await ethers.getContractFactory("ERC20TokenFactory");
@@ -39,13 +39,6 @@ describe("Bridge", function () {
         await erc20Gateway.deployed();
 
         const contractWithSigner = erc20Gateway.connect(accounts[0]);
-
-        const updateMappingTx = await contractWithSigner.updateTokenMapping(
-            token.address,
-            "0x1111111111111111111111111111111111111111",
-        );
-
-        await updateMappingTx.wait();
     });
 
     it("Send tokens test", async function () {
@@ -58,13 +51,7 @@ describe("Bridge", function () {
         const origin_balance = await token.balanceOf(accounts[0].address);
         const origin_bridge_balance = await token.balanceOf(erc20Gateway.address);
 
-        const tokenMetadata = {
-            symbol: "MTK",
-            name: "MyToken",
-            decimals: 18,
-        };
-
-        const send_tx = await contractWithSigner.sendTokens(token.address, accounts[3].address, 100, tokenMetadata);
+        const send_tx = await contractWithSigner.sendTokens(token.address, accounts[3].address, 100);
 
         await send_tx.wait();
 
