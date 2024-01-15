@@ -8,7 +8,7 @@ describe("Bridge", function () {
         const BridgeContract = await ethers.getContractFactory("Bridge");
         const accounts = await hre.ethers.getSigners();
 
-        bridge = await BridgeContract.deploy(accounts[0].address);
+        bridge = await BridgeContract.deploy(accounts[0].address, accounts[1].address);
         await bridge.deployed();
     });
 
