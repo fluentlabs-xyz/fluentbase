@@ -16,6 +16,12 @@ contract ERC20TokenFactory is Ownable {
         implementation = _implementation;
     }
 
+    function computeOtherSidePeggedTokenAddress(address _gateway, address _originToken, address _implementation, address _factory) external view returns (address) {
+        bytes32 _salt = _calculateSalt(_gateway, _originToken);
+
+        return Clones.predictDeterministicAddress(_implementation, _salt, _factory);
+    }
+
     function computePeggedTokenAddress(address _gateway, address _originToken) external view returns (address) {
         bytes32 _salt = _calculateSalt(_gateway, _originToken);
 
