@@ -1,7 +1,7 @@
-use crate::{SysPlatformSDK, SDK};
+use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
 pub use alloy_primitives::{Address, Bytes, B256, U256};
-use fluentbase_codec::{define_codec_struct, Encoder};
+use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
 
 define_codec_struct! {
     pub struct ContractInput {
@@ -48,13 +48,13 @@ define_codec_struct! {
 macro_rules! impl_reader_helper {
     ($input_type:ty, $return_typ:ty) => {{
         let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
-        SDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
+        LowLevelSDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
         let mut result: $return_typ = Default::default();
         let (offset, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
         if length > 0 {
             let mut buffer2 = vec![0; offset + length];
             buffer2[0..<$input_type>::FIELD_SIZE].copy_from_slice(&buffer);
-            SDK::sys_read(
+            LowLevelSDK::sys_read(
                 &mut buffer2.as_mut_slice()[offset..(offset + length)],
                 offset as u32,
             );
@@ -166,9 +166,9 @@ impl ExecutionContext {
 
     pub fn exit(&self, exit_code: i32) {
         if let Some(output) = self.output.as_ref() {
-            SDK::sys_write(output.encode_to_vec(0).as_slice());
+            LowLevelSDK::sys_write(output.encode_to_vec(0).as_slice());
         }
-        SDK::sys_halt(exit_code);
+        LowLevelSDK::sys_halt(exit_code);
     }
 }
 
@@ -176,7 +176,7 @@ impl ExecutionContext {
 mod test {
     use crate::{
         evm::{ContractInput, ExecutionContext, U256},
-        SDK,
+        LowLevelSDK,
     };
     use alloc::vec;
     use alloy_primitives::B256;
@@ -192,7 +192,7 @@ mod test {
             ..Default::default()
         };
         let encoded_input = contract_input.encode_to_vec(0);
-        SDK::with_test_input(encoded_input);
+        LowLevelSDK::with_test_input(encoded_input);
         // read input fields
         let input = ExecutionContext::contract_input();
         assert_eq!(input, contract_input.contract_input);

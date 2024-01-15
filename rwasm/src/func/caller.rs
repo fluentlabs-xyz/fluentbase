@@ -59,7 +59,17 @@ impl<'a, T> Caller<'a, T> {
         }
     }
 
-    pub fn write_memory(&mut self, address: usize, data: &[u8]) {
+    pub fn read_memory(&self, offset: u32, len: u32) -> &[u8] {
+        let buffer = self.exported_memory().data(self);
+        if buffer.len() > offset as usize {
+            &buffer[(offset as usize)..(offset as usize + len as usize)]
+        } else {
+            &[]
+        }
+    }
+
+    pub fn write_memory(&mut self, address: u32, data: &[u8]) {
+        let address = address as usize;
         let memory = self.exported_memory().data_mut(self.as_context_mut());
         memory[address..(address + data.len())].clone_from_slice(data);
         self.ctx

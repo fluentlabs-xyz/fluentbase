@@ -1,5 +1,5 @@
 use crate::{fr_from_little_endian, fr_to_little_endian, reverse_byte_order, Byte32, Fr};
-use fluentbase_poseidon::{poseidon_hash, Hashable, MessageHashable};
+use fluentbase_poseidon::MessageHashable;
 use halo2curves::FieldExt;
 use std::{prelude::v1::*, sync::Arc};
 
