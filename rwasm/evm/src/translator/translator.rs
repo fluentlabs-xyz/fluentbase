@@ -210,80 +210,22 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let opcode_to_beginning: &[(u8, u32)] = &[
-            (opcode::BYTE, 8590),
-            (opcode::SHL, 10320),
-            (opcode::SHR, 11096),
-            (opcode::AND, 8486),
-            (opcode::OR, 9203),
-            (opcode::XOR, 12020),
-            (opcode::NOT, 9109),
-            (opcode::GT, 8813),
-            (opcode::LT, 9004),
-            (opcode::SGT, 10175),
-            (opcode::SLT, 11875),
-            (opcode::EQ, 8695),
-            (opcode::SAR, 9307),
-            (opcode::ISZERO, 8918),
-            (opcode::ADD, 656),
-            (opcode::SUB, 8254),
-            (opcode::MUL, 4925),
-            (opcode::DIV, 2489),
-            (opcode::SDIV, 5155),
-            (opcode::MOD, 4822),
-            (opcode::SMOD, 7020),
-            (opcode::EXP, 4062),
-            (opcode::ADDMOD, 1475),
-            (opcode::MULMOD, 5028),
-            (opcode::SIGNEXTEND, 6770),
-            (opcode::MSTORE, 15945),
-            (opcode::MSTORE8, 16012),
-            (opcode::MLOAD, 15769),
-            (opcode::MSIZE, 15848),
-            (opcode::POP, 16056),
-            (opcode::DUP1, 16046),
-            (opcode::DUP2, 16051),
-            (opcode::SWAP1, 16074),
-            (opcode::SWAP2, 16079),
-            (opcode::KECCAK256, 17442),
-            (opcode::ADDRESS, 16084),
-            (opcode::CALLER, 16946),
-            (opcode::CALLVALUE, 17098),
-            (opcode::CODESIZE, 17263),
-            (opcode::GAS, 17375),
-            (opcode::CALLDATALOAD, 16698),
-            (opcode::CALLDATASIZE, 16845),
-            (opcode::CALLDATACOPY, 16234),
-            (opcode::CHAINID, 13069),
-            (opcode::BASEFEE, 12664),
-            (opcode::BLOCKHASH, 12863),
-            (opcode::COINBASE, 13227),
-            (opcode::GASLIMIT, 13398),
-            (opcode::NUMBER, 13536),
-            (opcode::TIMESTAMP, 13811),
-            (opcode::SLOAD, 13674),
-            (opcode::SSTORE, 13783),
-            (opcode::TSTORE, 13973),
-            (opcode::TLOAD, 13949),
-            (opcode::DIFFICULTY, 15331),
-            (opcode::BLOBBASEFEE, 14010),
-            (opcode::GASPRICE, 15469),
-            (opcode::ORIGIN, 15634),
-            (opcode::BLOBHASH, 14148),
-            (opcode::RETURN, 12570),
-            (opcode::REVERT, 12616),
-        ];
+        let opcode_to_entry_json_bytes =
+            include_bytes!("../../../rwasm-code-snippets/bin/solid_file.json").as_slice();
+        let json: serde_json::Value = serde_json::from_slice(opcode_to_entry_json_bytes).unwrap();
+        let opcode_to_entries = json.as_array().unwrap();
         let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
             let l = self.subroutines_instruction_set.instr.len();
-            for opcode_meta in opcode_to_beginning {
-                let opcode = opcode_meta.0;
-                let fn_beginning_offset = opcode_meta.1;
+            for v in opcode_to_entries {
+                let opcode_to_entry = v.as_array().unwrap();
+                let opcode = opcode_to_entry[0].as_u64().unwrap() as u8;
+                let entry = opcode_to_entry[1].as_u64().unwrap() as u32;
                 let subroutine_data = SubroutineData {
-                    rel_entry_offset: fn_beginning_offset,
+                    rel_entry_offset: entry,
                     begin_offset: l,
                     end_offset: instruction_set.len() as usize - 1 + l,
                 };
@@ -301,7 +243,6 @@ impl<'a> Translator<'a> {
         };
 
         initiate_subroutines_solid_file(
-            // include_bytes!("../../../rwasm-code-snippets/bin/bitwise_iszero.rwasm").as_slice(),
             include_bytes!("../../../rwasm-code-snippets/bin/solid_file.rwasm").as_slice(),
         );
     }
