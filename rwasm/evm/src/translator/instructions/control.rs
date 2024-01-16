@@ -17,6 +17,7 @@ use crate::{
         WASM_I64_IN_EVM_WORD_COUNT,
     },
 };
+use fluentbase_runtime::ExitCode;
 use log::debug;
 
 // recompute this value after adding or removing rwasm ops to jump()
@@ -150,7 +151,9 @@ pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn invalid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::InvalidFEOpcode;
-    wasm_call(translator, host.instruction_set(), SystemFunc::SysHalt);
+    let is = host.instruction_set();
+    is.op_i32_const(ExitCode::UnknownError as i32);
+    wasm_call(translator, is, SystemFunc::SysHalt);
 }
 
 pub fn not_found<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
