@@ -4,7 +4,7 @@ use crate::{
     consts::U256_BYTES_COUNT,
 };
 use core::slice;
-use fluentbase_sdk::{CryptoPlatformSDK, SDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 #[no_mangle]
 fn system_keccak256() {
@@ -16,6 +16,6 @@ fn system_keccak256() {
     let data = unsafe { slice::from_raw_parts(offset.0 as *const u8, size.0 as usize) };
 
     let mut res = [0u8; U256_BYTES_COUNT as usize];
-    SDK::crypto_keccak256(data, &mut res);
+    LowLevelSDK::crypto_keccak256(data, &mut res);
     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }
