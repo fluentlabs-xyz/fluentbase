@@ -74,11 +74,9 @@ mod evm_to_rwasm_tests {
     use alloy_primitives::{hex, Bytes, B256};
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
-    use fluentbase_rwasm::rwasm::{
-        BinaryFormat,
-        BinaryFormatWriter,
-        InstructionSet,
-        ReducedModule,
+    use fluentbase_rwasm::{
+        engine::bytecode::Instruction,
+        rwasm::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule},
     };
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
     use log::debug;
@@ -240,7 +238,7 @@ mod evm_to_rwasm_tests {
         preamble.op_i32_const(20);
         preamble.op_memory_grow();
         preamble.op_drop();
-        let res = compiler.compile(Some(&preamble), None);
+        let res = compiler.run(Some(&preamble), None);
         assert_eq!(res, InstructionResult::Stop);
 
         let mut buffer = vec![0; 1024 * 1024];
@@ -262,7 +260,7 @@ mod evm_to_rwasm_tests {
 
         let mut global_memory = vec![];
         let mut global_memory_len: usize = 0;
-        let mut ctx = RuntimeContext::new(rwasm_binary);
+        let mut runtime_ctx = RuntimeContext::new(rwasm_binary);
 
         // TODO make it customizable
         let mut contract_input = ContractInput::default();
@@ -287,24 +285,34 @@ mod evm_to_rwasm_tests {
             .map(|v| B256::from_slice(v))
             .collect();
         let ci = contract_input.encode_to_vec(0);
-        ctx = ctx.with_input(ci);
+        runtime_ctx = runtime_ctx.with_input(ci);
 
-        let runtime = Runtime::new(ctx, &import_linker);
+        let runtime = Runtime::new(runtime_ctx, &import_linker);
         let mut runtime = runtime.unwrap();
         let result = runtime.call();
         // let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result: ExecutionResult<()> = result.unwrap();
         for (idx, log) in execution_result.tracer().logs.iter().enumerate() {
-            if log.memory_changes.len() <= 0 {
-                continue;
+            // if log.memory_changes.len() <= 0 {
+            //     continue;
+            // };
+            let memory_changes = &log.memory_changes;
+            let stack = &log.stack;
+            let prev_opcode = if idx > 0 {
+                Some(execution_result.tracer().logs[idx - 1].opcode)
+            } else {
+                None
             };
-            let memory_changes = log.memory_changes.clone();
             debug!(
-                "{}: opcode:{:x?} memory_changes:{:?}",
-                idx, log.opcode, &memory_changes
+                "idx {}: opcode:{:x?} (prev:{:x?}) memory_changes:{:?} stack:{:?}",
+                idx,
+                log.opcode,
+                prev_opcode.unwrap_or(Instruction::Unreachable),
+                &memory_changes,
+                stack
             );
-            for change in &memory_changes {
+            for change in memory_changes {
                 let offset_start = change.offset as usize;
                 let offset_end = offset_start + change.len as usize;
                 if global_memory.len() <= offset_end {
@@ -316,12 +324,16 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        debug!("global_memory total len {}", global_memory_len,);
         debug!(
             "\nruntime.store.data().output() {:?}\n",
             runtime.data().output()
         );
         assert_eq!(execution_result.data().exit_code(), 0);
+
+        debug!(
+            "\nglobal_memory ({}): {:?}\n",
+            global_memory_len, &global_memory
+        );
 
         (global_memory, runtime.data().output().clone())
     }
@@ -1714,31 +1726,49 @@ mod evm_to_rwasm_tests {
         test_op_cases(MSIZE, Some(&preamble), &cases, false, ResultLocation::Stack);
     }
 
-    // #[test]
-    // fn mcopy() {
-    //     let mut preamble = vec![];
-    //     preamble.extend(compile_op_bytecode(
-    //         MSTORE,
-    //         &Case::Args3((
-    //             // dest src len
-    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
-    //             x("0000000000000000000000000000000000000000000000000000000000000000"),
-    //             x("00000000000000000000000000000000000000000000000000000000000000FF"),
-    //             vec![],
-    //         )),
-    //     ));
-    //     let cases = [Case::Args0(x(
-    //         "0000000000000000000000000000000000000000000000000000000000000014",
-    //     ))];
-    //
-    //     test_op_cases(
-    //         MCOPY,
-    //         Some(&preamble),
-    //         &cases,
-    //         true,
-    //         ResultLocation::Memory(0),
-    //     );
-    // }
+    #[test]
+    fn mcopy() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_bytecode(
+            MSTORE,
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"),
+                vec![],
+            )),
+        ));
+        let cases = [
+            Case::Args3((
+                // dest src len
+                x("0000000000000000000000000000000000000000000000000000000000000020"), // dst 32
+                x("0000000000000000000000000000000000000000000000000000000000000000"), // src 0
+                x("0000000000000000000000000000000000000000000000000000000000000005"), // size 5
+                x("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200102030405000000000000000000"),
+            )),
+            Case::Args3((
+                // dest src len
+                x("0000000000000000000000000000000000000000000000000000000000000020"), // dst 32
+                x("0000000000000000000000000000000000000000000000000000000000000003"), // src 3
+                x("0000000000000000000000000000000000000000000000000000000000000006"), // size 6
+                x("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200405060708090000000000000000"),
+            )),
+            Case::Args3((
+                // dest src len
+                x("0000000000000000000000000000000000000000000000000000000000000020"), // dst 32
+                x("0000000000000000000000000000000000000000000000000000000000000003"), // src 3
+                x("0000000000000000000000000000000000000000000000000000000000000000"), // size 0
+                x("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200000000000000000000000000000"),
+            )),
+        ];
+
+        test_op_cases(
+            MCOPY,
+            Some(&preamble),
+            &cases,
+            true,
+            ResultLocation::Memory(0),
+        );
+    }
 
     #[test]
     fn caller() {

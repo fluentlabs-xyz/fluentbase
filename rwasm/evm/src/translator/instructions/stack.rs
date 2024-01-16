@@ -6,7 +6,7 @@ use crate::{
         instructions::utilities::replace_current_opcode_with_call_to_subroutine,
         translator::Translator,
     },
-    utilities::{align_to_evm_word_array, WASM_I64_IN_EVM_WORD_COUNT},
+    utilities::{align_to_evm_word_array, EVM_WORD_BYTES, WASM_I64_IN_EVM_WORD_COUNT},
 };
 use log::debug;
 
@@ -55,7 +55,7 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
     is.op_i64_load(0);
-    is.op_i64_const(32);
+    is.op_i64_const(EVM_WORD_BYTES);
     is.op_i64_add();
     is.op_i64_store(0);
 
