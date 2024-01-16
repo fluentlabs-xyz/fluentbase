@@ -1,12 +1,13 @@
-mod types;
-
 extern crate core;
 
-use crate::types::FileFormat;
+use crate::{opcodes::OPCODE_NAME_TO_NUMBER, types::FileFormat};
 use clap::Parser;
 use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig, FuncOrExport};
 use std::{fs, io::BufRead, path::Path};
+
+mod opcodes;
+mod types;
 
 /// Command line utility which takes input WAT/WASM file and converts it into RWASM
 #[derive(Parser, Debug)]
@@ -16,7 +17,10 @@ struct Args {
     file_in_path: String,
 
     #[arg(long, default_value = "")]
-    file_out_path: String,
+    rwasm_file_out_path: String,
+
+    #[arg(long, default_value = "")]
+    json_file_out_path: String,
 
     #[arg(long, default_value_t = false)]
     skip_translate_sections: bool,
@@ -90,8 +94,9 @@ fn main() {
             .unwrap();
     };
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+    let mut as_rust_vec: Vec<String> = vec![];
+    let mut as_json_arr: Vec<String> = vec![];
     if args.entry_fn_name_beginnings_for != "" {
-        let mut as_rust_vec: Vec<String> = vec![];
         for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
             let fn_name = Box::new(fn_name.to_string());
             let fn_idx = compiler
@@ -112,22 +117,39 @@ fn main() {
             let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
             let opcode_name = fn_name_split[fn_name_split.len() - 1];
             as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
+            let opcode_number = OPCODE_NAME_TO_NUMBER.get(opcode_name).unwrap();
+            as_json_arr.push(format!("[{opcode_number},{fn_beginning}]"));
         }
         println!(
             "rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]",
             as_rust_vec.join(",")
-        )
+        );
     }
+    let json_str = format!("[{}]", as_json_arr.join(","));
+    println!("json [OPCODE_NUMBER,FN_ENTRY_OFFSET]: \n{}", json_str);
     let rwasm_binary = compiler.finalize().unwrap();
-    let file_out_path;
-    if args.file_out_path != "" {
-        file_out_path = args.file_out_path;
+    let rwasm_file_out_path;
+    let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
+    if args.rwasm_file_out_path != "" {
+        rwasm_file_out_path = args.rwasm_file_out_path;
     } else {
-        file_out_path = format!(
+        rwasm_file_out_path = format!(
             "{}/{}",
-            file_in_path.parent().unwrap().to_str().unwrap(),
+            oud_dir_path,
             format!("{}{}", file_in_name, types::RWASM_OUT_FILE_EXT)
         );
     }
-    fs::write(file_out_path, rwasm_binary).unwrap();
+    fs::write(rwasm_file_out_path, rwasm_binary).unwrap();
+
+    let json_file_out_path;
+    if args.json_file_out_path != "" {
+        json_file_out_path = args.json_file_out_path;
+    } else {
+        json_file_out_path = format!(
+            "{}/{}",
+            oud_dir_path,
+            format!("{}{}", file_in_name, ".json")
+        );
+    }
+    fs::write(json_file_out_path, json_str).unwrap();
 }
