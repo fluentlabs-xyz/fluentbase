@@ -37,6 +37,7 @@ mod evm_to_rwasm_tests {
                     GT,
                     ISZERO,
                     JUMP,
+                    JUMPI,
                     KECCAK256,
                     LT,
                     MCOPY,
@@ -319,7 +320,7 @@ mod evm_to_rwasm_tests {
                 None
             };
             debug!(
-                "idx {}: opcode:{:x?} (prev:{:x?}) memory_changes:{:?} stack:{:?}",
+                "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
                 idx,
                 log.opcode,
                 prev_opcode.unwrap_or(Instruction::Unreachable),
@@ -2313,6 +2314,90 @@ mod evm_to_rwasm_tests {
             Some(&preamble_bytecode),
             &cases,
             Some(32),
+            ResultLocation::Stack,
+        );
+    }
+
+    #[test]
+    fn jumpi_do_not_jump() {
+        let mut preamble_bytecode = vec![];
+
+        // current offset: 0
+
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            Some(JUMPI),
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                x("0000000000000000000000000000000000000000000000000000000000000000"), // skip this jump
+                vec![],
+            )),
+        ));
+
+        // current offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+
+        // this push must be skipped
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            None,
+            &Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000007"), // 7
+                vec![],
+            )),
+        ));
+
+        // current offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
+
+        let cases = [Case::Args1((
+            x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
+            x("000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000007"),
+        ))];
+
+        test_op_cases(
+            STOP, // special case
+            Some(&preamble_bytecode),
+            &cases,
+            Some(EVM_WORD_BYTES as i32 * 2),
+            ResultLocation::Stack,
+        );
+    }
+
+    #[test]
+    fn jumpi_do_jump() {
+        let mut preamble_bytecode = vec![];
+
+        // current offset: 0
+
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            Some(JUMPI),
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                x("0000000000000000000000000000000000000000000000000000000000000003"), // do not skip this jump
+                vec![],
+            )),
+        ));
+
+        // current offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+
+        // this push must be skipped
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            None,
+            &Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000003"),
+                vec![],
+            )),
+        ));
+
+        // current offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
+
+        let cases = [Case::Args1((
+            x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
+            x("000000000000000000000000000000000000000000000000000000000000000a"),
+        ))];
+
+        test_op_cases(
+            STOP, // special case
+            Some(&preamble_bytecode),
+            &cases,
+            Some(EVM_WORD_BYTES as i32 * 1),
             ResultLocation::Stack,
         );
     }

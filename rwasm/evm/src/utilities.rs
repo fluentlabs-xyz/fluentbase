@@ -55,7 +55,7 @@ pub fn load_i64_const_be(is: &mut InstructionSet, offset: Option<u64>) {
     if let Some(offset) = offset {
         is.op_i64_const(offset);
     }
-    is.op_local_get(1);
+    is.op_local_get(1); // duplicate offset
     let mut pow: u64 = 72057594037927936; // 256**7
     for i in 0..WASM_I64_BYTES {
         if i > 0 {
@@ -71,7 +71,7 @@ pub fn load_i64_const_be(is: &mut InstructionSet, offset: Option<u64>) {
             is.op_i64_add();
         }
     }
-    is.op_local_set(1); // replace offset left on stack with resulting value
+    is.op_local_set(1); // replace offset value left on stack with resulting value
 }
 
 pub fn sp_set_value(is: &mut InstructionSet, use_sp_base_offset: bool, value: Option<u64>) {
@@ -90,7 +90,13 @@ pub fn sp_get_value(is: &mut InstructionSet) {
     load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64))
 }
 
-pub fn form_sp_drop_u256(count: u64) -> InstructionSet {
+pub fn sp_get_offset(is: &mut InstructionSet) {
+    is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64);
+    sp_get_value(is);
+    is.op_i64_sub();
+}
+
+pub fn sp_drop_u256_gen(count: u64) -> InstructionSet {
     let mut is = InstructionSet::new();
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64); // for store
     sp_get_value(&mut is);
@@ -102,7 +108,7 @@ pub fn form_sp_drop_u256(count: u64) -> InstructionSet {
 }
 
 pub fn sp_drop_u256(is: &mut InstructionSet, count: u64) {
-    let is_tmp = form_sp_drop_u256(count);
+    let is_tmp = sp_drop_u256_gen(count);
     is.extend(&is_tmp);
 
     // is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64); // for store

@@ -183,7 +183,7 @@ opcodes! {
     0x53 => MSTORE8  => memory::mstore8, // done
     0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload (need bindings for runtime)
     0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore (need bindings for runtime)
-    0x56 => JUMP     => control::jump, // TODO replace with BrIndirect (think on it)
+    0x56 => JUMP     => control::jump, // TODO
     0x57 => JUMPI    => control::jumpi, // TODO replace with BrIndirect (think on it)
     0x58 => PC       => control::pc, // TODO
     0x59 => MSIZE    => memory::msize, // memory.size
