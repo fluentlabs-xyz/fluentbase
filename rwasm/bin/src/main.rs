@@ -126,7 +126,6 @@ fn main() {
         );
     }
     let json_str = format!("[{}]", as_json_arr.join(","));
-    println!("json [OPCODE_NUMBER,FN_ENTRY_OFFSET]: \n{}", json_str);
     let rwasm_binary = compiler.finalize().unwrap();
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
