@@ -37,6 +37,7 @@ mod evm_to_rwasm_tests {
                     GT,
                     ISZERO,
                     JUMP,
+                    JUMPDEST,
                     JUMPI,
                     KECCAK256,
                     LT,
@@ -2286,12 +2287,12 @@ mod evm_to_rwasm_tests {
         preamble_bytecode.extend(compile_op_with_args_bytecode(
             Some(JUMP),
             &Case::Args1((
-                x("0000000000000000000000000000000000000000000000000000000000000043"), // 67
+                x("0000000000000000000000000000000000000000000000000000000000000043"), // 68
                 vec![],
             )),
         ));
 
-        // current offset: + 32 (ARGS for PUSH) + 1 (PUSH32) + 1 (JUMP) = 34
+        // current offset: offset + 32 (ARGS for PUSH) + 1 (PUSH32) + 1 (JUMP) = 34
 
         // this push must be skipped
         preamble_bytecode.extend(compile_op_with_args_bytecode(
@@ -2303,6 +2304,13 @@ mod evm_to_rwasm_tests {
         ));
 
         // current offset: 34 + 32 (ARGS for PUSH) + 1 (PUSH32) = 67
+
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            Some(JUMPDEST),
+            &Case::Args0(vec![]),
+        ));
+
+        // current offset: offset + 1 (JUMPDEST) = 68
 
         let cases = [Case::Args1((
             x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
@@ -2327,7 +2335,7 @@ mod evm_to_rwasm_tests {
         preamble_bytecode.extend(compile_op_with_args_bytecode(
             Some(JUMPI),
             &Case::Args2((
-                x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                x("0000000000000000000000000000000000000000000000000000000000000065"), // 101
                 x("0000000000000000000000000000000000000000000000000000000000000000"), // skip this jump
                 vec![],
             )),
@@ -2345,6 +2353,13 @@ mod evm_to_rwasm_tests {
         ));
 
         // current offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
+
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            Some(JUMPDEST),
+            &Case::Args0(vec![]),
+        ));
+
+        // current offset: offset + 1 (JUMPDEST) = 101
 
         let cases = [Case::Args1((
             x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
@@ -2381,7 +2396,7 @@ mod evm_to_rwasm_tests {
             preamble_bytecode.extend(compile_op_with_args_bytecode(
                 Some(JUMPI),
                 &Case::Args2((
-                    x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                    x("0000000000000000000000000000000000000000000000000000000000000065"), // 101
                     arg, // do not skip this jump
                     vec![],
                 )),
@@ -2404,6 +2419,13 @@ mod evm_to_rwasm_tests {
                 x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
                 x("000000000000000000000000000000000000000000000000000000000000000a"),
             ))];
+
+            preamble_bytecode.extend(compile_op_with_args_bytecode(
+                Some(JUMPDEST),
+                &Case::Args0(vec![]),
+            ));
+
+            // current offset: offset + 1 (JUMPDEST) = 101
 
             test_op_cases(
                 STOP, // special case
