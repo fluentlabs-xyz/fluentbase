@@ -2,7 +2,10 @@ use crate::{
     translator::{
         host::Host,
         instruction_result::InstructionResult,
-        instructions::opcode,
+        instructions::{
+            control::{JUMPI_PARAMS_COUNT, JUMP_PARAMS_COUNT},
+            opcode,
+        },
         translator::contract::Contract,
     },
     utilities::sp_drop_u256_gen,
@@ -23,7 +26,7 @@ pub mod contract;
 pub struct Translator<'a> {
     pub contract: Box<Contract>,
     pub instruction_pointer: *const u8,
-    pub instruction_pointer_prev_opcode: *const u8,
+    pub instruction_pointer_prev: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
     opcode_to_subroutine_data: HashMap<u8, SubroutineData>,
@@ -53,7 +56,7 @@ impl<'a> Translator<'a> {
     ) -> Self {
         let mut s = Self {
             instruction_pointer: contract.bytecode.as_ptr(),
-            instruction_pointer_prev_opcode: contract.bytecode.as_ptr(),
+            instruction_pointer_prev: contract.bytecode.as_ptr(),
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
@@ -89,8 +92,8 @@ impl<'a> Translator<'a> {
             let is = host.instruction_set();
             // TODO replace magic consts with dynamic calculation
             let aux_idx: usize = match *opcode {
-                opcode::JUMP => 6,
-                opcode::JUMPI => 14,
+                opcode::JUMP => JUMP_PARAMS_COUNT,
+                opcode::JUMPI => JUMPI_PARAMS_COUNT,
                 // dynamic calculation
                 _ => {
                     panic!("unsupported opcode: {}", opcode)
@@ -137,6 +140,14 @@ impl<'a> Translator<'a> {
         }
     }
 
+    #[inline]
+    pub fn program_counter_prev(&self) -> usize {
+        unsafe {
+            self.instruction_pointer_prev
+                .offset_from(self.contract.bytecode.as_ptr()) as usize
+        }
+    }
+
     #[inline(always)]
     pub fn step<FN, H: Host>(&mut self, instruction_table: &[FN; 256], host: &mut H)
     where
@@ -145,7 +156,7 @@ impl<'a> Translator<'a> {
         let opcode = self.opcode_cur();
         let pc = self.program_counter();
 
-        self.instruction_pointer_prev_opcode = self.instruction_pointer;
+        let instruction_pointer = self.instruction_pointer;
         self.instruction_pointer_inc(1);
 
         let is_offset_start = host.instruction_set().len() as usize;
@@ -153,6 +164,7 @@ impl<'a> Translator<'a> {
         let is_offset_end = host.instruction_set().len() as usize - 1;
         self.native_offset_to_rwasm_instr_offset
             .insert(pc, (is_offset_start, is_offset_end));
+        self.instruction_pointer_prev = instruction_pointer;
         debug!(
             "translator opcode:{} pc:{} is_offset(start:{}..end:{})",
             opcode, pc, is_offset_start, is_offset_end
@@ -166,20 +178,16 @@ impl<'a> Translator<'a> {
         self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset as isize) };
     }
 
-    pub fn get_bytecode_slice(
-        &self,
-        instruction_pointer_rel_offset: Option<isize>,
-        len: usize,
-    ) -> &[u8] {
-        if let Some(offset) = instruction_pointer_rel_offset {
+    pub fn get_bytecode_slice(&self, rel_offset: Option<isize>, len: usize) -> &[u8] {
+        if let Some(offset) = rel_offset {
             unsafe { core::slice::from_raw_parts(self.instruction_pointer.offset(offset), len) }
         } else {
             unsafe { core::slice::from_raw_parts(self.instruction_pointer, len) }
         }
     }
 
-    pub fn get_bytecode_byte(&self, instruction_pointer_offset: Option<isize>) -> u8 {
-        if let Some(offset) = instruction_pointer_offset {
+    pub fn get_bytecode_byte(&self, offset: Option<isize>) -> u8 {
+        if let Some(offset) = offset {
             unsafe { *self.instruction_pointer.offset(offset) }
         } else {
             unsafe { *self.instruction_pointer }

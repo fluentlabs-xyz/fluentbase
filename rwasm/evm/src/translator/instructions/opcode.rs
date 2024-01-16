@@ -183,8 +183,8 @@ opcodes! {
     0x53 => MSTORE8  => memory::mstore8, // done
     0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload (need bindings for runtime)
     0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore (need bindings for runtime)
-    0x56 => JUMP     => control::jump, // TODO
-    0x57 => JUMPI    => control::jumpi, // TODO replace with BrIndirect (think on it)
+    0x56 => JUMP     => control::jump, // done (only static params supported)
+    0x57 => JUMPI    => control::jumpi, // done (only static params supported)
     0x58 => PC       => control::pc, // TODO
     0x59 => MSIZE    => memory::msize, // memory.size
     0x5A => GAS      => system::gas, // return 0
@@ -357,6 +357,10 @@ opcodes! {
     0xFD => REVERT       => control::revert::<H>, // sys_write + sys_halt
     0xFE => INVALID      => control::invalid, // sys_halt
     0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
+}
+
+pub fn compute_push_count(opcode: u8) -> usize {
+    (opcode - PUSH0) as usize
 }
 
 /// An EVM opcode.
