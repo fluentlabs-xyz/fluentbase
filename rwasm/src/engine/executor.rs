@@ -247,15 +247,15 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 return Err(TrapCode::StackOverflow.into());
             }
 
-            // let dump = self.value_stack.dump_stack(self.sp);
-            // if dump.len() < 20 {
-            //     println!(
-            //         "{} {:?} {:?}",
-            //         self.ip.pc(),
-            //         instr,
-            //         dump.iter().map(|v| v.as_u64()).collect::<Vec<_>>()
-            //     );
-            // }
+            let dump = self.value_stack.dump_stack(self.sp);
+            if dump.len() < 20 {
+                println!(
+                    "{} {:?} {:?}",
+                    self.ip.pc(),
+                    instr,
+                    dump.iter().map(|v| v.as_u64()).collect::<Vec<_>>()
+                );
+            }
 
             // handle pre-instruction state
             let has_default_memory = {
