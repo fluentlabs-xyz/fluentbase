@@ -48,8 +48,9 @@ pub(super) fn wasm_call(
     fn_name: SystemFunc,
 ) -> u64 {
     let mut ops_count = is.len() as u64;
-    let import_fn_idx =
-        translator.get_import_linker().index_mapping()[&ImportName::new("env", fn_name.to_str())].0;
+    let import_fn_idx = translator.get_import_linker().index_mapping()
+        [&ImportName::new("fluentbase_v1alpha", fn_name.to_str())]
+        .0;
     is.op_call(import_fn_idx);
 
     ops_count = is.len() as u64 - ops_count;
