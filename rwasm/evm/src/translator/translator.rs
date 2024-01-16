@@ -5,7 +5,7 @@ use crate::{
         instructions::opcode,
         translator::contract::Contract,
     },
-    utilities::form_sp_drop_u256,
+    utilities::sp_drop_u256_gen,
 };
 pub use analysis::BytecodeLocked;
 use fluentbase_rwasm::{
@@ -23,6 +23,7 @@ pub mod contract;
 pub struct Translator<'a> {
     pub contract: Box<Contract>,
     pub instruction_pointer: *const u8,
+    pub instruction_pointer_prev_opcode: *const u8,
     pub instruction_result: InstructionResult,
     import_linker: &'a ImportLinker,
     opcode_to_subroutine_data: HashMap<u8, SubroutineData>,
@@ -30,7 +31,7 @@ pub struct Translator<'a> {
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
     native_offset_to_rwasm_instr_offset: HashMap<usize, (usize, usize)>,
-    jumps_to_process: Vec<(usize, usize)>,
+    jumps_to_process: Vec<(u8, usize, usize)>, // opcode, pc_from, pc_to
 }
 
 pub struct SubroutineData {
@@ -52,6 +53,7 @@ impl<'a> Translator<'a> {
     ) -> Self {
         let mut s = Self {
             instruction_pointer: contract.bytecode.as_ptr(),
+            instruction_pointer_prev_opcode: contract.bytecode.as_ptr(),
             contract,
             instruction_result: InstructionResult::Continue,
             import_linker,
@@ -66,8 +68,8 @@ impl<'a> Translator<'a> {
         s
     }
 
-    pub fn jumps_to_process_add(&mut self, from_pc: usize, to_pc: usize) -> usize {
-        self.jumps_to_process.push((from_pc, to_pc));
+    pub fn jumps_to_process_add(&mut self, opcode: u8, from_pc: usize, to_pc: usize) -> usize {
+        self.jumps_to_process.push((opcode, from_pc, to_pc));
         self.jumps_to_process.len()
     }
 
@@ -76,19 +78,29 @@ impl<'a> Translator<'a> {
     }
 
     fn jumps_to_process_apply(&mut self, host: &mut dyn Host) {
-        for (pc_from, pc_to) in self.jumps_to_process.iter() {
+        for (opcode, pc_from, pc_to) in self.jumps_to_process.iter() {
             let is_offsets_from = self
                 .native_offset_to_rwasm_instr_offset
                 .get(pc_from)
                 .unwrap();
             let is_offsets_to = self.native_offset_to_rwasm_instr_offset.get(pc_to).unwrap();
-            let jump_rel_offset = is_offsets_to.0 - is_offsets_from.1 - 1;
+            let jump_rel_offset = is_offsets_to.0 as i32 - is_offsets_from.1 as i32 - 1;
 
             let is = host.instruction_set();
-            let is_idx = is_offsets_from.0 + form_sp_drop_u256(1).len() as usize; // TODO parametrize magic const
-            if let Instruction::I64Const(v) = is.instr[is_idx] {
-                let val_new = UntypedValue::from(v.as_usize() + jump_rel_offset);
-                is.instr[is_idx] = Instruction::I64Const(val_new);
+            // TODO replace magic consts with dynamic calculation
+            let aux_idx: usize = match *opcode {
+                opcode::JUMP => 6,
+                opcode::JUMPI => 14,
+                // dynamic calculation
+                _ => {
+                    panic!("unsupported opcode: {}", opcode)
+                }
+            };
+            let idx = is_offsets_from.0 + aux_idx; // TODO replace form_sp_drop_u256
+            debug!("translator: applying jumps fixes at idx {}", idx);
+            if let Instruction::I64Const(v) = is.instr[idx] {
+                let val_new = UntypedValue::from(v.as_i32() + jump_rel_offset);
+                is.instr[idx] = Instruction::I64Const(val_new);
             } else {
                 panic!("expected Instruction::I64Const");
             }
@@ -133,6 +145,7 @@ impl<'a> Translator<'a> {
         let opcode = self.opcode_cur();
         let pc = self.program_counter();
 
+        self.instruction_pointer_prev_opcode = self.instruction_pointer;
         self.instruction_pointer_inc(1);
 
         let is_offset_start = host.instruction_set().len() as usize;
