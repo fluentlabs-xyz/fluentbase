@@ -2,11 +2,7 @@ use crate::{
     consts::SP_BASE_MEM_OFFSET_DEFAULT,
     translator::{
         host::Host,
-        instructions::utilities::{
-            replace_current_opcode_with_call_to_subroutine,
-            wasm_call,
-            SystemFunc,
-        },
+        instructions::utilities::{replace_current_opcode_with_call_to_subroutine, wasm_call},
         translator::Translator,
     },
     utilities::{
@@ -18,6 +14,7 @@ use crate::{
         WASM_I64_IN_EVM_WORD_COUNT,
     },
 };
+use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::rwasm::InstructionSet;
 use log::debug;
 
@@ -67,7 +64,7 @@ pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
         }
     }
     let mut aux_is = InstructionSet::new();
-    wasm_call(translator, &mut aux_is, SystemFunc::SysHalt);
+    wasm_call(translator, &mut aux_is, SysFuncIdx::SYS_HALT);
     aux_is.op_unreachable();
     is.op_br_if_eqz(aux_is.len() as i32 + 1);
     is.extend(&aux_is);

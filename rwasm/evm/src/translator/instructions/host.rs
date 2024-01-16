@@ -1,12 +1,9 @@
 use crate::translator::{
     host::Host,
-    instructions::utilities::{
-        replace_current_opcode_with_call_to_subroutine,
-        wasm_call,
-        SystemFunc,
-    },
+    instructions::utilities::{replace_current_opcode_with_call_to_subroutine, wasm_call},
     translator::Translator,
 };
+use fluentbase_runtime::SysFuncIdx;
 use log::debug;
 
 pub fn balance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -50,7 +47,7 @@ pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SSTORE";
     debug!("op:{}", OP);
-    wasm_call(translator, host.instruction_set(), SystemFunc::EvmSstore);
+    wasm_call(translator, host.instruction_set(), SysFuncIdx::ZKTRIE_STORE);
 }
 
 pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
