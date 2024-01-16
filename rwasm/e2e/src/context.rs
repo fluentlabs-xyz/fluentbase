@@ -329,9 +329,9 @@ impl TestContext<'_> {
                         import.module().to_string(),
                         import.name().to_string(),
                         import_index,
-                        1,
                         &func_type.params(),
                         &func_type.results(),
+                        1,
                     ));
                     import_index += 1;
                     let exports = self
@@ -357,9 +357,9 @@ impl TestContext<'_> {
                         import.module().to_string(),
                         import.name().to_string(),
                         GLOBAL_START_INDEX as u16 + global_index,
-                        1,
                         &[],
                         &[global_type.content()],
+                        1,
                     ));
                     global_index += 1;
 
@@ -480,104 +480,104 @@ impl TestContext<'_> {
                 "env".to_string(),
                 "_sys_state".to_string(),
                 SYS_STATE as u16,
-                1,
                 &[],
                 &[ValueType::I32],
+                1,
             ));
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "_sys_input".to_string(),
                 SYS_INPUT as u16,
-                1,
                 &[],
                 &[ValueType::I64],
+                1,
             ));
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "_sys_output".to_string(),
                 SYS_OUTPUT as u16,
-                1,
                 &[ValueType::I64],
                 &[],
+                1,
             ));
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "_sys_input_len".to_string(),
                 SYS_INPUT_LEN as u16,
-                1,
                 &[],
                 &[ValueType::I32],
+                1,
             ));
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "_sys_output_len".to_string(),
                 SYS_OUTPUT_LEN as u16,
-                1,
                 &[],
                 &[ValueType::I32],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_i32".to_string(),
                 SYS_PRINT_I32 as u16,
-                1,
                 &[ValueType::I32],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_i64".to_string(),
                 SYS_PRINT_I64 as u16,
-                1,
                 &[ValueType::I64],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_f32".to_string(),
                 SYS_PRINT_F32 as u16,
-                1,
                 &[ValueType::F32],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_f64".to_string(),
                 SYS_PRINT_F64 as u16,
-                1,
                 &[ValueType::F64],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_i32_f32".to_string(),
                 SYS_PRINT_I32_F32 as u16,
-                1,
                 &[ValueType::I32, ValueType::F32],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print_f64_f64".to_string(),
                 SYS_PRINT_F64_F64 as u16,
-                1,
                 &[ValueType::F64, ValueType::F64],
                 &[],
+                1,
             ));
 
             import_linker.insert_function(ImportFunc::new_env(
                 "spectest".to_string(),
                 "print".to_string(),
                 SYS_PRINT as u16,
+                &[],
+                &[],
                 1,
-                &[],
-                &[],
             ));
         }
         let config = CompilerConfig::default()
@@ -658,62 +658,62 @@ impl TestContext<'_> {
             "spectest".to_string(),
             "print_i32".to_string(),
             SYS_PRINT_I32 as u16,
-            1,
             &[ValueType::I32],
             &[],
+            1,
         ));
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_i64".to_string(),
             SYS_PRINT_I64 as u16,
-            1,
             &[ValueType::I64],
             &[],
+            1,
         ));
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_f32".to_string(),
             SYS_PRINT_F32 as u16,
-            1,
             &[ValueType::F32],
             &[],
+            1,
         ));
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_f64".to_string(),
             SYS_PRINT_F64 as u16,
-            1,
             &[ValueType::F64],
             &[],
+            1,
         ));
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_i32_f32".to_string(),
             SYS_PRINT_I32_F32 as u16,
-            1,
             &[ValueType::I32, ValueType::F32],
             &[],
+            1,
         ));
 
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print_f64_f64".to_string(),
             SYS_PRINT_F64_F64 as u16,
-            1,
             &[ValueType::F64, ValueType::F64],
             &[],
+            1,
         ));
         import_linker.insert_function(ImportFunc::new_env(
             "spectest".to_string(),
             "print".to_string(),
             SYS_PRINT as u16,
+            &[],
+            &[],
             1,
-            &[],
-            &[],
         ));
 
         let mut compiler = Compiler::new_with_linker(

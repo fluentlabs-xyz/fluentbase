@@ -39,8 +39,8 @@ pub enum CompilerError {
     DropKeepOutOfBounds,
 }
 
-impl Into<i32> for CompilerError {
-    fn into(self) -> i32 {
+impl CompilerError {
+    pub fn into_i32(self) -> i32 {
         match self {
             CompilerError::ModuleError(_) => -1,
             CompilerError::MissingEntrypoint => -2,
@@ -53,6 +53,12 @@ impl Into<i32> for CompilerError {
             CompilerError::MemoryUsageTooBig => -9,
             CompilerError::DropKeepOutOfBounds => -10,
         }
+    }
+}
+
+impl Into<i32> for CompilerError {
+    fn into(self) -> i32 {
+        self.into_i32()
     }
 }
 
@@ -253,7 +259,7 @@ impl<'linker> Compiler<'linker> {
         // lets reserve 0 index and offset for sections init
         assert_eq!(self.code_section.len(), 0, "code section must be empty");
         if self.config.with_magic_prefix {
-            self.code_section.op_magic_prefix(0x0061736d00000000u64);
+            self.code_section.op_magic_prefix([0x00; 8]);
         }
         // first we must translate all sections, this is an entrypoint
         if self.config.with_state {

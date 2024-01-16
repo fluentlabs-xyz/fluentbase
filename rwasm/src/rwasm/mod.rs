@@ -53,9 +53,9 @@ mod tests {
             "env".to_string(),
             "_sys_halt".to_string(),
             10,
-            1,
             &[ValueType::I32],
             &[],
+            1,
         ));
 
         let mut translator = Compiler::new_with_linker(

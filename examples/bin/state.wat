@@ -2,7 +2,7 @@
   (type (;0;) (func (param i32 i32)))
   (type (;1;) (func))
   (type (;2;) (func (param i32)))
-  (import "env" "_sys_write" (func (;0;) (type 0)))
+  (import "fluentbase_v1alpha" "_sys_write" (func (;0;) (type 0)))
   (func (;1;) (type 1)
     (local i32)
     global.get 0
