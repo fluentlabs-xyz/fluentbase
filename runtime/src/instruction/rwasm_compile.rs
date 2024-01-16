@@ -5,9 +5,9 @@ use fluentbase_rwasm::{
     Caller,
 };
 
-pub struct RwasmCompile;
+pub struct SysCompile;
 
-impl RwasmCompile {
+impl SysCompile {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         input_offset: u32,

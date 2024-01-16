@@ -3,12 +3,12 @@ use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
 #[cfg(test)]
 use alloc::vec::Vec;
 use fluentbase_runtime::instruction::{
-    crypto_ecrecover::CryptoEcrecover,
-    crypto_keccak256::CryptoKeccak256,
-    crypto_poseidon::CryptoPoseidon,
-    crypto_poseidon2::CryptoPoseidon2,
-    rwasm_compile::RwasmCompile,
-    rwasm_transact::RwasmTransact,
+    crypto_ecrecover::SysEcrecover,
+    crypto_keccak256::SysKeccak256,
+    crypto_poseidon::SysPoseidon,
+    crypto_poseidon2::SysPoseidon2,
+    rwasm_compile::SysCompile,
+    rwasm_transact::SysExec,
 };
 #[cfg(test)]
 use fluentbase_runtime::RuntimeContext;
@@ -97,12 +97,12 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
-        let result = CryptoKeccak256::fn_impl(data);
+        let result = SysKeccak256::fn_impl(data);
         output.copy_from_slice(&result);
     }
 
     fn crypto_poseidon(data: &[u8], output: &mut [u8]) {
-        let result = CryptoPoseidon::fn_impl(data);
+        let result = SysPoseidon::fn_impl(data);
         output.copy_from_slice(&result);
     }
 
@@ -112,7 +112,7 @@ impl LowLevelAPI for LowLevelSDK {
         fd_data: &[u8; 32],
         output: &mut [u8],
     ) -> bool {
-        match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
+        match SysPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
             Ok(result) => {
                 output.copy_from_slice(&result);
                 true
@@ -122,12 +122,12 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
-        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
+        let result = SysEcrecover::fn_impl(digest, sig, rec_id as u32);
         output.copy_from_slice(&result);
     }
 
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        match RwasmCompile::fn_impl(input, output.len() as u32) {
+        match SysCompile::fn_impl(input, output.len() as u32) {
             Ok(result) => {
                 output[0..result.len()].copy_from_slice(&result);
                 0
@@ -137,7 +137,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn rwasm_transact(code: &[u8], input: &[u8], output: &mut [u8], state: u32, fuel: u32) -> i32 {
-        match RwasmTransact::fn_impl(code, input, state, fuel, output.len() as u32) {
+        match SysExec::fn_impl(code, input, state, fuel, output.len() as u32) {
             Ok(result) => {
                 output[0..result.len()].copy_from_slice(&result);
                 0
@@ -146,19 +146,35 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn zktrie_open(root: &Bytes32) -> u32 {
+    fn zktrie_open(root: &Bytes32) {
         todo!()
     }
 
-    fn zktrie_update(trie: u32, key: &Bytes32, flags: u32, values: &[Bytes32]) {
+    fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]) {
         todo!()
     }
 
-    fn zktrie_get(trie: u32, key: &Bytes32, output: &mut [Bytes32]) {
+    fn zktrie_field(key: &Bytes32, output: &mut [Bytes32]) {
         todo!()
     }
 
-    fn zktrie_root(trie: u32, output: &mut Bytes32) {
+    fn zktrie_root(output: &mut Bytes32) {
+        todo!()
+    }
+
+    fn zktrie_rollback() {
+        todo!()
+    }
+
+    fn zktrie_commit() {
+        todo!()
+    }
+
+    fn zktrie_store(key: &Bytes32, val: &Bytes32) {
+        todo!()
+    }
+
+    fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
         todo!()
     }
 }

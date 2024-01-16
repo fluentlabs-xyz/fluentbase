@@ -177,8 +177,8 @@ fn test_keccak256() {
   (type (;0;) (func (param i32 i32 i32)))
   (type (;1;) (func))
   (type (;2;) (func (param i32 i32)))
-  (import "env" "_crypto_keccak256" (func $_evm_keccak256 (type 0)))
-  (import "env" "_sys_write" (func $_evm_return (type 2)))
+  (import "fluentbase_v1alpha" "_crypto_keccak256" (func $_evm_keccak256 (type 0)))
+  (import "fluentbase_v1alpha" "_sys_write" (func $_evm_return (type 2)))
   (func $main (type 1)
     i32.const 0
     i32.const 12

@@ -3,9 +3,9 @@ use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::{common::Trap, Caller};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 
-pub struct CryptoPoseidon2;
+pub struct SysPoseidon2;
 
-impl CryptoPoseidon2 {
+impl SysPoseidon2 {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         fa_offset: u32,

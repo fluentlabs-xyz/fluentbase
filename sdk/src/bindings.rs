@@ -48,14 +48,17 @@ extern "C" {
         fuel_limit: u32,
     ) -> i32;
 
-    pub(crate) fn _zktrie_open(root32_ptr: *const u8) -> u32;
+    pub(crate) fn _zktrie_open(root32_ptr: *const u8) -> ();
     pub(crate) fn _zktrie_update(
-        trie: u32,
         key32_offset: *const u8,
         flags: u32,
-        val32_offset: *const u8,
-        val32_len: u32,
+        vals32_offset: *const u8,
+        vals32_len: u32,
     );
-    pub(crate) fn _zktrie_get(trie: u32, key32_offset: *const u8, output_offset: *mut u8);
-    pub(crate) fn _zktrie_root(trie: u32, output32_offset: *mut u8);
+    pub(crate) fn _zktrie_field(key32_offset: *const u8, output_offset: *mut u8);
+    pub(crate) fn _zktrie_root(output32_offset: *mut u8);
+    pub(crate) fn _zktrie_rollback();
+    pub(crate) fn _zktrie_commit();
+    pub(crate) fn _zktrie_store(key32_offset: *const u8, val32_offset: *const u8);
+    pub(crate) fn _zktrie_load(key32_offset: *const u8, val32_offset: *mut u8);
 }
