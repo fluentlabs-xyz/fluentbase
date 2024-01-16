@@ -3,7 +3,7 @@ use crate::translator::{
     instructions::utilities::{
         replace_current_opcode_with_call_to_subroutine,
         wasm_call,
-        SystemFuncs,
+        SystemFunc,
     },
     translator::Translator,
 };
@@ -50,7 +50,7 @@ pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SSTORE";
     debug!("op:{}", OP);
-    wasm_call(host.instruction_set(), SystemFuncs::EvmSstore, translator);
+    wasm_call(translator, host.instruction_set(), SystemFunc::EvmSstore);
 }
 
 pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

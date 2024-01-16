@@ -38,7 +38,7 @@ impl<'a> EvmCompiler<'a> {
         &self.instruction_set
     }
 
-    pub fn compile(
+    pub fn run(
         &mut self,
         preamble: Option<&InstructionSet>,
         postamble: Option<&InstructionSet>,

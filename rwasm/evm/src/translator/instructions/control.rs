@@ -4,7 +4,7 @@ use crate::translator::{
     instructions::utilities::{
         replace_current_opcode_with_call_to_subroutine,
         wasm_call,
-        SystemFuncs,
+        SystemFunc,
     },
     translator::Translator,
 };
@@ -51,7 +51,7 @@ pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn invalid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.instruction_result = InstructionResult::InvalidFEOpcode;
-    wasm_call(host.instruction_set(), SystemFuncs::SysHalt, translator)
+    wasm_call(translator, host.instruction_set(), SystemFunc::SysHalt);
 }
 
 pub fn not_found<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
