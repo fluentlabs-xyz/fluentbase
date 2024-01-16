@@ -1,9 +1,9 @@
 use crate::{ExitCode, Runtime, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
 
-pub struct RwasmTransact;
+pub struct SysExec;
 
-impl RwasmTransact {
+impl SysExec {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         code_offset: u32,

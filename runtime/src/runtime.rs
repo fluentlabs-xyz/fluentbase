@@ -1,5 +1,6 @@
 use crate::{
     instruction::{runtime_register_handlers, runtime_register_linkers},
+    storage::TrieDb,
     ExitCode,
     RuntimeError,
     RECURSIVE_MAX_DEPTH,
@@ -21,7 +22,7 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use std::mem::take;
+use std::{mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
@@ -35,6 +36,8 @@ pub struct RuntimeContext<'t, T> {
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
+    // storage
+    pub(crate) zktrie: Option<Rc<dyn TrieDb>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -49,6 +52,7 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             input: self.input.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
+            zktrie: self.zktrie.clone(),
         }
     }
 }
@@ -65,6 +69,7 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             input: vec![],
             exit_code: 0,
             output: vec![],
+            zktrie: None,
         }
     }
 }
@@ -104,6 +109,11 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
         self.fuel_limit = fuel_limit;
+        self
+    }
+
+    pub fn with_zktrie(mut self, zktrie: Rc<dyn TrieDb>) -> Self {
+        self.zktrie = Some(zktrie);
         self
     }
 

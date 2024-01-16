@@ -11,8 +11,12 @@ use crate::{
         _sys_read,
         _sys_state,
         _sys_write,
+        _zktrie_commit,
+        _zktrie_load,
         _zktrie_open,
+        _zktrie_rollback,
         _zktrie_root,
+        _zktrie_store,
     },
     Bytes32,
     LowLevelAPI,
@@ -113,14 +117,13 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn zktrie_open(root: &Bytes32) -> u32 {
+    fn zktrie_open(root: &Bytes32) {
         unsafe { _zktrie_open(root.as_ptr()) }
     }
 
-    fn zktrie_update(trie: u32, key: &Bytes32, flags: u32, values: &[Bytes32]) {
+    fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]) {
         // unsafe {
         //     _zktrie_update(
-        //         trie,
         //         key.as_ptr(),
         //         flags,
         //         values.as_ptr().as_ptr(),
@@ -129,11 +132,27 @@ impl LowLevelAPI for LowLevelSDK {
         // }
     }
 
-    fn zktrie_get(trie: u32, key: &Bytes32, output: &mut [Bytes32]) {
-        // unsafe { _zktrie_get(trie, key.as_ptr(), output.as_mut_ptr().as_mut_ptr()) }
+    fn zktrie_field(key: &Bytes32, output: &mut [Bytes32]) {
+        // unsafe { _zktrie_field(key.as_ptr(), output.as_mut_ptr().as_mut_ptr()) }
     }
 
-    fn zktrie_root(trie: u32, output: &mut Bytes32) {
-        unsafe { _zktrie_root(trie, output.as_mut_ptr()) }
+    fn zktrie_root(output: &mut Bytes32) {
+        unsafe { _zktrie_root(output.as_mut_ptr()) }
+    }
+
+    fn zktrie_rollback() {
+        unsafe { _zktrie_rollback() }
+    }
+
+    fn zktrie_commit() {
+        unsafe { _zktrie_commit() }
+    }
+
+    fn zktrie_store(key: &Bytes32, val: &Bytes32) {
+        unsafe { _zktrie_store(key.as_ptr(), val.as_ptr()) }
+    }
+
+    fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
+        unsafe { _zktrie_load(key.as_ptr(), val.as_mut_ptr()) }
     }
 }

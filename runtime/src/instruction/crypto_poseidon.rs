@@ -1,9 +1,9 @@
 use crate::RuntimeContext;
 use fluentbase_rwasm::{common::Trap, Caller};
 
-pub struct CryptoPoseidon;
+pub struct SysPoseidon;
 
-impl CryptoPoseidon {
+impl SysPoseidon {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         f32s_offset: u32,

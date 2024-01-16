@@ -1,9 +1,9 @@
 use crate::RuntimeContext;
 use fluentbase_rwasm::{common::Trap, Caller};
 
-pub struct CryptoKeccak256;
+pub struct SysKeccak256;
 
-impl CryptoKeccak256 {
+impl SysKeccak256 {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         data_offset: u32,
