@@ -1,4 +1,5 @@
 use super::{BufferDecoder, BufferEncoder, Encoder};
+use alloy_primitives::Bytes;
 use hashbrown::{HashMap, HashSet};
 
 #[test]
@@ -13,6 +14,21 @@ fn test_vec() {
     let mut buffer_decoder = BufferDecoder::new(result.as_slice());
     let mut values2 = Default::default();
     Vec::<i32>::decode_body(&mut buffer_decoder, 0, &mut values2);
+    assert_eq!(values, values2);
+}
+
+#[test]
+fn test_bytes() {
+    let values = Bytes::from_static("Hello, World".as_bytes());
+    let result = {
+        let mut buffer_encoder = BufferEncoder::new(Bytes::HEADER_SIZE, None);
+        values.encode(&mut buffer_encoder, 0);
+        buffer_encoder.finalize()
+    };
+    println!("{}", hex::encode(&result));
+    let mut buffer_decoder = BufferDecoder::new(result.as_slice());
+    let mut values2 = Default::default();
+    Bytes::decode_body(&mut buffer_decoder, 0, &mut values2);
     assert_eq!(values, values2);
 }
 
