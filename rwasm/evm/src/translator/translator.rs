@@ -218,8 +218,8 @@ impl<'a> Translator<'a> {
                 .clone();
             let l = self.subroutines_instruction_set.instr.len();
             for v in opcode_to_entry {
-                let opcode = v[0] as u8;
-                let entry = v[1];
+                let opcode = v.0;
+                let entry = v.1;
                 let subroutine_data = SubroutineData {
                     rel_entry_offset: entry,
                     begin_offset: l,
