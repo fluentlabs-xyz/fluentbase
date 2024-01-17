@@ -149,9 +149,9 @@ opcodes! {
     0x32 => ORIGIN    => host_env::origin, // tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
-    0x35 => CALLDATALOAD => system::calldataload, // from contract_input
-    0x36 => CALLDATASIZE => system::calldatasize, // from contract_input
-    0x37 => CALLDATACOPY => system::calldatacopy, // from contract_input
+    0x35 => CALLDATALOAD => system::calldataload, // done
+    0x36 => CALLDATASIZE => system::calldatasize, // done
+    0x37 => CALLDATACOPY => system::calldatacopy, // done
     0x38 => CODESIZE     => system::codesize, // done
     0x39 => CODECOPY     => system::codecopy, // TODO
 
