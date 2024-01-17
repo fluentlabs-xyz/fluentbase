@@ -1,3 +1,4 @@
+use crate::deploy_internal;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 extern "C" {
@@ -5,7 +6,9 @@ extern "C" {
     fn __set_stack_pointer(sp: u32);
 }
 
-pub fn deploy() {}
+pub fn deploy() {
+    deploy_internal(include_bytes!("../bin/stack.wasm"))
+}
 
 pub fn main() {
     unsafe {

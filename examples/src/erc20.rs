@@ -1,7 +1,7 @@
 use alloy_sol_types::{sol, SolCall, SolEvent, SolType, SolValue};
 use fluentbase_sdk::{
     evm::{Address, Bytes, ExecutionContext, U256},
-    LowLevelCryptoSDK,
+    LowLevelAPI,
     LowLevelSDK,
 };
 use hex_literal::hex;
@@ -165,7 +165,7 @@ pub fn main() {
         }
         _ => panic!("unknown method"),
     };
-    ctx.return_and_exit(output.as_slice(), 0);
+    ctx.fast_return_and_exit(output.as_slice(), 0);
 }
 
 #[cfg(test)]

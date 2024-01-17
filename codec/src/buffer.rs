@@ -37,8 +37,16 @@ impl<const N: usize> FixedEncoder<N> {
         }
     }
 
-    pub fn finalize(&self) -> &[u8] {
+    pub fn bytes(&self) -> &[u8] {
         &self.buffer[..(self.header_length + self.body_length)]
+    }
+
+    pub fn len(&self) -> usize {
+        self.header_length + self.body_length
+    }
+
+    pub fn finalize(self) -> ([u8; N], usize) {
+        (self.buffer, self.header_length + self.body_length)
     }
 }
 
@@ -224,7 +232,7 @@ mod test {
             offset += buffer.write_u32(offset, test.a);
             offset += buffer.write_u16(offset, test.b);
             buffer.write_u64(offset, test.c);
-            buffer.finalize().to_vec()
+            buffer.bytes().to_vec()
         };
         println!("{}", hex::encode(&buffer));
         let mut decoder = BufferDecoder::new(&buffer);
@@ -242,7 +250,7 @@ mod test {
             buffer.write_u32(12, 0xdeadbeef);
             buffer.write_bytes(16, &[5, 6, 7, 8, 9]);
             buffer.write_u32(24, 0x7f);
-            buffer.finalize().to_vec()
+            buffer.bytes().to_vec()
         };
         println!("{}", hex::encode(&buffer));
         let mut decoder = BufferDecoder::new(buffer.as_slice());

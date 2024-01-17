@@ -1,20 +1,23 @@
-FILES = keccak256 greeting secp256k1 poseidon rwasm panic state
-MANUAL = stack
+FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack
 
 all: $(FILES) $(MANUAL)
 
+#.PHONY: $(FILES)
+#$(FILES):
+#	cargo b --release --target=wasm32-unknown-unknown --features=$@
+#	mkdir -p bin
+#	cp ../target/wasm32-unknown-unknown/release/fluentbase_example.wasm ./bin/$@.wasm
+#	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+
 .PHONY: $(FILES)
 $(FILES):
-	cargo b --release --target=wasm32-unknown-unknown --features=$@
 	mkdir -p bin
-	cp ../target/wasm32-unknown-unknown/release/fluentbase_example.wasm ./bin/$@.wasm
-	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
-
-.PHONY: $(MANUAL)
-$(MANUAL):
+	touch ./bin/$@.wasm ./bin/$@-deploy.wasm
 	cargo b --release --target=wasm32-unknown-unknown --features=$@
-	mkdir -p bin
 	clang stack.s -c --target=wasm32-unknown-unknown
-	wasm-ld --allow-undefined --no-entry --export=main --strip-all --export=deploy ../target/wasm32-unknown-unknown/release/libfluentbase_example.a ./stack.o -o ./bin/$@.wasm
-	rm stack.o
+	wasm-ld --allow-undefined --static --no-entry --export=main --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a ./stack.o -o ./bin/$@.wasm
 	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+	cargo b --release --target=wasm32-unknown-unknown --features=$@
+	wasm-ld --allow-undefined --static --no-entry --export=deploy --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a -o ./bin/$@-deploy.wasm
+	wasm2wat ./bin/$@-deploy.wasm > ./bin/$@-deploy.wat
+	rm stack.o

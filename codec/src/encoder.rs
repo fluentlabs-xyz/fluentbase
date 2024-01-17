@@ -1,4 +1,4 @@
-use crate::buffer::{BufferDecoder, BufferEncoder, WritableBuffer};
+use crate::buffer::{BufferDecoder, BufferEncoder, FixedEncoder, WritableBuffer};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -9,6 +9,11 @@ pub trait Encoder<T: Sized> {
 
     const HEADER_SIZE: usize;
 
+    fn encode_to_fixed<const N: usize>(&self, field_offset: usize) -> ([u8; N], usize) {
+        let mut buffer_encoder = FixedEncoder::<N>::new(Self::HEADER_SIZE);
+        self.encode(&mut buffer_encoder, field_offset);
+        buffer_encoder.finalize()
+    }
     fn encode_to_vec(&self, field_offset: usize) -> Vec<u8> {
         let mut buffer_encoder = BufferEncoder::new(Self::HEADER_SIZE, None);
         self.encode(&mut buffer_encoder, field_offset);

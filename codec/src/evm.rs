@@ -1,4 +1,4 @@
-use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, Encoder};
 use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
 
 impl Encoder<Bytes> for Bytes {
