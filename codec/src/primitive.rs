@@ -1,8 +1,8 @@
-use crate::{BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
 
 impl Encoder<u8> for u8 {
     const HEADER_SIZE: usize = core::mem::size_of::<u8>();
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         encoder.write_u8(field_offset, *self);
     }
     fn decode_header(
@@ -19,7 +19,7 @@ macro_rules! impl_le_int {
     ($typ:ty, $write_fn:ident, $read_fn:ident) => {
         impl Encoder<$typ> for $typ {
             const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
-            fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+            fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
                 encoder.$write_fn(field_offset, *self);
             }
             fn decode_header(
@@ -44,7 +44,7 @@ impl_le_int!(i64, write_i64, read_i64);
 impl<T: Sized + Encoder<T>, const N: usize> Encoder<[T; N]> for [T; N] {
     const HEADER_SIZE: usize = T::HEADER_SIZE * N;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         (0..N).for_each(|i| {
             self[i].encode(encoder, field_offset + i * T::HEADER_SIZE);
         });
@@ -65,7 +65,7 @@ impl<T: Sized + Encoder<T>, const N: usize> Encoder<[T; N]> for [T; N] {
 impl<T: Sized + Encoder<T> + Default> Encoder<Option<T>> for Option<T> {
     const HEADER_SIZE: usize = 1 + T::HEADER_SIZE;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         let option_flag = if self.is_some() { 1u8 } else { 0u8 };
         option_flag.encode(encoder, field_offset);
         if let Some(value) = &self {

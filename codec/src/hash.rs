@@ -1,4 +1,4 @@
-use crate::{BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
 use alloc::vec::Vec;
 use core::hash::Hash;
 use hashbrown::{HashMap, HashSet};
@@ -9,7 +9,7 @@ impl<K: Default + Sized + Encoder<K> + Eq + Hash + Ord, V: Default + Sized + Enc
     // length + keys (bytes) + values (bytes)
     const HEADER_SIZE: usize = 4 + 8 + 8;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
         // make sure keys & values are sorted
@@ -71,7 +71,7 @@ impl<T: Default + Sized + Encoder<T> + Eq + Hash + Ord> Encoder<HashSet<T>> for 
     // length + keys (bytes)
     const HEADER_SIZE: usize = 4 + 8;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         // encode length
         encoder.write_u32(field_offset, self.len() as u32);
         // make sure set is sorted
