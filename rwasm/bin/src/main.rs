@@ -20,7 +20,7 @@ struct Args {
     rwasm_file_out_path: String,
 
     #[arg(long, default_value = "")]
-    json_file_out_path: String,
+    rs_file_out_path: String,
 
     #[arg(long, default_value_t = false)]
     skip_translate_sections: bool,
@@ -120,12 +120,10 @@ fn main() {
             let opcode_number = OPCODE_NAME_TO_NUMBER.get(opcode_name).unwrap();
             as_json_arr.push(format!("[{opcode_number},{fn_beginning}]"));
         }
-        println!(
-            "rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]",
-            as_rust_vec.join(",")
-        );
     }
     let json_str = format!("[{}]", as_json_arr.join(","));
+    let rs_str = format!("[{}]", as_rust_vec.join(","));
+    println!("rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]", rs_str);
     let rwasm_binary = compiler.finalize().unwrap();
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
@@ -140,15 +138,11 @@ fn main() {
     }
     fs::write(rwasm_file_out_path, rwasm_binary).unwrap();
 
-    let json_file_out_path;
-    if args.json_file_out_path != "" {
-        json_file_out_path = args.json_file_out_path;
+    let rs_file_out_path;
+    if args.rs_file_out_path != "" {
+        rs_file_out_path = args.rs_file_out_path;
     } else {
-        json_file_out_path = format!(
-            "{}/{}",
-            oud_dir_path,
-            format!("{}{}", file_in_name, ".json")
-        );
+        rs_file_out_path = format!("{}/{}", oud_dir_path, format!("{}{}", file_in_name, ".rs"));
     }
-    fs::write(json_file_out_path, json_str).unwrap();
+    fs::write(rs_file_out_path, rs_str).unwrap();
 }

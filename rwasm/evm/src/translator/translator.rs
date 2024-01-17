@@ -210,20 +210,16 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let opcode_to_entry_json_bytes =
-            include_bytes!("../../../rwasm-code-snippets/bin/solid_file.json").as_slice();
-        let json: serde_json::Value = serde_json::from_slice(opcode_to_entry_json_bytes).unwrap();
-        let opcode_to_entries = json.as_array().unwrap();
+        let opcode_to_entry = include!("../../../rwasm-code-snippets/bin/solid_file.rs").as_slice();
         let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
                 .bytecode()
                 .clone();
             let l = self.subroutines_instruction_set.instr.len();
-            for v in opcode_to_entries {
-                let opcode_to_entry = v.as_array().unwrap();
-                let opcode = opcode_to_entry[0].as_u64().unwrap() as u8;
-                let entry = opcode_to_entry[1].as_u64().unwrap() as u32;
+            for v in opcode_to_entry {
+                let opcode = v.0;
+                let entry = v.1;
                 let subroutine_data = SubroutineData {
                     rel_entry_offset: entry,
                     begin_offset: l,
