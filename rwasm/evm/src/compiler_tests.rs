@@ -71,6 +71,7 @@ mod evm_to_rwasm_tests {
                     SWAP1,
                     SWAP2,
                     TIMESTAMP,
+                    TLOAD,
                     TSTORE,
                     XOR,
                 },
@@ -119,6 +120,8 @@ mod evm_to_rwasm_tests {
         Args2((Vec<u8>, Vec<u8>, Vec<u8>)),
         // result_expected a b c
         Args3((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
+        // result_expected a b c
+        Universal(Vec<Vec<u8>>),
     }
 
     #[derive(Clone)]
@@ -126,6 +129,7 @@ mod evm_to_rwasm_tests {
         Stack,
         Memory(usize),
         Output(usize),
+        Private,
     }
 
     fn compile_op_with_args_bytecode(opcode: Option<u8>, case: &Case) -> Vec<u8> {
@@ -149,6 +153,12 @@ mod evm_to_rwasm_tests {
                 evm_bytecode.extend(args.1.clone());
                 evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.0.clone());
+            }
+            Case::Universal(args) => {
+                for i in (0..args.len() - 1).rev() {
+                    evm_bytecode.push(PUSH32);
+                    evm_bytecode.extend(args[i].clone());
+                }
             }
         }
         if let Some(opcode) = opcode {
@@ -185,6 +195,10 @@ mod evm_to_rwasm_tests {
                 Case::Args1(v) => v.1.clone(),
                 Case::Args2(v) => v.2.clone(),
                 Case::Args3(v) => v.3.clone(),
+                Case::Universal(v) => {
+                    let i = v.len() - 1;
+                    v[i].clone()
+                }
             };
 
             let mut evm_bytecode: Vec<u8> = vec![];
@@ -238,6 +252,7 @@ mod evm_to_rwasm_tests {
                 let res = &output[offset..offset + res_expected.len()];
                 assert_eq!(res_expected, res);
             }
+            ResultLocation::Private => {}
         }
     }
 
@@ -1820,7 +1835,6 @@ mod evm_to_rwasm_tests {
         test_op_cases(ADDRESS, None, &cases, Some(-1), ResultLocation::Stack);
     }
 
-    // #[ignore]
     #[test]
     fn calldatasize() {
         let mut cases = vec![];
@@ -2088,18 +2102,48 @@ mod evm_to_rwasm_tests {
         test_op_cases(SSTORE, None, &cases, Some(-1), ResultLocation::Stack);
     }
 
-    // TODO
-    #[ignore]
     #[test]
     fn tstore() {
         let cases = [Case::Args2((
             x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000002"),
             x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
-        test_op_cases(TSTORE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            TSTORE,
+            None,
+            &cases,
+            Some(0),
+            ResultLocation::Memory(SP_BASE_MEM_OFFSET_DEFAULT),
+        );
     }
+
+    #[test]
+    fn tload() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_with_args_bytecode(
+            Some(TSTORE),
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                vec![],
+            )),
+        ));
+        let cases = [Case::Args1((
+            x("0000000000000000000000000000000000000000000000000000000000000001"),
+            x("0000000000000000000000000000000000000000000000000000000000000002"),
+        ))];
+
+        test_op_cases(
+            TLOAD,
+            Some(&preamble),
+            &cases,
+            Some(32),
+            ResultLocation::Stack,
+        );
+    }
+
     #[test]
     fn ret() {
         let mut preamble = vec![];
@@ -2378,18 +2422,18 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn jumpi_do_jump() {
-        let jump_decision_arg = [
+        let jump_decision_args = [
             x("0000000000000000 0000000000000000 0000000000000000 0000000000000001"),
-            // x("0000000000000000 0000000000000000 0000000000000001 0000000000000000"),
-            // x("0000000000000000 0000000000000001 0000000000000000 0000000000000000"),
-            // x("0000000000000001 0000000000000000 0000000000000000 0000000000000000"),
-            // x("0000000000000000 0000000000000000 0000000000000000 1000000000000000"),
-            // x("0000000000000000 0000000000000000 1000000000000000 0000000000000000"),
-            // x("0000000000000000 1000000000000000 0000000000000000 0000000000000000"),
-            // x("1000000000000000 0000000000000000 0000000000000000 0000000000000000"),
+            x("0000000000000000 0000000000000000 0000000000000001 0000000000000000"),
+            x("0000000000000000 0000000000000001 0000000000000000 0000000000000000"),
+            x("0000000000000001 0000000000000000 0000000000000000 0000000000000000"),
+            x("0000000000000000 0000000000000000 0000000000000000 1000000000000000"),
+            x("0000000000000000 0000000000000000 1000000000000000 0000000000000000"),
+            x("0000000000000000 1000000000000000 0000000000000000 0000000000000000"),
+            x("1000000000000000 0000000000000000 0000000000000000 0000000000000000"),
         ];
 
-        for arg in jump_decision_arg {
+        for jump_decision_arg in jump_decision_args {
             let mut preamble_bytecode = vec![];
 
             // current offset: 0
@@ -2398,7 +2442,7 @@ mod evm_to_rwasm_tests {
                 Some(JUMPI),
                 &Case::Args2((
                     x("0000000000000000000000000000000000000000000000000000000000000065"), // 101
-                    arg, // do not skip this jump
+                    jump_decision_arg, // do not skip this jump
                     vec![],
                 )),
             ));

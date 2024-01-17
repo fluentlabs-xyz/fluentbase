@@ -18,8 +18,7 @@ mod all_tests {
     use crate::arithmetic::sub::arithmetic_sub;
     use crate::{
         test_utils::{u256_from_le_u64, u256_into_le_tuple},
-        ts_get,
-        ts_set,
+        ts::{ts_get, ts_set},
     };
     use alloc::vec;
     use fluentbase_sdk::evm::U256;
@@ -28,14 +27,15 @@ mod all_tests {
     #[cfg(feature = "test_hashmap")]
     #[test]
     fn test_hashmap() {
-        let index_arr = [2];
-        let value_arr = [55];
-        let index = U256::from_be_slice(&index_arr);
-        let value = U256::from_be_slice(&value_arr);
-        // ts_set(index, value);
+        let index_arr = &[2];
+        let value_arr = &[55];
+        let index = U256::from_be_slice(index_arr);
+        let value = U256::from_be_slice(value_arr);
+        ts_set(index, value);
 
-        // let res = ts_get(index);
-        // assert!(res.is_some());
+        let res = ts_get(index);
+        assert!(res.is_some());
+        assert_eq!(res.unwrap(), value);
     }
 
     #[cfg(feature = "arithmetic_div")]

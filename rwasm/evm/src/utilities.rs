@@ -1,5 +1,13 @@
-use crate::consts::SP_BASE_MEM_OFFSET_DEFAULT;
+use crate::{
+    consts::SP_BASE_MEM_OFFSET_DEFAULT,
+    translator::{
+        instruction_result::InstructionResult,
+        instructions::utilities::wasm_call,
+        translator::Translator,
+    },
+};
 use core::slice::Chunks;
+use fluentbase_runtime::{ExitCode, SysFuncIdx};
 use fluentbase_rwasm::rwasm::InstructionSet;
 
 pub const EVM_WORD_BYTES: usize = 32;
@@ -110,10 +118,15 @@ pub fn sp_drop_u256_gen(count: u64) -> InstructionSet {
 pub fn sp_drop_u256(is: &mut InstructionSet, count: u64) {
     let is_tmp = sp_drop_u256_gen(count);
     is.extend(&is_tmp);
+}
 
-    // is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64); // for store
-    // sp_get_value(is);
-    // is.op_i64_const(EVM_WORD_BYTES as u64 * count);
-    // is.op_i64_sub();
-    // sp_set_value(is, false, None);
+pub fn stop_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+    translator.instruction_result = InstructionResult::Stop;
+    is.op_return();
+    is.op_unreachable();
+}
+pub fn invalid_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+    translator.instruction_result = InstructionResult::InvalidFEOpcode;
+    is.op_i32_const(ExitCode::UnknownError as i32);
+    wasm_call(translator, is, SysFuncIdx::SYS_HALT);
 }
