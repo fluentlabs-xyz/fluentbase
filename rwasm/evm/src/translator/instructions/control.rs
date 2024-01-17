@@ -9,9 +9,11 @@ use crate::{
         translator::Translator,
     },
     utilities::{
+        invalid_op_gen,
         load_i64_const,
         sp_drop_u256,
         sp_get_offset,
+        stop_op_gen,
         EVM_WORD_BYTES,
         WASM_I64_BYTES,
         WASM_I64_IN_EVM_WORD_COUNT,
@@ -143,17 +145,11 @@ pub fn revert<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    translator.instruction_result = InstructionResult::Stop;
-    let is = host.instruction_set();
-    is.op_return();
-    is.op_unreachable();
+    stop_op_gen(translator, host.instruction_set());
 }
 
 pub fn invalid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    translator.instruction_result = InstructionResult::InvalidFEOpcode;
-    let is = host.instruction_set();
-    is.op_i32_const(ExitCode::UnknownError as i32);
-    wasm_call(translator, is, SysFuncIdx::SYS_HALT);
+    invalid_op_gen(translator, host.instruction_set());
 }
 
 pub fn not_found<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {

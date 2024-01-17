@@ -2,7 +2,7 @@ use crate::translator::{host::Host, translator::Translator};
 use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::rwasm::InstructionSet;
 
-pub(super) fn wasm_call(
+pub fn wasm_call(
     translator: &mut Translator,
     is: &mut InstructionSet,
     sys_func_idx: SysFuncIdx,

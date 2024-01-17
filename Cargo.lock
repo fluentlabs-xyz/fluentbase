@@ -1847,6 +1847,7 @@ dependencies = [
  "hashbrown 0.14.3",
  "hex",
  "log",
+ "once_cell",
  "wat",
 ]
 
