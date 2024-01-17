@@ -1880,7 +1880,6 @@ dependencies = [
  "log",
  "once_cell",
  "serde_json",
- "wat",
 ]
 
 [[package]]
