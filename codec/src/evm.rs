@@ -1,5 +1,26 @@
 use crate::{BufferDecoder, BufferEncoder, Encoder};
-use alloy_primitives::{Address, FixedBytes, Uint};
+use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
+
+impl Encoder<Bytes> for Bytes {
+    const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 2;
+
+    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+        encoder.write_bytes(field_offset, &self.0);
+    }
+
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        _result: &mut Bytes,
+    ) -> (usize, usize) {
+        decoder.read_bytes_header(field_offset)
+    }
+
+    fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut Bytes) {
+        let bytes = decoder.read_bytes(field_offset);
+        *result = Bytes::copy_from_slice(bytes);
+    }
+}
 
 impl<const N: usize> Encoder<FixedBytes<N>> for FixedBytes<N> {
     const HEADER_SIZE: usize = N;
