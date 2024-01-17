@@ -1,4 +1,4 @@
-use crate::buffer::{BufferDecoder, BufferEncoder};
+use crate::buffer::{BufferDecoder, BufferEncoder, WritableBuffer};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -15,7 +15,7 @@ pub trait Encoder<T: Sized> {
         buffer_encoder.finalize()
     }
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize);
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize);
 
     fn decode_header(
         decoder: &mut BufferDecoder,

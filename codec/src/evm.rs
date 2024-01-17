@@ -1,10 +1,10 @@
-use crate::{BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
 use alloy_primitives::{Address, Bytes, FixedBytes, Uint};
 
 impl Encoder<Bytes> for Bytes {
     const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 2;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         encoder.write_bytes(field_offset, &self.0);
     }
 
@@ -24,7 +24,7 @@ impl Encoder<Bytes> for Bytes {
 
 impl<const N: usize> Encoder<FixedBytes<N>> for FixedBytes<N> {
     const HEADER_SIZE: usize = N;
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         self.0.encode(encoder, field_offset)
     }
     fn decode_header(
@@ -41,7 +41,7 @@ macro_rules! impl_evm_fixed {
     ($typ:ty) => {
         impl Encoder<$typ> for $typ {
             const HEADER_SIZE: usize = <$typ>::len_bytes();
-            fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+            fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
                 self.0.encode(encoder, field_offset)
             }
             fn decode_header(
@@ -64,7 +64,7 @@ impl_evm_fixed!(Address);
 
 impl<const BITS: usize, const LIMBS: usize> Encoder<Uint<BITS, LIMBS>> for Uint<BITS, LIMBS> {
     const HEADER_SIZE: usize = Self::BYTES;
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         self.as_limbs().encode(encoder, field_offset)
     }
     fn decode_header(

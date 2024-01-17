@@ -5,7 +5,7 @@ extern crate alloc;
 extern crate core;
 
 pub use crate::{
-    buffer::{BufferDecoder, BufferEncoder},
+    buffer::{BufferDecoder, BufferEncoder, WritableBuffer},
     encoder::{Encoder, FieldEncoder},
 };
 

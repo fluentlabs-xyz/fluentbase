@@ -1,4 +1,4 @@
-use crate::{BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
 use alloc::vec::Vec;
 
 ///
@@ -16,7 +16,7 @@ impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
     // u32: length + values (bytes)
     const HEADER_SIZE: usize = core::mem::size_of::<u32>() * 3;
 
-    fn encode(&self, encoder: &mut BufferEncoder, field_offset: usize) {
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
         encoder.write_u32(field_offset, self.len() as u32);
         let mut value_encoder = BufferEncoder::new(T::HEADER_SIZE * self.len(), None);
         for (i, obj) in self.iter().enumerate() {

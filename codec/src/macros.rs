@@ -52,7 +52,7 @@ macro_rules! define_codec_struct {
         }
         impl $crate::Encoder<$struct_type> for $struct_type {
             const HEADER_SIZE: usize = $crate::derive_header_size!($($element:$ty),*);
-            fn encode(&self, encoder: &mut $crate::BufferEncoder, mut field_offset: usize) {
+            fn encode<W: $crate::WritableBuffer>(&self, encoder: &mut W, mut field_offset: usize) {
                 $crate::derive_encode!(self, encoder, field_offset, $($element:$ty),*);
             }
             fn decode_header(decoder: &mut $crate::BufferDecoder, mut field_offset: usize, result: &mut $struct_type) -> (usize, usize) {
