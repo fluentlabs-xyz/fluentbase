@@ -144,5 +144,5 @@ fn main() {
     } else {
         rs_file_out_path = format!("{}/{}", oud_dir_path, format!("{}{}", file_in_name, ".rs"));
     }
-    fs::write(rs_file_out_path, json_str).unwrap();
+    fs::write(rs_file_out_path, rs_str).unwrap();
 }
