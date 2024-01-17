@@ -56,7 +56,7 @@ codegen-units = 1
 [profile.release]
 panic = "abort"
 lto = true
-opt-level = 'z'
+opt-level = 3
 strip = true
 debug = false
 debug-assertions = false

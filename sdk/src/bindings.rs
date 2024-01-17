@@ -15,7 +15,7 @@ extern "C" {
         rec_id: u32,
     );
 
-    pub(crate) fn _sys_halt(code: i32);
+    pub(crate) fn _sys_halt(code: i32) -> !;
     pub(crate) fn _sys_write(offset: *const u8, length: u32);
     pub(crate) fn _sys_input_size() -> u32;
     pub(crate) fn _sys_read(target: *mut u8, offset: u32, length: u32);
