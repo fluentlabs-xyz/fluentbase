@@ -1,6 +1,6 @@
 use crate::{
+    complex_types::RuntimeError,
     storage::{KeyValueDb, TrieDb},
-    RuntimeError,
 };
 use fluentbase_zktrie::{
     Byte32,

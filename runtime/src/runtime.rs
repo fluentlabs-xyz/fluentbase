@@ -1,10 +1,9 @@
 use crate::{
+    complex_types::RuntimeError,
+    consts::{RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT},
     instruction::{runtime_register_handlers, runtime_register_linkers},
     storage::TrieDb,
     ExitCode,
-    RuntimeError,
-    RECURSIVE_MAX_DEPTH,
-    STACK_MAX_HEIGHT,
 };
 use fluentbase_rwasm::{
     engine::Tracer,

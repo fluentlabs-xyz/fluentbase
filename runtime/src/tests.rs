@@ -4,6 +4,7 @@ use fluentbase_rwasm::{
     rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule},
 };
 
+#[cfg(test)]
 pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();

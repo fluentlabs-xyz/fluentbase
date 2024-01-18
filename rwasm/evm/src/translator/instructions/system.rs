@@ -3,29 +3,28 @@ use crate::translator::{
     instructions::utilities::replace_current_opcode_with_call_to_subroutine,
     translator::Translator,
 };
-use log::debug;
 
 pub fn keccak256<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "KECCAK256";
-    debug!("op:{}", OP);
+    // // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn address<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADDRESS";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn caller<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLER";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn codesize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CODESIZE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
@@ -36,25 +35,25 @@ pub fn codecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn calldataload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLDATALOAD";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn calldatasize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLDATASIZE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn calldatacopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLDATACOPY";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn callvalue<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALLVALUE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
@@ -70,6 +69,6 @@ pub fn returndatacopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) 
 
 pub fn gas<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "GAS";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }

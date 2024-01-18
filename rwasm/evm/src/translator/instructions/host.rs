@@ -4,7 +4,6 @@ use crate::translator::{
     translator::Translator,
 };
 use fluentbase_runtime::SysFuncIdx;
-use log::debug;
 
 pub fn balance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "BALANCE";
@@ -34,31 +33,31 @@ pub fn extcodecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BLOCKHASH";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLOAD";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SSTORE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     wasm_call(translator, host.instruction_set(), SysFuncIdx::ZKTRIE_STORE);
 }
 
 pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TSTORE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TLOAD";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 

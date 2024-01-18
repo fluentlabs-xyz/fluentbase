@@ -1,7 +1,7 @@
 mod noop;
 mod zktrie;
 
-use crate::RuntimeError;
+use crate::complex_types::RuntimeError;
 use std::collections::HashMap;
 
 pub trait KeyValueDb {

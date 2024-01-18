@@ -7,6 +7,7 @@ use crate::{
         translator::{contract::Contract, Translator},
     },
 };
+use alloc::boxed::Box;
 use alloy_primitives::Bytes;
 use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet};
 

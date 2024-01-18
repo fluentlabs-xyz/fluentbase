@@ -19,15 +19,14 @@ use crate::{
         WASM_I64_IN_EVM_WORD_COUNT,
     },
 };
-use fluentbase_runtime::{ExitCode, SysFuncIdx};
-use log::debug;
+use core::{i64, u64};
 
 // recompute this value after adding or removing rwasm ops to jump()
 pub const JUMP_PARAMS_COUNT: usize = 6;
 pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "JUMP";
     const OPCODE: u8 = JUMP;
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     const OP_PARAMS_COUNT: u64 = 1;
 
     let pc_from = translator.program_counter() - 1;
@@ -41,6 +40,7 @@ pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     if bytes_before != push_count {
         panic!("expected distance {} got {}", push_count, bytes_before);
     };
+    // const WASM_I64_BYTES_TMP: usize = 4;
     let mut pc_to_arr = [0u8; WASM_I64_BYTES];
     let mut bytes_to_fetch = if bytes_before < WASM_I64_BYTES {
         bytes_before
@@ -50,8 +50,8 @@ pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     let pc_to_slice =
         translator.get_bytecode_slice(Some(-1 - bytes_to_fetch as isize), bytes_to_fetch);
     pc_to_arr[WASM_I64_BYTES - pc_to_slice.len()..].copy_from_slice(pc_to_slice);
-    let pc_to = usize::from_be_bytes(pc_to_arr);
-    translator.jumps_to_process_add(OPCODE, pc_from, pc_to);
+    let pc_to = i64::from_be_bytes(pc_to_arr);
+    translator.jumps_to_process_add(OPCODE, pc_from, pc_to as usize);
     let is = host.instruction_set();
 
     sp_drop_u256(is, OP_PARAMS_COUNT);
@@ -67,7 +67,7 @@ pub const JUMPI_PARAMS_COUNT: usize = 31;
 pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "JUMPI";
     const OPCODE: u8 = JUMPI;
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     const OP_PARAMS_COUNT: u64 = 2;
 
     let pc_from = translator.program_counter() - 1;
@@ -81,6 +81,7 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     if bytes_before != push_count {
         panic!("expected distance {} got {}", push_count, bytes_before);
     };
+    // const WASM_I64_BYTES_TMP: usize = 4;
     let mut pc_to_arr = [0u8; WASM_I64_BYTES];
     let mut bytes_to_fetch = if bytes_before < WASM_I64_BYTES {
         bytes_before
@@ -90,8 +91,8 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     let pc_to_slice =
         translator.get_bytecode_slice(Some(-1 - bytes_to_fetch as isize), bytes_to_fetch);
     pc_to_arr[WASM_I64_BYTES - pc_to_slice.len()..].copy_from_slice(pc_to_slice);
-    let pc_to = usize::from_be_bytes(pc_to_arr);
-    translator.jumps_to_process_add(OPCODE, pc_from, pc_to);
+    let pc_to = u64::from_be_bytes(pc_to_arr);
+    translator.jumps_to_process_add(OPCODE, pc_from, pc_to as usize);
     let is = host.instruction_set();
 
     sp_get_offset(is);
@@ -124,7 +125,7 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn jumpdest<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "JUMPDEST";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
 }
 
 pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -134,13 +135,13 @@ pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "RET";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn revert<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "REVERT";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
