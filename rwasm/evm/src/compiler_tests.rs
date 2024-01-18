@@ -5,89 +5,88 @@ mod evm_to_rwasm_tests {
         consts::{SP_BASE_MEM_OFFSET_DEFAULT, VIRTUAL_STACK_TOP_DEFAULT},
         translator::{
             instruction_result::InstructionResult,
-            instructions::{
-                opcode,
-                opcode::{
-                    ADD,
-                    ADDMOD,
-                    ADDRESS,
-                    AND,
-                    BASEFEE,
-                    BLOBBASEFEE,
-                    BLOBHASH,
-                    BLOCKHASH,
-                    BYTE,
-                    CALLDATACOPY,
-                    CALLDATALOAD,
-                    CALLDATASIZE,
-                    CALLER,
-                    CALLVALUE,
-                    CHAINID,
-                    CODESIZE,
-                    COINBASE,
-                    DIFFICULTY,
-                    DIV,
-                    DUP1,
-                    DUP2,
-                    EQ,
-                    EXP,
-                    GAS,
-                    GASLIMIT,
-                    GASPRICE,
-                    GT,
-                    ISZERO,
-                    JUMP,
-                    JUMPDEST,
-                    JUMPI,
-                    KECCAK256,
-                    LT,
-                    MCOPY,
-                    MLOAD,
-                    MOD,
-                    MSIZE,
-                    MSTORE,
-                    MSTORE8,
-                    MUL,
-                    MULMOD,
-                    NOT,
-                    NUMBER,
-                    OR,
-                    ORIGIN,
-                    POP,
-                    PUSH32,
-                    RETURN,
-                    SAR,
-                    SDIV,
-                    SGT,
-                    SHL,
-                    SHR,
-                    SIGNEXTEND,
-                    SLOAD,
-                    SLT,
-                    SMOD,
-                    SSTORE,
-                    STOP,
-                    SUB,
-                    SWAP1,
-                    SWAP2,
-                    TIMESTAMP,
-                    TLOAD,
-                    TSTORE,
-                    XOR,
-                },
+            instructions::opcode::{
+                ADD,
+                ADDMOD,
+                ADDRESS,
+                AND,
+                BASEFEE,
+                BLOBBASEFEE,
+                BLOBHASH,
+                BLOCKHASH,
+                BYTE,
+                CALLDATACOPY,
+                CALLDATALOAD,
+                CALLDATASIZE,
+                CALLER,
+                CALLVALUE,
+                CHAINID,
+                CODESIZE,
+                COINBASE,
+                DIFFICULTY,
+                DIV,
+                DUP1,
+                DUP2,
+                EQ,
+                EXP,
+                GAS,
+                GASLIMIT,
+                GASPRICE,
+                GT,
+                ISZERO,
+                JUMP,
+                JUMPDEST,
+                JUMPI,
+                KECCAK256,
+                LT,
+                MCOPY,
+                MLOAD,
+                MOD,
+                MSIZE,
+                MSTORE,
+                MSTORE8,
+                MUL,
+                MULMOD,
+                NOT,
+                NUMBER,
+                OR,
+                ORIGIN,
+                POP,
+                PUSH32,
+                RETURN,
+                SAR,
+                SDIV,
+                SGT,
+                SHL,
+                SHR,
+                SIGNEXTEND,
+                SLOAD,
+                SLT,
+                SMOD,
+                SSTORE,
+                STOP,
+                SUB,
+                SWAP1,
+                SWAP2,
+                TIMESTAMP,
+                TLOAD,
+                TSTORE,
+                XOR,
             },
         },
         utilities::EVM_WORD_BYTES,
     };
+    use alloc::{string::ToString, vec, vec::Vec};
     use alloy_primitives::{hex, Bytes, B256};
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
-    use fluentbase_rwasm::{
-        engine::bytecode::Instruction,
-        rwasm::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule},
+    use fluentbase_rwasm::rwasm::{
+        BinaryFormat,
+        BinaryFormatWriter,
+        InstructionSet,
+        ReducedModule,
     };
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
-    use log::debug;
 
     static CONTRACT_ADDRESS: [u8; 20] = [1; 20]; // Address - 20 bytes
     static CONTRACT_CALLER: [u8; 20] = [2; 20]; // Address - 20 bytes
@@ -283,11 +282,11 @@ mod evm_to_rwasm_tests {
 
         let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
         let mut instruction_set = rmodule.bytecode().clone();
-        debug!(
-            "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",
-            rwasm_binary.len(),
-            instruction_set.trace()
-        );
+        // debug!(
+        //     "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",
+        //     rwasm_binary.len(),
+        //     instruction_set.trace()
+        // );
 
         let mut global_memory = vec![];
         let mut global_memory_len: usize = 0;
@@ -299,7 +298,7 @@ mod evm_to_rwasm_tests {
         contract_input.contract_caller = Address::new(CONTRACT_CALLER);
         contract_input.contract_value = U256::from_be_bytes(CONTRACT_VALUE);
         contract_input.contract_code_size = u32::from_be_bytes(SYSTEM_CODESIZE);
-        contract_input.contract_input = CONTRACT_INPUT.to_vec();
+        contract_input.contract_input = Bytes::from(CONTRACT_INPUT);
         contract_input.env_chain_id = u64::from_be_bytes(HOST_CHAINID);
         contract_input.block_base_fee = U256::from_be_bytes(HOST_BASEFEE);
         contract_input.block_hash = B256::new(HOST_BLOCKHASH);
@@ -308,13 +307,13 @@ mod evm_to_rwasm_tests {
         contract_input.block_number = u64::from_be_bytes(HOST_NUMBER);
         contract_input.block_timestamp = u64::from_be_bytes(HOST_TIMESTAMP);
         contract_input.block_difficulty = u64::from_be_bytes(HOST_ENV_DIFFICULTY);
-        contract_input.tx_blob_gas_price = u64::from_be_bytes(HOST_ENV_BLOBBASEFEE);
+        // contract_input.tx_blob_gas_price = u64::from_be_bytes(HOST_ENV_BLOBBASEFEE);
         contract_input.tx_gas_price = U256::from_be_bytes(HOST_ENV_GASPRICE);
         contract_input.tx_caller = Address::new(HOST_ENV_ORIGIN);
-        contract_input.tx_blob_hashes = HOST_ENV_BLOB_HASHES
-            .iter()
-            .map(|v| B256::from_slice(v))
-            .collect();
+        // contract_input.tx_blob_hashes = HOST_ENV_BLOB_HASHES
+        //     .iter()
+        //     .map(|v| B256::from_slice(v))
+        //     .collect();
         let ci = contract_input.encode_to_vec(0);
         runtime_ctx = runtime_ctx.with_input(ci);
 
@@ -335,14 +334,14 @@ mod evm_to_rwasm_tests {
             } else {
                 None
             };
-            debug!(
-                "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
-                idx,
-                log.opcode,
-                prev_opcode.unwrap_or(Instruction::Unreachable),
-                &memory_changes,
-                stack
-            );
+            // debug!(
+            //     "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
+            //     idx,
+            //     log.opcode,
+            //     prev_opcode.unwrap_or(Instruction::Unreachable),
+            //     &memory_changes,
+            //     stack
+            // );
             for change in memory_changes {
                 let offset_start = change.offset as usize;
                 let offset_end = offset_start + change.len as usize;
@@ -355,16 +354,16 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        debug!(
-            "\nruntime.store.data().output() {:?}\n",
-            runtime.data().output()
-        );
+        // debug!(
+        //     "\nruntime.store.data().output() {:?}\n",
+        //     runtime.data().output()
+        // );
         assert_eq!(execution_result.data().exit_code(), 0);
 
-        debug!(
-            "\nglobal_memory ({}): {:?}\n",
-            global_memory_len, &global_memory
-        );
+        // debug!(
+        //     "\nglobal_memory ({}): {:?}\n",
+        //     global_memory_len, &global_memory
+        // );
 
         (global_memory, runtime.data().output().clone())
     }
@@ -2077,8 +2076,6 @@ mod evm_to_rwasm_tests {
         test_op_cases(TIMESTAMP, None, &cases, Some(-1), ResultLocation::Stack);
     }
 
-    // TODO
-    #[ignore]
     #[test]
     fn sload() {
         let cases = [Case::Args1((
@@ -2089,8 +2086,6 @@ mod evm_to_rwasm_tests {
         test_op_cases(SLOAD, None, &cases, Some(-1), ResultLocation::Stack);
     }
 
-    // TODO
-    #[ignore]
     #[test]
     fn sstore() {
         let cases = [Case::Args2((

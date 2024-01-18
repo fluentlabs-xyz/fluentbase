@@ -1,4 +1,5 @@
 use crate::translator::{host::Host, translator::Translator};
+use alloc::format;
 use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::rwasm::InstructionSet;
 

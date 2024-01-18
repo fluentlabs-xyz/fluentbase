@@ -7,7 +7,7 @@ host_chainid host_basefee host_blockhash host_coinbase host_gaslimit host_number
 host_env_block_difficulty host_env_blobbasefee host_env_gasprice host_env_origin host_env_blobhash \
 control_return control_revert
 
-all: $(FILES)
+all: solid_file
 
 TARGET=wasm32-unknown-unknown
 PROFILE=release
@@ -15,7 +15,7 @@ TEST_CASE=arithmetic_sdiv
 
 .PHONY: $(FILES)
 $(FILES):
-	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/rwasm-code-snippets/bin/$@.wat
+	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/code-snippets/bin/$@.wat
 
 solid_file:
-	cargo run -- --entry-fn-name=$(ENTRY_FN_NAME) --entry-fn-name-beginnings-for="$(FILES)" --skip-translate-sections --skip-type-check --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/rwasm-code-snippets/bin/$@.wat
+	cargo run -- --entry-fn-name=$(ENTRY_FN_NAME) --entry-fn-name-beginnings-for="$(FILES)" --skip-translate-sections --skip-type-check --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/code-snippets/bin/$@.wat

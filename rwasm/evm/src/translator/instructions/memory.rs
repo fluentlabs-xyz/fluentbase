@@ -15,30 +15,30 @@ use crate::{
     },
 };
 use fluentbase_runtime::SysFuncIdx;
+// use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::rwasm::InstructionSet;
-use log::debug;
 
 pub fn mload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MLOAD";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSTORE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSORE8";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 
 pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSIZE";
-    debug!("op:{}", OP);
+    // debug!("op:{}", OP);
     replace_current_opcode_with_call_to_subroutine(translator, host);
 }
 

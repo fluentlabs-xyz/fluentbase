@@ -1,23 +1,21 @@
-use crate::{
-    translator::{
-        host::Host,
-        instruction_result::InstructionResult,
-        instructions::{
-            control::{JUMPI_PARAMS_COUNT, JUMP_PARAMS_COUNT},
-            opcode,
-        },
-        translator::contract::Contract,
+use crate::translator::{
+    host::Host,
+    instruction_result::InstructionResult,
+    instructions::{
+        control::{JUMPI_PARAMS_COUNT, JUMP_PARAMS_COUNT},
+        opcode,
     },
-    utilities::sp_drop_u256_gen,
+    translator::contract::Contract,
 };
+use alloc::{boxed::Box, vec::Vec};
 pub use analysis::BytecodeLocked;
+use core::marker::PhantomData;
 use fluentbase_rwasm::{
     common::UntypedValue,
     engine::bytecode::Instruction,
     rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule},
 };
-use log::debug;
-use std::{collections::HashMap, marker::PhantomData};
+use hashbrown::HashMap;
 
 pub mod analysis;
 pub mod contract;
@@ -100,7 +98,7 @@ impl<'a> Translator<'a> {
                 }
             };
             let idx = is_offsets_from.0 + aux_idx; // TODO replace form_sp_drop_u256
-            debug!("translator: applying jumps fixes at idx {}", idx);
+                                                   // debug!("translator: applying jumps fixes at idx {}", idx);
             if let Instruction::I64Const(v) = is.instr[idx] {
                 let val_new = UntypedValue::from(v.as_i32() + jump_rel_offset);
                 is.instr[idx] = Instruction::I64Const(val_new);
@@ -165,10 +163,10 @@ impl<'a> Translator<'a> {
         self.native_offset_to_rwasm_instr_offset
             .insert(pc, (is_offset_start, is_offset_end));
         self.instruction_pointer_prev = instruction_pointer;
-        debug!(
-            "translator opcode:{} pc:{} is_offset(start:{}..end:{})",
-            opcode, pc, is_offset_start, is_offset_end
-        );
+        // debug!(
+        //     "translator opcode:{} pc:{} is_offset(start:{}..end:{})",
+        //     opcode, pc, is_offset_start, is_offset_end
+        // );
     }
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {
@@ -210,7 +208,7 @@ impl<'a> Translator<'a> {
     }
 
     fn init_code_snippets(&mut self) {
-        let opcode_to_entry = include!("../../../rwasm-code-snippets/bin/solid_file.rs").as_slice();
+        let opcode_to_entry = include!("../../../code-snippets/bin/solid_file.rs").as_slice();
         let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
@@ -239,7 +237,7 @@ impl<'a> Translator<'a> {
         };
 
         initiate_subroutines_solid_file(
-            include_bytes!("../../../rwasm-code-snippets/bin/solid_file.rwasm").as_slice(),
+            include_bytes!("../../../code-snippets/bin/solid_file.rwasm").as_slice(),
         );
     }
 

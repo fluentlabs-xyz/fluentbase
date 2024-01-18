@@ -1,4 +1,4 @@
-use crate::{storage::TrieDb, RuntimeError};
+use crate::{complex_types::RuntimeError, storage::TrieDb};
 
 #[derive(Debug, Default, Clone)]
 pub struct NoopPersistentStorage;
