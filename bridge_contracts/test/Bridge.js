@@ -15,6 +15,9 @@ describe("Bridge", function () {
 
         bridge = await BridgeContract.deploy(accounts[0].address, rollup.address);
         await bridge.deployed();
+
+        let setBridge = await rollup.setBridge(bridge.address);
+        await setBridge.wait();
     });
 
     it("Send message test", async function () {
@@ -178,7 +181,5 @@ describe("Bridge", function () {
         new_balance = await hre.ethers.provider.getBalance(receiverAddress);
         expect(new_balance.sub(origin_balance)).to.be.eql(BigNumber.from(300));
 
-
-0000000000000000000000000000000000000000000000000000000000000000
     });
 });
