@@ -1,6 +1,5 @@
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Bridge} from "./Bridge.sol";
-import "hardhat/console.sol";
 
 contract Rollup is Ownable {
     address public bridge;
@@ -57,11 +56,6 @@ contract Rollup is Ownable {
         return true;
     }
 
-    function lastWithdrawRoot(
-    ) external view returns (bytes32) {
-        return withdrawRoots[lastProofedIndex];
-    }
-
     function calculateMerkleRoot(
         bytes memory _leafs
     ) external pure returns (bytes32) {
@@ -73,7 +67,6 @@ contract Rollup is Ownable {
     ) internal pure returns (bytes32) {
         uint256 count = _leafs.length / 32;
 
-        console.logBytes(_leafs);
         require(count > 0, "empty leafs");
 
         while (count > 0) {
@@ -90,16 +83,12 @@ contract Rollup is Ownable {
                 assembly {
                     mstore(add(add(_leafs, 32), mul(i, 32)), hash)
                 }
-                console.logBytes32(left);
-                console.logBytes32(right);
             }
 
-            console.log(count);
             if (count % 2 == 1 && count > 1) {
                 assembly {
                     left := mload(add(add(_leafs, 32), mul(sub(count, 1), 32)))
                 }
-                console.logBytes32(left);
                 hash = _efficientHash(left, bytes32(0));
 
                 assembly {
@@ -127,26 +116,18 @@ contract Rollup is Ownable {
         require(_proof.length % 32 == 0, "Invalid proof");
         uint256 _length = _proof.length / 32;
 
-        console.logBytes(_proof);
-
         for (uint256 i = 0; i < _length; i++) {
             bytes32 item;
             assembly {
                 item := mload(add(add(_proof, 32), mul(i, 32)))
             }
             if (_nonce % 2 == 0) {
-                console.logBytes32(item);
-                console.logBytes32(_hash);
                 _hash = _efficientHash(_hash, item);
             } else {
-                console.logBytes32(item);
-                console.logBytes32(_hash);
                 _hash = _efficientHash(item, _hash);
             }
             _nonce /= 2;
         }
-        console.logBytes32(_hash);
-        console.logBytes32(_root);
         return _hash == _root;
     }
 

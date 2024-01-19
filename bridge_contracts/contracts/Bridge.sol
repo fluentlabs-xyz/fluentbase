@@ -2,7 +2,6 @@
 
 pragma solidity ^0.8.0;
 
-import "hardhat/console.sol";
 import {IERC20Gateway} from "./IERC20Gateway.sol";
 import {Rollup} from "./Rollup.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
@@ -60,22 +59,22 @@ contract Bridge {
         uint256 _value,
         uint256 _nonce,
         bytes calldata _message,
-        bytes memory merkleProof
+        bytes memory merkleProof,
+        uint256 proofIndex
     ) external payable {
-        console.logString("Begin");
         bytes memory encodedMessage = _encodeMessage(_from, _to, _value, _nonce, _message);
 
         bytes32 messageHash = keccak256(encodedMessage);
-
         require(!receivedMessage[messageHash], "Message already received");
 
-        bytes32 _messageRoot = Rollup(rollup).lastWithdrawRoot();
+        require(Rollup(rollup).acceptedProofIndex(proofIndex));
+
+        bytes32 _messageRoot = Rollup(rollup).withdrawRoots(proofIndex);
         require(
             Rollup(rollup).verifyMerkleProof(_messageRoot, messageHash, _nonce, merkleProof),
             "Invalid proof"
         );
 
-        console.logString("ENd");
         _receiveMessage(_from, _to, _value, _nonce, _message, messageHash);
     }
 

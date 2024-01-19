@@ -114,6 +114,7 @@ describe("Bridge", function () {
             0,
             [],
             [],
+            1
         );
 
         await receive_tx.wait();
@@ -142,6 +143,7 @@ describe("Bridge", function () {
             1,
             [],
             Buffer.from("1fbe8b16b467b65c93cc416c9f6a43585820a41b90f14f6b74abe46e017fac75", 'hex'),
+            2
         );
 
         events = await bridge.queryFilter("ReceivedMessage", receive_tx.blockNumber);
@@ -168,6 +170,7 @@ describe("Bridge", function () {
             2,
             [],
             Buffer.from("00000000000000000000000000000000000000000000000000000000000000003e13975f9e4165cf4119f2f82528f20d0ba7d1ab18cf62b0e07a625fdcb600ba", 'hex'),
+            3
         );
 
         events = await bridge.queryFilter("ReceivedMessage", receive_tx.blockNumber);
