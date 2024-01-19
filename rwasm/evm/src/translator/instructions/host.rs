@@ -100,12 +100,18 @@ pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLOAD";
     #[cfg(test)]
     debug!("op:{}", OP);
+    pop!(translator, index);
     // const OP_PARAMS_COUNT: u64 = 1;
     // let is = translator.result_instruction_set();
     // sp_get_offset(is);
     // is.op_local_get(1); // save to the same word
     // wasm_call(translator, is, SysFuncIdx::ZKTRIE_LOAD);
-    // TODO gas (think)
+    // TODO what todo with hot/cold logic
+    // let Some((value, is_cold)) = host.sload(interpreter.contract.address, index) else {
+    //     interpreter.instruction_result = InstructionResult::FatalExternalError;
+    //     return;
+    // };
+    gas!(translator, gas::calc::sload_cost(/*is_cold*/));
 
     replace_with_call_to_subroutine(translator, host);
 }
@@ -121,6 +127,18 @@ pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     // wasm_call(translator, is, SysFuncIdx::ZKTRIE_STORE);
     // sp_drop_u256(is, OP_PARAMS_COUNT);
     // TODO gas (think)
+    pop!(translator, index, value);
+    // TODO what todo with hot/cold logic
+    // let Some((original, old, new, is_cold)) =
+    //     host.sstore(interpreter.contract.address, index, value)
+    //     else {
+    //         interpreter.instruction_result = InstructionResult::FatalExternalError;
+    //         return;
+    //     };
+    // gas_or_fail!(translator, {
+    //     let remaining_gas = translator.gas.remaining();
+    //     gas::calc::::sstore_cost(original, old, new, remaining_gas, false)
+    // });
 
     replace_with_call_to_subroutine(translator, host);
 }
@@ -148,41 +166,34 @@ pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn log<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "LOG";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn selfdestruct<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "SELFDESTRUCT";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn create<const IS_CREATE2: bool, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CREATE";
     panic!("op:{}(IS_CREATE2:{}) not implemented", OP, IS_CREATE2);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CALL";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn call_code<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CALL_CODE";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn delegate_call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "DELEGATE_CALL";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
 
 pub fn static_call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "STATIC_CALL";
     panic!("op:{} not implemented", OP);
-    // TODO gas (not implemented opcode)
 }
