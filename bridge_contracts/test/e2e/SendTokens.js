@@ -7,9 +7,12 @@ describe("Contract deployment and interaction", function () {
     let l1Url = 'http://127.0.0.1:8545/';
     let l2Url = 'http://127.0.0.1:8546/';
     let l1Implementation, l2Implementation;
+    let rollup;
+
+    let messageHashes = []
 
     before(async () => {
-        [l1Gateway, l1Bridge, l1Implementation, l1Factory] = await SetUpChain(l1Url);
+        [l1Gateway, l1Bridge, l1Implementation, l1Factory] = await SetUpChain(l1Url, true);
 
         [l2Gateway, l2Bridge, l2Implementation, l2Factory] = await SetUpChain(l2Url)
 
@@ -30,7 +33,7 @@ describe("Contract deployment and interaction", function () {
         await tx.wait()
     });
 
-    async function SetUpChain(provider_url) {
+    async function SetUpChain(provider_url, withRollup) {
         let provider = new ethers.providers.JsonRpcProvider(provider_url);
 
         let signer = provider.getSigner();
@@ -42,7 +45,16 @@ describe("Contract deployment and interaction", function () {
 
         const BridgeContract = await ethers.getContractFactory("Bridge");
         const accounts = await hre.ethers.getSigners();
-        let bridge = await BridgeContract.connect(signer).deploy(accounts[0].address, accounts[1].address);
+
+        let rollupAddress = "0x0000000000000000000000000000000000000000";
+        if (withRollup) {
+            const RollupContract = await ethers.getContractFactory("Rollup");
+            rollup = await RollupContract.connect(signer).deploy();
+            rollupAddress = rollup.address;
+            console.log("Rollup address: ", rollupAddress);
+        }
+
+        let bridge = await BridgeContract.connect(signer).deploy(accounts[0].address, rollupAddress);
         await bridge.deployed();
         console.log("Bridge: ", bridge.address);
 
@@ -77,11 +89,7 @@ describe("Contract deployment and interaction", function () {
     it("Bridging tokens between to contracts", async function () {
         let provider = new ethers.providers.JsonRpcProvider(l1Url);
         let accounts = await provider.listAccounts();
-        console.log("Accounts: ", );
-        console.log("Sig: ", await provider.getSigner().getAddress());
-        console.log("Sig 0: ", await provider.getSigner(0).getAddress());
-        console.log("Sig 1: ", await provider.getSigner(1).getAddress());
-        console.log("Sig acc: ", await provider.getSigner(await provider.listAccounts()[0]).getAddress());
+
         const approve_tx = await l1Token.approve(l1Gateway.address, 100);
         await approve_tx.wait();
 
@@ -96,7 +104,6 @@ describe("Contract deployment and interaction", function () {
 
         expect(events.length).to.equal(1);
 
-        console.log(events)
         const sentEvent = events[0];
 
         const receive_tx = await l2Bridge.receiveMessage(
@@ -130,16 +137,26 @@ describe("Contract deployment and interaction", function () {
         const backEvents = await l2Bridge.queryFilter("SentMessage", send_tx.blockNumber);
 
         expect(backEvents.length).to.equal(1);
+        let messageHash = backEvents[0].args.messageHash;
 
         console.log(backEvents)
         const sentBackEvent = backEvents[0];
 
-        const receiveBackTx = await l1Bridge.receiveMessage(
+        const accept = await rollup.acceptNextProof(
+            1,
+            messageHash,
+            []
+        )
+
+        await accept.wait();
+
+        const receiveBackTx = await l1Bridge.receiveMessageWithProof(
             sentBackEvent.args["sender"],
             sentBackEvent.args["to"],
             sentBackEvent.args["value"],
             sentBackEvent.args["nonce"],
-            sentBackEvent.args["data"]
+            sentBackEvent.args["data"],
+            []
         );
 
         await receiveBackTx.wait();

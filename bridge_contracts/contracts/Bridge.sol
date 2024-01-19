@@ -2,8 +2,9 @@
 
 pragma solidity ^0.8.0;
 
+import "hardhat/console.sol";
 import {IERC20Gateway} from "./IERC20Gateway.sol";
-
+import {Rollup} from "./Rollup.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
@@ -12,7 +13,7 @@ contract Bridge {
     uint256 public nonce;
 
     mapping(bytes32 => bool) public receivedMessage;
-
+    mapping(bytes32 => bool) public sentMessage;
     address public bridgeAuthority;
     address public rollup;
 
@@ -48,6 +49,8 @@ contract Bridge {
 
         bytes32 messageHash = keccak256(encodedMessage);
 
+        sentMessage[messageHash] = true;
+
         emit SentMessage(from, _to, value, messageNonce, messageHash, _message);
     }
 
@@ -57,25 +60,22 @@ contract Bridge {
         uint256 _value,
         uint256 _nonce,
         bytes calldata _message,
-        bytes memory merkleProof,
-        uint256 proofIndex
+        bytes memory merkleProof
     ) external payable {
+        console.logString("Begin");
         bytes memory encodedMessage = _encodeMessage(_from, _to, _value, _nonce, _message);
 
         bytes32 messageHash = keccak256(encodedMessage);
 
         require(!receivedMessage[messageHash], "Message already received");
 
-        {
-            address _rollup = rollup;
-            require(Rollup(_rollup).acceptedProofIndex(proofIndex));
-            bytes32 _messageRoot = Rollup(_rollup).withdrawRoots(proofIndex);
-            require(
-                Rollup(_rollup).verifyMerkleProof(_messageRoot, messageHash, _nonce, merkleProof),
-                "Invalid proof"
-            );
-        }
+        bytes32 _messageRoot = Rollup(rollup).lastWithdrawRoot();
+        require(
+            Rollup(rollup).verifyMerkleProof(_messageRoot, messageHash, _nonce, merkleProof),
+            "Invalid proof"
+        );
 
+        console.logString("ENd");
         _receiveMessage(_from, _to, _value, _nonce, _message, messageHash);
     }
 

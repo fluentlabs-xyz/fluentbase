@@ -108,7 +108,6 @@ describe("Bridge", function () {
                 )
                 .slice(2);
 
-        console.log("This");
         const data = hre.ethers.utils.defaultAbiCoder
             .encode(
                 ["address", "address", "uint256", "uint256", "bytes"],
@@ -119,9 +118,8 @@ describe("Bridge", function () {
         const inputBytes = Buffer.from(data, "hex");
         const hash = ethers.utils.keccak256(inputBytes);
 
-        expect(hash).to.equal("0x95bca3e344b05a8f3e3a72c8ae351f07fca4e01db60a313ff5eb4252b7d3ef30");
+        expect(hash).to.equal("0xed6c9db457d77d53b6bf21b449e6404456b3628853693ee133cb2e893e6cc503");
 
-        console.log("That");
         const receive_tx = await contractWithSigner.receiveMessage(
             "0x1111111111111111111111111111111111111111",
             erc20Gateway.address,
@@ -134,14 +132,12 @@ describe("Bridge", function () {
 
         let error_events = await bridge.queryFilter("Error", receive_tx.blockNumber);
 
-        console.log(error_events);
-
-
+        expect(error_events.length).to.equal(0);
         let events = await bridge.queryFilter("ReceivedMessage", receive_tx.blockNumber);
 
         expect(events.length).to.equal(1);
         expect(events[0].args.messageHash).to.equal(
-          "0x50f618e7a0139020d4a2ceb3b9eebdcaa681dfc8082781348f97dcd938aa5279",
+          "0x7523b9a58ac19b3ba6f272eb7120f22dcdaab28cc069fe8829acdba0e3992507",
         );
         expect(events[0].args.successfulCall).to.equal(true);
 
