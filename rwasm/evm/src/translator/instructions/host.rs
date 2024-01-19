@@ -1,9 +1,14 @@
-use crate::translator::{
-    host::Host,
-    instructions::utilities::{replace_current_opcode_with_call_to_subroutine, wasm_call},
-    translator::Translator,
+use crate::{
+    translator::{
+        host::Host,
+        instructions::utilities::{replace_with_call_to_subroutine, wasm_call},
+        translator::Translator,
+    },
+    utilities::{sp_drop_u256, sp_get_offset, EVM_WORD_BYTES},
 };
 use fluentbase_runtime::SysFuncIdx;
+#[cfg(test)]
+use log::debug;
 
 pub fn balance<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "BALANCE";
@@ -33,32 +38,48 @@ pub fn extcodecopy<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BLOCKHASH";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
-}
-
-pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    const OP: &str = "SLOAD";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SSTORE";
-    // debug!("op:{}", OP);
-    wasm_call(translator, host.instruction_set(), SysFuncIdx::ZKTRIE_STORE);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    // const OP_PARAMS_COUNT: u64 = 2;
+    // let is = host.instruction_set();
+    // sp_get_offset(is, None);
+    // sp_get_offset(is, Some(EVM_WORD_BYTES as i64));
+    // wasm_call(translator, is, SysFuncIdx::ZKTRIE_STORE);
+    // sp_drop_u256(is, OP_PARAMS_COUNT);
+    replace_with_call_to_subroutine(translator, host);
+}
+
+pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "SLOAD";
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    // const OP_PARAMS_COUNT: u64 = 1;
+    // let is = host.instruction_set();
+    // sp_get_offset(is);
+    // is.op_local_get(1); // save to the same word
+    // wasm_call(translator, is, SysFuncIdx::ZKTRIE_LOAD);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TSTORE";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TLOAD";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn log<const N: usize, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {

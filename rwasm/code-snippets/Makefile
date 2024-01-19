@@ -7,7 +7,7 @@ host_chainid host_basefee host_blockhash host_coinbase host_gaslimit host_number
 host_env_block_difficulty host_env_blobbasefee host_env_gasprice host_env_origin host_env_blobhash \
 control_return control_revert
 
-all: $(FILES)
+all: solid_file
 
 TARGET=wasm32-unknown-unknown
 PROFILE=release

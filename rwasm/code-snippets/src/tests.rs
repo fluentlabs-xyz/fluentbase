@@ -17,12 +17,16 @@ mod all_tests {
     #[cfg(feature = "arithmetic_sub")]
     use crate::arithmetic::sub::arithmetic_sub;
     use crate::{
+        common_sp::{stack_pop_u256, SP_BASE_MEM_OFFSET_DEFAULT},
+        consts::U256_BYTES_COUNT,
         test_utils::{u256_from_le_u64, u256_into_le_tuple},
         ts::{ts_get, ts_set},
     };
     use alloc::vec;
-    use fluentbase_sdk::evm::U256;
+    use fluentbase_sdk::{evm::U256, LowLevelSDK};
     use log::debug;
+
+    extern crate fluentbase_sdk;
 
     #[cfg(feature = "test_hashmap")]
     #[test]

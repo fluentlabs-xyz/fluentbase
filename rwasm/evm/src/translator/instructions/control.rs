@@ -4,7 +4,7 @@ use crate::{
         instruction_result::InstructionResult,
         instructions::{
             opcode::{compute_push_count, JUMP, JUMPI, PUSH0, PUSH32},
-            utilities::{replace_current_opcode_with_call_to_subroutine, wasm_call},
+            utilities::replace_with_call_to_subroutine,
         },
         translator::Translator,
     },
@@ -20,13 +20,16 @@ use crate::{
     },
 };
 use core::{i64, u64};
+#[cfg(test)]
+use log::debug;
 
 // recompute this value after adding or removing rwasm ops to jump()
 pub const JUMP_PARAMS_COUNT: usize = 6;
 pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "JUMP";
     const OPCODE: u8 = JUMP;
-    // debug!("op:{}", OP);
+    #[cfg(test)]
+    debug!("op:{}", OP);
     const OP_PARAMS_COUNT: u64 = 1;
 
     let pc_from = translator.program_counter() - 1;
@@ -67,7 +70,8 @@ pub const JUMPI_PARAMS_COUNT: usize = 31;
 pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "JUMPI";
     const OPCODE: u8 = JUMPI;
-    // debug!("op:{}", OP);
+    #[cfg(test)]
+    debug!("op:{}", OP);
     const OP_PARAMS_COUNT: u64 = 2;
 
     let pc_from = translator.program_counter() - 1;
@@ -95,7 +99,7 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     translator.jumps_to_process_add(OPCODE, pc_from, pc_to as usize);
     let is = host.instruction_set();
 
-    sp_get_offset(is);
+    sp_get_offset(is, None);
     sp_drop_u256(is, OP_PARAMS_COUNT);
 
     // fetch conditional param and make decision based on it
@@ -125,7 +129,8 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn jumpdest<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "JUMPDEST";
-    // debug!("op:{}", OP);
+    #[cfg(test)]
+    debug!("op:{}", OP);
 }
 
 pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
@@ -135,14 +140,16 @@ pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "RET";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn revert<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "REVERT";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

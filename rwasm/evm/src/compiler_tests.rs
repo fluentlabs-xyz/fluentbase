@@ -2,7 +2,7 @@
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
-        consts::{SP_BASE_MEM_OFFSET_DEFAULT, VIRTUAL_STACK_TOP_DEFAULT},
+        consts::{INTERNAL_VIRTUAL_STACK_TOP_DEFAULT, SP_BASE_MEM_OFFSET_DEFAULT},
         translator::{
             instruction_result::InstructionResult,
             instructions::opcode::{
@@ -80,13 +80,12 @@ mod evm_to_rwasm_tests {
     use alloy_primitives::{hex, Bytes, B256};
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
-    use fluentbase_rwasm::rwasm::{
-        BinaryFormat,
-        BinaryFormatWriter,
-        InstructionSet,
-        ReducedModule,
+    use fluentbase_rwasm::{
+        engine::bytecode::Instruction,
+        rwasm::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule},
     };
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
+    use log::debug;
 
     static CONTRACT_ADDRESS: [u8; 20] = [1; 20]; // Address - 20 bytes
     static CONTRACT_CALLER: [u8; 20] = [2; 20]; // Address - 20 bytes
@@ -119,7 +118,7 @@ mod evm_to_rwasm_tests {
         Args2((Vec<u8>, Vec<u8>, Vec<u8>)),
         // result_expected a b c
         Args3((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
-        // result_expected a b c
+        // result_expected param_1..param_n
         Universal(Vec<Vec<u8>>),
     }
 
@@ -262,7 +261,7 @@ mod evm_to_rwasm_tests {
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();
-        let virtual_stack_top = VIRTUAL_STACK_TOP_DEFAULT;
+        let virtual_stack_top = INTERNAL_VIRTUAL_STACK_TOP_DEFAULT;
         preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
         preamble.op_global_set(0);
         preamble.op_i32_const(20);
@@ -282,11 +281,11 @@ mod evm_to_rwasm_tests {
 
         let mut rmodule = ReducedModule::new(&rwasm_binary).unwrap();
         let mut instruction_set = rmodule.bytecode().clone();
-        // debug!(
-        //     "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",
-        //     rwasm_binary.len(),
-        //     instruction_set.trace()
-        // );
+        debug!(
+            "\nrmodule.trace_binary() (rwasm_binary.len={}): \n{}\n",
+            rwasm_binary.len(),
+            instruction_set.trace()
+        );
 
         let mut global_memory = vec![];
         let mut global_memory_len: usize = 0;
@@ -320,7 +319,6 @@ mod evm_to_rwasm_tests {
         let runtime = Runtime::new(runtime_ctx, &import_linker);
         let mut runtime = runtime.unwrap();
         let result = runtime.call();
-        // let result = Runtime::run(&rwasm_binary, &Vec::new(), 0);
         assert!(result.is_ok());
         let execution_result: ExecutionResult<()> = result.unwrap();
         for (idx, log) in execution_result.tracer().logs.iter().enumerate() {
@@ -334,14 +332,14 @@ mod evm_to_rwasm_tests {
             } else {
                 None
             };
-            // debug!(
-            //     "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
-            //     idx,
-            //     log.opcode,
-            //     prev_opcode.unwrap_or(Instruction::Unreachable),
-            //     &memory_changes,
-            //     stack
-            // );
+            debug!(
+                "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
+                idx,
+                log.opcode,
+                prev_opcode.unwrap_or(Instruction::Unreachable),
+                &memory_changes,
+                stack
+            );
             for change in memory_changes {
                 let offset_start = change.offset as usize;
                 let offset_end = offset_start + change.len as usize;
@@ -354,10 +352,10 @@ mod evm_to_rwasm_tests {
                 }
             }
         }
-        // debug!(
-        //     "\nruntime.store.data().output() {:?}\n",
-        //     runtime.data().output()
-        // );
+        debug!(
+            "\nruntime.store.data().output() {:?}\n",
+            runtime.data().output()
+        );
         assert_eq!(execution_result.data().exit_code(), 0);
 
         // debug!(
@@ -2077,45 +2075,32 @@ mod evm_to_rwasm_tests {
     }
 
     #[test]
-    fn sload() {
+    fn sstore_sload() {
+        let mut preamble = vec![];
+        preamble.extend(compile_op_with_args_bytecode(
+            Some(SSTORE),
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0000000000000000000000000000000000000000000000000000000000000002"),
+                vec![],
+            )),
+        ));
         let cases = [Case::Args1((
             x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
-        ))];
-
-        test_op_cases(SLOAD, None, &cases, Some(-1), ResultLocation::Stack);
-    }
-
-    #[test]
-    fn sstore() {
-        let cases = [Case::Args2((
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
-        ))];
-
-        test_op_cases(SSTORE, None, &cases, Some(-1), ResultLocation::Stack);
-    }
-
-    #[test]
-    fn tstore() {
-        let cases = [Case::Args2((
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
             x("0000000000000000000000000000000000000000000000000000000000000002"),
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
         ))];
 
         test_op_cases(
-            TSTORE,
-            None,
+            SLOAD,
+            Some(&preamble),
             &cases,
-            Some(0),
-            ResultLocation::Memory(SP_BASE_MEM_OFFSET_DEFAULT),
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
         );
     }
 
     #[test]
-    fn tload() {
+    fn tstore_tload() {
         let mut preamble = vec![];
         preamble.extend(compile_op_with_args_bytecode(
             Some(TSTORE),
@@ -2134,7 +2119,7 @@ mod evm_to_rwasm_tests {
             TLOAD,
             Some(&preamble),
             &cases,
-            Some(32),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
         );
     }
@@ -2361,7 +2346,7 @@ mod evm_to_rwasm_tests {
             STOP, // special case
             Some(&preamble_bytecode),
             &cases,
-            Some(32),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
         );
     }

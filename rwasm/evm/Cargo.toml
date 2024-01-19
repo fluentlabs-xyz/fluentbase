@@ -3,7 +3,15 @@ name = "fluentbase-rwasm-evm-translator"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib"]
+bench = false
+test = false
+proc-macro = false
+
+
 [dependencies]
+fluentbase-rwasm-code-snippets = { path = "../code-snippets" }
 fluentbase-rwasm = { path = "..", default-features = false }
 fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
 fluentbase-codec = { path = "../../codec", default-features = false }
@@ -14,14 +22,9 @@ fluentbase-runtime = { path = "../../runtime", default-features = false, feature
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../../runtime" }
+env_logger = { version = "0.10.2" }
+log = { version = "0.4.20" }
+ctor = "0.2.6"
 
 [build-dependencies]
 hex = { version = "0.4", default-features = false }
-
-[lib]
-crate-type = ["cdylib"]
-bench = false
-test = false
-proc-macro = false
-
-
