@@ -65,13 +65,12 @@ pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MCOPY";
     #[cfg(test)]
     debug!("op:{}", OP);
-    // TODO gas
     pop!(translator, dst, src, len);
     // into usize or fail
     let len = as_usize_or_fail!(translator, len);
     // deduce gas
     gas_or_fail!(translator, gas::calc::verylowcopy_cost(len as u32));
-    // if len == 0 {
+    // if len == 0 { // TODO just drop params on stack?
     //     return;
     // }
 

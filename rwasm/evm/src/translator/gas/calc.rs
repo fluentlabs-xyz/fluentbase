@@ -1,6 +1,5 @@
 use super::constants::*;
-// use crate::inner_models::SelfDestructResult;
-// use crate::primitives::{Address, Spec, SpecId::*, U256};
+use crate::primitives::{Address, U256};
 
 // #[allow(clippy::collapsible_else_if)]
 // pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i64 {
@@ -147,11 +146,11 @@ pub fn verylowcopy_cost(len: u32) -> Option<u32> {
 //         .checked_add(LOGTOPIC * n as u64)
 // }
 //
-// pub fn keccak256_cost(len: u64) -> Option<u64> {
-//     let wordd = len / 32;
-//     let wordr = len % 32;
-//     KECCAK256.checked_add(KECCAK256WORD.checked_mul(if wordr == 0 { wordd } else { wordd + 1 })?)
-// }
+pub fn keccak256_cost(len: u32) -> Option<u32> {
+    let wordd = len / 32;
+    let wordr = len % 32;
+    KECCAK256.checked_add(KECCAK256WORD.checked_mul(if wordr == 0 { wordd } else { wordd + 1 })?)
+}
 //
 // /// EIP-3860: Limit and meter initcode
 // ///
@@ -164,28 +163,28 @@ pub fn verylowcopy_cost(len: u32) -> Option<u32> {
 //     let wordr = len % 32;
 //     INITCODE_WORD_COST * if wordr == 0 { wordd } else { wordd + 1 }
 // }
-//
-// #[inline]
-// pub fn sload_cost<SPEC: Spec>(is_cold: bool) -> u64 {
-//     if SPEC::enabled(BERLIN) {
-//         if is_cold {
-//             COLD_SLOAD_COST
-//         } else {
-//             WARM_STORAGE_READ_COST
-//         }
-//     } else if SPEC::enabled(ISTANBUL) {
-//         // EIP-1884: Repricing for trie-size-dependent opcodes
-//         800
-//     } else if SPEC::enabled(TANGERINE) {
-//         // EIP-150: Gas cost changes for IO-heavy operations
-//         200
-//     } else {
-//         50
-//     }
-// }
-//
+
+#[inline]
+pub fn sload_cost(/*is_cold: bool*/) -> u32 {
+    // if SPEC::enabled(BERLIN) {
+    //     if is_cold {
+    //         COLD_SLOAD_COST
+    //     } else {
+    WARM_STORAGE_READ_COST
+    //     }
+    // } else if SPEC::enabled(ISTANBUL) {
+    //     // EIP-1884: Repricing for trie-size-dependent opcodes
+    //     800
+    // } else if SPEC::enabled(TANGERINE) {
+    //     // EIP-150: Gas cost changes for IO-heavy operations
+    //     200
+    // } else {
+    //     50
+    // }
+}
+
 // #[allow(clippy::collapsible_else_if)]
-// pub fn sstore_cost<SPEC: Spec>(
+// pub fn sstore_cost(
 //     original: U256,
 //     current: U256,
 //     new: U256,
@@ -235,7 +234,7 @@ pub fn verylowcopy_cost(len: u32) -> Option<u32> {
 //         Some(gas_cost)
 //     }
 // }
-//
+
 // pub fn selfdestruct_cost<SPEC: Spec>(res: SelfDestructResult) -> u64 {
 //     // EIP-161: State trie clearing (invariant-preserving alternative)
 //     let should_charge_topup = if SPEC::enabled(SPURIOUS_DRAGON) {
