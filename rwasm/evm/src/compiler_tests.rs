@@ -291,7 +291,6 @@ mod evm_to_rwasm_tests {
         let mut global_memory_len: usize = 0;
         let mut runtime_ctx = RuntimeContext::new(rwasm_binary);
 
-        // TODO make it customizable
         let mut contract_input = ContractInput::default();
         contract_input.contract_address = Address::new(CONTRACT_ADDRESS);
         contract_input.contract_caller = Address::new(CONTRACT_CALLER);
@@ -314,7 +313,7 @@ mod evm_to_rwasm_tests {
         //     .map(|v| B256::from_slice(v))
         //     .collect();
         let ci = contract_input.encode_to_vec(0);
-        runtime_ctx = runtime_ctx.with_input(ci);
+        runtime_ctx = runtime_ctx.with_input(ci).with_fuel_limit(10_000_000);
 
         let runtime = Runtime::new(runtime_ctx, &import_linker);
         let mut runtime = runtime.unwrap();
@@ -322,9 +321,6 @@ mod evm_to_rwasm_tests {
         assert!(result.is_ok());
         let execution_result: ExecutionResult<()> = result.unwrap();
         for (idx, log) in execution_result.tracer().logs.iter().enumerate() {
-            // if log.memory_changes.len() <= 0 {
-            //     continue;
-            // };
             let memory_changes = &log.memory_changes;
             let stack = &log.stack;
             let prev_opcode = if idx > 0 {
@@ -333,7 +329,7 @@ mod evm_to_rwasm_tests {
                 None
             };
             debug!(
-                "idx {}: opcode:{:?} (prev:{:?}) memory_changes:{:?} stack:{:?}",
+                "trace:idx:{} opcode:{:?} (prev:{:?}) memory_changes(for prev opcode):{:?} stack:{:?}",
                 idx,
                 log.opcode,
                 prev_opcode.unwrap_or(Instruction::Unreachable),

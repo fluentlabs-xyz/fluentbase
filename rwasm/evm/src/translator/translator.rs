@@ -5,9 +5,9 @@ use crate::translator::{
         control::{JUMPI_PARAMS_COUNT, JUMP_PARAMS_COUNT},
         opcode,
     },
-    translator::contract::Contract,
+    translator::{contract::Contract, stack::Stack},
 };
-use alloc::{boxed::Box, format, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 pub use analysis::BytecodeLocked;
 use core::marker::PhantomData;
 use fluentbase_rwasm::{
@@ -19,6 +19,7 @@ use hashbrown::HashMap;
 
 pub mod analysis;
 pub mod contract;
+pub mod stack;
 
 #[derive()]
 pub struct Translator<'a> {
@@ -33,6 +34,8 @@ pub struct Translator<'a> {
     _lifetime: PhantomData<&'a ()>,
     native_offset_to_rwasm_instr_offset: HashMap<usize, (usize, usize)>,
     jumps_to_process: Vec<(u8, usize, usize)>, // opcode, pc_from, pc_to
+    pub stack: Stack,
+    result_instruction_set: Option<InstructionSet>,
 }
 
 pub struct SubroutineData {
@@ -64,9 +67,27 @@ impl<'a> Translator<'a> {
             native_offset_to_rwasm_instr_offset: Default::default(),
             _lifetime: Default::default(),
             jumps_to_process: Default::default(),
+            stack: Stack::new(),
+            result_instruction_set: None,
         };
         s.init_code_snippets();
         s
+    }
+
+    #[inline]
+    pub fn result_instruction_set(&self) -> &InstructionSet {
+        self.result_instruction_set.as_ref().unwrap()
+    }
+
+    #[inline]
+    pub fn result_instruction_set_mut(&mut self) -> &mut InstructionSet {
+        self.result_instruction_set.as_mut().unwrap()
+    }
+
+    #[inline]
+    pub fn take_instruction_set(&mut self) -> InstructionSet {
+        let instruction_set = self.result_instruction_set.take();
+        instruction_set.unwrap()
     }
 
     pub fn jumps_to_process_add(&mut self, opcode: u8, from_pc: usize, to_pc: usize) -> usize {
@@ -74,37 +95,51 @@ impl<'a> Translator<'a> {
         self.jumps_to_process.len()
     }
 
+    #[inline]
+    pub fn stack(&self) -> &Stack {
+        &self.stack
+    }
+
     pub fn jumps_to_process_reset(&mut self) {
         self.jumps_to_process.clear()
     }
 
-    fn jumps_to_process_apply(&mut self, host: &mut dyn Host) {
+    fn jumps_to_process_apply(&mut self) {
+        let mut idx_to_new_instruction: Vec<(usize, Instruction)> = vec![];
         for (opcode, pc_from, pc_to) in self.jumps_to_process.iter() {
             let is_offsets_from = self
                 .native_offset_to_rwasm_instr_offset
                 .get(pc_from)
+                .unwrap()
+                .clone();
+            let is_offsets_to = self
+                .native_offset_to_rwasm_instr_offset
+                .get(pc_to)
+                .cloned()
                 .unwrap();
-            let is_offsets_to = self.native_offset_to_rwasm_instr_offset.get(pc_to).unwrap();
             let jump_rel_offset = is_offsets_to.0 as i32 - is_offsets_from.1 as i32 - 1;
 
-            let is = host.instruction_set();
             // TODO replace magic consts with dynamic calculation
             let aux_idx: usize = match *opcode {
                 opcode::JUMP => JUMP_PARAMS_COUNT,
                 opcode::JUMPI => JUMPI_PARAMS_COUNT,
-                // dynamic calculation
                 _ => {
                     panic!("unsupported opcode: {}", opcode)
                 }
             };
             let idx = is_offsets_from.0 + aux_idx; // TODO replace form_sp_drop_u256
-                                                   // debug!("translator: applying jumps fixes at idx {}", idx);
+            let is = self.result_instruction_set();
             if let Instruction::I64Const(v) = is.instr[idx] {
-                let val_new = UntypedValue::from(v.as_i32() + jump_rel_offset);
-                is.instr[idx] = Instruction::I64Const(val_new);
+                let new_value = UntypedValue::from(v.as_i32() + jump_rel_offset);
+                idx_to_new_instruction.push((idx, Instruction::I64Const(new_value)));
             } else {
                 panic!("expected Instruction::I64Const");
             }
+        }
+
+        let is = self.result_instruction_set_mut();
+        for (idx, new_val) in idx_to_new_instruction {
+            is.instr[idx] = new_val;
         }
     }
 
@@ -157,9 +192,9 @@ impl<'a> Translator<'a> {
         let instruction_pointer = self.instruction_pointer;
         self.instruction_pointer_inc(1);
 
-        let is_offset_start = host.instruction_set().len() as usize;
+        let is_offset_start = self.result_instruction_set_mut().len() as usize;
         instruction_table[opcode as usize](self, host);
-        let is_offset_end = host.instruction_set().len() as usize - 1;
+        let is_offset_end = self.result_instruction_set_mut().len() as usize - 1;
         self.native_offset_to_rwasm_instr_offset
             .insert(pc, (is_offset_start, is_offset_end));
         self.instruction_pointer_prev = instruction_pointer;
@@ -196,14 +231,16 @@ impl<'a> Translator<'a> {
         &mut self,
         instruction_table: &[FN; 256],
         host: &mut H,
+        result_instruction_set: InstructionSet,
     ) -> InstructionResult
     where
         FN: Fn(&mut Translator<'_>, &mut H),
     {
+        self.result_instruction_set = Some(result_instruction_set);
         while self.instruction_result == InstructionResult::Continue {
             self.step(instruction_table, host);
         }
-        self.jumps_to_process_apply(host);
+        self.jumps_to_process_apply();
         self.instruction_result
     }
 

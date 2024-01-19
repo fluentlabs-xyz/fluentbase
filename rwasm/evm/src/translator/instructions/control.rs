@@ -1,5 +1,6 @@
 use crate::{
     translator::{
+        gas,
         host::Host,
         instruction_result::InstructionResult,
         instructions::{
@@ -30,6 +31,8 @@ pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OPCODE: u8 = JUMP;
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::MID);
     const OP_PARAMS_COUNT: u64 = 1;
 
     let pc_from = translator.program_counter() - 1;
@@ -55,7 +58,7 @@ pub fn jump<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     pc_to_arr[WASM_I64_BYTES - pc_to_slice.len()..].copy_from_slice(pc_to_slice);
     let pc_to = i64::from_be_bytes(pc_to_arr);
     translator.jumps_to_process_add(OPCODE, pc_from, pc_to as usize);
-    let is = host.instruction_set();
+    let is = translator.result_instruction_set_mut();
 
     sp_drop_u256(is, OP_PARAMS_COUNT);
 
@@ -72,6 +75,8 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OPCODE: u8 = JUMPI;
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::HIGH);
     const OP_PARAMS_COUNT: u64 = 2;
 
     let pc_from = translator.program_counter() - 1;
@@ -97,7 +102,7 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     pc_to_arr[WASM_I64_BYTES - pc_to_slice.len()..].copy_from_slice(pc_to_slice);
     let pc_to = u64::from_be_bytes(pc_to_arr);
     translator.jumps_to_process_add(OPCODE, pc_from, pc_to as usize);
-    let is = host.instruction_set();
+    let is = translator.result_instruction_set_mut();
 
     sp_get_offset(is, None);
     sp_drop_u256(is, OP_PARAMS_COUNT);
@@ -127,15 +132,19 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     is.op_br_indirect(2); // for const and br_indirect itself
 }
 
-pub fn jumpdest<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn jumpdest<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "JUMPDEST";
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::JUMPDEST);
 }
 
-pub fn pc<H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn pc<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "PC";
     panic!("op:{} not implemented", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::BASE);
 }
 
 pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
@@ -153,11 +162,11 @@ pub fn revert<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn stop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    stop_op_gen(translator, host.instruction_set());
+    stop_op_gen(translator);
 }
 
 pub fn invalid<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    invalid_op_gen(translator, host.instruction_set());
+    invalid_op_gen(translator);
 }
 
 pub fn not_found<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {

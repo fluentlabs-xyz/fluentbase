@@ -131,13 +131,15 @@ pub fn sp_drop_u256(is: &mut InstructionSet, count: u64) {
     is.extend(&is_tmp);
 }
 
-pub fn stop_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+pub fn stop_op_gen(translator: &mut Translator<'_>) {
     translator.instruction_result = InstructionResult::Stop;
+    let is = translator.result_instruction_set_mut();
     is.op_return();
     is.op_unreachable();
 }
-pub fn invalid_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+pub fn invalid_op_gen(translator: &mut Translator<'_>) {
     translator.instruction_result = InstructionResult::InvalidFEOpcode;
+    let is = translator.result_instruction_set_mut();
     is.op_i32_const(ExitCode::UnknownError as i32);
-    wasm_call(translator, is, SysFuncIdx::SYS_HALT);
+    wasm_call(translator, None, SysFuncIdx::SYS_HALT);
 }
