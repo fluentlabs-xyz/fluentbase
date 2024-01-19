@@ -118,7 +118,7 @@ describe("Bridge", function () {
         const inputBytes = Buffer.from(data, "hex");
         const hash = ethers.utils.keccak256(inputBytes);
 
-        expect(hash).to.equal("0xed6c9db457d77d53b6bf21b449e6404456b3628853693ee133cb2e893e6cc503");
+        expect(hash).to.equal("0x7507ff1d7b2bf735f2a1a6fad46edd6e3d2048524a098fcaca8afb9f67b6b802");
 
         const receive_tx = await contractWithSigner.receiveMessage(
             "0x1111111111111111111111111111111111111111",
@@ -137,7 +137,7 @@ describe("Bridge", function () {
 
         expect(events.length).to.equal(1);
         expect(events[0].args.messageHash).to.equal(
-          "0x7523b9a58ac19b3ba6f272eb7120f22dcdaab28cc069fe8829acdba0e3992507",
+          "0xb2877f7f0912452bde2efbd451cb4146f105de323c9a70963d8c878f842a76e3",
         );
         expect(events[0].args.successfulCall).to.equal(true);
 

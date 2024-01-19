@@ -1,14 +1,16 @@
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Bridge} from "./Bridge.sol";
 import "hardhat/console.sol";
 
-contract Rollup is OwnableUpgradeable {
+contract Rollup is Ownable {
     address public bridge;
 
     uint256 public lastProofedIndex;
 
     mapping(uint256 => bytes32) public withdrawRoots;
     mapping(uint256 => bytes32) public depositsRoots;
+
+    constructor () Ownable(msg.sender) {}
 
     function setBridge(address _bridge) external payable onlyOwner {
         bridge = _bridge;

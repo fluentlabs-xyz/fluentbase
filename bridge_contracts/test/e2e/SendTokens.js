@@ -39,7 +39,7 @@ describe("Contract deployment and interaction", function () {
         let signer = provider.getSigner();
 
         const PeggedToken = await ethers.getContractFactory("ERC20PeggedToken");
-        let peggedToken = await PeggedToken.connect(signer).deploy(); // Adjust initial supply as needed
+        let peggedToken = await PeggedToken.connect(signer).deploy();
         await peggedToken.deployed();
         console.log("Pegged token: ", peggedToken.address);
 
@@ -57,6 +57,12 @@ describe("Contract deployment and interaction", function () {
         let bridge = await BridgeContract.connect(signer).deploy(accounts[0].address, rollupAddress);
         await bridge.deployed();
         console.log("Bridge: ", bridge.address);
+
+        if (withRollup) {
+            let setBridge = await rollup.setBridge(bridge.address);
+            await setBridge.wait();
+        }
+
 
         const TokenFactoryContract = await ethers.getContractFactory("ERC20TokenFactory");
         let tokenFactory = await TokenFactoryContract.connect(signer).deploy(peggedToken.address);
@@ -106,6 +112,11 @@ describe("Contract deployment and interaction", function () {
 
         const sentEvent = events[0];
 
+        let sendMessageHash = sentEvent.args["messageHash"];
+
+        console.log("Message hash", sendMessageHash);
+        console.log("Event", sentEvent);
+
         const receive_tx = await l2Bridge.receiveMessage(
             sentEvent.args["sender"],
             sentEvent.args["to"],
@@ -142,10 +153,12 @@ describe("Contract deployment and interaction", function () {
         console.log(backEvents)
         const sentBackEvent = backEvents[0];
 
+        let deposits = Buffer.from(sendMessageHash.substring(2), 'hex');
+        console.log(deposits);
         const accept = await rollup.acceptNextProof(
             1,
             messageHash,
-            []
+            deposits
         )
 
         await accept.wait();
