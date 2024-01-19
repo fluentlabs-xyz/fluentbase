@@ -32,7 +32,7 @@ pub(super) fn preprocess_op_params(translator: &mut Translator<'_>, host: &mut d
     instruction_set.op_i32_const(return_offset);
 }
 
-pub(super) fn replace_current_opcode_with_call_to_subroutine(
+pub(super) fn replace_with_call_to_subroutine(
     translator: &mut Translator<'_>,
     host: &mut dyn Host,
 ) {

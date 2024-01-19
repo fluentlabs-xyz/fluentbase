@@ -92,22 +92,35 @@ pub fn sp_set_value(is: &mut InstructionSet, use_sp_base_offset: bool, value: Op
     );
 }
 
-pub fn sp_get_value(is: &mut InstructionSet) {
-    load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64))
+pub fn sp_get_value(is: &mut InstructionSet, apply_delta: Option<i64>) {
+    load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64));
+    apply_delta_value_on_stack(is, apply_delta);
 }
 
-pub fn sp_get_offset(is: &mut InstructionSet) {
+pub fn apply_delta_value_on_stack(is: &mut InstructionSet, v: Option<i64>) {
+    if let Some(v) = v {
+        if v != 0 {
+            is.op_i64_const(v.abs() as u64);
+            if v < 0 {
+                is.op_i64_sub();
+            } else {
+                is.op_i64_add();
+            }
+        }
+    }
+}
+
+pub fn sp_get_offset(is: &mut InstructionSet, apply_delta: Option<i64>) {
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64);
-    sp_get_value(is);
+    sp_get_value(is, None);
     is.op_i64_sub();
+    apply_delta_value_on_stack(is, apply_delta);
 }
 
 pub fn sp_drop_u256_gen(count: u64) -> InstructionSet {
     let mut is = InstructionSet::new();
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64); // for store
-    sp_get_value(&mut is);
-    is.op_i64_const(EVM_WORD_BYTES as u64 * count);
-    is.op_i64_sub();
+    sp_get_value(&mut is, Some(-(EVM_WORD_BYTES as i64 * count as i64)));
     sp_set_value(&mut is, false, None);
 
     is

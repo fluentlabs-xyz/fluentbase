@@ -7,7 +7,7 @@ use crate::translator::{
     },
     translator::contract::Contract,
 };
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, format, vec::Vec};
 pub use analysis::BytecodeLocked;
 use core::marker::PhantomData;
 use fluentbase_rwasm::{

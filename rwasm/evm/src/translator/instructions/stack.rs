@@ -3,17 +3,20 @@ use crate::{
     translator::{
         host::Host,
         instruction_result::InstructionResult,
-        instructions::utilities::replace_current_opcode_with_call_to_subroutine,
+        instructions::utilities::replace_with_call_to_subroutine,
         translator::Translator,
     },
     utilities::{align_to_evm_word_array, EVM_WORD_BYTES, WASM_I64_IN_EVM_WORD_COUNT},
 };
 use fluentbase_rwasm::rwasm::InstructionSet;
+#[cfg(test)]
+use log::debug;
 
 pub fn pop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "POP";
-    // debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
@@ -86,11 +89,11 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
 pub fn dup<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DUP";
     // debug!("op:{}{}", OP, N);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn swap<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SWAP";
     // debug!("op:{}{}", OP, N);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    replace_with_call_to_subroutine(translator, host);
 }

@@ -1,7 +1,7 @@
 use crate::consts::U256_BYTES_COUNT;
 use core::slice;
 
-pub const SP_BASE_MEM_OFFSET_DEFAULT: usize = 1024 * 32; // must match with value in rwasm evm
+pub const SP_BASE_MEM_OFFSET_DEFAULT: usize = 1024 * 32;
 
 // extern "C" {
 //     fn __get_stack_pointer() -> u32;
