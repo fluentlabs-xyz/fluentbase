@@ -1,8 +1,10 @@
 use crate::{
     consts::SP_BASE_MEM_OFFSET_DEFAULT,
     translator::{
+        gas,
         host::Host,
         instructions::utilities::{replace_with_call_to_subroutine, wasm_call},
+        translator,
         translator::Translator,
     },
     utilities::{
@@ -23,6 +25,9 @@ pub fn mload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MLOAD";
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::VERYLOW);
+
     replace_with_call_to_subroutine(translator, host);
 }
 
@@ -30,6 +35,9 @@ pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSTORE";
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::VERYLOW);
+
     replace_with_call_to_subroutine(translator, host);
 }
 
@@ -37,6 +45,9 @@ pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSORE8";
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::VERYLOW);
+
     replace_with_call_to_subroutine(translator, host);
 }
 
@@ -44,34 +55,53 @@ pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSIZE";
     #[cfg(test)]
     debug!("op:{}", OP);
+    let is = translator.result_instruction_set_mut();
+    gas!(translator, gas::constants::BASE);
+
     replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MCOPY";
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    // TODO gas
+    pop!(translator, dst, src, len);
+    // into usize or fail
+    let len = as_usize_or_fail!(translator, len);
+    // deduce gas
+    gas_or_fail!(translator, gas::calc::verylowcopy_cost(len as u32));
+    // if len == 0 {
+    //     return;
+    // }
 
     const OP_PARAMS_COUNT: usize = 3;
-    let is = host.instruction_set();
+    {
+        let is = translator.result_instruction_set_mut();
 
-    for op_param_idx in 0..OP_PARAMS_COUNT {
-        for u256_i64_component_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
-            let offset = op_param_idx * EVM_WORD_BYTES + u256_i64_component_idx * WASM_I64_BYTES;
-            sp_get_value(is, None);
-            if op_param_idx > 0 || u256_i64_component_idx > 0 {
-                is.op_i64_const(offset as u64);
-                is.op_i64_add();
-                is.op_i64_load(0);
-                is.op_i64_or();
-            } else {
-                is.op_i64_load(0);
+        for op_param_idx in 0..OP_PARAMS_COUNT {
+            for u256_i64_component_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
+                let offset =
+                    op_param_idx * EVM_WORD_BYTES + u256_i64_component_idx * WASM_I64_BYTES;
+                sp_get_value(is, None);
+                if op_param_idx > 0 || u256_i64_component_idx > 0 {
+                    is.op_i64_const(offset as u64);
+                    is.op_i64_add();
+                    is.op_i64_load(0);
+                    is.op_i64_or();
+                } else {
+                    is.op_i64_load(0);
+                }
             }
         }
     }
 
     let mut aux_is = InstructionSet::new();
     aux_is.op_i32_const(ExitCode::UnknownError as i32);
-    wasm_call(translator, &mut aux_is, SysFuncIdx::SYS_HALT);
+    wasm_call(translator, Some(&mut aux_is), SysFuncIdx::SYS_HALT);
     aux_is.op_unreachable();
+
+    let is = translator.result_instruction_set_mut();
     is.op_br_if_eqz(aux_is.len() as i32 + 1);
     is.extend(&aux_is);
 

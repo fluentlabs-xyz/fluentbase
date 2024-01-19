@@ -51,39 +51,44 @@ impl<'a> EvmCompiler<'a> {
         let mut translator =
             Translator::new(self.import_linker, self.inject_fuel_consumption, contract);
 
-        self.instruction_set.op_magic_prefix([0x00; 8]);
+        let mut instruction_set = InstructionSet::new();
+
+        instruction_set.op_magic_prefix([0x00; 8]);
 
         self.instruction_set_entry_offset =
             Some(translator.subroutines_instruction_set().instr.len() + 1);
-        self.instruction_set
-            .op_br(self.instruction_set_entry_offset.unwrap() as i32);
+        instruction_set.op_br(self.instruction_set_entry_offset.unwrap() as i32);
 
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
         for (_opcode, data) in translator.opcode_to_subroutine_data() {
             subroutines_instruction_set.fix_br_indirect_offset(
                 Some(data.begin_offset),
                 Some(data.end_offset),
-                (self.instruction_set.len() + data.begin_offset as u32) as i32,
+                (instruction_set.len() + data.begin_offset as u32) as i32,
             );
             // 'end_offset' now points to the end of 1 solid file and not to the 1 of 1 specific
             // func
             break;
         }
-        self.instruction_set
+        instruction_set
             .instr
             .extend(&subroutines_instruction_set.instr);
 
         preamble.map(|v| {
-            self.instruction_set.instr.extend(&v.instr);
+            instruction_set.instr.extend(&v.instr);
         });
 
-        let mut host = HostImpl::new(&mut self.instruction_set);
+        let mut host = HostImpl::new();
         let instruction_table = make_instruction_table::<HostImpl>();
-        let res = translator.run(&instruction_table, &mut host);
+        let res = translator.run(&instruction_table, &mut host, instruction_set);
+
+        let mut instruction_set = translator.take_instruction_set();
 
         postamble.map(|v| {
-            self.instruction_set.instr.extend(&v.instr);
+            instruction_set.instr.extend(&v.instr);
         });
+
+        self.instruction_set = instruction_set;
 
         res
     }
