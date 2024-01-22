@@ -1,7 +1,5 @@
-use crate::{
-    complex_types::RuntimeError,
-    storage::{KeyValueDb, TrieDb},
-};
+use crate::storage::{KeyValueDb, TrieDb};
+use fluentbase_types::ExitCode;
 use fluentbase_zktrie::{
     Byte32,
     Database,
@@ -73,44 +71,59 @@ impl<'a, DB: KeyValueDb> PreimageDatabase for NodeDb<'a, DB> {
 
 pub struct ZkTriePersistentStorage<'a, DB> {
     storage: NodeDb<'a, DB>,
-    trie: ZkTrie<PoseidonHash>,
+    trie: Option<ZkTrie<PoseidonHash>>,
 }
 
 const MAX_LEVEL: usize = 31 * 8;
 
 impl<'a, DB: KeyValueDb> ZkTriePersistentStorage<'a, DB> {
-    pub fn empty(storage: &'a mut DB) -> Self {
-        let root = [0u8; 32];
+    pub fn new(storage: &'a mut DB) -> Self {
         Self {
             storage: NodeDb(storage),
-            trie: ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root)),
+            trie: None,
         }
     }
 
-    pub fn new(storage: &'a mut DB, root: &[u8; 32]) -> Result<Self, RuntimeError> {
-        Ok(Self {
-            storage: NodeDb(storage),
-            trie: ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root[..])),
-        })
+    pub fn new_empty(storage: &'a mut DB) -> Self {
+        Self::new_opened(storage, &[0u8; 32])
+    }
+
+    pub fn new_opened(storage: &'a mut DB, root32: &[u8]) -> Self {
+        let mut storage = Self::new(storage);
+        storage.open(root32);
+        storage
     }
 }
 
 impl<'a, DB: KeyValueDb> TrieDb for ZkTriePersistentStorage<'a, DB> {
-    fn open(&self, _key: &[u8; 32]) -> Result<Self, RuntimeError>
-    where
-        Self: Sized,
-    {
-        todo!()
+    fn open(&mut self, root32: &[u8]) {
+        self.trie = Some(ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root32)));
     }
 
     fn compute_root(&self) -> [u8; 32] {
-        self.trie.hash().bytes()
+        self.trie
+            .as_ref()
+            .map(|trie| trie.hash().clone())
+            .unwrap_or(Hash::default())
+            .bytes()
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
-        if let Ok(val) = self.trie.get_data(&self.storage, &key[..]) {
+    fn get(&self, key: &[u8]) -> Option<Vec<[u8; 32]>> {
+        if let Ok(val) = self.trie.as_ref()?.get_data(&self.storage, key) {
             match val {
-                TrieData::Node(node) => Some(node.data().to_vec()),
+                TrieData::Node(node) => {
+                    let result = node
+                        .data()
+                        .to_vec()
+                        .chunks(32)
+                        .map(|val| {
+                            let mut bytes = [0u8; 32];
+                            bytes.copy_from_slice(val);
+                            bytes
+                        })
+                        .collect::<Vec<_>>();
+                    Some(result)
+                }
                 TrieData::NotFound => None,
             }
         } else {
@@ -120,22 +133,23 @@ impl<'a, DB: KeyValueDb> TrieDb for ZkTriePersistentStorage<'a, DB> {
 
     fn update(
         &mut self,
-        key: &[u8; 32],
+        key: &[u8],
         value_flags: u32,
         value: &Vec<[u8; 32]>,
-    ) -> Result<(), RuntimeError> {
-        self.trie
-            .update(
-                &mut self.storage,
-                &key[..],
-                value_flags,
-                value.iter().map(|v| Byte32::from(*v)).collect(),
-            )
-            .map_err(|err| RuntimeError::StorageError(format!("can't update value ({:?})", err)))
+    ) -> Result<(), ExitCode> {
+        let trie = self.trie.as_mut().unwrap();
+        trie.update(
+            &mut self.storage,
+            key,
+            value_flags,
+            value.iter().map(|v| Byte32::from(*v)).collect(),
+        )
+        .map_err(|_| ExitCode::PersistentStorageError)
     }
 
     fn proof(&self, key: &[u8; 32]) -> Option<Vec<Vec<u8>>> {
-        match self.trie.proof(&self.storage, &key[..]) {
+        let trie = self.trie.as_ref().unwrap();
+        match trie.proof(&self.storage, &key[..]) {
             Ok(result) => Some(result),
             Err(_) => None,
         }
@@ -162,7 +176,7 @@ mod tests {
     fn test_simple() {
         let mut db = InMemoryDb::default();
         // create new zkt
-        let mut zkt = ZkTriePersistentStorage::empty(&mut db);
+        let mut zkt = ZkTriePersistentStorage::new(&mut db);
         zkt.update(
             bytes32!("key1"),
             0,
@@ -172,9 +186,9 @@ mod tests {
         let root = zkt.compute_root();
         println!("root: {:?}", hex::encode(root));
         // open and read value
-        let zkt2 = ZkTriePersistentStorage::new(&mut db, &root).unwrap();
+        let zkt2 = ZkTriePersistentStorage::new_opened(&mut db, &root);
         let data = zkt2.get(bytes32!("key1")).unwrap();
-        assert_eq!(data[0..32], *bytes32!("value1"));
-        assert_eq!(data[32..64], *bytes32!("value2"));
+        assert_eq!(data[0], *bytes32!("value1"));
+        assert_eq!(data[1], *bytes32!("value2"));
     }
 }

@@ -1,5 +1,6 @@
-use crate::{ExitCode, Runtime, RuntimeContext};
+use crate::{Runtime, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_types::ExitCode;
 
 pub struct SysExec;
 

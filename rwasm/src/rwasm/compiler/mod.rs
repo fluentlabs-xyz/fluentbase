@@ -1,4 +1,5 @@
 use crate::{
+    alloc::string::ToString,
     arena::ArenaIndex,
     common::{Pages, UntypedValue, ValueType},
     engine::{
@@ -19,7 +20,7 @@ use crate::{
     FuncType,
     Module,
 };
-use alloc::{boxed::Box, collections::BTreeMap, rc::Rc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, rc::Rc, string::String, vec::Vec};
 use core::{cell::RefCell, ops::Deref};
 
 mod drop_keep;

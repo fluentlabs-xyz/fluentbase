@@ -9,7 +9,6 @@ bench = false
 test = false
 proc-macro = false
 
-
 [dependencies]
 fluentbase-rwasm-code-snippets = { path = "../code-snippets" }
 fluentbase-rwasm = { path = "..", default-features = false }
@@ -18,7 +17,7 @@ fluentbase-codec = { path = "../../codec", default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
 hashbrown = { version = "0.14", default-features = false }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
-fluentbase-runtime = { path = "../../runtime", default-features = false, features = ["types"] }
+fluentbase-types = { path = "../../types", default-features = false }
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../../runtime" }

@@ -42,27 +42,29 @@ use crate::{
         zktrie_update::ZkTrieUpdate,
     },
     runtime::RuntimeContext,
-    SysFuncIdx,
-    SysFuncIdx::{
-        CRYPTO_ECRECOVER,
-        CRYPTO_KECCAK256,
-        CRYPTO_POSEIDON,
-        CRYPTO_POSEIDON2,
-        SYS_COMPILE,
-        SYS_EXEC,
-        SYS_HALT,
-        SYS_INPUT_SIZE,
-        SYS_READ,
-        SYS_STATE,
-        SYS_WRITE,
-        ZKTRIE_COMMIT,
-        ZKTRIE_FIELD,
-        ZKTRIE_LOAD,
-        ZKTRIE_OPEN,
-        ZKTRIE_ROLLBACK,
-        ZKTRIE_ROOT,
-        ZKTRIE_STORE,
-        ZKTRIE_UPDATE,
+    types::{
+        SysFuncIdx,
+        SysFuncIdx::{
+            CRYPTO_ECRECOVER,
+            CRYPTO_KECCAK256,
+            CRYPTO_POSEIDON,
+            CRYPTO_POSEIDON2,
+            SYS_COMPILE,
+            SYS_EXEC,
+            SYS_HALT,
+            SYS_INPUT_SIZE,
+            SYS_READ,
+            SYS_STATE,
+            SYS_WRITE,
+            ZKTRIE_COMMIT,
+            ZKTRIE_FIELD,
+            ZKTRIE_LOAD,
+            ZKTRIE_OPEN,
+            ZKTRIE_ROLLBACK,
+            ZKTRIE_ROOT,
+            ZKTRIE_STORE,
+            ZKTRIE_UPDATE,
+        },
     },
 };
 use fluentbase_rwasm::{rwasm::ImportLinker, Caller, Linker, Store};
@@ -92,7 +94,7 @@ impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_rwasm_transact(
 impl_runtime_handler!(SysCompile, SYS_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
 impl_runtime_handler!(ZkTrieOpen, ZKTRIE_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieUpdate, ZKTRIE_UPDATE, fn fluentbase_v1alpha::_zktrie_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
-impl_runtime_handler!(ZkTrieField, ZKTRIE_FIELD, fn fluentbase_v1alpha::_zktrie_field(key32_offset: u32, output_offset: u32) -> ());
+impl_runtime_handler!(ZkTrieField, ZKTRIE_FIELD, fn fluentbase_v1alpha::_zktrie_field(key32_offset: u32, field: u32, output32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieRoot, ZKTRIE_ROOT, fn fluentbase_v1alpha::_zktrie_root(output32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieRollback, ZKTRIE_ROLLBACK, fn fluentbase_v1alpha::_zktrie_rollback() -> ());
 impl_runtime_handler!(ZkTrieCommit, ZKTRIE_COMMIT, fn fluentbase_v1alpha::_zktrie_commit() -> ());

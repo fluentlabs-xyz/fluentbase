@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 use fluentbase_rwasm::{
     common::UntypedValue,
     engine::bytecode::Instruction,
-    rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule},
+    rwasm::{ImportLinker, InstructionSet, ReducedModule},
 };
 use hashbrown::HashMap;
 #[cfg(test)]

@@ -1,6 +1,7 @@
-use crate::{ExitCode, RuntimeContext};
+use crate::RuntimeContext;
 use fluentbase_poseidon::Hashable;
 use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_types::ExitCode;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 
 pub struct SysPoseidon2;

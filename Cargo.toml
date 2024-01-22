@@ -12,6 +12,7 @@ members = [
     "rwasm/evm",
     "rwasm/code-snippets",
     "sdk",
+    "types",
     "zktrie",
 ]
 exclude = []

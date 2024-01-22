@@ -1,7 +1,7 @@
-mod noop;
+// mod noop;
 mod zktrie;
 
-use crate::complex_types::RuntimeError;
+use fluentbase_types::ExitCode;
 use std::collections::HashMap;
 
 pub trait KeyValueDb {
@@ -24,20 +24,18 @@ impl KeyValueDb for InMemoryDb {
 }
 
 pub trait TrieDb {
-    fn open(&self, key: &[u8; 32]) -> Result<Self, RuntimeError>
-    where
-        Self: Sized;
+    fn open(&mut self, root32: &[u8]);
 
     fn compute_root(&self) -> [u8; 32];
 
-    fn get(&self, key: &[u8; 32]) -> Option<Vec<u8>>;
+    fn get(&self, key: &[u8]) -> Option<Vec<[u8; 32]>>;
 
     fn update(
         &mut self,
-        key: &[u8; 32],
+        key: &[u8],
         value_flags: u32,
         value: &Vec<[u8; 32]>,
-    ) -> Result<(), RuntimeError>;
+    ) -> Result<(), ExitCode>;
 
     fn proof(&self, key: &[u8; 32]) -> Option<Vec<Vec<u8>>>;
 }

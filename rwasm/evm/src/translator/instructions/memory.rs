@@ -15,8 +15,8 @@ use crate::{
         WASM_I64_IN_EVM_WORD_COUNT,
     },
 };
-use fluentbase_runtime::{ExitCode, SysFuncIdx};
 use fluentbase_rwasm::rwasm::InstructionSet;
+use fluentbase_types::{ExitCode, SysFuncIdx};
 #[cfg(test)]
 use log::debug;
 

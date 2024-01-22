@@ -14,6 +14,7 @@ define_codec_struct! {
         contract_code_size: u32,
         contract_code_hash: B256,
         contract_input: Bytes,
+        contract_input_size: u32,
         contract_value: U256,
         // block info
         block_hash: B256,
@@ -128,6 +129,7 @@ impl ExecutionContext {
     impl_reader_func!(fn contract_code_size() -> u32, ContractInput::ContractCodeSize);
     impl_reader_func!(fn contract_code_hash() -> B256, ContractInput::ContractCodeHash);
     impl_reader_func!(fn contract_input() -> Bytes, ContractInput::ContractInput);
+    impl_reader_func!(fn contract_input_size() -> u32, ContractInput::ContractInputSize);
     impl_reader_func!(fn contract_value() -> U256, ContractInput::ContractValue);
     // block info
     impl_reader_func!(fn block_hash() -> B256, ContractInput::BlockHash);

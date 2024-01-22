@@ -247,7 +247,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 return Err(TrapCode::StackOverflow.into());
             }
 
-            let dump = self.value_stack.dump_stack(self.sp);
+            // let dump = self.value_stack.dump_stack(self.sp);
             // if dump.len() < 20 {
             //     println!(
             //         "{} {:?} {:?}",

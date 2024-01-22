@@ -1,7 +1,7 @@
 use crate::translator::{host::Host, translator::Translator};
 use alloc::format;
-use fluentbase_runtime::SysFuncIdx;
 use fluentbase_rwasm::rwasm::InstructionSet;
+use fluentbase_types::SysFuncIdx;
 
 pub fn wasm_call(
     translator: &mut Translator,
