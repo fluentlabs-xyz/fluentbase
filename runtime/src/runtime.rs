@@ -1,9 +1,7 @@
 use crate::{
-    complex_types::RuntimeError,
-    consts::{RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT},
     instruction::{runtime_register_handlers, runtime_register_linkers},
     storage::TrieDb,
-    ExitCode,
+    types::RuntimeError,
 };
 use fluentbase_rwasm::{
     engine::Tracer,
@@ -21,7 +19,8 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use std::{mem::take, rc::Rc};
+use fluentbase_types::{ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
+use std::{cell::RefCell, mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
@@ -36,7 +35,7 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
     // storage
-    pub(crate) zktrie: Option<Rc<dyn TrieDb>>,
+    pub(crate) zktrie: Option<Rc<RefCell<dyn TrieDb>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -111,7 +110,7 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_zktrie(mut self, zktrie: Rc<dyn TrieDb>) -> Self {
+    pub fn with_zktrie(mut self, zktrie: Rc<RefCell<dyn TrieDb>>) -> Self {
         self.zktrie = Some(zktrie);
         self
     }

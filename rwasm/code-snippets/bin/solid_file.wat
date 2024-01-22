@@ -200,7 +200,7 @@
       i32.const 12
       i32.add
       i32.const 0
-      i32.load offset=1050900
+      i32.load offset=1050916
       i32.store
       local.get 2
       i32.const 44
@@ -273,7 +273,7 @@
       i32.store offset=20
       local.get 2
       i32.const 0
-      i32.load offset=1050900
+      i32.load offset=1050916
       i32.store offset=60
       local.get 2
       i32.const 3
@@ -340,7 +340,7 @@
       i32.store offset=20
       local.get 2
       i32.const 0
-      i32.load offset=1050900
+      i32.load offset=1050916
       i32.store offset=60
       local.get 2
       i32.const 3
@@ -407,7 +407,7 @@
       i32.store offset=20
       local.get 2
       i32.const 0
-      i32.load offset=1050900
+      i32.load offset=1050916
       i32.store offset=60
       local.get 2
       i32.const 3
@@ -2385,7 +2385,7 @@
                     local.get 1
                     i32.const 8
                     i32.add
-                    i32.const 1048848
+                    i32.const 1048852
                     call 161
                     unreachable
                   end
@@ -2415,7 +2415,7 @@
                 local.get 1
                 i32.const 8
                 i32.add
-                i32.const 1048848
+                i32.const 1048852
                 call 161
                 unreachable
               end
@@ -2459,12 +2459,12 @@
             local.get 1
             i32.const 8
             i32.add
-            i32.const 1048848
+            i32.const 1048852
             call 161
             unreachable
           end
           i32.const 0
-          i32.load8_u offset=1051085
+          i32.load8_u offset=1051101
           drop
           local.get 6
           i32.const 8
@@ -28234,12 +28234,12 @@
     local.set 2
     block  ;; label = @1
       i32.const 0
-      i32.load offset=1051068
+      i32.load offset=1051084
       local.tee 3
       i32.eqz
       br_if 0 (;@1;)
       i32.const 0
-      i32.load offset=1051080
+      i32.load offset=1051096
       i32.eqz
       br_if 0 (;@1;)
       local.get 1
@@ -28656,7 +28656,7 @@
       i32.add
       local.set 8
       i32.const 0
-      i32.load offset=1051072
+      i32.load offset=1051088
       local.set 9
       i32.const 0
       local.set 10
@@ -29218,13 +29218,13 @@
     block  ;; label = @1
       block  ;; label = @2
         i32.const 0
-        i32.load offset=1051068
+        i32.load offset=1051084
         i32.eqz
         br_if 0 (;@2;)
         local.get 0
         i32.const 88
         i32.add
-        i32.const 1051068
+        i32.const 1051084
         local.get 0
         i32.const 8
         i32.add
@@ -29240,11 +29240,11 @@
       i32.const 8
       i32.add
       i32.const 0
-      i64.load offset=1048880
+      i64.load offset=1048888
       i64.store
       local.get 0
       i32.const 0
-      i64.load offset=1048872
+      i64.load offset=1048880
       i64.store offset=72
       local.get 0
       i32.const 88
@@ -29270,21 +29270,21 @@
       local.set 2
       block  ;; label = @2
         i32.const 0
-        i32.load offset=1051068
+        i32.load offset=1051084
         br_if 0 (;@2;)
         i32.const 0
         local.get 2
-        i32.store offset=1051068
+        i32.store offset=1051084
         i32.const 0
         local.get 11
         i64.load align=4
-        i64.store offset=1051072 align=4
+        i64.store offset=1051088 align=4
         i32.const 0
         local.get 11
         i32.const 8
         i32.add
         i32.load
-        i32.store offset=1051080
+        i32.store offset=1051096
         br 1 (;@1;)
       end
       local.get 2
@@ -29310,8 +29310,8 @@
       local.get 0
       i32.const 88
       i32.add
-      i32.const 1049068
-      i32.const 1049116
+      i32.const 1049076
+      i32.const 1049124
       call 172
       unreachable
     end
@@ -32825,7 +32825,7 @@
               end
               local.get 16
               i32.const 32
-              i32.const 1048924
+              i32.const 1048932
               call 164
               unreachable
             end
@@ -32844,7 +32844,7 @@
             end
             local.get 15
             local.get 16
-            i32.const 1048988
+            i32.const 1048996
             call 171
             unreachable
           end
@@ -33071,13 +33071,13 @@
           end
           local.get 1
           i32.const 32
-          i32.const 1048924
+          i32.const 1048932
           call 164
           unreachable
         end
         local.get 5
         local.get 1
-        i32.const 1049052
+        i32.const 1049060
         call 171
         unreachable
       end
@@ -33908,13 +33908,13 @@
     block  ;; label = @1
       block  ;; label = @2
         i32.const 0
-        i32.load offset=1051068
+        i32.load offset=1051084
         i32.eqz
         br_if 0 (;@2;)
         local.get 2
         i32.const 24
         i32.add
-        i32.const 1051068
+        i32.const 1051084
         local.get 0
         local.get 1
         call 11
@@ -33926,11 +33926,11 @@
       i32.const 8
       i32.add
       i32.const 0
-      i64.load offset=1048880
+      i64.load offset=1048888
       i64.store
       local.get 2
       i32.const 0
-      i64.load offset=1048872
+      i64.load offset=1048880
       i64.store offset=8
       local.get 2
       i32.const 24
@@ -33952,21 +33952,21 @@
       local.set 1
       block  ;; label = @2
         i32.const 0
-        i32.load offset=1051068
+        i32.load offset=1051084
         br_if 0 (;@2;)
         i32.const 0
         local.get 1
-        i32.store offset=1051068
+        i32.store offset=1051084
         i32.const 0
         local.get 0
         i64.load align=4
-        i64.store offset=1051072 align=4
+        i64.store offset=1051088 align=4
         i32.const 0
         local.get 0
         i32.const 8
         i32.add
         i32.load
-        i32.store offset=1051080
+        i32.store offset=1051096
         br 1 (;@1;)
       end
       local.get 1
@@ -33992,8 +33992,8 @@
       local.get 2
       i32.const 24
       i32.add
-      i32.const 1049068
-      i32.const 1049116
+      i32.const 1049076
+      i32.const 1049124
       call 172
       unreachable
     end
@@ -34375,7 +34375,7 @@
     local.get 2
     i32.store offset=4
     local.get 0
-    i32.const 1049132
+    i32.const 1049140
     i32.store)
   (func (;111;) (type 4) (param i32)
     (local i32 i32)
@@ -34480,16 +34480,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -34502,7 +34502,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -34513,9 +34513,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -34528,7 +34528,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -34593,13 +34593,13 @@
       end
       i32.const 8
       local.get 3
-      i32.const 1049160
+      i32.const 1049168
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049160
+    i32.const 1049168
     call 171
     unreachable)
   (func (;113;) (type 4) (param i32)
@@ -34694,16 +34694,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 7
                 local.get 6
                 i32.add
                 local.tee 8
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 6
                 i32.const 65535
                 i32.add
@@ -34716,7 +34716,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 9
                 i32.const 0
                 local.get 7
@@ -34727,9 +34727,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 7
                 local.get 7
                 local.get 9
@@ -34742,7 +34742,7 @@
               end
               i32.const 0
               local.get 8
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 7
               i32.eqz
               br_if 2 (;@3;)
@@ -34839,13 +34839,13 @@
       end
       i32.const 20
       local.get 6
-      i32.const 1049176
+      i32.const 1049184
       call 164
       unreachable
     end
     local.get 5
     local.get 6
-    i32.const 1049176
+    i32.const 1049184
     call 171
     unreachable)
   (func (;114;) (type 4) (param i32)
@@ -34940,16 +34940,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 7
                 local.get 6
                 i32.add
                 local.tee 8
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 6
                 i32.const 65535
                 i32.add
@@ -34962,7 +34962,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 9
                 i32.const 0
                 local.get 7
@@ -34973,9 +34973,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 7
                 local.get 7
                 local.get 9
@@ -34988,7 +34988,7 @@
               end
               i32.const 0
               local.get 8
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 7
               i32.eqz
               br_if 2 (;@3;)
@@ -35085,13 +35085,13 @@
       end
       i32.const 20
       local.get 6
-      i32.const 1049192
+      i32.const 1049200
       call 164
       unreachable
     end
     local.get 5
     local.get 6
-    i32.const 1049192
+    i32.const 1049200
     call 171
     unreachable)
   (func (;115;) (type 10) (result i32)
@@ -35156,16 +35156,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -35178,7 +35178,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -35189,9 +35189,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -35204,7 +35204,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -35267,13 +35267,13 @@
       end
       i32.const 4
       local.get 3
-      i32.const 1049208
+      i32.const 1049216
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049208
+    i32.const 1049216
     call 171
     unreachable)
   (func (;116;) (type 4) (param i32)
@@ -35296,10 +35296,10 @@
     i64.const 0
     i64.store offset=32 align=4
     local.get 1
-    i32.const 1049132
+    i32.const 1049140
     i32.store offset=28
     local.get 1
-    i32.const 1049132
+    i32.const 1049140
     i32.store offset=24
     local.get 1
     i32.const 8
@@ -35344,16 +35344,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 5
                 local.get 4
                 i32.add
                 local.tee 6
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 4
                 i32.const 65535
                 i32.add
@@ -35366,7 +35366,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 7
                 i32.const 0
                 local.get 5
@@ -35377,9 +35377,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 5
                 local.get 5
                 local.get 7
@@ -35392,7 +35392,7 @@
               end
               i32.const 0
               local.get 6
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 5
               i32.eqz
               br_if 2 (;@3;)
@@ -35464,13 +35464,13 @@
       end
       i32.const 8
       local.get 4
-      i32.const 1049224
+      i32.const 1049232
       call 164
       unreachable
     end
     local.get 3
     local.get 4
-    i32.const 1049224
+    i32.const 1049232
     call 171
     unreachable)
   (func (;117;) (type 4) (param i32)
@@ -35507,7 +35507,7 @@
     local.get 1
     i32.const 40
     i32.add
-    i32.const 100
+    i32.const 104
     i32.const 32
     call 5
     local.get 1
@@ -35643,7 +35643,7 @@
     local.get 1
     i32.const 8
     i32.add
-    i32.const 132
+    i32.const 136
     i32.const 32
     call 5
     local.get 1
@@ -35742,7 +35742,7 @@
     local.get 1
     i32.const 24
     i32.add
-    i32.const 164
+    i32.const 168
     i32.const 20
     call 5
     local.get 1
@@ -35807,16 +35807,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 7
                 local.get 6
                 i32.add
                 local.tee 8
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 6
                 i32.const 65535
                 i32.add
@@ -35829,7 +35829,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 9
                 i32.const 0
                 local.get 7
@@ -35840,9 +35840,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 7
                 local.get 7
                 local.get 9
@@ -35855,7 +35855,7 @@
               end
               i32.const 0
               local.get 8
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 7
               i32.eqz
               br_if 2 (;@3;)
@@ -35952,13 +35952,13 @@
       end
       i32.const 20
       local.get 6
-      i32.const 1049240
+      i32.const 1049248
       call 164
       unreachable
     end
     local.get 5
     local.get 6
-    i32.const 1049240
+    i32.const 1049248
     call 171
     unreachable)
   (func (;120;) (type 9) (result i64)
@@ -35974,7 +35974,7 @@
     local.get 0
     i32.const 24
     i32.add
-    i32.const 184
+    i32.const 188
     i32.const 8
     call 5
     local.get 0
@@ -36023,16 +36023,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -36045,7 +36045,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -36056,9 +36056,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -36071,7 +36071,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -36136,13 +36136,13 @@
       end
       i32.const 8
       local.get 3
-      i32.const 1049256
+      i32.const 1049264
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049256
+    i32.const 1049264
     call 171
     unreachable)
   (func (;121;) (type 9) (result i64)
@@ -36158,7 +36158,7 @@
     local.get 0
     i32.const 24
     i32.add
-    i32.const 192
+    i32.const 196
     i32.const 8
     call 5
     local.get 0
@@ -36207,16 +36207,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -36229,7 +36229,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -36240,9 +36240,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -36255,7 +36255,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -36320,13 +36320,13 @@
       end
       i32.const 8
       local.get 3
-      i32.const 1049272
+      i32.const 1049280
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049272
+    i32.const 1049280
     call 171
     unreachable)
   (func (;122;) (type 9) (result i64)
@@ -36342,7 +36342,7 @@
     local.get 0
     i32.const 24
     i32.add
-    i32.const 200
+    i32.const 204
     i32.const 8
     call 5
     local.get 0
@@ -36391,16 +36391,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -36413,7 +36413,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -36424,9 +36424,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -36439,7 +36439,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -36504,13 +36504,13 @@
       end
       i32.const 8
       local.get 3
-      i32.const 1049288
+      i32.const 1049296
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049288
+    i32.const 1049296
     call 171
     unreachable)
   (func (;123;) (type 9) (result i64)
@@ -36526,7 +36526,7 @@
     local.get 0
     i32.const 24
     i32.add
-    i32.const 208
+    i32.const 212
     i32.const 8
     call 5
     local.get 0
@@ -36575,16 +36575,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 4
                 local.get 3
                 i32.add
                 local.tee 5
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 3
                 i32.const 65535
                 i32.add
@@ -36597,7 +36597,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 6
                 i32.const 0
                 local.get 4
@@ -36608,9 +36608,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 4
                 local.get 4
                 local.get 6
@@ -36623,7 +36623,7 @@
               end
               i32.const 0
               local.get 5
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 4
               i32.eqz
               br_if 2 (;@3;)
@@ -36688,13 +36688,13 @@
       end
       i32.const 8
       local.get 3
-      i32.const 1049304
+      i32.const 1049312
       call 164
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049304
+    i32.const 1049312
     call 171
     unreachable)
   (func (;124;) (type 4) (param i32)
@@ -36731,7 +36731,7 @@
     local.get 1
     i32.const 40
     i32.add
-    i32.const 216
+    i32.const 220
     i32.const 32
     call 5
     local.get 1
@@ -36867,7 +36867,7 @@
     local.get 1
     i32.const 40
     i32.add
-    i32.const 248
+    i32.const 252
     i32.const 32
     call 5
     local.get 1
@@ -36996,7 +36996,7 @@
     local.get 1
     i32.const 24
     i32.add
-    i32.const 313
+    i32.const 317
     i32.const 20
     call 5
     local.get 1
@@ -37061,16 +37061,16 @@
               br_if 1 (;@4;)
               block  ;; label = @6
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.tee 7
                 local.get 6
                 i32.add
                 local.tee 8
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 i32.le_u
                 br_if 0 (;@6;)
-                i32.const 1051096
+                i32.const 1051112
                 local.get 6
                 i32.const 65535
                 i32.add
@@ -37083,7 +37083,7 @@
                 i32.eq
                 br_if 3 (;@3;)
                 i32.const 0
-                i32.load offset=1051092
+                i32.load offset=1051108
                 local.set 9
                 i32.const 0
                 local.get 7
@@ -37094,9 +37094,9 @@
                 i32.const -65536
                 i32.and
                 i32.add
-                i32.store offset=1051092
+                i32.store offset=1051108
                 i32.const 0
-                i32.load offset=1051088
+                i32.load offset=1051104
                 local.get 7
                 local.get 7
                 local.get 9
@@ -37109,7 +37109,7 @@
               end
               i32.const 0
               local.get 8
-              i32.store offset=1051088
+              i32.store offset=1051104
               local.get 7
               i32.eqz
               br_if 2 (;@3;)
@@ -37206,20 +37206,20 @@
       end
       i32.const 20
       local.get 6
-      i32.const 1049320
+      i32.const 1049328
       call 164
       unreachable
     end
     local.get 5
     local.get 6
-    i32.const 1049320
+    i32.const 1049328
     call 171
     unreachable)
   (func (;127;) (type 3) (param i32 i32) (result i32)
     (local i32 i32)
     block  ;; label = @1
       i32.const 0
-      i32.load offset=1051088
+      i32.load offset=1051104
       local.tee 2
       local.get 1
       i32.rem_u
@@ -37233,7 +37233,7 @@
       local.get 3
       i32.sub
       local.tee 2
-      i32.store offset=1051088
+      i32.store offset=1051104
     end
     block  ;; label = @1
       local.get 2
@@ -37241,11 +37241,11 @@
       i32.add
       local.tee 1
       i32.const 0
-      i32.load offset=1051092
+      i32.load offset=1051108
       i32.le_u
       br_if 0 (;@1;)
       block  ;; label = @2
-        i32.const 1051096
+        i32.const 1051112
         local.get 0
         i32.const 65535
         i32.add
@@ -37261,7 +37261,7 @@
         return
       end
       i32.const 0
-      i32.load offset=1051092
+      i32.load offset=1051108
       local.set 3
       i32.const 0
       local.get 2
@@ -37272,9 +37272,9 @@
       i32.const -65536
       i32.and
       i32.add
-      i32.store offset=1051092
+      i32.store offset=1051108
       i32.const 0
-      i32.load offset=1051088
+      i32.load offset=1051104
       local.get 2
       local.get 2
       local.get 3
@@ -37287,7 +37287,7 @@
     end
     i32.const 0
     local.get 1
-    i32.store offset=1051088
+    i32.store offset=1051104
     local.get 2)
   (func (;128;) (type 0) (param i32 i32 i32))
   (func (;129;) (type 0) (param i32 i32 i32)
@@ -37309,13 +37309,13 @@
         br_if 1 (;@1;)
         i32.const 4
         local.get 4
-        i32.const 1049428
+        i32.const 1049440
         call 164
         unreachable
       end
       local.get 2
       local.get 3
-      i32.const 1049512
+      i32.const 1049524
       call 162
       unreachable
     end
@@ -37337,13 +37337,13 @@
         br_if 1 (;@1;)
         i32.const 4
         local.get 5
-        i32.const 1049428
+        i32.const 1049440
         call 164
         unreachable
       end
       local.get 4
       local.get 3
-      i32.const 1049512
+      i32.const 1049524
       call 162
       unreachable
     end
@@ -37382,13 +37382,13 @@
       end
       local.get 5
       local.get 2
-      i32.const 1049496
+      i32.const 1049508
       call 171
       unreachable
     end
     local.get 2
     local.get 3
-    i32.const 1049496
+    i32.const 1049508
     call 164
     unreachable)
   (func (;130;) (type 5) (param i32 i32 i32 i32)
@@ -37410,13 +37410,13 @@
         br_if 1 (;@1;)
         i32.const 4
         local.get 5
-        i32.const 1049428
+        i32.const 1049440
         call 164
         unreachable
       end
       local.get 2
       local.get 4
-      i32.const 1049512
+      i32.const 1049524
       call 162
       unreachable
     end
@@ -37438,13 +37438,13 @@
         br_if 1 (;@1;)
         i32.const 4
         local.get 4
-        i32.const 1049428
+        i32.const 1049440
         call 164
         unreachable
       end
       local.get 5
       local.get 4
-      i32.const 1049512
+      i32.const 1049524
       call 162
       unreachable
     end
@@ -37524,7 +37524,7 @@
       br_if 0 (;@1;)
       local.get 2
       local.get 4
-      i32.const 1049480
+      i32.const 1049492
       call 163
       unreachable
     end
@@ -37899,7 +37899,7 @@
     end
     local.get 2
     local.get 4
-    i32.const 1049480
+    i32.const 1049492
     call 163
     unreachable)
   (func (;134;) (type 5) (param i32 i32 i32 i32)
@@ -37921,13 +37921,13 @@
         br_if 1 (;@1;)
         i32.const 4
         local.get 4
-        i32.const 1049428
+        i32.const 1049440
         call 164
         unreachable
       end
       local.get 2
       local.get 4
-      i32.const 1049512
+      i32.const 1049524
       call 162
       unreachable
     end
@@ -37960,13 +37960,13 @@
         br_if 1 (;@1;)
         i32.const 8
         local.get 4
-        i32.const 1049444
+        i32.const 1049456
         call 164
         unreachable
       end
       local.get 2
       local.get 4
-      i32.const 1049528
+      i32.const 1049540
       call 162
       unreachable
     end
@@ -37989,11 +37989,11 @@
           block  ;; label = @4
             local.get 2
             br_if 0 (;@4;)
-            i32.const 1049636
+            i32.const 1049648
             local.set 3
             i32.const 0
             local.set 1
-            i32.const 1049544
+            i32.const 1049556
             local.set 4
             br 1 (;@3;)
           end
@@ -38002,7 +38002,7 @@
           i32.le_s
           br_if 1 (;@2;)
           i32.const 0
-          i32.load8_u offset=1051085
+          i32.load8_u offset=1051101
           drop
           local.get 2
           i32.const 1
@@ -38010,7 +38010,7 @@
           local.tee 4
           i32.eqz
           br_if 2 (;@1;)
-          i32.const 1049660
+          i32.const 1049672
           local.set 3
           block  ;; label = @4
             local.get 4
@@ -38030,7 +38030,7 @@
           i32.const 1
           i32.or
           local.set 1
-          i32.const 1049648
+          i32.const 1049660
           local.set 3
         end
         local.get 0
@@ -38065,7 +38065,7 @@
     local.get 2
     i32.store offset=4
     local.get 0
-    i32.const 1049636
+    i32.const 1049648
     i32.store)
   (func (;139;) (type 5) (param i32 i32 i32 i32)
     (local i32)
@@ -38084,7 +38084,7 @@
           i32.le_s
           br_if 1 (;@2;)
           i32.const 0
-          i32.load8_u offset=1051085
+          i32.load8_u offset=1051101
           drop
           local.get 3
           i32.const 1
@@ -38160,7 +38160,7 @@
       local.get 2
       i32.store offset=4
       local.get 0
-      i32.const 1049764
+      i32.const 1049776
       i32.store
       return
     end
@@ -38169,7 +38169,7 @@
   (func (;142;) (type 11) (param i32 i32 i32 i32 i32 i32)
     (local i32)
     i32.const 0
-    i32.load8_u offset=1051085
+    i32.load8_u offset=1051101
     drop
     block  ;; label = @1
       block  ;; label = @2
@@ -38217,7 +38217,7 @@
           local.get 4
           i32.store offset=4
           local.get 0
-          i32.const 1049764
+          i32.const 1049776
           i32.store
           return
         end
@@ -38242,7 +38242,7 @@
         local.get 4
         i32.store offset=4
         local.get 0
-        i32.const 1049764
+        i32.const 1049776
         i32.store
         local.get 6
         i32.const 12
@@ -38258,9 +38258,9 @@
     call 143
     unreachable)
   (func (;143;) (type 7)
-    i32.const 1049776
+    i32.const 1049788
     i32.const 5
-    i32.const 1049868
+    i32.const 1049884
     call 166
     unreachable)
   (func (;144;) (type 5) (param i32 i32 i32 i32)
@@ -38359,7 +38359,7 @@
               i32.le_s
               br_if 2 (;@3;)
               i32.const 0
-              i32.load8_u offset=1051085
+              i32.load8_u offset=1051101
               drop
               local.get 3
               i32.const 1
@@ -38427,13 +38427,13 @@
       call 155
       unreachable
     end
-    i32.const 1049672
+    i32.const 1049684
     i32.const 43
     local.get 4
     i32.const 15
     i32.add
-    i32.const 1049716
-    i32.const 1049748
+    i32.const 1049728
+    i32.const 1049760
     call 172
     unreachable)
   (func (;146;) (type 0) (param i32 i32 i32)
@@ -38507,23 +38507,23 @@
         global.set 0
         return
       end
-      i32.const 1049672
+      i32.const 1049684
       i32.const 43
       local.get 3
       i32.const 15
       i32.add
-      i32.const 1049716
-      i32.const 1049732
+      i32.const 1049728
+      i32.const 1049744
       call 172
       unreachable
     end
-    i32.const 1049672
+    i32.const 1049684
     i32.const 43
     local.get 3
     i32.const 15
     i32.add
-    i32.const 1049716
-    i32.const 1049748
+    i32.const 1049728
+    i32.const 1049760
     call 172
     unreachable)
   (func (;147;) (type 5) (param i32 i32 i32 i32)
@@ -38567,7 +38567,7 @@
       local.get 2
       i32.store offset=4
       local.get 0
-      i32.const 1049764
+      i32.const 1049776
       i32.store
       return
     end
@@ -38675,23 +38675,23 @@
         global.set 0
         return
       end
-      i32.const 1049672
+      i32.const 1049684
       i32.const 43
       local.get 3
       i32.const 15
       i32.add
-      i32.const 1049716
-      i32.const 1049732
+      i32.const 1049728
+      i32.const 1049744
       call 172
       unreachable
     end
-    i32.const 1049672
+    i32.const 1049684
     i32.const 43
     local.get 3
     i32.const 15
     i32.add
-    i32.const 1049716
-    i32.const 1049748
+    i32.const 1049728
+    i32.const 1049760
     call 172
     unreachable)
   (func (;150;) (type 5) (param i32 i32 i32 i32)
@@ -38723,7 +38723,7 @@
     local.get 2
     i32.store offset=4
     local.get 0
-    i32.const 1049764
+    i32.const 1049776
     i32.store)
   (func (;151;) (type 5) (param i32 i32 i32 i32)
     local.get 0
@@ -38778,13 +38778,13 @@
       global.set 0
       return
     end
-    i32.const 1049672
+    i32.const 1049684
     i32.const 43
     local.get 3
     i32.const 15
     i32.add
-    i32.const 1049716
-    i32.const 1049748
+    i32.const 1049728
+    i32.const 1049760
     call 172
     unreachable)
   (func (;153;) (type 3) (param i32 i32) (result i32)
@@ -38801,9 +38801,9 @@
       select
       return
     end
-    i32.const 1050000
+    i32.const 1050016
     i32.const 57
-    i32.const 1049976
+    i32.const 1049992
     call 166
     unreachable)
   (func (;154;) (type 3) (param i32 i32) (result i32)
@@ -38830,15 +38830,15 @@
     i32.const 1
     i32.store offset=12
     local.get 0
-    i32.const 1050108
+    i32.const 1050124
     i32.store offset=8
     local.get 0
-    i32.const 1050060
+    i32.const 1050076
     i32.store offset=16
     local.get 0
     i32.const 8
     i32.add
-    i32.const 1050116
+    i32.const 1050132
     call 161
     unreachable)
   (func (;157;) (type 1) (param i32 i32)
@@ -38853,7 +38853,7 @@
     i32.store offset=12
     block  ;; label = @1
       i32.const 0
-      i32.load8_u offset=1051084
+      i32.load8_u offset=1051100
       br_if 0 (;@1;)
       local.get 2
       i32.const 28
@@ -38864,7 +38864,7 @@
       i32.const 2
       i32.store offset=20
       local.get 2
-      i32.const 1050192
+      i32.const 1050208
       i32.store offset=16
       local.get 2
       i32.const 1
@@ -38883,7 +38883,7 @@
       i32.const 16
       i32.add
       i32.const 0
-      i32.const 1050208
+      i32.const 1050224
       call 174
       unreachable
     end
@@ -38896,7 +38896,7 @@
     i32.const 2
     i32.store offset=20
     local.get 2
-    i32.const 1050192
+    i32.const 1050208
     i32.store offset=16
     local.get 2
     i32.const 1
@@ -38914,7 +38914,7 @@
     local.get 2
     i32.const 16
     i32.add
-    i32.const 1050224
+    i32.const 1050240
     call 161
     unreachable)
   (func (;158;) (type 3) (param i32 i32) (result i32)
@@ -38943,10 +38943,10 @@
     local.get 0
     i32.store offset=20
     local.get 2
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=16
     local.get 2
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=12
     local.get 2
     i32.const 12
@@ -38984,7 +38984,7 @@
     i32.const 2
     i32.store offset=12
     local.get 3
-    i32.const 1050956
+    i32.const 1050972
     i32.store offset=8
     local.get 3
     i32.const 1
@@ -39039,7 +39039,7 @@
     i32.const 2
     i32.store offset=12
     local.get 3
-    i32.const 1050308
+    i32.const 1050324
     i32.store offset=8
     local.get 3
     i32.const 1
@@ -39094,7 +39094,7 @@
     i32.const 2
     i32.store offset=12
     local.get 3
-    i32.const 1050988
+    i32.const 1051004
     i32.store offset=8
     local.get 3
     i32.const 1
@@ -39643,7 +39643,7 @@
     i32.const 1
     i32.store offset=4
     local.get 3
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=8
     local.get 3
     local.get 1
@@ -40434,7 +40434,7 @@
     i32.const 2
     i32.store offset=12
     local.get 3
-    i32.const 1051040
+    i32.const 1051056
     i32.store offset=8
     local.get 3
     i32.const 1
@@ -40495,7 +40495,7 @@
     i32.const 2
     i32.store offset=28
     local.get 5
-    i32.const 1050328
+    i32.const 1050344
     i32.store offset=24
     local.get 5
     i32.const 26
@@ -40548,10 +40548,10 @@
     local.get 0
     i32.store offset=20
     local.get 3
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=16
     local.get 3
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=12
     local.get 3
     i32.const 12
@@ -40820,7 +40820,7 @@
             i32.eqz
             br_if 0 (;@4;)
             local.get 4
-            i32.const 1050368
+            i32.const 1050384
             i32.const 4
             local.get 3
             i32.load offset=12
@@ -40887,7 +40887,7 @@
       i32.eqz
       br_if 0 (;@1;)
       local.get 3
-      i32.const 1050368
+      i32.const 1050384
       i32.const 4
       local.get 2
       i32.load offset=12
@@ -40952,7 +40952,7 @@
               br_if 2 (;@3;)
               local.get 6
               i32.load offset=20
-              i32.const 1050372
+              i32.const 1050388
               i32.const 2
               local.get 6
               i32.const 24
@@ -40973,7 +40973,7 @@
               local.set 4
               local.get 6
               i32.load offset=20
-              i32.const 1050377
+              i32.const 1050393
               i32.const 1
               local.get 6
               i32.const 24
@@ -40991,7 +40991,7 @@
             local.get 3
             i32.const 36
             i32.add
-            i32.const 1050344
+            i32.const 1050360
             i32.store
             local.get 3
             local.get 0
@@ -41037,7 +41037,7 @@
             br_if 3 (;@1;)
             local.get 3
             i32.load offset=32
-            i32.const 1050324
+            i32.const 1050340
             i32.const 2
             local.get 3
             i32.load offset=36
@@ -41055,15 +41055,15 @@
           i32.const 1
           i32.store offset=16
           local.get 3
-          i32.const 1050452
+          i32.const 1050468
           i32.store offset=12
           local.get 3
-          i32.const 1050240
+          i32.const 1050256
           i32.store offset=20
           local.get 3
           i32.const 12
           i32.add
-          i32.const 1050492
+          i32.const 1050508
           call 161
           unreachable
         end
@@ -41075,7 +41075,7 @@
         br_if 1 (;@1;)
         local.get 6
         i32.load offset=20
-        i32.const 1050324
+        i32.const 1050340
         i32.const 2
         local.get 6
         i32.const 24
@@ -41142,7 +41142,7 @@
               local.get 3
               i32.const 36
               i32.add
-              i32.const 1050344
+              i32.const 1050360
               i32.store
               local.get 3
               local.get 0
@@ -41197,21 +41197,21 @@
             i32.const 1
             i32.store offset=16
             local.get 3
-            i32.const 1050556
+            i32.const 1050572
             i32.store offset=12
             local.get 3
-            i32.const 1050240
+            i32.const 1050256
             i32.store offset=20
             local.get 3
             i32.const 12
             i32.add
-            i32.const 1050564
+            i32.const 1050580
             call 161
             unreachable
           end
           local.get 3
           i32.load offset=32
-          i32.const 1050374
+          i32.const 1050390
           i32.const 2
           local.get 3
           i32.load offset=36
@@ -41264,7 +41264,7 @@
         i32.const 20
         i32.add
         i32.load
-        i32.const 1050376
+        i32.const 1050392
         i32.const 1
         local.get 0
         i32.const 24
@@ -41290,20 +41290,20 @@
     i32.const 1
     i32.store offset=12
     local.get 1
-    i32.const 1050628
+    i32.const 1050644
     i32.store offset=8
     local.get 1
-    i32.const 1050240
+    i32.const 1050256
     i32.store offset=16
     local.get 1
     i32.const 8
     i32.add
-    i32.const 1050636
+    i32.const 1050652
     call 161
     unreachable)
   (func (;182;) (type 3) (param i32 i32) (result i32)
     local.get 0
-    i32.const 1050344
+    i32.const 1050360
     local.get 1
     call 168)
   (func (;183;) (type 3) (param i32 i32) (result i32)
@@ -41851,7 +41851,7 @@
     (local i32)
     local.get 1
     i32.load offset=20
-    i32.const 1050378
+    i32.const 1050394
     i32.const 1
     local.get 1
     i32.const 24
@@ -41919,7 +41919,7 @@
         local.tee 8
         i32.const 1
         i32.shl
-        i32.const 1050698
+        i32.const 1050714
         i32.add
         i32.load16_u align=1
         i32.store16 align=1
@@ -41935,7 +41935,7 @@
         i32.and
         i32.const 1
         i32.shl
-        i32.const 1050698
+        i32.const 1050714
         i32.add
         i32.load16_u align=1
         i32.store16 align=1
@@ -41984,7 +41984,7 @@
       i32.and
       i32.const 1
       i32.shl
-      i32.const 1050698
+      i32.const 1050714
       i32.add
       i32.load16_u align=1
       i32.store16 align=1
@@ -42006,7 +42006,7 @@
         local.get 6
         i32.const 1
         i32.shl
-        i32.const 1050698
+        i32.const 1050714
         i32.add
         i32.load16_u align=1
         i32.store16 align=1
@@ -42027,7 +42027,7 @@
     end
     local.get 2
     local.get 1
-    i32.const 1050240
+    i32.const 1050256
     i32.const 0
     local.get 3
     i32.const 9
@@ -42101,13 +42101,13 @@
       br_if 0 (;@1;)
       local.get 4
       i32.const 128
-      i32.const 1050680
+      i32.const 1050696
       call 162
       unreachable
     end
     local.get 1
     i32.const 1
-    i32.const 1050696
+    i32.const 1050712
     i32.const 2
     local.get 2
     local.get 0
@@ -42127,7 +42127,7 @@
   (func (;190;) (type 3) (param i32 i32) (result i32)
     local.get 1
     i32.load offset=20
-    i32.const 1051056
+    i32.const 1051072
     i32.const 11
     local.get 1
     i32.const 24
@@ -42866,8 +42866,8 @@
   (table (;0;) 33 33 funcref)
   (memory (;0;) 17)
   (global (;0;) (mut i32) (i32.const 1048576))
-  (global (;1;) i32 (i32.const 1051096))
-  (global (;2;) i32 (i32.const 1051104))
+  (global (;1;) i32 (i32.const 1051112))
+  (global (;2;) i32 (i32.const 1051120))
   (export "memory" (memory 0))
   (export "arithmetic_add" (func 13))
   (export "arithmetic_addmod" (func 14))
@@ -42963,4 +42963,4 @@
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2))
   (elem (;0;) (i32.const 1) func 167 7 189 9 6 8 10 110 139 109 138 140 141 144 146 147 148 149 136 190 150 151 152 158 175 173 160 170 159 176 177 182)
-  (data (;0;) (i32.const 1048576) "\04\00\00\00\04\00\00\00\04\00\00\00\05\00\00\000x\00\00\10\00\10\00\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\10\00\10\00\00\00\00\000_U\00\10\00\10\00\00\00\00\00I\00\10\00\02\00\00\00\00\01\00\00called `Result::unwrap()` on an `Err` valueHash table capacity overflow\00\8b\00\10\00\1c\00\00\00/home/bfday/.cargo/registry/src/index.crates.io-6f17d22bba15001f/hashbrown-0.14.3/src/raw/mod.rs\b0\00\10\00`\00\00\00V\00\00\00(\00\00\00\ff\ff\ff\ff\ff\ff\ff\ff \01\10\00\00\00\00\00\00\00\00\00\00\00\00\00rwasm/code-snippets/src/common.rs\00\00\008\01\10\00!\00\00\00\88\03\00\00\06\00\00\00rwasm/code-snippets/src/system/calldatacopy.rs\00\00l\01\10\00.\00\00\00&\00\00\00\14\00\00\00rwasm/code-snippets/src/system/calldataload.rs\00\00\ac\01\10\00.\00\00\00\11\00\00\00\10\00\00\00\06\00\00\00\10\00\00\00\04\00\00\00\07\00\00\00rwasm/code-snippets/src/ts.rs\00\00\00\fc\01\10\00\1d\00\00\00\11\00\00\00\19\00\00\00\08\00\00\00\09\00\00\00\0a\00\00\00sdk/src/evm.rs\00\008\02\10\00\0e\00\00\00{\00\00\00\05\00\00\008\02\10\00\0e\00\00\00}\00\00\00\05\00\00\008\02\10\00\0e\00\00\00~\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\80\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\82\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\86\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\87\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\88\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\89\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\8a\00\00\00\05\00\00\008\02\10\00\0e\00\00\00\8f\00\00\00\05\00\00\00/home/bfday/.cargo/registry/src/index.crates.io-6f17d22bba15001f/byteorder-1.5.0/src/lib.rs\00\f8\02\10\00[\00\00\00V\08\00\00\1f\00\00\00\f8\02\10\00[\00\00\00[\08\00\00\1f\00\00\00codec/src/buffer.rs\00t\03\10\00\13\00\00\00\9b\00\00\00\09\00\00\00t\03\10\00\13\00\00\00\ad\00\00\00\15\00\00\00t\03\10\00\13\00\00\00\a1\00\00\00\05\00\00\00t\03\10\00\13\00\00\00\a3\00\00\00\05\00\00\00/home/bfday/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bytes-1.5.0/src/bytes.rs\00\00\00\0b\00\00\00\09\00\00\00\0c\00\00\00\0d\00\00\00\0e\00\00\00\0f\00\00\00\10\00\00\00\11\00\00\00\12\00\00\00called `Result::unwrap()` on an `Err` value\00\13\00\00\00\00\00\00\00\01\00\00\00\14\00\00\00\c8\03\10\00Y\00\00\00\03\04\00\002\00\00\00\c8\03\10\00Y\00\00\00\11\04\00\00I\00\00\00\15\00\00\00\16\00\00\00\17\00\00\00abort/home/bfday/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bytes-1.5.0/src/lib.rs\b5\04\10\00W\00\00\00s\00\00\00\09\00\00\00/home/bfday/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ruint-1.11.1/src/utils.rs\00\00\1c\05\10\00Z\00\00\00\07\00\00\00\0f\00\00\00\00\00\00\00\00\00\00\00attempt to calculate the remainder with a divisor of zero\00\00\00library/alloc/src/raw_vec.rscapacity overflow\00\00\00\e8\05\10\00\11\00\00\00\cc\05\10\00\1c\00\00\00\17\02\00\00\05\00\00\00library/alloc/src/alloc.rsmemory allocation of  bytes failed.\06\10\00\15\00\00\00C\06\10\00\0d\00\00\00\14\06\10\00\1a\00\00\00\a2\01\00\00\0d\00\00\00\14\06\10\00\1a\00\00\00\a0\01\00\00\0d\00\00\00\1b\00\00\00\00\00\00\00\01\00\00\00\1c\00\00\00index out of bounds: the len is  but the index is \00\00\90\06\10\00 \00\00\00\b0\06\10\00\12\00\00\00: \00\00\80\06\10\00\00\00\00\00\d4\06\10\00\02\00\00\00\1d\00\00\00\0c\00\00\00\04\00\00\00\1e\00\00\00\1f\00\00\00 \00\00\00    , ,\0a}\0a{attempted to begin a new map entry without completing the previous one\00\00\00\0b\07\10\00F\00\00\00library/core/src/fmt/builders.rs\5c\07\10\00 \00\00\00\0b\03\00\00\0d\00\00\00attempted to format a map value before its key\00\00\8c\07\10\00.\00\00\00\5c\07\10\00 \00\00\00K\03\00\00\0d\00\00\00attempted to finish a map with a partial entry\00\00\d4\07\10\00.\00\00\00\5c\07\10\00 \00\00\00\a1\03\00\00\0d\00\00\00library/core/src/fmt/num.rs\00\1c\08\10\00\1b\00\00\00i\00\00\00\17\00\00\000x00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\00\00\18\00\00\00range start index  out of range for slice of length \18\09\10\00\12\00\00\00*\09\10\00\22\00\00\00range end index \5c\09\10\00\10\00\00\00*\09\10\00\22\00\00\00slice index starts at  but ends at \00|\09\10\00\16\00\00\00\92\09\10\00\0d\00\00\00LayoutError"))
+  (data (;0;) (i32.const 1048576) "\04\00\00\00\04\00\00\00\04\00\00\00\05\00\00\000x\00\00\10\00\10\00\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\10\00\10\00\00\00\00\000_U\00\10\00\10\00\00\00\00\00I\00\10\00\02\00\00\00\00\01\00\00called `Result::unwrap()` on an `Err` valueHash table capacity overflow\00\8b\00\10\00\1c\00\00\00/Users/dmitry/.cargo/registry/src/index.crates.io-6f17d22bba15001f/hashbrown-0.14.3/src/raw/mod.rs\00\00\b0\00\10\00b\00\00\00V\00\00\00(\00\00\00\00\00\00\00\ff\ff\ff\ff\ff\ff\ff\ff(\01\10\00\00\00\00\00\00\00\00\00\00\00\00\00rwasm/code-snippets/src/common.rs\00\00\00@\01\10\00!\00\00\00\88\03\00\00\06\00\00\00rwasm/code-snippets/src/system/calldatacopy.rs\00\00t\01\10\00.\00\00\00&\00\00\00\14\00\00\00rwasm/code-snippets/src/system/calldataload.rs\00\00\b4\01\10\00.\00\00\00\11\00\00\00\10\00\00\00\06\00\00\00\10\00\00\00\04\00\00\00\07\00\00\00rwasm/code-snippets/src/ts.rs\00\00\00\04\02\10\00\1d\00\00\00\11\00\00\00\19\00\00\00\08\00\00\00\09\00\00\00\0a\00\00\00sdk/src/evm.rs\00\00@\02\10\00\0e\00\00\00|\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00~\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\7f\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\81\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\83\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\88\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\89\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\8a\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\8b\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\8c\00\00\00\05\00\00\00@\02\10\00\0e\00\00\00\91\00\00\00\05\00\00\00/Users/dmitry/.cargo/registry/src/index.crates.io-6f17d22bba15001f/byteorder-1.5.0/src/lib.rs\00\00\00\00\03\10\00]\00\00\00V\08\00\00\1f\00\00\00\00\03\10\00]\00\00\00[\08\00\00\1f\00\00\00codec/src/buffer.rs\00\80\03\10\00\13\00\00\00\9b\00\00\00\09\00\00\00\80\03\10\00\13\00\00\00\ad\00\00\00\15\00\00\00\80\03\10\00\13\00\00\00\a1\00\00\00\05\00\00\00\80\03\10\00\13\00\00\00\a3\00\00\00\05\00\00\00/Users/dmitry/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bytes-1.5.0/src/bytes.rs\00\0b\00\00\00\09\00\00\00\0c\00\00\00\0d\00\00\00\0e\00\00\00\0f\00\00\00\10\00\00\00\11\00\00\00\12\00\00\00called `Result::unwrap()` on an `Err` value\00\13\00\00\00\00\00\00\00\01\00\00\00\14\00\00\00\d4\03\10\00[\00\00\00\03\04\00\002\00\00\00\d4\03\10\00[\00\00\00\11\04\00\00I\00\00\00\15\00\00\00\16\00\00\00\17\00\00\00abort/Users/dmitry/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bytes-1.5.0/src/lib.rs\00\00\c1\04\10\00Y\00\00\00s\00\00\00\09\00\00\00/Users/dmitry/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ruint-1.11.1/src/utils.rs,\05\10\00\5c\00\00\00\07\00\00\00\0f\00\00\00\00\00\00\00\00\00\00\00attempt to calculate the remainder with a divisor of zero\00\00\00library/alloc/src/raw_vec.rscapacity overflow\00\00\00\f8\05\10\00\11\00\00\00\dc\05\10\00\1c\00\00\00\17\02\00\00\05\00\00\00library/alloc/src/alloc.rsmemory allocation of  bytes failed>\06\10\00\15\00\00\00S\06\10\00\0d\00\00\00$\06\10\00\1a\00\00\00\a2\01\00\00\0d\00\00\00$\06\10\00\1a\00\00\00\a0\01\00\00\0d\00\00\00\1b\00\00\00\00\00\00\00\01\00\00\00\1c\00\00\00index out of bounds: the len is  but the index is \00\00\a0\06\10\00 \00\00\00\c0\06\10\00\12\00\00\00: \00\00\90\06\10\00\00\00\00\00\e4\06\10\00\02\00\00\00\1d\00\00\00\0c\00\00\00\04\00\00\00\1e\00\00\00\1f\00\00\00 \00\00\00    , ,\0a}\0a{attempted to begin a new map entry without completing the previous one\00\00\00\1b\07\10\00F\00\00\00library/core/src/fmt/builders.rsl\07\10\00 \00\00\00\0b\03\00\00\0d\00\00\00attempted to format a map value before its key\00\00\9c\07\10\00.\00\00\00l\07\10\00 \00\00\00K\03\00\00\0d\00\00\00attempted to finish a map with a partial entry\00\00\e4\07\10\00.\00\00\00l\07\10\00 \00\00\00\a1\03\00\00\0d\00\00\00library/core/src/fmt/num.rs\00,\08\10\00\1b\00\00\00i\00\00\00\17\00\00\000x00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\00\00\18\00\00\00range start index  out of range for slice of length (\09\10\00\12\00\00\00:\09\10\00\22\00\00\00range end index l\09\10\00\10\00\00\00:\09\10\00\22\00\00\00slice index starts at  but ends at \00\8c\09\10\00\16\00\00\00\a2\09\10\00\0d\00\00\00LayoutError"))

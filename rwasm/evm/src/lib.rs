@@ -4,8 +4,6 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use alloc::string::ToString;
-
 pub mod compiler;
 
 #[cfg(test)]

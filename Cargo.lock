@@ -1780,6 +1780,7 @@ dependencies = [
  "ethers-core",
  "fluentbase-poseidon",
  "fluentbase-rwasm",
+ "fluentbase-types",
  "fluentbase-zktrie",
  "halo2curves 0.3.1",
  "hex",
@@ -1876,6 +1877,7 @@ dependencies = [
  "fluentbase-rwasm",
  "fluentbase-rwasm-code-snippets",
  "fluentbase-sdk",
+ "fluentbase-types",
  "hashbrown 0.14.3",
  "hex",
  "log",
@@ -1901,6 +1903,15 @@ dependencies = [
  "lol_alloc",
  "paste",
  "sha2",
+]
+
+[[package]]
+name = "fluentbase-types"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-rwasm",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]

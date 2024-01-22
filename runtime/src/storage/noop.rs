@@ -5,7 +5,7 @@ pub struct NoopPersistentStorage;
 
 #[allow(dead_code, unused)]
 impl TrieDb for NoopPersistentStorage {
-    fn open(&self, key: &[u8; 32]) -> Result<Self, RuntimeError>
+    fn open(&self, key: &[u8]) -> Result<Self, RuntimeError>
     where
         Self: Sized,
     {
@@ -16,13 +16,13 @@ impl TrieDb for NoopPersistentStorage {
         [0u8; 32]
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
     fn update(
         &mut self,
-        _key: &[u8; 32],
+        _key: &[u8],
         _value_flags: u32,
         _value: &Vec<[u8; 32]>,
     ) -> Result<(), RuntimeError> {

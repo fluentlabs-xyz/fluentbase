@@ -1,4 +1,4 @@
-use crate::complex_types::RuntimeError;
+use crate::types::RuntimeError;
 #[macro_export]
 macro_rules! forward_call_args {
     ($func:path, $caller:ident, []) => {
@@ -81,7 +81,7 @@ macro_rules! impl_runtime_handler {
             const MODULE_NAME: &'static str = stringify!($module);
             const FUNC_NAME: &'static str = stringify!($name);
 
-            const FUNC_INDEX: $crate::SysFuncIdx = $crate::SysFuncIdx::$sys_func;
+            const FUNC_INDEX: $crate::types::SysFuncIdx = $crate::types::SysFuncIdx::$sys_func;
 
             fn register_linker<'t, T>(import_linker: &mut fluentbase_rwasm::rwasm::ImportLinker) {
                 use fluentbase_rwasm::rwasm::ImportFunc;
@@ -91,7 +91,7 @@ macro_rules! impl_runtime_handler {
                     $sys_func as u16,
                     &[fluentbase_rwasm::common::ValueType::I32; $crate::count_call_args!($($t)*)],
                     &[fluentbase_rwasm::common::ValueType::I32; $crate::count_ret_args!($out)],
-                    $crate::SysFuncIdx::$sys_func.fuel_cost(),
+                    $crate::types::SysFuncIdx::$sys_func.fuel_cost(),
                 ));
             }
 

@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, RuntimeContext, SysFuncIdx};
+use crate::{runtime::Runtime, types::SysFuncIdx, RuntimeContext};
 use fluentbase_rwasm::{
     instruction_set,
     rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule},

@@ -7,8 +7,8 @@ use crate::{
     },
 };
 use core::slice::Chunks;
-use fluentbase_runtime::{ExitCode, SysFuncIdx};
 use fluentbase_rwasm::rwasm::InstructionSet;
+use fluentbase_types::{ExitCode, SysFuncIdx};
 
 pub const EVM_WORD_BYTES: usize = 32;
 pub const WASM_I64_BITS: usize = 64;

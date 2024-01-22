@@ -1,17 +1,7 @@
 use fluentbase_codec::Encoder;
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{
-    ExecutionResult,
-    Runtime,
-    RuntimeContext,
-    SysFuncIdx,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
-use fluentbase_rwasm::{
-    instruction_set,
-    rwasm::{Compiler, CompilerConfig, FuncOrExport},
-};
+use fluentbase_runtime::{types::STATE_MAIN, ExecutionResult, Runtime, RuntimeContext};
+use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig};
 use fluentbase_sdk::evm::{Bytes, ContractInput, ContractOutput};
 use hex_literal::hex;
 
