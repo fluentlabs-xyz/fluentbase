@@ -3,24 +3,31 @@ use crate::{
         host::Host,
         instruction_result::InstructionResult,
         instructions::{
-            control::{JUMPI_PARAMS_COUNT, JUMP_PARAMS_COUNT},
+            control::{
+                JUMPI_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG,
+                JUMP_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG,
+            },
             opcode,
         },
-        translator::contract::Contract,
+        translator::{contract::Contract, stack::Stack},
     },
-    utilities::sp_drop_u256_gen,
+    utilities::invalid_op_gen,
 };
+use alloc::{boxed::Box, vec, vec::Vec};
 pub use analysis::BytecodeLocked;
+use core::marker::PhantomData;
 use fluentbase_rwasm::{
     common::UntypedValue,
     engine::bytecode::Instruction,
     rwasm::{BinaryFormat, ImportLinker, InstructionSet, ReducedModule},
 };
+use hashbrown::HashMap;
+#[cfg(test)]
 use log::debug;
-use std::{collections::HashMap, marker::PhantomData};
 
 pub mod analysis;
 pub mod contract;
+pub mod stack;
 
 #[derive()]
 pub struct Translator<'a> {
@@ -34,7 +41,15 @@ pub struct Translator<'a> {
     subroutines_instruction_set: InstructionSet,
     _lifetime: PhantomData<&'a ()>,
     native_offset_to_rwasm_instr_offset: HashMap<usize, (usize, usize)>,
-    jumps_to_process: Vec<(u8, usize, usize)>, // opcode, pc_from, pc_to
+    jumps: Vec<JumpMetadata>, // item: (opcode, pc_from, pc_to)
+    pub stack: Stack,
+    result_instruction_set: Option<InstructionSet>,
+}
+
+struct JumpMetadata {
+    pub opcode: u8,
+    pub pc_from: usize,
+    pub pc_to: usize,
 }
 
 pub struct SubroutineData {
@@ -65,48 +80,96 @@ impl<'a> Translator<'a> {
             subroutines_instruction_set: Default::default(),
             native_offset_to_rwasm_instr_offset: Default::default(),
             _lifetime: Default::default(),
-            jumps_to_process: Default::default(),
+            jumps: Default::default(),
+            stack: Stack::new(),
+            result_instruction_set: None,
         };
         s.init_code_snippets();
         s
     }
 
-    pub fn jumps_to_process_add(&mut self, opcode: u8, from_pc: usize, to_pc: usize) -> usize {
-        self.jumps_to_process.push((opcode, from_pc, to_pc));
-        self.jumps_to_process.len()
+    #[inline]
+    pub fn result_instruction_set(&self) -> &InstructionSet {
+        self.result_instruction_set.as_ref().unwrap()
     }
 
-    pub fn jumps_to_process_reset(&mut self) {
-        self.jumps_to_process.clear()
+    #[inline]
+    pub fn result_instruction_set_mut(&mut self) -> &mut InstructionSet {
+        self.result_instruction_set.as_mut().unwrap()
     }
 
-    fn jumps_to_process_apply(&mut self, host: &mut dyn Host) {
-        for (opcode, pc_from, pc_to) in self.jumps_to_process.iter() {
+    #[inline]
+    pub fn take_instruction_set(&mut self) -> InstructionSet {
+        let instruction_set = self.result_instruction_set.take();
+        instruction_set.unwrap()
+    }
+
+    #[inline]
+    pub fn stack(&self) -> &Stack {
+        &self.stack
+    }
+
+    pub fn jumps_add(&mut self, opcode: u8, pc_from: usize, pc_to: usize) -> usize {
+        self.jumps.push(JumpMetadata {
+            opcode,
+            pc_from,
+            pc_to,
+        });
+        self.jumps.len()
+    }
+
+    pub fn jumps_reset(&mut self) {
+        self.jumps.clear()
+    }
+
+    fn jumps_apply<H: Host>(&mut self, host: &mut H) {
+        let mut idx_to_new_instruction: Vec<(usize, Instruction)> = vec![];
+        for JumpMetadata {
+            opcode,
+            pc_from,
+            pc_to,
+        } in self.jumps.iter()
+        {
             let is_offsets_from = self
                 .native_offset_to_rwasm_instr_offset
                 .get(pc_from)
+                .unwrap()
+                .clone();
+            let is_offsets_to = self
+                .native_offset_to_rwasm_instr_offset
+                .get(pc_to)
+                .cloned()
                 .unwrap();
-            let is_offsets_to = self.native_offset_to_rwasm_instr_offset.get(pc_to).unwrap();
             let jump_rel_offset = is_offsets_to.0 as i32 - is_offsets_from.1 as i32 - 1;
 
-            let is = host.instruction_set();
-            // TODO replace magic consts with dynamic calculation
             let aux_idx: usize = match *opcode {
-                opcode::JUMP => JUMP_PARAMS_COUNT,
-                opcode::JUMPI => JUMPI_PARAMS_COUNT,
-                // dynamic calculation
+                opcode::JUMP => JUMP_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG,
+                opcode::JUMPI => JUMPI_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG,
                 _ => {
-                    panic!("unsupported opcode: {}", opcode)
+                    if cfg!(test) {
+                        panic!("unsupported opcode: {}", opcode);
+                    }
+                    invalid_op_gen(self);
+                    return;
                 }
             };
             let idx = is_offsets_from.0 + aux_idx; // TODO replace form_sp_drop_u256
-            debug!("translator: applying jumps fixes at idx {}", idx);
+            let is = self.result_instruction_set();
             if let Instruction::I64Const(v) = is.instr[idx] {
-                let val_new = UntypedValue::from(v.as_i32() + jump_rel_offset);
-                is.instr[idx] = Instruction::I64Const(val_new);
+                let new_value = UntypedValue::from(v.as_i32() + jump_rel_offset);
+                idx_to_new_instruction.push((idx, Instruction::I64Const(new_value)));
             } else {
-                panic!("expected Instruction::I64Const");
+                if cfg!(test) {
+                    panic!("expected Instruction::I64Const");
+                }
+                invalid_op_gen(self);
+                return;
             }
+        }
+
+        let is = self.result_instruction_set_mut();
+        for (idx, new_val) in idx_to_new_instruction {
+            is.instr[idx] = new_val;
         }
     }
 
@@ -115,13 +178,26 @@ impl<'a> Translator<'a> {
     }
 
     #[inline]
-    pub fn opcode_prev(&self) -> u8 {
+    pub fn instruction_prev(&self) -> u8 {
         unsafe { *(self.instruction_pointer.sub(1)) }
     }
 
     #[inline]
-    pub fn opcode_cur(&self) -> u8 {
+    pub fn opcode_prev(&self) -> u8 {
+        unsafe { *self.instruction_pointer_prev }
+    }
+
+    #[inline]
+    pub fn instruction_cur(&self) -> u8 {
         unsafe { *self.instruction_pointer }
+    }
+
+    #[inline]
+    pub fn instruction_at_pc(&self, pc: usize) -> Option<u8> {
+        if pc >= self.program_counter_max() {
+            return None;
+        }
+        unsafe { Some(*self.contract.bytecode.as_ptr().offset(pc as isize)) }
     }
 
     #[inline]
@@ -141,6 +217,11 @@ impl<'a> Translator<'a> {
     }
 
     #[inline]
+    pub fn program_counter_max(&self) -> usize {
+        self.contract.bytecode.len()
+    }
+
+    #[inline]
     pub fn program_counter_prev(&self) -> usize {
         unsafe {
             self.instruction_pointer_prev
@@ -153,18 +234,20 @@ impl<'a> Translator<'a> {
     where
         FN: Fn(&mut Translator<'_>, &mut H),
     {
-        let opcode = self.opcode_cur();
+        let opcode = self.instruction_cur();
         let pc = self.program_counter();
 
         let instruction_pointer = self.instruction_pointer;
         self.instruction_pointer_inc(1);
 
-        let is_offset_start = host.instruction_set().len() as usize;
+        let is_offset_start = self.result_instruction_set_mut().len() as usize;
         instruction_table[opcode as usize](self, host);
-        let is_offset_end = host.instruction_set().len() as usize - 1;
+        let is_offset_end = self.result_instruction_set_mut().len() as usize - 1;
         self.native_offset_to_rwasm_instr_offset
             .insert(pc, (is_offset_start, is_offset_end));
         self.instruction_pointer_prev = instruction_pointer;
+
+        #[cfg(test)]
         debug!(
             "translator opcode:{} pc:{} is_offset(start:{}..end:{})",
             opcode, pc, is_offset_start, is_offset_end
@@ -198,19 +281,21 @@ impl<'a> Translator<'a> {
         &mut self,
         instruction_table: &[FN; 256],
         host: &mut H,
+        result_instruction_set: InstructionSet,
     ) -> InstructionResult
     where
         FN: Fn(&mut Translator<'_>, &mut H),
     {
+        self.result_instruction_set = Some(result_instruction_set);
         while self.instruction_result == InstructionResult::Continue {
             self.step(instruction_table, host);
         }
-        self.jumps_to_process_apply(host);
+        self.jumps_apply(host);
         self.instruction_result
     }
 
     fn init_code_snippets(&mut self) {
-        let opcode_to_entry = include!("../../../rwasm-code-snippets/bin/solid_file.rs").as_slice();
+        let opcode_to_entry = include!("../../../code-snippets/bin/solid_file.rs").as_slice();
         let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()
@@ -226,11 +311,13 @@ impl<'a> Translator<'a> {
                     end_offset: instruction_set.len() as usize - 1 + l,
                 };
 
-                if self.opcode_to_subroutine_data.contains_key(&opcode) {
-                    panic!(
-                        "code snippet for opcode 0x{:x?} already exists (decimal: {})",
-                        opcode, opcode
-                    );
+                if cfg!(test) {
+                    if self.opcode_to_subroutine_data.contains_key(&opcode) {
+                        panic!(
+                            "code snippet for opcode 0x{:x?} already exists (decimal: {})",
+                            opcode, opcode
+                        );
+                    }
                 }
                 self.opcode_to_subroutine_data
                     .insert(opcode, subroutine_data);
@@ -239,7 +326,7 @@ impl<'a> Translator<'a> {
         };
 
         initiate_subroutines_solid_file(
-            include_bytes!("../../../rwasm-code-snippets/bin/solid_file.rwasm").as_slice(),
+            include_bytes!("../../../code-snippets/bin/solid_file.rwasm").as_slice(),
         );
     }
 

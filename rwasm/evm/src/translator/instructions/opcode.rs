@@ -102,7 +102,7 @@ opcodes! {
     0x03 => SUB        => arithmetic::wrapping_sub, // done
     0x04 => DIV        => arithmetic::div, // done
     0x05 => SDIV       => arithmetic::sdiv, // done
-    0x06 => MOD        => arithmetic::arithmetic_mod, // done
+    0x06 => MOD        => arithmetic::rem, // done
     0x07 => SMOD       => arithmetic::smod, // done
     0x08 => ADDMOD     => arithmetic::addmod, // done
     0x09 => MULMOD     => arithmetic::mulmod, // done
@@ -229,37 +229,37 @@ opcodes! {
 
     0x80 => DUP1  => stack::dup::<1, H>,  // done
     0x81 => DUP2  => stack::dup::<2, H>,  // done
-    0x82 => DUP3  => stack::dup::<3, H>,  // TODO distribute existing solution
-    0x83 => DUP4  => stack::dup::<4, H>,  // TODO distribute existing solution
-    0x84 => DUP5  => stack::dup::<5, H>,  // TODO distribute existing solution
-    0x85 => DUP6  => stack::dup::<6, H>,  // TODO distribute existing solution
-    0x86 => DUP7  => stack::dup::<7, H>,  // TODO distribute existing solution
-    0x87 => DUP8  => stack::dup::<8, H>,  // TODO distribute existing solution
-    0x88 => DUP9  => stack::dup::<9, H>,  // TODO distribute existing solution
-    0x89 => DUP10 => stack::dup::<10, H>,  // TODO distribute existing solution
-    0x8A => DUP11 => stack::dup::<11, H>,  // TODO distribute existing solution
-    0x8B => DUP12 => stack::dup::<12, H>,  // TODO distribute existing solution
-    0x8C => DUP13 => stack::dup::<13, H>,  // TODO distribute existing solution
-    0x8D => DUP14 => stack::dup::<14, H>,  // TODO distribute existing solution
-    0x8E => DUP15 => stack::dup::<15, H>,  // TODO distribute existing solution
-    0x8F => DUP16 => stack::dup::<16, H>,  // TODO distribute existing solution
+    0x82 => DUP3  => stack::dup::<3, H>,  // done
+    0x83 => DUP4  => stack::dup::<4, H>,  // done
+    0x84 => DUP5  => stack::dup::<5, H>,  // done
+    0x85 => DUP6  => stack::dup::<6, H>,  // done
+    0x86 => DUP7  => stack::dup::<7, H>,  // done
+    0x87 => DUP8  => stack::dup::<8, H>,  // done
+    0x88 => DUP9  => stack::dup::<9, H>,  // done
+    0x89 => DUP10 => stack::dup::<10, H>,  // done
+    0x8A => DUP11 => stack::dup::<11, H>,  // done
+    0x8B => DUP12 => stack::dup::<12, H>,  // done
+    0x8C => DUP13 => stack::dup::<13, H>,  // done
+    0x8D => DUP14 => stack::dup::<14, H>,  // done
+    0x8E => DUP15 => stack::dup::<15, H>,  // done
+    0x8F => DUP16 => stack::dup::<16, H>,  // done
 
     0x90 => SWAP1  => stack::swap::<1, H>,  // done
     0x91 => SWAP2  => stack::swap::<2, H>,  // done
-    0x92 => SWAP3  => stack::swap::<3, H>,  // TODO distribute existing solution
-    0x93 => SWAP4  => stack::swap::<4, H>,  // TODO distribute existing solution
-    0x94 => SWAP5  => stack::swap::<5, H>,  // TODO distribute existing solution
-    0x95 => SWAP6  => stack::swap::<6, H>,  // TODO distribute existing solution
-    0x96 => SWAP7  => stack::swap::<7, H>,  // TODO distribute existing solution
-    0x97 => SWAP8  => stack::swap::<8, H>,  // TODO distribute existing solution
-    0x98 => SWAP9  => stack::swap::<9, H>,  // TODO distribute existing solution
-    0x99 => SWAP10 => stack::swap::<10, H>,  // TODO distribute existing solution
-    0x9A => SWAP11 => stack::swap::<11, H>,  // TODO distribute existing solution
-    0x9B => SWAP12 => stack::swap::<12, H>,  // TODO distribute existing solution
-    0x9C => SWAP13 => stack::swap::<13, H>,  // TODO distribute existing solution
-    0x9D => SWAP14 => stack::swap::<14, H>,  // TODO distribute existing solution
-    0x9E => SWAP15 => stack::swap::<15, H>,  // TODO distribute existing solution
-    0x9F => SWAP16 => stack::swap::<16, H>,  // TODO distribute existing solution
+    0x92 => SWAP3  => stack::swap::<3, H>,  // done
+    0x93 => SWAP4  => stack::swap::<4, H>,  // done
+    0x94 => SWAP5  => stack::swap::<5, H>,  // done
+    0x95 => SWAP6  => stack::swap::<6, H>,  // done
+    0x96 => SWAP7  => stack::swap::<7, H>,  // done
+    0x97 => SWAP8  => stack::swap::<8, H>,  // done
+    0x98 => SWAP9  => stack::swap::<9, H>,  // done
+    0x99 => SWAP10 => stack::swap::<10, H>,  // done
+    0x9A => SWAP11 => stack::swap::<11, H>,  // done
+    0x9B => SWAP12 => stack::swap::<12, H>,  // done
+    0x9C => SWAP13 => stack::swap::<13, H>,  // done
+    0x9D => SWAP14 => stack::swap::<14, H>,  // done
+    0x9E => SWAP15 => stack::swap::<15, H>,  // done
+    0x9F => SWAP16 => stack::swap::<16, H>,  // done
 
     0xA0 => LOG0 => host::log::<0, H>, // TODO
     0xA1 => LOG1 => host::log::<1, H>, // TODO

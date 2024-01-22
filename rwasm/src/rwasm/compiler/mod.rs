@@ -475,9 +475,9 @@ impl<'linker> Compiler<'linker> {
         // translate router for main index
         if self.config.with_router {
             self.translate_router(main_index)?;
-        } else {
-            self.translate_subroutine(main_index)?;
-        }
+        } /* else {
+              self.translate_subroutine(main_index)?;
+          }*/
         Ok(())
     }
 

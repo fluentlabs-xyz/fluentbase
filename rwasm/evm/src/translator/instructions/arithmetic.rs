@@ -1,69 +1,100 @@
 use crate::translator::{
+    gas,
     host::Host,
-    instructions::utilities::replace_current_opcode_with_call_to_subroutine,
+    instructions::utilities::replace_with_call_to_subroutine,
     translator::Translator,
 };
+#[cfg(test)]
 use log::debug;
 
 pub fn wrapped_add<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADD";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::VERYLOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn wrapping_mul<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MUL";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn wrapping_sub<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SUB";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    // replace_current_opcode_with_code_snippet(translator, host, true);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::VERYLOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn div<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DIV";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn sdiv<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SDIV";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn arithmetic_mod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+pub fn rem<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MOD";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn smod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SMOD";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn addmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "ADDMOD";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::MID);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn mulmod<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MULMOD";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::MID);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn exp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXP";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, 50);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 /// In the yellow paper `SIGNEXTEND` is defined to take two inputs, we will call them
@@ -83,6 +114,9 @@ pub fn exp<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
 pub fn signextend<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SIGNEXTEND";
+    #[cfg(test)]
     debug!("op:{}", OP);
-    replace_current_opcode_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
