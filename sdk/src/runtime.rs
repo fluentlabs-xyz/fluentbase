@@ -9,6 +9,7 @@ use fluentbase_runtime::instruction::{
     crypto_poseidon2::SysPoseidon2,
     rwasm_compile::SysCompile,
     rwasm_transact::SysExec,
+    zktrie_open::ZkTrieOpen,
 };
 #[cfg(test)]
 use fluentbase_runtime::RuntimeContext;
@@ -146,36 +147,36 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn zktrie_open(root: &Bytes32) {
-        todo!()
+    fn zktrie_open(_root: &Bytes32) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]) {
-        todo!()
+    fn zktrie_update(_key: &Bytes32, _flags: u32, _values: &[Bytes32]) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_field(key: &Bytes32, output: &mut [Bytes32]) {
-        todo!()
+    fn zktrie_field(_key: &Bytes32, _field: u32, _output: &mut [Bytes32]) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_root(output: &mut Bytes32) {
-        todo!()
+    fn zktrie_root(_output: &mut Bytes32) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 
     fn zktrie_rollback() {
-        todo!()
+        unreachable!("zktrie methods are not available in this mode")
     }
 
     fn zktrie_commit() {
-        todo!()
+        unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_store(key: &Bytes32, val: &Bytes32) {
-        todo!()
+    fn zktrie_store(_key: &Bytes32, _val: &Bytes32) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
-        todo!()
+    fn zktrie_load(_key: &Bytes32, _val: &mut Bytes32) {
+        unreachable!("zktrie methods are not available in this mode")
     }
 }
 

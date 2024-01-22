@@ -12,11 +12,13 @@ use crate::{
         _sys_state,
         _sys_write,
         _zktrie_commit,
+        _zktrie_field,
         _zktrie_load,
         _zktrie_open,
         _zktrie_rollback,
         _zktrie_root,
         _zktrie_store,
+        _zktrie_update,
     },
     Bytes32,
     LowLevelAPI,
@@ -135,19 +137,12 @@ impl LowLevelAPI for LowLevelSDK {
 
     #[inline(always)]
     fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]) {
-        // unsafe {
-        //     _zktrie_update(
-        //         key.as_ptr(),
-        //         flags,
-        //         values.as_ptr().as_ptr(),
-        //         values.len() as u32,
-        //     )
-        // }
+        unsafe { _zktrie_update(key.as_ptr(), flags, values.as_ptr(), values.len() as u32) }
     }
 
     #[inline(always)]
-    fn zktrie_field(key: &Bytes32, output: &mut [Bytes32]) {
-        // unsafe { _zktrie_field(key.as_ptr(), output.as_mut_ptr().as_mut_ptr()) }
+    fn zktrie_field(key: &Bytes32, field: u32, output: &mut [Bytes32]) {
+        unsafe { _zktrie_field(key.as_ptr(), field, output.as_mut_ptr()) }
     }
 
     #[inline(always)]

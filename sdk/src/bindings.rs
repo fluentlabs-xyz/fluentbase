@@ -52,10 +52,14 @@ extern "C" {
     pub(crate) fn _zktrie_update(
         key32_offset: *const u8,
         flags: u32,
-        vals32_offset: *const u8,
+        vals32_offset: *const [u8; 32],
         vals32_len: u32,
     );
-    pub(crate) fn _zktrie_field(key32_offset: *const u8, field: u32, output32_offset: *mut u8);
+    pub(crate) fn _zktrie_field(
+        key32_offset: *const u8,
+        field: u32,
+        output32_offset: *mut [u8; 32],
+    );
     pub(crate) fn _zktrie_root(output32_offset: *mut u8);
     pub(crate) fn _zktrie_rollback();
     pub(crate) fn _zktrie_commit();
