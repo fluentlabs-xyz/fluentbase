@@ -1,36 +1,30 @@
-use crate::primitives::{Address, B256, KECCAK_EMPTY};
-use crate::primitives::{Bytecode, Bytes, HashMap, U256};
-use crate::translator::host::Host;
-use crate::translator::inner_models::{CreateInputs, SelfDestructResult};
-use crate::translator::instruction_result::InstructionResult;
+use crate::{
+    primitives::{Address, Bytecode, Bytes, HashMap, B256, KECCAK_EMPTY, U256},
+    translator::{
+        host::Host,
+        inner_models::{CreateInputs, SelfDestructResult},
+        instruction_result::InstructionResult,
+    },
+};
 use alloc::vec::Vec;
-use fluentbase_rwasm::rwasm::InstructionSet;
 
 /// A dummy [Host] implementation.
 #[derive(Debug, PartialEq)]
-pub struct HostImpl<'a> {
+pub struct HostImpl {
     pub transient_storage: HashMap<U256, U256>,
-    instruction_set: &'a mut InstructionSet,
 }
 
-impl<'a> HostImpl<'a> {
+impl HostImpl {
     /// Create a new dummy host with the given [`Env`].
     #[inline]
-    pub fn new(instruction_set: &'a mut InstructionSet) -> Self {
+    pub fn new() -> Self {
         Self {
-            // env,
-            instruction_set,
             transient_storage: HashMap::new(),
         }
     }
 }
 
-impl<'a> Host for HostImpl<'a> {
-    #[inline]
-    fn instruction_set(&mut self) -> &mut InstructionSet {
-        &mut self.instruction_set
-    }
-
+impl Host for HostImpl {
     #[inline]
     fn load_account(&mut self, _address: Address) -> Option<(bool, bool)> {
         Some((true, true))
@@ -89,7 +83,8 @@ impl<'a> Host for HostImpl<'a> {
 
     #[inline]
     fn call(&mut self) -> (InstructionResult, Bytes) {
-        panic!("Call is not supported")
+        // #[cfg(test)]
+        panic!("not supported");
     }
 
     #[inline]
@@ -97,11 +92,13 @@ impl<'a> Host for HostImpl<'a> {
         &mut self,
         _inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Bytes) {
-        panic!("Create is not supported for this host")
+        // #[cfg(test)]
+        panic!("not supported")
     }
 
     #[inline]
     fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
-        panic!("Selfdestruct is not supported")
+        // #[cfg(test)]
+        panic!("not supported")
     }
 }

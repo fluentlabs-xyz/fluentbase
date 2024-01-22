@@ -10,7 +10,7 @@ members = [
     "rwasm/bin",
     "rwasm/e2e",
     "rwasm/evm",
-    "rwasm/rwasm-code-snippets",
+    "rwasm/code-snippets",
     "sdk",
     "zktrie",
 ]

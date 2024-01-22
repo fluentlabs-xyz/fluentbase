@@ -14,8 +14,6 @@ pub const EVM_WORD_BYTES: usize = 32;
 pub const WASM_I64_BITS: usize = 64;
 pub const WASM_I64_BYTES: usize = WASM_I64_BITS / 8;
 pub const WASM_I64_IN_EVM_WORD_COUNT: usize = EVM_WORD_BYTES / WASM_I64_BYTES;
-pub const WASM_I64_HIGH_32_BIT_MASK: usize = 0xffffffff00000000;
-pub const WASM_I64_LOW_32_BIT_MASK: usize = 0xffffffff;
 
 pub fn align_to_evm_word_array(
     data: &[u8],
@@ -94,22 +92,35 @@ pub fn sp_set_value(is: &mut InstructionSet, use_sp_base_offset: bool, value: Op
     );
 }
 
-pub fn sp_get_value(is: &mut InstructionSet) {
-    load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64))
+pub fn sp_get_value(is: &mut InstructionSet, apply_delta: Option<i64>) {
+    load_i64_const(is, Some(SP_BASE_MEM_OFFSET_DEFAULT as u64));
+    apply_delta_value_on_stack(is, apply_delta);
 }
 
-pub fn sp_get_offset(is: &mut InstructionSet) {
+pub fn apply_delta_value_on_stack(is: &mut InstructionSet, v: Option<i64>) {
+    if let Some(v) = v {
+        if v != 0 {
+            is.op_i64_const(v.abs() as u64);
+            if v < 0 {
+                is.op_i64_sub();
+            } else {
+                is.op_i64_add();
+            }
+        }
+    }
+}
+
+pub fn sp_get_offset(is: &mut InstructionSet, apply_delta: Option<i64>) {
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64);
-    sp_get_value(is);
+    sp_get_value(is, None);
     is.op_i64_sub();
+    apply_delta_value_on_stack(is, apply_delta);
 }
 
 pub fn sp_drop_u256_gen(count: u64) -> InstructionSet {
     let mut is = InstructionSet::new();
     is.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT as u64); // for store
-    sp_get_value(&mut is);
-    is.op_i64_const(EVM_WORD_BYTES as u64 * count);
-    is.op_i64_sub();
+    sp_get_value(&mut is, Some(-(EVM_WORD_BYTES as i64 * count as i64)));
     sp_set_value(&mut is, false, None);
 
     is
@@ -120,13 +131,18 @@ pub fn sp_drop_u256(is: &mut InstructionSet, count: u64) {
     is.extend(&is_tmp);
 }
 
-pub fn stop_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+pub fn stop_op_gen(translator: &mut Translator<'_>) {
     translator.instruction_result = InstructionResult::Stop;
+    let is = translator.result_instruction_set_mut();
     is.op_return();
     is.op_unreachable();
 }
-pub fn invalid_op_gen(translator: &mut Translator<'_>, is: &mut InstructionSet) {
+pub fn invalid_op_gen(translator: &mut Translator<'_>) {
     translator.instruction_result = InstructionResult::InvalidFEOpcode;
+    let is = translator.result_instruction_set_mut();
     is.op_i32_const(ExitCode::UnknownError as i32);
-    wasm_call(translator, is, SysFuncIdx::SYS_HALT);
+    wasm_call(translator, None, SysFuncIdx::SYS_HALT);
+}
+pub fn not_found_op_gen(translator: &mut Translator<'_>) {
+    translator.instruction_result = InstructionResult::OpcodeNotFound;
 }
