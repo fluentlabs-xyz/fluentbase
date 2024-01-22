@@ -1,6 +1,6 @@
 extern crate core;
 
-use crate::{opcodes::OPCODE_NAME_TO_NUMBER, types::FileFormat};
+use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_runtime::Runtime;
 use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig, FuncOrExport};
@@ -95,7 +95,6 @@ fn main() {
     };
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
     let mut as_rust_vec: Vec<String> = vec![];
-    let mut as_json_arr: Vec<String> = vec![];
     if args.entry_fn_name_beginnings_for != "" {
         for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
             let fn_name = Box::new(fn_name.to_string());
@@ -117,11 +116,8 @@ fn main() {
             let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
             let opcode_name = fn_name_split[fn_name_split.len() - 1];
             as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
-            let opcode_number = OPCODE_NAME_TO_NUMBER.get(opcode_name).unwrap();
-            as_json_arr.push(format!("[{opcode_number},{fn_beginning}]"));
         }
     }
-    let json_str = format!("[{}]", as_json_arr.join(","));
     let rs_str = format!("[{}]", as_rust_vec.join(","));
     println!("rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]", rs_str);
     let rwasm_binary = compiler.finalize().unwrap();
