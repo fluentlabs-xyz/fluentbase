@@ -212,6 +212,13 @@ impl Default for FuncOrExport {
     }
 }
 
+pub struct FuncSourceMap {
+    fn_index: u32,
+    fn_name: String,
+    position: u32,
+    length: u32,
+}
+
 impl<'linker> Compiler<'linker> {
     pub fn new(wasm_binary: &[u8], config: CompilerConfig) -> Result<Self, CompilerError> {
         Self::new_with_linker(wasm_binary, config, None)
@@ -1163,6 +1170,58 @@ impl<'linker> Compiler<'linker> {
 
         self.code_section.op_call(import_index);
         Ok(())
+    }
+
+    fn section_length(&self) -> usize {
+        self.injection_segments
+            .get(0)
+            .map(|inj| inj.end as usize)
+            .unwrap_or_default()
+    }
+
+    pub fn build_source_map(&self) -> Vec<FuncSourceMap> {
+        let mut result = Vec::new();
+        if self.config.translate_sections {
+            result.push(FuncSourceMap {
+                fn_index: u32::MAX,
+                fn_name: "$__entrypoint".to_string(),
+                position: 0,
+                length: self.section_length() as u32,
+            });
+        }
+        let mut function_by_position = self
+            .function_beginning
+            .iter()
+            .map(|(fn_index, position)| (*position, *fn_index))
+            .collect::<Vec<_>>();
+        function_by_position.sort();
+        for (i, (position, index)) in function_by_position.iter().copied().enumerate() {
+            let next_position = function_by_position
+                .get(i + 1)
+                .map(|next| next.0)
+                .unwrap_or_else(|| self.code_section.len());
+            let fn_name = self
+                .module
+                .exports
+                .iter()
+                .filter(|func| {
+                    if let Some(fn_index) = func.1.into_func_idx() {
+                        fn_index == index
+                    } else {
+                        false
+                    }
+                })
+                .last()
+                .map(|func| func.0.to_string())
+                .unwrap_or_else(|| format!("$__fn_{}", index));
+            result.push(FuncSourceMap {
+                fn_index: index,
+                fn_name,
+                position,
+                length: next_position - position,
+            });
+        }
+        result
     }
 
     pub fn finalize(&mut self) -> Result<Vec<u8>, CompilerError> {
