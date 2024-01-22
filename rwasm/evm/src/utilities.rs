@@ -143,3 +143,6 @@ pub fn invalid_op_gen(translator: &mut Translator<'_>) {
     is.op_i32_const(ExitCode::UnknownError as i32);
     wasm_call(translator, None, SysFuncIdx::SYS_HALT);
 }
+pub fn not_found_op_gen(translator: &mut Translator<'_>) {
+    translator.instruction_result = InstructionResult::OpcodeNotFound;
+}

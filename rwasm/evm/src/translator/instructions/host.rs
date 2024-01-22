@@ -1,19 +1,19 @@
-use crate::{
-    translator::{
-        gas,
-        host::Host,
-        instructions::utilities::{replace_with_call_to_subroutine, wasm_call},
-        translator::Translator,
-    },
-    utilities::{sp_drop_u256, sp_get_offset, EVM_WORD_BYTES},
+use crate::translator::{
+    gas,
+    host::Host,
+    instruction_result::InstructionResult,
+    instructions::utilities::replace_with_call_to_subroutine,
+    translator::Translator,
 };
-use fluentbase_runtime::SysFuncIdx;
 #[cfg(test)]
 use log::debug;
 
 pub fn balance<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "BALANCE";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
     // gas!(
     //     interpreter,
     //     if SPEC::enabled(ISTANBUL) {
@@ -27,16 +27,21 @@ pub fn balance<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     // );
 }
 
-pub fn selfbalance<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+pub fn selfbalance<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "SELFBALANCE";
-    panic!("op:{} not implemented", OP);
-    let is = translator.result_instruction_set_mut();
-    gas!(translator, gas::constants::LOW);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
+    // gas!(translator, gas::constants::LOW);
 }
 
 pub fn extcodesize<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "EXTCODESIZE";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
     // if SPEC::enabled(BERLIN) {
     //     gas!(
     //         interpreter,
@@ -56,7 +61,10 @@ pub fn extcodesize<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
 /// EIP-1052: EXTCODEHASH opcode
 pub fn extcodehash<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "EXTCODEHASH";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
     // if SPEC::enabled(BERLIN) {
     //     gas!(
     //         interpreter,
@@ -75,7 +83,10 @@ pub fn extcodehash<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
 
 pub fn extcodecopy<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "EXTCODECOPY";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
     // let len = as_usize_or_fail!(interpreter, len_u256);
     // gas_or_fail!(
     //     interpreter,
@@ -90,7 +101,6 @@ pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BLOCKHASH";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::BLOCKHASH);
 
     replace_with_call_to_subroutine(translator, host);
@@ -100,13 +110,13 @@ pub fn sload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SLOAD";
     #[cfg(test)]
     debug!("op:{}", OP);
-    pop!(translator, index);
+    pop!(translator, _index);
     // const OP_PARAMS_COUNT: u64 = 1;
     // let is = translator.result_instruction_set();
     // sp_get_offset(is);
     // is.op_local_get(1); // save to the same word
     // wasm_call(translator, is, SysFuncIdx::ZKTRIE_LOAD);
-    // TODO what todo with hot/cold logic
+    // TODO hot/cold logic
     // let Some((value, is_cold)) = host.sload(interpreter.contract.address, index) else {
     //     interpreter.instruction_result = InstructionResult::FatalExternalError;
     //     return;
@@ -126,9 +136,8 @@ pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     // sp_get_offset(is, Some(EVM_WORD_BYTES as i64));
     // wasm_call(translator, is, SysFuncIdx::ZKTRIE_STORE);
     // sp_drop_u256(is, OP_PARAMS_COUNT);
-    // TODO gas (think)
-    pop!(translator, index, value);
-    // TODO what todo with hot/cold logic
+    pop!(translator, _index, _value);
+    // TODO hot/cold logic
     // let Some((original, old, new, is_cold)) =
     //     host.sstore(interpreter.contract.address, index, value)
     //     else {
@@ -147,7 +156,6 @@ pub fn tstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TSTORE";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::WARM_STORAGE_READ_COST);
 
     replace_with_call_to_subroutine(translator, host);
@@ -157,7 +165,6 @@ pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "TLOAD";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::WARM_STORAGE_READ_COST);
 
     replace_with_call_to_subroutine(translator, host);
@@ -165,35 +172,53 @@ pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn log<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "LOG";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
 pub fn selfdestruct<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "SELFDESTRUCT";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
-pub fn create<const IS_CREATE2: bool, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn create<const IS_CREATE2: bool, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CREATE";
     panic!("op:{}(IS_CREATE2:{}) not implemented", OP, IS_CREATE2);
 }
 
 pub fn call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CALL";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
 pub fn call_code<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CALL_CODE";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
 pub fn delegate_call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "DELEGATE_CALL";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
 pub fn static_call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "STATIC_CALL";
-    panic!("op:{} not implemented", OP);
+    if cfg!(test) {
+        panic!("op:{} not implemented", OP);
+    }
+    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }

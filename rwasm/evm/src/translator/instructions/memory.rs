@@ -4,7 +4,6 @@ use crate::{
         gas,
         host::Host,
         instructions::utilities::{replace_with_call_to_subroutine, wasm_call},
-        translator,
         translator::Translator,
     },
     utilities::{
@@ -25,7 +24,6 @@ pub fn mload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MLOAD";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::VERYLOW);
 
     replace_with_call_to_subroutine(translator, host);
@@ -35,7 +33,6 @@ pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSTORE";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::VERYLOW);
 
     replace_with_call_to_subroutine(translator, host);
@@ -45,7 +42,6 @@ pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSORE8";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::VERYLOW);
 
     replace_with_call_to_subroutine(translator, host);
@@ -55,29 +51,28 @@ pub fn msize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "MSIZE";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::BASE);
 
     replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn mcopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+pub fn mcopy<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "MCOPY";
     #[cfg(test)]
     debug!("op:{}", OP);
-    pop!(translator, dst, src, len);
+    const OP_PARAMS_COUNT: usize = 3;
+    pop!(translator, _dst, _src, len);
     // into usize or fail
     let len = as_usize_or_fail!(translator, len);
     // deduce gas
     gas_or_fail!(translator, gas::calc::verylowcopy_cost(len as u32));
-    // if len == 0 { // TODO just drop params on stack?
-    //     return;
-    // }
+    let is = translator.result_instruction_set_mut();
+    if len == 0 {
+        sp_drop_u256(is, OP_PARAMS_COUNT as u64);
+        return;
+    }
 
-    const OP_PARAMS_COUNT: usize = 3;
     {
-        let is = translator.result_instruction_set_mut();
-
         for op_param_idx in 0..OP_PARAMS_COUNT {
             for u256_i64_component_idx in 0..(WASM_I64_IN_EVM_WORD_COUNT - 1) {
                 let offset =
