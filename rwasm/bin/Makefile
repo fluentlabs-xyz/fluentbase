@@ -20,4 +20,5 @@ $(FILES):
 	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/code-snippets/bin/$@.wat
 
 solid_file:
-	cargo run -- --entry-fn-name=$(ENTRY_FN_NAME) --entry-fn-name-beginnings-for="$(FILES)" --skip-translate-sections --skip-type-check --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/code-snippets/bin/$@.wat
+	# --skip-translate-sections  --use-subroutine-router
+	cargo run -- --entry-fn-name=$(ENTRY_FN_NAME) --entry-fn-name-beginnings-for="$(FILES)" --skip-type-check --do-not-inject-fuel --file-in-path=../../rwasm/code-snippets/bin/$@.wat
