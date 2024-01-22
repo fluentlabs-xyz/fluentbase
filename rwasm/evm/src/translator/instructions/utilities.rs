@@ -23,7 +23,7 @@ pub fn wasm_call(
 }
 
 pub(super) fn preprocess_op_params(translator: &mut Translator<'_>, host: &mut dyn Host) {
-    let opcode = translator.opcode_prev();
+    let opcode = translator.instruction_prev();
     let prev_funcs_len = translator
         .subroutine_data(opcode)
         .expect(&format!("no meta found for 0x{:x?} opcode", opcode))
@@ -40,7 +40,7 @@ pub(super) fn replace_with_call_to_subroutine(
 ) {
     preprocess_op_params(translator, host);
 
-    let opcode = translator.opcode_prev();
+    let opcode = translator.instruction_prev();
     let is_len = translator.result_instruction_set_mut().len();
 
     let sd = translator

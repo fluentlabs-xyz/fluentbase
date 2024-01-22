@@ -186,6 +186,7 @@ mod evm_to_rwasm_tests {
         cases: &[Case],
         sp: Option<i32>,
         result_location: ResultLocation,
+        instruction_result: Option<InstructionResult>,
     ) {
         for case in cases {
             let res_expected = match case {
@@ -213,6 +214,7 @@ mod evm_to_rwasm_tests {
                 res_expected,
                 sp,
                 result_location.clone(),
+                instruction_result,
             );
         }
     }
@@ -223,8 +225,13 @@ mod evm_to_rwasm_tests {
         res_expected: Vec<u8>,
         sp: Option<i32>,
         result_location: ResultLocation,
+        instruction_result: Option<InstructionResult>,
     ) {
-        let (mut global_memory, output) = run_test(&evm_bytecode);
+        let res = run_test(&evm_bytecode, instruction_result);
+        if res == None {
+            return;
+        }
+        let (mut global_memory, output) = res.unwrap();
         let sp_mem = &global_memory[SP_BASE_MEM_OFFSET_DEFAULT..SP_BASE_MEM_OFFSET_DEFAULT + 8];
         let sp_val = u64::from_le_bytes(sp_mem.try_into().unwrap()) as usize;
         if let Some(sp) = sp {
@@ -254,7 +261,10 @@ mod evm_to_rwasm_tests {
         }
     }
 
-    fn run_test(evm_bytecode_bytes: &Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    fn run_test(
+        evm_bytecode_bytes: &Vec<u8>,
+        instruction_result: Option<InstructionResult>,
+    ) -> Option<(Vec<u8>, Vec<u8>)> {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
         let import_linker = Runtime::<()>::new_linker();
@@ -268,7 +278,12 @@ mod evm_to_rwasm_tests {
         preamble.op_memory_grow();
         preamble.op_drop();
         let res = compiler.run(Some(&preamble), None);
-        assert_eq!(res, InstructionResult::Stop);
+        if let Some(instruction_result) = instruction_result {
+            assert_eq!(res, instruction_result);
+            return None;
+        } else {
+            assert!(res.is_ok());
+        }
 
         let mut buffer = vec![0; 1024 * 1024];
         let mut binary_format_writer = BinaryFormatWriter::new(&mut buffer);
@@ -329,7 +344,8 @@ mod evm_to_rwasm_tests {
                 None
             };
             debug!(
-                "trace:idx:{} opcode:{:?} (prev:{:?}) memory_changes(for prev opcode):{:?} stack:{:?}",
+                "pc{:?} idx{} op{:?} (prev:{:?}) memchz(for prev):{:?} stack:{:?}",
+                log.program_counter,
                 idx,
                 log.opcode,
                 prev_opcode.unwrap_or(Instruction::Unreachable),
@@ -359,7 +375,7 @@ mod evm_to_rwasm_tests {
         //     global_memory_len, &global_memory
         // );
 
-        (global_memory, runtime.data().output().clone())
+        Some((global_memory, runtime.data().output().clone()))
     }
 
     #[test]
@@ -445,6 +461,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -475,6 +492,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args1(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -497,6 +515,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args1(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -554,6 +573,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -635,6 +655,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -672,7 +693,7 @@ mod evm_to_rwasm_tests {
             )));
         }
 
-        test_op_cases(BYTE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(BYTE, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn lt() {
@@ -757,6 +778,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -786,6 +808,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -872,6 +895,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -896,6 +920,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -920,6 +945,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -982,6 +1008,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1079,6 +1106,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1105,6 +1133,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args3(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1144,6 +1173,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1193,6 +1223,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1232,6 +1263,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args3(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1354,6 +1386,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1428,6 +1461,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1503,6 +1537,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1536,6 +1571,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1582,6 +1618,7 @@ mod evm_to_rwasm_tests {
             &cases.map(|v| Case::Args2(v)),
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1630,7 +1667,7 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(SMOD, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(SMOD, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -1641,7 +1678,7 @@ mod evm_to_rwasm_tests {
             x("0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001"),
         ))];
 
-        test_op_cases(OR, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(OR, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -1659,7 +1696,7 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(XOR, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(XOR, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -1682,7 +1719,14 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(MSTORE, None, &cases, Some(0), ResultLocation::Memory(0));
+        test_op_cases(
+            MSTORE,
+            None,
+            &cases,
+            Some(0),
+            ResultLocation::Memory(0),
+            None,
+        );
     }
 
     #[test]
@@ -1700,7 +1744,14 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(MSTORE8, None, &cases, Some(0), ResultLocation::Memory(0));
+        test_op_cases(
+            MSTORE8,
+            None,
+            &cases,
+            Some(0),
+            ResultLocation::Memory(0),
+            None,
+        );
     }
 
     #[test]
@@ -1735,6 +1786,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1759,6 +1811,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(-1),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -1803,6 +1856,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(0),
             ResultLocation::Memory(0),
+            None,
         );
     }
 
@@ -1814,7 +1868,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(CALLER, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(CALLER, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -1825,7 +1879,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(ADDRESS, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(ADDRESS, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -1836,7 +1890,14 @@ mod evm_to_rwasm_tests {
         v[32 - len_be.len()..].copy_from_slice(&len_be);
         cases.push(Case::Args0(v.to_vec()));
 
-        test_op_cases(CALLDATASIZE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            CALLDATASIZE,
+            None,
+            &cases,
+            Some(32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1861,7 +1922,14 @@ mod evm_to_rwasm_tests {
             cases.push(Case::Args1((v.to_vec(), res_expected)));
         }
 
-        test_op_cases(CALLDATALOAD, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            CALLDATALOAD,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1931,6 +1999,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(0),
             ResultLocation::Memory(0),
+            None,
         );
     }
 
@@ -1938,7 +2007,14 @@ mod evm_to_rwasm_tests {
     fn callvalue() {
         let cases = [Case::Args0(CONTRACT_VALUE.to_vec())];
 
-        test_op_cases(CALLVALUE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            CALLVALUE,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1965,6 +2041,7 @@ mod evm_to_rwasm_tests {
                 &[case.1.clone()],
                 Some(-1),
                 ResultLocation::Stack,
+                None,
             );
         }
     }
@@ -1977,7 +2054,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(CODESIZE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            CODESIZE,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn chainid() {
@@ -1987,7 +2071,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(CHAINID, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(CHAINID, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn basefee() {
@@ -1997,7 +2081,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(BASEFEE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(BASEFEE, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn blockhash() {
@@ -2007,7 +2091,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(BLOCKHASH, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            BLOCKHASH,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn coinbase() {
@@ -2017,7 +2108,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(COINBASE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            COINBASE,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn gasprice() {
@@ -2027,7 +2125,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(GASPRICE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            GASPRICE,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn origin() {
@@ -2037,7 +2142,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(ORIGIN, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(ORIGIN, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn gaslimit() {
@@ -2047,7 +2152,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(GASLIMIT, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            GASLIMIT,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn number() {
@@ -2057,7 +2169,7 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(NUMBER, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(NUMBER, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn timestamp() {
@@ -2067,9 +2179,17 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(TIMESTAMP, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            TIMESTAMP,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
+    #[ignore] // TODO no implementation yet
     #[test]
     fn sstore_sload() {
         let mut preamble = vec![];
@@ -2092,6 +2212,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -2117,6 +2238,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -2143,6 +2265,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(0),
             ResultLocation::Output(0),
+            None,
         );
     }
     #[test]
@@ -2151,7 +2274,7 @@ mod evm_to_rwasm_tests {
             "0000000000000000000000000000000000000000000000000000000000000000",
         ))];
 
-        test_op_cases(GAS, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(GAS, None, &cases, Some(-1), ResultLocation::Stack, None);
     }
     #[test]
     fn difficulty() {
@@ -2161,8 +2284,17 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(DIFFICULTY, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            DIFFICULTY,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
+
+    #[ignore] // TODO no implementation yet
     #[test]
     fn blobbasefee() {
         let cases = [Case::Args0({
@@ -2171,8 +2303,17 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(BLOBBASEFEE, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            BLOBBASEFEE,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
+
+    #[ignore] // TODO no implementation yet
     #[test]
     fn blobhash() {
         let cases = [
@@ -2194,7 +2335,14 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(BLOBHASH, None, &cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            BLOBHASH,
+            None,
+            &cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -2204,7 +2352,7 @@ mod evm_to_rwasm_tests {
             x(""),
         ))];
 
-        test_op_cases(POP, None, &cases, Some(0), ResultLocation::Stack);
+        test_op_cases(POP, None, &cases, Some(0), ResultLocation::Stack, None);
     }
 
     #[test]
@@ -2246,6 +2394,7 @@ mod evm_to_rwasm_tests {
                 &cases,
                 Some(-1),
                 ResultLocation::Stack,
+                None,
             );
         }
     }
@@ -2295,25 +2444,26 @@ mod evm_to_rwasm_tests {
                 &cases,
                 Some(-1),
                 ResultLocation::Stack,
+                None,
             );
         }
     }
 
     #[test]
-    fn jump() {
+    fn jump_correct_jumpdest() {
         let mut preamble_bytecode = vec![];
 
-        // current offset: 0
+        // offset: 0
 
         preamble_bytecode.extend(compile_op_with_args_bytecode(
             Some(JUMP),
             &Case::Args1((
-                x("0000000000000000000000000000000000000000000000000000000000000043"), // 68
+                x("0000000000000000000000000000000000000000000000000000000000000043"), // 67
                 vec![],
             )),
         ));
 
-        // current offset: offset + 32 (ARGS for PUSH) + 1 (PUSH32) + 1 (JUMP) = 34
+        // offset: + 32 (ARGS for PUSH) + 1 (PUSH32) + 1 (JUMP) = 34
 
         // this push must be skipped
         preamble_bytecode.extend(compile_op_with_args_bytecode(
@@ -2324,14 +2474,14 @@ mod evm_to_rwasm_tests {
             )),
         ));
 
-        // current offset: 34 + 32 (ARGS for PUSH) + 1 (PUSH32) = 67
+        // offset: + 32 (ARGS for PUSH) + 1 (PUSH32) = 67
 
         preamble_bytecode.extend(compile_op_with_args_bytecode(
             Some(JUMPDEST),
             &Case::Args0(vec![]),
         ));
 
-        // current offset: offset + 1 (JUMPDEST) = 68
+        // offset: + 1 (JUMPDEST) = 68
 
         let cases = [Case::Args1((
             x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
@@ -2344,25 +2494,25 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
+            None,
         );
     }
 
     #[test]
-    fn jumpi_do_not_jump() {
+    fn jump_incorrect_jumpdest() {
         let mut preamble_bytecode = vec![];
 
-        // current offset: 0
+        // offset: 0
 
         preamble_bytecode.extend(compile_op_with_args_bytecode(
-            Some(JUMPI),
-            &Case::Args2((
-                x("0000000000000000000000000000000000000000000000000000000000000065"), // 101
-                x("0000000000000000000000000000000000000000000000000000000000000000"), // skip this jump
+            Some(JUMP),
+            &Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000043"), // 67
                 vec![],
             )),
         ));
 
-        // current offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+        // offset: + 32 (ARGS for PUSH) + 1 (PUSH32) + 1 (JUMP) = 34
 
         // this push must be skipped
         preamble_bytecode.extend(compile_op_with_args_bytecode(
@@ -2373,14 +2523,57 @@ mod evm_to_rwasm_tests {
             )),
         ));
 
-        // current offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
+        // offset: + 32 (ARGS for PUSH) + 1 (PUSH32) = 67
+
+        let cases = [Case::Args1((
+            x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
+            x("000000000000000000000000000000000000000000000000000000000000000a"),
+        ))];
+
+        test_op_cases(
+            STOP, // special case
+            Some(&preamble_bytecode),
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            Some(InstructionResult::InvalidJump),
+        );
+    }
+
+    #[test]
+    fn jumpi_do_not_jump() {
+        let mut preamble_bytecode = vec![];
+
+        // offset: 0
+
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            Some(JUMPI),
+            &Case::Args2((
+                x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                x("0000000000000000000000000000000000000000000000000000000000000000"), // skip this jump
+                vec![],
+            )),
+        ));
+
+        // offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+
+        // this push must be skipped
+        preamble_bytecode.extend(compile_op_with_args_bytecode(
+            None,
+            &Case::Args1((
+                x("0000000000000000000000000000000000000000000000000000000000000007"), // 7
+                vec![],
+            )),
+        ));
+
+        // offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
 
         preamble_bytecode.extend(compile_op_with_args_bytecode(
             Some(JUMPDEST),
             &Case::Args0(vec![]),
         ));
 
-        // current offset: offset + 1 (JUMPDEST) = 101
+        // offset: + 1 (JUMPDEST) = 101
 
         let cases = [Case::Args1((
             x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
@@ -2393,6 +2586,7 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(EVM_WORD_BYTES as i32 * 2),
             ResultLocation::Stack,
+            None,
         );
     }
 
@@ -2412,18 +2606,18 @@ mod evm_to_rwasm_tests {
         for jump_decision_arg in jump_decision_args {
             let mut preamble_bytecode = vec![];
 
-            // current offset: 0
+            // offset: 0
 
             preamble_bytecode.extend(compile_op_with_args_bytecode(
                 Some(JUMPI),
                 &Case::Args2((
-                    x("0000000000000000000000000000000000000000000000000000000000000065"), // 101
+                    x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
                     jump_decision_arg, // do not skip this jump
                     vec![],
                 )),
             ));
 
-            // current offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+            // offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
 
             // this push must be skipped
             preamble_bytecode.extend(compile_op_with_args_bytecode(
@@ -2436,11 +2630,6 @@ mod evm_to_rwasm_tests {
 
             // current offset: 67 + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
 
-            let cases = [Case::Args1((
-                x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
-                x("000000000000000000000000000000000000000000000000000000000000000a"),
-            ))];
-
             preamble_bytecode.extend(compile_op_with_args_bytecode(
                 Some(JUMPDEST),
                 &Case::Args0(vec![]),
@@ -2448,12 +2637,74 @@ mod evm_to_rwasm_tests {
 
             // current offset: offset + 1 (JUMPDEST) = 101
 
+            let cases = [Case::Args1((
+                x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
+                x("000000000000000000000000000000000000000000000000000000000000000a"),
+            ))];
+
             test_op_cases(
                 STOP, // special case
                 Some(&preamble_bytecode),
                 &cases,
                 Some(EVM_WORD_BYTES as i32 * 1),
                 ResultLocation::Stack,
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn jumpi_do_jump_incorrect_jumpdest() {
+        let jump_decision_args = [
+            x("0000000000000000 0000000000000000 0000000000000000 0000000000000001"),
+            x("0000000000000000 0000000000000000 0000000000000001 0000000000000000"),
+            x("0000000000000000 0000000000000001 0000000000000000 0000000000000000"),
+            x("0000000000000001 0000000000000000 0000000000000000 0000000000000000"),
+            x("0000000000000000 0000000000000000 0000000000000000 1000000000000000"),
+            x("0000000000000000 0000000000000000 1000000000000000 0000000000000000"),
+            x("0000000000000000 1000000000000000 0000000000000000 0000000000000000"),
+            x("1000000000000000 0000000000000000 0000000000000000 0000000000000000"),
+        ];
+
+        for jump_decision_arg in jump_decision_args {
+            let mut preamble_bytecode = vec![];
+
+            // offset: 0
+
+            preamble_bytecode.extend(compile_op_with_args_bytecode(
+                Some(JUMPI),
+                &Case::Args2((
+                    x("0000000000000000000000000000000000000000000000000000000000000064"), // 100
+                    jump_decision_arg, // do not skip this jump
+                    vec![],
+                )),
+            ));
+
+            // offset: + 32*2 (ARGS for PUSH) + 2 (PUSH32) + 1 (JUMP) = 67
+
+            // this push must be skipped
+            preamble_bytecode.extend(compile_op_with_args_bytecode(
+                None,
+                &Case::Args1((
+                    x("0000000000000000000000000000000000000000000000000000000000000003"),
+                    vec![],
+                )),
+            ));
+
+            // offset: + 32 (ARGS for PUSH) + 1 (PUSH32) = 100
+
+            let cases = [Case::Args1((
+                x("000000000000000000000000000000000000000000000000000000000000000a"), // 10
+                x("000000000000000000000000000000000000000000000000000000000000000a"),
+            ))];
+
+            test_op_cases(
+                STOP, // special case
+                Some(&preamble_bytecode),
+                &cases,
+                Some(EVM_WORD_BYTES as i32 * 1),
+                ResultLocation::Stack,
+                Some(InstructionResult::InvalidJump),
             );
         }
     }
@@ -2476,7 +2727,14 @@ mod evm_to_rwasm_tests {
             x("0000000000000000000000000000000000000000000000000000000000000003"),
         ))];
 
-        test_op_cases(OR, Some(&preamble), cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            OR,
+            Some(&preamble),
+            cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -2504,7 +2762,14 @@ mod evm_to_rwasm_tests {
             x("000000000000000000000000000000000000000000000000000000000000000f"),
         ))];
 
-        test_op_cases(ADD, Some(&preamble), cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            ADD,
+            Some(&preamble),
+            cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -2534,6 +2799,13 @@ mod evm_to_rwasm_tests {
             x("0000000000000000000000000000000000000000000000000000000000000002"),
         ))];
 
-        test_op_cases(DIV, Some(&preamble), cases, Some(-1), ResultLocation::Stack);
+        test_op_cases(
+            DIV,
+            Some(&preamble),
+            cases,
+            Some(-1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 }

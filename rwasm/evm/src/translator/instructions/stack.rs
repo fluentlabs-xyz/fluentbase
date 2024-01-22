@@ -18,26 +18,15 @@ pub fn pop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "POP";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::BASE);
 
     replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "PUSH";
     #[cfg(test)]
     debug!("op:{}", OP);
-
-    let next_opcode = translator.get_bytecode_byte(Some(N as isize));
-
-    // if [JUMP].contains(&next_opcode) {
-    //     jump(translator, host);
-    //
-    //     translator.instruction_pointer_inc(N + 1);
-    //     translator.instruction_result = InstructionResult::Continue;
-    // } else {
-    // let data = translator.get_bytecode_slice(None, N);
 
     let mut is_aux = InstructionSet::new();
 
@@ -89,27 +78,18 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
         is_aux.op_i64_add();
         is_aux.op_i64_store(0);
     }
-    // debug!(
-    //     "op:{}{} data:{:?} res_instr_count:{}",
-    //     OP,
-    //     N,
-    //     data,
-    //     is_aux.len()
-    // );
 
     let is = translator.result_instruction_set_mut();
     is.extend(&is_aux);
 
     translator.instruction_pointer_inc(N);
     translator.instruction_result = InstructionResult::Continue;
-    // }
 }
 
 pub fn dup<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DUP";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::VERYLOW);
 
     replace_with_call_to_subroutine(translator, host);
@@ -119,7 +99,6 @@ pub fn swap<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut
     const OP: &str = "SWAP";
     #[cfg(test)]
     debug!("op:{}", OP);
-    let is = translator.result_instruction_set_mut();
     gas!(translator, gas::constants::VERYLOW);
 
     replace_with_call_to_subroutine(translator, host);

@@ -107,3 +107,10 @@ macro_rules! as_usize_or_fail {
         x[0] as usize
     }};
 }
+
+macro_rules! return_with_reason {
+    ($translator:expr, $reason:expr) => {{
+        $translator.instruction_result = $reason;
+        return;
+    }};
+}

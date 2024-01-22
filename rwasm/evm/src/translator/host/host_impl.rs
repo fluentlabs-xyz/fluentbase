@@ -83,7 +83,8 @@ impl Host for HostImpl {
 
     #[inline]
     fn call(&mut self) -> (InstructionResult, Bytes) {
-        panic!("Call is not supported")
+        #[cfg(test)]
+        panic!("not supported");
     }
 
     #[inline]
@@ -91,11 +92,13 @@ impl Host for HostImpl {
         &mut self,
         _inputs: &mut CreateInputs,
     ) -> (InstructionResult, Option<Address>, Bytes) {
-        panic!("Create is not supported for this host")
+        #[cfg(test)]
+        panic!("not supported")
     }
 
     #[inline]
     fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
-        panic!("Selfdestruct is not supported")
+        #[cfg(test)]
+        panic!("not supported")
     }
 }

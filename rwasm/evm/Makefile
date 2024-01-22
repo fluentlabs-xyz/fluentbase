@@ -3,11 +3,11 @@ FEATURES =
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 
-all: solid_file
+all: wat_file
 
-solid_file:
+wat_file:
 	set -ex
-	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}" -v
+	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FEATURES}" -v
 	mkdir -p bin
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_evm_translator.wasm > ../../tmp/$@.wat
 

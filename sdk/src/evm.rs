@@ -202,7 +202,6 @@ mod test {
     };
     use alloy_primitives::{Bytes, B256};
     use fluentbase_codec::Encoder;
-    use std::process;
 
     #[test]
     fn test_encode_decode() {

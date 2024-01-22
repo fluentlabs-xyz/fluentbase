@@ -14,3 +14,4 @@ rwasm/spec/target
 libzktrie.so
 
 /tmp/*
+!/tmp/.gitkeep
