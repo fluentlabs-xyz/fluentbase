@@ -82,7 +82,6 @@ impl<const N: usize> WritableBuffer for FixedEncoder<N> {
 
 #[derive(Default)]
 pub struct BufferEncoder {
-    header_length: usize,
     buffer: Vec<u8>,
 }
 
@@ -90,10 +89,7 @@ impl BufferEncoder {
     pub fn new(header_length: usize, data_length: Option<usize>) -> Self {
         let mut buffer = Vec::with_capacity(header_length + data_length.unwrap_or(0));
         buffer.resize(header_length, 0);
-        Self {
-            header_length,
-            buffer,
-        }
+        Self { buffer }
     }
 
     pub fn finalize(self) -> Vec<u8> {

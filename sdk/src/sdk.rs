@@ -22,7 +22,7 @@ pub trait LowLevelAPI {
 
     fn zktrie_open(root: &Bytes32);
     fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]);
-    fn zktrie_field(key: &Bytes32, output: &mut [Bytes32]);
+    fn zktrie_field(key: &Bytes32, field: u32, output: &mut [Bytes32]);
     fn zktrie_root(output: &mut Bytes32);
     fn zktrie_rollback();
     fn zktrie_commit();
