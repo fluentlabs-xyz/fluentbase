@@ -3,7 +3,12 @@ extern crate core;
 use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_runtime::Runtime;
-use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig, FuncOrExport};
+use fluentbase_rwasm::rwasm::{
+    instruction::INSTRUCTION_SIZE_BYTES,
+    Compiler,
+    CompilerConfig,
+    FuncOrExport,
+};
 use std::{fs, io::BufRead, path::Path};
 
 mod opcodes;
@@ -94,6 +99,18 @@ fn main() {
             .unwrap();
     };
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+    let func_source_maps = compiler.build_source_map();
+    for func_source_map in &func_source_maps {
+        println!("func_source_map '{:?}'", func_source_map);
+    }
+    let entry_point_fn = &func_source_maps[0];
+    println!(
+        "zero_fn_source_map name '{}' index '{}' pos '{}' len '{}'",
+        entry_point_fn.fn_name,
+        entry_point_fn.fn_index,
+        entry_point_fn.position,
+        entry_point_fn.length
+    );
     let mut as_rust_vec: Vec<String> = vec![];
     if args.entry_fn_name_beginnings_for != "" {
         for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
@@ -107,7 +124,7 @@ fn main() {
                     .unwrap_or(&0)
             } else {
                 0
-            };
+            }/* + entry_point_fn.length*/;
             println!(
                 "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
                 fn_idx, fn_beginning
@@ -120,7 +137,13 @@ fn main() {
     }
     let rs_str = format!("[{}]", as_rust_vec.join(","));
     println!("rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]", rs_str);
-    let rwasm_binary = compiler.finalize().unwrap();
+    let mut rwasm_binary = compiler.finalize().unwrap();
+    let entry_point_bytecode = &rwasm_binary[entry_point_fn.position as usize
+        * INSTRUCTION_SIZE_BYTES
+        ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES];
+    let mut rwasm_binary_tmp = entry_point_bytecode.to_owned();
+    rwasm_binary_tmp.extend(&rwasm_binary);
+    // rwasm_binary = rwasm_binary_tmp;
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
     if args.rwasm_file_out_path != "" {

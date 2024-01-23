@@ -55,9 +55,9 @@ impl<'a> EvmCompiler<'a> {
 
         instruction_set.op_magic_prefix([0x00; 8]);
 
-        self.instruction_set_entry_offset =
-            Some(translator.subroutines_instruction_set().instr.len() + 1);
-        instruction_set.op_br(self.instruction_set_entry_offset.unwrap() as i32);
+        let instruction_set_entry_offset = translator.subroutines_instruction_set().instr.len() + 1;
+        self.instruction_set_entry_offset = Some(instruction_set_entry_offset);
+        instruction_set.op_br(instruction_set_entry_offset as i32);
 
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
         for (_opcode, data) in translator.opcode_to_subroutine_data() {
@@ -66,8 +66,7 @@ impl<'a> EvmCompiler<'a> {
                 Some(data.end_offset),
                 (instruction_set.len() + data.begin_offset as u32) as i32,
             );
-            // 'end_offset' now points to the end of 1 solid file and not to the 1 of 1 specific
-            // func
+            // 'end_offset' now points to the end of 1 solid file
             break;
         }
         instruction_set
