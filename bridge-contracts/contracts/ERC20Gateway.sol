@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {IBridge} from "./IBridge.sol";
 import {IERC20Gateway} from "./IERC20Gateway.sol";
@@ -8,7 +9,6 @@ import {ERC20PeggedToken} from "./ERC20PeggedToken.sol";
 import {ERC20TokenFactory} from "./ERC20TokenFactory.sol";
 import {IERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ERC20Gateway is Ownable {
     struct TokenMetadata {
