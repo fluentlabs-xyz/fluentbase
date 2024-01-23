@@ -8,7 +8,12 @@ use crate::{
         instructions::utilities::replace_with_call_to_subroutine,
         translator::Translator,
     },
-    utilities::{align_to_evm_word_array, EVM_WORD_BYTES, WASM_I64_IN_EVM_WORD_COUNT},
+    utilities::{
+        align_to_evm_word_array,
+        EVM_WORD_BYTES,
+        WASM_I64_BYTES,
+        WASM_I64_IN_EVM_WORD_COUNT,
+    },
 };
 use fluentbase_rwasm::rwasm::InstructionSet;
 #[cfg(test)]
@@ -34,7 +39,7 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mu
         if N == 0 {
             gas!(translator, gas::constants::BASE);
             if let Err(result) = translator.stack.push(U256::ZERO) {
-                translator.instruction_result = result;
+                return_with_reason!(translator, result);
             }
             for _ in 0..WASM_I64_IN_EVM_WORD_COUNT {
                 is_aux.op_i64_const(0);
@@ -46,17 +51,14 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mu
             .stack
             .push_slice(unsafe { core::slice::from_raw_parts(translator.instruction_pointer, N) })
         {
-            translator.instruction_result = result;
-            return;
+            return_with_reason!(translator, result);
         }
         let data_padded = align_to_evm_word_array(translator.get_bytecode_slice(None, N), true);
         if let Err(_) = data_padded {
-            translator.instruction_result = InstructionResult::OutOfOffset;
-            return;
+            return_with_reason!(translator, InstructionResult::OutOfOffset);
         }
         let data_padded = data_padded.unwrap();
 
-        // let is = translator.result_instruction_set();
         for i in 1..=4 {
             is_aux.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
             is_aux.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);
@@ -65,8 +67,10 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mu
             is_aux.op_i64_const(8 * i);
             is_aux.op_i64_sub();
         }
-        for chunk in data_padded.chunks(8) {
-            let v = i64::from_le_bytes(chunk.try_into().unwrap());
+        let mut chunk_values = [0u8; WASM_I64_BYTES];
+        for chunk in data_padded.chunks(WASM_I64_BYTES) {
+            chunk_values.clone_from_slice(chunk);
+            let v = i64::from_le_bytes(chunk_values);
             is_aux.op_i64_const(v);
             is_aux.op_i64_store(0);
         }

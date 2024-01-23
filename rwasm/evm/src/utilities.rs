@@ -24,7 +24,11 @@ pub fn align_to_evm_word_array(
         return Err(());
     }
     if data_len == EVM_WORD_BYTES {
-        return Ok(data.try_into().unwrap());
+        let res = TryInto::<[u8; EVM_WORD_BYTES]>::try_into(data);
+        if let Err(_) = res {
+            return Err(());
+        }
+        return Ok(res.unwrap());
     }
     let mut res = [0u8; EVM_WORD_BYTES];
     if pad_left_or_right {

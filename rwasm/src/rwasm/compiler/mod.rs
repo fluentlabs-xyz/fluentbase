@@ -213,11 +213,12 @@ impl Default for FuncOrExport {
     }
 }
 
+#[derive(Debug)]
 pub struct FuncSourceMap {
-    fn_index: u32,
-    fn_name: String,
-    position: u32,
-    length: u32,
+    pub fn_index: u32,
+    pub fn_name: String,
+    pub position: u32,
+    pub length: u32,
 }
 
 impl<'linker> Compiler<'linker> {
