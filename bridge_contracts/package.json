@@ -1,0 +1,31 @@
+{
+  "name": "bridge_contracts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx hardhat test",
+    "build": "npx hardhat compile",
+    "prettier": "npx prettier --write --plugin=prettier-plugin-solidity 'contracts/**/*.sol'",
+    "prettier:test": "npx prettier --write 'test/**/*.js'",
+    "solhint": "./node_modules/.bin/solhint -f table contracts/**/*.sol"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@nomiclabs/hardhat-solhint": "^3.0.1",
+    "chai": "^4.3.10",
+    "ethers": "^5.7.2",
+    "hardhat": "^2.19.2",
+    "prettier": "^3.1.1",
+    "prettier-plugin-solidity": "^1.2.0",
+    "solhint": "^4.0.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.1",
+    "@openzeppelin/contracts-upgradeable": "^v4.9.3",
+    "solc": "^0.8.23-fixed"
+  }
+}
