@@ -1,16 +1,15 @@
 use crate::{
-    consts::INIT_CODE_LENGTH,
     primitives::Bytecode,
     translator::{
         host::host_impl::HostImpl,
         instruction_result::InstructionResult,
         instructions::opcode::make_instruction_table,
-        translator::{contract::Contract, Translator},
+        translator::{contract::Contract, SubroutineData, Translator},
     },
 };
 use alloc::boxed::Box;
 use alloy_primitives::Bytes;
-use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet};
+use fluentbase_rwasm::rwasm::{ImportLinker, InstructionSet, FUNC_SOURCE_MAP_ENTRYPOINT_IDX};
 
 #[derive()]
 pub struct EvmCompiler<'a> {
@@ -56,24 +55,26 @@ impl<'a> EvmCompiler<'a> {
 
         instruction_set.op_magic_prefix([0x00; 8]);
 
-        let instruction_set_entry_offset =
-            translator.subroutines_instruction_set().instr.len() + 1 - INIT_CODE_LENGTH;
+        let init_code_data = translator.subroutine_data(FUNC_SOURCE_MAP_ENTRYPOINT_IDX);
+        let SubroutineData {
+            begin_offset: init_code_begin_offset,
+            length: init_code_length,
+            ..
+        } = init_code_data.cloned().unwrap_or_default();
+
+        let instruction_set_entry_offset: usize =
+            translator.subroutines_instruction_set().len() as usize + 1 - init_code_length;
         self.instruction_set_entry_offset = Some(instruction_set_entry_offset);
         instruction_set.op_br(instruction_set_entry_offset as i32);
 
         let mut subroutines_instruction_set = translator.subroutines_instruction_set().clone();
-        for (_opcode, data) in translator.opcode_to_subroutine_data() {
-            subroutines_instruction_set.fix_br_indirect_offset(
-                Some(data.begin_offset),
-                Some(data.end_offset),
-                (instruction_set.len() + data.begin_offset as u32) as i32,
-            );
-            // 'end_offset' now points to the end of 1 solid file
-            break;
-        }
-        instruction_set
-            .instr
-            .extend(&subroutines_instruction_set.instr);
+        let offset_change = (instruction_set.len() + init_code_begin_offset as u32) as i32;
+        subroutines_instruction_set.fix_br_indirect_offset(
+            Some(0),
+            Some(subroutines_instruction_set.len() as usize - 1),
+            offset_change,
+        );
+        instruction_set.extend(&subroutines_instruction_set);
 
         preamble.map(|v| {
             instruction_set.extend(&v);

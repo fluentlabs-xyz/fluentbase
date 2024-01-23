@@ -8,10 +8,11 @@ use fluentbase_rwasm::rwasm::{
     Compiler,
     CompilerConfig,
     FuncOrExport,
+    FUNC_SOURCE_MAP_ENTRYPOINT_IDX,
+    FUNC_SOURCE_MAP_ENTRYPOINT_NAME,
 };
 use std::{fs, io::BufRead, path::Path};
 
-mod opcodes;
 mod types;
 
 /// Command line utility which takes input WAT/WASM file and converts it into RWASM
@@ -100,9 +101,6 @@ fn main() {
     };
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
     let func_source_maps = compiler.build_source_map();
-    for func_source_map in &func_source_maps {
-        println!("func_source_map '{:?}'", func_source_map);
-    }
     let entry_point_fn = &func_source_maps[0];
     println!(
         "zero_fn_source_map name '{}' index '{}' pos '{}' len '{}'",
@@ -112,6 +110,24 @@ fn main() {
         entry_point_fn.length
     );
     let mut as_rust_vec: Vec<String> = vec![];
+    let restricted_fn_names = &["ts_get", "ts_set"];
+    for func_source_map in &func_source_maps {
+        println!("func_source_map '{:?}'", func_source_map);
+        let fn_name = func_source_map.fn_name.as_str();
+        let fn_beginning = func_source_map.position;
+        let fn_length = func_source_map.length;
+        if fn_name == FUNC_SOURCE_MAP_ENTRYPOINT_NAME {
+            let opcode = FUNC_SOURCE_MAP_ENTRYPOINT_IDX;
+            as_rust_vec.push(format!("({opcode}, {fn_beginning}, {fn_length})"));
+        } else if !fn_name.starts_with("$__") && !restricted_fn_names.contains(&fn_name) {
+            let fn_name = fn_name.to_uppercase();
+            let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
+            let opcode_name = fn_name_split[fn_name_split.len() - 1];
+            as_rust_vec.push(format!(
+                "(opcode::{opcode_name} as u32, {fn_beginning}, {fn_length})"
+            ));
+        }
+    }
     if args.entry_fn_name_beginnings_for != "" {
         for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
             let fn_name = Box::new(fn_name.to_string());
@@ -125,14 +141,14 @@ fn main() {
             } else {
                 0
             };
-            println!(
-                "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
-                fn_idx, fn_beginning
-            );
+            // println!(
+            //     "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
+            //     fn_idx, fn_beginning
+            // );
             let fn_name = fn_name.to_uppercase();
             let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
             let opcode_name = fn_name_split[fn_name_split.len() - 1];
-            as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
+            // as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
         }
     }
     let rs_str = format!("[{}]", as_rust_vec.join(","));
@@ -144,7 +160,7 @@ fn main() {
     // let mut rwasm_binary_tmp = entry_point_bytecode.to_owned();
     // rwasm_binary_tmp.extend(&rwasm_binary);
     // rwasm_binary = rwasm_binary_tmp;
-    // rwasm_binary.extend(&init_bytecode);
+    rwasm_binary.extend(&init_bytecode);
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
     if args.rwasm_file_out_path != "" {
