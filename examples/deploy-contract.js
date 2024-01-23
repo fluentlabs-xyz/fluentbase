@@ -21,9 +21,15 @@ const main = async () => {
     let isLocal = checkFlag('--local')
     let isDev = checkFlag('--dev')
 
-    let web3Url = 'https://rpc.dev0.fluentlabs.xyz/';
+    let web3Url = '';
     if (isLocal) {
         web3Url = 'http://127.0.0.1:8545';
+    } else if (isDev) {
+        web3Url = 'https://rpc.dev0.fluentlabs.xyz/';
+    } else {
+        console.log(`You must specify --dev or --local flag!`);
+        console.log(`Example: node deploy-contract.js --dev ./bin/greeting.wasm`);
+        process.exit(-1);
     }
 
     let [binaryPath] = args;

@@ -46,7 +46,7 @@ macro_rules! derive_types {
 #[macro_export]
 macro_rules! define_codec_struct {
     (pub struct $struct_type:ident { $($element:ident: $ty:ty),* $(,)? }) => {
-        #[derive(Debug, Default, PartialEq)]
+        #[derive(Debug, Default, PartialEq, Clone)]
         pub struct $struct_type {
             $(pub $element: $ty),*
         }
