@@ -1,4 +1,5 @@
 use crate::{
+    consts::INIT_CODE_LENGTH,
     primitives::Bytecode,
     translator::{
         host::host_impl::HostImpl,
@@ -55,7 +56,8 @@ impl<'a> EvmCompiler<'a> {
 
         instruction_set.op_magic_prefix([0x00; 8]);
 
-        let instruction_set_entry_offset = translator.subroutines_instruction_set().instr.len() + 1;
+        let instruction_set_entry_offset =
+            translator.subroutines_instruction_set().instr.len() + 1 - INIT_CODE_LENGTH;
         self.instruction_set_entry_offset = Some(instruction_set_entry_offset);
         instruction_set.op_br(instruction_set_entry_offset as i32);
 
@@ -74,7 +76,7 @@ impl<'a> EvmCompiler<'a> {
             .extend(&subroutines_instruction_set.instr);
 
         preamble.map(|v| {
-            instruction_set.instr.extend(&v.instr);
+            instruction_set.extend(&v);
         });
 
         let mut host = HostImpl::new();
@@ -84,7 +86,7 @@ impl<'a> EvmCompiler<'a> {
         let mut instruction_set = translator.take_instruction_set();
 
         postamble.map(|v| {
-            instruction_set.instr.extend(&v.instr);
+            instruction_set.extend(&v);
         });
 
         self.instruction_set = instruction_set;
