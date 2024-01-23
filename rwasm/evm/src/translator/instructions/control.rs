@@ -26,7 +26,7 @@ use core::{i64, u64};
 #[cfg(test)]
 use log::debug;
 
-pub const JUMP_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG: usize = 7;
+pub const JUMP_BR_INDIRECT_ARG_REL_OFFSET: usize = 6; // too heavy to replace with dyn comp
 pub fn jump<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "JUMP";
     const OPCODE: u8 = JUMP;
@@ -77,15 +77,15 @@ pub fn jump<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     let is_current_len = is.len();
     #[cfg(test)]
     debug!(
-        "hint: JUMP_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG={}",
-        is_current_len - is_before_len + 1
+        "hint: JUMP_BR_INDIRECT_ARG_OFFSET={}",
+        is_current_len - is_before_len
     );
     // by default: just skips itself (replaced with real value later)
     is.op_i64_const(is_current_len as i64);
     is.op_br_indirect(2); // for i64_const and br_indirect itself
 }
 
-pub const JUMPI_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG: usize = 32;
+pub const JUMPI_BR_INDIRECT_ARG_REL_OFFSET: usize = 31; // too heavy to replace with dyn comp
 pub fn jumpi<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "JUMPI";
     const OPCODE: u8 = JUMPI;
@@ -157,8 +157,8 @@ pub fn jumpi<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     let is_current_len = is.len();
     #[cfg(test)]
     debug!(
-        "hint: JUMPI_INSTRUCTIONS_BEFORE_BR_INDIRECT_ARG={}",
-        is_current_len - is_before_len + 1
+        "hint: JUMPI_BR_INDIRECT_ARG_OFFSET={}",
+        is_current_len - is_before_len
     );
     // by default: just skips itself (replaced with real value later)
     is.op_i64_const(is_current_len as i64);

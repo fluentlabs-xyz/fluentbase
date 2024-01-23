@@ -221,6 +221,9 @@ pub struct FuncSourceMap {
     pub length: u32,
 }
 
+pub const FUNC_SOURCE_MAP_ENTRYPOINT_NAME: &'static str = "$__entrypoint";
+pub const FUNC_SOURCE_MAP_ENTRYPOINT_IDX: u32 = u32::MAX;
+
 impl<'linker> Compiler<'linker> {
     pub fn new(wasm_binary: &[u8], config: CompilerConfig) -> Result<Self, CompilerError> {
         Self::new_with_linker(wasm_binary, config, None)
@@ -1185,8 +1188,8 @@ impl<'linker> Compiler<'linker> {
         let mut result = Vec::new();
         if self.config.translate_sections {
             result.push(FuncSourceMap {
-                fn_index: u32::MAX,
-                fn_name: "$__entrypoint".to_string(),
+                fn_index: FUNC_SOURCE_MAP_ENTRYPOINT_IDX,
+                fn_name: FUNC_SOURCE_MAP_ENTRYPOINT_NAME.to_string(),
                 position: 0,
                 length: self.section_length() as u32,
             });
