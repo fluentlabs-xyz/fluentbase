@@ -124,7 +124,7 @@ fn main() {
                     .unwrap_or(&0)
             } else {
                 0
-            }/* + entry_point_fn.length*/;
+            };
             println!(
                 "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
                 fn_idx, fn_beginning
@@ -138,12 +138,13 @@ fn main() {
     let rs_str = format!("[{}]", as_rust_vec.join(","));
     println!("rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]", rs_str);
     let mut rwasm_binary = compiler.finalize().unwrap();
-    let entry_point_bytecode = &rwasm_binary[entry_point_fn.position as usize
-        * INSTRUCTION_SIZE_BYTES
-        ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES];
-    let mut rwasm_binary_tmp = entry_point_bytecode.to_owned();
-    rwasm_binary_tmp.extend(&rwasm_binary);
+    let init_bytecode = rwasm_binary[entry_point_fn.position as usize * INSTRUCTION_SIZE_BYTES
+        ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES]
+        .to_vec();
+    // let mut rwasm_binary_tmp = entry_point_bytecode.to_owned();
+    // rwasm_binary_tmp.extend(&rwasm_binary);
     // rwasm_binary = rwasm_binary_tmp;
+    // rwasm_binary.extend(&init_bytecode);
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
     if args.rwasm_file_out_path != "" {
