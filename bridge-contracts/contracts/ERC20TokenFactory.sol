@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.0;
 
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
