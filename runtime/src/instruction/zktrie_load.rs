@@ -11,7 +11,8 @@ impl ZkTrieLoad {
         val32_offset: u32,
     ) -> Result<(), Trap> {
         let key = caller.read_memory(key32_offset, 32).to_vec();
-        Self::fn_impl(caller.data_mut(), &key).map_err(|err| err.into_trap())?;
+        let result = Self::fn_impl(caller.data_mut(), &key).map_err(|err| err.into_trap())?;
+        caller.write_memory(val32_offset, &result);
         Ok(())
     }
 

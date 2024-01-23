@@ -15,7 +15,7 @@ impl ZkTrieOpen {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>, root32: &[u8]) -> Result<(), ExitCode> {
-        let mut zktrie = context.zktrie.clone().unwrap();
+        let zktrie = context.zktrie.clone().unwrap();
         zktrie.borrow_mut().open(root32);
         Ok(())
     }
