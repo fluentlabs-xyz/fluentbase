@@ -4,7 +4,7 @@ use fluentbase_rwasm::{common::Trap, Caller};
 pub struct ZkTrieCommit;
 
 impl ZkTrieCommit {
-    pub fn fn_handler<T>(caller: Caller<'_, RuntimeContext<T>>) -> Result<(), Trap> {
+    pub fn fn_handler<T>(_caller: Caller<'_, RuntimeContext<T>>) -> Result<(), Trap> {
         Ok(())
     }
 

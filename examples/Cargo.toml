@@ -26,11 +26,6 @@ wat = "1.0.77"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
-[target.wasm32-unknown-unknown]
-rustflags = [
-    "-C", "link-arg=-zstack-size=8192", # shrink the heap
-]
-
 [features]
 default = []
 std = [
