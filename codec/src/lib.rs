@@ -1,5 +1,4 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(inherent_associated_types)]
 
 extern crate alloc;
 extern crate core;

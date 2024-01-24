@@ -147,28 +147,28 @@ macro_rules! output_mut_or_default {
 
 impl ExecutionContext {
     // env info
-    impl_reader_func!(fn env_chain_id() -> u64, ContractInput::EnvChainId);
+    impl_reader_func!(fn env_chain_id() -> u64, <ContractInput as IContractInput>::EnvChainId);
     // contract info
-    impl_reader_func!(fn contract_address() -> Address, ContractInput::ContractAddress);
-    impl_reader_func!(fn contract_caller() -> Address, ContractInput::ContractCaller);
-    impl_reader_func!(fn contract_bytecode() -> Bytes, ContractInput::ContractBytecode);
-    impl_reader_func!(fn contract_code_size() -> u32, ContractInput::ContractCodeSize);
-    impl_reader_func!(fn contract_code_hash() -> B256, ContractInput::ContractCodeHash);
-    impl_reader_func!(fn contract_input() -> Bytes, ContractInput::ContractInput);
-    impl_reader_func!(fn contract_input_size() -> u32, ContractInput::ContractInputSize);
-    impl_reader_func!(fn contract_value() -> U256, ContractInput::ContractValue);
+    impl_reader_func!(fn contract_address() -> Address, <ContractInput as IContractInput>::ContractAddress);
+    impl_reader_func!(fn contract_caller() -> Address, <ContractInput as IContractInput>::ContractCaller);
+    impl_reader_func!(fn contract_bytecode() -> Bytes, <ContractInput as IContractInput>::ContractBytecode);
+    impl_reader_func!(fn contract_code_size() -> u32, <ContractInput as IContractInput>::ContractCodeSize);
+    impl_reader_func!(fn contract_code_hash() -> B256, <ContractInput as IContractInput>::ContractCodeHash);
+    impl_reader_func!(fn contract_input() -> Bytes, <ContractInput as IContractInput>::ContractInput);
+    impl_reader_func!(fn contract_input_size() -> u32, <ContractInput as IContractInput>::ContractInputSize);
+    impl_reader_func!(fn contract_value() -> U256, <ContractInput as IContractInput>::ContractValue);
     // block info
-    impl_reader_func!(fn block_hash() -> B256, ContractInput::BlockHash);
-    impl_reader_func!(fn block_coinbase() -> Address, ContractInput::BlockCoinbase);
-    impl_reader_func!(fn block_timestamp() -> u64, ContractInput::BlockTimestamp);
-    impl_reader_func!(fn block_number() -> u64, ContractInput::BlockNumber);
-    impl_reader_func!(fn block_difficulty() -> u64, ContractInput::BlockDifficulty);
-    impl_reader_func!(fn block_gas_limit() -> u64, ContractInput::BlockGasLimit);
-    impl_reader_func!(fn block_base_fee() -> U256, ContractInput::BlockBaseFee);
+    impl_reader_func!(fn block_hash() -> B256, <ContractInput as IContractInput>::BlockHash);
+    impl_reader_func!(fn block_coinbase() -> Address, <ContractInput as IContractInput>::BlockCoinbase);
+    impl_reader_func!(fn block_timestamp() -> u64, <ContractInput as IContractInput>::BlockTimestamp);
+    impl_reader_func!(fn block_number() -> u64, <ContractInput as IContractInput>::BlockNumber);
+    impl_reader_func!(fn block_difficulty() -> u64, <ContractInput as IContractInput>::BlockDifficulty);
+    impl_reader_func!(fn block_gas_limit() -> u64, <ContractInput as IContractInput>::BlockGasLimit);
+    impl_reader_func!(fn block_base_fee() -> U256, <ContractInput as IContractInput>::BlockBaseFee);
     // tx info
-    impl_reader_func!(fn tx_gas_price() -> U256, ContractInput::TxGasPrice);
-    impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, ContractInput::TxGasPriorityFee);
-    impl_reader_func!(fn tx_caller() -> Address, ContractInput::TxCaller);
+    impl_reader_func!(fn tx_gas_price() -> U256, <ContractInput as IContractInput>::TxGasPrice);
+    impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, <ContractInput as IContractInput>::TxGasPriorityFee);
+    impl_reader_func!(fn tx_caller() -> Address, <ContractInput as IContractInput>::TxCaller);
     // impl_reader_func!(fn tx_blob_hashes() -> Vec<B256>, ContractInput::TxBlobHashes);
     // impl_reader_func!(fn tx_blob_gas_price() -> u64, ContractInput::TxBlobGasPrice);
 

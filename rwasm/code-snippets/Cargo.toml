@@ -10,9 +10,10 @@ bench = false
 proc-macro = false
 
 [dependencies]
+byteorder.workspace = true
+fluentbase-codec = { path = "../../codec", default-features = false }
 fluentbase-rwasm = { path = "..", default-features = false }
 fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
-hex = "0.4.3"
 hashbrown = { workspace = true }
 once_cell = { version = "1.19.0", default-features = false }
 

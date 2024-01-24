@@ -9,6 +9,7 @@ host_chainid host_basefee host_blockhash host_coinbase host_gaslimit host_number
 host_env_block_difficulty host_env_blobbasefee host_env_gasprice host_env_origin host_env_blobhash \
 control_return control_revert
 
+.PHONY: all
 all: solid_file
 
 TARGET=wasm32-unknown-unknown
@@ -23,15 +24,18 @@ $(FILES):
 	#wasm2wat ./bin/$@.wasm > ./bin/$@.wat
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 
+.PHONY: solid_file
 solid_file:
 	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}"
 	mkdir -p bin
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 	(cd ../bin; make $@)
 
+.PHONY: with_rwasm_translation
 with_rwasm_translation:
 	make $(FILE)
 	(cd ../bin; make $(FILE) ENTRY_FN_NAME=$(ENTRY_FN_NAME))
 
+.PHONY: clean
 clean:
 	cargo clean
