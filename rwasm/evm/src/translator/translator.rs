@@ -297,7 +297,7 @@ impl<'a> Translator<'a> {
 
     fn init_code_snippets(&mut self) {
         let opcode_to_entry_to_len =
-            include!("../../../code-snippets/bin/solid_file.rs").as_slice();
+            include!("../../../code-snippets/bin/solid_file_source_map.rs").as_slice();
         let mut initiate_subroutines_solid_file = |rwasm_binary: &[u8]| {
             let instruction_set = ReducedModule::new(&rwasm_binary)
                 .unwrap()

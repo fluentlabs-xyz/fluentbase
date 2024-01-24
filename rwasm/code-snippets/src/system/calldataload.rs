@@ -7,17 +7,17 @@ use fluentbase_sdk::evm::ExecutionContext;
 
 #[no_mangle]
 fn system_calldataload() {
-    let i = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let idx = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
-    let i = u256_be_to_tuple_le(i).0 as usize;
+    let idx = u256_be_to_tuple_le(idx).0 as usize;
+    let mut idx_tail = idx + (U256_BYTES_COUNT as usize);
 
     let ci = ExecutionContext::contract_input();
-    let v = if i < ci.len() {
-        if i + (U256_BYTES_COUNT as usize) < ci.len() {
-            &ci[i..i + U256_BYTES_COUNT as usize]
-        } else {
-            &ci[i..ci.len()]
-        }
+    if idx_tail > ci.len() {
+        idx_tail = ci.len();
+    }
+    let v = if idx_tail > idx {
+        &ci[idx..idx_tail]
     } else {
         &[]
     };
