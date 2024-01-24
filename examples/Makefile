@@ -15,9 +15,9 @@ $(FILES):
 	touch ./bin/$@.wasm ./bin/$@-deploy.wasm
 	RUSTFLAGS='-C link-arg=-zstack-size=65536 -C target-feature=+bulk-memory' cargo b --release --target=wasm32-unknown-unknown --features=$@
 	clang stack.s -c --target=wasm32-unknown-unknown
-	wasm-ld --allow-undefined --static --no-entry --export=main --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a ./stack.o -o ./bin/$@.wasm
+	wasm-ld --allow-undefined --static --no-entry --export=main --strip-all --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a ./stack.o -o ./bin/$@.wasm
 	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
 	cargo b --release --target=wasm32-unknown-unknown --features=$@
-	wasm-ld --allow-undefined --static --no-entry --export=deploy --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a -o ./bin/$@-deploy.wasm
+	wasm-ld --allow-undefined --static --no-entry --export=deploy --strip-all --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a -o ./bin/$@-deploy.wasm
 	wasm2wat ./bin/$@-deploy.wasm > ./bin/$@-deploy.wat
 	rm stack.o
