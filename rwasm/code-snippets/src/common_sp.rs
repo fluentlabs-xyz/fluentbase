@@ -71,6 +71,17 @@ pub(crate) fn stack_pop_u256(sp_base_mem_offset: usize) -> [u8; U256_BYTES_COUNT
     res
 }
 
+pub(crate) unsafe fn stack_pop_u256_unsafe(sp_base_mem_offset: usize) -> *const u64 {
+    let sp_mem_offset = sp_get_mem_offset(sp_base_mem_offset);
+    sp_dec(sp_base_mem_offset, U256_BYTES_COUNT);
+    sp_mem_offset as *const u64
+}
+
+pub(crate) unsafe fn stack_peek_u256_unsafe(sp_base_mem_offset: usize) -> *mut u64 {
+    let sp_mem_offset = sp_get_mem_offset(sp_base_mem_offset);
+    sp_mem_offset as *mut u64
+}
+
 pub(crate) fn stack_peek_u256(
     sp_base_mem_offset: usize,
     param_idx: usize,
