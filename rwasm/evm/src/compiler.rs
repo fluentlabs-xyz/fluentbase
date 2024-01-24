@@ -1,4 +1,5 @@
 use crate::{
+    consts::INTERNAL_VIRTUAL_STACK_TOP_DEFAULT,
     primitives::Bytecode,
     translator::{
         host::host_impl::HostImpl,
@@ -75,6 +76,10 @@ impl<'a> EvmCompiler<'a> {
             offset_change,
         );
         instruction_set.extend(&subroutines_instruction_set);
+
+        let virtual_stack_top = INTERNAL_VIRTUAL_STACK_TOP_DEFAULT;
+        instruction_set.op_i64_const(virtual_stack_top);
+        instruction_set.op_global_set(0);
 
         preamble.map(|v| {
             instruction_set.extend(&v);
