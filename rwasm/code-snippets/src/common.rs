@@ -341,6 +341,62 @@ pub(crate) fn add(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE 
     (s0, s1, s2, s3)
 }
 
+pub(crate) unsafe fn add_unsafe_not_working(a: *const u64, b: *const u64) -> U256AsU64TupleLE {
+    let mut a_part: u64 = 0;
+    let mut b_part: u64 = 0;
+    let mut part_sum: u64 = 0;
+    let mut carry: u64 = 0;
+    let mut s0: u64 = 0;
+    let mut s1: u64 = 0;
+    let mut s2: u64 = 0;
+    let mut s3: u64 = 0;
+
+    a_part = *a.offset(3) & U64_LOW_PART_MASK;
+    b_part = *b.offset(0) & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part;
+    s0 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = *a.offset(0) >> U64_HALF_BITS_COUNT;
+    b_part = *b.offset(0) >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s0 = s0 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = *a.offset(1) & U64_LOW_PART_MASK;
+    b_part = *b.offset(1) & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s1 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = *a.offset(1) >> U64_HALF_BITS_COUNT;
+    b_part = *b.offset(1) >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s1 = s1 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = *a.offset(2) & U64_LOW_PART_MASK;
+    b_part = *b.offset(2) & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s2 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = *a.offset(2) >> U64_HALF_BITS_COUNT;
+    b_part = *b.offset(2) >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s2 = s2 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+
+    a_part = *a.offset(3) & U64_LOW_PART_MASK;
+    b_part = *b.offset(3) & U64_LOW_PART_MASK;
+    part_sum = a_part + b_part + carry;
+    s3 = part_sum & U64_LOW_PART_MASK;
+    carry = part_sum >> U64_HALF_BITS_COUNT;
+    a_part = *a.offset(3) >> U64_HALF_BITS_COUNT;
+    b_part = *b.offset(3) >> U64_HALF_BITS_COUNT;
+    part_sum = a_part + b_part + carry;
+    s3 = s3 + ((part_sum & U64_LOW_PART_MASK) << U64_HALF_BITS_COUNT);
+
+    (s0, s1, s2, s3)
+}
+
 // pub(crate) fn add_global_mem(
 //     a0: u64,
 //     a1: u64,
