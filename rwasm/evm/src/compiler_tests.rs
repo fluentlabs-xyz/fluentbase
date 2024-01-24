@@ -459,7 +459,7 @@ mod evm_to_rwasm_tests {
             EQ,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -490,7 +490,7 @@ mod evm_to_rwasm_tests {
             ISZERO,
             None,
             &cases.map(|v| Case::Args1(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -513,7 +513,7 @@ mod evm_to_rwasm_tests {
             NOT,
             None,
             &cases.map(|v| Case::Args1(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -571,7 +571,7 @@ mod evm_to_rwasm_tests {
             SHL,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -653,7 +653,7 @@ mod evm_to_rwasm_tests {
             SHR,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -693,7 +693,14 @@ mod evm_to_rwasm_tests {
             )));
         }
 
-        test_op_cases(BYTE, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            BYTE,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn lt() {
@@ -776,7 +783,7 @@ mod evm_to_rwasm_tests {
             LT,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -806,7 +813,7 @@ mod evm_to_rwasm_tests {
             SLT,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -893,7 +900,7 @@ mod evm_to_rwasm_tests {
             GT,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -918,7 +925,7 @@ mod evm_to_rwasm_tests {
             SGT,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -943,7 +950,7 @@ mod evm_to_rwasm_tests {
             SAR,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -952,61 +959,61 @@ mod evm_to_rwasm_tests {
     #[test]
     fn add() {
         let cases = [
-            // // a=0 b=0 r=0
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            // ),
+            // a=0 b=0 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
             // a=1 b=1 r=2
             (
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000001"),
                 x("0x0000000000000000000000000000000000000000000000000000000000000002"),
             ),
-            // // a=-1 b=1 r=0
-            // (
-            //     x("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            // ),
-            // // a=1 b=-1 r=0
-            // (
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000001"),
-            //     x("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-            //     x("0x0000000000000000000000000000000000000000000000000000000000000000"),
-            // ),
-            // // a=-7382179374129 b=12312412312412 r=4930232938283
-            // (
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
-            //     x("0x00000000000000000000000000000000000000000000000000000b32b4f6535c"),
-            //     x("0x0000000000000000000000000000000000000000000000000000047be8c86f2b"),
-            // ),
-            // // a=12312412312412 b=-7382179374129 r=4930232938283
-            // (
-            //     x("0x00000000000000000000000000000000000000000000000000000b32b4f6535c"),
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
-            //     x("0x0000000000000000000000000000000000000000000000000000047be8c86f2b"),
-            // ),
-            // // a=-7382179374129 b=2412312412 r=-7379767061717
-            // (
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
-            //     x("0x000000000000000000000000000000000000000000000000000000008fc8f75c"),
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff949c39b132b"),
-            // ),
-            // // a=2412312412 b=-7382179374129 r=-7379767061717
-            // (
-            //     x("0x000000000000000000000000000000000000000000000000000000008fc8f75c"),
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
-            //     x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff949c39b132b"),
-            // ),
+            // a=-1 b=1 r=0
+            (
+                x("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            // a=1 b=-1 r=0
+            (
+                x("0x0000000000000000000000000000000000000000000000000000000000000001"),
+                x("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+                x("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            // a=-7382179374129 b=12312412312412 r=4930232938283
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
+                x("0x00000000000000000000000000000000000000000000000000000b32b4f6535c"),
+                x("0x0000000000000000000000000000000000000000000000000000047be8c86f2b"),
+            ),
+            // a=12312412312412 b=-7382179374129 r=4930232938283
+            (
+                x("0x00000000000000000000000000000000000000000000000000000b32b4f6535c"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
+                x("0x0000000000000000000000000000000000000000000000000000047be8c86f2b"),
+            ),
+            // a=-7382179374129 b=2412312412 r=-7379767061717
+            (
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
+                x("0x000000000000000000000000000000000000000000000000000000008fc8f75c"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff949c39b132b"),
+            ),
+            // a=2412312412 b=-7382179374129 r=-7379767061717
+            (
+                x("0x000000000000000000000000000000000000000000000000000000008fc8f75c"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff94933d21bcf"),
+                x("0xfffffffffffffffffffffffffffffffffffffffffffffffffffff949c39b132b"),
+            ),
         ];
 
         test_op_cases(
             ADD,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1104,7 +1111,7 @@ mod evm_to_rwasm_tests {
             SUB,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1131,7 +1138,7 @@ mod evm_to_rwasm_tests {
             ADDMOD,
             None,
             &cases.map(|v| Case::Args3(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1171,7 +1178,7 @@ mod evm_to_rwasm_tests {
             SIGNEXTEND,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1221,7 +1228,7 @@ mod evm_to_rwasm_tests {
             MUL,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1261,7 +1268,7 @@ mod evm_to_rwasm_tests {
             MULMOD,
             None,
             &cases.map(|v| Case::Args3(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1384,7 +1391,7 @@ mod evm_to_rwasm_tests {
             EXP,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1459,7 +1466,7 @@ mod evm_to_rwasm_tests {
             DIV,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1535,7 +1542,7 @@ mod evm_to_rwasm_tests {
             SDIV,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1569,7 +1576,7 @@ mod evm_to_rwasm_tests {
             AND,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1616,7 +1623,7 @@ mod evm_to_rwasm_tests {
             MOD,
             None,
             &cases.map(|v| Case::Args2(v)),
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1667,7 +1674,14 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(SMOD, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            SMOD,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1678,7 +1692,14 @@ mod evm_to_rwasm_tests {
             x("0x000033000c0004300f000a070000b000e0000000f000300017002004300a0001"),
         ))];
 
-        test_op_cases(OR, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            OR,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1696,7 +1717,14 @@ mod evm_to_rwasm_tests {
             )),
         ];
 
-        test_op_cases(XOR, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            XOR,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1784,7 +1812,7 @@ mod evm_to_rwasm_tests {
             MLOAD,
             Some(&preamble),
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1809,7 +1837,7 @@ mod evm_to_rwasm_tests {
             MSIZE,
             Some(&preamble),
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -1868,7 +1896,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(CALLER, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            CALLER,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1879,7 +1914,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(ADDRESS, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            ADDRESS,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
@@ -1926,7 +1968,7 @@ mod evm_to_rwasm_tests {
             CALLDATALOAD,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2011,7 +2053,7 @@ mod evm_to_rwasm_tests {
             CALLVALUE,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2039,7 +2081,7 @@ mod evm_to_rwasm_tests {
                 KECCAK256,
                 Some(&case.0),
                 &[case.1.clone()],
-                Some(-1),
+                Some(EVM_WORD_BYTES as i32),
                 ResultLocation::Stack,
                 None,
             );
@@ -2058,7 +2100,7 @@ mod evm_to_rwasm_tests {
             CODESIZE,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2071,7 +2113,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(CHAINID, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            CHAINID,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn basefee() {
@@ -2081,7 +2130,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(BASEFEE, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            BASEFEE,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn blockhash() {
@@ -2095,7 +2151,7 @@ mod evm_to_rwasm_tests {
             BLOCKHASH,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2112,7 +2168,7 @@ mod evm_to_rwasm_tests {
             COINBASE,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2120,7 +2176,7 @@ mod evm_to_rwasm_tests {
     #[test]
     fn gasprice() {
         let cases = [Case::Args0({
-            let mut v = vec![0; 32 - HOST_ENV_GASPRICE.len()];
+            let mut v = vec![0; EVM_WORD_BYTES - HOST_ENV_GASPRICE.len()];
             v.extend(&HOST_ENV_GASPRICE);
             v
         })];
@@ -2129,7 +2185,7 @@ mod evm_to_rwasm_tests {
             GASPRICE,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2142,7 +2198,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(ORIGIN, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            ORIGIN,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn gaslimit() {
@@ -2156,7 +2219,7 @@ mod evm_to_rwasm_tests {
             GASLIMIT,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2169,7 +2232,14 @@ mod evm_to_rwasm_tests {
             v
         })];
 
-        test_op_cases(NUMBER, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            NUMBER,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn timestamp() {
@@ -2183,7 +2253,7 @@ mod evm_to_rwasm_tests {
             TIMESTAMP,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2274,7 +2344,14 @@ mod evm_to_rwasm_tests {
             "0000000000000000000000000000000000000000000000000000000000000000",
         ))];
 
-        test_op_cases(GAS, None, &cases, Some(-1), ResultLocation::Stack, None);
+        test_op_cases(
+            GAS,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
     }
     #[test]
     fn difficulty() {
@@ -2288,7 +2365,7 @@ mod evm_to_rwasm_tests {
             DIFFICULTY,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2307,7 +2384,7 @@ mod evm_to_rwasm_tests {
             BLOBBASEFEE,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2339,7 +2416,7 @@ mod evm_to_rwasm_tests {
             BLOBHASH,
             None,
             &cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2362,7 +2439,7 @@ mod evm_to_rwasm_tests {
         let mut val = [0u8; 32];
         let val_last_idx = val.len() - 1;
 
-        for dup_case in 1..=2 {
+        for dup_case in 1..=16 {
             preamble_bytecode.clear();
             res_mem.clear();
 
@@ -2380,19 +2457,13 @@ mod evm_to_rwasm_tests {
             }
             let cases = [Case::Args0(res_mem.clone())];
 
-            let op = match dup_case {
-                1 => DUP1,
-                2 => DUP2,
-                _ => {
-                    panic!("unsupported DUP{}", dup_case)
-                }
-            };
+            let op = DUP1 + dup_case - 1;
 
             test_op_cases(
                 op,
                 Some(&preamble_bytecode),
                 &cases,
-                Some(-1),
+                Some(EVM_WORD_BYTES as i32 * (dup_case as i32 + 1)),
                 ResultLocation::Stack,
                 None,
             );
@@ -2406,7 +2477,7 @@ mod evm_to_rwasm_tests {
         let mut val = [0u8; 32];
         let val_last_idx = val.len() - 1;
 
-        for swap_case in 1..=2 {
+        for swap_case in 1..=16 {
             preamble_bytecode.clear();
             res_mem.clear();
 
@@ -2430,19 +2501,13 @@ mod evm_to_rwasm_tests {
             }
             let cases = [Case::Args0(res_mem.clone())];
 
-            let op = match swap_case {
-                1 => SWAP1,
-                2 => SWAP2,
-                _ => {
-                    panic!("unsupported SWAP{}", swap_case)
-                }
-            };
+            let op = SWAP1 + swap_case - 1;
 
             test_op_cases(
                 op,
                 Some(&preamble_bytecode),
                 &cases,
-                Some(-1),
+                Some(EVM_WORD_BYTES as i32 * (swap_case as i32 + 1)),
                 ResultLocation::Stack,
                 None,
             );
@@ -2731,7 +2796,7 @@ mod evm_to_rwasm_tests {
             OR,
             Some(&preamble),
             cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2766,7 +2831,7 @@ mod evm_to_rwasm_tests {
             ADD,
             Some(&preamble),
             cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
@@ -2803,7 +2868,7 @@ mod evm_to_rwasm_tests {
             DIV,
             Some(&preamble),
             cases,
-            Some(-1),
+            Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
             None,
         );
