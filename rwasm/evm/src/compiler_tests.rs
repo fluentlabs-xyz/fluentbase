@@ -272,10 +272,6 @@ mod evm_to_rwasm_tests {
 
         let mut preamble = InstructionSet::new();
 
-        let virtual_stack_top = INTERNAL_VIRTUAL_STACK_TOP_DEFAULT;
-        preamble.op_i64_const(virtual_stack_top); // virtual stack top offset
-        preamble.op_global_set(0);
-
         let res = compiler.run(Some(&preamble), None);
         if let Some(instruction_result) = instruction_result {
             assert_eq!(res, instruction_result);
