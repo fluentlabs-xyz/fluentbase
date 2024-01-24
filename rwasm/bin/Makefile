@@ -15,12 +15,11 @@ TARGET=wasm32-unknown-unknown
 PROFILE=release
 TEST_CASE=arithmetic_sdiv
 
-OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --entry-fn-name-beginnings-for="$(FILES)" --do-not-inject-fuel --skip-type-check #--skip-translate-sections  --use-subroutine-router
+OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --do-not-inject-fuel --skip-type-check --no-router #--skip-translate-sections
 
 .PHONY: $(FILES)
 $(FILES):
-	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --use-subroutine-router --file-in-path=../../rwasm/code-snippets/bin/$@.wat
+	cargo run -- --skip-translate-sections --skip-type-check --entry-fn-name-matches-file-in-name --do-not-inject-fuel --no-router --skip-source-map --file-in-path=../../rwasm/code-snippets/bin/$@.wat
 
 solid_file:
-	set -ex
 	cargo run -- ${OPTIONS} --file-in-path=../../rwasm/code-snippets/bin/$@.wat

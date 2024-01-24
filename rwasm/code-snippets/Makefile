@@ -16,7 +16,6 @@ PROFILE=release
 
 .PHONY: $(FILES)
 $(FILES):
-	set -ex
 	cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
 	mkdir -p bin
 	#clang stack.s -c --target=wasm32-unknown-unknown
@@ -25,7 +24,6 @@ $(FILES):
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 
 solid_file:
-	set -ex
 	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}"
 	mkdir -p bin
 	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat

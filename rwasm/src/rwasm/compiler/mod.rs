@@ -450,7 +450,9 @@ impl<'linker> Compiler<'linker> {
             let num_inputs = func_type.params();
             let num_outputs = func_type.results();
 
-            self.code_section.op_type_check(idx);
+            if self.config.type_check {
+                self.code_section.op_type_check(idx);
+            }
             self.swap_stack_parameters(num_inputs.len() as u32);
             self.translate_host_call(func_idx)?;
             if num_outputs.len() > 0 {

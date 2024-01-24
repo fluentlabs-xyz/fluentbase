@@ -11,6 +11,7 @@ use fluentbase_rwasm::rwasm::{
     FUNC_SOURCE_MAP_ENTRYPOINT_IDX,
     FUNC_SOURCE_MAP_ENTRYPOINT_NAME,
 };
+use log::debug;
 use std::{fs, io::BufRead, path::Path};
 
 mod types;
@@ -29,6 +30,9 @@ struct Args {
     rs_file_out_path: String,
 
     #[arg(long, default_value_t = false)]
+    skip_source_map: bool,
+
+    #[arg(long, default_value_t = false)]
     skip_translate_sections: bool,
 
     #[arg(long, default_value_t = false)]
@@ -38,13 +42,10 @@ struct Args {
     do_not_inject_fuel: bool,
 
     #[arg(long, default_value_t = false)]
-    use_subroutine_router: bool,
+    no_router: bool,
 
     #[arg(long, default_value = "")]
     entry_fn_name: String,
-
-    #[arg(long, default_value = "")]
-    entry_fn_name_beginnings_for: String,
 
     #[arg(long, default_value_t = false)]
     entry_fn_name_matches_file_in_name: bool,
@@ -79,7 +80,7 @@ fn main() {
             .translate_sections(!args.skip_translate_sections)
             .type_check(!args.skip_type_check)
             .fuel_consume(!args.do_not_inject_fuel)
-            .with_router(!args.use_subroutine_router)
+            .with_router(!args.no_router)
             .with_magic_prefix(false),
         Some(&import_linker),
     )
@@ -102,7 +103,7 @@ fn main() {
     compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
     let func_source_maps = compiler.build_source_map();
     let entry_point_fn = &func_source_maps[0];
-    println!(
+    debug!(
         "zero_fn_source_map name '{}' index '{}' pos '{}' len '{}'",
         entry_point_fn.fn_name,
         entry_point_fn.fn_index,
@@ -112,7 +113,7 @@ fn main() {
     let mut as_rust_vec: Vec<String> = vec![];
     let restricted_fn_names = &["ts_get", "ts_set"];
     for func_source_map in &func_source_maps {
-        println!("func_source_map '{:?}'", func_source_map);
+        debug!("func_source_map '{:?}'", func_source_map);
         let fn_name = func_source_map.fn_name.as_str();
         let fn_beginning = func_source_map.position;
         let fn_length = func_source_map.length;
@@ -128,38 +129,20 @@ fn main() {
             ));
         }
     }
-    if args.entry_fn_name_beginnings_for != "" {
-        for fn_name in args.entry_fn_name_beginnings_for.split(" ") {
-            let fn_name = Box::new(fn_name.to_string());
-            let fn_idx = compiler
-                .resolve_func_index(&FuncOrExport::Export(Box::leak(fn_name.clone())))
-                .unwrap_or(None);
-            let fn_beginning = if fn_idx.is_some() {
-                *compiler
-                    .resolve_func_beginning(fn_idx.unwrap())
-                    .unwrap_or(&0)
-            } else {
-                0
-            };
-            // println!(
-            //     "fn_name '{fn_name}' idx '{:?}' begins at '{:?}'",
-            //     fn_idx, fn_beginning
-            // );
-            let fn_name = fn_name.to_uppercase();
-            let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
-            let opcode_name = fn_name_split[fn_name_split.len() - 1];
-            // as_rust_vec.push(format!("(opcode::{opcode_name}, {fn_beginning})"));
-        }
-    }
     let rs_str = format!("[{}]", as_rust_vec.join(","));
-    println!("rust [(opcode::NAME, FN_ENTRY_OFFSET)]: \n[{}]", rs_str);
     let mut rwasm_binary = compiler.finalize().unwrap();
+    // let init_bytecode_instruction_to_cut = 4; // redundant instruction inside init bytecode
     let init_bytecode = rwasm_binary[entry_point_fn.position as usize * INSTRUCTION_SIZE_BYTES
         ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES]
         .to_vec();
-    // let mut rwasm_binary_tmp = entry_point_bytecode.to_owned();
-    // rwasm_binary_tmp.extend(&rwasm_binary);
-    // rwasm_binary = rwasm_binary_tmp;
+    debug!(
+        "extending rwasm_binary (byte len {}, instruction len {}) with init_bytecode (instruction position {} len {} fact len {})",
+        rwasm_binary.len(),
+        rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
+        entry_point_fn.position,
+        entry_point_fn.length,
+        init_bytecode.len() / INSTRUCTION_SIZE_BYTES
+    );
     rwasm_binary.extend(&init_bytecode);
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
@@ -172,13 +155,33 @@ fn main() {
             format!("{}{}", file_in_name, types::RWASM_OUT_FILE_EXT)
         );
     }
+    debug!(
+        "rwasm_binary (byte len {}, instruction len {})",
+        rwasm_binary.len(),
+        rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
+    );
     fs::write(rwasm_file_out_path, rwasm_binary).unwrap();
 
-    let rs_file_out_path;
-    if args.rs_file_out_path != "" {
-        rs_file_out_path = args.rs_file_out_path;
-    } else {
-        rs_file_out_path = format!("{}/{}", oud_dir_path, format!("{}{}", file_in_name, ".rs"));
+    if !args.skip_source_map {
+        let rs_source_map_file_out_path;
+        if args.rs_file_out_path != "" {
+            rs_source_map_file_out_path = args.rs_file_out_path;
+        } else {
+            rs_source_map_file_out_path = format!(
+                "{}/{}",
+                oud_dir_path,
+                format!("{}{}", file_in_name, "_source_map.rs")
+            );
+        }
+        fs::write(rs_source_map_file_out_path, rs_str).unwrap();
     }
-    fs::write(rs_file_out_path, rs_str).unwrap();
+}
+#[ctor::ctor]
+fn log_init() {
+    let init_res =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .try_init();
+    if let Err(e) = init_res {
+        panic!("failed to init logger: {}", e.to_string());
+    }
 }
