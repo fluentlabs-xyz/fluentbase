@@ -1944,31 +1944,27 @@ mod evm_to_rwasm_tests {
         );
     }
 
-    // #[ignore]
     #[test]
     fn calldataload() {
-        let mut cases = vec![Case::Args1((
-            // dest src len
-            x("0000000000000000000000000000000000000000000000000000000000000000"),
-            x("0000000000000000000000000000000000000000000000000000000000000001"),
-        ))];
+        let mut cases = vec![];
 
-        // let start_idx = 1;
-        // for idx in start_idx..CONTRACT_INPUT.len() - 1 {
-        //     let mut v = [0u8; EVM_WORD_BYTES];
-        //     let idx_be = idx.to_be_bytes();
-        //     v[EVM_WORD_BYTES - idx_be.len()..].copy_from_slice(&idx_be);
-        //
-        //     let start_idx = idx;
-        //     let end_idx = idx
-        //         + if CONTRACT_INPUT.len() - idx >= EVM_WORD_BYTES { EVM_WORD_BYTES
-        //         } else {
-        //             CONTRACT_INPUT.len() - idx
-        //         };
-        //     let mut res_expected = CONTRACT_INPUT[start_idx..end_idx].to_vec();
-        //     res_expected.resize(EVM_WORD_BYTES, 0);
-        //     cases.push(Case::Args1((v.to_vec(), res_expected)));
-        // }
+        let start_idx = 1;
+        for idx in start_idx..CONTRACT_INPUT.len() - 1 {
+            let mut v = [0u8; EVM_WORD_BYTES];
+            let idx_be = idx.to_be_bytes();
+            v[EVM_WORD_BYTES - idx_be.len()..].copy_from_slice(&idx_be);
+
+            let start_idx = idx;
+            let end_idx = idx
+                + if CONTRACT_INPUT.len() - idx >= EVM_WORD_BYTES {
+                    EVM_WORD_BYTES
+                } else {
+                    CONTRACT_INPUT.len() - idx
+                };
+            let mut res_expected = CONTRACT_INPUT[start_idx..end_idx].to_vec();
+            res_expected.resize(EVM_WORD_BYTES, 0);
+            cases.push(Case::Args1((v.to_vec(), res_expected)));
+        }
 
         test_op_cases(
             CALLDATALOAD,

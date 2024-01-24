@@ -34,12 +34,19 @@ macro_rules! derive_decode {
 }
 #[macro_export]
 macro_rules! derive_types {
-    ($field_offset:expr,) => {};
-    ($field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
+    (@typ $field_offset:expr,) => {};
+    (@def $field_offset:expr,) => {};
+    (@typ $field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
         paste::paste! {
-            pub type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
+            type [<$val_head:camel>];
         }
-        $crate::derive_types!($field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
+        $crate::derive_types!(@typ $field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
+    };
+    (@def $field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
+        paste::paste! {
+            type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
+        }
+        $crate::derive_types!(@def $field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
     };
 }
 
@@ -68,8 +75,13 @@ macro_rules! define_codec_struct {
                 result
             }
         }
-        impl $struct_type {
-            $crate::derive_types!(0, $($element:$ty,)*);
+        paste::paste! {
+            pub trait [<I $struct_type>] {
+                $crate::derive_types!(@typ 0, $($element:$ty,)*);
+            }
+            impl [<I $struct_type>] for $struct_type {
+                $crate::derive_types!(@def 0, $($element:$ty,)*);
+            }
         }
     };
 }
@@ -122,32 +134,32 @@ mod tests {
             c: 3,
         };
         // check offsets
-        assert_eq!(SimpleType::A::FIELD_OFFSET, 0);
-        assert_eq!(SimpleType::B::FIELD_OFFSET, 8);
-        assert_eq!(SimpleType::C::FIELD_OFFSET, 8 + 4);
+        assert_eq!(<SimpleType as ISimpleType>::A::FIELD_OFFSET, 0);
+        assert_eq!(<SimpleType as ISimpleType>::B::FIELD_OFFSET, 8);
+        assert_eq!(<SimpleType as ISimpleType>::C::FIELD_OFFSET, 8 + 4);
         // check sizes
-        assert_eq!(SimpleType::A::FIELD_SIZE, 8);
-        assert_eq!(SimpleType::B::FIELD_SIZE, 4);
-        assert_eq!(SimpleType::C::FIELD_SIZE, 2);
+        assert_eq!(<SimpleType as ISimpleType>::A::FIELD_SIZE, 8);
+        assert_eq!(<SimpleType as ISimpleType>::B::FIELD_SIZE, 4);
+        assert_eq!(<SimpleType as ISimpleType>::C::FIELD_SIZE, 2);
         // encode entire struct
         let encoded_value = value.encode_to_vec(0);
         let mut encoded_value = encoded_value.as_slice();
         // decode only field `a`
         {
             let mut a: u64 = 0;
-            SimpleType::A::decode_field_header(&mut encoded_value, &mut a);
+            <SimpleType as ISimpleType>::A::decode_field_header(&mut encoded_value, &mut a);
             assert_eq!(a, value.a);
         }
         // decode only field `b`
         {
             let mut b: u32 = 0;
-            SimpleType::B::decode_field_header(&mut encoded_value, &mut b);
+            <SimpleType as ISimpleType>::B::decode_field_header(&mut encoded_value, &mut b);
             assert_eq!(b, value.b);
         }
         // decode only field `c`
         {
             let mut c: u16 = 0;
-            SimpleType::C::decode_field_header(&mut encoded_value, &mut c);
+            <SimpleType as ISimpleType>::C::decode_field_header(&mut encoded_value, &mut c);
             assert_eq!(c, value.c);
         }
     }

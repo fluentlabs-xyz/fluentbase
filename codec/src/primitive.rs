@@ -1,4 +1,4 @@
-use crate::{buffer::WritableBuffer, BufferDecoder, BufferEncoder, Encoder};
+use crate::{buffer::WritableBuffer, BufferDecoder, Encoder};
 
 impl Encoder<u8> for u8 {
     const HEADER_SIZE: usize = core::mem::size_of::<u8>();
