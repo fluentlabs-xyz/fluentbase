@@ -11,10 +11,12 @@ pub mod sys_state;
 pub mod sys_write;
 pub mod zktrie_commit;
 pub mod zktrie_field;
+pub mod zktrie_get_code;
 pub mod zktrie_load;
 pub mod zktrie_open;
 pub mod zktrie_rollback;
 pub mod zktrie_root;
+pub mod zktrie_set_code;
 pub mod zktrie_store;
 pub mod zktrie_update;
 
@@ -34,10 +36,12 @@ use crate::{
         sys_write::SysWrite,
         zktrie_commit::ZkTrieCommit,
         zktrie_field::ZkTrieField,
+        zktrie_get_code::ZkTrieGetCode,
         zktrie_load::ZkTrieLoad,
         zktrie_open::ZkTrieOpen,
         zktrie_rollback::ZkTrieRollback,
         zktrie_root::ZkTrieRoot,
+        zktrie_set_code::ZkTrieSetCode,
         zktrie_store::ZkTrieStore,
         zktrie_update::ZkTrieUpdate,
     },
@@ -68,6 +72,7 @@ use crate::{
     },
 };
 use fluentbase_rwasm::{rwasm::ImportLinker, Caller, Linker, Store};
+use fluentbase_types::SysFuncIdx::{ZKTRIE_GET_CODE, ZKTRIE_SET_CODE};
 
 pub trait RuntimeHandler {
     const MODULE_NAME: &'static str;
@@ -98,10 +103,12 @@ impl_runtime_handler!(ZkTrieField, ZKTRIE_FIELD, fn fluentbase_v1alpha::_zktrie_
 impl_runtime_handler!(ZkTrieRoot, ZKTRIE_ROOT, fn fluentbase_v1alpha::_zktrie_root(output32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieRollback, ZKTRIE_ROLLBACK, fn fluentbase_v1alpha::_zktrie_rollback() -> ());
 impl_runtime_handler!(ZkTrieCommit, ZKTRIE_COMMIT, fn fluentbase_v1alpha::_zktrie_commit() -> ());
+impl_runtime_handler!(ZkTrieGetCode, ZKTRIE_GET_CODE, fn fluentbase_v1alpha::_zktrie_get_code(key20_offset: u32, output_offset: u32, output_len: u32) -> ());
+impl_runtime_handler!(ZkTrieSetCode, ZKTRIE_SET_CODE, fn fluentbase_v1alpha::_zktrie_set_code(key20_offset: u32, code_offset: u32, code_len: u32) -> ());
 impl_runtime_handler!(ZkTrieStore, ZKTRIE_STORE, fn fluentbase_v1alpha::_zktrie_store(key32_offset: u32, val32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieLoad, ZKTRIE_LOAD, fn fluentbase_v1alpha::_zktrie_load(key32_offset: u32, val32_offset: u32) -> ());
 
-pub(crate) fn runtime_register_linkers<'t, T>(import_linker: &mut ImportLinker) {
+pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
     SysHalt::register_linker::<T>(import_linker);
     SysState::register_linker::<T>(import_linker);
     SysRead::register_linker::<T>(import_linker);
@@ -118,6 +125,9 @@ pub(crate) fn runtime_register_linkers<'t, T>(import_linker: &mut ImportLinker) 
     ZkTrieField::register_linker::<T>(import_linker);
     ZkTrieRoot::register_linker::<T>(import_linker);
     ZkTrieRollback::register_linker::<T>(import_linker);
+    ZkTrieCommit::register_linker::<T>(import_linker);
+    ZkTrieGetCode::register_linker::<T>(import_linker);
+    ZkTrieSetCode::register_linker::<T>(import_linker);
     ZkTrieCommit::register_linker::<T>(import_linker);
     ZkTrieStore::register_linker::<T>(import_linker);
     ZkTrieLoad::register_linker::<T>(import_linker);
@@ -144,6 +154,8 @@ pub(crate) fn runtime_register_handlers<'t, T>(
     ZkTrieRoot::register_handler(linker, store);
     ZkTrieRollback::register_handler(linker, store);
     ZkTrieCommit::register_handler(linker, store);
+    ZkTrieGetCode::register_handler(linker, store);
+    ZkTrieSetCode::register_handler(linker, store);
     ZkTrieStore::register_handler(linker, store);
     ZkTrieLoad::register_handler(linker, store);
 }

@@ -11,7 +11,7 @@ pub enum ExitCode {
     ExecutionHalted = -1001,
     NotSupportedCall = -1003,
     TransactError = -1004,
-    RwasmOutputOverflow = -1005,
+    OutputOverflow = -1005,
     InputDecodeFailure = -1006,
     PoseidonError = -1007,
     PersistentStorageError = -1008,
@@ -92,8 +92,10 @@ pub enum SysFuncIdx {
     ZKTRIE_ROOT = 0x0204,     // fluentbase_v1alpha::_zktrie_root
     ZKTRIE_ROLLBACK = 0x0205, // fluentbase_v1alpha::_zktrie_rollback
     ZKTRIE_COMMIT = 0x0206,   // fluentbase_v1alpha::_zktrie_commit
-    ZKTRIE_STORE = 0x0207,    // fluentbase_v1alpha::_zktrie_store
-    ZKTRIE_LOAD = 0x0208,     // fluentbase_v1alpha::_zktrie_load
+    ZKTRIE_GET_CODE = 0x0207, // fluentbase_v1alpha::_zktrie_get_code
+    ZKTRIE_SET_CODE = 0x0208, // fluentbase_v1alpha::_zktrie_set_code
+    ZKTRIE_STORE = 0x0209,    // fluentbase_v1alpha::_zktrie_store
+    ZKTRIE_LOAD = 0x020A,     // fluentbase_v1alpha::_zktrie_load
     // WASI runtime (0x5741 means WA)
     WASI_PROC_EXIT = 0x0301,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0x0302,          // wasi_snapshot_preview1::fd_write
@@ -140,7 +142,7 @@ impl SysFuncIdx {
             SysFuncIdx::MPT_UPDATE => 1,
             SysFuncIdx::MPT_GET => 1,
             SysFuncIdx::MPT_GET_ROOT => 1,
-            _ => unreachable!("not configured fuel for opcode: {:?}", self),
+            _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
     }
 }

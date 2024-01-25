@@ -23,12 +23,15 @@ impl KeyValueDb for InMemoryDb {
     }
 }
 
-pub trait TrieDb {
+pub trait StateDb {
     fn open(&mut self, root32: &[u8]);
 
     fn compute_root(&self) -> [u8; 32];
 
     fn get(&self, key: &[u8]) -> Option<Vec<[u8; 32]>>;
+
+    fn get_code(&self, key: &[u8]) -> Option<Vec<u8>>;
+    fn set_code(&mut self, key: &[u8], code: &[u8]);
 
     fn update(
         &mut self,

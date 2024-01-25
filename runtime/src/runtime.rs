@@ -1,6 +1,6 @@
 use crate::{
-    instruction::{runtime_register_handlers, runtime_register_linkers},
-    storage::TrieDb,
+    instruction::{runtime_register_handlers, runtime_register_sovereign_linkers},
+    storage::StateDb,
     types::RuntimeError,
 };
 use fluentbase_rwasm::{
@@ -35,7 +35,7 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
     // storage
-    pub(crate) zktrie: Option<Rc<RefCell<dyn TrieDb>>>,
+    pub(crate) zktrie: Option<Rc<RefCell<dyn StateDb>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -110,8 +110,8 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_zktrie(mut self, zktrie: Rc<RefCell<dyn TrieDb>>) -> Self {
-        self.zktrie = Some(zktrie);
+    pub fn with_state_db(mut self, state_db: Rc<RefCell<dyn StateDb>>) -> Self {
+        self.zktrie = Some(state_db);
         self
     }
 
@@ -219,7 +219,7 @@ pub struct Runtime<'t, T> {
 impl<'t, T> Runtime<'t, T> {
     pub fn new_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
-        runtime_register_linkers::<T>(&mut import_linker);
+        runtime_register_sovereign_linkers::<T>(&mut import_linker);
         import_linker
     }
 
