@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 
-pub struct ZkTrieLoad;
+pub struct StateDbGetStorage;
 
-impl ZkTrieLoad {
+impl StateDbGetStorage {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         key32_offset: u32,
@@ -17,7 +17,7 @@ impl ZkTrieLoad {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>, key: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        let zktrie = context.zktrie.clone().unwrap();
+        let zktrie = context.trie_db.clone().unwrap();
         let result = zktrie
             .borrow_mut()
             .get(key)

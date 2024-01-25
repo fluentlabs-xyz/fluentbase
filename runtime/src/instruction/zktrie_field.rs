@@ -19,7 +19,7 @@ impl ZkTrieField {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>, key: &[u8], field: u32) -> Option<[u8; 32]> {
-        let zktrie = context.zktrie.clone().unwrap();
+        let zktrie = context.trie_db.clone().unwrap();
         let field_values = zktrie.borrow().get(key)?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {

@@ -1,5 +1,5 @@
-use crate::storage::{KeyValueDb, StateDb};
-use fluentbase_types::ExitCode;
+use crate::storage::TrieDb;
+use fluentbase_types::{AccountDb, ExitCode};
 use fluentbase_zktrie::{
     Byte32,
     Database,
@@ -30,45 +30,31 @@ macro_rules! storage_key {
     }};
 }
 
-impl<'a, DB: KeyValueDb> Database for NodeDb<'a, DB> {
+impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
     type Node = Node<PoseidonHash>;
 
     fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
-        let storage_key = storage_key!(STORAGE_PREFIX_NODE, key.raw_bytes());
-        match self.0.get(&storage_key[..]) {
-            Some(value) => Ok(Some(Arc::new(Node::from_bytes(value.as_slice())?))),
+        match self.0.get_node(key.raw_bytes()) {
+            Some(value) => Ok(Some(Arc::new(Node::from_bytes(&value)?))),
             None => Ok(None),
         }
     }
 
     fn update_node(&mut self, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
-        let storage_key = storage_key!(STORAGE_PREFIX_NODE, node.hash().raw_bytes());
-        self.0.put(&storage_key[..], &node.canonical_value());
+        self.0
+            .update_node(node.hash().raw_bytes(), &node.canonical_value());
         Ok(Arc::new(node))
     }
 }
 
-impl<'a, DB: KeyValueDb> PreimageDatabase for NodeDb<'a, DB> {
+impl<'a, DB: AccountDb> PreimageDatabase for NodeDb<'a, DB> {
     fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
-        let storage_key = storage_key!(STORAGE_PREFIX_PREIMAGE, &hash_field.to_bytes());
-        self.0.put(&storage_key[..], &preimage.to_vec());
+        self.0
+            .update_preimage(&hash_field.to_bytes(), &preimage.to_vec());
     }
 
     fn preimage(&self, key: &Fr) -> Vec<u8> {
-        let storage_key = storage_key!(STORAGE_PREFIX_PREIMAGE, &key.to_bytes());
-        self.0.get(&storage_key[..]).unwrap_or_default()
-    }
-}
-
-impl<'a, DB: KeyValueDb> NodeDb<'a, DB> {
-    pub(crate) fn get_code(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let storage_key = storage_key!(STORAGE_PREFIX_CODE, key);
-        self.0.get(&storage_key)
-    }
-
-    pub(crate) fn set_code(&mut self, key: &[u8], value: &Vec<u8>) {
-        let storage_key = storage_key!(STORAGE_PREFIX_CODE, key);
-        self.0.put(&storage_key, value);
+        self.0.get_preimage(&key.to_bytes()).unwrap_or_default()
     }
 }
 
@@ -79,7 +65,7 @@ pub struct ZkTrieStateDb<'a, DB> {
 
 const MAX_LEVEL: usize = 31 * 8;
 
-impl<'a, DB: KeyValueDb> ZkTrieStateDb<'a, DB> {
+impl<'a, DB: AccountDb> ZkTrieStateDb<'a, DB> {
     pub fn new(storage: &'a mut DB) -> Self {
         Self {
             storage: NodeDb(storage),
@@ -98,7 +84,7 @@ impl<'a, DB: KeyValueDb> ZkTrieStateDb<'a, DB> {
     }
 }
 
-impl<'a, DB: KeyValueDb> StateDb for ZkTrieStateDb<'a, DB> {
+impl<'a, DB: AccountDb> TrieDb for ZkTrieStateDb<'a, DB> {
     fn open(&mut self, root32: &[u8]) {
         self.trie = Some(ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root32)));
     }
@@ -134,14 +120,6 @@ impl<'a, DB: KeyValueDb> StateDb for ZkTrieStateDb<'a, DB> {
         }
     }
 
-    fn get_code(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.storage.get_code(key)
-    }
-
-    fn set_code(&mut self, key: &[u8], code: &[u8]) {
-        self.storage.set_code(key, &code.to_vec())
-    }
-
     fn update(
         &mut self,
         key: &[u8],
@@ -169,7 +147,8 @@ impl<'a, DB: KeyValueDb> StateDb for ZkTrieStateDb<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{zktrie::ZkTrieStateDb, InMemoryDb, StateDb};
+    use crate::storage::{zktrie::ZkTrieStateDb, TrieDb};
+    use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {
         ($val:expr) => {{
@@ -185,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let mut db = InMemoryDb::default();
+        let mut db = InMemoryAccountDb::default();
         // create new zkt
         let mut zkt = ZkTrieStateDb::new_empty(&mut db);
         zkt.update(

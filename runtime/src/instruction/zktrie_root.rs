@@ -14,7 +14,7 @@ impl ZkTrieRoot {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>) -> [u8; 32] {
-        let zktrie = context.zktrie.clone().unwrap();
+        let zktrie = context.trie_db.clone().unwrap();
         let result = zktrie.borrow().compute_root();
         result
     }

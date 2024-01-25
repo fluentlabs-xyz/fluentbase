@@ -1116,13 +1116,13 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
  "byteorder",
  "eth_trie",
  "fluentbase-codec",
  "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-rwasm",
+ "fluentbase-types",
  "halo2curves 0.3.1",
  "hex",
  "hex-literal",
@@ -1138,6 +1138,7 @@ dependencies = [
 name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "fluentbase-rwasm",
  "strum",
  "strum_macros",

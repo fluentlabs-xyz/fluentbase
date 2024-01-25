@@ -1,10 +1,10 @@
-use crate::RuntimeContext;
+use crate::{types::Address, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 
-pub struct ZkTrieGetCode;
+pub struct StateDbGetCode;
 
-impl ZkTrieGetCode {
+impl StateDbGetCode {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         key20_offset: u32,
@@ -23,10 +23,14 @@ impl ZkTrieGetCode {
         key: &[u8],
         output_len: u32,
     ) -> Result<Vec<u8>, ExitCode> {
-        let zktrie = context.zktrie.clone().unwrap();
-        let code = zktrie.borrow().get_code(key).unwrap_or_default();
+        let account_db = context.account_db.clone().unwrap();
+        let account = account_db
+            .borrow()
+            .get_account(&Address::from_slice(key))
+            .unwrap_or_default();
+        let code = account.code.unwrap_or_default();
         if code.len() <= output_len as usize {
-            Ok(code)
+            Ok(code.to_vec())
         } else {
             Err(ExitCode::OutputOverflow)
         }
