@@ -19,7 +19,7 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use fluentbase_types::{AccountDb, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
+use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
@@ -31,6 +31,7 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) state: u32,
     pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) address: Address,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
@@ -49,6 +50,7 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             state: self.state.clone(),
             catch_trap: self.catch_trap.clone(),
             input: self.input.clone(),
+            address: self.address.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
             account_db: self.account_db.clone(),
@@ -67,6 +69,7 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             state: 0,
             catch_trap: true,
             input: vec![],
+            address: Default::default(),
             exit_code: 0,
             output: vec![],
             account_db: None,
@@ -110,6 +113,11 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
         self.fuel_limit = fuel_limit;
+        self
+    }
+
+    pub fn with_address(mut self, address: Address) -> Self {
+        self.address = address;
         self
     }
 

@@ -1,4 +1,4 @@
-use crate::RuntimeContext;
+use crate::{types::U256, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 
@@ -17,15 +17,12 @@ impl StateDbGetStorage {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>, key: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        let zktrie = context.trie_db.clone().unwrap();
-        let result = zktrie
+        let account_db = context.account_db.clone().unwrap();
+        let result = account_db
             .borrow_mut()
-            .get(key)
-            .ok_or_else(|| ExitCode::PersistentStorageError)?;
-        if !result.is_empty() {
-            Ok(result[0].to_vec())
-        } else {
-            Err(ExitCode::PersistentStorageError)
-        }
+            .get_storage(&context.address, &U256::from_be_slice(key))
+            .unwrap_or_default()
+            .to_be_bytes_vec();
+        Ok(result)
     }
 }
