@@ -1,4 +1,4 @@
-use crate::RuntimeContext;
+use crate::{types::U256, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 
@@ -21,10 +21,12 @@ impl StateDbUpdateStorage {
         key: &[u8],
         value: &[u8],
     ) -> Result<(), ExitCode> {
-        let zktrie = context.trie_db.clone().unwrap();
-        let mut value32 = [0u8; 32];
-        value32.copy_from_slice(value);
-        zktrie.borrow_mut().update(key, 1, &vec![value32])?;
+        let account_db = context.account_db.clone().unwrap();
+        account_db.borrow_mut().update_storage(
+            &context.address,
+            &U256::from_be_slice(key),
+            &U256::from_be_slice(value),
+        );
         Ok(())
     }
 }
