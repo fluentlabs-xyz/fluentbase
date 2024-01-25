@@ -5,6 +5,7 @@ pub mod crypto_poseidon2;
 pub mod rwasm_compile;
 pub mod rwasm_transact;
 pub mod statedb_get_code;
+pub mod statedb_get_code_size;
 pub mod statedb_get_storage;
 pub mod statedb_update_code;
 pub mod statedb_update_storage;
@@ -30,6 +31,7 @@ use crate::{
         rwasm_compile::SysCompile,
         rwasm_transact::SysExec,
         statedb_get_code::StateDbGetCode,
+        statedb_get_code_size::StateDbGetCodeSize,
         statedb_get_storage::StateDbGetStorage,
         statedb_update_code::StateDbUpdateCode,
         statedb_update_storage::StateDbUpdateStorage,
@@ -53,10 +55,10 @@ use crate::{
             CRYPTO_KECCAK256,
             CRYPTO_POSEIDON,
             CRYPTO_POSEIDON2,
+            RWASM_COMPILE,
+            RWASM_TRANSACT,
             STATEDB_GET_STORAGE,
             STATEDB_UPDATE_STORAGE,
-            SYS_COMPILE,
-            SYS_EXEC,
             SYS_HALT,
             SYS_INPUT_SIZE,
             SYS_READ,
@@ -72,7 +74,7 @@ use crate::{
     },
 };
 use fluentbase_rwasm::{rwasm::ImportLinker, Caller, Linker, Store};
-use fluentbase_types::SysFuncIdx::{STATEDB_GET_CODE, STATEDB_UPDATE_CODE};
+use fluentbase_types::SysFuncIdx::{STATEDB_GET_CODE, STATEDB_GET_CODE_SIZE, STATEDB_UPDATE_CODE};
 
 pub trait RuntimeHandler {
     const MODULE_NAME: &'static str;
@@ -95,18 +97,19 @@ impl_runtime_handler!(SysKeccak256, CRYPTO_KECCAK256, fn fluentbase_v1alpha::_cr
 impl_runtime_handler!(SysPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_crypto_poseidon(f32s_offset: u32, f32s_len: u32, output_offset: u32) -> ());
 impl_runtime_handler!(SysPoseidon2, CRYPTO_POSEIDON2, fn fluentbase_v1alpha::_crypto_poseidon2(fa32_offset: u32, fb32_offset: u32, fd32_offset: u32, output_offset: u32) -> ());
 impl_runtime_handler!(SysEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_offset: u32, sig64_offset: u32, output65_offset: u32, rec_id: u32) -> ());
-impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_rwasm_transact(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, output_offset: u32, output_len: u32, state: u32, fuel: u32) -> i32);
-impl_runtime_handler!(SysCompile, SYS_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
+impl_runtime_handler!(SysExec, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, output_offset: u32, output_len: u32, state: u32, fuel: u32) -> i32);
+impl_runtime_handler!(SysCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
+impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_zktrie_get_code(key20_offset: u32, output_offset: u32, output_len: u32) -> ());
+impl_runtime_handler!(StateDbGetCodeSize, STATEDB_GET_CODE_SIZE, fn fluentbase_v1alpha::_zktrie_get_code_size(key20_offset: u32) -> u32);
+impl_runtime_handler!(StateDbUpdateCode, STATEDB_UPDATE_CODE, fn fluentbase_v1alpha::_zktrie_set_code(key20_offset: u32, code_offset: u32, code_len: u32) -> ());
+impl_runtime_handler!(StateDbUpdateStorage, STATEDB_GET_STORAGE, fn fluentbase_v1alpha::_zktrie_store(key32_offset: u32, val32_offset: u32) -> ());
+impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v1alpha::_zktrie_load(key32_offset: u32, val32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieOpen, ZKTRIE_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieUpdate, ZKTRIE_UPDATE, fn fluentbase_v1alpha::_zktrie_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
 impl_runtime_handler!(ZkTrieField, ZKTRIE_FIELD, fn fluentbase_v1alpha::_zktrie_field(key32_offset: u32, field: u32, output32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieRoot, ZKTRIE_ROOT, fn fluentbase_v1alpha::_zktrie_root(output32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieRollback, ZKTRIE_ROLLBACK, fn fluentbase_v1alpha::_zktrie_rollback() -> ());
 impl_runtime_handler!(ZkTrieCommit, ZKTRIE_COMMIT, fn fluentbase_v1alpha::_zktrie_commit() -> ());
-impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_zktrie_get_code(key20_offset: u32, output_offset: u32, output_len: u32) -> ());
-impl_runtime_handler!(StateDbUpdateCode, STATEDB_UPDATE_CODE, fn fluentbase_v1alpha::_zktrie_set_code(key20_offset: u32, code_offset: u32, code_len: u32) -> ());
-impl_runtime_handler!(StateDbUpdateStorage, STATEDB_GET_STORAGE, fn fluentbase_v1alpha::_zktrie_store(key32_offset: u32, val32_offset: u32) -> ());
-impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v1alpha::_zktrie_load(key32_offset: u32, val32_offset: u32) -> ());
 
 pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
     SysHalt::register_linker::<T>(import_linker);
@@ -120,17 +123,17 @@ pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut Impo
     SysEcrecover::register_linker::<T>(import_linker);
     SysExec::register_linker::<T>(import_linker);
     SysCompile::register_linker::<T>(import_linker);
+    StateDbGetCode::register_linker::<T>(import_linker);
+    StateDbGetCodeSize::register_linker::<T>(import_linker);
+    StateDbUpdateCode::register_linker::<T>(import_linker);
+    StateDbUpdateStorage::register_linker::<T>(import_linker);
+    StateDbGetStorage::register_linker::<T>(import_linker);
     ZkTrieOpen::register_linker::<T>(import_linker);
     ZkTrieUpdate::register_linker::<T>(import_linker);
     ZkTrieField::register_linker::<T>(import_linker);
     ZkTrieRoot::register_linker::<T>(import_linker);
     ZkTrieRollback::register_linker::<T>(import_linker);
     ZkTrieCommit::register_linker::<T>(import_linker);
-    StateDbGetCode::register_linker::<T>(import_linker);
-    StateDbUpdateCode::register_linker::<T>(import_linker);
-    ZkTrieCommit::register_linker::<T>(import_linker);
-    StateDbUpdateStorage::register_linker::<T>(import_linker);
-    StateDbGetStorage::register_linker::<T>(import_linker);
 }
 
 pub(crate) fn runtime_register_handlers<'t, T>(
@@ -148,14 +151,15 @@ pub(crate) fn runtime_register_handlers<'t, T>(
     SysEcrecover::register_handler(linker, store);
     SysExec::register_handler(linker, store);
     SysCompile::register_handler(linker, store);
+    StateDbGetCode::register_handler(linker, store);
+    StateDbGetCodeSize::register_handler(linker, store);
+    StateDbUpdateCode::register_handler(linker, store);
+    StateDbUpdateStorage::register_handler(linker, store);
+    StateDbGetStorage::register_handler(linker, store);
     ZkTrieOpen::register_handler(linker, store);
     ZkTrieUpdate::register_handler(linker, store);
     ZkTrieField::register_handler(linker, store);
     ZkTrieRoot::register_handler(linker, store);
     ZkTrieRollback::register_handler(linker, store);
     ZkTrieCommit::register_handler(linker, store);
-    StateDbGetCode::register_handler(linker, store);
-    StateDbUpdateCode::register_handler(linker, store);
-    StateDbUpdateStorage::register_handler(linker, store);
-    StateDbGetStorage::register_handler(linker, store);
 }
