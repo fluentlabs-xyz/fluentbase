@@ -9,7 +9,6 @@ use fluentbase_runtime::instruction::{
     crypto_poseidon2::SysPoseidon2,
     rwasm_compile::SysCompile,
     rwasm_transact::SysExec,
-    zktrie_open::ZkTrieOpen,
 };
 #[cfg(test)]
 use fluentbase_runtime::RuntimeContext;
@@ -35,7 +34,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[cfg(not(test))]
-    fn sys_read(target: &mut [u8], offset: u32) {
+    fn sys_read(_target: &mut [u8], _offset: u32) {
         unreachable!("sys methods are not available in this mode")
     }
 
@@ -64,7 +63,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[cfg(not(test))]
-    fn sys_write(value: &[u8]) {
+    fn sys_write(_value: &[u8]) {
         unreachable!("sys methods are not available in this mode")
     }
 
@@ -78,7 +77,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[cfg(not(test))]
-    fn sys_halt(exit_code: i32) {
+    fn sys_halt(_exit_code: i32) {
         unreachable!("sys methods are not available in this mode")
     }
 

@@ -37,14 +37,17 @@ impl<const N: usize> FixedEncoder<N> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn bytes(&self) -> &[u8] {
         &self.buffer[..(self.header_length + self.body_length)]
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.header_length + self.body_length
     }
 
+    #[allow(dead_code)]
     pub fn finalize(self) -> ([u8; N], usize) {
         (self.buffer, self.header_length + self.body_length)
     }

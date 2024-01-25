@@ -46,10 +46,9 @@ define_codec_struct! {
 define_codec_struct! {
     pub struct ContractOutput {
         return_data: Bytes,
-        // logs: [Option<ContractLog>; MAX_LOGS],
+        logs: Option<Vec<ContractLog>>,
     }
 }
-// const MAX_LOGS: usize = 10;
 
 macro_rules! impl_reader_helper {
     ($input_type:ty, $return_typ:ty) => {{
@@ -90,18 +89,15 @@ macro_rules! impl_emit_log {
         pub fn $fn_name(&mut self, topics: [B256; $num_topics], data: Bytes) {
             let address = Self::contract_address();
             let output = output_mut_or_default!(self);
-            for log in output.logs.iter_mut() {
-                if log.is_some() {
-                    continue;
-                }
-                *log = Some(ContractLog {
+            output
+                .logs
+                .get_or_insert(Default::default())
+                .push(ContractLog {
                     address,
                     $log_field: Some(topics),
                     data,
                     ..Default::default()
                 });
-            }
-            panic!("max logs reached")
         }
     };
 }
@@ -172,11 +168,11 @@ impl ExecutionContext {
     // impl_reader_func!(fn tx_blob_hashes() -> Vec<B256>, ContractInput::TxBlobHashes);
     // impl_reader_func!(fn tx_blob_gas_price() -> u64, ContractInput::TxBlobGasPrice);
 
-    // impl_emit_log!(emit_log0, topic0, 1);
-    // impl_emit_log!(emit_log1, topic1, 2);
-    // impl_emit_log!(emit_log2, topic2, 3);
-    // impl_emit_log!(emit_log3, topic3, 4);
-    // impl_emit_log!(emit_log4, topic4, 5);
+    impl_emit_log!(emit_log0, topic0, 1);
+    impl_emit_log!(emit_log1, topic1, 2);
+    impl_emit_log!(emit_log2, topic2, 3);
+    impl_emit_log!(emit_log3, topic3, 4);
+    impl_emit_log!(emit_log4, topic4, 5);
 
     pub fn emit_return(&mut self, return_data: &[u8]) {
         let output = output_mut_or_default!(self);
@@ -192,7 +188,7 @@ impl ExecutionContext {
     {
         let contract_output = ContractOutput {
             return_data: Bytes::from_static(return_data),
-            // logs: [None; MAX_LOGS],
+            logs: None,
         };
         let (buffer, length) =
             contract_output.encode_to_fixed::<{ N + ContractOutput::HEADER_SIZE }>(0);
@@ -203,7 +199,7 @@ impl ExecutionContext {
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
         let contract_output = ContractOutput {
             return_data: return_data.into(),
-            // logs: [None; MAX_LOGS],
+            logs: None,
         };
         LowLevelSDK::sys_write(contract_output.encode_to_vec(0).as_slice());
         // LowLevelSDK::sys_write(return_data);
@@ -224,8 +220,8 @@ mod test {
         evm::{ContractInput, ExecutionContext, U256},
         LowLevelSDK,
     };
-    use alloy_primitives::{Bytes, B256};
     use fluentbase_codec::Encoder;
+    use fluentbase_types::{Bytes, B256};
 
     #[test]
     fn test_encode_decode() {
