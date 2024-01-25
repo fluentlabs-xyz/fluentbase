@@ -10,7 +10,7 @@ pub struct InMemoryAccountDb {
 }
 
 impl AccountDb for InMemoryAccountDb {
-    fn get_account(&self, address: &Address) -> Option<Account> {
+    fn get_account(&mut self, address: &Address) -> Option<Account> {
         self.accounts.get(address).cloned()
     }
 
@@ -18,15 +18,15 @@ impl AccountDb for InMemoryAccountDb {
         self.accounts.insert(address.clone(), account.clone());
     }
 
-    fn get_storage(&self, _address: &Address, _index: &U256) -> Option<U256> {
+    fn get_storage(&mut self, _address: &Address, _index: &U256) -> Option<U256> {
         todo!()
     }
 
-    fn update_storage(&self, _address: &Address, _index: &U256, _value: &U256) {
+    fn update_storage(&mut self, _address: &Address, _index: &U256, _value: &U256) {
         todo!()
     }
 
-    fn get_node(&self, key: &[u8]) -> Option<Vec<u8>> {
+    fn get_node(&mut self, key: &[u8]) -> Option<Vec<u8>> {
         self.nodes.get(&key.to_vec()).cloned()
     }
 
@@ -34,7 +34,7 @@ impl AccountDb for InMemoryAccountDb {
         self.nodes.insert(key.to_vec(), value.to_vec());
     }
 
-    fn get_preimage(&self, key: &[u8]) -> Option<Vec<u8>> {
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Vec<u8>> {
         self.preimages.get(&key.to_vec()).cloned()
     }
 
