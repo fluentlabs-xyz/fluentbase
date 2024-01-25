@@ -6,6 +6,7 @@ mod macros;
 mod runtime;
 pub use runtime::*;
 mod storage;
+pub use storage::*;
 #[cfg(test)]
 mod tests;
 pub mod types;
