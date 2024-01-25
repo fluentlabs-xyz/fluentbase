@@ -12,9 +12,9 @@ use fluentbase_zktrie::{
     ZkTrie,
 };
 use halo2curves::bn256::Fr;
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 
-struct NodeDb<'a, DB>(&'a mut DB);
+struct NodeDb<'a, DB>(RefCell<&'a mut DB>);
 
 const STORAGE_PREFIX_NODE: u8 = 0x01;
 const STORAGE_PREFIX_PREIMAGE: u8 = 0x02;
@@ -34,7 +34,7 @@ impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
     type Node = Node<PoseidonHash>;
 
     fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
-        match self.0.get_node(key.raw_bytes()) {
+        match self.0.borrow_mut().get_node(key.raw_bytes()) {
             Some(value) => Ok(Some(Arc::new(Node::from_bytes(&value)?))),
             None => Ok(None),
         }
@@ -42,6 +42,7 @@ impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
 
     fn update_node(&mut self, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
         self.0
+            .borrow_mut()
             .update_node(node.hash().raw_bytes(), &node.canonical_value());
         Ok(Arc::new(node))
     }
@@ -50,11 +51,15 @@ impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
 impl<'a, DB: AccountDb> PreimageDatabase for NodeDb<'a, DB> {
     fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
         self.0
+            .borrow_mut()
             .update_preimage(&hash_field.to_bytes(), &preimage.to_vec());
     }
 
     fn preimage(&self, key: &Fr) -> Vec<u8> {
-        self.0.get_preimage(&key.to_bytes()).unwrap_or_default()
+        self.0
+            .borrow_mut()
+            .get_preimage(&key.to_bytes())
+            .unwrap_or_default()
     }
 }
 
@@ -68,7 +73,7 @@ const MAX_LEVEL: usize = 31 * 8;
 impl<'a, DB: AccountDb> ZkTrieStateDb<'a, DB> {
     pub fn new(storage: &'a mut DB) -> Self {
         Self {
-            storage: NodeDb(storage),
+            storage: NodeDb(RefCell::new(storage)),
             trie: None,
         }
     }
