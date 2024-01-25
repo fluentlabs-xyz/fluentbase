@@ -92,10 +92,11 @@ pub enum SysFuncIdx {
     ZKTRIE_ROOT = 0x0204,     // fluentbase_v1alpha::_zktrie_root
     ZKTRIE_ROLLBACK = 0x0205, // fluentbase_v1alpha::_zktrie_rollback
     ZKTRIE_COMMIT = 0x0206,   // fluentbase_v1alpha::_zktrie_commit
-    ZKTRIE_GET_CODE = 0x0207, // fluentbase_v1alpha::_zktrie_get_code
-    ZKTRIE_SET_CODE = 0x0208, // fluentbase_v1alpha::_zktrie_set_code
-    ZKTRIE_STORE = 0x0209,    // fluentbase_v1alpha::_zktrie_store
-    ZKTRIE_LOAD = 0x020A,     // fluentbase_v1alpha::_zktrie_load
+    // statedb functions
+    STATEDB_GET_CODE = 0x0501,    // fluentbase_v1alpha::_statedb_get_code
+    STATEDB_UPDATE_CODE = 0x0502, // fluentbase_v1alpha::_statedb_update_code
+    STATEDB_GET_STORAGE = 0x0503, // fluentbase_v1alpha::_statedb_get_storage
+    STATEDB_UPDATE_STORAGE = 0x0504, // fluentbase_v1alpha::_statedb_update_storage
     // WASI runtime (0x5741 means WA)
     WASI_PROC_EXIT = 0x0301,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0x0302,          // wasi_snapshot_preview1::fd_write
@@ -130,8 +131,8 @@ impl SysFuncIdx {
             SysFuncIdx::ZKTRIE_ROOT => 1,
             SysFuncIdx::ZKTRIE_ROLLBACK => 1,
             SysFuncIdx::ZKTRIE_COMMIT => 1,
-            SysFuncIdx::ZKTRIE_STORE => 1,
-            SysFuncIdx::ZKTRIE_LOAD => 1,
+            SysFuncIdx::STATEDB_GET_STORAGE => 1,
+            SysFuncIdx::STATEDB_UPDATE_STORAGE => 1,
             SysFuncIdx::WASI_PROC_EXIT => 1,
             SysFuncIdx::WASI_FD_WRITE => 1,
             SysFuncIdx::WASI_ENVIRON_SIZES_GET => 1,

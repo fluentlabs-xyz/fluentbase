@@ -1,6 +1,6 @@
 use crate::{
     instruction::{runtime_register_handlers, runtime_register_sovereign_linkers},
-    storage::StateDb,
+    storage::TrieDb,
     types::RuntimeError,
 };
 use fluentbase_rwasm::{
@@ -19,7 +19,7 @@ use fluentbase_rwasm::{
     StackLimits,
     Store,
 };
-use fluentbase_types::{ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
+use fluentbase_types::{AccountDb, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
@@ -35,7 +35,8 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
     // storage
-    pub(crate) zktrie: Option<Rc<RefCell<dyn StateDb>>>,
+    pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
+    pub(crate) trie_db: Option<Rc<RefCell<dyn TrieDb>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -50,7 +51,8 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             input: self.input.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
-            zktrie: self.zktrie.clone(),
+            account_db: self.account_db.clone(),
+            trie_db: self.trie_db.clone(),
         }
     }
 }
@@ -67,7 +69,8 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             input: vec![],
             exit_code: 0,
             output: vec![],
-            zktrie: None,
+            account_db: None,
+            trie_db: None,
         }
     }
 }
@@ -110,8 +113,13 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_state_db(mut self, state_db: Rc<RefCell<dyn StateDb>>) -> Self {
-        self.zktrie = Some(state_db);
+    pub fn with_account_db(mut self, account: Rc<RefCell<dyn AccountDb>>) -> Self {
+        self.account_db = Some(account);
+        self
+    }
+
+    pub fn with_trie_db(mut self, zktrie: Rc<RefCell<dyn TrieDb>>) -> Self {
+        self.trie_db = Some(zktrie);
         self
     }
 

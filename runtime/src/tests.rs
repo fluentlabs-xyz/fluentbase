@@ -195,16 +195,16 @@ fn test_keccak256() {
         false,
     );
 
-    let module = ReducedModule::new(&rwasm_binary).unwrap();
-    println!("module.trace_binary(): {:?}", module.trace());
+    let _module = ReducedModule::new(&rwasm_binary).unwrap();
+    // println!("module.trace_binary(): {:?}", module.trace());
     let ctx = RuntimeContext::new(rwasm_binary);
     let import_linker = Runtime::<()>::new_linker();
     let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
-    println!(
-        "execution_result (exit_code {})",
-        execution_result.data().exit_code,
-    );
-    match hex::decode("0xa04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
+    // println!(
+    //     "execution_result (exit_code {})",
+    //     execution_result.data().exit_code,
+    // );
+    match hex::decode("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
         Ok(answer) => {
             assert_eq!(&answer, execution_result.data().output().as_slice());
         }

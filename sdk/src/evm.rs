@@ -1,7 +1,7 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
-pub use alloy_primitives::{Address, Bytes, B256, U256};
 use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
+pub use fluentbase_types::{Address, Bytes, B256, U256};
 
 define_codec_struct! {
     pub struct ContractInput {

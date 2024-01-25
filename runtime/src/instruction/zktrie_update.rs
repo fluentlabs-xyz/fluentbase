@@ -32,7 +32,7 @@ impl ZkTrieUpdate {
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
-        let zktrie = context.zktrie.clone().unwrap();
+        let zktrie = context.trie_db.clone().unwrap();
         zktrie.borrow_mut().update(key, value_flags, &vals)?;
         Ok(())
     }

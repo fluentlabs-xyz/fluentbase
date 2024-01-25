@@ -1,4 +1,3 @@
-use crate::types::RuntimeError;
 #[macro_export]
 macro_rules! forward_call_args {
     ($func:path, $caller:ident, []) => {
@@ -67,6 +66,18 @@ macro_rules! count_ret_args {
         1
     };
     (i32) => {
+        1
+    };
+    (u64) => {
+        1
+    };
+    (i64) => {
+        1
+    };
+    (f32) => {
+        1
+    };
+    (f64) => {
         1
     };
     ($out:ty) => {
@@ -148,19 +159,3 @@ mod tests {
         assert_eq!(C, 1);
     }
 }
-
-macro_rules! rwasm_error {
-    ($error_type:path) => {
-        impl From<$error_type> for RuntimeError {
-            fn from(value: $error_type) -> Self {
-                Self::Rwasm(value.into())
-            }
-        }
-    };
-}
-
-rwasm_error!(fluentbase_rwasm::global::GlobalError);
-rwasm_error!(fluentbase_rwasm::memory::MemoryError);
-rwasm_error!(fluentbase_rwasm::table::TableError);
-rwasm_error!(fluentbase_rwasm::linker::LinkerError);
-rwasm_error!(fluentbase_rwasm::module::ModuleError);

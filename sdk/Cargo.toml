@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-codec = { path = "../codec", default-features = false }
+fluentbase-types = { path = "../types", default-features = false }
 fluentbase-runtime = { path = "../runtime", optional = true }
 fluentbase-rwasm = { path = "../rwasm", optional = true }
 fluentbase-poseidon = { path = "../poseidon", optional = true }
@@ -14,7 +15,7 @@ eth_trie = { version = "0.3.0", optional = true }
 keccak-hash = { version = "0.10.0", optional = true }
 halo2curves = { workspace = true, optional = true }
 #alloy-sol-types = { version = "0.5.1", default-features = false }
-alloy-primitives = { workspace = true }
+#alloy-primitives = { workspace = true }
 lazy_static = "1.4.0"
 byteorder = { workspace = true }
 #wee_alloc = "0.4.5"
