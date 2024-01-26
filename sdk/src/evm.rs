@@ -49,6 +49,11 @@ define_codec_struct! {
         logs: Option<Vec<ContractLog>>,
     }
 }
+define_codec_struct! {
+    pub struct ContractOutputNoLogs {
+        return_data: Bytes,
+    }
+}
 
 macro_rules! impl_reader_helper {
     ($input_type:ty, $return_typ:ty) => {{
@@ -186,9 +191,8 @@ impl ExecutionContext {
     ) where
         [u8; N + ContractOutput::HEADER_SIZE]:,
     {
-        let contract_output = ContractOutput {
+        let contract_output = ContractOutputNoLogs {
             return_data: Bytes::from_static(return_data),
-            logs: None,
         };
         let (buffer, length) =
             contract_output.encode_to_fixed::<{ N + ContractOutput::HEADER_SIZE }>(0);

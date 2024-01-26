@@ -1,4 +1,4 @@
-use crate::storage::TrieDb;
+use crate::{storage::TrieDb, types::Bytes};
 use fluentbase_types::{AccountDb, ExitCode};
 use fluentbase_zktrie::{
     Byte32,
@@ -41,9 +41,10 @@ impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
     }
 
     fn update_node(&mut self, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
-        self.0
-            .borrow_mut()
-            .update_node(node.hash().raw_bytes(), &node.canonical_value());
+        self.0.borrow_mut().update_node(
+            node.hash().raw_bytes(),
+            Bytes::copy_from_slice(&node.canonical_value()),
+        );
         Ok(Arc::new(node))
     }
 }
@@ -52,7 +53,7 @@ impl<'a, DB: AccountDb> PreimageDatabase for NodeDb<'a, DB> {
     fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
         self.0
             .borrow_mut()
-            .update_preimage(&hash_field.to_bytes(), &preimage.to_vec());
+            .update_preimage(&hash_field.to_bytes(), Bytes::copy_from_slice(preimage));
     }
 
     fn preimage(&self, key: &Fr) -> Vec<u8> {
@@ -60,6 +61,7 @@ impl<'a, DB: AccountDb> PreimageDatabase for NodeDb<'a, DB> {
             .borrow_mut()
             .get_preimage(&key.to_bytes())
             .unwrap_or_default()
+            .to_vec()
     }
 }
 

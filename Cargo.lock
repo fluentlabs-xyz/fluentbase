@@ -1140,6 +1140,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "fluentbase-rwasm",
+ "hashbrown 0.14.3",
  "strum",
  "strum_macros",
 ]

@@ -13,7 +13,8 @@ all: $(FILES) $(MANUAL)
 $(FILES):
 	mkdir -p bin
 	touch ./bin/$@.wasm ./bin/$@-deploy.wasm
-	RUSTFLAGS='-C link-arg=-zstack-size=65536 -C target-feature=+bulk-memory' cargo b --release --target=wasm32-unknown-unknown --features=$@
+	# RUSTFLAGS='-C link-arg=-zstack-size=65536 -C target-feature=+bulk-memory'
+	cargo b --release --target=wasm32-unknown-unknown --features=$@
 	clang stack.s -c --target=wasm32-unknown-unknown
 	wasm-ld --allow-undefined --static --no-entry --export=main --strip-all --stack-first ../target/wasm32-unknown-unknown/release/libfluentbase_example.a ./stack.o -o ./bin/$@.wasm
 	wasm2wat ./bin/$@.wasm > ./bin/$@.wat

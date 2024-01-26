@@ -5,7 +5,7 @@ extern crate fluentbase_sdk;
 
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::{Bytes, ContractOutput},
+    evm::{Bytes, ContractOutput, ContractOutputNoLogs},
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -60,7 +60,7 @@ pub(crate) fn deploy_internal<const N: usize>(bytes: &'static [u8; N])
 where
     [u8; N + ContractOutput::HEADER_SIZE]:,
 {
-    let contract_output = ContractOutput {
+    let contract_output = ContractOutputNoLogs {
         return_data: Bytes::from_static(bytes),
     };
     let (buffer, length) =
