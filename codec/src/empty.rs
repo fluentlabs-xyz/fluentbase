@@ -23,3 +23,36 @@ impl Encoder<EmptyVec> for EmptyVec {
         decoder.read_bytes_header(field_offset + 4)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{define_codec_struct, BufferDecoder, EmptyVec, Encoder};
+    use alloy_primitives::Bytes;
+
+    define_codec_struct! {
+        pub struct ContractOutput {
+            return_data: Bytes,
+            logs: Vec<ContractOutput>,
+        }
+    }
+    define_codec_struct! {
+        pub struct ContractOutputNoLogs {
+            return_data: Bytes,
+            logs: EmptyVec,
+        }
+    }
+
+    #[test]
+    fn test_empty_encode() {
+        let input = ContractOutputNoLogs {
+            return_data: Bytes::copy_from_slice("Hello, World".as_bytes()),
+            logs: Default::default(),
+        };
+        let buffer = input.encode_to_vec(0);
+        let mut buffer_decoder = BufferDecoder::new(&buffer);
+        let mut output = ContractOutput::default();
+        ContractOutput::decode_body(&mut buffer_decoder, 0, &mut output);
+        assert_eq!(input.return_data, output.return_data);
+        assert_eq!(output.logs, vec![]);
+    }
+}

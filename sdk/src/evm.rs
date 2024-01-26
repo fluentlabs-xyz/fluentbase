@@ -187,14 +187,14 @@ impl ExecutionContext {
         return_data: &'static [u8; N],
         exit_code: i32,
     ) where
-        [u8; N + ContractOutput::HEADER_SIZE]:,
+        [u8; N + ContractOutputNoLogs::HEADER_SIZE]:,
     {
         let contract_output = ContractOutputNoLogs {
             return_data: Bytes::from_static(return_data),
             logs: Default::default(),
         };
         let (buffer, length) =
-            contract_output.encode_to_fixed::<{ N + ContractOutput::HEADER_SIZE }>(0);
+            contract_output.encode_to_fixed::<{ N + ContractOutputNoLogs::HEADER_SIZE }>(0);
         LowLevelSDK::sys_write(&buffer[..length]);
         LowLevelSDK::sys_halt(exit_code);
     }
@@ -205,7 +205,6 @@ impl ExecutionContext {
             logs: Default::default(),
         };
         LowLevelSDK::sys_write(contract_output.encode_to_vec(0).as_slice());
-        // LowLevelSDK::sys_write(return_data);
         LowLevelSDK::sys_halt(exit_code);
     }
 
@@ -220,11 +219,19 @@ impl ExecutionContext {
 #[cfg(test)]
 mod test {
     use crate::{
-        evm::{ContractInput, ExecutionContext, U256},
+        evm::{ContractInput, ContractOutput, ContractOutputNoLogs, ExecutionContext, U256},
         LowLevelSDK,
     };
     use fluentbase_codec::Encoder;
     use fluentbase_types::{Bytes, B256};
+
+    #[test]
+    fn test_output_headers() {
+        assert_eq!(
+            ContractOutput::HEADER_SIZE,
+            ContractOutputNoLogs::HEADER_SIZE
+        );
+    }
 
     #[test]
     fn test_encode_decode() {
