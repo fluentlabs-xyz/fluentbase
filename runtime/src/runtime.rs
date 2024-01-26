@@ -1,6 +1,6 @@
 use crate::{
     instruction::{runtime_register_handlers, runtime_register_sovereign_linkers},
-    storage::TrieDb,
+    storage::PersistentStorage,
     types::RuntimeError,
 };
 use fluentbase_rwasm::{
@@ -37,7 +37,7 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) output: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
-    pub(crate) trie_db: Option<Rc<RefCell<dyn TrieDb>>>,
+    pub(crate) trie_db: Option<Rc<RefCell<dyn PersistentStorage>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -126,7 +126,7 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_trie_db(mut self, zktrie: Rc<RefCell<dyn TrieDb>>) -> Self {
+    pub fn with_trie_db(mut self, zktrie: Rc<RefCell<dyn PersistentStorage>>) -> Self {
         self.trie_db = Some(zktrie);
         self
     }
