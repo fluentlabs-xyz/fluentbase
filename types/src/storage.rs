@@ -1,5 +1,5 @@
 use crate::Account;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 
 pub trait AccountDb {
     fn get_account(&mut self, address: &Address) -> Option<Account>;
@@ -10,11 +10,11 @@ pub trait AccountDb {
 
     fn update_storage(&mut self, address: &Address, index: &U256, value: &U256);
 
-    fn get_node(&mut self, key: &[u8]) -> Option<Vec<u8>>;
+    fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
 
-    fn update_node(&mut self, key: &[u8], value: &Vec<u8>);
+    fn update_node(&mut self, key: &[u8], value: Bytes);
 
-    fn get_preimage(&mut self, key: &[u8]) -> Option<Vec<u8>>;
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes>;
 
-    fn update_preimage(&mut self, key: &[u8], value: &Vec<u8>);
+    fn update_preimage(&mut self, key: &[u8], value: Bytes);
 }
