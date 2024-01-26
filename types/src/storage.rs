@@ -9,7 +9,9 @@ pub trait AccountDb {
     fn get_storage(&mut self, address: &Address, index: &U256) -> Option<U256>;
 
     fn update_storage(&mut self, address: &Address, index: &U256, value: &U256);
+}
 
+pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
 
     fn update_node(&mut self, key: &[u8], value: Bytes);

@@ -1,5 +1,5 @@
-use crate::{storage::TrieDb, types::Bytes};
-use fluentbase_types::{AccountDb, ExitCode};
+use crate::{storage::PersistentStorage, types::Bytes};
+use fluentbase_types::{ExitCode, TrieDb};
 use fluentbase_zktrie::{
     Byte32,
     Database,
@@ -30,7 +30,7 @@ macro_rules! storage_key {
     }};
 }
 
-impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
+impl<'a, DB: TrieDb> Database for NodeDb<'a, DB> {
     type Node = Node<PoseidonHash>;
 
     fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
@@ -49,7 +49,7 @@ impl<'a, DB: AccountDb> Database for NodeDb<'a, DB> {
     }
 }
 
-impl<'a, DB: AccountDb> PreimageDatabase for NodeDb<'a, DB> {
+impl<'a, DB: TrieDb> PreimageDatabase for NodeDb<'a, DB> {
     fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
         self.0
             .borrow_mut()
@@ -72,7 +72,7 @@ pub struct ZkTrieStateDb<'a, DB> {
 
 const MAX_LEVEL: usize = 31 * 8;
 
-impl<'a, DB: AccountDb> ZkTrieStateDb<'a, DB> {
+impl<'a, DB: TrieDb> ZkTrieStateDb<'a, DB> {
     pub fn new(storage: &'a mut DB) -> Self {
         Self {
             storage: NodeDb(RefCell::new(storage)),
@@ -91,7 +91,7 @@ impl<'a, DB: AccountDb> ZkTrieStateDb<'a, DB> {
     }
 }
 
-impl<'a, DB: AccountDb> TrieDb for ZkTrieStateDb<'a, DB> {
+impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
     fn open(&mut self, root32: &[u8]) {
         self.trie = Some(ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root32)));
     }
@@ -154,7 +154,7 @@ impl<'a, DB: AccountDb> TrieDb for ZkTrieStateDb<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{zktrie::ZkTrieStateDb, TrieDb};
+    use crate::storage::{zktrie::ZkTrieStateDb, PersistentStorage};
     use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {

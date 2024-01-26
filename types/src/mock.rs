@@ -1,4 +1,4 @@
-use crate::{Account, AccountDb, U256};
+use crate::{Account, AccountDb, TrieDb, U256};
 use alloy_primitives::{Address, Bytes};
 use hashbrown::HashMap;
 
@@ -25,7 +25,9 @@ impl AccountDb for InMemoryAccountDb {
     fn update_storage(&mut self, _address: &Address, _index: &U256, _value: &U256) {
         todo!()
     }
+}
 
+impl TrieDb for InMemoryAccountDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes> {
         self.nodes.get(&Bytes::copy_from_slice(key)).cloned()
     }
