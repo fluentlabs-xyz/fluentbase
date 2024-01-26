@@ -7,9 +7,9 @@ use k256::{
     PublicKey,
 };
 
-pub struct SysEcrecover;
+pub struct CryptoEcrecover;
 
-impl SysEcrecover {
+impl CryptoEcrecover {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         digest32_offset: u32,
@@ -40,7 +40,7 @@ impl SysEcrecover {
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::instruction::crypto_ecrecover::SysEcrecover;
+    use crate::instruction::crypto_ecrecover::CryptoEcrecover;
     use hex_literal::hex;
     use sha2::{Digest, Sha256};
 
@@ -83,7 +83,7 @@ mod secp256k1_tests {
             params_vec.push(vector.rec_id as u8);
             params_vec.extend(&vector.pk);
 
-            let _ = SysEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32);
+            let _ = CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32);
             // &vector.pk;
             // assert_eq!(res, true);
         }

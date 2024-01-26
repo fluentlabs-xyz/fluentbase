@@ -1,6 +1,6 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
-use fluentbase_codec::{define_codec_struct, BufferDecoder, EmptyVec, Encoder};
+use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
 pub use fluentbase_types::{Address, Bytes, B256, U256};
 
 define_codec_struct! {
@@ -30,29 +30,6 @@ define_codec_struct! {
         tx_caller: Address,
         // tx_blob_hashes: Vec<B256>,
         // tx_blob_gas_price: u64,
-    }
-}
-define_codec_struct! {
-    pub struct ContractLog {
-        address: Address,
-        topic0: Option<[B256; 1]>,
-        topic1: Option<[B256; 2]>,
-        topic2: Option<[B256; 3]>,
-        topic3: Option<[B256; 4]>,
-        topic4: Option<[B256; 5]>,
-        data: Bytes,
-    }
-}
-define_codec_struct! {
-    pub struct ContractOutput {
-        return_data: Bytes,
-        logs: Vec<ContractLog>,
-    }
-}
-define_codec_struct! {
-    pub struct ContractOutputNoLogs {
-        return_data: Bytes,
-        logs: EmptyVec,
     }
 }
 
@@ -90,21 +67,6 @@ macro_rules! impl_reader_func {
     };
 }
 
-macro_rules! impl_emit_log {
-    ($fn_name:ident, $log_field:ident, $num_topics:expr) => {
-        pub fn $fn_name(&mut self, topics: [B256; $num_topics], data: Bytes) {
-            let address = Self::contract_address();
-            let output = output_mut_or_default!(self);
-            output.logs.push(ContractLog {
-                address,
-                $log_field: Some(topics),
-                data,
-                ..Default::default()
-            });
-        }
-    };
-}
-
 // #[derive(Default)]
 // struct CachedState {
 //     env_chain_id: Option<u64>,
@@ -131,18 +93,17 @@ macro_rules! impl_emit_log {
 
 #[derive(Default)]
 pub struct ExecutionContext {
-    output: Option<ContractOutput>,
     // cached_state: CachedState,
 }
 
-macro_rules! output_mut_or_default {
-    ($self:ident) => {{
-        if $self.output.is_none() {
-            $self.output = Some(Default::default());
-        }
-        $self.output.as_mut().unwrap()
-    }};
-}
+// macro_rules! output_mut_or_default {
+//     ($self:ident) => {{
+//         if $self.output.is_none() {
+//             $self.output = Some(Default::default());
+//         }
+//         $self.output.as_mut().unwrap()
+//     }};
+// }
 
 impl ExecutionContext {
     // env info
@@ -171,47 +132,21 @@ impl ExecutionContext {
     // impl_reader_func!(fn tx_blob_hashes() -> Vec<B256>, ContractInput::TxBlobHashes);
     // impl_reader_func!(fn tx_blob_gas_price() -> u64, ContractInput::TxBlobGasPrice);
 
-    impl_emit_log!(emit_log0, topic0, 1);
-    impl_emit_log!(emit_log1, topic1, 2);
-    impl_emit_log!(emit_log2, topic2, 3);
-    impl_emit_log!(emit_log3, topic3, 4);
-    impl_emit_log!(emit_log4, topic4, 5);
-
-    pub fn emit_return(&mut self, return_data: &[u8]) {
-        let output = output_mut_or_default!(self);
-        output.return_data = Bytes::copy_from_slice(return_data);
-    }
-
     pub fn static_return_and_exit<const N: usize>(
         &self,
         return_data: &'static [u8; N],
         exit_code: i32,
-    ) where
-        [u8; N + ContractOutputNoLogs::HEADER_SIZE]:,
-    {
-        let contract_output = ContractOutputNoLogs {
-            return_data: Bytes::from_static(return_data),
-            logs: Default::default(),
-        };
-        let (buffer, length) =
-            contract_output.encode_to_fixed::<{ N + ContractOutputNoLogs::HEADER_SIZE }>(0);
-        LowLevelSDK::sys_write(&buffer[..length]);
+    ) {
+        LowLevelSDK::sys_write(return_data);
         LowLevelSDK::sys_halt(exit_code);
     }
 
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
-        let contract_output = ContractOutputNoLogs {
-            return_data: return_data.into(),
-            logs: Default::default(),
-        };
-        LowLevelSDK::sys_write(contract_output.encode_to_vec(0).as_slice());
+        LowLevelSDK::sys_write(return_data.into().as_ref());
         LowLevelSDK::sys_halt(exit_code);
     }
 
     pub fn exit(&self, exit_code: i32) {
-        if let Some(output) = self.output.as_ref() {
-            LowLevelSDK::sys_write(output.encode_to_vec(0).as_slice());
-        }
         LowLevelSDK::sys_halt(exit_code);
     }
 }
@@ -219,19 +154,11 @@ impl ExecutionContext {
 #[cfg(test)]
 mod test {
     use crate::{
-        evm::{ContractInput, ContractOutput, ContractOutputNoLogs, ExecutionContext, U256},
+        evm::{ContractInput, ExecutionContext, U256},
         LowLevelSDK,
     };
     use fluentbase_codec::Encoder;
     use fluentbase_types::{Bytes, B256};
-
-    #[test]
-    fn test_output_headers() {
-        assert_eq!(
-            ContractOutput::HEADER_SIZE,
-            ContractOutputNoLogs::HEADER_SIZE
-        );
-    }
 
     #[test]
     fn test_encode_decode() {

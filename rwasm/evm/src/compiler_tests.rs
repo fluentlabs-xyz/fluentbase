@@ -267,7 +267,7 @@ mod evm_to_rwasm_tests {
     ) -> Option<(Vec<u8>, Vec<u8>)> {
         let evm_binary = Bytes::from(evm_bytecode_bytes.clone());
 
-        let import_linker = Runtime::<()>::new_linker();
+        let import_linker = Runtime::<()>::new_sovereign_linker();
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
         let mut preamble = InstructionSet::new();

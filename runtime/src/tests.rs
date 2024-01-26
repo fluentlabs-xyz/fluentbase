@@ -5,7 +5,7 @@ use fluentbase_rwasm::{
 };
 
 pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut compiler = Compiler::new_with_linker(
         &wasm_binary,
@@ -42,7 +42,7 @@ fn test_simple() {
         true,
     );
     let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
 }
 
@@ -60,7 +60,7 @@ fn test_input_output() {
     "#,
     )
     .unwrap();
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let config = CompilerConfig::default()
         .with_state(true)
         .fuel_consume(true)
@@ -136,7 +136,7 @@ fn test_wrong_indirect_type() {
     "#,
     )
     .unwrap();
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let mut compiler = Compiler::new_with_linker(
         wasm_binary.as_slice(),
         CompilerConfig::default()
@@ -198,7 +198,7 @@ fn test_keccak256() {
     let _module = ReducedModule::new(&rwasm_binary).unwrap();
     // println!("module.trace_binary(): {:?}", module.trace());
     let ctx = RuntimeContext::new(rwasm_binary);
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
     // println!(
     //     "execution_result (exit_code {})",

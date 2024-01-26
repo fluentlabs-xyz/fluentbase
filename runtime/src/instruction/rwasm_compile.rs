@@ -5,9 +5,9 @@ use fluentbase_rwasm::{
     Caller,
 };
 
-pub struct SysCompile;
+pub struct RwasmCompile;
 
-impl SysCompile {
+impl RwasmCompile {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         input_offset: u32,
@@ -26,7 +26,7 @@ impl SysCompile {
     }
 
     pub fn fn_impl(input: &[u8], output_len: u32) -> Result<Vec<u8>, i32> {
-        let import_linker = Runtime::<()>::new_linker();
+        let import_linker = Runtime::<()>::new_sovereign_linker();
         let mut compiler = Compiler::new_with_linker(
             input.as_ref(),
             CompilerConfig::default().fuel_consume(true),

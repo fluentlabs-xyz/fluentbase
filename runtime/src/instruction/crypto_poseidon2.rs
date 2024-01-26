@@ -4,9 +4,9 @@ use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 
-pub struct SysPoseidon2;
+pub struct CryptoPoseidon2;
 
-impl SysPoseidon2 {
+impl CryptoPoseidon2 {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         fa_offset: u32,

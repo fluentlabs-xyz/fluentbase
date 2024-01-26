@@ -3,12 +3,11 @@ use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
 #[cfg(test)]
 use alloc::vec::Vec;
 use fluentbase_runtime::instruction::{
-    crypto_ecrecover::SysEcrecover,
-    crypto_keccak256::SysKeccak256,
-    crypto_poseidon::SysPoseidon,
-    crypto_poseidon2::SysPoseidon2,
-    rwasm_compile::SysCompile,
-    rwasm_transact::SysExec,
+    crypto_ecrecover::CryptoEcrecover,
+    crypto_keccak256::CryptoKeccak256,
+    crypto_poseidon::CryptoPoseidon,
+    crypto_poseidon2::CryptoPoseidon2,
+    rwasm_compile::RwasmCompile,
 };
 #[cfg(test)]
 use fluentbase_runtime::RuntimeContext;
@@ -97,12 +96,12 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
-        let result = SysKeccak256::fn_impl(data);
+        let result = CryptoKeccak256::fn_impl(data);
         output.copy_from_slice(&result);
     }
 
     fn crypto_poseidon(data: &[u8], output: &mut [u8]) {
-        let result = SysPoseidon::fn_impl(data);
+        let result = CryptoPoseidon::fn_impl(data);
         output.copy_from_slice(&result);
     }
 
@@ -112,7 +111,7 @@ impl LowLevelAPI for LowLevelSDK {
         fd_data: &[u8; 32],
         output: &mut [u8],
     ) -> bool {
-        match SysPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
+        match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
             Ok(result) => {
                 output.copy_from_slice(&result);
                 true
@@ -122,12 +121,12 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
-        let result = SysEcrecover::fn_impl(digest, sig, rec_id as u32);
+        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
         output.copy_from_slice(&result);
     }
 
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        match SysCompile::fn_impl(input, output.len() as u32) {
+        match RwasmCompile::fn_impl(input, output.len() as u32) {
             Ok(result) => {
                 output[0..result.len()].copy_from_slice(&result);
                 0
@@ -136,14 +135,46 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn rwasm_transact(code: &[u8], input: &[u8], output: &mut [u8], state: u32, fuel: u32) -> i32 {
-        match SysExec::fn_impl(code, input, state, fuel, output.len() as u32) {
-            Ok(result) => {
-                output[0..result.len()].copy_from_slice(&result);
-                0
-            }
-            Err(err_code) => err_code,
-        }
+    fn rwasm_transact(
+        _address: &[u8],
+        _value: &[u8],
+        _input: &[u8],
+        _output: &mut [u8],
+        _fuel: u32,
+        _is_static: bool,
+    ) -> i32 {
+        unreachable!("rwasm methods are not available in this mode")
+        // match RwasmTransact::fn_impl(address, value, input, output.len() as u32, fuel) {
+        //     Ok(result) => {
+        //         output[0..result.len()].copy_from_slice(&result);
+        //         0
+        //     }
+        //     Err(err_code) => err_code,
+        // }
+    }
+
+    fn statedb_get_code(_key: &[u8], _output: &mut [u8]) {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_get_code_size(_key: &[u8]) -> u32 {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_set_code(_key: &[u8], _code: &[u8]) {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_get_storage(_key: &[u8], _value: &mut [u8]) {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_update_storage(_key: &[u8], _value: &[u8]) {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_emit_log(_topics: &[Bytes32], _data: &[u8]) {
+        unreachable!("statedb methods are not available in this mode")
     }
 
     fn zktrie_open(_root: &Bytes32) {

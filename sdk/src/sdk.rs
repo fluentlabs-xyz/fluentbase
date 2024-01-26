@@ -18,7 +18,21 @@ pub trait LowLevelAPI {
     fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
 
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32;
-    fn rwasm_transact(code: &[u8], input: &[u8], output: &mut [u8], state: u32, fuel: u32) -> i32;
+    fn rwasm_transact(
+        address: &[u8],
+        value: &[u8],
+        input: &[u8],
+        output: &mut [u8],
+        fuel: u32,
+        is_static: bool,
+    ) -> i32;
+
+    fn statedb_get_code(key: &[u8], output: &mut [u8]);
+    fn statedb_get_code_size(key: &[u8]) -> u32;
+    fn statedb_set_code(key: &[u8], code: &[u8]);
+    fn statedb_get_storage(key: &[u8], value: &mut [u8]);
+    fn statedb_update_storage(key: &[u8], value: &[u8]);
+    fn statedb_emit_log(topics: &[Bytes32], data: &[u8]);
 
     fn zktrie_open(root: &Bytes32);
     fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]);

@@ -1,5 +1,10 @@
 use crate::{
-    instruction::{runtime_register_handlers, runtime_register_sovereign_linkers},
+    instruction::{
+        runtime_register_shared_handlers,
+        runtime_register_shared_linkers,
+        runtime_register_sovereign_handlers,
+        runtime_register_sovereign_linkers,
+    },
     storage::PersistentStorage,
     types::RuntimeError,
 };
@@ -29,8 +34,11 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
+    pub(crate) is_shared: bool,
     pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) is_static: bool,
+    pub(crate) caller: Address,
     pub(crate) address: Address,
     // context outputs
     pub(crate) exit_code: i32,
@@ -48,8 +56,11 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
+            is_shared: self.is_shared.clone(),
             catch_trap: self.catch_trap.clone(),
             input: self.input.clone(),
+            is_static: self.is_static.clone(),
+            caller: self.caller.clone(),
             address: self.address.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
@@ -67,8 +78,11 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             bytecode: vec![],
             fuel_limit: 0,
             state: 0,
+            is_shared: false,
             catch_trap: true,
             input: vec![],
+            is_static: false,
+            caller: Default::default(),
             address: Default::default(),
             exit_code: 0,
             output: vec![],
@@ -101,8 +115,18 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
+    pub fn with_is_static(mut self, is_static: bool) -> Self {
+        self.is_static = is_static;
+        self
+    }
+
     pub fn with_state(mut self, state: u32) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn with_is_shared(mut self, is_shared: bool) -> Self {
+        self.is_shared = is_shared;
         self
     }
 
@@ -113,6 +137,11 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
         self.fuel_limit = fuel_limit;
+        self
+    }
+
+    pub fn with_caller(mut self, caller: Address) -> Self {
+        self.caller = caller;
         self
     }
 
@@ -233,9 +262,15 @@ pub struct Runtime<'t, T> {
 }
 
 impl<'t, T> Runtime<'t, T> {
-    pub fn new_linker() -> ImportLinker {
+    pub fn new_sovereign_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
         runtime_register_sovereign_linkers::<T>(&mut import_linker);
+        import_linker
+    }
+
+    pub fn new_shared_linker() -> ImportLinker {
+        let mut import_linker = ImportLinker::default();
+        runtime_register_shared_linkers::<T>(&mut import_linker);
         import_linker
     }
 
@@ -370,7 +405,11 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn register_bindings(&mut self) {
-        runtime_register_handlers(&mut self.linker, &mut self.store)
+        if !self.data().is_shared {
+            runtime_register_sovereign_handlers(&mut self.linker, &mut self.store)
+        } else {
+            runtime_register_shared_handlers(&mut self.linker, &mut self.store)
+        }
     }
 
     pub fn catch_trap(err: RuntimeError) -> i32 {

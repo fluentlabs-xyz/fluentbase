@@ -21,6 +21,9 @@ impl StateDbUpdateStorage {
         key: &[u8],
         value: &[u8],
     ) -> Result<(), ExitCode> {
+        if context.is_static {
+            return Err(ExitCode::WriteProtection);
+        }
         let account_db = context.account_db.clone().unwrap();
         account_db.borrow_mut().update_storage(
             &context.address,
