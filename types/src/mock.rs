@@ -26,7 +26,7 @@ impl AccountDb for InMemoryAccountDb {
         todo!()
     }
 
-    fn transfer(&mut self, _from: &Address, _to: &Address, _value: &U256) {
+    fn transfer(&mut self, _from: &Address, _to: &Address, _value: &U256) -> bool {
         todo!()
     }
 
