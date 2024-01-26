@@ -73,7 +73,7 @@ fn main() {
         }
     }
 
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let mut compiler = Compiler::new_with_linker(
         &wasm_binary,
         CompilerConfig::default()

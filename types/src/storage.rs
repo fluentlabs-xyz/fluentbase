@@ -1,5 +1,5 @@
 use crate::Account;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 
 pub trait AccountDb {
     fn get_account(&mut self, address: &Address) -> Option<Account>;
@@ -9,6 +9,10 @@ pub trait AccountDb {
     fn get_storage(&mut self, address: &Address, index: &U256) -> Option<U256>;
 
     fn update_storage(&mut self, address: &Address, index: &U256, value: &U256);
+
+    fn transfer(&mut self, from: &Address, to: &Address, value: &U256);
+
+    fn emit_log(&mut self, address: &Address, topics: &[B256], data: Bytes);
 }
 
 pub trait TrieDb {

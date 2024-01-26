@@ -15,6 +15,7 @@ pub enum ExitCode {
     InputDecodeFailure = -1006,
     PoseidonError = -1007,
     PersistentStorageError = -1008,
+    WriteProtection = -1009,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -31,6 +32,10 @@ pub enum ExitCode {
 }
 
 impl ExitCode {
+    pub fn into_i32(self) -> i32 {
+        self as i32
+    }
+
     pub fn into_trap(self) -> Trap {
         Trap::i32_exit(self as i32)
     }
@@ -78,8 +83,9 @@ pub enum SysFuncIdx {
     SYS_READ = 0x0003,       // fluentbase_v1alpha::_sys_read
     SYS_INPUT_SIZE = 0x0004, // fluentbase_v1alpha::_sys_input_size
     SYS_WRITE = 0x0005,      // fluentbase_v1alpha::_sys_write
-    RWASM_TRANSACT = 0x000A, // fluentbase_v1alpha::_sys_transact
-    RWASM_COMPILE = 0x000B,  // fluentbase_v1alpha::_sys_compile
+    // RWASM
+    RWASM_TRANSACT = 0x000A, // fluentbase_v1alpha::_rwasm_transact
+    RWASM_COMPILE = 0x000B,  // fluentbase_v1alpha::_rwasm_compile
     // crypto functions
     CRYPTO_KECCAK256 = 0x0101, // fluentbase_v1alpha::_sys_keccak256
     CRYPTO_POSEIDON = 0x0102,  // fluentbase_v1alpha::_sys_poseidon
@@ -98,6 +104,7 @@ pub enum SysFuncIdx {
     STATEDB_UPDATE_CODE = 0x0503,   // fluentbase_v1alpha::_statedb_update_code
     STATEDB_GET_STORAGE = 0x0504,   // fluentbase_v1alpha::_statedb_get_storage
     STATEDB_UPDATE_STORAGE = 0x0505, // fluentbase_v1alpha::_statedb_update_storage
+    STATEDB_EMIT_LOG = 0x0506,      // fluentbase_v1alpha::_statedb_add_log
     // WASI runtime (0x5741 means WA)
     WASI_PROC_EXIT = 0x0301,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0x0302,          // wasi_snapshot_preview1::fd_write

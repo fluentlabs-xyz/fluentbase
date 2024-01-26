@@ -1,5 +1,5 @@
 use crate::{Account, AccountDb, TrieDb, U256};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use hashbrown::HashMap;
 
 #[derive(Default)]
@@ -23,6 +23,14 @@ impl AccountDb for InMemoryAccountDb {
     }
 
     fn update_storage(&mut self, _address: &Address, _index: &U256, _value: &U256) {
+        todo!()
+    }
+
+    fn transfer(&mut self, _from: &Address, _to: &Address, _value: &U256) {
+        todo!()
+    }
+
+    fn emit_log(&mut self, _address: &Address, _topics: &[B256], _data: Bytes) {
         todo!()
     }
 }

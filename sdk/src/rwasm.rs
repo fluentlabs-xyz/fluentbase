@@ -6,6 +6,12 @@ use crate::{
         _crypto_poseidon2,
         _rwasm_compile,
         _rwasm_transact,
+        _statedb_emit_log,
+        _statedb_get_code,
+        _statedb_get_code_size,
+        _statedb_get_storage,
+        _statedb_set_code,
+        _statedb_update_storage,
         _sys_halt,
         _sys_input_size,
         _sys_read,
@@ -110,22 +116,60 @@ impl LowLevelAPI for LowLevelSDK {
 
     #[inline(always)]
     fn rwasm_transact(
-        bytecode: &[u8],
+        address: &[u8],
+        value: &[u8],
         input: &[u8],
         output: &mut [u8],
-        state: u32,
-        fuel_limit: u32,
+        fuel: u32,
+        is_static: bool,
     ) -> i32 {
         unsafe {
             _rwasm_transact(
-                bytecode.as_ptr(),
-                bytecode.len() as u32,
+                address.as_ptr(),
+                value.as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
                 output.as_mut_ptr(),
                 output.len() as u32,
-                state,
-                fuel_limit,
+                fuel,
+                is_static as u32,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn statedb_get_code(key: &[u8], output: &mut [u8]) {
+        unsafe { _statedb_get_code(key.as_ptr(), output.as_mut_ptr(), output.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn statedb_get_code_size(key: &[u8]) -> u32 {
+        unsafe { _statedb_get_code_size(key.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn statedb_set_code(key: &[u8], code: &[u8]) {
+        unsafe { _statedb_set_code(key.as_ptr(), code.as_ptr(), code.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn statedb_get_storage(key: &[u8], value: &mut [u8]) {
+        unsafe { _statedb_get_storage(key.as_ptr(), value.as_mut_ptr()) }
+    }
+
+    #[inline(always)]
+    fn statedb_update_storage(key: &[u8], value: &[u8]) {
+        unsafe { _statedb_update_storage(key.as_ptr(), value.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn statedb_emit_log(topics: &[Bytes32], data: &[u8]) {
+        unsafe {
+            _statedb_emit_log(
+                topics.as_ptr(),
+                topics.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
             )
         }
     }

@@ -6,7 +6,7 @@ use fluentbase_sdk::evm::{Bytes, ContractInput, ContractOutput};
 use hex_literal::hex;
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     Compiler::new_with_linker(
         &wasm_binary.to_vec(),
         CompilerConfig::default().fuel_consume(inject_fuel_consumption),
@@ -29,7 +29,7 @@ fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> Executio
         .with_fuel_limit(100_000)
         .with_input(input_data)
         .with_catch_trap(true);
-    let import_linker = Runtime::<()>::new_linker();
+    let import_linker = Runtime::<()>::new_sovereign_linker();
     let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
     runtime.data_mut().clean_output();
     runtime.call().unwrap()
@@ -102,7 +102,7 @@ fn test_secp256k1_verify() {
         let ctx = RuntimeContext::new(rwasm_binary.as_slice())
             .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
-        let import_linker = Runtime::<()>::new_linker();
+        let import_linker = Runtime::<()>::new_sovereign_linker();
         let output = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
         let output = ContractOutput::from(output.data().output().clone());
         assert_eq!(output.return_data, Vec::<u8>::new());

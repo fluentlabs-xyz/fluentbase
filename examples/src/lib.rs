@@ -1,14 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
-#![feature(generic_const_exprs)]
 extern crate fluentbase_sdk;
 
-use fluentbase_codec::Encoder;
-use fluentbase_sdk::{
-    evm::{Bytes, ContractOutputNoLogs},
-    LowLevelAPI,
-    LowLevelSDK,
-};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 #[cfg(feature = "erc20")]
 mod erc20;
@@ -56,16 +50,7 @@ macro_rules! export_and_forward {
 export_and_forward!(deploy);
 export_and_forward!(main);
 
-pub(crate) fn deploy_internal<const N: usize>(bytes: &'static [u8; N])
-where
-    [u8; N + ContractOutputNoLogs::HEADER_SIZE]:,
-{
-    let contract_output = ContractOutputNoLogs {
-        return_data: Bytes::from_static(bytes),
-        logs: Default::default(),
-    };
-    let (buffer, length) =
-        contract_output.encode_to_fixed::<{ N + ContractOutputNoLogs::HEADER_SIZE }>(0);
-    LowLevelSDK::sys_write(&buffer[..length]);
+pub(crate) fn deploy_internal<const N: usize>(bytes: &'static [u8; N]) {
+    LowLevelSDK::sys_write(bytes);
     LowLevelSDK::sys_halt(0);
 }

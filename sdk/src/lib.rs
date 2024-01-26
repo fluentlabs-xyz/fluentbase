@@ -1,5 +1,4 @@
 #![cfg_attr(not(feature = "runtime"), no_std)]
-#![feature(generic_const_exprs)]
 
 extern crate alloc;
 extern crate core;

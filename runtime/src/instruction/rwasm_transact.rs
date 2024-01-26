@@ -1,56 +1,88 @@
-use crate::{Runtime, RuntimeContext};
+use crate::{
+    types::{Address, U256},
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_rwasm::{common::Trap, Caller};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, STATE_MAIN};
 
-pub struct SysExec;
+pub struct RwasmTransact;
 
-impl SysExec {
+impl RwasmTransact {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
-        code_offset: u32,
-        code_len: u32,
+        address20_offset: u32,
+        value32_offset: u32,
         input_offset: u32,
-        input_len: u32,
-        output_offset: u32,
-        output_len: u32,
-        state: u32,
+        input_length: u32,
+        return_offset: u32,
+        return_length: u32,
         fuel: u32,
+        is_static: u32,
     ) -> Result<i32, Trap> {
-        let code = caller.read_memory(code_offset, code_len);
-        let input = caller.read_memory(input_offset, input_len);
-        match Self::fn_impl(code, input, state, fuel, output_len) {
-            Ok(output) => {
-                caller.write_memory(output_offset, &output);
-                Ok(0)
+        let address = caller.read_memory(address20_offset, 20).to_vec();
+        let value = caller.read_memory(value32_offset, 32).to_vec();
+        let input = caller.read_memory(input_offset, input_length).to_vec();
+        let exit_code = match Self::fn_impl(
+            caller.data_mut(),
+            &address,
+            &value,
+            &input,
+            return_length,
+            fuel,
+            is_static != 0,
+        ) {
+            Ok(return_data) => {
+                caller.write_memory(return_offset, &return_data);
+                0
             }
-            Err(err) => Ok(err.into()),
-        }
+            Err(err) => err.into_i32(),
+        };
+        Ok(exit_code)
     }
 
-    pub fn fn_impl(
-        code: &[u8],
+    pub fn fn_impl<T>(
+        context: &mut RuntimeContext<T>,
+        address: &[u8],
+        value: &[u8],
         input: &[u8],
-        state: u32,
+        return_length: u32,
         fuel: u32,
-        output_len: u32,
-    ) -> Result<Vec<u8>, i32> {
-        // TODO: "we probably need custom linker here with reduced host calls number"
-        // TODO: "make sure there is no panic inside runtime"
-        let import_linker = Runtime::<()>::new_linker();
+        is_static: bool,
+    ) -> Result<Vec<u8>, ExitCode> {
+        let address = Address::from_slice(address);
+        let value = U256::from_be_slice(value);
+        // reject static with value not zero
+        if context.is_static && !value.is_zero() {
+            return Err(ExitCode::WriteProtection);
+        }
+        // get bytecode
+        let account_db = context.account_db.clone().unwrap();
+        let account = account_db
+            .borrow_mut()
+            .get_account(&address)
+            .unwrap_or_default();
+        let code = account.code.unwrap_or_default();
+        // transfer funds
+        account_db
+            .borrow_mut()
+            .transfer(&context.address, &address, &value);
+        // init shared runtime
+        let import_linker = Runtime::<()>::new_shared_linker();
         let ctx = RuntimeContext::new(code)
             .with_input(input.to_vec())
-            .with_state(state)
-            .with_fuel_limit(fuel);
+            .with_is_static(is_static)
+            .with_state(STATE_MAIN)
+            .with_caller(context.address)
+            .with_address(address)
+            .with_fuel_limit(fuel)
+            .with_account_db(account_db)
+            .with_is_shared(true);
         let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker)
-            .map_err(|_| ExitCode::TransactError as i32)?;
+            .map_err(|_| ExitCode::TransactError)?;
         let output = execution_result.data().output();
-        // TODO: "this is not a good way for handling this"
-        if output_len < output.len() as u32 {
-            return Err(output.len() as i32);
-        }
-        // TODO: "exit code from shared apps can't be greater than 0"
-        if execution_result.data().exit_code() > 0 {
-            return Err(ExitCode::TransactError as i32);
+        if output.len() > return_length as usize {
+            return Err(ExitCode::OutputOverflow);
         }
         Ok(output.clone())
     }
