@@ -1,9 +1,9 @@
 use crate::{BufferDecoder, Encoder, WritableBuffer};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct EmptyArray;
+pub struct EmptyVec;
 
-impl Encoder<EmptyArray> for EmptyArray {
+impl Encoder<EmptyVec> for EmptyVec {
     const HEADER_SIZE: usize = 8;
 
     fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
@@ -13,7 +13,7 @@ impl Encoder<EmptyArray> for EmptyArray {
     fn decode_header(
         decoder: &mut BufferDecoder,
         field_offset: usize,
-        _result: &mut EmptyArray,
+        _result: &mut EmptyVec,
     ) -> (usize, usize) {
         decoder.read_bytes_header(field_offset)
     }

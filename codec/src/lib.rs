@@ -5,7 +5,7 @@ extern crate core;
 
 pub use crate::{
     buffer::{BufferDecoder, BufferEncoder, WritableBuffer},
-    empty::EmptyArray,
+    empty::EmptyVec,
     encoder::{Encoder, FieldEncoder},
 };
 

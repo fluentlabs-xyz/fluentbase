@@ -1,6 +1,6 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
-use fluentbase_codec::{define_codec_struct, BufferDecoder, EmptyArray, Encoder};
+use fluentbase_codec::{define_codec_struct, BufferDecoder, EmptyVec, Encoder};
 pub use fluentbase_types::{Address, Bytes, B256, U256};
 
 define_codec_struct! {
@@ -52,7 +52,7 @@ define_codec_struct! {
 define_codec_struct! {
     pub struct ContractOutputNoLogs {
         return_data: Bytes,
-        logs: EmptyArray,
+        logs: EmptyVec,
     }
 }
 
