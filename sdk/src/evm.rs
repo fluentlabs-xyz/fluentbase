@@ -1,6 +1,6 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
-use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
+use fluentbase_codec::{define_codec_struct, BufferDecoder, EmptyArray, Encoder};
 pub use fluentbase_types::{Address, Bytes, B256, U256};
 
 define_codec_struct! {
@@ -52,6 +52,7 @@ define_codec_struct! {
 define_codec_struct! {
     pub struct ContractOutputNoLogs {
         return_data: Bytes,
+        logs: EmptyArray,
     }
 }
 
@@ -193,6 +194,7 @@ impl ExecutionContext {
     {
         let contract_output = ContractOutputNoLogs {
             return_data: Bytes::from_static(return_data),
+            logs: Default::default(),
         };
         let (buffer, length) =
             contract_output.encode_to_fixed::<{ N + ContractOutput::HEADER_SIZE }>(0);
