@@ -4,10 +4,13 @@ use crate::{BufferDecoder, Encoder, WritableBuffer};
 pub struct EmptyVec;
 
 impl Encoder<EmptyVec> for EmptyVec {
-    const HEADER_SIZE: usize = 8;
+    const HEADER_SIZE: usize = 12;
 
     fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
-        encoder.write_bytes(field_offset, &[]);
+        // first 4 bytes are number of elements
+        encoder.write_u32(field_offset, 0);
+        // remaining 4+4 are offset and length
+        encoder.write_bytes(field_offset + 4, &[]);
     }
 
     fn decode_header(
@@ -15,6 +18,8 @@ impl Encoder<EmptyVec> for EmptyVec {
         field_offset: usize,
         _result: &mut EmptyVec,
     ) -> (usize, usize) {
-        decoder.read_bytes_header(field_offset)
+        let count = decoder.read_u32(field_offset);
+        debug_assert_eq!(count, 0);
+        decoder.read_bytes_header(field_offset + 4)
     }
 }
