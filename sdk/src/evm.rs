@@ -46,7 +46,7 @@ define_codec_struct! {
 define_codec_struct! {
     pub struct ContractOutput {
         return_data: Bytes,
-        logs: Option<Vec<ContractLog>>,
+        logs: Vec<ContractLog>,
     }
 }
 define_codec_struct! {
@@ -95,15 +95,12 @@ macro_rules! impl_emit_log {
         pub fn $fn_name(&mut self, topics: [B256; $num_topics], data: Bytes) {
             let address = Self::contract_address();
             let output = output_mut_or_default!(self);
-            output
-                .logs
-                .get_or_insert(Default::default())
-                .push(ContractLog {
-                    address,
-                    $log_field: Some(topics),
-                    data,
-                    ..Default::default()
-                });
+            output.logs.push(ContractLog {
+                address,
+                $log_field: Some(topics),
+                data,
+                ..Default::default()
+            });
         }
     };
 }
@@ -203,9 +200,9 @@ impl ExecutionContext {
     }
 
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
-        let contract_output = ContractOutput {
+        let contract_output = ContractOutputNoLogs {
             return_data: return_data.into(),
-            logs: None,
+            logs: Default::default(),
         };
         LowLevelSDK::sys_write(contract_output.encode_to_vec(0).as_slice());
         // LowLevelSDK::sys_write(return_data);
