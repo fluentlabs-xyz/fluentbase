@@ -1,5 +1,6 @@
 use crate::{types::B256, RuntimeContext};
 use fluentbase_rwasm::{common::Trap, Caller};
+use fluentbase_types::ExitCode;
 
 pub struct StateDbEmitLog;
 
@@ -22,14 +23,22 @@ impl StateDbEmitLog {
             })
             .collect::<Vec<_>>();
         let data = caller.read_memory(data_offset, data_len).to_vec();
-        Self::fn_impl(caller.data_mut(), &topics, &data);
+        Self::fn_impl(caller.data_mut(), &topics, &data).map_err(|err| err.into_trap())?;
         Ok(())
     }
 
-    pub fn fn_impl<T>(context: &mut RuntimeContext<T>, topics: &Vec<B256>, data: &Vec<u8>) {
+    pub fn fn_impl<T>(
+        context: &mut RuntimeContext<T>,
+        topics: &Vec<B256>,
+        data: &Vec<u8>,
+    ) -> Result<(), ExitCode> {
+        if context.is_static {
+            return Err(ExitCode::WriteProtection);
+        }
         let account_db = context.account_db.clone().unwrap();
         account_db
             .borrow_mut()
             .emit_log(&context.address, &topics, data.clone().into());
+        Ok(())
     }
 }
