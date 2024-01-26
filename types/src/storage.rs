@@ -10,7 +10,7 @@ pub trait AccountDb {
 
     fn update_storage(&mut self, address: &Address, index: &U256, value: &U256);
 
-    fn transfer(&mut self, from: &Address, to: &Address, value: &U256);
+    fn transfer(&mut self, from: &Address, to: &Address, value: &U256) -> bool;
 
     fn emit_log(&mut self, address: &Address, topics: &[B256], data: Bytes);
 }
