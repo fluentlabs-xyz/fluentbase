@@ -5,10 +5,12 @@ extern crate core;
 
 pub use crate::{
     buffer::{BufferDecoder, BufferEncoder, WritableBuffer},
+    empty::EmptyArray,
     encoder::{Encoder, FieldEncoder},
 };
 
 mod buffer;
+mod empty;
 mod encoder;
 mod evm;
 mod hash;

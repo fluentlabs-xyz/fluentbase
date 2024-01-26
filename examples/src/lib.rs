@@ -62,6 +62,7 @@ where
 {
     let contract_output = ContractOutputNoLogs {
         return_data: Bytes::from_static(bytes),
+        logs: Default::default(),
     };
     let (buffer, length) =
         contract_output.encode_to_fixed::<{ N + ContractOutput::HEADER_SIZE }>(0);
