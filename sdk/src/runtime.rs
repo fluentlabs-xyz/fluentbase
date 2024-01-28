@@ -200,14 +200,6 @@ impl LowLevelAPI for LowLevelSDK {
     fn zktrie_commit() {
         unreachable!("zktrie methods are not available in this mode")
     }
-
-    fn statedb_update_storage(_key: &Bytes32, _val: &Bytes32) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_load(_key: &Bytes32, _val: &mut Bytes32) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
 }
 
 #[cfg(test)]
