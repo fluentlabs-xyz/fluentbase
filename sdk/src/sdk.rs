@@ -40,6 +40,6 @@ pub trait LowLevelAPI {
     fn zktrie_root(output: &mut Bytes32);
     fn zktrie_rollback();
     fn zktrie_commit();
-    fn zktrie_store(key: &Bytes32, val: &Bytes32);
-    fn zktrie_load(key: &Bytes32, val: &mut Bytes32);
+    // fn zktrie_store(key: &Bytes32, val: &Bytes32);
+    // fn zktrie_load(key: &Bytes32, val: &mut Bytes32);
 }

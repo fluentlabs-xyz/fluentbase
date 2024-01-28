@@ -79,6 +79,4 @@ extern "C" {
     pub(crate) fn _zktrie_root(output32_offset: *mut u8);
     pub(crate) fn _zktrie_rollback();
     pub(crate) fn _zktrie_commit();
-    pub(crate) fn _zktrie_store(key32_offset: *const u8, val32_offset: *const u8);
-    pub(crate) fn _zktrie_load(key32_offset: *const u8, val32_offset: *mut u8);
 }
