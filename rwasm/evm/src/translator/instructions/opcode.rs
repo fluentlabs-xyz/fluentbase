@@ -193,39 +193,39 @@ opcodes! {
     0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap (temp store, use RAM)
     0x5E => MCOPY    => memory::mcopy::<H>, // memory.copy
 
-    0x5F => PUSH0  => stack::push::<0, H>, // manually implemented
-    0x60 => PUSH1  => stack::push::<1, H>, // manually implemented
-    0x61 => PUSH2  => stack::push::<2, H>, // manually implemented
-    0x62 => PUSH3  => stack::push::<3, H>, // manually implemented
-    0x63 => PUSH4  => stack::push::<4, H>, // manually implemented
-    0x64 => PUSH5  => stack::push::<5, H>, // manually implemented
-    0x65 => PUSH6  => stack::push::<6, H>, // manually implemented
-    0x66 => PUSH7  => stack::push::<7, H>, // manually implemented
-    0x67 => PUSH8  => stack::push::<8, H>, // manually implemented
-    0x68 => PUSH9  => stack::push::<9, H>, // manually implemented
-    0x69 => PUSH10 => stack::push::<10, H>, // manually implemented
-    0x6A => PUSH11 => stack::push::<11, H>, // manually implemented
-    0x6B => PUSH12 => stack::push::<12, H>, // manually implemented
-    0x6C => PUSH13 => stack::push::<13, H>, // manually implemented
-    0x6D => PUSH14 => stack::push::<14, H>, // manually implemented
-    0x6E => PUSH15 => stack::push::<15, H>, // manually implemented
-    0x6F => PUSH16 => stack::push::<16, H>, // manually implemented
-    0x70 => PUSH17 => stack::push::<17, H>, // manually implemented
-    0x71 => PUSH18 => stack::push::<18, H>, // manually implemented
-    0x72 => PUSH19 => stack::push::<19, H>, // manually implemented
-    0x73 => PUSH20 => stack::push::<20, H>, // manually implemented
-    0x74 => PUSH21 => stack::push::<21, H>, // manually implemented
-    0x75 => PUSH22 => stack::push::<22, H>, // manually implemented
-    0x76 => PUSH23 => stack::push::<23, H>, // manually implemented
-    0x77 => PUSH24 => stack::push::<24, H>, // manually implemented
-    0x78 => PUSH25 => stack::push::<25, H>, // manually implemented
-    0x79 => PUSH26 => stack::push::<26, H>, // manually implemented
-    0x7A => PUSH27 => stack::push::<27, H>, // manually implemented
-    0x7B => PUSH28 => stack::push::<28, H>, // manually implemented
-    0x7C => PUSH29 => stack::push::<29, H>, // manually implemented
-    0x7D => PUSH30 => stack::push::<30, H>, // manually implemented
-    0x7E => PUSH31 => stack::push::<31, H>, // manually implemented
-    0x7F => PUSH32 => stack::push::<32, H>, // manually implemented
+    0x5F => PUSH0  => stack::push::<0, H>, // done
+    0x60 => PUSH1  => stack::push::<1, H>, // done
+    0x61 => PUSH2  => stack::push::<2, H>, // done
+    0x62 => PUSH3  => stack::push::<3, H>, // done
+    0x63 => PUSH4  => stack::push::<4, H>, // done
+    0x64 => PUSH5  => stack::push::<5, H>, // done
+    0x65 => PUSH6  => stack::push::<6, H>, // done
+    0x66 => PUSH7  => stack::push::<7, H>, // done
+    0x67 => PUSH8  => stack::push::<8, H>, // done
+    0x68 => PUSH9  => stack::push::<9, H>, // done
+    0x69 => PUSH10 => stack::push::<10, H>, // done
+    0x6A => PUSH11 => stack::push::<11, H>, // done
+    0x6B => PUSH12 => stack::push::<12, H>, // done
+    0x6C => PUSH13 => stack::push::<13, H>, // done
+    0x6D => PUSH14 => stack::push::<14, H>, // done
+    0x6E => PUSH15 => stack::push::<15, H>, // done
+    0x6F => PUSH16 => stack::push::<16, H>, // done
+    0x70 => PUSH17 => stack::push::<17, H>, // done
+    0x71 => PUSH18 => stack::push::<18, H>, // done
+    0x72 => PUSH19 => stack::push::<19, H>, // done
+    0x73 => PUSH20 => stack::push::<20, H>, // done
+    0x74 => PUSH21 => stack::push::<21, H>, // done
+    0x75 => PUSH22 => stack::push::<22, H>, // done
+    0x76 => PUSH23 => stack::push::<23, H>, // done
+    0x77 => PUSH24 => stack::push::<24, H>, // done
+    0x78 => PUSH25 => stack::push::<25, H>, // done
+    0x79 => PUSH26 => stack::push::<26, H>, // done
+    0x7A => PUSH27 => stack::push::<27, H>, // done
+    0x7B => PUSH28 => stack::push::<28, H>, // done
+    0x7C => PUSH29 => stack::push::<29, H>, // done
+    0x7D => PUSH30 => stack::push::<30, H>, // done
+    0x7E => PUSH31 => stack::push::<31, H>, // done
+    0x7F => PUSH32 => stack::push::<32, H>, // done
 
     0x80 => DUP1  => stack::dup::<1, H>,  // done
     0x81 => DUP2  => stack::dup::<2, H>,  // done

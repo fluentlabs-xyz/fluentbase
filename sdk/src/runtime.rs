@@ -201,7 +201,7 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_store(_key: &Bytes32, _val: &Bytes32) {
+    fn statedb_update_storage(_key: &Bytes32, _val: &Bytes32) {
         unreachable!("zktrie methods are not available in this mode")
     }
 

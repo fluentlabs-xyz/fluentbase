@@ -9,7 +9,7 @@ use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 pub fn host_sload() {
     let k = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let mut v = [0; U256_BYTES_COUNT as usize];
-    LowLevelSDK::zktrie_load(&k, &mut v);
+    LowLevelSDK::statedb_update_storage(&k, &mut v);
 
     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, u256_from_be_slice(&v));
 }

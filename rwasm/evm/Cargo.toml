@@ -6,7 +6,6 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 bench = false
-test = false
 proc-macro = false
 
 [dependencies]

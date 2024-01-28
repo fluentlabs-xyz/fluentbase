@@ -19,11 +19,11 @@ use crate::{
         _sys_write,
         _zktrie_commit,
         _zktrie_field,
-        _zktrie_load,
+        // _zktrie_load,
         _zktrie_open,
         _zktrie_rollback,
         _zktrie_root,
-        _zktrie_store,
+        // _zktrie_store,
         _zktrie_update,
     },
     Bytes32,
@@ -204,13 +204,13 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { _zktrie_commit() }
     }
 
-    #[inline(always)]
-    fn zktrie_store(key: &Bytes32, val: &Bytes32) {
-        unsafe { _zktrie_store(key.as_ptr(), val.as_ptr()) }
-    }
-
-    #[inline(always)]
-    fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
-        unsafe { _zktrie_load(key.as_ptr(), val.as_mut_ptr()) }
-    }
+    // #[inline(always)]
+    // fn zktrie_store(key: &Bytes32, val: &Bytes32) {
+    //     unsafe { _zktrie_store(key.as_ptr(), val.as_ptr()) }
+    // }
+    //
+    // #[inline(always)]
+    // fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
+    //     unsafe { _statedb_get_storage(key.as_ptr(), val.as_mut_ptr()) }
+    // }
 }
