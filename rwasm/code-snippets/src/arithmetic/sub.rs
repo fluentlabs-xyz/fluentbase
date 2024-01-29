@@ -1,5 +1,5 @@
 use crate::{
-    common::{u256_be_to_tuple_le, u256_tuple_le_to_be},
+    common::{u256_be_to_u64tuple_le, u256_u64tuple_le_to_be},
     common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U64_MAX_VAL,
 };
@@ -9,8 +9,8 @@ pub fn arithmetic_sub() {
     let a = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let b = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
-    let a = u256_be_to_tuple_le(a);
-    let b = u256_be_to_tuple_le(b);
+    let a = u256_be_to_u64tuple_le(a);
+    let b = u256_be_to_u64tuple_le(b);
 
     let mut borrow: u64 = 0;
     let mut s0: u64 = 0;
@@ -49,7 +49,7 @@ pub fn arithmetic_sub() {
 
     let r = (s0, s1, s2, s3);
 
-    let res = u256_tuple_le_to_be(r);
+    let res = u256_u64tuple_le_to_be(r);
 
     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, res);
 }

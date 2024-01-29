@@ -924,7 +924,7 @@ pub(crate) fn convert_sign_le(v: U256AsU64TupleLE) -> U256AsU64TupleLE {
     r
 }
 
-pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256AsU64TupleLE {
+pub(crate) fn u256_be_to_u64tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256AsU64TupleLE {
     let mut r = (0, 0, 0, 0);
     let mut v = [0u8; 8];
     v.clone_from_slice(&val[0..8]);
@@ -939,7 +939,7 @@ pub(crate) fn u256_be_to_tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256A
     r
 }
 
-pub(crate) fn u256_tuple_le_to_be(val: U256AsU64TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
+pub(crate) fn u256_u64tuple_le_to_be(val: U256AsU64TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[0..8].copy_from_slice(&val.3.to_be_bytes());
     r[8..16].copy_from_slice(&val.2.to_be_bytes());

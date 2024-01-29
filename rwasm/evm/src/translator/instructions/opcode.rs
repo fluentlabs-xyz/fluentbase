@@ -342,8 +342,8 @@ opcodes! {
     // 0xEE
     // 0xEF
     0xF0 => CREATE       => host::create::<false, H>, // TODO
-    0xF1 => CALL         => host::call::<H>, // TODO
-    0xF2 => CALLCODE     => host::call_code::<H>, // TODO
+    0xF1 => CALL         => host::call::<H>, // done (need to test)
+    0xF2 => CALLCODE     => host::call_code::<H>, // not supported, useless
     0xF3 => RETURN       => control::ret, // sdk sys_write + return
     0xF4 => DELEGATECALL => host::delegate_call::<H>, // TODO
     0xF5 => CREATE2      => host::create::<true, H>, // TODO
@@ -351,12 +351,12 @@ opcodes! {
     // 0xF7
     // 0xF8
     // 0xF9
-    0xFA => STATICCALL   => host::static_call::<H>, // TODO
+    0xFA => STATICCALL   => host::static_call::<H>, // done (need to test)
     // 0xFB
     // 0xFC
     0xFD => REVERT       => control::revert::<H>, // sys_write + sys_halt
     0xFE => INVALID      => control::invalid, // sys_halt
-    0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // TODO
+    0xFF => SELFDESTRUCT => host::selfdestruct::<H>, // not supported
 }
 
 pub fn compute_push_count(opcode: u8) -> usize {

@@ -1,5 +1,5 @@
 use crate::{
-    common::u256_be_to_tuple_le,
+    common::u256_be_to_u64tuple_le,
     common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
@@ -13,7 +13,7 @@ use fluentbase_sdk::{
 #[no_mangle]
 fn system_calldataload() {
     let index = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
-    let index = u256_be_to_tuple_le(index).0 as usize;
+    let index = u256_be_to_u64tuple_le(index).0 as usize;
     let (offset, length) = {
         let mut header = [0u8; 8];
         LowLevelSDK::sys_read(

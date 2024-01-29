@@ -1,5 +1,5 @@
 use crate::{
-    common::u256_be_to_tuple_le,
+    common::u256_be_to_u64tuple_le,
     common_sp::{stack_pop_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
@@ -17,9 +17,9 @@ fn system_calldatacopy() {
     let src_offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
     let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
 
-    let mut dest_offset = u256_be_to_tuple_le(dest_offset).0 as usize;
-    let mut src_offset = u256_be_to_tuple_le(src_offset).0 as usize;
-    let size_left = u256_be_to_tuple_le(size);
+    let mut dest_offset = u256_be_to_u64tuple_le(dest_offset).0 as usize;
+    let mut src_offset = u256_be_to_u64tuple_le(src_offset).0 as usize;
+    let size_left = u256_be_to_u64tuple_le(size);
 
     let (ci_offset, ci_length) = {
         let mut header = [0u8; 8];
