@@ -188,9 +188,9 @@ opcodes! {
     0x58 => PC       => control::pc, // TODO
     0x59 => MSIZE    => memory::msize, // memory.size
     0x5A => GAS      => system::gas, // return 0
-    0x5B => JUMPDEST => control::jumpdest, // TODO
-    0x5C => TLOAD    => host::tload::<H>, // TODO use hashmap (temp store, use RAM)
-    0x5D => TSTORE   => host::tstore::<H>, // TODO use hashmap (temp store, use RAM)
+    0x5B => JUMPDEST => control::jumpdest, // done
+    0x5C => TLOAD    => host::tload::<H>, // done
+    0x5D => TSTORE   => host::tstore::<H>, // done
     0x5E => MCOPY    => memory::mcopy::<H>, // memory.copy
 
     0x5F => PUSH0  => stack::push::<0, H>, // done
@@ -341,12 +341,12 @@ opcodes! {
     // 0xED
     // 0xEE
     // 0xEF
-    0xF0 => CREATE       => host::create::<false, H>, // TODO
+    0xF0 => CREATE       => host::create::<false, H>, // done
     0xF1 => CALL         => host::call::<H>, // done (need to test)
     0xF2 => CALLCODE     => host::call_code::<H>, // not supported, useless
     0xF3 => RETURN       => control::ret, // sdk sys_write + return
-    0xF4 => DELEGATECALL => host::delegate_call::<H>, // TODO
-    0xF5 => CREATE2      => host::create::<true, H>, // TODO
+    0xF4 => DELEGATECALL => host::delegate_call::<H>, // done
+    0xF5 => CREATE2      => host::create::<true, H>, // done
     // 0xF6
     // 0xF7
     // 0xF8
