@@ -43,7 +43,7 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.5.2", default-features = false }
+alloy-primitives = { version = "0.5.2", default-features = false, features = ["rlp"] }
 hashbrown = "0.14.3"
 serde = { version = "1.0.193", default-features = false }
 casey = "0.4.0"

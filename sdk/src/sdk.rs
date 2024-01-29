@@ -24,7 +24,15 @@ pub trait LowLevelAPI {
         input: &[u8],
         output: &mut [u8],
         fuel: u32,
+        is_delegate: bool,
         is_static: bool,
+    ) -> i32;
+    fn rwasm_create(
+        value32: &[u8],
+        input_bytecode: &[u8],
+        salt32: &[u8],
+        deployed_contract_address20_output: &mut [u8],
+        is_create2: bool,
     ) -> i32;
 
     fn statedb_get_code(key: &[u8], output: &mut [u8]);

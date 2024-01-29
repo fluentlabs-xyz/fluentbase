@@ -39,6 +39,7 @@ extern "C" {
         return_offset: *mut u8,
         return_length: u32,
         fuel: u32,
+        is_delegate: u32,
         is_static: u32,
     ) -> i32;
     pub(crate) fn _rwasm_compile(
@@ -46,6 +47,14 @@ extern "C" {
         input_len: u32,
         output_ptr: *mut u8,
         output_len: u32,
+    ) -> i32;
+    pub(crate) fn _rwasm_create(
+        value32_offset: *const u8,
+        input_bytecode_offset: *const u8,
+        input_bytecode_length: u32,
+        salt32_offset: *const u8,
+        deployed_contract_address20_output_offset: *mut u8,
+        is_create2: u32,
     ) -> i32;
 
     pub(crate) fn _statedb_get_code(

@@ -16,6 +16,7 @@ pub enum ExitCode {
     PoseidonError = -1007,
     PersistentStorageError = -1008,
     WriteProtection = -1009,
+    CreateError = -1010,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -86,6 +87,7 @@ pub enum SysFuncIdx {
     // RWASM
     RWASM_TRANSACT = 0x000A, // fluentbase_v1alpha::_rwasm_transact
     RWASM_COMPILE = 0x000B,  // fluentbase_v1alpha::_rwasm_compile
+    RWASM_CREATE = 0x000C,   // fluentbase_v1alpha::_rwasm_create
     // crypto functions
     CRYPTO_KECCAK256 = 0x0101, // fluentbase_v1alpha::_sys_keccak256
     CRYPTO_POSEIDON = 0x0102,  // fluentbase_v1alpha::_sys_poseidon
@@ -129,6 +131,7 @@ impl SysFuncIdx {
             SysFuncIdx::SYS_WRITE => 1,
             SysFuncIdx::RWASM_TRANSACT => 1,
             SysFuncIdx::RWASM_COMPILE => 1,
+            SysFuncIdx::RWASM_CREATE => 1,
             SysFuncIdx::CRYPTO_KECCAK256 => 1,
             SysFuncIdx::CRYPTO_POSEIDON => 1,
             SysFuncIdx::CRYPTO_POSEIDON2 => 1,

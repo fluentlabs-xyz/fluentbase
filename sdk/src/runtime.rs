@@ -141,6 +141,7 @@ impl LowLevelAPI for LowLevelSDK {
         _input: &[u8],
         _output: &mut [u8],
         _fuel: u32,
+        _is_delegate: u32,
         _is_static: bool,
     ) -> i32 {
         unreachable!("rwasm methods are not available in this mode")
@@ -151,6 +152,16 @@ impl LowLevelAPI for LowLevelSDK {
         //     }
         //     Err(err_code) => err_code,
         // }
+    }
+
+    fn rwasm_create(
+        _value32_offset: &[u8],
+        _input_bytecode: &[u8],
+        _salt32: &[u8],
+        _deployed_contract_address20_output: &mut [u8],
+        _is_create2: bool,
+    ) -> i32 {
+        unreachable!("rwasm methods are not available in this mode")
     }
 
     fn statedb_get_code(_key: &[u8], _output: &mut [u8]) {

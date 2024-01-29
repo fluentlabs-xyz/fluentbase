@@ -20,7 +20,7 @@ pub(crate) fn sp_set(sp_base_mem_offset: usize, value: u64) {
     unsafe { *(sp_base_mem_offset as *mut u64) = value }
 }
 
-pub(crate) fn sp_get(sp_base_mem_offset: usize) -> u64 {
+pub(crate) fn sp_get_value(sp_base_mem_offset: usize) -> u64 {
     unsafe { *(sp_base_mem_offset as *mut u64) }
 }
 
@@ -29,13 +29,13 @@ pub(crate) fn sp_compute_mem_offset(sp_base_mem_offset: usize, sp: u64) -> u64 {
 }
 
 pub(crate) fn sp_get_mem_offset(sp_base_mem_offset: usize) -> u64 {
-    let sp = sp_get(sp_base_mem_offset);
+    let sp = sp_get_value(sp_base_mem_offset);
     sp_compute_mem_offset(sp_base_mem_offset, sp)
 }
 
 // TODO check boundaries?
 pub(crate) fn sp_change(sp_base_mem_offset: usize, count_bytes: i32) -> u64 {
-    let mut sp = sp_get(sp_base_mem_offset);
+    let mut sp = sp_get_value(sp_base_mem_offset);
     sp = (sp as i32 + count_bytes) as u64;
     sp_set(sp_base_mem_offset, sp);
 
@@ -59,12 +59,25 @@ pub(crate) fn stack_push_u256(sp_base_mem_offset: usize, val: [u8; U256_BYTES_CO
     dest.copy_from_slice(&val);
 }
 
+#[inline]
+pub(crate) fn u256_zero() -> [u8; U256_BYTES_COUNT as usize] {
+    [0u8; U256_BYTES_COUNT as usize]
+}
+
+#[inline]
+pub(crate) fn u256_one() -> [u8; U256_BYTES_COUNT as usize] {
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
+    ]
+}
+
 pub(crate) fn stack_pop_u256(sp_base_mem_offset: usize) -> [u8; U256_BYTES_COUNT as usize] {
     let sp_mem_offset = sp_get_mem_offset(sp_base_mem_offset);
     let v =
         unsafe { slice::from_raw_parts_mut(sp_mem_offset as *mut u8, U256_BYTES_COUNT as usize) };
 
-    let mut res = [0u8; U256_BYTES_COUNT as usize];
+    let mut res = u256_zero();
     res.copy_from_slice(v);
     sp_dec(sp_base_mem_offset, U256_BYTES_COUNT);
 
@@ -85,7 +98,7 @@ pub(crate) unsafe fn stack_peek_u256_unsafe(sp_base_mem_offset: usize) -> *mut u
 pub(crate) fn stack_peek_u256(
     sp_base_mem_offset: usize,
     param_idx: usize,
-) -> [u8; U256_BYTES_COUNT as usize] {
+) -> (u64, [u8; U256_BYTES_COUNT as usize]) {
     let sp_mem_offset = sp_get_mem_offset(sp_base_mem_offset);
     let src = unsafe {
         slice::from_raw_parts(
@@ -93,10 +106,10 @@ pub(crate) fn stack_peek_u256(
             U256_BYTES_COUNT as usize,
         )
     };
-    let mut res = [0u8; U256_BYTES_COUNT as usize];
+    let mut res = u256_zero();
     res.copy_from_slice(src);
 
-    res
+    (sp_mem_offset, res)
 }
 
 pub(crate) fn stack_write_u256(
