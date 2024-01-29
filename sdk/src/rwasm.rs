@@ -5,6 +5,7 @@ use crate::{
         _crypto_poseidon,
         _crypto_poseidon2,
         _rwasm_compile,
+        _rwasm_create,
         _rwasm_transact,
         _statedb_emit_log,
         _statedb_get_code,
@@ -119,6 +120,7 @@ impl LowLevelAPI for LowLevelSDK {
         input: &[u8],
         output: &mut [u8],
         fuel: u32,
+        is_delegate: bool,
         is_static: bool,
     ) -> i32 {
         unsafe {
@@ -130,7 +132,28 @@ impl LowLevelAPI for LowLevelSDK {
                 output.as_mut_ptr(),
                 output.len() as u32,
                 fuel,
+                is_delegate as u32,
                 is_static as u32,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn rwasm_create(
+        value32: &[u8],
+        input_bytecode: &[u8],
+        salt32: &[u8],
+        deployed_contract_address20_output: &mut [u8],
+        is_create2: bool,
+    ) -> i32 {
+        unsafe {
+            _rwasm_create(
+                value32.as_ptr(),
+                input_bytecode.as_ptr(),
+                input_bytecode.len() as u32,
+                salt32.as_ptr(),
+                deployed_contract_address20_output.as_mut_ptr(),
+                is_create2 as u32,
             )
         }
     }

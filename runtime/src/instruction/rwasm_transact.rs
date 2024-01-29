@@ -18,6 +18,7 @@ impl RwasmTransact {
         return_offset: u32,
         return_length: u32,
         fuel: u32,
+        is_delegate: u32,
         is_static: u32,
     ) -> Result<i32, Trap> {
         let address = caller.read_memory(address20_offset, 20).to_vec();
@@ -30,6 +31,7 @@ impl RwasmTransact {
             &input,
             return_length,
             fuel,
+            is_delegate != 0,
             is_static != 0,
         ) {
             Ok(return_data) => {
@@ -48,14 +50,17 @@ impl RwasmTransact {
         input: &[u8],
         return_length: u32,
         fuel: u32,
+        is_delegate: bool,
         is_static: bool,
     ) -> Result<Vec<u8>, ExitCode> {
-        let address = Address::from_slice(address);
         let value = U256::from_be_slice(value);
         // reject static with value not zero
-        if context.is_static && !value.is_zero() {
+        if is_delegate && !value.is_zero() {
+            return Err(ExitCode::NotSupportedCall);
+        } else if context.is_static && !value.is_zero() {
             return Err(ExitCode::WriteProtection);
         }
+        let address = Address::from_slice(address);
         // get bytecode
         let account_db = context.account_db.clone().unwrap();
         let account = account_db
@@ -64,20 +69,26 @@ impl RwasmTransact {
             .unwrap_or_default();
         let code = account.code.unwrap_or_default();
         // transfer funds
-        account_db
-            .borrow_mut()
-            .transfer(&context.address, &address, &value);
+        if !is_delegate {
+            account_db
+                .borrow_mut()
+                .transfer(&context.address, &address, &value);
+        }
         // init shared runtime
         let import_linker = Runtime::<()>::new_shared_linker();
-        let ctx = RuntimeContext::new(code)
+        let mut ctx = RuntimeContext::new(code)
             .with_input(input.to_vec())
             .with_is_static(is_static)
             .with_state(STATE_MAIN)
-            .with_caller(context.address)
-            .with_address(address)
             .with_fuel_limit(fuel)
+            .with_address(address)
             .with_account_db(account_db)
             .with_is_shared(true);
+        if is_delegate {
+            ctx = ctx.with_caller(context.caller);
+        } else {
+            ctx = ctx.with_caller(context.address);
+        }
         let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker)
             .map_err(|_| ExitCode::TransactError)?;
         let output = execution_result.data().output();

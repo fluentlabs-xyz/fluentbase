@@ -1,4 +1,5 @@
 use super::constants::*;
+use alloy_primitives::U256;
 
 // #[allow(clippy::collapsible_else_if)]
 // pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i64 {
@@ -49,19 +50,19 @@ use super::constants::*;
 //         }
 //     }
 // }
-//
-// #[inline]
-// pub fn create2_cost(len: usize) -> Option<u64> {
-//     let base = CREATE;
-//     // ceil(len / 32.0)
-//     let len = len as u64;
-//     let sha_addup_base = (len / 32) + u64::from((len % 32) != 0);
-//     let sha_addup = KECCAK256WORD.checked_mul(sha_addup_base)?;
-//     let gas = base.checked_add(sha_addup)?;
-//
-//     Some(gas)
-// }
-//
+
+#[inline]
+pub fn create2_cost(len: usize) -> Option<u32> {
+    let base = CREATE;
+    // ceil(len / 32.0)
+    let len = len as u32;
+    let sha_addup_base = (len / 32) + u32::from((len % 32) != 0);
+    let sha_addup = KECCAK256WORD.checked_mul(sha_addup_base)?;
+    let gas = base.checked_add(sha_addup)?;
+
+    Some(gas)
+}
+
 // #[inline]
 // fn log2floor(value: U256) -> u64 {
 //     assert!(value != U256::ZERO);
@@ -258,34 +259,34 @@ pub fn sload_cost(/*is_cold: bool*/) -> u32 {
 //     }
 //     gas
 // }
-//
-// pub fn call_cost<SPEC: Spec>(
-//     value: U256,
-//     is_new: bool,
-//     is_cold: bool,
-//     is_call_or_callcode: bool,
-//     is_call_or_staticcall: bool,
-// ) -> u64 {
-//     let transfers_value = value != U256::default();
-//
-//     let call_gas = if SPEC::enabled(BERLIN) {
-//         if is_cold {
-//             COLD_ACCOUNT_ACCESS_COST
-//         } else {
-//             WARM_STORAGE_READ_COST
-//         }
-//     } else if SPEC::enabled(TANGERINE) {
-//         // EIP-150: Gas cost changes for IO-heavy operations
-//         700
-//     } else {
-//         40
-//     };
-//
-//     call_gas
-//         + xfer_cost(is_call_or_callcode, transfers_value)
-//         + new_cost::<SPEC>(is_call_or_staticcall, is_new, transfers_value)
-// }
-//
+
+pub fn call_cost(
+    value: U256,
+    is_new: bool,
+    is_cold: bool,
+    is_call_or_callcode: bool,
+    is_call_or_staticcall: bool,
+) -> u32 {
+    let transfers_value = value != U256::default();
+
+    // let call_gas = if SPEC::enabled(BERLIN) {
+    let call_gas = if is_cold {
+        COLD_ACCOUNT_ACCESS_COST
+    } else {
+        WARM_STORAGE_READ_COST
+    };
+    // } else if SPEC::enabled(TANGERINE) {
+    //     // EIP-150: Gas cost changes for IO-heavy operations
+    //     700
+    // } else {
+    //     40
+    // };
+
+    call_gas
+        + xfer_cost(is_call_or_callcode, transfers_value)
+        + new_cost(is_call_or_staticcall, is_new, transfers_value)
+}
+
 // #[inline]
 // pub fn warm_cold_cost<SPEC: Spec>(is_cold: bool, regular_value: u64) -> u64 {
 //     if SPEC::enabled(BERLIN) {
@@ -298,36 +299,35 @@ pub fn sload_cost(/*is_cold: bool*/) -> u32 {
 //         regular_value
 //     }
 // }
-//
-// #[inline]
-// fn xfer_cost(is_call_or_callcode: bool, transfers_value: bool) -> u64 {
-//     if is_call_or_callcode && transfers_value {
-//         CALLVALUE
-//     } else {
-//         0
-//     }
-// }
-//
-// #[inline]
-// fn new_cost<SPEC: Spec>(is_call_or_staticcall: bool, is_new: bool, transfers_value: bool) -> u64
-// {     if is_call_or_staticcall {
-//         // EIP-161: State trie clearing (invariant-preserving alternative)
-//         if SPEC::enabled(SPURIOUS_DRAGON) {
-//             if transfers_value && is_new {
-//                 NEWACCOUNT
-//             } else {
-//                 0
-//             }
-//         } else if is_new {
-//             NEWACCOUNT
-//         } else {
-//             0
-//         }
-//     } else {
-//         0
-//     }
-// }
-//
+
+#[inline]
+fn xfer_cost(is_call_or_callcode: bool, transfers_value: bool) -> u32 {
+    if is_call_or_callcode && transfers_value {
+        CALLVALUE
+    } else {
+        0
+    }
+}
+
+#[inline]
+fn new_cost(is_call_or_staticcall: bool, is_new: bool, transfers_value: bool) -> u32 {
+    if is_call_or_staticcall {
+        // if SPEC::enabled(SPURIOUS_DRAGON) {
+        if transfers_value && is_new {
+            NEWACCOUNT
+        } else {
+            0
+        }
+        // } else if is_new {
+        //     NEWACCOUNT
+        // } else {
+        //     0
+        // }
+    } else {
+        0
+    }
+}
+
 // #[inline]
 // pub fn memory_gas(a: usize) -> u64 {
 //     let a = a as u64;

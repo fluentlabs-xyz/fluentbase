@@ -3,6 +3,7 @@ pub mod crypto_keccak256;
 pub mod crypto_poseidon;
 pub mod crypto_poseidon2;
 pub mod rwasm_compile;
+pub mod rwasm_create;
 pub mod rwasm_transact;
 pub mod statedb_emit_log;
 pub mod statedb_get_code;
@@ -30,6 +31,7 @@ use crate::{
         crypto_poseidon::CryptoPoseidon,
         crypto_poseidon2::CryptoPoseidon2,
         rwasm_compile::RwasmCompile,
+        rwasm_create::RwasmCreate,
         rwasm_transact::RwasmTransact,
         statedb_emit_log::StateDbEmitLog,
         statedb_get_code::StateDbGetCode,
@@ -58,6 +60,7 @@ use crate::{
             CRYPTO_POSEIDON,
             CRYPTO_POSEIDON2,
             RWASM_COMPILE,
+            RWASM_CREATE,
             RWASM_TRANSACT,
             STATEDB_GET_STORAGE,
             STATEDB_UPDATE_STORAGE,
@@ -106,8 +109,9 @@ impl_runtime_handler!(CryptoPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_c
 impl_runtime_handler!(CryptoPoseidon2, CRYPTO_POSEIDON2, fn fluentbase_v1alpha::_crypto_poseidon2(fa32_offset: u32, fb32_offset: u32, fd32_offset: u32, output_offset: u32) -> ());
 impl_runtime_handler!(CryptoEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_offset: u32, sig64_offset: u32, output65_offset: u32, rec_id: u32) -> ());
 
-impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_static: u32) -> i32);
+impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_delegate: u32, is_static: u32) -> i32);
 impl_runtime_handler!(RwasmCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
+impl_runtime_handler!(RwasmCreate, RWASM_CREATE, fn fluentbase_v1alpha::_rwasm_create(value32_offset: u32, input_bytecode_offset: u32, input_bytecode_length: u32, salt32_offset: u32, return_address20_offset: u32, is_create2: u32) -> i32);
 
 impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_statedb_get_code(key20_offset: u32, output_offset: u32, output_len: u32) -> ());
 impl_runtime_handler!(StateDbGetCodeSize, STATEDB_GET_CODE_SIZE, fn fluentbase_v1alpha::_statedb_get_code_size(key20_offset: u32) -> u32);
@@ -135,6 +139,7 @@ pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut Impo
     CryptoEcrecover::register_linker::<T>(import_linker);
     RwasmTransact::register_linker::<T>(import_linker);
     RwasmCompile::register_linker::<T>(import_linker);
+    RwasmCreate::register_linker::<T>(import_linker);
     StateDbGetCode::register_linker::<T>(import_linker);
     StateDbGetCodeSize::register_linker::<T>(import_linker);
     // StateDbUpdateCode::register_linker::<T>(import_linker);
@@ -161,6 +166,7 @@ pub(crate) fn runtime_register_shared_linkers<'t, T>(import_linker: &mut ImportL
     CryptoEcrecover::register_linker::<T>(import_linker);
     RwasmTransact::register_linker::<T>(import_linker);
     RwasmCompile::register_linker::<T>(import_linker);
+    RwasmCreate::register_linker::<T>(import_linker);
     StateDbGetCode::register_linker::<T>(import_linker);
     StateDbGetCodeSize::register_linker::<T>(import_linker);
     // StateDbUpdateCode::register_linker::<T>(import_linker);
@@ -190,6 +196,7 @@ pub(crate) fn runtime_register_sovereign_handlers<'t, T>(
     CryptoEcrecover::register_handler(linker, store);
     RwasmTransact::register_handler(linker, store);
     RwasmCompile::register_handler(linker, store);
+    RwasmCreate::register_handler(linker, store);
     StateDbGetCode::register_handler(linker, store);
     StateDbGetCodeSize::register_handler(linker, store);
     // StateDbUpdateCode::register_handler(linker, store);
@@ -219,6 +226,7 @@ pub(crate) fn runtime_register_shared_handlers<'t, T>(
     CryptoEcrecover::register_handler(linker, store);
     RwasmTransact::register_handler(linker, store);
     RwasmCompile::register_handler(linker, store);
+    RwasmCreate::register_handler(linker, store);
     StateDbGetCode::register_handler(linker, store);
     StateDbGetCodeSize::register_handler(linker, store);
     // StateDbUpdateCode::register_handler(linker, store);

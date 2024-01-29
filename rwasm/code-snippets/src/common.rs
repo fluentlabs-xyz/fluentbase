@@ -964,13 +964,13 @@ pub(crate) fn u256_from_be_slice_align_left(v: &[u8]) -> [u8; U256_BYTES_COUNT a
 }
 
 pub(crate) fn swap_n(first_param_idx: usize, second_param_idx: usize) {
-    let v0 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, first_param_idx);
-    let v1 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, second_param_idx);
+    let v0 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, first_param_idx).1;
+    let v1 = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, second_param_idx).1;
     stack_write_u256(SP_BASE_MEM_OFFSET_DEFAULT, &v0, second_param_idx);
     stack_write_u256(SP_BASE_MEM_OFFSET_DEFAULT, &v1, first_param_idx);
 }
 
 pub(crate) fn dup_n(param_idx: usize) {
     let v = stack_peek_u256(SP_BASE_MEM_OFFSET_DEFAULT, param_idx);
-    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, v);
+    stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, v.1);
 }

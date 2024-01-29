@@ -5,6 +5,7 @@ use crate::translator::{
     instructions::utilities::replace_with_call_to_subroutine,
     translator::Translator,
 };
+use alloy_primitives::U256;
 #[cfg(test)]
 use log::debug;
 
@@ -181,28 +182,42 @@ pub fn log<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut
 pub fn selfdestruct<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "SELFDESTRUCT";
     if cfg!(test) {
-        panic!("op:{} not implemented", OP);
+        panic!("op:{} not supported", OP);
     }
     return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
-pub fn create<const IS_CREATE2: bool, H: Host>(_translator: &mut Translator<'_>, _host: &mut H) {
+pub fn create<const IS_CREATE2: bool, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CREATE";
-    panic!("op:{}(IS_CREATE2:{}) not implemented", OP, IS_CREATE2);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop!(translator, _value, _code_offset, len);
+    let len = as_usize_or_fail!(translator, len);
+    if IS_CREATE2 {
+        pop!(translator, _salt);
+        gas!(translator, gas::constants::CREATE);
+    } else {
+        gas::calc::create2_cost(len).map(|gas| gas!(translator, gas));
+    }
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn call<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CALL";
     #[cfg(test)]
     debug!("op:{}", OP);
-    gas!(translator, gas::constants::WARM_STORAGE_READ_COST); // COLD_ACCOUNT_ACCESS_COST
     pop!(translator, _local_gas_limit, _to);
-    pop!(translator, _value);
+    pop!(translator, value);
     pop!(translator, in_offset, in_len, out_offset, out_len);
     as_usize_or_fail!(translator, in_offset);
     as_usize_or_fail!(translator, in_len);
     as_usize_or_fail!(translator, out_offset);
     as_usize_or_fail!(translator, out_len);
+    gas!(
+        translator,
+        gas::calc::call_cost(value, false, false, true, true,)
+    );
 
     replace_with_call_to_subroutine(translator, host);
 }
@@ -210,30 +225,43 @@ pub fn call<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 pub fn call_code<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "CALL_CODE";
     if cfg!(test) {
-        panic!("op:{} not implemented", OP);
+        panic!("op:{} not supported", OP);
     }
     return_with_reason!(translator, InstructionResult::OpcodeNotFound);
 }
 
-pub fn delegate_call<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn delegate_call<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "DELEGATE_CALL";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-}
-
-pub fn static_call<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    const OP: &str = "STATIC_CALL";
     #[cfg(test)]
     debug!("op:{}", OP);
-    gas!(translator, gas::constants::WARM_STORAGE_READ_COST); // or COLD_ACCOUNT_ACCESS_COST
     pop!(translator, _local_gas_limit, _to);
     pop!(translator, in_offset, in_len, out_offset, out_len);
     as_usize_or_fail!(translator, in_offset);
     as_usize_or_fail!(translator, in_len);
     as_usize_or_fail!(translator, out_offset);
     as_usize_or_fail!(translator, out_len);
+    gas!(
+        translator,
+        gas::calc::call_cost(U256::ZERO, false, false, false, false)
+    );
+
+    replace_with_call_to_subroutine(translator, host);
+}
+
+pub fn static_call<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
+    const OP: &str = "STATIC_CALL";
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop!(translator, _local_gas_limit, _to);
+    pop!(translator, in_offset, in_len, out_offset, out_len);
+    as_usize_or_fail!(translator, in_offset);
+    as_usize_or_fail!(translator, in_len);
+    as_usize_or_fail!(translator, out_offset);
+    as_usize_or_fail!(translator, out_len);
+    gas!(
+        translator,
+        gas::calc::call_cost(U256::ZERO, false, false, false, true)
+    );
 
     replace_with_call_to_subroutine(translator, host);
 }
