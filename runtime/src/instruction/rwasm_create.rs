@@ -4,7 +4,7 @@ use crate::{
     RuntimeContext,
 };
 use fluentbase_rwasm::{common::Trap, Caller};
-use fluentbase_types::{Account, ExitCode, STATE_MAIN};
+use fluentbase_types::{Account, ExitCode, STATE_DEPLOY};
 
 pub struct RwasmCreate;
 
@@ -80,7 +80,7 @@ impl RwasmCreate {
         let import_linker = Runtime::<()>::new_shared_linker();
         let bytecode = Bytes::copy_from_slice(input_bytecode);
         let ctx = RuntimeContext::new(bytecode)
-            .with_state(STATE_MAIN)
+            .with_state(STATE_DEPLOY)
             .with_caller(context.address)
             .with_address(deployed_contract_address)
             .with_account_db(account_db.clone())

@@ -10,9 +10,11 @@ impl SysWrite {
         length: u32,
     ) -> Result<(), Trap> {
         let data = caller.read_memory(offset, length).to_vec();
-        caller.data_mut().extend_return_data(data.as_slice());
+        Self::fn_impl(caller.data_mut(), &data);
         Ok(())
     }
 
-    pub fn fn_impl() {}
+    pub fn fn_impl<T>(ctx: &mut RuntimeContext<T>, data: &[u8]) {
+        ctx.extend_return_data(data);
+    }
 }
