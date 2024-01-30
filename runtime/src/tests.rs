@@ -1,8 +1,5 @@
 use crate::{runtime::Runtime, types::SysFuncIdx, RuntimeContext};
-use fluentbase_rwasm::{
-    instruction_set,
-    rwasm::{Compiler, CompilerConfig, FuncOrExport, ReducedModule},
-};
+use rwasm_codegen::{instruction_set, Compiler, CompilerConfig, FuncOrExport, ReducedModule};
 
 pub(crate) fn wat2rwasm(wat: &str, consume_fuel: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_sovereign_linker();

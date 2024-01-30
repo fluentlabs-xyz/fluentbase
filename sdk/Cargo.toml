@@ -8,7 +8,7 @@ edition = "2021"
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-runtime = { path = "../runtime", optional = true }
-fluentbase-rwasm = { path = "../rwasm", optional = true }
+rwasm-codegen = { workspace = true, optional = true, default-features = false }
 fluentbase-poseidon = { path = "../poseidon", optional = true }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"], optional = true }
 eth_trie = { version = "0.3.0", optional = true }
@@ -36,7 +36,7 @@ evm = []
 runtime = [
     "fluentbase-codec/std",
     "dep:fluentbase-runtime",
-    "dep:fluentbase-rwasm",
+    "dep:rwasm-codegen",
     "dep:fluentbase-poseidon",
     "dep:k256",
     "dep:eth_trie",

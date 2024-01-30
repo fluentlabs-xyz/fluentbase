@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{common::Trap, Caller};
+use rwasm::{common::Trap, Caller};
 
 pub struct ZkTrieField;
 

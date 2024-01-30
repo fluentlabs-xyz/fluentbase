@@ -1,6 +1,6 @@
 use crate::deploy_internal;
-use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig};
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use rwasm_codegen::{Compiler, CompilerConfig};
 
 pub fn deploy() {
     deploy_internal(include_bytes!("../bin/rwasm.wasm"))

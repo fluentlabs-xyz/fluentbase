@@ -3,8 +3,8 @@ use crate::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::{ExitCode, STATE_MAIN};
+use rwasm::{common::Trap, Caller};
 
 pub struct RwasmTransact;
 

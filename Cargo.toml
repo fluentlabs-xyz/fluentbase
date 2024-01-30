@@ -1,16 +1,13 @@
 [workspace]
 members = [
+    "code-snippets",
     "codec",
     "codec-derive",
     "e2e",
     "examples",
     "poseidon",
     "runtime",
-    "rwasm",
-    "rwasm/bin",
-    "rwasm/e2e",
-    "rwasm/evm",
-    "rwasm/code-snippets",
+    "rwasm-evm",
     "sdk",
     "types",
     "zktrie",
@@ -42,6 +39,8 @@ categories = ["wasm", "no-std", "virtualization"]
 #maingate = { git = "https://github.com/scroll-tech/halo2wrong", branch = "halo2-ecc-snark-verifier-0323" }
 
 [workspace.dependencies]
+rwasm-codegen = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.5.2", default-features = false, features = ["rlp"] }
 hashbrown = "0.14.3"

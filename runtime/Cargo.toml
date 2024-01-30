@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-# fluentbase
-fluentbase-rwasm = { path = "../rwasm" }
+rwasm-codegen = { workspace = true }
+rwasm = { workspace = true, default-features = false }
 fluentbase-poseidon = { path = "../poseidon" }
 fluentbase-zktrie = { path = "../zktrie" }
 fluentbase-types = { path = "../types" }

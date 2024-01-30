@@ -1,6 +1,6 @@
 use crate::{types::Address, RuntimeContext};
-use fluentbase_rwasm::{common::Trap, Caller};
 use keccak_hash::H256;
+use rwasm::{common::Trap, Caller};
 
 pub struct StateDbGetCodeHash;
 

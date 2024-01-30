@@ -1,6 +1,6 @@
 use crate::{types::Address, RuntimeContext};
-use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
+use rwasm::{common::Trap, Caller};
 
 pub struct StateDbGetBalance;
 

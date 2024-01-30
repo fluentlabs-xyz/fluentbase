@@ -8,23 +8,28 @@ use crate::{
     storage::PersistentStorage,
     types::RuntimeError,
 };
-use fluentbase_rwasm::{
-    engine::Tracer,
-    rwasm::{ImportLinker, InstructionSet, ReducedModule, ReducedModuleError},
-    AsContextMut,
-    Config,
-    Engine,
-    FuelConsumptionMode,
-    Func,
-    FuncType,
-    Instance,
-    IntoFunc,
-    Linker,
-    Module,
-    StackLimits,
-    Store,
-};
 use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
+use rwasm_codegen::{
+    rwasm::{
+        engine::Tracer,
+        AsContextMut,
+        Config,
+        Engine,
+        FuelConsumptionMode,
+        Func,
+        FuncType,
+        Instance,
+        IntoFunc,
+        Linker,
+        Module,
+        StackLimits,
+        Store,
+    },
+    ImportLinker,
+    InstructionSet,
+    ReducedModule,
+    ReducedModuleError,
+};
 use std::{cell::RefCell, mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
@@ -418,7 +423,7 @@ impl<'t, T> Runtime<'t, T> {
             _ => return ExitCode::UnknownError as i32,
         };
         let err = match err {
-            fluentbase_rwasm::Error::Trap(err) => err,
+            rwasm::Error::Trap(err) => err,
             _ => return ExitCode::UnknownError as i32,
         };
         // for i32 error code (raw error) just return result

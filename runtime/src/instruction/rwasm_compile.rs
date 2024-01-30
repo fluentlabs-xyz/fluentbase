@@ -1,8 +1,8 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_rwasm::{
-    common::Trap,
-    rwasm::{Compiler, CompilerConfig},
-    Caller,
+use rwasm_codegen::{
+    rwasm::{common::Trap, Caller},
+    Compiler,
+    CompilerConfig,
 };
 
 pub struct RwasmCompile;

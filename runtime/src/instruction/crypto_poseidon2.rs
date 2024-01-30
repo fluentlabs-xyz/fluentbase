@@ -1,8 +1,8 @@
 use crate::RuntimeContext;
 use fluentbase_poseidon::Hashable;
-use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::ExitCode;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
+use rwasm::{common::Trap, Caller};
 
 pub struct CryptoPoseidon2;
 

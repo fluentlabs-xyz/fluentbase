@@ -1,4 +1,4 @@
-use fluentbase_rwasm::{
+use rwasm::{
     common::{Trap, TrapCode},
     engine::{bytecode::FuncIdx, CompiledFunc},
 };

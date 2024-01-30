@@ -1,9 +1,9 @@
-use fluentbase_rwasm::rwasm::ReducedModuleError;
+use rwasm_codegen::{rwasm::Error as RwasmError, ReducedModuleError};
 
 #[derive(Debug)]
 pub enum RuntimeError {
     ReducedModule(ReducedModuleError),
-    Rwasm(fluentbase_rwasm::Error),
+    Rwasm(RwasmError),
     StorageError(String),
 }
 
@@ -13,8 +13,8 @@ impl From<ReducedModuleError> for RuntimeError {
     }
 }
 
-impl From<fluentbase_rwasm::Error> for RuntimeError {
-    fn from(value: fluentbase_rwasm::Error) -> Self {
+impl From<RwasmError> for RuntimeError {
+    fn from(value: RwasmError) -> Self {
         Self::Rwasm(value)
     }
 }
@@ -31,8 +31,8 @@ macro_rules! rwasm_error {
     };
 }
 
-rwasm_error!(fluentbase_rwasm::global::GlobalError);
-rwasm_error!(fluentbase_rwasm::memory::MemoryError);
-rwasm_error!(fluentbase_rwasm::table::TableError);
-rwasm_error!(fluentbase_rwasm::linker::LinkerError);
-rwasm_error!(fluentbase_rwasm::module::ModuleError);
+rwasm_error!(rwasm::global::GlobalError);
+rwasm_error!(rwasm::memory::MemoryError);
+rwasm_error!(rwasm::table::TableError);
+rwasm_error!(rwasm::linker::LinkerError);
+rwasm_error!(rwasm::module::ModuleError);

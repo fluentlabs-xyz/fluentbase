@@ -1,0 +1,33 @@
+[package]
+name = "fluentbase-rwasm-evm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+proc-macro = false
+
+[dependencies]
+fluentbase-rwasm-code-snippets = { path = "../code-snippets" }
+rwasm = { workspace = true, default-features = false }
+rwasm-codegen = { workspace = true }
+fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
+fluentbase-codec = { path = "../codec", default-features = false }
+alloy-primitives = { workspace = true, default-features = false }
+hashbrown = { version = "0.14", default-features = false }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+fluentbase-types = { path = "../types", default-features = false }
+
+[dev-dependencies]
+fluentbase-runtime = { path = "../runtime" }
+env_logger = { version = "0.10.2" }
+log = { version = "0.4.20" }
+ctor = "0.2.6"
+
+[build-dependencies]
+hex = { version = "0.4", default-features = false }
+
+[features]
+default = ["no_gas_measuring"]
+no_gas_measuring = []

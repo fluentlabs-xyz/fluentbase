@@ -13,8 +13,8 @@ categories.workspace = true
 fluentbase-runtime = { path = "../runtime" }
 fluentbase-sdk = { path = "../sdk" }
 fluentbase-poseidon = { path = "../poseidon" }
-fluentbase-rwasm = { path = "../rwasm" }
 fluentbase-codec = { path = "../codec" }
+rwasm-codegen = { workspace = true }
 
 [dev-dependencies]
 serde_json = "1.0.108"
