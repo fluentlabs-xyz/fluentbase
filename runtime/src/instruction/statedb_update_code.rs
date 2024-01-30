@@ -1,6 +1,6 @@
 use crate::{types::Bytes, RuntimeContext};
-use fluentbase_rwasm::{common::Trap, Caller};
 use fluentbase_types::{Account, Address, B256};
+use rwasm::{common::Trap, Caller};
 
 pub struct StateDbUpdateCode;
 

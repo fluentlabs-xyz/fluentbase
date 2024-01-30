@@ -1,9 +1,9 @@
 use fluentbase_codec::Encoder;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{types::STATE_MAIN, ExecutionResult, Runtime, RuntimeContext};
-use fluentbase_rwasm::rwasm::{Compiler, CompilerConfig};
-use fluentbase_sdk::evm::{Bytes, ContractInput, ContractOutput};
+use fluentbase_sdk::evm::{Bytes, ContractInput};
 use hex_literal::hex;
+use rwasm_codegen::{Compiler, CompilerConfig};
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_sovereign_linker();
@@ -42,8 +42,10 @@ fn test_greeting() {
         "Hello, World".as_bytes(),
     );
     assert_eq!(output.data().exit_code(), 0);
-    let output = ContractOutput::from(output.data().output().clone());
-    assert_eq!(output.return_data, "Hello, World".as_bytes().to_vec());
+    assert_eq!(
+        output.data().output().clone(),
+        "Hello, World".as_bytes().to_vec()
+    );
 }
 
 #[test]
@@ -53,9 +55,8 @@ fn test_keccak256() {
         "Hello, World".as_bytes(),
     );
     assert_eq!(output.data().exit_code(), 0);
-    let output = ContractOutput::from(output.data().output().clone());
     assert_eq!(
-        output.return_data,
+        output.data().output().clone(),
         hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529").to_vec()
     );
 }
@@ -68,8 +69,10 @@ fn test_poseidon() {
         input_data,
     );
     assert_eq!(output.data().exit_code(), 0);
-    let output = ContractOutput::from(output.data().output().clone());
-    assert_eq!(output.return_data, poseidon_hash(input_data).to_vec());
+    assert_eq!(
+        output.data().output().clone(),
+        poseidon_hash(input_data).to_vec()
+    );
 }
 
 #[test]
@@ -104,8 +107,7 @@ fn test_secp256k1_verify() {
             .with_fuel_limit(10_000_000);
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let output = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
-        let output = ContractOutput::from(output.data().output().clone());
-        assert_eq!(output.return_data, Vec::<u8>::new());
+        assert_eq!(output.data().output().clone(), Vec::<u8>::new());
     }
 }
 

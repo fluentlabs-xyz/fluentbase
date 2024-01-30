@@ -100,29 +100,29 @@ macro_rules! impl_runtime_handler {
 
             const FUNC_INDEX: $crate::types::SysFuncIdx = $crate::types::SysFuncIdx::$sys_func;
 
-            fn register_linker<'t, T>(import_linker: &mut fluentbase_rwasm::rwasm::ImportLinker) {
-                use fluentbase_rwasm::rwasm::ImportFunc;
+            fn register_linker<'t, T>(import_linker: &mut rwasm_codegen::ImportLinker) {
+                use rwasm_codegen::ImportFunc;
                 import_linker.insert_function(ImportFunc::new_env(
                     stringify!($module).to_string(),
                     stringify!($name).to_string(),
                     $sys_func as u16,
-                    &[fluentbase_rwasm::common::ValueType::I32; $crate::count_call_args!($($t)*)],
-                    &[fluentbase_rwasm::common::ValueType::I32; $crate::count_ret_args!($out)],
+                    &[rwasm::common::ValueType::I32; $crate::count_call_args!($($t)*)],
+                    &[rwasm::common::ValueType::I32; $crate::count_ret_args!($out)],
                     $crate::types::SysFuncIdx::$sys_func.fuel_cost(),
                 ));
             }
 
             fn register_handler<'t, T>(
-                linker: &mut fluentbase_rwasm::Linker<RuntimeContext<'t, T>>,
-                store: &mut fluentbase_rwasm::Store<RuntimeContext<'t, T>>,
+                linker: &mut rwasm::Linker<RuntimeContext<'t, T>>,
+                store: &mut rwasm::Store<RuntimeContext<'t, T>>,
             ) {
-                use fluentbase_rwasm::AsContextMut;
+                use rwasm::AsContextMut;
                 linker.define(
                     stringify!($module),
                     stringify!($name),
-                    fluentbase_rwasm::Func::wrap(
+                    rwasm::Func::wrap(
                         store.as_context_mut(),
-                        |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, fluentbase_rwasm::common::Trap> {
+                        |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, rwasm::common::Trap> {
                             return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
                         })
                 ).unwrap();

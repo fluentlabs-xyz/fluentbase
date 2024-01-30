@@ -82,7 +82,6 @@ use crate::{
         },
     },
 };
-use fluentbase_rwasm::{rwasm::ImportLinker, Caller, Linker, Store};
 use fluentbase_types::SysFuncIdx::{
     STATEDB_EMIT_LOG,
     STATEDB_GET_BALANCE,
@@ -90,6 +89,10 @@ use fluentbase_types::SysFuncIdx::{
     STATEDB_GET_CODE_HASH,
     STATEDB_GET_CODE_SIZE,
     STATEDB_UPDATE_CODE,
+};
+use rwasm_codegen::{
+    rwasm::{Caller, Linker, Store},
+    ImportLinker,
 };
 
 pub trait RuntimeHandler {

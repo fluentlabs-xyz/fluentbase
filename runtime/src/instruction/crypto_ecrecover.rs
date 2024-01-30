@@ -1,11 +1,11 @@
 use crate::RuntimeContext;
-use fluentbase_rwasm::{common::Trap, Caller};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
     EncodedPoint,
     PublicKey,
 };
+use rwasm::{common::Trap, Caller};
 
 pub struct CryptoEcrecover;
 

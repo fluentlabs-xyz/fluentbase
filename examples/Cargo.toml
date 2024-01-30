@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
-fluentbase-rwasm = { path = "../rwasm", default-features = false }
+rwasm-codegen = { workspace = true, default-features = false }
 #revm = { version = "3.3.0", default-features = false }
 #revm-primitives = { version = "1.1.2", default-features = false }
 #revm-interpreter = { version = "1.1.2", default-features = false }
@@ -14,8 +14,8 @@ fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #wat = "1.0.77"
-alloy-sol-types = { version = "0.5.1", default-features = false }
-byteorder = { workspace = true }
+#alloy-sol-types = { version = "0.5.1", default-features = false }
+#byteorder = { workspace = true }
 hex-literal = "0.4.1"
 
 [dev-dependencies]
