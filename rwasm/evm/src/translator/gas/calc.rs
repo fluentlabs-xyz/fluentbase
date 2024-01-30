@@ -184,56 +184,56 @@ pub fn sload_cost(/*is_cold: bool*/) -> u32 {
 }
 
 // #[allow(clippy::collapsible_else_if)]
-// pub fn sstore_cost(
-//     original: U256,
-//     current: U256,
-//     new: U256,
-//     gas: u64,
-//     is_cold: bool,
-// ) -> Option<u64> {
-//     // TODO untangle this mess and make it more elegant
-//     let (gas_sload, gas_sstore_reset) = if SPEC::enabled(BERLIN) {
-//         (WARM_STORAGE_READ_COST, SSTORE_RESET - COLD_SLOAD_COST)
-//     } else {
-//         (sload_cost::<SPEC>(is_cold), SSTORE_RESET)
-//     };
-//
-//     // https://eips.ethereum.org/EIPS/eip-2200
-//     // It’s a combined version of EIP-1283 and EIP-1706
-//     let gas_cost = if SPEC::enabled(ISTANBUL) {
-//         // EIP-1706
-//         if gas <= CALL_STIPEND {
-//             return None;
-//         }
-//
-//         // EIP-1283
-//         if new == current {
-//             gas_sload
-//         } else {
-//             if original == current {
-//                 if original == U256::ZERO {
-//                     SSTORE_SET
-//                 } else {
-//                     gas_sstore_reset
-//                 }
-//             } else {
-//                 gas_sload
-//             }
-//         }
-//     } else {
-//         if current == U256::ZERO && new != U256::ZERO {
-//             SSTORE_SET
-//         } else {
-//             gas_sstore_reset
-//         }
-//     };
-//     // In EIP-2929 we charge extra if the slot has not been used yet in this transaction
-//     if SPEC::enabled(BERLIN) && is_cold {
-//         Some(gas_cost + COLD_SLOAD_COST)
-//     } else {
-//         Some(gas_cost)
-//     }
-// }
+pub fn sstore_cost(// original: U256,
+    // current: U256,
+    // new: U256,
+    // gas: u32,
+    // is_cold: bool,
+) -> Option<u32> {
+    // TODO untangle this mess and make it more elegant
+    let (gas_sload, gas_sstore_reset) = /*if SPEC::enabled(BERLIN) {*/
+        (WARM_STORAGE_READ_COST, SSTORE_RESET - COLD_SLOAD_COST)
+    /*} else {
+        (sload_cost::<SPEC>(is_cold), SSTORE_RESET)
+    }*/;
+
+    // https://eips.ethereum.org/EIPS/eip-2200
+    // It’s a combined version of EIP-1283 and EIP-1706
+    let gas_cost =  /*if SPEC::enabled(ISTANBUL)*/ {
+        // EIP-1706
+        // if gas <= CALL_STIPEND {
+        //     return None;
+        // };
+
+        // EIP-1283
+        // if new == current {
+        //     gas_sload
+        // } else {
+        //     if original == current {
+        //         if original == U256::ZERO {
+                    SSTORE_SET
+        //         } else {
+        //             gas_sstore_reset
+        //         }
+        //     } else {
+        //         gas_sload
+        //     }
+        // }
+    };
+    // } else {
+    //     if current == U256::ZERO && new != U256::ZERO {
+    //         SSTORE_SET
+    //     } else {
+    //         gas_sstore_reset
+    //     }
+    // };
+    // // In EIP-2929 we charge extra if the slot has not been used yet in this transaction
+    // if SPEC::enabled(BERLIN) && is_cold {
+    Some(gas_cost + COLD_SLOAD_COST)
+    // } else {
+    //     Some(gas_cost)
+    // }
+}
 
 // pub fn selfdestruct_cost<SPEC: Spec>(res: SelfDestructResult) -> u64 {
 //     // EIP-161: State trie clearing (invariant-preserving alternative)

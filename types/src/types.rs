@@ -107,6 +107,8 @@ pub enum SysFuncIdx {
     STATEDB_GET_STORAGE = 0x0504,   // fluentbase_v1alpha::_statedb_get_storage
     STATEDB_UPDATE_STORAGE = 0x0505, // fluentbase_v1alpha::_statedb_update_storage
     STATEDB_EMIT_LOG = 0x0506,      // fluentbase_v1alpha::_statedb_add_log
+    STATEDB_GET_BALANCE = 0x0507,   // fluentbase_v1alpha::_statedb_get_balance
+    STATEDB_GET_CODE_HASH = 0x0508, // fluentbase_v1alpha::_statedb_get_code_hash
     // WASI runtime (0x5741 means WA)
     WASI_PROC_EXIT = 0x0301,         // wasi_snapshot_preview1::proc_exit
     WASI_FD_WRITE = 0x0302,          // wasi_snapshot_preview1::fd_write
@@ -144,6 +146,9 @@ impl SysFuncIdx {
             SysFuncIdx::ZKTRIE_COMMIT => 1,
             SysFuncIdx::STATEDB_GET_STORAGE => 1,
             SysFuncIdx::STATEDB_UPDATE_STORAGE => 1,
+            SysFuncIdx::STATEDB_EMIT_LOG => 1,
+            SysFuncIdx::STATEDB_GET_BALANCE => 1,
+            SysFuncIdx::STATEDB_GET_CODE_HASH => 1,
             SysFuncIdx::WASI_PROC_EXIT => 1,
             SysFuncIdx::WASI_FD_WRITE => 1,
             SysFuncIdx::WASI_ENVIRON_SIZES_GET => 1,

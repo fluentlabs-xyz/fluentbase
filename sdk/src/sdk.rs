@@ -35,8 +35,10 @@ pub trait LowLevelAPI {
         is_create2: bool,
     ) -> i32;
 
-    fn statedb_get_code(key: &[u8], output: &mut [u8]);
+    fn statedb_get_code(key: &[u8], output: &mut [u8], code_offset: u32);
     fn statedb_get_code_size(key: &[u8]) -> u32;
+    fn statedb_get_code_hash(key: &[u8], out_hash32: &mut [u8]) -> ();
+    fn statedb_get_balance(address20: &[u8], out_balance32: &mut [u8], is_self: bool) -> ();
     fn statedb_set_code(key: &[u8], code: &[u8]);
     fn statedb_get_storage(key: &[u8], value: &mut [u8]);
     fn statedb_update_storage(key: &[u8], value: &[u8]);

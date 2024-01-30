@@ -10,6 +10,8 @@ mod calldatasize;
 mod caller;
 #[cfg(feature = "system_callvalue")]
 mod callvalue;
+#[cfg(feature = "system_codecopy")]
+mod codecopy;
 #[cfg(feature = "system_codesize")]
 mod codesize;
 #[cfg(feature = "system_gas")]
