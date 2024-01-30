@@ -141,7 +141,7 @@ impl LowLevelAPI for LowLevelSDK {
         _input: &[u8],
         _output: &mut [u8],
         _fuel: u32,
-        _is_delegate: u32,
+        _is_delegate: bool,
         _is_static: bool,
     ) -> i32 {
         unreachable!("rwasm methods are not available in this mode")
