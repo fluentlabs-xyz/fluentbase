@@ -60,10 +60,20 @@ extern "C" {
     pub(crate) fn _statedb_get_code(
         key20_offset: *const u8,
         output_offset: *mut u8,
-        output_len: u32,
+        code_offset: u32,
+        out_len: u32,
     );
     pub(crate) fn _statedb_get_code_size(key20_offset: *const u8) -> u32;
+    pub(crate) fn _statedb_get_code_hash(
+        key20_offset: *const u8,
+        output_hash32_offset: *mut u8,
+    ) -> ();
     pub(crate) fn _statedb_set_code(key20_offset: *const u8, code_offset: *const u8, code_len: u32);
+    pub(crate) fn _statedb_get_balance(
+        address20_offset: *const u8,
+        out_balance32_offset: *mut u8,
+        is_self: u32,
+    );
     pub(crate) fn _statedb_get_storage(key32_offset: *const u8, val32_offset: *mut u8);
     pub(crate) fn _statedb_update_storage(key32_offset: *const u8, val32_offset: *const u8);
     pub(crate) fn _statedb_emit_log(

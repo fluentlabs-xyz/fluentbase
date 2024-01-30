@@ -6,7 +6,9 @@ pub mod rwasm_compile;
 pub mod rwasm_create;
 pub mod rwasm_transact;
 pub mod statedb_emit_log;
+pub mod statedb_get_balance;
 pub mod statedb_get_code;
+pub mod statedb_get_code_hash;
 pub mod statedb_get_code_size;
 pub mod statedb_get_storage;
 pub mod statedb_update_code;
@@ -34,7 +36,9 @@ use crate::{
         rwasm_create::RwasmCreate,
         rwasm_transact::RwasmTransact,
         statedb_emit_log::StateDbEmitLog,
+        statedb_get_balance::StateDbGetBalance,
         statedb_get_code::StateDbGetCode,
+        statedb_get_code_hash::StateDbGetCodeHash,
         statedb_get_code_size::StateDbGetCodeSize,
         statedb_get_storage::StateDbGetStorage,
         statedb_update_code::StateDbUpdateCode,
@@ -81,7 +85,9 @@ use crate::{
 use fluentbase_rwasm::{rwasm::ImportLinker, Caller, Linker, Store};
 use fluentbase_types::SysFuncIdx::{
     STATEDB_EMIT_LOG,
+    STATEDB_GET_BALANCE,
     STATEDB_GET_CODE,
+    STATEDB_GET_CODE_HASH,
     STATEDB_GET_CODE_SIZE,
     STATEDB_UPDATE_CODE,
 };
@@ -113,12 +119,14 @@ impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwa
 impl_runtime_handler!(RwasmCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
 impl_runtime_handler!(RwasmCreate, RWASM_CREATE, fn fluentbase_v1alpha::_rwasm_create(value32_offset: u32, input_bytecode_offset: u32, input_bytecode_length: u32, salt32_offset: u32, return_address20_offset: u32, is_create2: u32) -> i32);
 
-impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_statedb_get_code(key20_offset: u32, output_offset: u32, output_len: u32) -> ());
+impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_statedb_get_code(key20_offset: u32, output_offset: u32, code_offset: u32, output_len: u32) -> ());
 impl_runtime_handler!(StateDbGetCodeSize, STATEDB_GET_CODE_SIZE, fn fluentbase_v1alpha::_statedb_get_code_size(key20_offset: u32) -> u32);
+impl_runtime_handler!(StateDbGetCodeHash, STATEDB_GET_CODE_HASH, fn fluentbase_v1alpha::_statedb_get_code_hash(key20_offset: u32, out_hash32_offset: u32) -> ());
 impl_runtime_handler!(StateDbUpdateCode, STATEDB_UPDATE_CODE, fn fluentbase_v1alpha::_statedb_set_code(key20_offset: u32, code_offset: u32, code_len: u32) -> ());
 impl_runtime_handler!(StateDbUpdateStorage, STATEDB_GET_STORAGE, fn fluentbase_v1alpha::_statedb_get_storage(key32_offset: u32, val32_offset: u32) -> ());
 impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v1alpha::_statedb_update_storage(key32_offset: u32, val32_offset: u32) -> ());
 impl_runtime_handler!(StateDbEmitLog, STATEDB_EMIT_LOG, fn fluentbase_v1alpha::_statedb_emit_log(topics32_offset: u32, topics32_length: u32, data_offset: u32, data_len: u32) -> ());
+impl_runtime_handler!(StateDbGetBalance, STATEDB_GET_BALANCE, fn fluentbase_v1alpha::_statedb_get_balance(address20_offset: u32, out_balance32_offset: u32, is_self: u32) -> ());
 
 impl_runtime_handler!(ZkTrieOpen, ZKTRIE_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(ZkTrieUpdate, ZKTRIE_UPDATE, fn fluentbase_v1alpha::_zktrie_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
@@ -142,6 +150,8 @@ pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut Impo
     RwasmCreate::register_linker::<T>(import_linker);
     StateDbGetCode::register_linker::<T>(import_linker);
     StateDbGetCodeSize::register_linker::<T>(import_linker);
+    StateDbGetCodeHash::register_linker::<T>(import_linker);
+    StateDbGetBalance::register_linker::<T>(import_linker);
     // StateDbUpdateCode::register_linker::<T>(import_linker);
     StateDbUpdateStorage::register_linker::<T>(import_linker);
     StateDbGetStorage::register_linker::<T>(import_linker);
@@ -169,6 +179,8 @@ pub(crate) fn runtime_register_shared_linkers<'t, T>(import_linker: &mut ImportL
     RwasmCreate::register_linker::<T>(import_linker);
     StateDbGetCode::register_linker::<T>(import_linker);
     StateDbGetCodeSize::register_linker::<T>(import_linker);
+    StateDbGetCodeHash::register_linker::<T>(import_linker);
+    StateDbGetBalance::register_linker::<T>(import_linker);
     // StateDbUpdateCode::register_linker::<T>(import_linker);
     StateDbUpdateStorage::register_linker::<T>(import_linker);
     StateDbGetStorage::register_linker::<T>(import_linker);
@@ -199,6 +211,8 @@ pub(crate) fn runtime_register_sovereign_handlers<'t, T>(
     RwasmCreate::register_handler(linker, store);
     StateDbGetCode::register_handler(linker, store);
     StateDbGetCodeSize::register_handler(linker, store);
+    StateDbGetCodeHash::register_handler(linker, store);
+    StateDbGetBalance::register_handler(linker, store);
     // StateDbUpdateCode::register_handler(linker, store);
     StateDbUpdateStorage::register_handler(linker, store);
     StateDbGetStorage::register_handler(linker, store);
@@ -229,6 +243,8 @@ pub(crate) fn runtime_register_shared_handlers<'t, T>(
     RwasmCreate::register_handler(linker, store);
     StateDbGetCode::register_handler(linker, store);
     StateDbGetCodeSize::register_handler(linker, store);
+    StateDbGetCodeHash::register_handler(linker, store);
+    StateDbGetBalance::register_handler(linker, store);
     // StateDbUpdateCode::register_handler(linker, store);
     StateDbUpdateStorage::register_handler(linker, store);
     StateDbGetStorage::register_handler(linker, store);

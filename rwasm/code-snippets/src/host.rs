@@ -11,8 +11,10 @@ use crate::{
     consts::U256_BYTES_COUNT,
 };
 use core::slice;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
+#[cfg(feature = "host_balance")]
+mod balance;
 #[cfg(feature = "host_basefee")]
 mod basefee;
 #[cfg(feature = "host_blockhash")]
@@ -29,10 +31,28 @@ mod create;
 mod create2;
 #[cfg(feature = "host_delegatecall")]
 mod delegatecall;
+#[cfg(feature = "host_extcodecopy")]
+mod extcodecopy;
+#[cfg(feature = "host_extcodehash")]
+mod extcodehash;
+#[cfg(feature = "host_extcodesize")]
+mod extcodesize;
 #[cfg(feature = "host_gaslimit")]
 mod gaslimit;
+#[cfg(feature = "host_log0")]
+mod log0;
+#[cfg(feature = "host_log1")]
+mod log1;
+#[cfg(feature = "host_log2")]
+mod log2;
+#[cfg(feature = "host_log3")]
+mod log3;
+#[cfg(feature = "host_log4")]
+mod log4;
 #[cfg(feature = "host_number")]
 mod number;
+#[cfg(feature = "host_selfbalance")]
+mod selfbalance;
 #[cfg(feature = "host_sload")]
 mod sload;
 #[cfg(feature = "host_sstore")]
@@ -139,4 +159,50 @@ pub fn host_create_impl(is_create2: bool) {
         SP_BASE_MEM_OFFSET_DEFAULT,
         u256_from_be_slice(deployed_contract_address20),
     );
+}
+
+#[inline]
+pub fn host_log<const TOPIC_COUNT: usize>() {
+    assert!(TOPIC_COUNT <= 4);
+    let offset = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+    let size = stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT);
+
+    let offset = u256_be_to_u64tuple_le(offset);
+    let size = u256_be_to_u64tuple_le(size);
+
+    // TODO process incorrect params
+
+    let data = unsafe { slice::from_raw_parts(offset.0 as *const u8, size.0 as usize) };
+
+    match TOPIC_COUNT {
+        0 => {
+            LowLevelSDK::statedb_emit_log(&[], data);
+        }
+        1 => LowLevelSDK::statedb_emit_log(&[stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT)], data),
+        2 => LowLevelSDK::statedb_emit_log(
+            &[
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+            ],
+            data,
+        ),
+        3 => LowLevelSDK::statedb_emit_log(
+            &[
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+            ],
+            data,
+        ),
+        4 => LowLevelSDK::statedb_emit_log(
+            &[
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+            ],
+            data,
+        ),
+        _ => {}
+    };
 }

@@ -149,6 +149,7 @@ pub fn sstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     //     let remaining_gas = translator.gas.remaining();
     //     gas::calc::::sstore_cost(original, old, new, remaining_gas, false)
     // });
+    gas::calc::sstore_cost().map(|v| gas!(translator, v));
 
     replace_with_call_to_subroutine(translator, host);
 }

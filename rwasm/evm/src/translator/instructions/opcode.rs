@@ -145,7 +145,7 @@ opcodes! {
     // 0x2E
     // 0x2F
     0x30 => ADDRESS   => system::address, // done
-    0x31 => BALANCE   => host::balance::<H>, // TODO
+    0x31 => BALANCE   => host::balance::<H>, // done
     0x32 => ORIGIN    => host_env::origin, // tx_caller
     0x33 => CALLER    => system::caller, // done
     0x34 => CALLVALUE => system::callvalue, // done
@@ -153,14 +153,14 @@ opcodes! {
     0x36 => CALLDATASIZE => system::calldatasize, // done
     0x37 => CALLDATACOPY => system::calldatacopy, // done
     0x38 => CODESIZE     => system::codesize, // done
-    0x39 => CODECOPY     => system::codecopy, // TODO
+    0x39 => CODECOPY     => system::codecopy, // TODO rewrite with low level api to reduce size
 
     0x3A => GASPRICE       => host_env::gasprice, // tx_gas_price
-    0x3B => EXTCODESIZE    => host::extcodesize::<H>, // TODO
-    0x3C => EXTCODECOPY    => host::extcodecopy::<H>, // TODO
+    0x3B => EXTCODESIZE    => host::extcodesize::<H>, // done
+    0x3C => EXTCODECOPY    => host::extcodecopy::<H>, // done
     0x3D => RETURNDATASIZE => system::returndatasize::<H>, // TODO
     0x3E => RETURNDATACOPY => system::returndatacopy::<H>, // TODO
-    0x3F => EXTCODEHASH    => host::extcodehash::<H>, // TODO
+    0x3F => EXTCODEHASH    => host::extcodehash::<H>, // done
     0x40 => BLOCKHASH      => host::blockhash, // done
     0x41 => COINBASE       => host_env::coinbase, // done
     0x42 => TIMESTAMP      => host_env::timestamp, // done
@@ -168,7 +168,7 @@ opcodes! {
     0x44 => DIFFICULTY     => host_env::difficulty::<H>, // block_difficulty
     0x45 => GASLIMIT       => host_env::gaslimit, // done
     0x46 => CHAINID        => host_env::chainid::<H>, // done
-    0x47 => SELFBALANCE    => host::selfbalance::<H>, // TODO
+    0x47 => SELFBALANCE    => host::selfbalance::<H>, // done
     0x48 => BASEFEE        => host_env::basefee::<H>, // done
     0x49 => BLOBHASH       => host_env::blob_hash::<H>, // tx_blob_hashes (renamed from DATAHASH)
     0x4A => BLOBBASEFEE    => host_env::blob_basefee::<H>, // tx_blob_gas_price
@@ -181,11 +181,11 @@ opcodes! {
     0x51 => MLOAD    => memory::mload, // load 32 bytes from mem
     0x52 => MSTORE   => memory::mstore, // done
     0x53 => MSTORE8  => memory::mstore8, // done
-    0x54 => SLOAD    => host::sload::<H>, // TODO evm_sload (need bindings for runtime)
-    0x55 => SSTORE   => host::sstore::<H>, // TODO evm_sstore (need bindings for runtime)
+    0x54 => SLOAD    => host::sload::<H>, // done
+    0x55 => SSTORE   => host::sstore::<H>, // done
     0x56 => JUMP     => control::jump, // done (only static params supported)
     0x57 => JUMPI    => control::jumpi, // done (only static params supported)
-    0x58 => PC       => control::pc, // TODO
+    0x58 => PC       => control::pc, // just returns 0
     0x59 => MSIZE    => memory::msize, // memory.size
     0x5A => GAS      => system::gas, // return 0
     0x5B => JUMPDEST => control::jumpdest, // done
@@ -261,11 +261,11 @@ opcodes! {
     0x9E => SWAP15 => stack::swap::<15, H>,  // done
     0x9F => SWAP16 => stack::swap::<16, H>,  // done
 
-    0xA0 => LOG0 => host::log::<0, H>, // TODO
-    0xA1 => LOG1 => host::log::<1, H>, // TODO
-    0xA2 => LOG2 => host::log::<2, H>, // TODO
-    0xA3 => LOG3 => host::log::<3, H>, // TODO
-    0xA4 => LOG4 => host::log::<4, H>, // TODO
+    0xA0 => LOG0 => host::log::<0, H>, // done
+    0xA1 => LOG1 => host::log::<1, H>, // done
+    0xA2 => LOG2 => host::log::<2, H>, // done
+    0xA3 => LOG3 => host::log::<3, H>, // done
+    0xA4 => LOG4 => host::log::<4, H>, // done
     // 0xA5
     // 0xA6
     // 0xA7
@@ -343,7 +343,7 @@ opcodes! {
     // 0xEF
     0xF0 => CREATE       => host::create::<false, H>, // done
     0xF1 => CALL         => host::call::<H>, // done (need to test)
-    0xF2 => CALLCODE     => host::call_code::<H>, // not supported, useless
+    0xF2 => CALLCODE     => host::call_code::<H>, // not supported
     0xF3 => RETURN       => control::ret, // sdk sys_write + return
     0xF4 => DELEGATECALL => host::delegate_call::<H>, // done
     0xF5 => CREATE2      => host::create::<true, H>, // done

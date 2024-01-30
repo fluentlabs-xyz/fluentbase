@@ -164,11 +164,19 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("rwasm methods are not available in this mode")
     }
 
-    fn statedb_get_code(_key: &[u8], _output: &mut [u8]) {
+    fn statedb_get_code(_key: &[u8], _output: &mut [u8], code_offset: u32) {
         unreachable!("statedb methods are not available in this mode")
     }
 
     fn statedb_get_code_size(_key: &[u8]) -> u32 {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_get_code_hash(_key: &[u8], _out_hash32: &mut [u8]) -> () {
+        unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn statedb_get_balance(_address20: &[u8], _out_balance32: &mut [u8], _is_self: bool) -> () {
         unreachable!("statedb methods are not available in this mode")
     }
 

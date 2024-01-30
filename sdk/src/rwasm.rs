@@ -8,7 +8,9 @@ use crate::{
         _rwasm_create,
         _rwasm_transact,
         _statedb_emit_log,
+        _statedb_get_balance,
         _statedb_get_code,
+        _statedb_get_code_hash,
         _statedb_get_code_size,
         _statedb_get_storage,
         _statedb_set_code,
@@ -159,13 +161,36 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn statedb_get_code(key: &[u8], output: &mut [u8]) {
-        unsafe { _statedb_get_code(key.as_ptr(), output.as_mut_ptr(), output.len() as u32) }
+    fn statedb_get_code(key: &[u8], output: &mut [u8], code_offset: u32) {
+        unsafe {
+            _statedb_get_code(
+                key.as_ptr(),
+                output.as_mut_ptr(),
+                code_offset,
+                output.len() as u32,
+            )
+        }
     }
 
     #[inline(always)]
     fn statedb_get_code_size(key: &[u8]) -> u32 {
         unsafe { _statedb_get_code_size(key.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn statedb_get_code_hash(key: &[u8], out_hash32: &mut [u8]) -> () {
+        unsafe { _statedb_get_code_hash(key.as_ptr(), out_hash32.as_mut_ptr()) }
+    }
+
+    #[inline(always)]
+    fn statedb_get_balance(address20: &[u8], out_balance32: &mut [u8], is_self: bool) -> () {
+        unsafe {
+            _statedb_get_balance(
+                address20.as_ptr(),
+                out_balance32.as_mut_ptr(),
+                is_self as u32,
+            )
+        }
     }
 
     #[inline(always)]

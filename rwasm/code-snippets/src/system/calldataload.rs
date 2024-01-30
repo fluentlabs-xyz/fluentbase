@@ -1,6 +1,6 @@
 use crate::{
     common::u256_be_to_u64tuple_le,
-    common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
+    common_sp::{stack_pop_u256, stack_push_u256, u256_zero, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
 use byteorder::{ByteOrder, LittleEndian};
@@ -26,13 +26,13 @@ fn system_calldataload() {
     };
     let value: [u8; U256_BYTES_COUNT as usize] = if index < length as usize {
         let length = core::cmp::min(length - index as u32, U256_BYTES_COUNT as u32) as usize;
-        let mut value = [0u8; U256_BYTES_COUNT as usize];
+        let mut value = u256_zero();
         if length > 0 {
             LowLevelSDK::sys_read(&mut value[..length], offset + index as u32);
         }
         value
     } else {
-        [0u8; U256_BYTES_COUNT as usize]
+        u256_zero()
     };
     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, value);
 }
