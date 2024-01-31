@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "code-snippets",
+    "rwasm/code-snippets",
     "codec",
     "codec-derive",
     "e2e",
     "examples",
     "poseidon",
     "runtime",
-    "rwasm-evm",
+    "rwasm/evm",
     "sdk",
     "types",
     "zktrie",
