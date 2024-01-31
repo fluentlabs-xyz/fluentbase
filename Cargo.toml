@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "rwasm/bin",
     "rwasm/code-snippets",
     "codec",
     "codec-derive",

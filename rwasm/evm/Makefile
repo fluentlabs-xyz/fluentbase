@@ -9,7 +9,7 @@ wat_file:
 	set -ex
 	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FEATURES}" -v
 	mkdir -p bin
-	wasm2wat ../target/${TARGET}/${PROFILE}/fluentbase_rwasm_evm_translator.wasm > ./bin/$@.wat
+	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_evm_translator.wasm > ./bin/$@.wat
 
 clean:
 	cargo clean

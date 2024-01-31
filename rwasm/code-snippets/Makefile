@@ -20,15 +20,15 @@ PROFILE=release
 $(FILES):
 	cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
 	mkdir -p bin
-	wasm2wat ../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
+	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
 	du -sh ./bin/$@.wat
 
 .PHONY: solid_file
 solid_file:
 	cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}"
 	mkdir -p bin
-	wasm2wat ../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
-	#(cd ../bin; make $@)
+	wasm2wat ../../target/${TARGET}/${PROFILE}/fluentbase_rwasm_code_snippets.wasm > ./bin/$@.wat
+	(cd ../bin; make $@)
 
 .PHONY: with_rwasm_translation
 with_rwasm_translation:
