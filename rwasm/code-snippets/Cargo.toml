@@ -138,7 +138,6 @@ host_selfbalance = []
 control_return = []
 control_revert = []
 control_pc = []
-test_hashmap = []
 
 [profile.release]
 lto = true
