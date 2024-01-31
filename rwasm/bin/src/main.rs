@@ -129,7 +129,7 @@ fn main() {
             ));
         }
     }
-    let rs_str = format!("[{}]", as_rust_vec.join(","));
+    let rs_str = format!("[\n    {}\n]", as_rust_vec.join(",\n    "));
     let mut rwasm_binary = compiler.finalize().unwrap();
     // let init_bytecode_instruction_to_cut = 4; // redundant instruction inside init bytecode
     let init_bytecode = rwasm_binary[entry_point_fn.position as usize * INSTRUCTION_SIZE_BYTES
