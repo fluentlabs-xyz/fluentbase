@@ -172,13 +172,12 @@ pub fn jumpdest<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     gas!(translator, gas::constants::JUMPDEST);
 }
 
-pub fn pc<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn pc<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "PC";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // gas!(translator, gas::constants::BASE);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    replace_with_call_to_subroutine(translator, host);
+    gas!(translator, gas::constants::BASE);
 }
 
 pub fn ret<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

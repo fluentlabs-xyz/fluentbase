@@ -44530,7 +44530,6 @@
   (export "system_codesize" (func 125))
   (export "system_gas" (func 126))
   (export "system_keccak256" (func 127))
-  (export "host_env_blobbasefee" (func 47))
   (export "__data_end" (global 1))
   (export "__heap_base" (global 2))
   (elem (;0;) (i32.const 1) func 166 13 188 15 12 14 16 157 174 172 159 169 158 175 176 181)
