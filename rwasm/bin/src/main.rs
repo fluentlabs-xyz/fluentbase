@@ -12,7 +12,7 @@ use rwasm_codegen::{
     FUNC_SOURCE_MAP_ENTRYPOINT_IDX,
     FUNC_SOURCE_MAP_ENTRYPOINT_NAME,
 };
-use std::{fs, io::BufRead, path::Path};
+use std::{fs, path::Path};
 
 mod types;
 
