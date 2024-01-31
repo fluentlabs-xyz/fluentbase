@@ -111,7 +111,7 @@ fn main() {
         entry_point_fn.length
     );
     let mut as_rust_vec: Vec<String> = vec![];
-    let restricted_fn_names = &["ts_get", "ts_set"];
+    let restricted_fn_names = &[];
     for func_source_map in &func_source_maps {
         debug!("func_source_map '{:?}'", func_source_map);
         let fn_name = func_source_map.fn_name.as_str();

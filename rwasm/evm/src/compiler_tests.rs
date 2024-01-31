@@ -51,6 +51,7 @@ mod evm_to_rwasm_tests {
                 NUMBER,
                 OR,
                 ORIGIN,
+                PC,
                 POP,
                 PUSH32,
                 RETURN,
@@ -2724,6 +2725,22 @@ mod evm_to_rwasm_tests {
                 Some(InstructionResult::InvalidJump),
             );
         }
+    }
+
+    #[test]
+    fn pc() {
+        let cases = [Case::Args0(x(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ))];
+
+        test_cases(
+            PC,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32 * 1),
+            ResultLocation::Stack,
+            None,
+        );
     }
 
     #[test]
