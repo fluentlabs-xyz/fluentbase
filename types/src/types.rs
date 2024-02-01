@@ -21,6 +21,7 @@ pub enum ExitCode {
     PreimageUnavailable = -1011,
     InsufficientBalance = -1012,
     CreateCollision = -1013,
+    ContractSizeLimit = -1014,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,

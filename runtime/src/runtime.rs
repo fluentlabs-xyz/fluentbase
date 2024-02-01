@@ -192,10 +192,6 @@ impl<'t, T> RuntimeContext<'t, T> {
         }
     }
 
-    pub fn set_exit_code(&mut self, exit_code: i32) {
-        self.exit_code = exit_code;
-    }
-
     pub fn exit_code(&self) -> i32 {
         self.exit_code
     }
