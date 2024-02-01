@@ -957,6 +957,8 @@ dependencies = [
  "byteorder",
  "fluentbase-sdk",
  "fluentbase-types",
+ "hex",
+ "keccak-hash",
 ]
 
 [[package]]

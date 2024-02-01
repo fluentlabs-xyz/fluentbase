@@ -10,7 +10,7 @@ members = [
     "rwasm/code-snippets",
     "rwasm/evm",
     "sdk",
-    "statedb",
+    "kernel",
     "types",
     "zktrie",
 ]
