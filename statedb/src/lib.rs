@@ -1,13 +1,13 @@
 #![no_std]
 
 extern crate alloc;
-extern crate fluentbase_sdk;
 
 use alloc::alloc::alloc;
 use byteorder::{BigEndian, ByteOrder};
 use core::{alloc::Layout, ptr};
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput},
+    Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -79,6 +79,22 @@ impl Account {
     }
 
     #[inline(always)]
+    fn commit(&self, address: &Address) {
+        let mut values: [Bytes32; 5] = [[0u8; 32]; 5];
+        BigEndian::write_u64(&mut values[0][16..], self.code_size);
+        BigEndian::write_u64(&mut values[0][24..], self.nonce);
+        values[1].copy_from_slice(&self.balance.to_be_bytes::<32>());
+        values[2].copy_from_slice(self.root.as_slice());
+        values[3].copy_from_slice(self.keccak_code_hash.as_slice());
+        values[4].copy_from_slice(self.code_hash.as_slice());
+        let mut key32 = [0u8; 32];
+        unsafe {
+            ptr::copy(address.as_ptr(), key32.as_mut_ptr(), 20);
+        }
+        LowLevelSDK::zktrie_update(&key32, 8, &values);
+    }
+
+    #[inline(always)]
     fn is_not_empty(&self) -> bool {
         self.nonce != 0 || self.keccak_code_hash != KECCAK_EMPTY || self.code_hash != POSEIDON_EMPTY
     }
@@ -94,33 +110,6 @@ fn _unsafe_read_input_address(offset: usize) -> Address {
     let mut address = [0u8; Address::len_bytes()];
     LowLevelSDK::sys_read(&mut address, offset as u32);
     Address::from(address)
-}
-
-#[inline(always)]
-fn _unsafe_caller_balance(value: &mut U256) {
-    let mut bytes32 = [0u8; 32];
-    let address =
-        _unsafe_read_input_address(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
-    unsafe {
-        ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
-    }
-    LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
-        value.as_le_slice_mut().as_mut_ptr()
-    });
-}
-
-#[inline(always)]
-fn _unsafe_callee_balance(value: &mut U256) {
-    let mut bytes32 = [0u8; 32];
-    let address = _unsafe_read_input_address(
-        <ContractInput as IContractInput>::ContractAddress::FIELD_OFFSET,
-    );
-    unsafe {
-        ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
-    }
-    LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
-        value.as_le_slice_mut().as_mut_ptr()
-    });
 }
 
 #[inline(always)]
@@ -189,6 +178,11 @@ fn _calc_create_address(nonce: u64, deployer: &Address) -> Address {
     Address::from_word(B256::from(out))
 }
 
+/// EIP-170: Contract code size limit
+///
+/// By default this limit is 0x6000 (~24kb)
+pub const MAX_CODE_SIZE: u32 = 0x6000;
+
 #[no_mangle]
 pub fn _evm_create(
     value32_offset: *const u8,
@@ -210,13 +204,6 @@ pub fn _evm_create(
     let mut deployer = Account::read_account(&contract_address);
     let created_address = _calc_create_address(deployer.nonce, &contract_address);
     let mut contract = Account::read_account(&created_address);
-    // calc keccak256 and poseidon hashes for account
-    LowLevelSDK::crypto_keccak256(
-        code_offset,
-        code_length,
-        contract.keccak_code_hash.as_mut_ptr(),
-    );
-    LowLevelSDK::crypto_poseidon(code_offset, code_length, contract.code_hash.as_mut_ptr());
     // if nonce or code is not empty then its collision
     if contract.is_not_empty() {
         return ExitCode::CreateCollision.into_i32();
@@ -236,7 +223,11 @@ pub fn _evm_create(
         0,
         gas_limit,
     );
+    // read output bytecode
     let bytecode_length = LowLevelSDK::sys_output_size();
+    if bytecode_length > MAX_CODE_SIZE {
+        return ExitCode::ContractSizeLimit.into_i32();
+    }
     let bytecode = unsafe {
         alloc(Layout::from_size_align_unchecked(
             bytecode_length as usize,
@@ -244,5 +235,16 @@ pub fn _evm_create(
         ))
     };
     LowLevelSDK::sys_read_output(bytecode, 0, bytecode_length);
+    // calc keccak256 and poseidon hashes for account
+    LowLevelSDK::crypto_keccak256(
+        code_offset,
+        code_length,
+        contract.keccak_code_hash.as_mut_ptr(),
+    );
+    LowLevelSDK::crypto_poseidon(code_offset, code_length, contract.code_hash.as_mut_ptr());
+    // commit account changes
+    contract.commit(&created_address);
+    // copy result address to output and return ok
+    unsafe { ptr::copy(created_address.as_ptr(), output20_offset, 20) }
     ExitCode::Ok.into_i32()
 }
