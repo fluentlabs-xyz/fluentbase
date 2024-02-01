@@ -1,7 +1,11 @@
 #[link(wasm_import_module = "fluentbase_v1alpha")]
 extern "C" {
-    pub(crate) fn _crypto_keccak256(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
-    pub(crate) fn _crypto_poseidon(data_offset: *const u8, data_len: i32, output_offset: *mut u8);
+    pub(crate) fn _crypto_keccak256(
+        data_offset: *const u8,
+        data_len: u32,
+        output32_offset: *mut u8,
+    );
+    pub(crate) fn _crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub(crate) fn _crypto_poseidon2(
         fa32_offset: *const u8,
         fb32_offset: *const u8,
@@ -19,17 +23,31 @@ extern "C" {
     pub(crate) fn _sys_write(offset: *const u8, length: u32);
     pub(crate) fn _sys_input_size() -> u32;
     pub(crate) fn _sys_read(target: *mut u8, offset: u32, length: u32);
+    pub(crate) fn _sys_output_size() -> u32;
+    pub(crate) fn _sys_read_output(target: *mut u8, offset: u32, length: u32);
     pub(crate) fn _sys_state() -> u32;
+    pub(crate) fn _sys_exec(
+        code_offset: *const u8,
+        code_len: u32,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel: u32,
+    ) -> i32;
 
-    pub(crate) fn _mpt_open();
-    pub(crate) fn _mpt_update(
-        key_offset: *const u8,
-        key_len: i32,
-        value_offset: *const u8,
-        value_len: i32,
-    );
-    pub(crate) fn _mpt_get(key_offset: *const u8, key_len: u32, output_offset: *mut u8) -> i32;
-    pub(crate) fn _mpt_get_root(output_offset: *mut u8) -> i32;
+    pub(crate) fn _preimage_size(hash32: *const u8) -> u32;
+    pub(crate) fn _preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32);
+
+    // pub(crate) fn _mpt_open();
+    // pub(crate) fn _mpt_update(
+    //     key_offset: *const u8,
+    //     key_len: i32,
+    //     value_offset: *const u8,
+    //     value_len: i32,
+    // );
+    // pub(crate) fn _mpt_get(key_offset: *const u8, key_len: u32, output_offset: *mut u8) -> i32;
+    // pub(crate) fn _mpt_get_root(output_offset: *mut u8) -> i32;
 
     pub(crate) fn _rwasm_transact(
         address20_offset: *const u8,
@@ -90,11 +108,7 @@ extern "C" {
         vals32_offset: *const [u8; 32],
         vals32_len: u32,
     );
-    pub(crate) fn _zktrie_field(
-        key32_offset: *const u8,
-        field: u32,
-        output32_offset: *mut [u8; 32],
-    );
+    pub(crate) fn _zktrie_field(key32_offset: *const u8, field: u32, output32_offset: *mut u8);
     pub(crate) fn _zktrie_root(output32_offset: *mut u8);
     pub(crate) fn _zktrie_rollback();
     pub(crate) fn _zktrie_commit();

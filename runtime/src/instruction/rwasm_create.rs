@@ -22,17 +22,16 @@ impl RwasmCreate {
         let input_bytecode = caller
             .read_memory(input_bytecode_offset, input_bytecode_length)
             .to_vec();
-        let salt32: Vec<u8> = if is_create2 != 0 {
-            vec![]
+        let salt32 = if is_create2 != 0 {
+            Some(caller.read_memory(salt32_offset, 32).to_vec())
         } else {
-            caller.read_memory(salt32_offset, 32).to_vec()
+            None
         };
         let exit_code = match Self::fn_impl(
             caller.data_mut(),
             &value32,
             &input_bytecode,
-            &salt32,
-            is_create2 != 0,
+            salt32.as_ref().map(|v| v.as_slice()),
         ) {
             Ok(deployed_contract_address20) => {
                 caller.write_memory(
@@ -50,8 +49,7 @@ impl RwasmCreate {
         context: &mut RuntimeContext<T>,
         value: &[u8],
         input_bytecode: &[u8],
-        salt32: &[u8],
-        is_create2: bool,
+        salt32: Option<&[u8]>,
     ) -> Result<Address, ExitCode> {
         // reject static with value not zero
         if context.is_static {
@@ -64,7 +62,7 @@ impl RwasmCreate {
             .borrow_mut()
             .get_account(&context.address)
             .unwrap_or_default();
-        let deployed_contract_address = if is_create2 {
+        let deployed_contract_address = if let Some(salt32) = salt32 {
             let init_code_hash = B256::from_slice(keccak_hash::keccak(input_bytecode).as_bytes());
             context
                 .address
