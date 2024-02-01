@@ -1,4 +1,5 @@
 use super::constants::*;
+use crate::translator::gas;
 use alloy_primitives::U256;
 
 // #[allow(clippy::collapsible_else_if)]
@@ -108,44 +109,44 @@ pub fn verylowcopy_cost(len: u32) -> Option<u32> {
     VERYLOW.checked_add(COPY.checked_mul(if wordr == 0 { wordd } else { wordd + 1 })?)
 }
 
-// #[inline]
-// pub fn extcodecopy_cost<SPEC: Spec>(len: u64, is_cold: bool) -> Option<u64> {
-//     let wordd = len / 32;
-//     let wordr = len % 32;
-//
-//     let base_gas: u64 = if SPEC::enabled(BERLIN) {
-//         if is_cold {
-//             COLD_ACCOUNT_ACCESS_COST
-//         } else {
-//             WARM_STORAGE_READ_COST
-//         }
-//     } else if SPEC::enabled(TANGERINE) {
-//         700
-//     } else {
-//         20
-//     };
-//     base_gas.checked_add(COPY.checked_mul(if wordr == 0 { wordd } else { wordd + 1 })?)
-// }
-//
-// pub fn account_access_gas<SPEC: Spec>(is_cold: bool) -> u64 {
-//     if SPEC::enabled(BERLIN) {
-//         if is_cold {
-//             COLD_ACCOUNT_ACCESS_COST
-//         } else {
-//             WARM_STORAGE_READ_COST
-//         }
-//     } else if SPEC::enabled(ISTANBUL) {
-//         700
-//     } else {
-//         20
-//     }
-// }
-//
-// pub fn log_cost(n: u8, len: u64) -> Option<u64> {
-//     LOG.checked_add(LOGDATA.checked_mul(len)?)?
-//         .checked_add(LOGTOPIC * n as u64)
-// }
-//
+#[inline]
+pub fn extcodecopy_cost(len: u32, is_cold: bool) -> Option<u32> {
+    let wordd = len / 32;
+    let wordr = len % 32;
+
+    let base_gas: u32 = // if SPEC::enabled(BERLIN) {
+        if is_cold {
+            COLD_ACCOUNT_ACCESS_COST
+        } else {
+            gas::constants::WARM_STORAGE_READ_COST
+        };
+    // } else if SPEC::enabled(TANGERINE) {
+    //     700
+    // } else {
+    //     20
+    // };
+    base_gas.checked_add(COPY.checked_mul(if wordr == 0 { wordd } else { wordd + 1 })?)
+}
+
+pub fn account_access_gas(is_cold: bool) -> u32 {
+    // if SPEC::enabled(BERLIN) {
+    if is_cold {
+        COLD_ACCOUNT_ACCESS_COST
+    } else {
+        WARM_STORAGE_READ_COST
+    }
+    // } else if SPEC::enabled(ISTANBUL) {
+    //     700
+    // } else {
+    //     20
+    // }
+}
+
+pub fn log_cost(n: u8, len: u32) -> Option<u32> {
+    LOG.checked_add(LOGDATA.checked_mul(len)?)?
+        .checked_add(LOGTOPIC * n as u32)
+}
+
 pub fn keccak256_cost(len: u32) -> Option<u32> {
     let wordd = len / 32;
     let wordr = len % 32;

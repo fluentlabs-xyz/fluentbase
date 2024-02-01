@@ -39,7 +39,7 @@ pub fn mstore<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 }
 
 pub fn mstore8<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
-    const OP: &str = "MSORE8";
+    const OP: &str = "MSTORE8";
     #[cfg(test)]
     debug!("op:{}", OP);
     gas!(translator, gas::constants::VERYLOW);

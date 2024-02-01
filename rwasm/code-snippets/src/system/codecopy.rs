@@ -5,7 +5,7 @@ use crate::{
 use byteorder::{ByteOrder, LittleEndian};
 use core::slice;
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput},
+    evm::{ContractInput, IContractInput},
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -53,6 +53,6 @@ pub fn system_codecopy() {
         );
     };
     if offset_tail_fact < offset_tail_expected {
-        dest_data[offset_tail_fact - offset..offset_tail_expected - offset_tail_fact].fill(0);
+        dest_data[offset_tail_fact - offset..].fill(0);
     }
 }

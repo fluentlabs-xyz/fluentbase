@@ -126,7 +126,7 @@ pub fn host_create_impl(is_create2: bool) {
     } else {
         (init_bytecode_size.0, [0u8; U256_BYTES_COUNT as usize])
     };
-    let deployed_contract_address20_offset = if is_create2 {
+    let deployed_contract_address20_out_offset = if is_create2 {
         salt.0
     } else {
         init_bytecode_size.0
@@ -141,14 +141,14 @@ pub fn host_create_impl(is_create2: bool) {
             init_bytecode_size.0 as usize,
         )
     };
-    let deployed_contract_address20 =
-        unsafe { slice::from_raw_parts_mut(deployed_contract_address20_offset as *mut u8, 20) };
+    let deployed_contract_address20_out =
+        unsafe { slice::from_raw_parts_mut(deployed_contract_address20_out_offset as *mut u8, 20) };
 
     let exit_code = <LowLevelSDK as LowLevelAPI>::rwasm_create(
         &value,
         input,
         salt.1.as_slice(),
-        deployed_contract_address20,
+        deployed_contract_address20_out,
         false,
     );
     if exit_code != 0 {
@@ -157,7 +157,7 @@ pub fn host_create_impl(is_create2: bool) {
     }
     stack_push_u256(
         SP_BASE_MEM_OFFSET_DEFAULT,
-        u256_from_be_slice(deployed_contract_address20),
+        u256_from_be_slice(deployed_contract_address20_out),
     );
 }
 

@@ -14,8 +14,6 @@ use alloc::{boxed::Box, vec, vec::Vec};
 pub use analysis::BytecodeLocked;
 use core::marker::PhantomData;
 use hashbrown::HashMap;
-#[cfg(test)]
-use log::debug;
 use rwasm::{common::UntypedValue, engine::bytecode::Instruction};
 use rwasm_codegen::{ImportLinker, InstructionSet, ReducedModule};
 
@@ -245,11 +243,11 @@ impl<'a> Translator<'a> {
             .insert(pc, (is_offset_start, is_offset_end));
         self.instruction_pointer_prev = instruction_pointer;
 
-        #[cfg(test)]
-        debug!(
-            "translator opcode:{} pc:{} instrset_offset(start:{}..end:{})",
-            opcode, pc, is_offset_start, is_offset_end
-        );
+        // #[cfg(test)]
+        // debug!(
+        //     "translator opcode:{} pc:{} instr_offset(start:{}..end:{})",
+        //     opcode, pc, is_offset_start, is_offset_end
+        // );
     }
 
     pub fn instruction_pointer_inc(&mut self, offset: usize) {

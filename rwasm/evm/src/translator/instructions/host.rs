@@ -9,93 +9,71 @@ use alloy_primitives::U256;
 #[cfg(test)]
 use log::debug;
 
-pub fn balance<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn balance<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "BALANCE";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // gas!(
-    //     interpreter,
-    //     if SPEC::enabled(ISTANBUL) {
-    //         // EIP-1884: Repricing for trie-size-dependent opcodes
-    //         gas::account_access_gas::<SPEC>(is_cold)
-    //     } else if SPEC::enabled(TANGERINE) {
-    //         400
-    //     } else {
-    //         20
-    //     }
-    // );
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop_address!(translator, _address);
+    gas!(translator, gas::calc::account_access_gas(false));
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn selfbalance<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn selfbalance<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "SELFBALANCE";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // gas!(translator, gas::constants::LOW);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    gas!(translator, gas::constants::LOW);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn extcodesize<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn extcodesize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXTCODESIZE";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // if SPEC::enabled(BERLIN) {
-    //     gas!(
-    //         interpreter,
-    //         if is_cold {
-    //             COLD_ACCOUNT_ACCESS_COST
-    //         } else {
-    //             WARM_STORAGE_READ_COST
-    //         }
-    //     );
-    // } else if SPEC::enabled(TANGERINE) {
-    //     gas!(interpreter, 700);
-    // } else {
-    //     gas!(interpreter, 20);
-    // }
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop_address!(translator, _address);
+    gas!(
+        translator,
+        // if is_cold {
+        //     COLD_ACCOUNT_ACCESS_COST
+        // } else {
+        gas::constants::WARM_STORAGE_READ_COST // }
+    );
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 /// EIP-1052: EXTCODEHASH opcode
-pub fn extcodehash<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn extcodehash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXTCODEHASH";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // if SPEC::enabled(BERLIN) {
-    //     gas!(
-    //         interpreter,
-    //         if is_cold {
-    //             COLD_ACCOUNT_ACCESS_COST
-    //         } else {
-    //             WARM_STORAGE_READ_COST
-    //         }
-    //     );
-    // } else if SPEC::enabled(ISTANBUL) {
-    //     gas!(interpreter, 700);
-    // } else {
-    //     gas!(interpreter, 400);
-    // }
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop_address!(translator, _address);
+    gas!(
+        translator,
+        // if is_cold {
+        //     COLD_ACCOUNT_ACCESS_COST
+        // } else {
+        gas::constants::WARM_STORAGE_READ_COST // }
+    );
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn extcodecopy<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn extcodecopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "EXTCODECOPY";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop_address!(translator, _address);
+    pop!(translator, _memory_offset, _code_offset, len_u256);
+    let len = as_usize_or_fail!(translator, len_u256);
+    gas_or_fail!(translator, gas::calc::extcodecopy_cost(len as u32, false));
+    if len == 0 {
+        return;
     }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
-    // let len = as_usize_or_fail!(interpreter, len_u256);
-    // gas_or_fail!(
-    //     interpreter,
-    //     gas::extcodecopy_cost::<SPEC>(len as u64, is_cold)
-    // );
-    // if len == 0 {
-    //     return;
-    // }
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn blockhash<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
@@ -172,12 +150,15 @@ pub fn tload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn log<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn log<const N: usize, H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "LOG";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
-    }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop!(translator, _offset, len);
+    let len = as_usize_or_fail!(translator, len);
+    gas_or_fail!(translator, gas::calc::log_cost(N as u8, len as u32));
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn selfdestruct<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {

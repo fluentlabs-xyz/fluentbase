@@ -1,5 +1,5 @@
 use crate::{
-    common_sp::{sp_compute_mem_offset, sp_inc, stack_peek_u256, SP_BASE_MEM_OFFSET_DEFAULT},
+    common_sp::{sp_compute_mem_offset, sp_inc, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::U256_BYTES_COUNT,
 };
 use core::slice;

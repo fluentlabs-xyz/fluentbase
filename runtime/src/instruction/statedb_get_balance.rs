@@ -14,11 +14,11 @@ impl StateDbGetBalance {
         let balance = {
             let is_self = is_self != 0;
             if is_self {
+                Self::fn_impl(caller.data_mut(), &[], is_self).map_err(|err| err.into_trap())?
+            } else {
                 let address = caller.read_memory(address20_offset, 20).to_vec();
                 Self::fn_impl(caller.data_mut(), &address, is_self)
                     .map_err(|err| err.into_trap())?
-            } else {
-                Self::fn_impl(caller.data_mut(), &[], is_self).map_err(|err| err.into_trap())?
             }
         };
         caller.write_memory(out_balance32_offset, &balance[0..32]);

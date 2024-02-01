@@ -2,7 +2,7 @@
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
-        consts::{INTERNAL_VIRTUAL_STACK_TOP_DEFAULT, SP_BASE_MEM_OFFSET_DEFAULT},
+        consts::SP_BASE_MEM_OFFSET_DEFAULT,
         translator::{
             instruction_result::InstructionResult,
             instructions::opcode::{
@@ -10,6 +10,7 @@ mod evm_to_rwasm_tests {
                 ADDMOD,
                 ADDRESS,
                 AND,
+                BALANCE,
                 BASEFEE,
                 BLOBBASEFEE,
                 BLOBHASH,
@@ -21,14 +22,19 @@ mod evm_to_rwasm_tests {
                 CALLER,
                 CALLVALUE,
                 CHAINID,
+                CODECOPY,
                 CODESIZE,
                 COINBASE,
+                CREATE,
+                CREATE2,
                 DIFFICULTY,
                 DIV,
                 DUP1,
-                DUP2,
                 EQ,
                 EXP,
+                EXTCODECOPY,
+                EXTCODEHASH,
+                EXTCODESIZE,
                 GAS,
                 GASLIMIT,
                 GASPRICE,
@@ -38,6 +44,7 @@ mod evm_to_rwasm_tests {
                 JUMPDEST,
                 JUMPI,
                 KECCAK256,
+                LOG0,
                 LT,
                 MCOPY,
                 MLOAD,
@@ -57,6 +64,7 @@ mod evm_to_rwasm_tests {
                 RETURN,
                 SAR,
                 SDIV,
+                SELFBALANCE,
                 SGT,
                 SHL,
                 SHR,
@@ -68,7 +76,6 @@ mod evm_to_rwasm_tests {
                 STOP,
                 SUB,
                 SWAP1,
-                SWAP2,
                 TIMESTAMP,
                 TLOAD,
                 TSTORE,
@@ -77,11 +84,14 @@ mod evm_to_rwasm_tests {
         },
         utilities::EVM_WORD_BYTES,
     };
-    use alloc::{string::ToString, vec, vec::Vec};
+    use alloc::{rc::Rc, string::ToString, vec, vec::Vec};
     use alloy_primitives::{hex, Bytes, B256};
+    use core::cell::RefCell;
     use fluentbase_codec::Encoder;
     use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
     use fluentbase_sdk::evm::{Address, ContractInput, U256};
+    use fluentbase_types::{Account, AccountDb, InMemoryAccountDb};
+    use lazy_static::lazy_static;
     use log::debug;
     use rwasm::engine::bytecode::Instruction;
     use rwasm_codegen::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule};
@@ -106,6 +116,70 @@ mod evm_to_rwasm_tests {
     static HOST_ENV_GASPRICE: [u8; 32] = [14; 32]; // u256 - 32 bytes
     static HOST_ENV_ORIGIN: [u8; 20] = [15; 20]; // Address - 20 bytes
     static HOST_ENV_BLOB_HASHES: &[[u8; 32]] = &[[1; 32], [2; 32], [3; 32]];
+    static CONTRACT_BYTECODE: &[u8] = &[
+        70, 80, 74, 157, 210, 30, 193, 224, 195, 186, 69, 157, 108, 59, 26, 225, 149, 85, 152, 222,
+    ];
+
+    lazy_static! {
+        static ref SALT1: B256 = B256::left_padding_from(&[
+            209, 102, 91, 188, 156, 121, 93, 221, 156, 57, 106, 55, 154, 62, 20, 23, 21, 110, 34,
+            225, 120, 134, 226, 58, 173, 164, 80, 17, 180, 3, 29, 194
+        ]);
+        static ref CALLER_ADDRESS: Address = Address::new([
+            187, 183, 200, 54, 217, 36, 224, 17, 157, 249, 177, 246, 95, 46, 125, 23, 141, 21, 7,
+            19
+        ]);
+        static ref CALLER_ACCOUNT_BYTECODE: Bytes = Bytes::copy_from_slice(&[
+            88, 157, 82, 216, 126, 78, 124, 162, 207, 40, 234, 212, 165, 125, 154, 140, 100, 201,
+            144, 135, 94
+        ]);
+        static ref CALLER_ACCOUNT: Account = Account {
+            balance: U256::from_be_slice(&[
+                211, 109, 149, 183, 251, 106, 161, 179, 235, 43, 144, 130, 230, 246, 88, 56, 246,
+                227, 21, 13, 248, 150, 47, 216, 35, 83, 200, 200, 198, 238, 186, 27
+            ]),
+            nonce: 3,
+            code_hash: B256::new(
+                keccak_hash::keccak(CALLER_ACCOUNT_BYTECODE.clone()).to_fixed_bytes()
+            ),
+            code: Some(CALLER_ACCOUNT_BYTECODE.clone()),
+        };
+        static ref USER1_ADDRESS: Address = Address::new([
+            4, 161, 101, 36, 210, 18, 205, 56, 117, 142, 62, 212, 144, 140, 203, 201, 68, 42, 97,
+            35
+        ]);
+        static ref USER1_ACCOUNT_BYTECODE: Bytes = Bytes::copy_from_slice(&[
+            26, 174, 195, 56, 172, 103, 71, 218, 84, 75, 219, 13, 115, 160
+        ]);
+        static ref USER1_ACCOUNT: Account = Account {
+            balance: U256::from_be_slice(&[
+                151, 241, 205, 52, 210, 166, 83, 156, 175, 189, 213, 173, 77, 189, 54, 63, 181,
+                190, 236, 192, 109, 8, 118, 183, 212, 204, 45, 126, 92, 117, 116, 9
+            ]),
+            nonce: 4,
+            code_hash: B256::new(
+                keccak_hash::keccak(USER1_ACCOUNT_BYTECODE.clone()).to_fixed_bytes()
+            ),
+            code: Some(USER1_ACCOUNT_BYTECODE.clone()),
+        };
+        static ref USER2_ADDRESS: Address = Address::new([
+            229, 162, 19, 139, 55, 179, 49, 233, 27, 118, 237, 201, 79, 246, 204, 24, 202, 220, 10,
+            27
+        ]);
+        static ref USER2_ACCOUNT_BYTECODE: Bytes =
+            Bytes::copy_from_slice(&[154, 231, 160, 31, 70, 70, 101, 234, 71, 146, 137, 166]);
+        static ref USER2_ACCOUNT: Account = Account {
+            balance: U256::from_be_slice(&[
+                229, 193, 13, 6, 93, 29, 230, 94, 55, 147, 173, 187, 196, 7, 33, 86, 254, 115, 65,
+                90, 35, 130, 74, 205, 247, 176, 133, 11, 208, 88, 79, 163
+            ]),
+            nonce: 5,
+            code_hash: B256::new(
+                keccak_hash::keccak(USER2_ACCOUNT_BYTECODE.clone()).to_fixed_bytes()
+            ),
+            code: Some(USER2_ACCOUNT_BYTECODE.clone()),
+        };
+    }
 
     #[derive(Clone)]
     enum Case {
@@ -117,6 +191,7 @@ mod evm_to_rwasm_tests {
         Args2((Vec<u8>, Vec<u8>, Vec<u8>)),
         // result_expected a b c
         Args3((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
+        Args4((Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)),
         // result_expected param_1..param_n
         Universal(Vec<Vec<u8>>),
     }
@@ -144,6 +219,16 @@ mod evm_to_rwasm_tests {
                 evm_bytecode.extend(args.0.clone());
             }
             Case::Args3(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.2.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.1.clone());
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.0.clone());
+            }
+            Case::Args4(args) => {
+                evm_bytecode.push(PUSH32);
+                evm_bytecode.extend(args.3.clone());
                 evm_bytecode.push(PUSH32);
                 evm_bytecode.extend(args.2.clone());
                 evm_bytecode.push(PUSH32);
@@ -193,6 +278,7 @@ mod evm_to_rwasm_tests {
                 Case::Args1(v) => v.1.clone(),
                 Case::Args2(v) => v.2.clone(),
                 Case::Args3(v) => v.3.clone(),
+                Case::Args4(v) => v.4.clone(),
                 Case::Universal(v) => {
                     let i = v.len() - 1;
                     v[i].clone()
@@ -269,13 +355,14 @@ mod evm_to_rwasm_tests {
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let mut compiler = EvmCompiler::new(&import_linker, false, evm_binary.as_ref());
 
-        let mut preamble = InstructionSet::new();
-
-        let res = compiler.run(Some(&preamble), None);
+        let res = compiler.run(None, None);
         if let Some(instruction_result) = instruction_result {
             assert_eq!(res, instruction_result);
             return None;
         } else {
+            if !res.is_ok() {
+                debug!("instruction_result: {:?}", res);
+            }
             assert!(res.is_ok());
         }
 
@@ -315,6 +402,7 @@ mod evm_to_rwasm_tests {
         contract_input.block_number = u64::from_be_bytes(HOST_NUMBER);
         contract_input.block_timestamp = u64::from_be_bytes(HOST_TIMESTAMP);
         contract_input.block_difficulty = u64::from_be_bytes(HOST_ENV_DIFFICULTY);
+        contract_input.contract_bytecode = Bytes::copy_from_slice(CONTRACT_BYTECODE);
         // contract_input.tx_blob_gas_price = u64::from_be_bytes(HOST_ENV_BLOBBASEFEE);
         contract_input.tx_gas_price = U256::from_be_bytes(HOST_ENV_GASPRICE);
         contract_input.tx_caller = Address::new(HOST_ENV_ORIGIN);
@@ -322,8 +410,17 @@ mod evm_to_rwasm_tests {
         //     .iter()
         //     .map(|v| B256::from_slice(v))
         //     .collect();
+        let mut account_db = InMemoryAccountDb::default();
+
+        account_db.update_account(&CALLER_ADDRESS, &CALLER_ACCOUNT);
+        account_db.update_account(&USER1_ADDRESS, &USER1_ACCOUNT);
+        account_db.update_account(&USER2_ADDRESS, &USER2_ACCOUNT);
         let ci = contract_input.encode_to_vec(0);
-        runtime_ctx = runtime_ctx.with_input(ci).with_fuel_limit(10_000_000);
+        runtime_ctx = runtime_ctx
+            .with_input(ci)
+            .with_fuel_limit(10_000_000)
+            .with_account_db(Rc::new(RefCell::new(account_db)))
+            .with_caller(CALLER_ADDRESS.clone());
 
         let runtime = Runtime::new(runtime_ctx, &import_linker);
         let mut runtime = runtime.unwrap();
@@ -1758,9 +1855,9 @@ mod evm_to_rwasm_tests {
     fn mstore8() {
         let cases = [
             Case::Args2((
-                x("0000000000000000000000000000000000000000000000000000000000000000"),
-                x("000000000f00000100000000f0000000100000000f00000000000000000f0032"),
-                x("3200000000000000000000000000000000000000000000000000000000000000"),
+                x("0000000000000000000000000000000000000000000000000000000000000000"), // offset
+                x("000000000f00000100000000f0000000100000000f00000000000000000f0032"), // data
+                x("3200000000000000000000000000000000000000000000000000000000000000"), // result
             )),
             Case::Args2((
                 x("0000000000000000000000000000000000000000000000000000000000000008"),
@@ -1905,11 +2002,9 @@ mod evm_to_rwasm_tests {
 
     #[test]
     fn address() {
-        let cases = [Case::Args0({
-            let mut v = vec![0; 32 - CONTRACT_ADDRESS.len()];
-            v.extend(&CONTRACT_ADDRESS);
-            v
-        })];
+        let cases = [Case::Args0(
+            B256::left_padding_from(CONTRACT_ADDRESS.as_slice()).to_vec(),
+        )];
 
         test_cases(
             ADDRESS,
@@ -1917,6 +2012,369 @@ mod evm_to_rwasm_tests {
             &cases,
             Some(EVM_WORD_BYTES as i32),
             ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[ignore]
+    #[test]
+    fn log0() {
+        let mut preamble = vec![];
+        let log_data: Vec<u8> = vec![
+            169, 83, 152, 138, 79, 114, 66, 48, 158, 239, 14, 15, 55, 215, 227, 148, 175, 166, 208,
+            143, 171, 188, 10, 119, 66, 39, 108, 239, 49, 6, 148, 173, 103, 45, 42, 121, 55, 216,
+            254, 91, 168, 44,
+        ];
+        let log_data_mem_offset: u32 = 9;
+        let log_data_evm_words_size = (log_data.len() + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES;
+        for (idx, chunk) in log_data.chunks(EVM_WORD_BYTES).enumerate() {
+            preamble.extend(compile_op_with_args_bytecode(
+                Some(MSTORE),
+                &Case::Args2((
+                    B256::left_padding_from(
+                        &(log_data_mem_offset as usize + idx * EVM_WORD_BYTES).to_be_bytes(),
+                    )
+                    .to_vec(),
+                    B256::left_padding_from(chunk).to_vec(),
+                    vec![],
+                )),
+            ));
+        }
+        let cases = [Case::Args2((
+            B256::left_padding_from(&log_data_mem_offset.to_be_bytes()).to_vec(), // mem_offset
+            B256::left_padding_from(&log_data_evm_words_size.to_be_bytes()).to_vec(), // size
+            vec![],
+        ))];
+
+        // TODO extract data from storage and compare with data above
+
+        test_cases(
+            LOG0,
+            Some(&preamble),
+            &cases,
+            Some(0),
+            ResultLocation::Private,
+            None,
+        );
+    }
+
+    #[test]
+    fn balance() {
+        let cases = [
+            Case::Args1((
+                B256::left_padding_from(CALLER_ADDRESS.as_slice()).to_vec(),
+                CALLER_ACCOUNT.balance.to_be_bytes_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER1_ADDRESS.as_slice()).to_vec(),
+                USER1_ACCOUNT.balance.to_be_bytes_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER2_ADDRESS.as_slice()).to_vec(),
+                USER2_ACCOUNT.balance.to_be_bytes_vec(),
+            )),
+        ];
+
+        test_cases(
+            BALANCE,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[ignore]
+    #[test]
+    fn create() {
+        let mut preamble = vec![];
+
+        // valid rwasm bytecode
+        let init_bytecode_data = vec![
+            61, 0, 0, 0, 0, 0, 0, 0, 2, 4, 0, 0, 0, 0, 0, 0, 0, 3, 11, 0, 0, 0, 0, 0, 0, 0, 0, 9,
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0,
+            0, 0, 0, 0, 0, 4, 2, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0,
+            0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 1, 13, 0, 0, 0, 0, 0, 0,
+            0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 61, 0, 0, 0, 0, 0, 16, 0, 0, 61, 0, 0, 0, 0, 0, 0, 0,
+            12, 13, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 4, 2, 0,
+            0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0,
+            0, 0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 1, 13, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ];
+
+        // valid rwasm bytecode
+        // let init_bytecode_data =
+        //     include_bytes!("../../code-snippets/bin/other_deploy_contract_test.rwasm").to_vec();
+
+        let deploy_bytecode_mem_offset: u32 = 9;
+        for (idx, chunk) in init_bytecode_data.chunks(1).enumerate() {
+            preamble.extend(compile_op_with_args_bytecode(
+                Some(MSTORE8),
+                &Case::Args2((
+                    B256::left_padding_from(
+                        &(deploy_bytecode_mem_offset as usize + idx).to_be_bytes(),
+                    )
+                    .to_vec(),
+                    B256::left_padding_from(chunk).to_vec(),
+                    vec![],
+                )),
+            ));
+        }
+
+        let deployed_contract_address = CALLER_ADDRESS.create(CALLER_ACCOUNT.nonce);
+
+        let cases = [Case::Args3((
+            B256::left_padding_from(&[0]).to_vec(), // value TODO set some not zero value
+            B256::left_padding_from(&deploy_bytecode_mem_offset.to_be_bytes()).to_vec(), // offset
+            B256::left_padding_from(&init_bytecode_data.len().to_be_bytes()).to_vec(), /* size */
+            B256::left_padding_from(deployed_contract_address.as_slice()).to_vec(), /* result address */
+        ))];
+
+        test_cases(
+            CREATE,
+            Some(&preamble),
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[ignore]
+    #[test]
+    fn create2() {
+        let mut preamble = vec![];
+
+        // valid rwasm bytecode
+        let init_bytecode_data = vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 4, 2, 0,
+            0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0,
+            0, 0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 1, 13, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0,
+            0, 0, 0, 61, 0, 0, 0, 0, 0, 16, 0, 0, 61, 0, 0, 0, 0, 0, 0, 0, 12, 13, 0, 0, 0, 0, 0,
+            0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            3, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 4, 2, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+            0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0, 0,
+            0, 0, 0, 0, 0, 1, 13, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let deploy_bytecode_mem_offset: u32 = 9;
+        for (idx, chunk) in init_bytecode_data.chunks(1).enumerate() {
+            preamble.extend(compile_op_with_args_bytecode(
+                Some(MSTORE8),
+                &Case::Args2((
+                    B256::left_padding_from(
+                        &(deploy_bytecode_mem_offset as usize + idx).to_be_bytes(),
+                    )
+                    .to_vec(),
+                    B256::left_padding_from(chunk).to_vec(),
+                    vec![],
+                )),
+            ));
+        }
+
+        let init_bytecode_hash = keccak_hash::keccak(&init_bytecode_data);
+        let deployed_contract_address =
+            CALLER_ADDRESS.create2(SALT1.clone(), init_bytecode_hash.as_fixed_bytes());
+
+        let cases = [Case::Args4((
+            B256::left_padding_from(&[0]).to_vec(), // value TODO set some not zero value
+            B256::left_padding_from(&deploy_bytecode_mem_offset.to_be_bytes()).to_vec(), // offset
+            B256::left_padding_from(&init_bytecode_data.len().to_be_bytes()).to_vec(), // size
+            SALT1.to_vec(),                         // salt
+            B256::left_padding_from(deployed_contract_address.as_slice()).to_vec(), /* result address */
+        ))];
+
+        test_cases(
+            CREATE2,
+            Some(&preamble),
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[test]
+    fn extcodesize() {
+        let cases = [
+            Case::Args1((
+                B256::left_padding_from(CALLER_ADDRESS.as_slice()).to_vec(),
+                B256::left_padding_from(CALLER_ACCOUNT_BYTECODE.len().to_be_bytes().as_slice())
+                    .to_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER1_ADDRESS.as_slice()).to_vec(),
+                B256::left_padding_from(USER1_ACCOUNT_BYTECODE.len().to_be_bytes().as_slice())
+                    .to_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER2_ADDRESS.as_slice()).to_vec(),
+                B256::left_padding_from(USER2_ACCOUNT_BYTECODE.len().to_be_bytes().as_slice())
+                    .to_vec(),
+            )),
+        ];
+
+        test_cases(
+            EXTCODESIZE,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[test]
+    fn extcodehash() {
+        let cases = [
+            Case::Args1((
+                B256::left_padding_from(CALLER_ADDRESS.as_slice()).to_vec(),
+                CALLER_ACCOUNT.code_hash.to_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER1_ADDRESS.as_slice()).to_vec(),
+                USER1_ACCOUNT.code_hash.to_vec(),
+            )),
+            Case::Args1((
+                B256::left_padding_from(USER2_ADDRESS.as_slice()).to_vec(),
+                USER2_ACCOUNT.code_hash.to_vec(),
+            )),
+        ];
+
+        test_cases(
+            EXTCODEHASH,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[test]
+    fn extcodecopy() {
+        let mut bytecode_memory_result: Vec<u8> = vec![];
+        let bytecode_offset = 3;
+        let dest_offset: u32 = 9;
+        let size = USER2_ACCOUNT_BYTECODE.len() + 2 - bytecode_offset;
+        bytecode_memory_result.extend_from_slice(&[0, 0]);
+        let mut bytecode_offset_tail_expected = bytecode_offset + size;
+        let mut bytecode_offset_tail_fact =
+            if bytecode_offset_tail_expected > USER2_ACCOUNT_BYTECODE.len() {
+                USER2_ACCOUNT_BYTECODE.len()
+            } else {
+                bytecode_offset_tail_expected
+            };
+        bytecode_memory_result
+            .extend_from_slice(&USER2_ACCOUNT_BYTECODE[bytecode_offset..bytecode_offset_tail_fact]);
+        bytecode_memory_result.extend_from_slice(&[0, 0]);
+        let bytecode_memory_result_len = bytecode_memory_result.len();
+
+        let mut preamble = vec![];
+        let total_words_to_mstore =
+            (bytecode_memory_result_len + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES;
+        for wc in 0..total_words_to_mstore {
+            preamble.extend(compile_op_with_args_bytecode(
+                Some(MSTORE),
+                &Case::Args2((
+                    {
+                        let mem_offset = dest_offset as usize + wc * EVM_WORD_BYTES;
+                        let v = B256::left_padding_from(&mem_offset.to_be_bytes());
+                        v.to_vec()
+                    },
+                    x("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                    vec![],
+                )),
+            ));
+        }
+
+        let cases = [Case::Args4((
+            B256::left_padding_from(USER2_ADDRESS.as_slice()).to_vec(), // address
+            B256::left_padding_from(&dest_offset.to_be_bytes()).to_vec(), // dest_offset
+            B256::left_padding_from(&bytecode_offset.to_be_bytes()).to_vec(), // offset
+            B256::left_padding_from(&size.to_be_bytes()).to_vec(),      //size
+            bytecode_memory_result,
+        ))];
+
+        test_cases(
+            EXTCODECOPY,
+            Some(&preamble),
+            &cases,
+            Some(0),
+            ResultLocation::Memory(7),
+            None,
+        );
+    }
+
+    #[test]
+    fn selfbalance() {
+        let cases = [Case::Args0(CALLER_ACCOUNT.balance.to_be_bytes_vec())];
+
+        test_cases(
+            SELFBALANCE,
+            None,
+            &cases,
+            Some(EVM_WORD_BYTES as i32),
+            ResultLocation::Stack,
+            None,
+        );
+    }
+
+    #[test]
+    fn codecopy() {
+        let mut contract_bytecode_memory_result: Vec<u8> = vec![];
+        let bytecode_offset = 3;
+        let dest_offset: u32 = 9;
+        let size = CONTRACT_BYTECODE.len() + 2 - bytecode_offset;
+        contract_bytecode_memory_result.extend_from_slice(&[0, 0]);
+        let mut bytecode_offset_tail_expected = bytecode_offset + size;
+        let mut bytecode_offset_tail_fact =
+            if bytecode_offset_tail_expected > CONTRACT_BYTECODE.len() {
+                CONTRACT_BYTECODE.len()
+            } else {
+                bytecode_offset_tail_expected
+            };
+        contract_bytecode_memory_result
+            .extend_from_slice(&CONTRACT_BYTECODE[bytecode_offset..bytecode_offset_tail_fact]);
+        contract_bytecode_memory_result.extend_from_slice(&[0, 0]);
+        let contract_bytecode_memory_result_len = contract_bytecode_memory_result.len();
+
+        let mut preamble = vec![];
+        let total_words_to_mstore =
+            (contract_bytecode_memory_result_len + EVM_WORD_BYTES - 1) / EVM_WORD_BYTES;
+        for wc in 0..total_words_to_mstore {
+            preamble.extend(compile_op_with_args_bytecode(
+                Some(MSTORE),
+                &Case::Args2((
+                    {
+                        let mem_offset = dest_offset as usize + wc * EVM_WORD_BYTES;
+                        let v = B256::left_padding_from(&mem_offset.to_be_bytes());
+                        v.to_vec()
+                    },
+                    x("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                    vec![],
+                )),
+            ));
+        }
+
+        let cases = [Case::Args3((
+            {
+                // dest offset
+                let v = B256::left_padding_from(&dest_offset.to_be_bytes());
+                v.to_vec()
+            },
+            B256::left_padding_from(&bytecode_offset.to_be_bytes()).to_vec(),
+            B256::left_padding_from(&size.to_be_bytes()).to_vec(),
+            contract_bytecode_memory_result,
+        ))];
+
+        test_cases(
+            CODECOPY,
+            Some(&preamble),
+            &cases,
+            Some(0),
+            ResultLocation::Memory(7),
             None,
         );
     }

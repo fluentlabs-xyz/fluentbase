@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rwasm-codegen = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel" }
+rwasm-codegen = { workspace = true, default-features = false, branch = "devel" }
+rwasm = { workspace = true, default-features = false, features = ["std"] }
 # we need runtime here only to obtain sys call indices
 fluentbase-runtime = { path = "../../runtime" }
 wat = "1.0.80"

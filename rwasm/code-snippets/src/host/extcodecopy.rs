@@ -34,6 +34,6 @@ pub fn host_extcodecopy() {
     LowLevelSDK::statedb_get_code(address20, dest_data, offset as u32);
 
     if size_fact < size {
-        dest_data[size_fact..size].fill(0);
+        dest_data[size_fact..].fill(0);
     }
 }

@@ -89,6 +89,35 @@ macro_rules! pop {
     };
 }
 
+macro_rules! pop_address {
+    ($interp:expr, $x1:ident) => {
+        if $interp.stack.len() < 1 {
+            $interp.instruction_result = InstructionResult::StackUnderflow;
+            return;
+        }
+        // Safety: Length is checked above.
+        let $x1 =
+            fluentbase_sdk::evm::Address::from_word(fluentbase_sdk::evm::B256::from(unsafe {
+                $interp.stack.pop_unsafe()
+            }));
+    };
+    ($interp:expr, $x1:ident, $x2:ident) => {
+        if $interp.stack.len() < 2 {
+            $interp.instruction_result = InstructionResult::StackUnderflow;
+            return;
+        }
+        // Safety: Length is checked above.
+        let $x1 =
+            fluentbase_sdk::evm::Address::from_word(fluentbase_sdk::evm::B256::from(unsafe {
+                $interp.stack.pop_unsafe()
+            }));
+        let $x2 =
+            fluentbase_sdk::evm::Address::from_word(fluentbase_sdk::evm::B256::from(unsafe {
+                $interp.stack.pop_unsafe()
+            }));
+    };
+}
+
 macro_rules! as_usize_or_fail {
     ($translator:expr, $v:expr) => {
         as_usize_or_fail!(
