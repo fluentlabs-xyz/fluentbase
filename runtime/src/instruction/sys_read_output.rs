@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{common::Trap, Caller};
 
-pub struct SysRead;
+pub struct SysReadOutput;
 
-impl SysRead {
+impl SysReadOutput {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         target: u32,
@@ -21,8 +21,8 @@ impl SysRead {
         offset: u32,
         length: u32,
     ) -> Result<Vec<u8>, ExitCode> {
-        if offset + length <= ctx.input.len() as u32 {
-            Ok(ctx.input[(offset as usize)..(offset as usize + length as usize)].to_vec())
+        if offset + length <= ctx.return_data.len() as u32 {
+            Ok(ctx.return_data[(offset as usize)..(offset as usize + length as usize)].to_vec())
         } else {
             Err(ExitCode::MemoryOutOfBounds)
         }

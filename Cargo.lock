@@ -950,6 +950,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-statedb"
+version = "0.1.0"
+dependencies = [
+ "alloy-rlp",
+ "byteorder",
+ "fluentbase-sdk",
+ "fluentbase-types",
+]
+
+[[package]]
 name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
