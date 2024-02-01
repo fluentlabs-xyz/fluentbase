@@ -210,7 +210,7 @@ pub fn _evm_create(
     }
     contract.nonce = 1;
     // transfer value to the just created account
-    if deployer.transfer_value(&mut contract, &value) {
+    if !deployer.transfer_value(&mut contract, &value) {
         return ExitCode::InsufficientBalance.into_i32();
     }
     // execute deployer bytecode
