@@ -1,4 +1,5 @@
-FILES = bitwise_byte bitwise_shl bitwise_shr bitwise_and bitwise_or bitwise_xor bitwise_not bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar bitwise_iszero \
+FILES = other_deploy_contract_test \
+bitwise_byte bitwise_shl bitwise_shr bitwise_and bitwise_or bitwise_xor bitwise_not bitwise_gt bitwise_lt bitwise_sgt bitwise_slt bitwise_eq bitwise_sar bitwise_iszero \
 arithmetic_add arithmetic_sub arithmetic_mul arithmetic_div arithmetic_sdiv arithmetic_mod arithmetic_smod arithmetic_exp arithmetic_addmod arithmetic_mulmod arithmetic_signextend \
 memory_mstore memory_mstore8 memory_mload memory_msize \
 stack_pop \
@@ -33,7 +34,7 @@ solid_file:
 .PHONY: with_rwasm_translation
 with_rwasm_translation:
 	make $(FILE)
-	(cd ../bin; make $(FILE) ENTRY_FN_NAME=$(ENTRY_FN_NAME))
+	(cd ../bin; make $(FILE) ENTRY_FN_NAME=$(ENTRY_FN_NAME) OPTIONS="--print-bytes")
 
 .PHONY: clean
 clean:

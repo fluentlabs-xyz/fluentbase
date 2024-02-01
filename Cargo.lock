@@ -922,6 +922,8 @@ dependencies = [
  "fluentbase-types",
  "hashbrown",
  "hex",
+ "keccak-hash",
+ "lazy_static",
  "log",
  "rwasm",
  "rwasm-codegen",
@@ -1862,7 +1864,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#00cbf2d7ee45d4cd377a86d35f42eb61ef44c788"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#ced4d15eb92b0d289d9162656149cfbb205a6545"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -1894,12 +1896,10 @@ dependencies = [
 [[package]]
 name = "rwasm-codegen"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#00cbf2d7ee45d4cd377a86d35f42eb61ef44c788"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#ced4d15eb92b0d289d9162656149cfbb205a6545"
 dependencies = [
  "byteorder",
  "rwasm",
- "strum",
- "strum_macros",
 ]
 
 [[package]]

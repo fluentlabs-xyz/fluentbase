@@ -30,13 +30,13 @@ pub fn pop<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
 
 pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
     const OP: &str = "PUSH";
-    #[cfg(test)]
-    debug!("op:{}", OP);
 
     let mut is_aux = InstructionSet::new();
 
     {
         if N == 0 {
+            #[cfg(test)]
+            debug!("op:{}{}", OP, N);
             gas!(translator, gas::constants::BASE);
             if let Err(result) = translator.stack.push(U256::ZERO) {
                 return_with_reason!(translator, result);
@@ -58,6 +58,8 @@ pub fn push<const N: usize, H: Host>(translator: &mut Translator<'_>, _host: &mu
             return_with_reason!(translator, InstructionResult::OutOfOffset);
         }
         let data_padded = data_padded.unwrap();
+        #[cfg(test)]
+        debug!("op:{}{} {:?}", OP, N, data_padded);
 
         for i in 1..=4 {
             is_aux.op_i64_const(SP_BASE_MEM_OFFSET_DEFAULT);

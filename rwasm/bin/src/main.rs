@@ -30,6 +30,9 @@ struct Args {
     rs_file_out_path: String,
 
     #[arg(long, default_value_t = false)]
+    print_bytes: bool,
+
+    #[arg(long, default_value_t = false)]
     skip_source_map: bool,
 
     #[arg(long, default_value_t = false)]
@@ -160,6 +163,9 @@ fn main() {
         rwasm_binary.len(),
         rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
     );
+    if args.print_bytes {
+        debug!("rwasm bytes: {:?}", rwasm_binary);
+    }
     fs::write(rwasm_file_out_path, rwasm_binary).unwrap();
 
     if !args.skip_source_map {

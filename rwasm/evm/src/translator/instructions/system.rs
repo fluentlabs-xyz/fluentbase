@@ -49,12 +49,18 @@ pub fn codesize<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     replace_with_call_to_subroutine(translator, host);
 }
 
-pub fn codecopy<H: Host>(translator: &mut Translator<'_>, _host: &mut H) {
+pub fn codecopy<H: Host>(translator: &mut Translator<'_>, host: &mut H) {
     const OP: &str = "CODECOPY";
-    if cfg!(test) {
-        panic!("op:{} not implemented", OP);
+    #[cfg(test)]
+    debug!("op:{}", OP);
+    pop!(translator, _memory_offset, _code_offset, len);
+    let len = as_usize_or_fail!(translator, len);
+    gas_or_fail!(translator, gas::calc::verylowcopy_cost(len as u32));
+    if len == 0 {
+        return;
     }
-    return_with_reason!(translator, InstructionResult::OpcodeNotFound);
+
+    replace_with_call_to_subroutine(translator, host);
 }
 
 pub fn calldataload<H: Host>(translator: &mut Translator<'_>, host: &mut H) {

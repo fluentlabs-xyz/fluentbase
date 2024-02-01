@@ -12,27 +12,28 @@ impl RwasmCreate {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         value32_offset: u32,
-        input_bytecode_offset: u32,
-        input_bytecode_length: u32,
+        init_bytecode_offset: u32,
+        init_bytecode_length: u32,
         salt32_offset: u32,
         deployed_contract_address20_offset: u32,
         is_create2: u32,
     ) -> Result<i32, Trap> {
         let value32 = caller.read_memory(value32_offset, 32).to_vec();
-        let input_bytecode = caller
-            .read_memory(input_bytecode_offset, input_bytecode_length)
+        let init_bytecode = caller
+            .read_memory(init_bytecode_offset, init_bytecode_length)
             .to_vec();
-        let salt32: Vec<u8> = if is_create2 != 0 {
-            vec![]
-        } else {
+        let is_create2 = is_create2 != 0;
+        let salt32: Vec<u8> = if is_create2 {
             caller.read_memory(salt32_offset, 32).to_vec()
+        } else {
+            vec![]
         };
         let exit_code = match Self::fn_impl(
             caller.data_mut(),
             &value32,
-            &input_bytecode,
+            &init_bytecode,
             &salt32,
-            is_create2 != 0,
+            is_create2,
         ) {
             Ok(deployed_contract_address20) => {
                 caller.write_memory(
@@ -49,7 +50,7 @@ impl RwasmCreate {
     pub fn fn_impl<T>(
         context: &mut RuntimeContext<T>,
         value: &[u8],
-        input_bytecode: &[u8],
+        init_bytecode: &[u8],
         salt32: &[u8],
         is_create2: bool,
     ) -> Result<Address, ExitCode> {
@@ -64,8 +65,8 @@ impl RwasmCreate {
             .borrow_mut()
             .get_account(&context.address)
             .unwrap_or_default();
-        let deployed_contract_address = if is_create2 {
-            let init_code_hash = B256::from_slice(keccak_hash::keccak(input_bytecode).as_bytes());
+        let dc_address = if is_create2 {
+            let init_code_hash = B256::from_slice(keccak_hash::keccak(init_bytecode).as_bytes());
             context
                 .address
                 .create2(B256::from_slice(salt32), init_code_hash)
@@ -73,16 +74,18 @@ impl RwasmCreate {
             context.address.create(sender_account.nonce)
         };
         // transfer funds to a new account
-        account_db
-            .borrow_mut()
-            .transfer(&context.address, &deployed_contract_address, &value);
+        if !value.is_zero() {
+            account_db
+                .borrow_mut()
+                .transfer(&context.address, &dc_address, &value);
+        }
         // init shared runtime
         let import_linker = Runtime::<()>::new_shared_linker();
-        let bytecode = Bytes::copy_from_slice(input_bytecode);
+        let bytecode = Bytes::copy_from_slice(init_bytecode);
         let ctx = RuntimeContext::new(bytecode)
             .with_state(STATE_DEPLOY)
             .with_caller(context.address)
-            .with_address(deployed_contract_address)
+            .with_address(dc_address)
             .with_account_db(account_db.clone())
             .with_is_shared(true);
         let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker)
@@ -96,7 +99,7 @@ impl RwasmCreate {
         } else {
             keccak_hash::keccak(output)
         };
-        let contract_account = Account {
+        let dc_account = Account {
             balance: value,
             code_hash: B256::from_slice(code_hash.as_bytes()),
             code: Some(Bytes::copy_from_slice(output)),
@@ -104,7 +107,7 @@ impl RwasmCreate {
         };
         account_db
             .borrow_mut()
-            .update_account(&deployed_contract_address, &contract_account);
-        Ok(deployed_contract_address)
+            .update_account(&dc_address, &dc_account);
+        Ok(dc_address)
     }
 }
