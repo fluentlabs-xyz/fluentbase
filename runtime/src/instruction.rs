@@ -2,6 +2,8 @@ pub mod crypto_ecrecover;
 pub mod crypto_keccak256;
 pub mod crypto_poseidon;
 pub mod crypto_poseidon2;
+pub mod preimage_copy;
+pub mod preimage_size;
 pub mod rwasm_compile;
 pub mod rwasm_create;
 pub mod rwasm_transact;
@@ -13,9 +15,12 @@ pub mod statedb_get_code_size;
 pub mod statedb_get_storage;
 pub mod statedb_update_code;
 pub mod statedb_update_storage;
+pub mod sys_exec;
 pub mod sys_halt;
 pub mod sys_input_size;
+pub mod sys_output_size;
 pub mod sys_read;
+pub mod sys_read_output;
 pub mod sys_state;
 pub mod sys_write;
 pub mod zktrie_commit;
@@ -32,6 +37,8 @@ use crate::{
         crypto_keccak256::CryptoKeccak256,
         crypto_poseidon::CryptoPoseidon,
         crypto_poseidon2::CryptoPoseidon2,
+        preimage_copy::PreimageCopy,
+        preimage_size::PreimageSize,
         rwasm_compile::RwasmCompile,
         rwasm_create::RwasmCreate,
         rwasm_transact::RwasmTransact,
@@ -43,9 +50,12 @@ use crate::{
         statedb_get_storage::StateDbGetStorage,
         statedb_update_code::StateDbUpdateCode,
         statedb_update_storage::StateDbUpdateStorage,
+        sys_exec::SysExec,
         sys_halt::SysHalt,
         sys_input_size::SysInputSize,
+        sys_output_size::SysOutputSize,
         sys_read::SysRead,
+        sys_read_output::SysReadOutput,
         sys_state::SysState,
         sys_write::SysWrite,
         zktrie_commit::ZkTrieCommit,
@@ -83,12 +93,17 @@ use crate::{
     },
 };
 use fluentbase_types::SysFuncIdx::{
+    PREIMAGE_COPY,
+    PREIMAGE_SIZE,
     STATEDB_EMIT_LOG,
     STATEDB_GET_BALANCE,
     STATEDB_GET_CODE,
     STATEDB_GET_CODE_HASH,
     STATEDB_GET_CODE_SIZE,
     STATEDB_UPDATE_CODE,
+    SYS_EXEC,
+    SYS_OUTPUT_SIZE,
+    SYS_READ_OUTPUT,
 };
 use rwasm_codegen::{
     rwasm::{Caller, Linker, Store},
@@ -107,16 +122,22 @@ pub trait RuntimeHandler {
     );
 }
 
-impl_runtime_handler!(SysHalt, SYS_HALT, fn fluentbase_v1alpha::_sys_halt(exit_code: i32) -> ());
-impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
-impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysInputSize, SYS_INPUT_SIZE, fn fluentbase_v1alpha::_sys_input_size() -> u32);
-impl_runtime_handler!(SysWrite, SYS_WRITE, fn fluentbase_v1alpha::_sys_write(offset: u32, length: u32) -> ());
-
 impl_runtime_handler!(CryptoKeccak256, CRYPTO_KECCAK256, fn fluentbase_v1alpha::_crypto_keccak256(data_offset: u32, data_len: u32, output_offset: u32) -> ());
 impl_runtime_handler!(CryptoPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_crypto_poseidon(f32s_offset: u32, f32s_len: u32, output_offset: u32) -> ());
 impl_runtime_handler!(CryptoPoseidon2, CRYPTO_POSEIDON2, fn fluentbase_v1alpha::_crypto_poseidon2(fa32_offset: u32, fb32_offset: u32, fd32_offset: u32, output_offset: u32) -> ());
 impl_runtime_handler!(CryptoEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_offset: u32, sig64_offset: u32, output65_offset: u32, rec_id: u32) -> ());
+
+impl_runtime_handler!(SysHalt, SYS_HALT, fn fluentbase_v1alpha::_sys_halt(exit_code: i32) -> ());
+impl_runtime_handler!(SysWrite, SYS_WRITE, fn fluentbase_v1alpha::_sys_write(offset: u32, length: u32) -> ());
+impl_runtime_handler!(SysInputSize, SYS_INPUT_SIZE, fn fluentbase_v1alpha::_sys_input_size() -> u32);
+impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
+impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel: u32) -> i32);
+impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
+
+impl_runtime_handler!(PreimageSize, PREIMAGE_SIZE, fn fluentbase_v1alpha::_preimage_size(hash32_offset: u32) -> u32);
+impl_runtime_handler!(PreimageCopy, PREIMAGE_COPY, fn fluentbase_v1alpha::_preimage_copy(hash32_offset: u32, output_offset: u32, output_len: u32) -> ());
 
 impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_delegate: u32, is_static: u32) -> i32);
 impl_runtime_handler!(RwasmCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);

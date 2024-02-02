@@ -7,6 +7,7 @@ use strum::IntoEnumIterator;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ExitCode {
+    Ok = 0,
     // fluentbase error codes
     ExecutionHalted = -1001,
     NotSupportedCall = -1003,
@@ -17,6 +18,10 @@ pub enum ExitCode {
     PersistentStorageError = -1008,
     WriteProtection = -1009,
     CreateError = -1010,
+    PreimageUnavailable = -1011,
+    InsufficientBalance = -1012,
+    CreateCollision = -1013,
+    ContractSizeLimit = -1014,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -79,11 +84,14 @@ pub enum SysFuncIdx {
     #[default]
     UNKNOWN = 0x0000,
     // SYS host functions (starts with 0x0000)
-    SYS_HALT = 0x0001,       // fluentbase_v1alpha::_sys_halt
-    SYS_STATE = 0x0002,      // fluentbase_v1alpha::_sys_state
-    SYS_READ = 0x0003,       // fluentbase_v1alpha::_sys_read
-    SYS_INPUT_SIZE = 0x0004, // fluentbase_v1alpha::_sys_input_size
-    SYS_WRITE = 0x0005,      // fluentbase_v1alpha::_sys_write
+    SYS_HALT = 0x0001,        // fluentbase_v1alpha::_sys_halt
+    SYS_WRITE = 0x0005,       // fluentbase_v1alpha::_sys_write
+    SYS_INPUT_SIZE = 0x0004,  // fluentbase_v1alpha::_sys_input_size
+    SYS_READ = 0x0003,        // fluentbase_v1alpha::_sys_read
+    SYS_OUTPUT_SIZE = 0x0006, // fluentbase_v1alpha::_sys_output_size
+    SYS_READ_OUTPUT = 0x0007, // fluentbase_v1alpha::_sys_read_output
+    SYS_EXEC = 0x0008,        // fluentbase_v1alpha::_sys_exec
+    SYS_STATE = 0x0002,       // fluentbase_v1alpha::_sys_state
     // RWASM
     RWASM_TRANSACT = 0x000A, // fluentbase_v1alpha::_rwasm_transact
     RWASM_COMPILE = 0x000B,  // fluentbase_v1alpha::_rwasm_compile
@@ -93,6 +101,9 @@ pub enum SysFuncIdx {
     CRYPTO_POSEIDON = 0x0102,  // fluentbase_v1alpha::_sys_poseidon
     CRYPTO_POSEIDON2 = 0x0103, // fluentbase_v1alpha::_sys_poseidon2
     CRYPTO_ECRECOVER = 0x0104, // fluentbase_v1alpha::_sys_ecrecover
+    // preimage functions
+    PREIMAGE_SIZE = 0x0701, // fluentbase_v1alpha::_preimage_size
+    PREIMAGE_COPY = 0x0702, // fluentbase_v1alpha::_preimage_copy
     // zktrie functions (0x5A54 means ZT)
     ZKTRIE_OPEN = 0x0201,     // fluentbase_v1alpha::_zktrie_open
     ZKTRIE_UPDATE = 0x0202,   // fluentbase_v1alpha::_zktrie_update

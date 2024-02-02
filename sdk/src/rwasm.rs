@@ -15,9 +15,12 @@ use crate::{
         _statedb_get_storage,
         _statedb_set_code,
         _statedb_update_storage,
+        _sys_exec,
         _sys_halt,
         _sys_input_size,
+        _sys_output_size,
         _sys_read,
+        _sys_read_output,
         _sys_state,
         _sys_write,
         _zktrie_commit,
@@ -54,24 +57,51 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
+    fn sys_output_size() -> u32 {
+        unsafe { _sys_output_size() }
+    }
+
+    #[inline(always)]
+    fn sys_read_output(target: *mut u8, offset: u32, length: u32) {
+        unsafe { _sys_read_output(target, offset, length) }
+    }
+
+    #[inline(always)]
     fn sys_state() -> u32 {
         unsafe { _sys_state() }
     }
 
     #[inline(always)]
-    fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
-        unsafe { _crypto_keccak256(data.as_ptr(), data.len() as i32, output.as_mut_ptr()) }
+    fn sys_exec(
+        code_offset: *const u8,
+        code_len: u32,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel: u32,
+    ) -> i32 {
+        unsafe {
+            _sys_exec(
+                code_offset,
+                code_len,
+                input_offset,
+                input_len,
+                return_offset,
+                return_len,
+                fuel,
+            )
+        }
     }
 
     #[inline(always)]
-    fn crypto_poseidon(fr32_data: &[u8], output: &mut [u8]) {
-        unsafe {
-            _crypto_poseidon(
-                fr32_data.as_ptr(),
-                fr32_data.len() as i32,
-                output.as_mut_ptr(),
-            )
-        }
+    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        unsafe { _crypto_keccak256(data_offset, data_len, output32_offset) }
+    }
+
+    #[inline(always)]
+    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        unsafe { _crypto_poseidon(data_offset, data_len, output32_offset) }
     }
 
     #[inline(always)]
@@ -231,8 +261,8 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn zktrie_field(key: &Bytes32, field: u32, output: &mut [Bytes32]) {
-        unsafe { _zktrie_field(key.as_ptr(), field, output.as_mut_ptr()) }
+    fn zktrie_field(key: *const u8, field: u32, output: *mut u8) {
+        unsafe { _zktrie_field(key, field, output) }
     }
 
     #[inline(always)]

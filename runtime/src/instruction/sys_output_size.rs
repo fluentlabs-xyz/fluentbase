@@ -1,14 +1,14 @@
 use crate::RuntimeContext;
 use rwasm::{common::Trap, Caller};
 
-pub struct SysState;
+pub struct SysOutputSize;
 
-impl SysState {
+impl SysOutputSize {
     pub fn fn_handler<T>(caller: Caller<'_, RuntimeContext<T>>) -> Result<u32, Trap> {
         Ok(Self::fn_impl(caller.data()))
     }
 
     pub fn fn_impl<T>(ctx: &RuntimeContext<T>) -> u32 {
-        ctx.state
+        ctx.return_data.len() as u32
     }
 }

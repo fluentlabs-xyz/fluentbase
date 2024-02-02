@@ -1,108 +1,127 @@
 #[allow(dead_code)]
 use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
-#[cfg(test)]
-use alloc::vec::Vec;
-use fluentbase_runtime::instruction::{
-    crypto_ecrecover::CryptoEcrecover,
-    crypto_keccak256::CryptoKeccak256,
-    crypto_poseidon::CryptoPoseidon,
-    crypto_poseidon2::CryptoPoseidon2,
-    rwasm_compile::RwasmCompile,
+use fluentbase_runtime::{
+    instruction::{
+        crypto_ecrecover::CryptoEcrecover,
+        crypto_keccak256::CryptoKeccak256,
+        crypto_poseidon::CryptoPoseidon,
+        crypto_poseidon2::CryptoPoseidon2,
+        rwasm_compile::RwasmCompile,
+        sys_exec::SysExec,
+        sys_halt::SysHalt,
+        sys_input_size::SysInputSize,
+        sys_output_size::SysOutputSize,
+        sys_read::SysRead,
+        sys_read_output::SysReadOutput,
+        sys_state::SysState,
+        sys_write::SysWrite,
+    },
+    RuntimeContext,
 };
-#[cfg(test)]
-use fluentbase_runtime::RuntimeContext;
+use std::ptr;
 
-#[cfg(test)]
 thread_local! {
     pub static CONTEXT: std::cell::Cell<RuntimeContext<'static, ()>> = std::cell::Cell::new(RuntimeContext::new(&[]));
 }
 
+fn with_context<F, R>(func: F) -> R
+where
+    F: Fn(&RuntimeContext<'static, ()>) -> R,
+{
+    CONTEXT.with(|ctx| {
+        let ctx2 = ctx.take();
+        let result = func(&ctx2);
+        ctx.set(ctx2);
+        result
+    })
+}
+
+fn with_context_mut<F, R>(func: F) -> R
+where
+    F: Fn(&mut RuntimeContext<'static, ()>) -> R,
+{
+    CONTEXT.with(|ctx| {
+        let mut ctx2 = ctx.take();
+        let result = func(&mut ctx2);
+        ctx.set(ctx2);
+        result
+    })
+}
+
 impl LowLevelAPI for LowLevelSDK {
-    #[cfg(test)]
     fn sys_read(target: &mut [u8], offset: u32) {
-        let input = CONTEXT.with(|ctx| {
-            let ctx2 = ctx.take();
-            let result = ctx2
-                .read_input(offset, target.len() as u32)
-                .unwrap()
-                .to_vec();
-            ctx.set(ctx2);
-            result.to_vec()
-        });
-        target.copy_from_slice(&input);
+        let result =
+            with_context(|ctx| SysRead::fn_impl(ctx, offset, target.len() as u32).unwrap());
+        target.copy_from_slice(&result);
     }
 
-    #[cfg(not(test))]
-    fn sys_read(_target: &mut [u8], _offset: u32) {
-        unreachable!("sys methods are not available in this mode")
-    }
-
-    #[cfg(test)]
     fn sys_input_size() -> u32 {
-        CONTEXT.with(|ctx| {
-            let ctx2 = ctx.take();
-            let result = ctx2.input_size();
-            ctx.set(ctx2);
-            result
-        })
+        with_context(|ctx| SysInputSize::fn_impl(ctx))
     }
 
-    #[cfg(not(test))]
-    fn sys_input_size() -> u32 {
-        unreachable!("sys methods are not available in this mode")
-    }
-
-    #[cfg(test)]
     fn sys_write(value: &[u8]) {
-        CONTEXT.with(|ctx| {
-            let mut output = ctx.take();
-            output.extend_return_data(value);
-            ctx.set(output);
-        });
+        with_context_mut(|ctx| SysWrite::fn_impl(ctx, value))
     }
 
-    #[cfg(not(test))]
-    fn sys_write(_value: &[u8]) {
-        unreachable!("sys methods are not available in this mode")
-    }
-
-    #[cfg(test)]
     fn sys_halt(exit_code: i32) {
-        CONTEXT.with(|ctx| {
-            let mut output = ctx.take();
-            output.set_exit_code(exit_code);
-            ctx.set(output);
+        with_context_mut(|ctx| SysHalt::fn_impl(ctx, exit_code))
+    }
+
+    fn sys_output_size() -> u32 {
+        with_context(|ctx| SysOutputSize::fn_impl(ctx))
+    }
+
+    fn sys_read_output(target: *mut u8, offset: u32, length: u32) {
+        let result = with_context(|ctx| SysReadOutput::fn_impl(ctx, offset, length).unwrap());
+        unsafe { ptr::copy(result.as_ptr(), target, length as usize) }
+    }
+
+    fn sys_exec(
+        code_offset: *const u8,
+        code_len: u32,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel: u32,
+    ) -> i32 {
+        let bytecode =
+            unsafe { &*ptr::slice_from_raw_parts(code_offset, code_len as usize) }.to_vec();
+        let input =
+            unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
+        match with_context_mut(move |ctx| {
+            SysExec::fn_impl(ctx, bytecode.clone(), input.clone(), return_len, fuel)
+        }) {
+            Ok(result) => {
+                if return_len > 0 {
+                    unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
+                }
+                0
+            }
+            Err(err) => err.into_i32(),
+        }
+    }
+
+    fn sys_state() -> u32 {
+        with_context(|ctx| SysState::fn_impl(ctx))
+    }
+
+    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        let result = CryptoKeccak256::fn_impl(unsafe {
+            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
         });
+        unsafe {
+            ptr::copy(result.as_ptr(), output32_offset, 32);
+        }
     }
 
-    #[cfg(not(test))]
-    fn sys_halt(_exit_code: i32) {
-        unreachable!("sys methods are not available in this mode")
-    }
-
-    #[cfg(test)]
-    fn sys_state() -> u32 {
-        CONTEXT.with(|ctx| {
-            let output = ctx.take();
-            let result = output.state();
-            ctx.set(output);
-            result
-        })
-    }
-
-    #[cfg(not(test))]
-    fn sys_state() -> u32 {
-        unreachable!("sys methods are not available in this mode")
-    }
-
-    fn crypto_keccak256(data: &[u8], output: &mut [u8]) {
-        let result = CryptoKeccak256::fn_impl(data);
-        output.copy_from_slice(&result);
-    }
-
-    fn crypto_poseidon(data: &[u8], output: &mut [u8]) {
-        let result = CryptoPoseidon::fn_impl(data);
-        output.copy_from_slice(&result);
+    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        let result = CryptoPoseidon::fn_impl(unsafe {
+            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
+        });
+        unsafe {
+            ptr::copy(result.as_ptr(), output32_offset, 32);
+        }
     }
 
     fn crypto_poseidon2(
@@ -164,7 +183,7 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("rwasm methods are not available in this mode")
     }
 
-    fn statedb_get_code(_key: &[u8], _output: &mut [u8], code_offset: u32) {
+    fn statedb_get_code(_key: &[u8], _output: &mut [u8], _code_offset: u32) {
         unreachable!("statedb methods are not available in this mode")
     }
 
@@ -204,7 +223,7 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_field(_key: &Bytes32, _field: u32, _output: &mut [Bytes32]) {
+    fn zktrie_field(_key: *const u8, _field: u32, _output: *mut u8) {
         unreachable!("zktrie methods are not available in this mode")
     }
 

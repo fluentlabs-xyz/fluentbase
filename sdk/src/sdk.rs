@@ -5,10 +5,21 @@ pub trait LowLevelAPI {
     fn sys_input_size() -> u32;
     fn sys_write(value: &[u8]);
     fn sys_halt(exit_code: i32);
+    fn sys_output_size() -> u32;
+    fn sys_read_output(target: *mut u8, offset: u32, length: u32);
     fn sys_state() -> u32;
+    fn sys_exec(
+        code_offset: *const u8,
+        code_len: u32,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel: u32,
+    ) -> i32;
 
-    fn crypto_keccak256(data: &[u8], output: &mut [u8]);
-    fn crypto_poseidon(fr32_data: &[u8], output: &mut [u8]);
+    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     fn crypto_poseidon2(
         fa32_data: &Bytes32,
         fb32_data: &Bytes32,
@@ -46,7 +57,7 @@ pub trait LowLevelAPI {
 
     fn zktrie_open(root: &Bytes32);
     fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]);
-    fn zktrie_field(key: &Bytes32, field: u32, output: &mut [Bytes32]);
+    fn zktrie_field(key: *const u8, field: u32, output: *mut u8);
     fn zktrie_root(output: &mut Bytes32);
     fn zktrie_rollback();
     fn zktrie_commit();
