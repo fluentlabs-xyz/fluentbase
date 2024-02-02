@@ -15,6 +15,6 @@ impl SysWrite {
     }
 
     pub fn fn_impl<T>(ctx: &mut RuntimeContext<T>, data: &[u8]) {
-        ctx.extend_return_data(data);
+        ctx.output.extend_from_slice(data);
     }
 }

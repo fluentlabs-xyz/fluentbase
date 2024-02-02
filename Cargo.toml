@@ -1,15 +1,16 @@
 [workspace]
 members = [
-    "rwasm/bin",
-    "rwasm/code-snippets",
     "codec",
     "codec-derive",
     "e2e",
     "examples",
     "poseidon",
     "runtime",
+    "rwasm/bin",
+    "rwasm/code-snippets",
     "rwasm/evm",
     "sdk",
+    "kernel",
     "types",
     "zktrie",
 ]
@@ -60,7 +61,7 @@ codegen-units = 1
 panic = "abort"
 lto = true
 opt-level = 3
-strip = true
+strip = false
 debug = false
 debug-assertions = false
 rpath = false

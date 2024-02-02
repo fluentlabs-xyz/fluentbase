@@ -14,6 +14,20 @@ impl Encoder<u8> for u8 {
         (0, 0)
     }
 }
+impl Encoder<bool> for bool {
+    const HEADER_SIZE: usize = core::mem::size_of::<bool>();
+    fn encode<W: WritableBuffer>(&self, encoder: &mut W, field_offset: usize) {
+        encoder.write_u8(field_offset, *self as u8);
+    }
+    fn decode_header(
+        decoder: &mut BufferDecoder,
+        field_offset: usize,
+        result: &mut bool,
+    ) -> (usize, usize) {
+        *result = decoder.read_u8(field_offset) != 0;
+        (0, 0)
+    }
+}
 
 macro_rules! impl_le_int {
     ($typ:ty, $write_fn:ident, $read_fn:ident) => {

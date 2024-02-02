@@ -8,7 +8,14 @@ use crate::{
     storage::PersistentStorage,
     types::RuntimeError,
 };
-use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
+use fluentbase_types::{
+    AccountDb,
+    Address,
+    ExitCode,
+    PreimageDb,
+    RECURSIVE_MAX_DEPTH,
+    STACK_MAX_HEIGHT,
+};
 use rwasm_codegen::{
     rwasm::{
         engine::Tracer,
@@ -34,7 +41,6 @@ use std::{cell::RefCell, mem::take, rc::Rc};
 
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
-    pub(crate) func_type: Option<FuncType>,
     // context inputs
     pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
@@ -45,12 +51,15 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) is_static: bool,
     pub(crate) caller: Address,
     pub(crate) address: Address,
+    pub(crate) func_type: Option<FuncType>,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
+    pub(crate) return_data: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
     pub(crate) trie_db: Option<Rc<RefCell<dyn PersistentStorage>>>,
+    pub(crate) preimage_db: Option<Rc<RefCell<dyn PreimageDb>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -69,8 +78,10 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             address: self.address.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
+            return_data: self.return_data.clone(),
             account_db: self.account_db.clone(),
             trie_db: self.trie_db.clone(),
+            preimage_db: self.preimage_db.clone(),
         }
     }
 }
@@ -91,8 +102,10 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             address: Default::default(),
             exit_code: 0,
             output: vec![],
+            return_data: vec![],
             account_db: None,
             trie_db: None,
+            preimage_db: None,
         }
     }
 }
@@ -160,21 +173,14 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_trie_db(mut self, zktrie: Rc<RefCell<dyn PersistentStorage>>) -> Self {
-        self.trie_db = Some(zktrie);
+    pub fn with_trie_db(mut self, zktrie_db: Rc<RefCell<dyn PersistentStorage>>) -> Self {
+        self.trie_db = Some(zktrie_db);
         self
     }
 
-    pub fn read_input(&self, offset: u32, length: u32) -> Result<&[u8], ExitCode> {
-        if offset + length <= self.input.len() as u32 {
-            Ok(&self.input[(offset as usize)..(offset as usize + length as usize)])
-        } else {
-            Err(ExitCode::MemoryOutOfBounds)
-        }
-    }
-
-    pub fn extend_return_data(&mut self, value: &[u8]) {
-        self.output.extend(value);
+    pub fn with_preimage_db(mut self, preimage_db: Rc<RefCell<dyn PreimageDb>>) -> Self {
+        self.preimage_db = Some(preimage_db);
+        self
     }
 
     pub fn take_context<F>(&mut self, func: F)
@@ -184,10 +190,6 @@ impl<'t, T> RuntimeContext<'t, T> {
         if let Some(context) = &self.context {
             func(context)
         }
-    }
-
-    pub fn set_exit_code(&mut self, exit_code: i32) {
-        self.exit_code = exit_code;
     }
 
     pub fn exit_code(&self) -> i32 {
