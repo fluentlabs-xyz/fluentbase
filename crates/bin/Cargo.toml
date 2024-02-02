@@ -7,7 +7,7 @@ edition = "2021"
 rwasm-codegen = { workspace = true, default-features = false, branch = "devel" }
 rwasm = { workspace = true, default-features = false, features = ["std"] }
 # we need runtime here only to obtain sys call indices
-fluentbase-runtime = { path = "../../runtime" }
+fluentbase-runtime = { path = "../runtime" }
 wat = "1.0.80"
 clap = { version = "4.4.11", features = ["derive"] }
 lazy_static = "1.4.0"

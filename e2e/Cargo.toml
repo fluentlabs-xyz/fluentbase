@@ -10,10 +10,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-runtime = { path = "../runtime" }
-fluentbase-sdk = { path = "../sdk" }
-fluentbase-poseidon = { path = "../poseidon" }
-fluentbase-codec = { path = "../codec" }
+fluentbase-runtime = { path = "../crates/runtime" }
+fluentbase-sdk = { path = "../crates/sdk" }
+fluentbase-poseidon = { path = "../crates/poseidon" }
+fluentbase-codec = { path = "../crates/codec" }
 rwasm-codegen = { workspace = true }
 
 [dev-dependencies]

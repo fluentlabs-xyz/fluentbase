@@ -1,18 +1,8 @@
 [workspace]
 members = [
-    "codec",
-    "codec-derive",
+    "crates/*",
     "e2e",
     "examples",
-    "poseidon",
-    "runtime",
-    "rwasm/bin",
-    "rwasm/code-snippets",
-    "rwasm/evm",
-    "sdk",
-    "kernel",
-    "types",
-    "zktrie",
 ]
 exclude = []
 resolver = "2"

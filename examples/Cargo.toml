@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-codec = { path = "../codec", default-features = false }
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
+fluentbase-codec = { path = "../crates/codec", default-features = false }
+fluentbase-sdk = { path = "../crates/sdk", default-features = false, features = ["evm"] }
 rwasm-codegen = { workspace = true, default-features = false }
 #revm = { version = "3.3.0", default-features = false }
 #revm-primitives = { version = "1.1.2", default-features = false }
