@@ -863,6 +863,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-kernel"
+version = "0.1.0"
+dependencies = [
+ "alloy-rlp",
+ "byteorder",
+ "fluentbase-sdk",
+ "fluentbase-types",
+ "hex",
+ "keccak-hash",
+]
+
+[[package]]
 name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
@@ -949,18 +961,6 @@ dependencies = [
  "paste",
  "rwasm-codegen",
  "sha2",
-]
-
-[[package]]
-name = "fluentbase-statedb"
-version = "0.1.0"
-dependencies = [
- "alloy-rlp",
- "byteorder",
- "fluentbase-sdk",
- "fluentbase-types",
- "hex",
- "keccak-hash",
 ]
 
 [[package]]

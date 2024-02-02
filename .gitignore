@@ -1,8 +1,8 @@
 
 /target/
 **/*.rs.bk
-rwasm/Cargo.lock
-rwasm/spec/target
+crates/rwasm/Cargo.lock
+crates/rwasm/spec/target
 
 **/fuzz/corpus/
 **/fuzz/target/

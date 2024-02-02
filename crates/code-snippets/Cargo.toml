@@ -11,9 +11,9 @@ proc-macro = false
 
 [dependencies]
 byteorder.workspace = true
-fluentbase-codec = { path = "../../codec", default-features = false }
+fluentbase-codec = { path = "../codec", default-features = false }
 rwasm-codegen = { workspace = true }
-fluentbase-sdk = { path = "../../sdk", default-features = false, features = ["evm"] }
+fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 hashbrown = { workspace = true }
 once_cell = { version = "1.19.0", default-features = false }
 

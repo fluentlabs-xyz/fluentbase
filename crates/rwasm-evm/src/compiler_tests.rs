@@ -2106,7 +2106,8 @@ mod evm_to_rwasm_tests {
 
         // valid rwasm bytecode
         // let init_bytecode_data =
-        //     include_bytes!("../../code-snippets/bin/other_deploy_contract_test.rwasm").to_vec();
+        //     include_bytes!("../../code-snippets/bin/other_deploy_contract_test.rwasm").
+        // to_vec();
 
         let deploy_bytecode_mem_offset: u32 = 9;
         for (idx, chunk) in init_bytecode_data.chunks(1).enumerate() {
