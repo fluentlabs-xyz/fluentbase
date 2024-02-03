@@ -16,6 +16,8 @@ pub fn _evm_create(
     output20_offset: *mut u8,
     gas_limit: u32,
 ) -> i32 {
+    // TODO: "gas calculations"
+    // TODO: "call depth stack check >= 1024"
     // check write protection
     if ExecutionContext::contract_is_static() {
         return ExitCode::WriteProtection.into_i32();
@@ -32,6 +34,7 @@ pub fn _evm_create(
     if contract.is_not_empty() {
         return ExitCode::CreateCollision.into_i32();
     }
+    deployer.nonce += 1;
     contract.nonce = 1;
     // transfer value to the just created account
     if !deployer.transfer_value(&mut contract, &value) {
