@@ -14,6 +14,7 @@ fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"]
 fluentbase-types = { path = "../types", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { version = "0.3.4", default-features = false }
+revm = { version = "3.5.0", default-features = false }
 
 [dev-dependencies]
 keccak-hash = { version = "0.10.0" }
@@ -23,7 +24,7 @@ hex = { version = "0.4.3" }
 crate-type = ["cdylib", "staticlib"]
 
 [features]
-default = ["std"]
+default = []
 std = [
     "fluentbase-sdk/runtime",
     "fluentbase-types/std",

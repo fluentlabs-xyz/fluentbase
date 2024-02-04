@@ -7,6 +7,8 @@ mod runtime;
 pub use runtime::*;
 mod storage;
 pub use storage::*;
+mod journal;
 #[cfg(test)]
 mod tests;
 pub mod types;
+pub(crate) mod zktrie;

@@ -1,5 +1,5 @@
 use crate::{storage::PersistentStorage, types::Bytes};
-use fluentbase_types::{ExitCode, TrieDb};
+use fluentbase_types::{ExitCode, TrieDb, POSEIDON_EMPTY};
 use fluentbase_zktrie::{
     Byte32,
     Database,
@@ -12,9 +12,10 @@ use fluentbase_zktrie::{
     ZkTrie,
 };
 use halo2curves::bn256::Fr;
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-struct NodeDb<'a, DB>(RefCell<&'a mut DB>);
+#[derive(Clone)]
+struct NodeDb<'a, DB>(Rc<RefCell<&'a mut DB>>);
 
 const STORAGE_PREFIX_NODE: u8 = 0x01;
 const STORAGE_PREFIX_PREIMAGE: u8 = 0x02;
@@ -65,6 +66,7 @@ impl<'a, DB: TrieDb> PreimageDatabase for NodeDb<'a, DB> {
     }
 }
 
+#[derive(Clone)]
 pub struct ZkTrieStateDb<'a, DB> {
     storage: NodeDb<'a, DB>,
     trie: Option<ZkTrie<PoseidonHash>>,
@@ -75,7 +77,7 @@ const MAX_LEVEL: usize = 31 * 8;
 impl<'a, DB: TrieDb> ZkTrieStateDb<'a, DB> {
     pub fn new(storage: &'a mut DB) -> Self {
         Self {
-            storage: NodeDb(RefCell::new(storage)),
+            storage: NodeDb(Rc::new(RefCell::new(storage))),
             trie: None,
         }
     }
@@ -92,8 +94,12 @@ impl<'a, DB: TrieDb> ZkTrieStateDb<'a, DB> {
 }
 
 impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
-    fn open(&mut self, root32: &[u8]) {
+    fn open(&mut self, root32: &[u8]) -> bool {
+        if self.trie.is_some() {
+            return false;
+        }
         self.trie = Some(ZkTrie::new(MAX_LEVEL, Hash::from_bytes(&root32)));
+        true
     }
 
     fn compute_root(&self) -> [u8; 32] {
@@ -143,6 +149,10 @@ impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
         .map_err(|_| ExitCode::PersistentStorageError)
     }
 
+    fn remove(&mut self, key: &[u8]) -> Result<(), ExitCode> {
+        self.update(key, 0, &vec![POSEIDON_EMPTY.0])
+    }
+
     fn proof(&self, key: &[u8; 32]) -> Option<Vec<Vec<u8>>> {
         let trie = self.trie.as_ref().unwrap();
         match trie.proof(&self.storage, &key[..]) {
@@ -154,7 +164,7 @@ impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{zktrie::ZkTrieStateDb, PersistentStorage};
+    use crate::{storage::PersistentStorage, zktrie::ZkTrieStateDb};
     use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {

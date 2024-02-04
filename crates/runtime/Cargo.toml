@@ -22,6 +22,7 @@ halo2curves = { workspace = true }
 # misc
 keccak-hash = { version = "0.10.0" }
 k256 = { version = "0.13.1" }
+hashbrown.workspace = true
 
 [dev-dependencies]
 hex = { version = "0.4.3" }
