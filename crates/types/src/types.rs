@@ -22,6 +22,7 @@ pub enum ExitCode {
     InsufficientBalance = -1012,
     CreateCollision = -1013,
     ContractSizeLimit = -1014,
+    StorageSlotOverflow = -1015,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -104,7 +105,7 @@ pub enum SysFuncIdx {
     // preimage functions
     PREIMAGE_SIZE = 0x0701, // fluentbase_v1alpha::_preimage_size
     PREIMAGE_COPY = 0x0702, // fluentbase_v1alpha::_preimage_copy
-    // zktrie functions (0x5A54 means ZT)
+    // zktrie functions
     ZKTRIE_OPEN = 0x0201,     // fluentbase_v1alpha::_zktrie_open
     ZKTRIE_UPDATE = 0x0202,   // fluentbase_v1alpha::_zktrie_update
     ZKTRIE_FIELD = 0x0203,    // fluentbase_v1alpha::_zktrie_field

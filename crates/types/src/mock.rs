@@ -2,7 +2,7 @@ use crate::{Account, AccountDb, TrieDb, U256};
 use alloy_primitives::{Address, Bytes, B256};
 use hashbrown::HashMap;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InMemoryAccountDb {
     accounts: HashMap<Address, Account>,
     nodes: HashMap<Bytes, Bytes>,

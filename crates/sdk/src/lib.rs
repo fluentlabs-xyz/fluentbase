@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "runtime"), no_std)]
+#![warn(unused_crate_dependencies)]
 
 extern crate alloc;
 extern crate core;
