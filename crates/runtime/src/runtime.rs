@@ -55,6 +55,7 @@ pub struct RuntimeContext<'t, T> {
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
+    pub(crate) consumed_fuel: u32,
     pub(crate) return_data: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
@@ -78,6 +79,7 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             address: self.address.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
+            consumed_fuel: self.consumed_fuel.clone(),
             return_data: self.return_data.clone(),
             account_db: self.account_db.clone(),
             trie_db: self.trie_db.clone(),
@@ -102,6 +104,7 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             address: Default::default(),
             exit_code: 0,
             output: vec![],
+            consumed_fuel: 0,
             return_data: vec![],
             account_db: None,
             trie_db: None,
@@ -228,6 +231,7 @@ impl<'t, T> RuntimeContext<'t, T> {
 pub struct ExecutionResult<'t, T> {
     runtime_context: RuntimeContext<'t, T>,
     tracer: Tracer,
+    fuel_consumed: Option<u64>,
 }
 
 impl<'t, T> ExecutionResult<'t, T> {
@@ -235,13 +239,16 @@ impl<'t, T> ExecutionResult<'t, T> {
         Self {
             runtime_context: store.data().clone(),
             tracer: store.tracer().clone(),
+            fuel_consumed: store.fuel_consumed(),
         }
     }
 
     pub fn taken(store: &mut Store<RuntimeContext<'t, T>>) -> Self {
+        let fuel_consumed = store.fuel_consumed();
         Self {
             runtime_context: take(store.data_mut()),
             tracer: take(store.tracer_mut()),
+            fuel_consumed,
         }
     }
 
@@ -255,6 +262,10 @@ impl<'t, T> ExecutionResult<'t, T> {
 
     pub fn data(&self) -> &RuntimeContext<'t, T> {
         &self.runtime_context
+    }
+
+    pub fn fuel_consumed(&self) -> Option<u64> {
+        self.fuel_consumed
     }
 }
 
@@ -292,6 +303,7 @@ impl<'t, T> Runtime<'t, T> {
             Ok(ExecutionResult {
                 runtime_context,
                 tracer: Default::default(),
+                fuel_consumed: None,
             })
         } else {
             let mut runtime = runtime?;

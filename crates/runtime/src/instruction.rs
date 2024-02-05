@@ -133,7 +133,7 @@ impl_runtime_handler!(SysInputSize, SYS_INPUT_SIZE, fn fluentbase_v1alpha::_sys_
 impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel: u32) -> i32);
+impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
 
 impl_runtime_handler!(PreimageSize, PREIMAGE_SIZE, fn fluentbase_v1alpha::_preimage_size(hash32_offset: u32) -> u32);

@@ -8,6 +8,7 @@ edition = "2021"
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-runtime = { path = "../runtime", optional = true }
+byteorder = { workspace = true }
 paste = { workspace = true }
 lol_alloc = "0.4.0"
 

@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
+use byteorder::{BigEndian, ByteOrder};
 use fluentbase_runtime::{
     instruction::{
         crypto_ecrecover::CryptoEcrecover,
@@ -85,19 +86,34 @@ impl LowLevelAPI for LowLevelSDK {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel: u32,
+        fuel_offset: *mut u32,
+        state: u32,
     ) -> i32 {
         let bytecode =
             unsafe { &*ptr::slice_from_raw_parts(code_offset, code_len as usize) }.to_vec();
         let input =
             unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
+        let fuel = BigEndian::read_u32(unsafe {
+            &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
+        });
         match with_context_mut(move |ctx| {
-            SysExec::fn_impl(ctx, bytecode.clone(), input.clone(), return_len, fuel)
+            SysExec::fn_impl(
+                ctx,
+                bytecode.clone(),
+                input.clone(),
+                return_len,
+                fuel,
+                state,
+            )
         }) {
-            Ok(result) => {
+            Ok((result, remaining_fuel)) => {
                 if return_len > 0 {
                     unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
                 }
+                BigEndian::write_u32(
+                    unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
+                    remaining_fuel,
+                );
                 0
             }
             Err(err) => err.into_i32(),
