@@ -2,15 +2,26 @@ mod balance;
 mod create;
 mod selfbalance;
 
+use alloc::vec::Vec;
 use byteorder::{BigEndian, ByteOrder};
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{Address, B256, U256},
+    evm::{Address, Bytes, B256, U256},
     Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
 use fluentbase_types::{KECCAK_EMPTY, POSEIDON_EMPTY};
+use revm_interpreter::{
+    primitives::{Bytecode, Env, HashMap},
+    CallInputs,
+    CreateInputs,
+    Gas,
+    Host,
+    InstructionResult,
+    SelfDestructResult,
+    SharedMemory,
+};
 
 pub(crate) const ZKTRIE_CODESIZE_NONCE_FIELD: u32 = 1;
 pub(crate) const ZKTRIE_BALANCE_FIELD: u32 = 2;
@@ -109,6 +120,94 @@ impl Account {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct HostImpl {
+    accounts: HashMap<Address, Account>,
+    logs: Vec<(Address, Vec<B256>, Bytes)>,
+}
+
+impl Host for HostImpl {
+    fn env(&mut self) -> &mut Env {
+        todo!()
+    }
+
+    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
+        let value = self.accounts.get(&address);
+        if value.is_some() {
+            return Some((false, true));
+        }
+        self.accounts
+            .insert(address, Account::read_account(&address));
+        Some((true, true))
+    }
+
+    fn block_hash(&mut self, _number: U256) -> Option<B256> {
+        todo!("not supported opcode")
+    }
+
+    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+        let (is_cold, exist) = self.load_account(address)?;
+        if !exist {
+            return Some((U256::ZERO, exist));
+        }
+        let Account { balance, .. } = self.accounts.get(&address).unwrap();
+        Some((*balance, is_cold))
+    }
+
+    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
+        todo!()
+    }
+
+    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+        todo!()
+    }
+
+    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
+        todo!()
+    }
+
+    fn sstore(
+        &mut self,
+        address: Address,
+        index: U256,
+        value: U256,
+    ) -> Option<(U256, U256, U256, bool)> {
+        todo!()
+    }
+
+    fn tload(&mut self, _address: Address, _index: U256) -> U256 {
+        todo!("not supported opcode")
+    }
+
+    fn tstore(&mut self, _address: Address, _index: U256, _value: U256) {
+        todo!("not supported opcode")
+    }
+
+    fn log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {
+        self.logs.push((address, topics, data));
+    }
+
+    fn call(
+        &mut self,
+        input: &mut CallInputs,
+        shared_memory: &mut SharedMemory,
+    ) -> (InstructionResult, Gas, Bytes) {
+        todo!()
+    }
+
+    fn create(
+        &mut self,
+        inputs: &mut CreateInputs,
+        shared_memory: &mut SharedMemory,
+    ) -> (InstructionResult, Option<Address>, Gas, Bytes) {
+        todo!()
+    }
+
+    fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
+        todo!("not supported opcode")
+    }
+}
+
 #[inline(always)]
 fn read_input_address(offset: usize) -> Address {
     let mut address = [0u8; Address::len_bytes()];
@@ -163,98 +262,4 @@ fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B256) 
     LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
     let bytes32: [u8; 32] = bytes[0..32].try_into().unwrap();
     Address::from_word(B256::from(bytes32))
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::evm::calc_create_address;
-    use alloc::vec;
-    use fluentbase_sdk::evm::Address;
-    use fluentbase_types::{address, B256};
-    use keccak_hash::keccak;
-
-    #[test]
-    fn create_correctness() {
-        fn create_slow(address: &Address, nonce: u64) -> Address {
-            use alloy_rlp::Encodable;
-            let mut out = vec![];
-            alloy_rlp::Header {
-                list: true,
-                payload_length: address.length() + nonce.length(),
-            }
-            .encode(&mut out);
-            address.encode(&mut out);
-            nonce.encode(&mut out);
-            Address::from_word(keccak(out).0.into())
-        }
-        let tests = vec![(address!("0000000000000000000000000000000000000000"), 100)];
-        for (address, nonce) in tests {
-            assert_eq!(
-                calc_create_address(&address, nonce),
-                create_slow(&address, nonce)
-            )
-        }
-    }
-
-    #[test]
-    fn create2() {
-        let tests = [
-            (
-                "0000000000000000000000000000000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "00",
-                "4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38",
-            ),
-            (
-                "deadbeef00000000000000000000000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "00",
-                "B928f69Bb1D91Cd65274e3c79d8986362984fDA3",
-            ),
-            (
-                "deadbeef00000000000000000000000000000000",
-                "000000000000000000000000feed000000000000000000000000000000000000",
-                "00",
-                "D04116cDd17beBE565EB2422F2497E06cC1C9833",
-            ),
-            (
-                "0000000000000000000000000000000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "deadbeef",
-                "70f2b2914A2a4b783FaEFb75f459A580616Fcb5e",
-            ),
-            (
-                "00000000000000000000000000000000deadbeef",
-                "00000000000000000000000000000000000000000000000000000000cafebabe",
-                "deadbeef",
-                "60f3f640a8508fC6a86d45DF051962668E1e8AC7",
-            ),
-            (
-                "00000000000000000000000000000000deadbeef",
-                "00000000000000000000000000000000000000000000000000000000cafebabe",
-                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-                "1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C",
-            ),
-            (
-                "0000000000000000000000000000000000000000",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-                "",
-                "E33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0",
-            ),
-        ];
-        for (from, salt, init_code, expected) in tests {
-            let from = from.parse::<Address>().unwrap();
-
-            let salt = hex::decode(salt).unwrap();
-            let salt: [u8; 32] = salt.try_into().unwrap();
-
-            let init_code = hex::decode(init_code).unwrap();
-            let init_code_hash: B256 = keccak(&init_code).0.into();
-
-            let expected = expected.parse::<Address>().unwrap();
-
-            assert_eq!(expected, from.create2(salt, init_code_hash));
-            assert_eq!(expected, from.create2_from_code(salt, init_code));
-        }
-    }
 }

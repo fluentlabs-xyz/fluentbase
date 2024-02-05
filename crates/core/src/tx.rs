@@ -30,7 +30,7 @@ pub(crate) const ZKTRIE_ROOT_FIELD: u32 = 3;
 pub(crate) const ZKTRIE_KECCAK_CODE_HASH_FIELD: u32 = 4;
 pub(crate) const ZKTRIE_CODE_HASH_FIELD: u32 = 5;
 
-struct TxDb {}
+pub struct TxDb {}
 
 impl Database for TxDb {
     type Error = ExitCode;
@@ -130,16 +130,16 @@ fn execute_transaction() -> Result<(), ExitCode> {
     Ok(())
 }
 
-#[no_mangle]
-pub fn _evm_call() {
-    // ...
-}
-
-#[no_mangle]
-pub fn _evm_exec_tx() -> i32 {
-    let exit_code = match execute_transaction() {
-        Ok(_) => ExitCode::Ok,
-        Err(err) => err,
-    };
-    exit_code.into_i32()
-}
+// #[no_mangle]
+// pub fn _evm_call() {
+//     // ...
+// }
+//
+// #[no_mangle]
+// pub fn _evm_exec_tx() -> i32 {
+//     let exit_code = match execute_transaction() {
+//         Ok(_) => ExitCode::Ok,
+//         Err(err) => err,
+//     };
+//     exit_code.into_i32()
+// }
