@@ -214,6 +214,7 @@ mod tests {
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key3"), &vec![bytes32!("val3")], 0);
         journal.rollback(checkpoint);
+        assert_eq!(journal.state.len(), 2);
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![
@@ -225,6 +226,7 @@ mod tests {
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key2"), &vec![bytes32!("Hello, World")], 0);
         journal.rollback(checkpoint);
+        assert_eq!(journal.state.len(), 2);
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![
@@ -244,10 +246,12 @@ mod tests {
         journal.update(&bytes32!("key2"), &vec![bytes32!("val2")], 1);
         journal.rollback(checkpoint);
         assert_eq!(journal.compute_root(), calc_trie_root(vec![]));
+        assert_eq!(journal.state.len(), 0);
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key3"), &vec![bytes32!("val3")], 0);
         journal.update(&bytes32!("key4"), &vec![bytes32!("val4")], 1);
         journal.rollback(checkpoint);
         assert_eq!(journal.compute_root(), calc_trie_root(vec![]));
+        assert_eq!(journal.state.len(), 0);
     }
 }

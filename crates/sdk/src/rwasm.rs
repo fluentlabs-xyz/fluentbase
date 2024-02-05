@@ -4,6 +4,8 @@ use crate::{
         _crypto_keccak256,
         _crypto_poseidon,
         _crypto_poseidon2,
+        _preimage_copy,
+        _preimage_size,
         _rwasm_compile,
         _rwasm_create,
         _rwasm_transact,
@@ -23,6 +25,7 @@ use crate::{
         _sys_read_output,
         _sys_state,
         _sys_write,
+        _zktrie_checkpoint,
         _zktrie_commit,
         _zktrie_field,
         _zktrie_open,
@@ -131,6 +134,16 @@ impl LowLevelAPI for LowLevelSDK {
                 rec_id as u32,
             )
         }
+    }
+
+    #[inline(always)]
+    fn preimage_size(hash32: *const u8) -> u32 {
+        unsafe { _preimage_size(hash32) }
+    }
+
+    #[inline(always)]
+    fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32) {
+        unsafe { _preimage_copy(hash32, output_offset, output_len) }
     }
 
     #[inline(always)]
@@ -271,13 +284,18 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn zktrie_rollback() {
-        unsafe { _zktrie_rollback() }
+    fn zktrie_checkpoint() -> u32 {
+        unsafe { _zktrie_checkpoint() }
     }
 
     #[inline(always)]
-    fn zktrie_commit() {
-        unsafe { _zktrie_commit() }
+    fn zktrie_rollback(checkpoint: u32) {
+        unsafe { _zktrie_rollback(checkpoint) }
+    }
+
+    #[inline(always)]
+    fn zktrie_commit(root32_offset: *mut u8) {
+        unsafe { _zktrie_commit(root32_offset) }
     }
 
     // #[inline(always)]

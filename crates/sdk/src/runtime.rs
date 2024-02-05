@@ -6,6 +6,8 @@ use fluentbase_runtime::{
         crypto_keccak256::CryptoKeccak256,
         crypto_poseidon::CryptoPoseidon,
         crypto_poseidon2::CryptoPoseidon2,
+        preimage_copy::PreimageCopy,
+        preimage_size::PreimageSize,
         rwasm_compile::RwasmCompile,
         sys_exec::SysExec,
         sys_halt::SysHalt,
@@ -144,6 +146,29 @@ impl LowLevelAPI for LowLevelSDK {
         output.copy_from_slice(&result);
     }
 
+    fn preimage_size(hash32: *const u8) -> u32 {
+        with_context(|ctx| {
+            PreimageSize::fn_impl(ctx, unsafe { &*ptr::slice_from_raw_parts(hash32, 32) })
+        })
+        .unwrap()
+    }
+
+    fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32) {
+        let output = with_context(|ctx| {
+            PreimageCopy::fn_impl(
+                ctx,
+                unsafe { &*ptr::slice_from_raw_parts(hash32, 32) },
+                output_len,
+            )
+        })
+        .unwrap();
+        if output_len > 0 {
+            unsafe {
+                ptr::copy(output.as_ptr(), output_offset, output_len as usize);
+            }
+        }
+    }
+
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
         match RwasmCompile::fn_impl(input, output.len() as u32) {
             Ok(result) => {
@@ -231,11 +256,15 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_rollback() {
+    fn zktrie_checkpoint() -> u32 {
         unreachable!("zktrie methods are not available in this mode")
     }
 
-    fn zktrie_commit() {
+    fn zktrie_rollback(_checkpoint: u32) {
+        unreachable!("zktrie methods are not available in this mode")
+    }
+
+    fn zktrie_commit(_root32_offset: *mut u8) {
         unreachable!("zktrie methods are not available in this mode")
     }
 }
