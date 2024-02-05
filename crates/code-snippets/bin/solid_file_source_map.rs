@@ -62,7 +62,6 @@
     (opcode::MSIZE as u32, 37340, 70),
     (opcode::MSTORE as u32, 37410, 110),
     (opcode::MSTORE8 as u32, 37520, 68),
-    (opcode::TEST as u32, 37588, 5),
     (opcode::DUP1 as u32, 37593, 76),
     (opcode::DUP10 as u32, 37669, 76),
     (opcode::DUP11 as u32, 37745, 76),
