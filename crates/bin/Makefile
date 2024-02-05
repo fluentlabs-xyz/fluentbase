@@ -23,4 +23,4 @@ $(FILES):
 	cargo run -- --skip-translate-sections ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path=../../rwasm/code-snippets/bin/$@.wat
 
 solid_file:
-	cargo run -- ${CARGO_OPTIONS} --file-in-path=../../rwasm/code-snippets/bin/$@.wat
+	cargo run -- ${CARGO_OPTIONS} --file-in-path=../code-snippets/bin/$@.wat
