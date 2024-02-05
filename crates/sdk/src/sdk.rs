@@ -28,6 +28,9 @@ pub trait LowLevelAPI {
     ) -> bool;
     fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
 
+    fn preimage_size(hash32: *const u8) -> u32;
+    fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32);
+
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32;
     fn rwasm_transact(
         address: &[u8],
@@ -59,8 +62,9 @@ pub trait LowLevelAPI {
     fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]);
     fn zktrie_field(key: *const u8, field: u32, output: *mut u8);
     fn zktrie_root(output: &mut Bytes32);
-    fn zktrie_rollback();
-    fn zktrie_commit();
+    fn zktrie_checkpoint() -> u32;
+    fn zktrie_rollback(checkpoint: u32);
+    fn zktrie_commit(root32_offset: *mut u8);
     // fn zktrie_store(key: &Bytes32, val: &Bytes32);
     // fn zktrie_load(key: &Bytes32, val: &mut Bytes32);
 }
