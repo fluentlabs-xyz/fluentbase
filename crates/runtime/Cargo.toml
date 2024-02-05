@@ -18,6 +18,7 @@ fluentbase-types = { path = "../types" }
 
 # workspace
 halo2curves = { workspace = true }
+byteorder = { workspace = true }
 
 # misc
 keccak-hash = { version = "0.10.0" }

@@ -15,7 +15,8 @@ pub trait LowLevelAPI {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel: u32,
+        fuel_offset: *mut u32,
+        state: u32,
     ) -> i32;
 
     fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);

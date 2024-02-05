@@ -33,7 +33,8 @@ extern "C" {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel: u32,
+        fuel_offset: *mut u32,
+        state: u32,
     ) -> i32;
 
     pub(crate) fn _preimage_size(hash32: *const u8) -> u32;

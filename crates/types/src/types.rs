@@ -5,9 +5,11 @@ use rwasm::{
 #[cfg(feature = "std")]
 use strum::IntoEnumIterator;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
     Ok = 0,
+    Panic = -71,
     // fluentbase error codes
     ExecutionHalted = -1001,
     NotSupportedCall = -1003,
@@ -23,6 +25,10 @@ pub enum ExitCode {
     CreateCollision = -1013,
     ContractSizeLimit = -1014,
     StorageSlotOverflow = -1015,
+    CallDepthOverflow = -1016,
+    FatalExternalError = -1017,
+    CompilationError = -1018,
+    OverflowPayment = -1019,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -39,6 +45,10 @@ pub enum ExitCode {
 }
 
 impl ExitCode {
+    pub fn is_ok(&self) -> bool {
+        *self == Self::Ok
+    }
+
     pub fn into_i32(self) -> i32 {
         self as i32
     }
@@ -69,6 +79,17 @@ impl From<TrapCode> for ExitCode {
 impl Into<Trap> for ExitCode {
     fn into(self) -> Trap {
         self.into_trap()
+    }
+}
+
+impl From<i32> for ExitCode {
+    fn from(value: i32) -> ExitCode {
+        for x in Self::iter() {
+            if x as i32 == value {
+                return x;
+            }
+        }
+        ExitCode::UnknownError
     }
 }
 
