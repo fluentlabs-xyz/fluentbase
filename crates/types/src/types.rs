@@ -82,6 +82,7 @@ impl Into<Trap> for ExitCode {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<i32> for ExitCode {
     fn from(value: i32) -> ExitCode {
         for x in Self::iter() {
