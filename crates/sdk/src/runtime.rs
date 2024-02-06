@@ -200,6 +200,12 @@ impl LowLevelAPI for LowLevelSDK {
     fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
         unreachable!("jzkt is not supported right now in this mode")
     }
+    fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32 {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
 
     fn preimage_size(hash32: *const u8) -> u32 {
         with_context(|ctx| {

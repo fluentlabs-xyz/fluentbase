@@ -123,7 +123,7 @@ pub enum SysFuncIdx {
     SYS_EXEC = 0x0008,        // fluentbase_v1alpha::_sys_exec
     SYS_STATE = 0x0002,       // fluentbase_v1alpha::_sys_state
 
-    // zktrie functions
+    // jzkt functions
     JZKT_OPEN = 0x0701,
     JZKT_CHECKPOINT = 0x0702,
     JZKT_GET = 0x0703,
@@ -133,6 +133,8 @@ pub enum SysFuncIdx {
     JZKT_EMIT_LOG = 0x0707,
     JZKT_COMMIT = 0x0708,
     JZKT_ROLLBACK = 0x0709,
+    JZKT_STORE = 0x070A,
+    JZKT_LOAD = 0x070B,
 
     // preimage functions
     PREIMAGE_SIZE = 0x0801, // fluentbase_v1alpha::_preimage_size
