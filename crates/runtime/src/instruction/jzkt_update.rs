@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{common::Trap, Caller};
 
-pub struct ZkTrieUpdate;
+pub struct JzktUpdate;
 
-impl ZkTrieUpdate {
+impl JzktUpdate {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         key32_offset: u32,
@@ -32,8 +32,9 @@ impl ZkTrieUpdate {
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
-        let zktrie = context.trie_db.clone().unwrap();
-        zktrie.borrow_mut().update(key, value_flags, &vals)?;
+        let jzkt = context.jzkt.clone().unwrap();
+        jzkt.borrow_mut()
+            .update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())
     }
 }

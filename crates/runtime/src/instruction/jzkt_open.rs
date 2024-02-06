@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::ExitCode;
 use rwasm::{common::Trap, Caller};
 
-pub struct ZkTrieOpen;
+pub struct JzktOpen;
 
-impl ZkTrieOpen {
+impl JzktOpen {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
         root32_offset: u32,
@@ -14,9 +14,10 @@ impl ZkTrieOpen {
         Ok(())
     }
 
-    pub fn fn_impl<T>(context: &mut RuntimeContext<T>, root32: &[u8]) -> Result<(), ExitCode> {
-        let zktrie = context.trie_db.clone().unwrap();
-        zktrie.borrow_mut().open(root32);
-        Ok(())
+    pub fn fn_impl<T>(_context: &mut RuntimeContext<T>, _root32: &[u8]) -> Result<(), ExitCode> {
+        todo!("not implemented yet")
+        // let jzkt = context.jzkt.clone().unwrap();
+        // jzkt.borrow_mut().open(root32);
+        // Ok(())
     }
 }

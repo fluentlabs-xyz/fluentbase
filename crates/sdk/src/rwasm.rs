@@ -4,6 +4,15 @@ use crate::{
         _crypto_keccak256,
         _crypto_poseidon,
         _crypto_poseidon2,
+        _jzkt_checkpoint,
+        _jzkt_commit,
+        _jzkt_compute_root,
+        _jzkt_emit_log,
+        _jzkt_get,
+        _jzkt_open,
+        _jzkt_remove,
+        _jzkt_rollback,
+        _jzkt_update,
         _preimage_copy,
         _preimage_size,
         _rwasm_compile,
@@ -25,13 +34,6 @@ use crate::{
         _sys_read_output,
         _sys_state,
         _sys_write,
-        _zktrie_checkpoint,
-        _zktrie_commit,
-        _zktrie_field,
-        _zktrie_open,
-        _zktrie_rollback,
-        _zktrie_root,
-        _zktrie_update,
     },
     Bytes32,
     LowLevelAPI,
@@ -136,6 +138,51 @@ impl LowLevelAPI for LowLevelSDK {
                 rec_id as u32,
             )
         }
+    }
+
+    #[inline(always)]
+    fn jzkt_open(root32_ptr: *const u8) {
+        unsafe { _jzkt_open(root32_ptr) }
+    }
+    #[inline(always)]
+    fn jzkt_checkpoint() -> (u32, u32) {
+        unsafe { _jzkt_checkpoint() }
+    }
+    #[inline(always)]
+    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32 {
+        unsafe { _jzkt_get(key32_offset, field, output32_offset) }
+    }
+    #[inline(always)]
+    fn jzkt_update(
+        key32_offset: *const u8,
+        flags: u32,
+        vals32_offset: *const [u8; 32],
+        vals32_len: u32,
+    ) {
+        unsafe {
+            _jzkt_update(key32_offset, flags, vals32_offset, vals32_len);
+        }
+    }
+    fn jzkt_remove(key32_offset: *const u8) {
+        unsafe { _jzkt_remove(key32_offset) }
+    }
+    fn jzkt_compute_root(output32_offset: *mut u8) {
+        unsafe { _jzkt_compute_root(output32_offset) }
+    }
+    fn jzkt_emit_log(
+        key32_ptr: *const u8,
+        topics32s_ptr: *const u8,
+        topics32s_len: u32,
+        data_ptr: *const u8,
+        data_len: u32,
+    ) {
+        unsafe { _jzkt_emit_log(key32_ptr, topics32s_ptr, topics32s_len, data_ptr, data_len) }
+    }
+    fn jzkt_commit(root32_offset: *mut u8) {
+        unsafe { _jzkt_commit(root32_offset) }
+    }
+    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
+        unsafe { _jzkt_rollback(checkpoint0, checkpoint1) }
     }
 
     #[inline(always)]
@@ -264,49 +311,4 @@ impl LowLevelAPI for LowLevelSDK {
             )
         }
     }
-
-    #[inline(always)]
-    fn zktrie_open(root: &Bytes32) {
-        unsafe { _zktrie_open(root.as_ptr()) }
-    }
-
-    #[inline(always)]
-    fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]) {
-        unsafe { _zktrie_update(key.as_ptr(), flags, values.as_ptr(), values.len() as u32) }
-    }
-
-    #[inline(always)]
-    fn zktrie_field(key: *const u8, field: u32, output: *mut u8) {
-        unsafe { _zktrie_field(key, field, output) }
-    }
-
-    #[inline(always)]
-    fn zktrie_root(output: &mut Bytes32) {
-        unsafe { _zktrie_root(output.as_mut_ptr()) }
-    }
-
-    #[inline(always)]
-    fn zktrie_checkpoint() -> u32 {
-        unsafe { _zktrie_checkpoint() }
-    }
-
-    #[inline(always)]
-    fn zktrie_rollback(checkpoint: u32) {
-        unsafe { _zktrie_rollback(checkpoint) }
-    }
-
-    #[inline(always)]
-    fn zktrie_commit(root32_offset: *mut u8) {
-        unsafe { _zktrie_commit(root32_offset) }
-    }
-
-    // #[inline(always)]
-    // fn zktrie_store(key: &Bytes32, val: &Bytes32) {
-    //     unsafe { _zktrie_store(key.as_ptr(), val.as_ptr()) }
-    // }
-    //
-    // #[inline(always)]
-    // fn zktrie_load(key: &Bytes32, val: &mut Bytes32) {
-    //     unsafe { _statedb_get_storage(key.as_ptr(), val.as_mut_ptr()) }
-    // }
 }

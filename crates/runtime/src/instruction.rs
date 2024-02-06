@@ -2,6 +2,15 @@ pub mod crypto_ecrecover;
 pub mod crypto_keccak256;
 pub mod crypto_poseidon;
 pub mod crypto_poseidon2;
+pub mod jzkt_checkpoint;
+pub mod jzkt_commit;
+pub mod jzkt_compute_root;
+pub mod jzkt_emit_log;
+pub mod jzkt_get;
+pub mod jzkt_open;
+pub mod jzkt_remove;
+pub mod jzkt_rollback;
+pub mod jzkt_update;
 pub mod preimage_copy;
 pub mod preimage_size;
 pub mod rwasm_compile;
@@ -23,12 +32,6 @@ pub mod sys_read;
 pub mod sys_read_output;
 pub mod sys_state;
 pub mod sys_write;
-pub mod zktrie_commit;
-pub mod zktrie_field;
-pub mod zktrie_open;
-pub mod zktrie_rollback;
-pub mod zktrie_root;
-pub mod zktrie_update;
 
 use crate::{
     impl_runtime_handler,
@@ -37,6 +40,15 @@ use crate::{
         crypto_keccak256::CryptoKeccak256,
         crypto_poseidon::CryptoPoseidon,
         crypto_poseidon2::CryptoPoseidon2,
+        jzkt_checkpoint::JzktCheckpoint,
+        jzkt_commit::JzktCommit,
+        jzkt_compute_root::JzktComputeRoot,
+        jzkt_emit_log::JzktEmitLog,
+        jzkt_get::JzktGet,
+        jzkt_open::JzktOpen,
+        jzkt_remove::JzktRemove,
+        jzkt_rollback::JzktRollback,
+        jzkt_update::JzktUpdate,
         preimage_copy::PreimageCopy,
         preimage_size::PreimageSize,
         rwasm_compile::RwasmCompile,
@@ -58,12 +70,6 @@ use crate::{
         sys_read_output::SysReadOutput,
         sys_state::SysState,
         sys_write::SysWrite,
-        zktrie_commit::ZkTrieCommit,
-        zktrie_field::ZkTrieField,
-        zktrie_open::ZkTrieOpen,
-        zktrie_rollback::ZkTrieRollback,
-        zktrie_root::ZkTrieRoot,
-        zktrie_update::ZkTrieUpdate,
     },
     runtime::RuntimeContext,
     types::{
@@ -73,6 +79,12 @@ use crate::{
             CRYPTO_KECCAK256,
             CRYPTO_POSEIDON,
             CRYPTO_POSEIDON2,
+            JZKT_COMMIT,
+            JZKT_COMPUTE_ROOT,
+            JZKT_GET,
+            JZKT_OPEN,
+            JZKT_ROLLBACK,
+            JZKT_UPDATE,
             RWASM_COMPILE,
             RWASM_CREATE,
             RWASM_TRANSACT,
@@ -83,16 +95,13 @@ use crate::{
             SYS_READ,
             SYS_STATE,
             SYS_WRITE,
-            ZKTRIE_COMMIT,
-            ZKTRIE_FIELD,
-            ZKTRIE_OPEN,
-            ZKTRIE_ROLLBACK,
-            ZKTRIE_ROOT,
-            ZKTRIE_UPDATE,
         },
     },
 };
 use fluentbase_types::SysFuncIdx::{
+    JZKT_CHECKPOINT,
+    JZKT_EMIT_LOG,
+    JZKT_REMOVE,
     PREIMAGE_COPY,
     PREIMAGE_SIZE,
     STATEDB_EMIT_LOG,
@@ -136,6 +145,16 @@ impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sy
 impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
 
+impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
+impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> (u32, u32));
+impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32) -> u32);
+impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
+impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_offset: u32) -> ());
+impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_offset: u32) -> ());
+impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
+impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
+impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint0: u32, checkpoint1: u32) -> ());
+
 impl_runtime_handler!(PreimageSize, PREIMAGE_SIZE, fn fluentbase_v1alpha::_preimage_size(hash32_offset: u32) -> u32);
 impl_runtime_handler!(PreimageCopy, PREIMAGE_COPY, fn fluentbase_v1alpha::_preimage_copy(hash32_offset: u32, output_offset: u32, output_len: u32) -> ());
 
@@ -151,13 +170,6 @@ impl_runtime_handler!(StateDbUpdateStorage, STATEDB_GET_STORAGE, fn fluentbase_v
 impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v1alpha::_statedb_update_storage(key32_offset: u32, val32_offset: u32) -> ());
 impl_runtime_handler!(StateDbEmitLog, STATEDB_EMIT_LOG, fn fluentbase_v1alpha::_statedb_emit_log(topics32_offset: u32, topics32_length: u32, data_offset: u32, data_len: u32) -> ());
 impl_runtime_handler!(StateDbGetBalance, STATEDB_GET_BALANCE, fn fluentbase_v1alpha::_statedb_get_balance(address20_offset: u32, out_balance32_offset: u32, is_self: u32) -> ());
-
-impl_runtime_handler!(ZkTrieOpen, ZKTRIE_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
-impl_runtime_handler!(ZkTrieUpdate, ZKTRIE_UPDATE, fn fluentbase_v1alpha::_zktrie_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
-impl_runtime_handler!(ZkTrieField, ZKTRIE_FIELD, fn fluentbase_v1alpha::_zktrie_field(key32_offset: u32, field: u32, output32_offset: u32) -> ());
-impl_runtime_handler!(ZkTrieRoot, ZKTRIE_ROOT, fn fluentbase_v1alpha::_zktrie_root(output32_offset: u32) -> ());
-impl_runtime_handler!(ZkTrieRollback, ZKTRIE_ROLLBACK, fn fluentbase_v1alpha::_zktrie_rollback() -> ());
-impl_runtime_handler!(ZkTrieCommit, ZKTRIE_COMMIT, fn fluentbase_v1alpha::_zktrie_commit() -> ());
 
 pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
     SysHalt::register_linker::<T>(import_linker);
@@ -180,12 +192,12 @@ pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut Impo
     StateDbUpdateStorage::register_linker::<T>(import_linker);
     StateDbGetStorage::register_linker::<T>(import_linker);
     StateDbEmitLog::register_linker::<T>(import_linker);
-    ZkTrieOpen::register_linker::<T>(import_linker);
-    ZkTrieUpdate::register_linker::<T>(import_linker);
-    ZkTrieField::register_linker::<T>(import_linker);
-    ZkTrieRoot::register_linker::<T>(import_linker);
-    ZkTrieRollback::register_linker::<T>(import_linker);
-    ZkTrieCommit::register_linker::<T>(import_linker);
+    JzktOpen::register_linker::<T>(import_linker);
+    JzktUpdate::register_linker::<T>(import_linker);
+    JzktGet::register_linker::<T>(import_linker);
+    JzktComputeRoot::register_linker::<T>(import_linker);
+    JzktRollback::register_linker::<T>(import_linker);
+    JzktCommit::register_linker::<T>(import_linker);
 }
 
 pub(crate) fn runtime_register_shared_linkers<'t, T>(import_linker: &mut ImportLinker) {
@@ -241,12 +253,12 @@ pub(crate) fn runtime_register_sovereign_handlers<'t, T>(
     StateDbUpdateStorage::register_handler(linker, store);
     StateDbGetStorage::register_handler(linker, store);
     StateDbEmitLog::register_handler(linker, store);
-    ZkTrieOpen::register_handler(linker, store);
-    ZkTrieUpdate::register_handler(linker, store);
-    ZkTrieField::register_handler(linker, store);
-    ZkTrieRoot::register_handler(linker, store);
-    ZkTrieRollback::register_handler(linker, store);
-    ZkTrieCommit::register_handler(linker, store);
+    JzktOpen::register_handler(linker, store);
+    JzktUpdate::register_handler(linker, store);
+    JzktGet::register_handler(linker, store);
+    JzktComputeRoot::register_handler(linker, store);
+    JzktRollback::register_handler(linker, store);
+    JzktCommit::register_handler(linker, store);
 }
 
 pub(crate) fn runtime_register_shared_handlers<'t, T>(

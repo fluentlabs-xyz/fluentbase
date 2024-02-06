@@ -14,5 +14,5 @@ pub fn _evm_self_balance(output32_offset: *mut u8) {
     unsafe {
         ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
     }
-    LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, output32_offset);
+    LowLevelSDK::jzkt_get(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, output32_offset);
 }
