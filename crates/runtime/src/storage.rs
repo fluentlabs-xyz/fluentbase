@@ -1,6 +1,6 @@
 use fluentbase_types::ExitCode;
 
-pub trait PersistentStorage {
+pub trait TrieStorage {
     fn open(&mut self, root32: &[u8]) -> bool;
 
     fn compute_root(&self) -> [u8; 32];

@@ -54,7 +54,7 @@ impl SysExec {
             .map_err(|_| ExitCode::TransactError)?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
         let output = execution_result.data().output();
-        if output.len() > return_len as usize {
+        if return_len > 0 && output.len() > return_len as usize {
             return Err(ExitCode::OutputOverflow);
         }
         ctx.consumed_fuel += fuel_consumed;

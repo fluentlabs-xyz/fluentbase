@@ -1,6 +1,7 @@
-use crate::PersistentStorage;
-use fluentbase_types::ExitCode;
+use crate::TrieStorage;
+use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use hashbrown::HashMap;
+use std::mem::take;
 
 enum JournalEvent {
     ItemChanged {
@@ -38,28 +39,48 @@ impl JournalEvent {
     }
 }
 
-pub struct JournaledTrie<'a, DB: PersistentStorage> {
+pub struct JournalCheckpoint(u32, u32);
+
+impl JournalCheckpoint {
+    fn state(&self) -> usize {
+        self.0 as usize
+    }
+
+    fn logs(&self) -> usize {
+        self.1 as usize
+    }
+}
+
+pub struct JournalLog {
+    address: Address,
+    topics: Vec<B256>,
+    data: Bytes,
+}
+
+pub struct JournaledTrie<'a, DB: TrieStorage> {
     storage: &'a mut DB,
     state: HashMap<[u8; 32], usize>,
+    logs: Vec<JournalLog>,
     journal: Vec<JournalEvent>,
     root: [u8; 32],
     committed: usize,
 }
 
-impl<'a, DB: PersistentStorage> JournaledTrie<'a, DB> {
+impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
     pub fn new(storage: &'a mut DB) -> Self {
         let root = storage.compute_root();
         Self {
             storage,
             state: HashMap::new(),
+            logs: Vec::new(),
             journal: Vec::new(),
             root,
             committed: 0,
         }
     }
 
-    pub fn checkpoint(&mut self) -> u32 {
-        self.journal.len() as u32
+    pub fn checkpoint(&mut self) -> JournalCheckpoint {
+        JournalCheckpoint(self.journal.len() as u32, 0)
     }
 
     pub fn get(&self, key: &[u8; 32]) -> Option<Vec<[u8; 32]>> {
@@ -93,9 +114,17 @@ impl<'a, DB: PersistentStorage> JournaledTrie<'a, DB> {
         self.storage.compute_root()
     }
 
-    pub fn commit(&mut self) -> Result<[u8; 32], ExitCode> {
+    pub fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {
+        self.logs.push(JournalLog {
+            address,
+            topics,
+            data,
+        });
+    }
+
+    pub fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
         if self.committed >= self.journal.len() {
-            return Ok(self.root);
+            panic!("nothing to commit")
         }
         for (key, value) in self
             .journal
@@ -114,19 +143,21 @@ impl<'a, DB: PersistentStorage> JournaledTrie<'a, DB> {
                 }
             }
         }
-        self.committed = self.journal.len();
+        self.journal.clear();
+        let logs = take(&mut self.logs);
+        self.committed = 0;
         self.root = self.storage.compute_root();
-        Ok(self.root)
+        Ok((self.root, logs))
     }
 
-    pub fn rollback(&mut self, checkpoint: u32) {
-        if checkpoint < self.committed as u32 {
+    pub fn rollback(&mut self, checkpoint: JournalCheckpoint) {
+        if checkpoint.state() < self.committed {
             panic!("reverting already committed changes is not allowed")
         }
         self.journal
             .iter()
             .rev()
-            .take(self.journal.len() - checkpoint as usize)
+            .take(self.journal.len() - checkpoint.state())
             .for_each(|v| match v.prev_state() {
                 Some(prev_state) => {
                     self.state.insert(*v.key(), prev_state);
@@ -135,13 +166,14 @@ impl<'a, DB: PersistentStorage> JournaledTrie<'a, DB> {
                     self.state.remove(v.key());
                 }
             });
-        self.journal.truncate(checkpoint as usize)
+        self.journal.truncate(checkpoint.state());
+        self.logs.truncate(checkpoint.logs());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{journal::JournaledTrie, zktrie::ZkTrieStateDb, PersistentStorage};
+    use crate::{journal::JournaledTrie, zktrie::ZkTrieStateDb, TrieStorage};
     use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {

@@ -5,7 +5,7 @@ use crate::{
         runtime_register_sovereign_handlers,
         runtime_register_sovereign_linkers,
     },
-    storage::PersistentStorage,
+    storage::TrieStorage,
     types::RuntimeError,
 };
 use fluentbase_types::{
@@ -59,7 +59,7 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) return_data: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
-    pub(crate) trie_db: Option<Rc<RefCell<dyn PersistentStorage>>>,
+    pub(crate) trie_db: Option<Rc<RefCell<dyn TrieStorage>>>,
     pub(crate) preimage_db: Option<Rc<RefCell<dyn PreimageDb>>>,
 }
 
@@ -176,7 +176,7 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_trie_db(mut self, zktrie_db: Rc<RefCell<dyn PersistentStorage>>) -> Self {
+    pub fn with_trie_db(mut self, zktrie_db: Rc<RefCell<dyn TrieStorage>>) -> Self {
         self.trie_db = Some(zktrie_db);
         self
     }
