@@ -1,4 +1,4 @@
-use crate::{storage::PersistentStorage, types::Bytes};
+use crate::{storage::TrieStorage, types::Bytes};
 use fluentbase_types::{ExitCode, TrieDb, POSEIDON_EMPTY};
 use fluentbase_zktrie::{
     Byte32,
@@ -93,7 +93,7 @@ impl<'a, DB: TrieDb> ZkTrieStateDb<'a, DB> {
     }
 }
 
-impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
+impl<'a, DB: TrieDb> TrieStorage for ZkTrieStateDb<'a, DB> {
     fn open(&mut self, root32: &[u8]) -> bool {
         if self.trie.is_some() {
             return false;
@@ -164,7 +164,7 @@ impl<'a, DB: TrieDb> PersistentStorage for ZkTrieStateDb<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{storage::PersistentStorage, zktrie::ZkTrieStateDb};
+    use crate::{storage::TrieStorage, zktrie::ZkTrieStateDb};
     use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {

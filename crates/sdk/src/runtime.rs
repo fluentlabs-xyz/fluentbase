@@ -1,6 +1,6 @@
 #[allow(dead_code)]
 use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
     instruction::{
         crypto_ecrecover::CryptoEcrecover,
@@ -93,7 +93,7 @@ impl LowLevelAPI for LowLevelSDK {
             unsafe { &*ptr::slice_from_raw_parts(code_offset, code_len as usize) }.to_vec();
         let input =
             unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
-        let fuel = BigEndian::read_u32(unsafe {
+        let fuel = LittleEndian::read_u32(unsafe {
             &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
         });
         match with_context_mut(move |ctx| {
@@ -110,7 +110,7 @@ impl LowLevelAPI for LowLevelSDK {
                 if return_len > 0 {
                     unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
                 }
-                BigEndian::write_u32(
+                LittleEndian::write_u32(
                     unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
                     remaining_fuel,
                 );
