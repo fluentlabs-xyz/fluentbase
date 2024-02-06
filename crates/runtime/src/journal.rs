@@ -39,7 +39,13 @@ impl JournalEvent {
     }
 }
 
-pub struct JournalCheckpoint(u32, u32);
+pub struct JournalCheckpoint(pub u32, pub u32);
+
+impl Into<(u32, u32)> for JournalCheckpoint {
+    fn into(self) -> (u32, u32) {
+        (self.0, self.1)
+    }
+}
 
 impl JournalCheckpoint {
     fn state(&self) -> usize {
@@ -55,6 +61,17 @@ pub struct JournalLog {
     address: Address,
     topics: Vec<B256>,
     data: Bytes,
+}
+
+pub trait IJournaledTrie {
+    fn checkpoint(&mut self) -> JournalCheckpoint;
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, bool)>;
+    fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32);
+    fn remove(&mut self, key: &[u8; 32]);
+    fn compute_root(&self) -> [u8; 32];
+    fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes);
+    fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode>;
+    fn rollback(&mut self, checkpoint: JournalCheckpoint);
 }
 
 pub struct JournaledTrie<'a, DB: TrieStorage> {
@@ -78,19 +95,27 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
             committed: 0,
         }
     }
+}
 
-    pub fn checkpoint(&mut self) -> JournalCheckpoint {
+impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
+    fn checkpoint(&mut self) -> JournalCheckpoint {
         JournalCheckpoint(self.journal.len() as u32, 0)
     }
 
-    pub fn get(&self, key: &[u8; 32]) -> Option<Vec<[u8; 32]>> {
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, bool)> {
         match self.state.get(key) {
-            Some(index) => self.journal.get(*index).unwrap().value().map(|v| v.0),
-            None => self.storage.get(key),
+            Some(index) => self
+                .journal
+                .get(*index)
+                .unwrap()
+                .value()
+                .map(|v| v.0)
+                .map(|v| (v, false)),
+            None => self.storage.get(key).map(|v| (v, true)),
         }
     }
 
-    pub fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32) {
+    fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32) {
         let pos = self.journal.len();
         self.journal.push(JournalEvent::ItemChanged {
             key: *key,
@@ -101,7 +126,7 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
         self.state.insert(*key, pos);
     }
 
-    pub fn remove(&mut self, key: &[u8; 32]) {
+    fn remove(&mut self, key: &[u8; 32]) {
         let pos = self.journal.len();
         self.journal.push(JournalEvent::ItemRemoved {
             key: *key,
@@ -110,11 +135,11 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
         self.state.insert(*key, pos);
     }
 
-    pub fn compute_root(&self) -> [u8; 32] {
+    fn compute_root(&self) -> [u8; 32] {
         self.storage.compute_root()
     }
 
-    pub fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {
+    fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes) {
         self.logs.push(JournalLog {
             address,
             topics,
@@ -122,7 +147,7 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
         });
     }
 
-    pub fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
+    fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
         if self.committed >= self.journal.len() {
             panic!("nothing to commit")
         }
@@ -150,7 +175,7 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
         Ok((self.root, logs))
     }
 
-    pub fn rollback(&mut self, checkpoint: JournalCheckpoint) {
+    fn rollback(&mut self, checkpoint: JournalCheckpoint) {
         if checkpoint.state() < self.committed {
             panic!("reverting already committed changes is not allowed")
         }
@@ -173,7 +198,11 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{journal::JournaledTrie, zktrie::ZkTrieStateDb, TrieStorage};
+    use crate::{
+        journal::{IJournaledTrie, JournaledTrie},
+        zktrie::ZkTrieStateDb,
+        TrieStorage,
+    };
     use fluentbase_types::InMemoryAccountDb;
 
     macro_rules! bytes32 {

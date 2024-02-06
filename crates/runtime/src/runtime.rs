@@ -5,7 +5,7 @@ use crate::{
         runtime_register_sovereign_handlers,
         runtime_register_sovereign_linkers,
     },
-    storage::TrieStorage,
+    journal::IJournaledTrie,
     types::RuntimeError,
 };
 use fluentbase_types::{
@@ -59,8 +59,8 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) return_data: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
-    pub(crate) trie_db: Option<Rc<RefCell<dyn TrieStorage>>>,
     pub(crate) preimage_db: Option<Rc<RefCell<dyn PreimageDb>>>,
+    pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
 }
 
 impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
@@ -82,8 +82,8 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             consumed_fuel: self.consumed_fuel.clone(),
             return_data: self.return_data.clone(),
             account_db: self.account_db.clone(),
-            trie_db: self.trie_db.clone(),
             preimage_db: self.preimage_db.clone(),
+            jzkt: self.jzkt.clone(),
         }
     }
 }
@@ -107,8 +107,8 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             consumed_fuel: 0,
             return_data: vec![],
             account_db: None,
-            trie_db: None,
             preimage_db: None,
+            jzkt: None,
         }
     }
 }
@@ -176,13 +176,13 @@ impl<'t, T> RuntimeContext<'t, T> {
         self
     }
 
-    pub fn with_trie_db(mut self, zktrie_db: Rc<RefCell<dyn TrieStorage>>) -> Self {
-        self.trie_db = Some(zktrie_db);
+    pub fn with_preimage_db(mut self, preimage_db: Rc<RefCell<dyn PreimageDb>>) -> Self {
+        self.preimage_db = Some(preimage_db);
         self
     }
 
-    pub fn with_preimage_db(mut self, preimage_db: Rc<RefCell<dyn PreimageDb>>) -> Self {
-        self.preimage_db = Some(preimage_db);
+    pub fn with_jzkt(mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> Self {
+        self.jzkt = Some(jzkt);
         self
     }
 

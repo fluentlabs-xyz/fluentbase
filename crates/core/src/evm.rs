@@ -65,27 +65,27 @@ impl Account {
             ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
         }
         let mut code_size_nonce = [0u8; 32];
-        LowLevelSDK::zktrie_field(
+        LowLevelSDK::jzkt_get(
             bytes32.as_ptr(),
             ZKTRIE_CODESIZE_NONCE_FIELD,
             code_size_nonce.as_mut_ptr(),
         );
         result.code_size = BigEndian::read_u64(&code_size_nonce[16..]);
         result.nonce = BigEndian::read_u64(&code_size_nonce[24..]);
-        LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
+        LowLevelSDK::jzkt_get(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
             result.balance.as_le_slice_mut().as_mut_ptr()
         });
-        LowLevelSDK::zktrie_field(
+        LowLevelSDK::jzkt_get(
             bytes32.as_ptr(),
             ZKTRIE_ROOT_FIELD,
             result.root.as_mut_ptr(),
         );
-        LowLevelSDK::zktrie_field(
+        LowLevelSDK::jzkt_get(
             bytes32.as_ptr(),
             ZKTRIE_KECCAK_CODE_HASH_FIELD,
             result.keccak_code_hash.as_mut_ptr(),
         );
-        LowLevelSDK::zktrie_field(
+        LowLevelSDK::jzkt_get(
             bytes32.as_ptr(),
             ZKTRIE_CODE_HASH_FIELD,
             result.code_hash.as_mut_ptr(),
@@ -106,7 +106,7 @@ impl Account {
         unsafe {
             ptr::copy(address.as_ptr(), key32.as_mut_ptr(), 20);
         }
-        LowLevelSDK::zktrie_update(&key32, 8, &values);
+        LowLevelSDK::jzkt_update(key32.as_ptr(), 8, values.as_ptr(), 32 * values.len() as u32);
     }
 
     #[inline(always)]
@@ -221,18 +221,7 @@ fn read_balance(address: Address, value: &mut U256) {
     unsafe {
         ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
     }
-    LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
-        value.as_le_slice_mut().as_mut_ptr()
-    });
-}
-
-#[inline(always)]
-fn write_balance(address: Address, value: &mut U256) {
-    let mut bytes32 = [0u8; 32];
-    unsafe {
-        ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
-    }
-    LowLevelSDK::zktrie_field(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
+    LowLevelSDK::jzkt_get(bytes32.as_ptr(), ZKTRIE_BALANCE_FIELD, unsafe {
         value.as_le_slice_mut().as_mut_ptr()
     });
 }

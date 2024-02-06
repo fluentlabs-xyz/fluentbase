@@ -52,6 +52,44 @@ where
 }
 
 impl LowLevelAPI for LowLevelSDK {
+    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        let result = CryptoKeccak256::fn_impl(unsafe {
+            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
+        });
+        unsafe {
+            ptr::copy(result.as_ptr(), output32_offset, 32);
+        }
+    }
+
+    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+        let result = CryptoPoseidon::fn_impl(unsafe {
+            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
+        });
+        unsafe {
+            ptr::copy(result.as_ptr(), output32_offset, 32);
+        }
+    }
+
+    fn crypto_poseidon2(
+        fa_data: &[u8; 32],
+        fb_data: &[u8; 32],
+        fd_data: &[u8; 32],
+        output: &mut [u8],
+    ) -> bool {
+        match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
+            Ok(result) => {
+                output.copy_from_slice(&result);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
+        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
+        output.copy_from_slice(&result);
+    }
+
     fn sys_read(target: &mut [u8], offset: u32) {
         let result =
             with_context(|ctx| SysRead::fn_impl(ctx, offset, target.len() as u32).unwrap());
@@ -124,42 +162,43 @@ impl LowLevelAPI for LowLevelSDK {
         with_context(|ctx| SysState::fn_impl(ctx))
     }
 
-    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
-        let result = CryptoKeccak256::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
-        });
-        unsafe {
-            ptr::copy(result.as_ptr(), output32_offset, 32);
-        }
+    fn jzkt_open(root32_ptr: *const u8) {
+        unreachable!("jzkt is not supported right now in this mode")
     }
-
-    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
-        let result = CryptoPoseidon::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
-        });
-        unsafe {
-            ptr::copy(result.as_ptr(), output32_offset, 32);
-        }
+    fn jzkt_checkpoint() -> (u32, u32) {
+        unreachable!("jzkt is not supported right now in this mode")
     }
-
-    fn crypto_poseidon2(
-        fa_data: &[u8; 32],
-        fb_data: &[u8; 32],
-        fd_data: &[u8; 32],
-        output: &mut [u8],
-    ) -> bool {
-        match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
-            Ok(result) => {
-                output.copy_from_slice(&result);
-                true
-            }
-            Err(_) => false,
-        }
+    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32 {
+        unreachable!("jzkt is not supported right now in this mode")
     }
-
-    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
-        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
-        output.copy_from_slice(&result);
+    fn jzkt_update(
+        key32_offset: *const u8,
+        flags: u32,
+        vals32_offset: *const [u8; 32],
+        vals32_len: u32,
+    ) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_remove(key32_offset: *const u8) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_compute_root(output32_offset: *mut u8) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_emit_log(
+        key32_ptr: *const u8,
+        topics32s_ptr: *const u8,
+        topics32s_len: u32,
+        data_ptr: *const u8,
+        data_len: u32,
+    ) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_commit(root32_offset: *mut u8) {
+        unreachable!("jzkt is not supported right now in this mode")
+    }
+    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
+        unreachable!("jzkt is not supported right now in this mode")
     }
 
     fn preimage_size(hash32: *const u8) -> u32 {
@@ -254,34 +293,6 @@ impl LowLevelAPI for LowLevelSDK {
 
     fn statedb_emit_log(_topics: &[Bytes32], _data: &[u8]) {
         unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn zktrie_open(_root: &Bytes32) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_update(_key: &Bytes32, _flags: u32, _values: &[Bytes32]) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_field(_key: *const u8, _field: u32, _output: *mut u8) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_root(_output: &mut Bytes32) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_checkpoint() -> u32 {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_rollback(_checkpoint: u32) {
-        unreachable!("zktrie methods are not available in this mode")
-    }
-
-    fn zktrie_commit(_root32_offset: *mut u8) {
-        unreachable!("zktrie methods are not available in this mode")
     }
 }
 

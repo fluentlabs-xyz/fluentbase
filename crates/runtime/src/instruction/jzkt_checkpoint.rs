@@ -1,0 +1,18 @@
+use crate::{journal::JournalCheckpoint, RuntimeContext};
+use fluentbase_types::ExitCode;
+use rwasm::{common::Trap, Caller};
+
+pub struct JzktCheckpoint;
+
+impl JzktCheckpoint {
+    pub fn fn_handler<T>(mut caller: Caller<'_, RuntimeContext<T>>) -> Result<(u32, u32), Trap> {
+        let checkpoint = Self::fn_impl(caller.data_mut()).map_err(|err| err.into_trap())?;
+        Ok(checkpoint.into())
+    }
+
+    pub fn fn_impl<T>(context: &mut RuntimeContext<T>) -> Result<JournalCheckpoint, ExitCode> {
+        let jzkt = context.jzkt.clone().unwrap();
+        let checkpoint = jzkt.borrow_mut().checkpoint();
+        Ok(checkpoint)
+    }
+}

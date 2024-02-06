@@ -1,6 +1,16 @@
 use crate::types::Bytes32;
 
 pub trait LowLevelAPI {
+    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
+    fn crypto_poseidon2(
+        fa32_data: &Bytes32,
+        fb32_data: &Bytes32,
+        fd32_data: &Bytes32,
+        output32: &mut [u8],
+    ) -> bool;
+    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
+
     fn sys_read(target: &mut [u8], offset: u32);
     fn sys_input_size() -> u32;
     fn sys_write(value: &[u8]);
@@ -19,15 +29,26 @@ pub trait LowLevelAPI {
         state: u32,
     ) -> i32;
 
-    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    fn crypto_poseidon2(
-        fa32_data: &Bytes32,
-        fb32_data: &Bytes32,
-        fd32_data: &Bytes32,
-        output32: &mut [u8],
-    ) -> bool;
-    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
+    fn jzkt_open(root32_ptr: *const u8);
+    fn jzkt_checkpoint() -> (u32, u32);
+    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32;
+    fn jzkt_update(
+        key32_offset: *const u8,
+        flags: u32,
+        vals32_offset: *const [u8; 32],
+        vals32_len: u32,
+    );
+    fn jzkt_remove(key32_offset: *const u8);
+    fn jzkt_compute_root(output32_offset: *mut u8);
+    fn jzkt_emit_log(
+        key32_ptr: *const u8,
+        topics32s_ptr: *const u8,
+        topics32s_len: u32,
+        data_ptr: *const u8,
+        data_len: u32,
+    );
+    fn jzkt_commit(root32_offset: *mut u8);
+    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32);
 
     fn preimage_size(hash32: *const u8) -> u32;
     fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32);
@@ -58,14 +79,4 @@ pub trait LowLevelAPI {
     fn statedb_get_storage(key: &[u8], value: &mut [u8]);
     fn statedb_update_storage(key: &[u8], value: &[u8]);
     fn statedb_emit_log(topics: &[Bytes32], data: &[u8]);
-
-    fn zktrie_open(root: &Bytes32);
-    fn zktrie_update(key: &Bytes32, flags: u32, values: &[Bytes32]);
-    fn zktrie_field(key: *const u8, field: u32, output: *mut u8);
-    fn zktrie_root(output: &mut Bytes32);
-    fn zktrie_checkpoint() -> u32;
-    fn zktrie_rollback(checkpoint: u32);
-    fn zktrie_commit(root32_offset: *mut u8);
-    // fn zktrie_store(key: &Bytes32, val: &Bytes32);
-    // fn zktrie_load(key: &Bytes32, val: &mut Bytes32);
 }
