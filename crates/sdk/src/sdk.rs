@@ -49,6 +49,8 @@ pub trait LowLevelAPI {
     );
     fn jzkt_commit(root32_offset: *mut u8);
     fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32);
+    fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8);
+    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32;
 
     fn preimage_size(hash32: *const u8) -> u32;
     fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32);

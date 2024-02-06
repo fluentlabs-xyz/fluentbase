@@ -7,9 +7,11 @@ pub mod jzkt_commit;
 pub mod jzkt_compute_root;
 pub mod jzkt_emit_log;
 pub mod jzkt_get;
+pub mod jzkt_load;
 pub mod jzkt_open;
 pub mod jzkt_remove;
 pub mod jzkt_rollback;
+pub mod jzkt_store;
 pub mod jzkt_update;
 pub mod preimage_copy;
 pub mod preimage_size;
@@ -45,9 +47,11 @@ use crate::{
         jzkt_compute_root::JzktComputeRoot,
         jzkt_emit_log::JzktEmitLog,
         jzkt_get::JzktGet,
+        jzkt_load::JzktLoad,
         jzkt_open::JzktOpen,
         jzkt_remove::JzktRemove,
         jzkt_rollback::JzktRollback,
+        jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
         preimage_copy::PreimageCopy,
         preimage_size::PreimageSize,
@@ -101,7 +105,9 @@ use crate::{
 use fluentbase_types::SysFuncIdx::{
     JZKT_CHECKPOINT,
     JZKT_EMIT_LOG,
+    JZKT_LOAD,
     JZKT_REMOVE,
+    JZKT_STORE,
     PREIMAGE_COPY,
     PREIMAGE_SIZE,
     STATEDB_EMIT_LOG,
@@ -154,14 +160,16 @@ impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha:
 impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
 impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint0: u32, checkpoint1: u32) -> ());
+impl_runtime_handler!(JzktStore, JZKT_STORE, fn fluentbase_v1alpha::_jzkt_store(slot32_ptr: u32, value32_ptr: u32) -> ());
+impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> u32);
 
 impl_runtime_handler!(PreimageSize, PREIMAGE_SIZE, fn fluentbase_v1alpha::_preimage_size(hash32_offset: u32) -> u32);
 impl_runtime_handler!(PreimageCopy, PREIMAGE_COPY, fn fluentbase_v1alpha::_preimage_copy(hash32_offset: u32, output_offset: u32, output_len: u32) -> ());
 
+// TODO: "remove these impls"
 impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_delegate: u32, is_static: u32) -> i32);
 impl_runtime_handler!(RwasmCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
 impl_runtime_handler!(RwasmCreate, RWASM_CREATE, fn fluentbase_v1alpha::_rwasm_create(value32_offset: u32, input_bytecode_offset: u32, input_bytecode_length: u32, salt32_offset: u32, return_address20_offset: u32, is_create2: u32) -> i32);
-
 impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_statedb_get_code(key20_offset: u32, output_offset: u32, code_offset: u32, output_len: u32) -> ());
 impl_runtime_handler!(StateDbGetCodeSize, STATEDB_GET_CODE_SIZE, fn fluentbase_v1alpha::_statedb_get_code_size(key20_offset: u32) -> u32);
 impl_runtime_handler!(StateDbGetCodeHash, STATEDB_GET_CODE_HASH, fn fluentbase_v1alpha::_statedb_get_code_hash(key20_offset: u32, out_hash32_offset: u32) -> ());
@@ -171,124 +179,95 @@ impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v
 impl_runtime_handler!(StateDbEmitLog, STATEDB_EMIT_LOG, fn fluentbase_v1alpha::_statedb_emit_log(topics32_offset: u32, topics32_length: u32, data_offset: u32, data_len: u32) -> ());
 impl_runtime_handler!(StateDbGetBalance, STATEDB_GET_BALANCE, fn fluentbase_v1alpha::_statedb_get_balance(address20_offset: u32, out_balance32_offset: u32, is_self: u32) -> ());
 
-pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
-    SysHalt::register_linker::<T>(import_linker);
-    SysState::register_linker::<T>(import_linker);
-    SysRead::register_linker::<T>(import_linker);
-    SysInputSize::register_linker::<T>(import_linker);
-    SysWrite::register_linker::<T>(import_linker);
+fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut ImportLinker) {
     CryptoKeccak256::register_linker::<T>(import_linker);
     CryptoPoseidon::register_linker::<T>(import_linker);
     CryptoPoseidon2::register_linker::<T>(import_linker);
     CryptoEcrecover::register_linker::<T>(import_linker);
-    RwasmTransact::register_linker::<T>(import_linker);
-    RwasmCompile::register_linker::<T>(import_linker);
-    RwasmCreate::register_linker::<T>(import_linker);
-    StateDbGetCode::register_linker::<T>(import_linker);
-    StateDbGetCodeSize::register_linker::<T>(import_linker);
-    StateDbGetCodeHash::register_linker::<T>(import_linker);
-    StateDbGetBalance::register_linker::<T>(import_linker);
-    // StateDbUpdateCode::register_linker::<T>(import_linker);
-    StateDbUpdateStorage::register_linker::<T>(import_linker);
-    StateDbGetStorage::register_linker::<T>(import_linker);
-    StateDbEmitLog::register_linker::<T>(import_linker);
-    JzktOpen::register_linker::<T>(import_linker);
-    JzktUpdate::register_linker::<T>(import_linker);
-    JzktGet::register_linker::<T>(import_linker);
-    JzktComputeRoot::register_linker::<T>(import_linker);
-    JzktRollback::register_linker::<T>(import_linker);
-    JzktCommit::register_linker::<T>(import_linker);
+    SysHalt::register_linker::<T>(import_linker);
+    SysWrite::register_linker::<T>(import_linker);
+    SysInputSize::register_linker::<T>(import_linker);
+    SysRead::register_linker::<T>(import_linker);
+    SysOutputSize::register_linker::<T>(import_linker);
+    SysReadOutput::register_linker::<T>(import_linker);
+    SysExec::register_linker::<T>(import_linker);
+    SysState::register_linker::<T>(import_linker);
+    if IS_SOVEREIGN {
+        JzktOpen::register_linker::<T>(import_linker);
+        JzktCheckpoint::register_linker::<T>(import_linker);
+        JzktGet::register_linker::<T>(import_linker);
+        JzktUpdate::register_linker::<T>(import_linker);
+        JzktRemove::register_linker::<T>(import_linker);
+        JzktComputeRoot::register_linker::<T>(import_linker);
+    }
+    JzktEmitLog::register_linker::<T>(import_linker);
+    if IS_SOVEREIGN {
+        JzktCommit::register_linker::<T>(import_linker);
+        JzktRollback::register_linker::<T>(import_linker);
+    }
+    JzktStore::register_linker::<T>(import_linker);
+    JzktLoad::register_linker::<T>(import_linker);
+    if IS_SOVEREIGN {
+        PreimageSize::register_linker::<T>(import_linker);
+        PreimageCopy::register_linker::<T>(import_linker);
+    }
+}
+
+pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
+    runtime_register_linkers::<T, true>(import_linker);
 }
 
 pub(crate) fn runtime_register_shared_linkers<'t, T>(import_linker: &mut ImportLinker) {
-    SysHalt::register_linker::<T>(import_linker);
-    SysState::register_linker::<T>(import_linker);
-    SysRead::register_linker::<T>(import_linker);
-    SysInputSize::register_linker::<T>(import_linker);
-    SysWrite::register_linker::<T>(import_linker);
-    CryptoKeccak256::register_linker::<T>(import_linker);
-    CryptoPoseidon::register_linker::<T>(import_linker);
-    CryptoPoseidon2::register_linker::<T>(import_linker);
-    CryptoEcrecover::register_linker::<T>(import_linker);
-    RwasmTransact::register_linker::<T>(import_linker);
-    RwasmCompile::register_linker::<T>(import_linker);
-    RwasmCreate::register_linker::<T>(import_linker);
-    StateDbGetCode::register_linker::<T>(import_linker);
-    StateDbGetCodeSize::register_linker::<T>(import_linker);
-    StateDbGetCodeHash::register_linker::<T>(import_linker);
-    StateDbGetBalance::register_linker::<T>(import_linker);
-    // StateDbUpdateCode::register_linker::<T>(import_linker);
-    StateDbUpdateStorage::register_linker::<T>(import_linker);
-    StateDbGetStorage::register_linker::<T>(import_linker);
-    StateDbEmitLog::register_linker::<T>(import_linker);
-    // ZkTrieOpen::register_linker::<T>(import_linker);
-    // ZkTrieUpdate::register_linker::<T>(import_linker);
-    // ZkTrieField::register_linker::<T>(import_linker);
-    // ZkTrieRoot::register_linker::<T>(import_linker);
-    // ZkTrieRollback::register_linker::<T>(import_linker);
-    // ZkTrieCommit::register_linker::<T>(import_linker);
+    runtime_register_linkers::<T, false>(import_linker);
+}
+
+fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
+    linker: &mut Linker<RuntimeContext<'t, T>>,
+    store: &mut Store<RuntimeContext<'t, T>>,
+) {
+    CryptoKeccak256::register_handler(linker, store);
+    CryptoPoseidon::register_handler(linker, store);
+    CryptoPoseidon2::register_handler(linker, store);
+    CryptoEcrecover::register_handler(linker, store);
+    SysHalt::register_handler(linker, store);
+    SysWrite::register_handler(linker, store);
+    SysInputSize::register_handler(linker, store);
+    SysRead::register_handler(linker, store);
+    SysOutputSize::register_handler(linker, store);
+    SysReadOutput::register_handler(linker, store);
+    SysExec::register_handler(linker, store);
+    SysState::register_handler(linker, store);
+    if IS_SOVEREIGN {
+        JzktOpen::register_handler(linker, store);
+        JzktCheckpoint::register_handler(linker, store);
+        JzktGet::register_handler(linker, store);
+        JzktUpdate::register_handler(linker, store);
+        JzktRemove::register_handler(linker, store);
+        JzktComputeRoot::register_handler(linker, store);
+    }
+    JzktEmitLog::register_handler(linker, store);
+    if IS_SOVEREIGN {
+        JzktCommit::register_handler(linker, store);
+        JzktRollback::register_handler(linker, store);
+    }
+    JzktStore::register_handler(linker, store);
+    JzktLoad::register_handler(linker, store);
+    if IS_SOVEREIGN {
+        PreimageSize::register_handler(linker, store);
+        PreimageCopy::register_handler(linker, store);
+    }
 }
 
 pub(crate) fn runtime_register_sovereign_handlers<'t, T>(
     linker: &mut Linker<RuntimeContext<'t, T>>,
     store: &mut Store<RuntimeContext<'t, T>>,
 ) {
-    SysHalt::register_handler(linker, store);
-    SysState::register_handler(linker, store);
-    SysRead::register_handler(linker, store);
-    SysInputSize::register_handler(linker, store);
-    SysWrite::register_handler(linker, store);
-    CryptoKeccak256::register_handler(linker, store);
-    CryptoPoseidon::register_handler(linker, store);
-    CryptoPoseidon2::register_handler(linker, store);
-    CryptoEcrecover::register_handler(linker, store);
-    RwasmTransact::register_handler(linker, store);
-    RwasmCompile::register_handler(linker, store);
-    RwasmCreate::register_handler(linker, store);
-    StateDbGetCode::register_handler(linker, store);
-    StateDbGetCodeSize::register_handler(linker, store);
-    StateDbGetCodeHash::register_handler(linker, store);
-    StateDbGetBalance::register_handler(linker, store);
-    // StateDbUpdateCode::register_handler(linker, store);
-    StateDbUpdateStorage::register_handler(linker, store);
-    StateDbGetStorage::register_handler(linker, store);
-    StateDbEmitLog::register_handler(linker, store);
-    JzktOpen::register_handler(linker, store);
-    JzktUpdate::register_handler(linker, store);
-    JzktGet::register_handler(linker, store);
-    JzktComputeRoot::register_handler(linker, store);
-    JzktRollback::register_handler(linker, store);
-    JzktCommit::register_handler(linker, store);
+    runtime_register_handlers::<T, true>(linker, store);
 }
 
 pub(crate) fn runtime_register_shared_handlers<'t, T>(
     linker: &mut Linker<RuntimeContext<'t, T>>,
     store: &mut Store<RuntimeContext<'t, T>>,
 ) {
-    SysHalt::register_handler(linker, store);
-    SysState::register_handler(linker, store);
-    SysRead::register_handler(linker, store);
-    SysInputSize::register_handler(linker, store);
-    SysWrite::register_handler(linker, store);
-    CryptoKeccak256::register_handler(linker, store);
-    CryptoPoseidon::register_handler(linker, store);
-    CryptoPoseidon2::register_handler(linker, store);
-    CryptoEcrecover::register_handler(linker, store);
-    RwasmTransact::register_handler(linker, store);
-    RwasmCompile::register_handler(linker, store);
-    RwasmCreate::register_handler(linker, store);
-    StateDbGetCode::register_handler(linker, store);
-    StateDbGetCodeSize::register_handler(linker, store);
-    StateDbGetCodeHash::register_handler(linker, store);
-    StateDbGetBalance::register_handler(linker, store);
-    // StateDbUpdateCode::register_handler(linker, store);
-    StateDbUpdateStorage::register_handler(linker, store);
-    StateDbGetStorage::register_handler(linker, store);
-    StateDbEmitLog::register_handler(linker, store);
-    // ZkTrieOpen::register_handler(linker, store);
-    // ZkTrieUpdate::register_handler(linker, store);
-    // ZkTrieField::register_handler(linker, store);
-    // ZkTrieRoot::register_handler(linker, store);
-    // ZkTrieRollback::register_handler(linker, store);
-    // ZkTrieCommit::register_handler(linker, store);
+    runtime_register_handlers::<T, false>(linker, store);
 }

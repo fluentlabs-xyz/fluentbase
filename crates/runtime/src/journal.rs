@@ -1,5 +1,7 @@
 use crate::TrieStorage;
+use fluentbase_poseidon::Hashable;
 use fluentbase_types::{Address, Bytes, ExitCode, B256};
+use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
 use std::mem::take;
 
@@ -67,6 +69,8 @@ pub trait IJournaledTrie {
     fn checkpoint(&mut self) -> JournalCheckpoint;
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, bool)>;
     fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32);
+    fn store(&mut self, address: &Address, slot: &[u8; 32], value: &[u8; 32]);
+    fn load(&mut self, address: &Address, slot: &[u8; 32]) -> Option<([u8; 32], bool)>;
     fn remove(&mut self, key: &[u8; 32]);
     fn compute_root(&self) -> [u8; 32];
     fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes);
@@ -83,7 +87,9 @@ pub struct JournaledTrie<'a, DB: TrieStorage> {
     committed: usize,
 }
 
-impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
+impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
+    const DOMAIN: Fr = Fr::zero();
+
     pub fn new(storage: &'a mut DB) -> Self {
         let root = storage.compute_root();
         Self {
@@ -94,6 +100,29 @@ impl<'a, DB: TrieStorage> JournaledTrie<'a, DB> {
             root,
             committed: 0,
         }
+    }
+
+    pub fn compress_value(val: &[u8; 32]) -> Fr {
+        let mut bytes32 = [0u8; 32];
+        bytes32[0..16].copy_from_slice(&val[0..16]);
+        let val1 = Fr::from_bytes(&bytes32).unwrap();
+        bytes32[0..16].copy_from_slice(&val[16..]);
+        let val2 = Fr::from_bytes(&bytes32).unwrap();
+        let hasher = Fr::hasher();
+        hasher.hash([val1, val2], Self::DOMAIN)
+    }
+
+    pub fn storage_key(address: &Address, slot: &[u8; 32]) -> [u8; 32] {
+        // storage key is `p(address, p(slot_0, slot_1, d), d)`
+        let address = {
+            let mut bytes32 = [0u8; 32];
+            bytes32[0..20].copy_from_slice(address.as_slice());
+            Fr::from_bytes(&bytes32).unwrap()
+        };
+        let slot = Self::compress_value(slot);
+        let hasher = Fr::hasher();
+        let key = hasher.hash([address, slot], Self::DOMAIN);
+        key.to_bytes()
     }
 }
 
@@ -124,6 +153,22 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
             prev_state: self.state.get(key).copied(),
         });
         self.state.insert(*key, pos);
+    }
+
+    fn store(&mut self, address: &Address, slot: &[u8; 32], value: &[u8; 32]) {
+        let storage_key = Self::storage_key(address, slot);
+        self.update(&storage_key, &vec![*value], 1);
+    }
+
+    fn load(&mut self, address: &Address, slot: &[u8; 32]) -> Option<([u8; 32], bool)> {
+        let storage_key = Self::storage_key(address, slot);
+        let (values, is_cold) = self.get(&storage_key)?;
+        assert_eq!(
+            values.len(),
+            1,
+            "not proper journal usage, storage must have only one element"
+        );
+        Some((values[0], is_cold))
     }
 
     fn remove(&mut self, key: &[u8; 32]) {
@@ -169,6 +214,7 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
             }
         }
         self.journal.clear();
+        self.state.clear();
         let logs = take(&mut self.logs);
         self.committed = 0;
         self.root = self.storage.compute_root();
@@ -203,7 +249,7 @@ mod tests {
         zktrie::ZkTrieStateDb,
         TrieStorage,
     };
-    use fluentbase_types::InMemoryAccountDb;
+    use fluentbase_types::{address, InMemoryAccountDb};
 
     macro_rules! bytes32 {
         ($val:expr) => {{
@@ -314,5 +360,23 @@ mod tests {
         journal.rollback(checkpoint);
         assert_eq!(journal.compute_root(), calc_trie_root(vec![]));
         assert_eq!(journal.state.len(), 0);
+    }
+
+    #[test]
+    fn test_storage_store_load() {
+        let mut db = InMemoryAccountDb::default();
+        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
+        let mut journal = JournaledTrie::new(&mut zktrie);
+        let address = address!("0000000000000000000000000000000000000001");
+        journal.store(&address, &bytes32!("slot1"), &bytes32!("value1"));
+        let (value, is_cold) = journal.load(&address, &bytes32!("slot1")).unwrap();
+        assert_eq!(value, bytes32!("value1"));
+        // value is warm because we've just loaded it into state
+        assert_eq!(is_cold, false);
+        journal.commit().unwrap();
+        let (value, is_cold) = journal.load(&address, &bytes32!("slot1")).unwrap();
+        assert_eq!(value, bytes32!("value1"));
+        // value is cold because we committed state before that made it empty
+        assert_eq!(is_cold, true);
     }
 }

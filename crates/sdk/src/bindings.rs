@@ -43,7 +43,7 @@ extern "C" {
     ) -> i32;
 
     /// Journaled ZK Trie methods to work with blockchain state
-    pub(crate) fn _jzkt_open(root32_ptr: *const u8) -> ();
+    pub(crate) fn _jzkt_open(root32_ptr: *const u8);
     pub(crate) fn _jzkt_checkpoint() -> (u32, u32);
     pub(crate) fn _jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32;
     pub(crate) fn _jzkt_update(
@@ -63,6 +63,8 @@ extern "C" {
     );
     pub(crate) fn _jzkt_commit(root32_offset: *mut u8);
     pub(crate) fn _jzkt_rollback(checkpoint0: u32, checkpoint1: u32);
+    pub(crate) fn _jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8);
+    pub(crate) fn _jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32;
 
     /// Preimage Database is used for managing poseidon preimages
     pub(crate) fn _preimage_size(hash32: *const u8) -> u32;
