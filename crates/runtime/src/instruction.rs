@@ -9,12 +9,12 @@ pub mod jzkt_emit_log;
 pub mod jzkt_get;
 pub mod jzkt_load;
 pub mod jzkt_open;
+pub mod jzkt_preimage_copy;
+pub mod jzkt_preimage_size;
 pub mod jzkt_remove;
 pub mod jzkt_rollback;
 pub mod jzkt_store;
 pub mod jzkt_update;
-pub mod preimage_copy;
-pub mod preimage_size;
 pub mod rwasm_compile;
 pub mod rwasm_create;
 pub mod rwasm_transact;
@@ -49,12 +49,12 @@ use crate::{
         jzkt_get::JzktGet,
         jzkt_load::JzktLoad,
         jzkt_open::JzktOpen,
+        jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize,
         jzkt_remove::JzktRemove,
         jzkt_rollback::JzktRollback,
         jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
-        preimage_copy::PreimageCopy,
-        preimage_size::PreimageSize,
         rwasm_compile::RwasmCompile,
         rwasm_create::RwasmCreate,
         rwasm_transact::RwasmTransact,
@@ -106,10 +106,10 @@ use fluentbase_types::SysFuncIdx::{
     JZKT_CHECKPOINT,
     JZKT_EMIT_LOG,
     JZKT_LOAD,
+    JZKT_PREIMAGE_COPY,
+    JZKT_PREIMAGE_SIZE,
     JZKT_REMOVE,
     JZKT_STORE,
-    PREIMAGE_COPY,
-    PREIMAGE_SIZE,
     STATEDB_EMIT_LOG,
     STATEDB_GET_BALANCE,
     STATEDB_GET_CODE,
@@ -162,9 +162,8 @@ impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_comm
 impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint0: u32, checkpoint1: u32) -> ());
 impl_runtime_handler!(JzktStore, JZKT_STORE, fn fluentbase_v1alpha::_jzkt_store(slot32_ptr: u32, value32_ptr: u32) -> ());
 impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> u32);
-
-impl_runtime_handler!(PreimageSize, PREIMAGE_SIZE, fn fluentbase_v1alpha::_preimage_size(hash32_offset: u32) -> u32);
-impl_runtime_handler!(PreimageCopy, PREIMAGE_COPY, fn fluentbase_v1alpha::_preimage_copy(hash32_offset: u32, output_offset: u32, output_len: u32) -> ());
+impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
+impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 
 // TODO: "remove these impls"
 impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_delegate: u32, is_static: u32) -> i32);
@@ -208,8 +207,8 @@ fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut
     JzktStore::register_linker::<T>(import_linker);
     JzktLoad::register_linker::<T>(import_linker);
     if IS_SOVEREIGN {
-        PreimageSize::register_linker::<T>(import_linker);
-        PreimageCopy::register_linker::<T>(import_linker);
+        // PreimageSize::register_linker::<T>(import_linker);
+        // PreimageCopy::register_linker::<T>(import_linker);
     }
 }
 
@@ -253,8 +252,8 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     JzktStore::register_handler(linker, store);
     JzktLoad::register_handler(linker, store);
     if IS_SOVEREIGN {
-        PreimageSize::register_handler(linker, store);
-        PreimageCopy::register_handler(linker, store);
+        // PreimageSize::register_handler(linker, store);
+        // PreimageCopy::register_handler(linker, store);
     }
 }
 

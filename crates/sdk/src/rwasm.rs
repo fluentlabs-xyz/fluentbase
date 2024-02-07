@@ -11,12 +11,12 @@ use crate::{
         _jzkt_get,
         _jzkt_load,
         _jzkt_open,
+        _jzkt_preimage_copy,
+        _jzkt_preimage_size,
         _jzkt_remove,
         _jzkt_rollback,
         _jzkt_store,
         _jzkt_update,
-        _preimage_copy,
-        _preimage_size,
         _rwasm_compile,
         _rwasm_create,
         _rwasm_transact,
@@ -192,15 +192,11 @@ impl LowLevelAPI for LowLevelSDK {
     fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32 {
         unsafe { _jzkt_load(slot32_ptr, value32_ptr) }
     }
-
-    #[inline(always)]
-    fn preimage_size(hash32: *const u8) -> u32 {
-        unsafe { _preimage_size(hash32) }
+    fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32 {
+        unsafe { _jzkt_preimage_size(hash32_ptr) }
     }
-
-    #[inline(always)]
-    fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32) {
-        unsafe { _preimage_copy(hash32, output_offset, output_len) }
+    fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
+        unsafe { _jzkt_preimage_copy(hash32_ptr, preimage_ptr) }
     }
 
     #[inline(always)]

@@ -86,6 +86,9 @@ macro_rules! count_ret_args {
     (f64) => {
         1
     };
+    (bool) => {
+        1
+    };
     ($out:ty) => {
         0
     };
@@ -157,11 +160,13 @@ mod tests {
     test_macro!(A -> u32);
     test_macro!(B -> ());
     test_macro!(C -> i32);
+    test_macro!(D -> bool);
 
     #[test]
     fn test_count_ret_macro() {
         assert_eq!(A, 1);
         assert_eq!(B, 0);
         assert_eq!(C, 1);
+        assert_eq!(D, 1);
     }
 }

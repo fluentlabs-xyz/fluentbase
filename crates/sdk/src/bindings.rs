@@ -45,15 +45,15 @@ extern "C" {
     /// Journaled ZK Trie methods to work with blockchain state
     pub(crate) fn _jzkt_open(root32_ptr: *const u8);
     pub(crate) fn _jzkt_checkpoint() -> (u32, u32);
-    pub(crate) fn _jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32;
+    pub(crate) fn _jzkt_get(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8) -> u32;
     pub(crate) fn _jzkt_update(
         key32_offset: *const u8,
         flags: u32,
         vals32_offset: *const [u8; 32],
         vals32_len: u32,
     );
-    pub(crate) fn _jzkt_remove(key32_offset: *const u8);
-    pub(crate) fn _jzkt_compute_root(output32_offset: *mut u8);
+    pub(crate) fn _jzkt_remove(key32_ptr: *const u8);
+    pub(crate) fn _jzkt_compute_root(output32_ptr: *mut u8);
     pub(crate) fn _jzkt_emit_log(
         key32_ptr: *const u8,
         topics32s_ptr: *const u8,
@@ -61,14 +61,12 @@ extern "C" {
         data_ptr: *const u8,
         data_len: u32,
     );
-    pub(crate) fn _jzkt_commit(root32_offset: *mut u8);
+    pub(crate) fn _jzkt_commit(root32_ptr: *mut u8);
     pub(crate) fn _jzkt_rollback(checkpoint0: u32, checkpoint1: u32);
     pub(crate) fn _jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8);
     pub(crate) fn _jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32;
-
-    /// Preimage Database is used for managing poseidon preimages
-    pub(crate) fn _preimage_size(hash32: *const u8) -> u32;
-    pub(crate) fn _preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32);
+    pub(crate) fn _jzkt_preimage_size(hash32_ptr: *const u8) -> u32;
+    pub(crate) fn _jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
 
     #[deprecated]
     pub(crate) fn _rwasm_transact(

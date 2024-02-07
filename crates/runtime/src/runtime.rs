@@ -8,14 +8,7 @@ use crate::{
     journal::IJournaledTrie,
     types::RuntimeError,
 };
-use fluentbase_types::{
-    AccountDb,
-    Address,
-    ExitCode,
-    PreimageDb,
-    RECURSIVE_MAX_DEPTH,
-    STACK_MAX_HEIGHT,
-};
+use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
 use rwasm_codegen::{
     rwasm::{
         engine::Tracer,
@@ -59,7 +52,6 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) return_data: Vec<u8>,
     // storage
     pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
-    pub(crate) preimage_db: Option<Rc<RefCell<dyn PreimageDb>>>,
     pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
 }
 
@@ -82,7 +74,6 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             consumed_fuel: self.consumed_fuel.clone(),
             return_data: self.return_data.clone(),
             account_db: self.account_db.clone(),
-            preimage_db: self.preimage_db.clone(),
             jzkt: self.jzkt.clone(),
         }
     }
@@ -107,7 +98,6 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             consumed_fuel: 0,
             return_data: vec![],
             account_db: None,
-            preimage_db: None,
             jzkt: None,
         }
     }
@@ -173,11 +163,6 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_account_db(mut self, account: Rc<RefCell<dyn AccountDb>>) -> Self {
         self.account_db = Some(account);
-        self
-    }
-
-    pub fn with_preimage_db(mut self, preimage_db: Rc<RefCell<dyn PreimageDb>>) -> Self {
-        self.preimage_db = Some(preimage_db);
         self
     }
 

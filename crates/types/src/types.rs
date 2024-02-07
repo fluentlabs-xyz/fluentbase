@@ -135,10 +135,8 @@ pub enum SysFuncIdx {
     JZKT_ROLLBACK = 0x0709,
     JZKT_STORE = 0x070A,
     JZKT_LOAD = 0x070B,
-
-    // preimage functions
-    PREIMAGE_SIZE = 0x0801, // fluentbase_v1alpha::_preimage_size
-    PREIMAGE_COPY = 0x0802, // fluentbase_v1alpha::_preimage_copy
+    JZKT_PREIMAGE_SIZE = 0x070C,
+    JZKT_PREIMAGE_COPY = 0x070D,
 
     // RWASM
     RWASM_TRANSACT = 0x000A, // fluentbase_v1alpha::_rwasm_transact

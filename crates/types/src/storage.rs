@@ -24,11 +24,3 @@ pub trait TrieDb {
 
     fn update_preimage(&mut self, key: &[u8], value: Bytes);
 }
-
-pub trait PreimageDb {
-    fn preimage_size(&self, hash: &[u8]) -> u32;
-
-    fn copy_preimage(&self, hash: &[u8], result: &mut [u8]);
-
-    fn update_preimage(&self, hash: &[u8], value: &[u8]);
-}
