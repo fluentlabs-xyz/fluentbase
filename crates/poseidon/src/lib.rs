@@ -4,22 +4,16 @@ mod primitives;
 pub use primitives::*;
 mod septidon;
 use halo2curves::bn256::Fr;
-use poseidon::Poseidon;
+pub use poseidon::Poseidon;
 pub use septidon::*;
 
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
-    const CHUNK_LEN: usize = 32;
+    const CHUNK_LEN: usize = 31;
     for chunk in data.chunks(CHUNK_LEN).into_iter() {
-        let chunk: [u8; CHUNK_LEN] = if chunk.len() == CHUNK_LEN {
-            chunk.try_into().unwrap()
-        } else {
-            let mut tmp_chunk = [0u8; CHUNK_LEN];
-            // be repr
-            tmp_chunk[..chunk.len()].copy_from_slice(chunk);
-            tmp_chunk
-        };
-        let v = Fr::from_bytes(&chunk).unwrap();
+        let mut buffer32: [u8; 32] = [0u8; 32];
+        buffer32[..chunk.len()].copy_from_slice(chunk);
+        let v = Fr::from_bytes(&buffer32).unwrap();
         hasher.update(&[v]);
     }
     let h = hasher.squeeze();
@@ -54,6 +48,12 @@ mod poseidon_tests {
         let hash = poseidon_hash(data.as_slice());
 
         assert_eq!(hash.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn full_32b() {
+        let data = vec![0xff; 32];
+        let _hash = poseidon_hash(&data);
     }
 
     #[test]
