@@ -7,8 +7,8 @@ use fluentbase_runtime::{
         crypto_keccak256::CryptoKeccak256,
         crypto_poseidon::CryptoPoseidon,
         crypto_poseidon2::CryptoPoseidon2,
-        preimage_copy::PreimageCopy,
-        preimage_size::PreimageSize,
+        jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize,
         rwasm_compile::RwasmCompile,
         sys_exec::SysExec,
         sys_halt::SysHalt,
@@ -207,29 +207,6 @@ impl LowLevelAPI for LowLevelSDK {
         unreachable!("jzkt is not supported right now in this mode")
     }
 
-    fn preimage_size(hash32: *const u8) -> u32 {
-        with_context(|ctx| {
-            PreimageSize::fn_impl(ctx, unsafe { &*ptr::slice_from_raw_parts(hash32, 32) })
-        })
-        .unwrap()
-    }
-
-    fn preimage_copy(hash32: *const u8, output_offset: *mut u8, output_len: u32) {
-        let output = with_context(|ctx| {
-            PreimageCopy::fn_impl(
-                ctx,
-                unsafe { &*ptr::slice_from_raw_parts(hash32, 32) },
-                output_len,
-            )
-        })
-        .unwrap();
-        if output_len > 0 {
-            unsafe {
-                ptr::copy(output.as_ptr(), output_offset, output_len as usize);
-            }
-        }
-    }
-
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
         match RwasmCompile::fn_impl(input, output.len() as u32) {
             Ok(result) => {
@@ -299,6 +276,14 @@ impl LowLevelAPI for LowLevelSDK {
 
     fn statedb_emit_log(_topics: &[Bytes32], _data: &[u8]) {
         unreachable!("statedb methods are not available in this mode")
+    }
+
+    fn jzkt_preimage_size(key32_ptr: *const u8) -> u32 {
+        todo!()
+    }
+
+    fn jzkt_preimage_copy(key32_ptr: *const u8, preimage_ptr: *mut u8) {
+        todo!()
     }
 }
 

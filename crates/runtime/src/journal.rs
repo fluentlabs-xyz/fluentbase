@@ -1,5 +1,5 @@
 use crate::TrieStorage;
-use fluentbase_poseidon::Hashable;
+use fluentbase_poseidon::{Hashable, Poseidon};
 use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
@@ -8,7 +8,7 @@ use std::mem::take;
 enum JournalEvent {
     ItemChanged {
         key: [u8; 32],
-        value: Vec<[u8; 32]>,
+        preimage: Vec<[u8; 32]>,
         flags: u32,
         prev_state: Option<usize>,
     },
@@ -26,9 +26,13 @@ impl JournalEvent {
         }
     }
 
-    fn value(&self) -> Option<(Vec<[u8; 32]>, u32)> {
+    fn preimage(&self) -> Option<(Vec<[u8; 32]>, u32)> {
         match self {
-            JournalEvent::ItemChanged { value, flags, .. } => Some((value.clone(), *flags)),
+            JournalEvent::ItemChanged {
+                preimage: value,
+                flags,
+                ..
+            } => Some((value.clone(), *flags)),
             JournalEvent::ItemRemoved { .. } => None,
         }
     }
@@ -76,11 +80,30 @@ pub trait IJournaledTrie {
     fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes);
     fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode>;
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
+    fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool;
+    fn preimage(&mut self, hash: &[u8; 32]) -> Vec<u8>;
+    fn preimage_size(&mut self, hash: &[u8; 32]) -> u32;
+}
+
+macro_rules! bytes32 {
+    ($val:literal) => {
+        bytes32!($val.as_bytes())
+    };
+    ($val:expr) => {{
+        let mut word: [u8; 32] = [0; 32];
+        if $val.len() > 32 {
+            word.copy_from_slice(&$val[0..32]);
+        } else {
+            word[..$val.len()].copy_from_slice($val);
+        }
+        word
+    }};
 }
 
 pub struct JournaledTrie<'a, DB: TrieStorage> {
     storage: &'a mut DB,
     state: HashMap<[u8; 32], usize>,
+    preimages: HashMap<[u8; 32], Vec<u8>>,
     logs: Vec<JournalLog>,
     journal: Vec<JournalEvent>,
     root: [u8; 32],
@@ -95,11 +118,24 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
         Self {
             storage,
             state: HashMap::new(),
+            preimages: HashMap::new(),
             logs: Vec::new(),
             journal: Vec::new(),
             root,
             committed: 0,
         }
+    }
+
+    pub fn message_hash(val: &[u8]) -> Fr {
+        let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
+        const CHUNK_LEN: usize = 31;
+        for chunk in val.chunks(CHUNK_LEN).into_iter() {
+            let mut buffer32: [u8; 32] = [0u8; 32];
+            buffer32[..chunk.len()].copy_from_slice(chunk);
+            let v = Fr::from_bytes(&buffer32).unwrap();
+            hasher.update(&[v]);
+        }
+        hasher.squeeze()
     }
 
     pub fn compress_value(val: &[u8; 32]) -> Fr {
@@ -137,7 +173,7 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
                 .journal
                 .get(*index)
                 .unwrap()
-                .value()
+                .preimage()
                 .map(|v| v.0)
                 .map(|v| (v, false)),
             None => self.storage.get(key).map(|v| (v, true)),
@@ -148,7 +184,7 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
         let pos = self.journal.len();
         self.journal.push(JournalEvent::ItemChanged {
             key: *key,
-            value: value.clone(),
+            preimage: value.clone(),
             flags,
             prev_state: self.state.get(key).copied(),
         });
@@ -200,7 +236,7 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
             .journal
             .iter()
             .skip(self.committed)
-            .map(|v| (*v.key(), v.value()))
+            .map(|v| (*v.key(), v.preimage()))
             .collect::<HashMap<_, _>>()
             .into_iter()
         {
@@ -213,7 +249,12 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
                 }
             }
         }
+        for (hash, preimage) in self.preimages.iter() {
+            self.storage
+                .update_preimage(hash, Bytes::from(preimage.clone()));
+        }
         self.journal.clear();
+        self.preimages.clear();
         self.state.clear();
         let logs = take(&mut self.logs);
         self.committed = 0;
@@ -240,6 +281,42 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
         self.journal.truncate(checkpoint.state());
         self.logs.truncate(checkpoint.logs());
     }
+
+    fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
+        let value = match self.get(key).and_then(|v| v.0.get(field as usize).cloned()) {
+            Some(value) => value,
+            None => return false,
+        };
+        // value hash stored inside trie must be equal to the provided value hash
+        let value_hash = Fr::from_bytes(&value).unwrap();
+        if Self::message_hash(preimage) != value_hash {
+            return false;
+        }
+        // write new preimage value into database
+        self.preimages.insert(value_hash.to_bytes(), value.to_vec());
+        true
+    }
+
+    fn preimage(&mut self, hash: &[u8; 32]) -> Vec<u8> {
+        // maybe its just changed preimage and we have it in the state
+        if let Some(preimage) = self.preimages.get(hash) {
+            return preimage.clone();
+        }
+        // get preimage from database
+        let preimage = self
+            .storage
+            .get_preimage(hash)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        preimage
+    }
+
+    fn preimage_size(&mut self, hash: &[u8; 32]) -> u32 {
+        if let Some(preimage) = self.preimages.get(hash) {
+            return preimage.len() as u32;
+        }
+        self.storage.preimage_size(hash)
+    }
 }
 
 #[cfg(test)]
@@ -250,18 +327,6 @@ mod tests {
         TrieStorage,
     };
     use fluentbase_types::{address, InMemoryAccountDb};
-
-    macro_rules! bytes32 {
-        ($val:expr) => {{
-            let mut word: [u8; 32] = [0; 32];
-            if $val.len() > 32 {
-                word.copy_from_slice(&$val.as_bytes()[0..32]);
-            } else {
-                word[0..$val.len()].copy_from_slice($val.as_bytes());
-            }
-            word
-        }};
-    }
 
     fn calc_trie_root(values: Vec<([u8; 32], Vec<[u8; 32]>, u32)>) -> [u8; 32] {
         let mut db = InMemoryAccountDb::default();
@@ -321,7 +386,7 @@ mod tests {
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key3"), &vec![bytes32!("val3")], 0);
         journal.rollback(checkpoint);
-        assert_eq!(journal.state.len(), 2);
+        assert_eq!(journal.state.len(), 0);
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![
@@ -333,7 +398,7 @@ mod tests {
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key2"), &vec![bytes32!("Hello, World")], 0);
         journal.rollback(checkpoint);
-        assert_eq!(journal.state.len(), 2);
+        assert_eq!(journal.state.len(), 0);
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![

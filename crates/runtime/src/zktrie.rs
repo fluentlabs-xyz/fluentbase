@@ -160,6 +160,14 @@ impl<'a, DB: TrieDb> TrieStorage for ZkTrieStateDb<'a, DB> {
             Err(_) => None,
         }
     }
+
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.storage.0.borrow_mut().get_preimage(key)
+    }
+
+    fn update_preimage(&mut self, key: &[u8], value: Bytes) {
+        self.storage.0.borrow_mut().update_preimage(key, value);
+    }
 }
 
 #[cfg(test)]
