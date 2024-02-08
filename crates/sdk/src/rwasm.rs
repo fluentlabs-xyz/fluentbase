@@ -17,6 +17,7 @@ use crate::{
         _jzkt_rollback,
         _jzkt_store,
         _jzkt_update,
+        _jzkt_update_preimage,
         _rwasm_compile,
         _rwasm_create,
         _rwasm_transact,
@@ -151,50 +152,63 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { _jzkt_checkpoint() }
     }
     #[inline(always)]
-    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> u32 {
+    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool {
         unsafe { _jzkt_get(key32_offset, field, output32_offset) }
     }
     #[inline(always)]
-    fn jzkt_update(
-        key32_offset: *const u8,
-        flags: u32,
-        vals32_offset: *const [u8; 32],
-        vals32_len: u32,
-    ) {
+    fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
         unsafe {
-            _jzkt_update(key32_offset, flags, vals32_offset, vals32_len);
+            _jzkt_update(key32_ptr, flags, vals32_ptr, vals32_len);
         }
     }
+    #[inline(always)]
+    fn jzkt_update_preimage(
+        key32_ptr: *const u8,
+        field: u32,
+        preimage_ptr: *const u8,
+        preimage_len: u32,
+    ) -> bool {
+        unsafe { _jzkt_update_preimage(key32_ptr, field, preimage_ptr, preimage_len) }
+    }
+    #[inline(always)]
     fn jzkt_remove(key32_offset: *const u8) {
         unsafe { _jzkt_remove(key32_offset) }
     }
+    #[inline(always)]
     fn jzkt_compute_root(output32_offset: *mut u8) {
         unsafe { _jzkt_compute_root(output32_offset) }
     }
+    #[inline(always)]
     fn jzkt_emit_log(
         key32_ptr: *const u8,
-        topics32s_ptr: *const u8,
+        topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
         data_ptr: *const u8,
         data_len: u32,
     ) {
         unsafe { _jzkt_emit_log(key32_ptr, topics32s_ptr, topics32s_len, data_ptr, data_len) }
     }
+    #[inline(always)]
     fn jzkt_commit(root32_offset: *mut u8) {
         unsafe { _jzkt_commit(root32_offset) }
     }
+    #[inline(always)]
     fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
         unsafe { _jzkt_rollback(checkpoint0, checkpoint1) }
     }
+    #[inline(always)]
     fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {
         unsafe { _jzkt_store(slot32_ptr, value32_ptr) }
     }
-    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> u32 {
+    #[inline(always)]
+    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32 {
         unsafe { _jzkt_load(slot32_ptr, value32_ptr) }
     }
+    #[inline(always)]
     fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32 {
         unsafe { _jzkt_preimage_size(hash32_ptr) }
     }
+    #[inline(always)]
     fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
         unsafe { _jzkt_preimage_copy(hash32_ptr, preimage_ptr) }
     }

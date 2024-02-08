@@ -23,7 +23,7 @@ mod types;
 
 pub use types::Bytes32;
 
-#[cfg(not(feature = "runtime"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
@@ -35,7 +35,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-#[cfg(not(feature = "runtime"))]
+#[cfg(not(feature = "std"))]
 #[global_allocator]
 #[cfg(target_arch = "wasm32")]
 static ALLOCATOR: lol_alloc::AssumeSingleThreaded<lol_alloc::LeakingAllocator> =
