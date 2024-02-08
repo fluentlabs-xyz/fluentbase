@@ -150,11 +150,7 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
 
     pub fn storage_key(address: &Address, slot: &[u8; 32]) -> [u8; 32] {
         // storage key is `p(address, p(slot_0, slot_1, d), d)`
-        let address = {
-            let mut bytes32 = [0u8; 32];
-            bytes32[0..20].copy_from_slice(address.as_slice());
-            Fr::from_bytes(&bytes32).unwrap()
-        };
+        let address = Fr::from_bytes(&address.into_word()).unwrap();
         let slot = Self::compress_value(slot);
         let hasher = Fr::hasher();
         let key = hasher.hash([address, slot], Self::DOMAIN);

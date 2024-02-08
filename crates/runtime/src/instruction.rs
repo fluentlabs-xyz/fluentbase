@@ -15,6 +15,7 @@ pub mod jzkt_remove;
 pub mod jzkt_rollback;
 pub mod jzkt_store;
 pub mod jzkt_update;
+pub mod jzkt_update_preimage;
 pub mod rwasm_compile;
 pub mod rwasm_create;
 pub mod rwasm_transact;
@@ -161,7 +162,7 @@ impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_e
 impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint0: u32, checkpoint1: u32) -> ());
 impl_runtime_handler!(JzktStore, JZKT_STORE, fn fluentbase_v1alpha::_jzkt_store(slot32_ptr: u32, value32_ptr: u32) -> ());
-impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> u32);
+impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> i32);
 impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 
