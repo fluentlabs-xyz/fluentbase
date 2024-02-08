@@ -1,9 +1,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
+extern crate alloc;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
+#[cfg(feature = "cairo")]
+mod cairo;
 #[cfg(feature = "erc20")]
 mod erc20;
 #[cfg(feature = "greeting")]
@@ -27,6 +30,8 @@ macro_rules! export_and_forward {
         #[no_mangle]
         #[cfg(target_arch = "wasm32")]
         pub extern "C" fn $fn_name() {
+            #[cfg(feature = "cairo")]
+            cairo::$fn_name();
             #[cfg(feature = "erc20")]
             erc20::$fn_name();
             #[cfg(feature = "greeting")]

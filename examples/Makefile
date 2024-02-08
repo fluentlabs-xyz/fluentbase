@@ -1,4 +1,4 @@
-FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack
+FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack cairo
 
 all: $(FILES) $(MANUAL)
 
