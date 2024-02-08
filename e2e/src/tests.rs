@@ -76,6 +76,20 @@ fn test_poseidon() {
 }
 
 #[test]
+fn test_cairo() {
+    let input_data = include_bytes!("../assets/fib_proof.proof");
+    let output = run_rwasm_with_evm_input(
+        include_bytes!("../../examples/bin/cairo.wasm").to_vec(),
+        input_data,
+    );
+    assert_eq!(output.data().exit_code(), 0);
+    assert_eq!(
+        output.data().output().clone(),
+        poseidon_hash(input_data).to_vec()
+    );
+}
+
+#[test]
 fn test_secp256k1_verify() {
     let wasm_binary = include_bytes!("../../examples/bin/secp256k1.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary, true);
