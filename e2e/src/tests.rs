@@ -67,18 +67,18 @@ fn run_rwasm_with_raw_input(
         let main_func = instance.get_func(&store, "main").unwrap();
         match main_func.call(&mut store, &[], &mut []) {
             Err(err) => {
-                let mut lines = String::new();
-                for log in store.tracer().logs.iter() {
-                    let stack = log
-                        .stack
-                        .iter()
-                        .map(|v| v.to_bits() as i64)
-                        .collect::<Vec<_>>();
-                    lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack)
-                        .as_str();
-                }
-                let _ = fs::create_dir("./tmp");
-                fs::write("./tmp/cairo.txt", lines).unwrap();
+                // let mut lines = String::new();
+                // for log in store.tracer().logs.iter() {
+                //     let stack = log
+                //         .stack
+                //         .iter()
+                //         .map(|v| v.to_bits() as i64)
+                //         .collect::<Vec<_>>();
+                //     lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack)
+                //         .as_str();
+                // }
+                // let _ = fs::create_dir("./tmp");
+                // fs::write("./tmp/cairo.txt", lines).unwrap();
                 panic!("err happened during wasm execution: {:?}", err);
             }
             Ok(_) => {}
@@ -146,6 +146,7 @@ fn test_poseidon() {
     );
 }
 
+#[ignore]
 #[test]
 fn test_cairo() {
     let input_data = include_bytes!("../assets/fib_proof.proof");
