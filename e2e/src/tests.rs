@@ -35,6 +35,19 @@ fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> Executio
     runtime.call().unwrap()
 }
 
+fn run_rwasm_with_raw_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult<()> {
+    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
+    let ctx = RuntimeContext::new(rwasm_binary)
+        .with_state(STATE_MAIN)
+        .with_fuel_limit(100_000)
+        .with_input(input_data.to_vec())
+        .with_catch_trap(true);
+    let import_linker = Runtime::<()>::new_sovereign_linker();
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    runtime.data_mut().clean_output();
+    runtime.call().unwrap()
+}
+
 #[test]
 fn test_greeting() {
     let output = run_rwasm_with_evm_input(
@@ -78,7 +91,7 @@ fn test_poseidon() {
 #[test]
 fn test_cairo() {
     let input_data = include_bytes!("../assets/fib_proof.proof");
-    let output = run_rwasm_with_evm_input(
+    let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/cairo.wasm").to_vec(),
         input_data,
     );
