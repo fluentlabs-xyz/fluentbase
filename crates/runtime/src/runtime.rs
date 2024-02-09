@@ -284,7 +284,7 @@ impl<'t, T> Runtime<'t, T> {
         let catch_error = runtime_context.catch_trap;
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
-            runtime_context.exit_code = Self::catch_trap(runtime.err().unwrap());
+            runtime_context.exit_code = Self::catch_trap(&runtime.err().unwrap());
             Ok(ExecutionResult {
                 runtime_context,
                 tracer: Default::default(),
@@ -379,10 +379,15 @@ impl<'t, T> Runtime<'t, T> {
         let res = func
             .call(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        if self.store.data().catch_trap && res.is_err() {
-            self.store.data_mut().exit_code = Self::catch_trap(res.err().unwrap());
-        } else {
-            res?;
+        match res {
+            Ok(_) => {}
+            Err(err) => {
+                let exit_code = Self::catch_trap(&err);
+                if exit_code != 0 && !self.store.data().catch_trap {
+                    return Err(err);
+                }
+                self.store.data_mut().exit_code = exit_code;
+            }
         }
         // we need to restore trace to recover missing opcode values
         self.restore_trace();
@@ -416,7 +421,7 @@ impl<'t, T> Runtime<'t, T> {
         }
     }
 
-    pub fn catch_trap(err: RuntimeError) -> i32 {
+    pub fn catch_trap(err: &RuntimeError) -> i32 {
         let err = match err {
             RuntimeError::Rwasm(err) => err,
             _ => return ExitCode::UnknownError as i32,
@@ -433,7 +438,7 @@ impl<'t, T> Runtime<'t, T> {
         if let Some(trap_code) = err.trap_code() {
             return Into::<ExitCode>::into(trap_code) as i32;
         }
-        // otherwise its just an unknown error
+        // otherwise it's just an unknown error
         ExitCode::UnknownError as i32
     }
 
