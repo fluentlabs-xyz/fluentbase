@@ -21,12 +21,16 @@ pub fn verify_cairo_proof_wasm(proof_bytes: &[u8], proof_options: &ProofOptions)
         return false;
     }
 
-    let Ok((proof, _)) =
+    let (proof, _) =
         bincode::serde::decode_from_slice(&bytes[0..proof_len], bincode::config::standard())
-    else {
-        return false;
-    };
-    let bytes = &bytes[proof_len..];
+            .unwrap();
+
+    // let Ok((proof, _)) =
+    //     bincode::serde::decode_from_slice(&bytes[0..proof_len], bincode::config::standard())
+    // else {
+    //     return false;
+    // };
+    // let bytes = &bytes[proof_len..];
 
     let Ok((pub_inputs, _)) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
     else {
