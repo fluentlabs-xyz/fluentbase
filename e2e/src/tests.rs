@@ -1,9 +1,20 @@
 use fluentbase_codec::Encoder;
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{types::STATE_MAIN, ExecutionResult, Runtime, RuntimeContext};
+use fluentbase_runtime::{
+    instruction::runtime_register_sovereign_handlers,
+    types::STATE_MAIN,
+    ExecutionResult,
+    Runtime,
+    RuntimeContext,
+};
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use hex_literal::hex;
-use rwasm_codegen::{Compiler, CompilerConfig};
+use rwasm_codegen::{
+    rwasm::{Config, Engine, Linker, Module, Store},
+    Compiler,
+    CompilerConfig,
+};
+use std::fs;
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_sovereign_linker();
@@ -35,7 +46,49 @@ fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> Executio
     runtime.call().unwrap()
 }
 
-fn run_rwasm_with_raw_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult<()> {
+fn run_rwasm_with_raw_input(
+    wasm_binary: Vec<u8>,
+    input_data: &[u8],
+    verify_wasm: bool,
+) -> ExecutionResult<()> {
+    // make sure at least wasm binary works well
+    let wasm_exit_code = if verify_wasm {
+        let config = Config::default();
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm_binary.as_slice()).unwrap();
+        let mut store = Store::new(&engine, RuntimeContext::<()>::default());
+        let mut linker = Linker::new(&engine);
+        runtime_register_sovereign_handlers(&mut linker, &mut store);
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .unwrap()
+            .start(&mut store)
+            .unwrap();
+        let main_func = instance.get_func(&store, "main").unwrap();
+        match main_func.call(&mut store, &[], &mut []) {
+            Err(err) => {
+                let mut lines = String::new();
+                for log in store.tracer().logs.iter() {
+                    let stack = log
+                        .stack
+                        .iter()
+                        .map(|v| v.to_bits() as i64)
+                        .collect::<Vec<_>>();
+                    lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack)
+                        .as_str();
+                }
+                let _ = fs::create_dir("./tmp");
+                fs::write("./tmp/cairo.txt", lines).unwrap();
+                panic!("err happened during wasm execution: {:?}", err);
+            }
+            Ok(_) => {}
+        }
+        let wasm_exit_code = store.data().exit_code();
+        Some(wasm_exit_code)
+    } else {
+        None
+    };
+    // compile and run wasm binary
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
@@ -45,7 +98,11 @@ fn run_rwasm_with_raw_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> Executio
     let import_linker = Runtime::<()>::new_sovereign_linker();
     let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
     runtime.data_mut().clean_output();
-    runtime.call().unwrap()
+    let execution_result = runtime.call().unwrap();
+    if let Some(wasm_exit_code) = wasm_exit_code {
+        assert_eq!(execution_result.data().exit_code(), wasm_exit_code);
+    }
+    execution_result
 }
 
 #[test]
@@ -63,9 +120,10 @@ fn test_greeting() {
 
 #[test]
 fn test_keccak256() {
-    let output = run_rwasm_with_evm_input(
+    let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/keccak256.wasm").to_vec(),
         "Hello, World".as_bytes(),
+        true,
     );
     assert_eq!(output.data().exit_code(), 0);
     assert_eq!(
@@ -94,6 +152,25 @@ fn test_cairo() {
     let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/cairo.wasm").to_vec(),
         input_data,
+        false,
+    );
+    let tracer = output.tracer();
+    {
+        let mut lines = String::new();
+        for log in tracer.logs.iter() {
+            let stack = log
+                .stack
+                .iter()
+                .map(|v| v.to_bits() as i64)
+                .collect::<Vec<_>>();
+            lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack).as_str();
+        }
+        fs::create_dir("./tmp");
+        fs::write("./tmp/cairo.txt", lines).unwrap();
+    }
+    println!(
+        "Return data: {}",
+        hex::encode(output.data().output().clone())
     );
     assert_eq!(output.data().exit_code(), 0);
     assert_eq!(

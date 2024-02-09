@@ -15,7 +15,7 @@ extern "C" {
         fb32_offset: *const u8,
         fd32_offset: *const u8,
         output32_offset: *mut u8,
-    ) -> bool;
+    );
     pub(crate) fn _crypto_ecrecover(
         digest32_offset: *const u8,
         sig64_offset: *const u8,

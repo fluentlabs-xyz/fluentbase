@@ -8,7 +8,7 @@ pub trait LowLevelAPI {
         fb32_data: &Bytes32,
         fd32_data: &Bytes32,
         output32: &mut [u8],
-    ) -> bool;
+    );
     fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
 
     fn sys_read(target: &mut [u8], offset: u32);

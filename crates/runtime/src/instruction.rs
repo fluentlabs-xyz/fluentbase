@@ -149,8 +149,8 @@ impl_runtime_handler!(SysInputSize, SYS_INPUT_SIZE, fn fluentbase_v1alpha::_sys_
 impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
+impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> (u32, u32));
@@ -211,6 +211,17 @@ fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut
         // PreimageSize::register_linker::<T>(import_linker);
         // PreimageCopy::register_linker::<T>(import_linker);
     }
+    RwasmTransact::register_linker::<T>(import_linker);
+    RwasmCompile::register_linker::<T>(import_linker);
+    RwasmCreate::register_linker::<T>(import_linker);
+    StateDbGetCode::register_linker::<T>(import_linker);
+    StateDbGetCodeSize::register_linker::<T>(import_linker);
+    StateDbGetCodeHash::register_linker::<T>(import_linker);
+    StateDbUpdateCode::register_linker::<T>(import_linker);
+    StateDbUpdateStorage::register_linker::<T>(import_linker);
+    StateDbGetStorage::register_linker::<T>(import_linker);
+    StateDbEmitLog::register_linker::<T>(import_linker);
+    StateDbGetBalance::register_linker::<T>(import_linker);
 }
 
 pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
@@ -256,16 +267,27 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
         // PreimageSize::register_handler(linker, store);
         // PreimageCopy::register_handler(linker, store);
     }
+    RwasmTransact::register_handler(linker, store);
+    RwasmCompile::register_handler(linker, store);
+    RwasmCreate::register_handler(linker, store);
+    StateDbGetCode::register_handler(linker, store);
+    StateDbGetCodeSize::register_handler(linker, store);
+    StateDbGetCodeHash::register_handler(linker, store);
+    StateDbUpdateCode::register_handler(linker, store);
+    StateDbUpdateStorage::register_handler(linker, store);
+    StateDbGetStorage::register_handler(linker, store);
+    StateDbEmitLog::register_handler(linker, store);
+    StateDbGetBalance::register_handler(linker, store);
 }
 
-pub(crate) fn runtime_register_sovereign_handlers<'t, T>(
+pub fn runtime_register_sovereign_handlers<'t, T>(
     linker: &mut Linker<RuntimeContext<'t, T>>,
     store: &mut Store<RuntimeContext<'t, T>>,
 ) {
     runtime_register_handlers::<T, true>(linker, store);
 }
 
-pub(crate) fn runtime_register_shared_handlers<'t, T>(
+pub fn runtime_register_shared_handlers<'t, T>(
     linker: &mut Linker<RuntimeContext<'t, T>>,
     store: &mut Store<RuntimeContext<'t, T>>,
 ) {

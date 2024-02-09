@@ -1,25 +1,11 @@
 use alloc::vec;
 use cairo_platinum_prover::air::CairoAIR;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use hashbrown::HashMap;
-use lambdaworks_math::field::{
-    element::FieldElement,
-    fields::fft_friendly::stark_252_prime_field::Stark252PrimeField,
-};
-use serde::{Deserialize, Serialize};
 use stark_platinum_prover::{
-    proof::{options::ProofOptions, stark::StarkProof},
+    proof::options::ProofOptions,
     transcript::StoneProverTranscript,
     verifier::{IsStarkVerifier, Verifier},
 };
-
-pub struct Stark252PrimeFieldProof(StarkProof<Stark252PrimeField, Stark252PrimeField>);
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct FE(FieldElement<Stark252PrimeField>);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryMap(HashMap<FE, FE>);
 
 pub fn verify_cairo_proof_wasm(proof_bytes: &[u8], proof_options: &ProofOptions) -> bool {
     let bytes = proof_bytes;
@@ -71,5 +57,16 @@ pub fn main() {
     let input_size = LowLevelSDK::sys_input_size();
     let mut input_buffer = vec![0u8; input_size as usize];
     LowLevelSDK::sys_read(&mut input_buffer, 0);
-    assert!(verify_cairo_proof_wasm(&input_buffer[..], &proof_options));
+    assert!(
+        verify_cairo_proof_wasm(&input_buffer[..], &proof_options),
+        "failed to verify cairo proof"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn test_verify_cairo() {
+    let cairo_proof = include_bytes!("../../e2e/assets/fib_proof.proof");
+    LowLevelSDK::with_test_input(cairo_proof.to_vec());
+    main();
 }

@@ -87,13 +87,12 @@ impl LowLevelAPI for LowLevelSDK {
         fb_data: &[u8; 32],
         fd_data: &[u8; 32],
         output: &mut [u8],
-    ) -> bool {
+    ) {
         match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
             Ok(result) => {
                 output.copy_from_slice(&result);
-                true
             }
-            Err(_) => false,
+            Err(_) => {}
         }
     }
 
@@ -333,7 +332,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 }
 
-#[cfg(test)]
+// #[cfg(test)]
 impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
         CONTEXT.with(|ctx| {

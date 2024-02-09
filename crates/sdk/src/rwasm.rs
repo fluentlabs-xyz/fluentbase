@@ -120,7 +120,7 @@ impl LowLevelAPI for LowLevelSDK {
         fb32_data: &Bytes32,
         fd32_data: &Bytes32,
         output32: &mut [u8],
-    ) -> bool {
+    ) {
         unsafe {
             _crypto_poseidon2(
                 fa32_data.as_ptr(),
