@@ -32,6 +32,22 @@ pub fn main() {
         &[],
         0,
     ));
+    import_linker.insert_function(ImportFunc::new_env(
+        "fluentbase_v1alpha".to_string(),
+        "_sys_input_size".to_string(),
+        102,
+        &[],
+        &[ValueType::I32; 1],
+        0,
+    ));
+    import_linker.insert_function(ImportFunc::new_env(
+        "fluentbase_v1alpha".to_string(),
+        "_sys_read".to_string(),
+        103,
+        &[ValueType::I32; 3],
+        &[],
+        0,
+    ));
     let mut compiler =
         Compiler::new_with_linker(buffer, CompilerConfig::default(), Some(&import_linker)).unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
@@ -42,7 +58,7 @@ pub fn main() {
 #[cfg(test)]
 #[test]
 fn test_example_rwasm() {
-    let wasm_binary = include_bytes!("../bin/greeting.wasm");
+    let wasm_binary = include_bytes!("../bin/rwasm.wasm");
     LowLevelSDK::with_test_input(wasm_binary.to_vec());
     main();
 }

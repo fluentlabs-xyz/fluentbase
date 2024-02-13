@@ -887,6 +887,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-bin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ctor",
+ "env_logger 0.11.1",
+ "fluentbase-runtime",
+ "log",
+ "rwasm-codegen",
+ "wat",
+]
+
+[[package]]
 name = "fluentbase-codec"
 version = "0.1.0"
 dependencies = [
@@ -2002,21 +2015,6 @@ dependencies = [
  "strum",
  "strum_macros",
  "wasmparser-nostd",
-]
-
-[[package]]
-name = "rwasm-bin"
-version = "0.1.0"
-dependencies = [
- "clap",
- "ctor",
- "env_logger 0.11.1",
- "fluentbase-runtime",
- "lazy_static",
- "log",
- "rwasm",
- "rwasm-codegen",
- "wat",
 ]
 
 [[package]]
