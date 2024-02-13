@@ -2003,7 +2003,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#a8c14817d2e5219177b60831b2082ba538dd96ea"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=no-tracer#a753db878fa147bfa00a21c370fcdb3f343c85fc"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -2020,7 +2020,7 @@ dependencies = [
 [[package]]
 name = "rwasm-codegen"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#a8c14817d2e5219177b60831b2082ba538dd96ea"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=no-tracer#a753db878fa147bfa00a21c370fcdb3f343c85fc"
 dependencies = [
  "byteorder",
  "rwasm",
