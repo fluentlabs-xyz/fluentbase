@@ -139,9 +139,3 @@ control_return = []
 control_revert = []
 control_pc = []
 other_deploy_contract_test = []
-
-[profile.release]
-lto = true
-opt-level = 'z'
-strip = true
-test = false
