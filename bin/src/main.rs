@@ -1,3 +1,5 @@
+#![warn(unused_crate_dependencies)]
+
 extern crate core;
 
 use crate::types::FileFormat;

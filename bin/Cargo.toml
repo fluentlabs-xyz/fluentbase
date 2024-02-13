@@ -1,0 +1,19 @@
+[package]
+name = "fluentbase-bin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rwasmc"
+path = "src/main.rs"
+
+[dependencies]
+rwasm-codegen = { workspace = true, default-features = false }
+#rwasm = { workspace = true, default-features = false, features = ["std"] }
+# we need runtime here only to obtain sys call indices
+fluentbase-runtime = { path = "../crates/runtime" }
+wat = "1.0.80"
+clap = { version = "4.4.11", features = ["derive"] }
+log = "0.4.20"
+ctor = "0.2.6"
+env_logger = "0.11.0"
