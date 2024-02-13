@@ -53,16 +53,16 @@ fn run_rwasm_with_raw_input(
 ) -> ExecutionResult<()> {
     // make sure at least wasm binary works well
     let wasm_exit_code = if verify_wasm {
-        let config = wasmi::Config::default();
-        let engine = wasmi::Engine::new(&config);
-        let module = wasmi::Module::new(&engine, wasm_binary.as_slice()).unwrap();
+        let config = Config::default();
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm_binary.as_slice()).unwrap();
         let ctx = RuntimeContext::<()>::new(vec![])
             .with_state(STATE_MAIN)
             .with_fuel_limit(100_000)
             .with_input(input_data.to_vec())
             .with_catch_trap(true);
-        let mut store = wasmi::Store::new(&engine, ctx);
-        let mut linker = wasmi::Linker::new(&engine);
+        let mut store = Store::new(&engine, ctx);
+        let mut linker = Linker::new(&engine);
         runtime_register_sovereign_handlers(&mut linker, &mut store);
         let instance = linker
             .instantiate(&mut store, &module)
@@ -149,6 +149,17 @@ fn test_poseidon() {
         output.data().output().clone(),
         poseidon_hash(input_data).to_vec()
     );
+}
+
+#[test]
+fn test_rwasm() {
+    let input_data = include_bytes!("../../examples/bin/greeting.wasm");
+    let output = run_rwasm_with_raw_input(
+        include_bytes!("../../examples/bin/rwasm.wasm").to_vec(),
+        input_data,
+        false,
+    );
+    assert_eq!(output.data().exit_code(), 0);
 }
 
 #[ignore]
