@@ -53,11 +53,16 @@ fn run_rwasm_with_raw_input(
 ) -> ExecutionResult<()> {
     // make sure at least wasm binary works well
     let wasm_exit_code = if verify_wasm {
-        let config = Config::default();
-        let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice()).unwrap();
-        let mut store = Store::new(&engine, RuntimeContext::<()>::default());
-        let mut linker = Linker::new(&engine);
+        let config = wasmi::Config::default();
+        let engine = wasmi::Engine::new(&config);
+        let module = wasmi::Module::new(&engine, wasm_binary.as_slice()).unwrap();
+        let ctx = RuntimeContext::<()>::new(vec![])
+            .with_state(STATE_MAIN)
+            .with_fuel_limit(100_000)
+            .with_input(input_data.to_vec())
+            .with_catch_trap(true);
+        let mut store = wasmi::Store::new(&engine, ctx);
+        let mut linker = wasmi::Linker::new(&engine);
         runtime_register_sovereign_handlers(&mut linker, &mut store);
         let instance = linker
             .instantiate(&mut store, &module)
@@ -149,11 +154,11 @@ fn test_poseidon() {
 #[ignore]
 #[test]
 fn test_cairo() {
-    let input_data = include_bytes!("../assets/fib_proof.proof");
+    let input_data = include_bytes!("../assets/fib100.proof");
     let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/cairo.wasm").to_vec(),
         input_data,
-        false,
+        true,
     );
     let tracer = output.tracer();
     {
@@ -166,7 +171,7 @@ fn test_cairo() {
                 .collect::<Vec<_>>();
             lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack).as_str();
         }
-        fs::create_dir("./tmp");
+        let _ = fs::create_dir("./tmp");
         fs::write("./tmp/cairo.txt", lines).unwrap();
     }
     println!(
