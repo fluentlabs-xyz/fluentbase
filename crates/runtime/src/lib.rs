@@ -1,5 +1,10 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![warn(unused_crate_dependencies)]
+
+// #[cfg(feature = "rwasm")]
+// pub(crate) use rwasm;
+// #[cfg(not(feature = "rwasm"))]
+// pub(crate) use wasmi as rwasm;
 
 pub mod instruction;
 mod macros;
