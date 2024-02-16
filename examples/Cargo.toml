@@ -16,7 +16,7 @@ rwasm-codegen = { workspace = true, default-features = false }
 #wat = "1.0.77"
 #alloy-sol-types = { version = "0.5.1", default-features = false }
 #byteorder = { workspace = true }
-bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features= ["serde"] }
+bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
 cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
 stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
 lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }

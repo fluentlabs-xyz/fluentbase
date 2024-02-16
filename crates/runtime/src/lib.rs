@@ -9,12 +9,18 @@
 pub mod instruction;
 mod macros;
 mod runtime;
+
 pub use runtime::*;
+
 mod storage;
+
 pub use storage::*;
+
 mod journal;
+
 pub use journal::*;
+
 #[cfg(test)]
 mod tests;
 pub mod types;
-pub(crate) mod zktrie;
+pub mod zktrie;

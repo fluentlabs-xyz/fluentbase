@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[cfg(feature = "tracer")]
 mod evm_to_rwasm_tests {
     use crate::{
         compiler::EvmCompiler,
@@ -96,25 +97,40 @@ mod evm_to_rwasm_tests {
     use rwasm::engine::bytecode::Instruction;
     use rwasm_codegen::{BinaryFormat, BinaryFormatWriter, InstructionSet, ReducedModule};
 
-    static CONTRACT_ADDRESS: [u8; 20] = [1; 20]; // Address - 20 bytes
-    static CONTRACT_CALLER: [u8; 20] = [2; 20]; // Address - 20 bytes
-    static CONTRACT_VALUE: [u8; 32] = [3; 32]; // U256 - 32 bytes
-    static SYSTEM_CODESIZE: [u8; 4] = [4; 4]; // u32 - 4 bytes
+    static CONTRACT_ADDRESS: [u8; 20] = [1; 20];
+    // Address - 20 bytes
+    static CONTRACT_CALLER: [u8; 20] = [2; 20];
+    // Address - 20 bytes
+    static CONTRACT_VALUE: [u8; 32] = [3; 32];
+    // U256 - 32 bytes
+    static SYSTEM_CODESIZE: [u8; 4] = [4; 4];
+    // u32 - 4 bytes
     static CONTRACT_INPUT: &[u8] = &[
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
         26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
     ];
-    static HOST_CHAINID: [u8; 8] = [5; 8]; // u64 - 8 bytes
-    static HOST_BASEFEE: [u8; 32] = [6; 32]; // U256 - 32 bytes
-    static HOST_BLOCKHASH: [u8; 32] = [7; 32]; // B256 - 32 bytes
-    static HOST_COINBASE: [u8; 20] = [8; 20]; // Address - 20 bytes
-    static HOST_GASLIMIT: [u8; 8] = [9; 8]; // u64 - 8 bytes
-    static HOST_NUMBER: [u8; 8] = [10; 8]; // u64 - 8 bytes
-    static HOST_TIMESTAMP: [u8; 8] = [11; 8]; // u64 - 8 bytes
-    static HOST_ENV_DIFFICULTY: [u8; 8] = [12; 8]; // u64 - 8 bytes
-    static HOST_ENV_BLOBBASEFEE: [u8; 8] = [13; 8]; // u64 - 8 bytes
-    static HOST_ENV_GASPRICE: [u8; 32] = [14; 32]; // u256 - 32 bytes
-    static HOST_ENV_ORIGIN: [u8; 20] = [15; 20]; // Address - 20 bytes
+    static HOST_CHAINID: [u8; 8] = [5; 8];
+    // u64 - 8 bytes
+    static HOST_BASEFEE: [u8; 32] = [6; 32];
+    // U256 - 32 bytes
+    static HOST_BLOCKHASH: [u8; 32] = [7; 32];
+    // B256 - 32 bytes
+    static HOST_COINBASE: [u8; 20] = [8; 20];
+    // Address - 20 bytes
+    static HOST_GASLIMIT: [u8; 8] = [9; 8];
+    // u64 - 8 bytes
+    static HOST_NUMBER: [u8; 8] = [10; 8];
+    // u64 - 8 bytes
+    static HOST_TIMESTAMP: [u8; 8] = [11; 8];
+    // u64 - 8 bytes
+    static HOST_ENV_DIFFICULTY: [u8; 8] = [12; 8];
+    // u64 - 8 bytes
+    static HOST_ENV_BLOBBASEFEE: [u8; 8] = [13; 8];
+    // u64 - 8 bytes
+    static HOST_ENV_GASPRICE: [u8; 32] = [14; 32];
+    // u256 - 32 bytes
+    static HOST_ENV_ORIGIN: [u8; 20] = [15; 20];
+    // Address - 20 bytes
     static HOST_ENV_BLOB_HASHES: &[[u8; 32]] = &[[1; 32], [2; 32], [3; 32]];
     static CONTRACT_BYTECODE: &[u8] = &[
         70, 80, 74, 157, 210, 30, 193, 224, 195, 186, 69, 157, 108, 59, 26, 225, 149, 85, 152, 222,
@@ -796,6 +812,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn lt() {
         let cases = [
@@ -2517,6 +2534,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn chainid() {
         let cases = [Case::Args0({
@@ -2534,6 +2552,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn basefee() {
         let cases = [Case::Args0({
@@ -2551,6 +2570,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn blockhash() {
         let cases = [Case::Args0({
@@ -2568,6 +2588,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn coinbase() {
         let cases = [Case::Args0({
@@ -2585,6 +2606,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn gasprice() {
         let cases = [Case::Args0({
@@ -2602,6 +2624,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn origin() {
         let cases = [Case::Args0({
@@ -2619,6 +2642,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn gaslimit() {
         let cases = [Case::Args0({
@@ -2636,6 +2660,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn number() {
         let cases = [Case::Args0({
@@ -2653,6 +2678,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn timestamp() {
         let cases = [Case::Args0({
@@ -2750,6 +2776,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn gas() {
         let cases = [Case::Args0(x(
@@ -2765,6 +2792,7 @@ mod evm_to_rwasm_tests {
             None,
         );
     }
+
     #[test]
     fn difficulty() {
         let cases = [Case::Args0({

@@ -100,8 +100,8 @@ macro_rules! bytes32 {
     }};
 }
 
-pub struct JournaledTrie<'a, DB: TrieStorage> {
-    storage: &'a mut DB,
+pub struct JournaledTrie<DB: TrieStorage> {
+    storage: DB,
     state: HashMap<[u8; 32], usize>,
     preimages: HashMap<[u8; 32], Vec<u8>>,
     logs: Vec<JournalLog>,
@@ -110,10 +110,10 @@ pub struct JournaledTrie<'a, DB: TrieStorage> {
     committed: usize,
 }
 
-impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
+impl<DB: TrieStorage> JournaledTrie<DB> {
     const DOMAIN: Fr = Fr::zero();
 
-    pub fn new(storage: &'a mut DB) -> Self {
+    pub fn new(storage: DB) -> Self {
         let root = storage.compute_root();
         Self {
             storage,
@@ -158,7 +158,7 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
     }
 }
 
-impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
+impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
     fn checkpoint(&mut self) -> JournalCheckpoint {
         JournalCheckpoint(self.journal.len() as u32, 0)
     }
@@ -289,7 +289,8 @@ impl<'a, DB: TrieStorage> IJournaledTrie for JournaledTrie<'a, DB> {
             return false;
         }
         // write new preimage value into database
-        self.preimages.insert(value_hash.to_bytes(), value.to_vec());
+        self.preimages
+            .insert(value_hash.to_bytes(), preimage.to_vec());
         true
     }
 
@@ -325,8 +326,8 @@ mod tests {
     use fluentbase_types::{address, InMemoryAccountDb};
 
     fn calc_trie_root(values: Vec<([u8; 32], Vec<[u8; 32]>, u32)>) -> [u8; 32] {
-        let mut db = InMemoryAccountDb::default();
-        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
+        let db = InMemoryAccountDb::default();
+        let mut zktrie = ZkTrieStateDb::new_empty(db);
         values
             .iter()
             .for_each(|(key, value, flags)| zktrie.update(&key[..], *flags, value).unwrap());
@@ -335,9 +336,9 @@ mod tests {
 
     #[test]
     fn test_commit_multiple_values() {
-        let mut db = InMemoryAccountDb::default();
-        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
-        let mut journal = JournaledTrie::new(&mut zktrie);
+        let db = InMemoryAccountDb::default();
+        let zktrie = ZkTrieStateDb::new_empty(db);
+        let mut journal = JournaledTrie::new(zktrie);
         journal.update(&bytes32!("key1"), &vec![bytes32!("val1")], 0);
         journal.update(&bytes32!("key2"), &vec![bytes32!("val2")], 1);
         // just commit all changes w/o revert
@@ -364,9 +365,9 @@ mod tests {
 
     #[test]
     fn test_commit_and_rollback() {
-        let mut db = InMemoryAccountDb::default();
-        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
-        let mut journal = JournaledTrie::new(&mut zktrie);
+        let db = InMemoryAccountDb::default();
+        let zktrie = ZkTrieStateDb::new_empty(db);
+        let mut journal = JournaledTrie::new(zktrie);
         journal.update(&bytes32!("key1"), &vec![bytes32!("val1")], 0);
         journal.update(&bytes32!("key2"), &vec![bytes32!("val2")], 1);
         // just commit all changes w/o revert
@@ -406,9 +407,9 @@ mod tests {
 
     #[test]
     fn test_rollback_to_empty() {
-        let mut db = InMemoryAccountDb::default();
-        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
-        let mut journal = JournaledTrie::new(&mut zktrie);
+        let db = InMemoryAccountDb::default();
+        let zktrie = ZkTrieStateDb::new_empty(db);
+        let mut journal = JournaledTrie::new(zktrie);
         let checkpoint = journal.checkpoint();
         journal.update(&bytes32!("key1"), &vec![bytes32!("val1")], 0);
         journal.update(&bytes32!("key2"), &vec![bytes32!("val2")], 1);
@@ -425,9 +426,9 @@ mod tests {
 
     #[test]
     fn test_storage_store_load() {
-        let mut db = InMemoryAccountDb::default();
-        let mut zktrie = ZkTrieStateDb::new_empty(&mut db);
-        let mut journal = JournaledTrie::new(&mut zktrie);
+        let db = InMemoryAccountDb::default();
+        let zktrie = ZkTrieStateDb::new_empty(db);
+        let mut journal = JournaledTrie::new(zktrie);
         let address = address!("0000000000000000000000000000000000000001");
         journal.store(&address, &bytes32!("slot1"), &bytes32!("value1"));
         let (value, is_cold) = journal.load(&address, &bytes32!("slot1")).unwrap();

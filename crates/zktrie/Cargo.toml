@@ -10,9 +10,9 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-poseidon = { path = "../poseidon" }
+fluentbase-poseidon = { path = "../poseidon", default-features = false }
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 halo2curves = { workspace = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
-uint = "0.9.5"
-byteorder = { workspace = true }
+uint = { version = "0.9.5", default-features = false }
+byteorder = { workspace = true, default-features = false }
