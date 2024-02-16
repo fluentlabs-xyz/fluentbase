@@ -10,11 +10,10 @@ use fluentbase_runtime::{
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use hex_literal::hex;
 use rwasm_codegen::{
-    rwasm::{Config, Engine, Error, Linker, Module, Store},
+    rwasm::{Config, Engine, Linker, Module, Store},
     Compiler,
     CompilerConfig,
 };
-use std::fs;
 
 fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_sovereign_linker();
@@ -158,6 +157,17 @@ fn test_poseidon() {
 #[test]
 fn test_rwasm() {
     let input_data = include_bytes!("../../examples/bin/rwasm.wasm");
+    let output = run_rwasm_with_raw_input(
+        include_bytes!("../../examples/bin/rwasm.wasm").to_vec(),
+        input_data,
+        false,
+    );
+    assert_eq!(output.data().exit_code(), 0);
+}
+
+#[test]
+fn test_rwasm_fast() {
+    let input_data = include_bytes!("../../examples/bin/stack.wasm");
     let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/rwasm.wasm").to_vec(),
         input_data,

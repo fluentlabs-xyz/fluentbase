@@ -15,7 +15,7 @@ use halo2curves::bn256::Fr;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Clone)]
-struct NodeDb<'a, DB>(Rc<RefCell<&'a mut DB>>);
+struct NodeDb<DB>(Rc<RefCell<DB>>);
 
 const STORAGE_PREFIX_NODE: u8 = 0x01;
 const STORAGE_PREFIX_PREIMAGE: u8 = 0x02;
@@ -31,7 +31,7 @@ macro_rules! storage_key {
     }};
 }
 
-impl<'a, DB: TrieDb> Database for NodeDb<'a, DB> {
+impl<DB: TrieDb> Database for NodeDb<DB> {
     type Node = Node<PoseidonHash>;
 
     fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
@@ -50,7 +50,7 @@ impl<'a, DB: TrieDb> Database for NodeDb<'a, DB> {
     }
 }
 
-impl<'a, DB: TrieDb> PreimageDatabase for NodeDb<'a, DB> {
+impl<'a, DB: TrieDb> PreimageDatabase for NodeDb<DB> {
     fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
         self.0
             .borrow_mut()
@@ -67,33 +67,33 @@ impl<'a, DB: TrieDb> PreimageDatabase for NodeDb<'a, DB> {
 }
 
 #[derive(Clone)]
-pub struct ZkTrieStateDb<'a, DB> {
-    storage: NodeDb<'a, DB>,
+pub struct ZkTrieStateDb<DB> {
+    storage: NodeDb<DB>,
     trie: Option<ZkTrie<PoseidonHash>>,
 }
 
 const MAX_LEVEL: usize = 31 * 8;
 
-impl<'a, DB: TrieDb> ZkTrieStateDb<'a, DB> {
-    pub fn new(storage: &'a mut DB) -> Self {
+impl<DB: TrieDb> ZkTrieStateDb<DB> {
+    pub fn new(storage: DB) -> Self {
         Self {
             storage: NodeDb(Rc::new(RefCell::new(storage))),
             trie: None,
         }
     }
 
-    pub fn new_empty(storage: &'a mut DB) -> Self {
+    pub fn new_empty(storage: DB) -> Self {
         Self::new_opened(storage, &[0u8; 32])
     }
 
-    pub fn new_opened(storage: &'a mut DB, root32: &[u8]) -> Self {
+    pub fn new_opened(storage: DB, root32: &[u8]) -> Self {
         let mut storage = Self::new(storage);
         storage.open(root32);
         storage
     }
 }
 
-impl<'a, DB: TrieDb> TrieStorage for ZkTrieStateDb<'a, DB> {
+impl<DB: TrieDb> TrieStorage for ZkTrieStateDb<DB> {
     fn open(&mut self, root32: &[u8]) -> bool {
         if self.trie.is_some() {
             return false;
@@ -174,6 +174,7 @@ impl<'a, DB: TrieDb> TrieStorage for ZkTrieStateDb<'a, DB> {
 mod tests {
     use crate::{storage::TrieStorage, zktrie::ZkTrieStateDb};
     use fluentbase_types::InMemoryAccountDb;
+    use std::ops::DerefMut;
 
     macro_rules! bytes32 {
         ($val:expr) => {{
@@ -191,7 +192,7 @@ mod tests {
     fn test_simple() {
         let mut db = InMemoryAccountDb::default();
         // create new zkt
-        let mut zkt = ZkTrieStateDb::new_empty(&mut db);
+        let mut zkt = ZkTrieStateDb::new_empty(db);
         zkt.update(
             bytes32!("key1"),
             0,
@@ -201,7 +202,7 @@ mod tests {
         let root = zkt.compute_root();
         println!("root: {:?}", hex::encode(root));
         // open and read value
-        let zkt2 = ZkTrieStateDb::new_opened(&mut db, &root);
+        let zkt2 = ZkTrieStateDb::new_opened(zkt.storage.0.borrow_mut().clone(), &root);
         let data = zkt2.get(bytes32!("key1")).unwrap();
         assert_eq!(data[0], *bytes32!("value1"));
         assert_eq!(data[1], *bytes32!("value2"));

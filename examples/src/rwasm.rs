@@ -1,8 +1,7 @@
 use crate::deploy_internal;
-use alloc::string::ToString;
 use core::{alloc::Layout, ptr};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use rwasm_codegen::{rwasm::common::ValueType, Compiler, CompilerConfig, ImportFunc, ImportLinker};
+use rwasm_codegen::{Compiler, CompilerConfig, ImportLinker, ImportLinkerDefaults};
 
 pub fn deploy() {
     deploy_internal(include_bytes!("../bin/rwasm.wasm"))
@@ -16,38 +15,7 @@ pub fn main() {
     };
     LowLevelSDK::sys_read(buffer, 0);
     let mut import_linker = ImportLinker::default();
-    import_linker.insert_function(ImportFunc::new_env(
-        "fluentbase_v1alpha".to_string(),
-        "_sys_halt".to_string(),
-        100,
-        &[ValueType::I32],
-        &[],
-        0,
-    ));
-    import_linker.insert_function(ImportFunc::new_env(
-        "fluentbase_v1alpha".to_string(),
-        "_sys_write".to_string(),
-        101,
-        &[ValueType::I32; 2],
-        &[],
-        0,
-    ));
-    import_linker.insert_function(ImportFunc::new_env(
-        "fluentbase_v1alpha".to_string(),
-        "_sys_input_size".to_string(),
-        102,
-        &[],
-        &[ValueType::I32; 1],
-        0,
-    ));
-    import_linker.insert_function(ImportFunc::new_env(
-        "fluentbase_v1alpha".to_string(),
-        "_sys_read".to_string(),
-        103,
-        &[ValueType::I32; 3],
-        &[],
-        0,
-    ));
+    ImportLinkerDefaults::new_v1alpha().register_import_funcs(&mut import_linker);
     let mut compiler =
         Compiler::new_with_linker(buffer, CompilerConfig::default(), Some(&import_linker)).unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();

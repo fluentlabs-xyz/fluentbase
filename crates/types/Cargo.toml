@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 rwasm = { workspace = true, default-features = false }
-rwasm-codegen = { workspace = true, default-features = false }
+#rwasm-codegen = { workspace = true, default-features = false }
 strum = { version = "0.25.0", optional = true }
 strum_macros = { version = "0.25.2", optional = true }
 alloy-primitives = { workspace = true }

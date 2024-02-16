@@ -1,6 +1,7 @@
 use crate::evm::B256;
 #[allow(dead_code)]
 use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
+use alloc::rc::Rc;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
     instruction::{
@@ -15,6 +16,8 @@ use fluentbase_runtime::{
         jzkt_get::JzktGet,
         jzkt_load::JzktLoad,
         jzkt_open::JzktOpen,
+        jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize,
         jzkt_remove::JzktRemove,
         jzkt_rollback::JzktRollback,
         jzkt_store::JzktStore,
@@ -30,10 +33,11 @@ use fluentbase_runtime::{
         sys_state::SysState,
         sys_write::SysWrite,
     },
+    IJournaledTrie,
     JournalCheckpoint,
     RuntimeContext,
 };
-use std::ptr;
+use std::{cell::RefCell, ptr};
 
 thread_local! {
     pub static CONTEXT: std::cell::Cell<RuntimeContext<'static, ()>> = std::cell::Cell::new(RuntimeContext::new(&[]));
@@ -261,10 +265,15 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
     fn jzkt_preimage_size(key32_ptr: *const u8) -> u32 {
-        todo!()
+        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
+        return with_context_mut(|ctx| JzktPreimageSize::fn_impl(ctx, key).unwrap());
     }
     fn jzkt_preimage_copy(key32_ptr: *const u8, preimage_ptr: *mut u8) {
-        todo!()
+        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
+        let preimage_copy = with_context_mut(|ctx| JzktPreimageCopy::fn_impl(ctx, key).unwrap());
+        let mut dest =
+            unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
+        dest.copy_from_slice(&preimage_copy);
     }
 
     fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
@@ -336,25 +345,32 @@ impl LowLevelAPI for LowLevelSDK {
 impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
         CONTEXT.with(|ctx| {
-            let output = ctx.take();
-            ctx.set(output.with_input(input));
+            let ctx2 = ctx.take();
+            ctx.set(ctx2.with_input(input));
         });
     }
 
     pub fn get_test_output() -> Vec<u8> {
         CONTEXT.with(|ctx| {
-            let mut output = ctx.take();
-            let result = output.output().clone();
-            output.clean_output();
-            ctx.set(output);
+            let mut ctx2 = ctx.take();
+            let result = ctx2.output().clone();
+            ctx2.clean_output();
+            ctx.set(ctx2);
             result
         })
     }
 
     pub fn with_test_state(state: u32) {
         CONTEXT.with(|ctx| {
-            let output = ctx.take();
-            ctx.set(output.with_state(state));
+            let ctx2 = ctx.take();
+            ctx.set(ctx2.with_state(state));
+        });
+    }
+
+    pub fn with_jzkt(v: Rc<RefCell<dyn IJournaledTrie>>) {
+        CONTEXT.with(|ctx| {
+            let ctx2 = ctx.take();
+            ctx.set(ctx2.with_jzkt(v));
         });
     }
 }
