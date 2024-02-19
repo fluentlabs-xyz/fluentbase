@@ -102,26 +102,27 @@ mod tests {
     use fluentbase_types::{address, B256};
     use keccak_hash::keccak;
 
+    fn generate_address_original_impl(address: &Address, nonce: u64) -> Address {
+        use alloy_rlp::Encodable;
+        let mut out = vec![];
+        alloy_rlp::Header {
+            list: true,
+            payload_length: address.length() + nonce.length(),
+        }
+        .encode(&mut out);
+        address.encode(&mut out);
+        nonce.encode(&mut out);
+        out.resize(32, 0);
+        Address::from_word(keccak(out).0.into())
+    }
+
     #[test]
     fn create_correctness() {
-        fn create_test_impl(address: &Address, nonce: u64) -> Address {
-            use alloy_rlp::Encodable;
-            let mut out = vec![];
-            alloy_rlp::Header {
-                list: true,
-                payload_length: address.length() + nonce.length(),
-            }
-            .encode(&mut out);
-            address.encode(&mut out);
-            nonce.encode(&mut out);
-            out.resize(32, 0);
-            Address::from_word(keccak(out).0.into())
-        }
         let tests = vec![(address!("0000000000000000000000000000000000000000"), 100)];
         for (address, nonce) in tests {
             assert_eq!(
                 calc_create_address(&address, nonce),
-                create_test_impl(&address, nonce)
+                generate_address_original_impl(&address, nonce)
             )
         }
     }

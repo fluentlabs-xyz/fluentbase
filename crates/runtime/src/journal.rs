@@ -386,6 +386,10 @@ mod tests {
         assert!(journal.update_preimage(&address1, 2, &code1));
 
         assert_eq!(code1, journal.preimage(&code1_hash));
+
+        journal.commit().unwrap();
+
+        assert_eq!(code1, journal.preimage(&code1_hash));
     }
 
     #[test]
