@@ -323,6 +323,7 @@ mod tests {
         zktrie::ZkTrieStateDb,
         TrieStorage,
     };
+    use fluentbase_poseidon::poseidon_hash;
     use fluentbase_types::{address, InMemoryAccountDb};
 
     fn calc_trie_root(values: Vec<([u8; 32], Vec<[u8; 32]>, u32)>) -> [u8; 32] {
@@ -339,28 +340,52 @@ mod tests {
         let db = InMemoryAccountDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
-        journal.update(&bytes32!("key1"), &vec![bytes32!("val1")], 0);
-        journal.update(&bytes32!("key2"), &vec![bytes32!("val2")], 1);
+        let key1 = bytes32!("key1");
+        let key2 = bytes32!("key2");
+        let key3 = bytes32!("key3");
+        let val1 = bytes32!("val1");
+        let val2 = bytes32!("val2");
+        let val3 = bytes32!("val3");
+        journal.update(&key1, &vec![val1.clone()], 0);
+        journal.update(&key2, &vec![val2.clone()], 1);
         // just commit all changes w/o revert
         journal.commit().unwrap();
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![
-                (bytes32!("key1"), vec![bytes32!("val1")], 0),
-                (bytes32!("key2"), vec![bytes32!("val2")], 1),
+                (key1, vec![val1.clone()], 0),
+                (key2, vec![val2.clone()], 1),
             ])
         );
         // add third key to the existing trie and commit
-        journal.update(&bytes32!("key3"), &vec![bytes32!("val3")], 0);
+        journal.update(&key3, &vec![val3], 0);
         journal.commit().unwrap();
         assert_eq!(
             journal.compute_root(),
             calc_trie_root(vec![
-                (bytes32!("key1"), vec![bytes32!("val1")], 0),
-                (bytes32!("key2"), vec![bytes32!("val2")], 1),
-                (bytes32!("key3"), vec![bytes32!("val3")], 0),
+                (key1, vec![val1.clone()], 0),
+                (key2, vec![val2.clone()], 1),
+                (key3, vec![val3], 0),
             ])
         );
+    }
+
+    #[test]
+    fn test_code_preimage_update_and_check() {
+        let db = InMemoryAccountDb::default();
+        let zktrie = ZkTrieStateDb::new_empty(db);
+        let mut journal = JournaledTrie::new(zktrie);
+        let address1 = bytes32!("address1");
+        let address1_hash = poseidon_hash(&address1);
+        let code1 = vec![1, 2, 3, 4, 5, 6];
+        let code1_hash = poseidon_hash(&code1);
+        let mut account1_fields: [[u8; 32]; 4] = [[0u8; 32]; 4];
+        account1_fields[2] = code1_hash;
+
+        journal.update(&address1, &account1_fields.to_vec(), 12);
+        assert!(journal.update_preimage(&address1, 2, &code1));
+
+        assert_eq!(code1, journal.preimage(&code1_hash));
     }
 
     #[test]
