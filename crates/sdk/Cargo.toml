@@ -10,7 +10,7 @@ fluentbase-types = { path = "../types", default-features = false }
 fluentbase-runtime = { path = "../runtime", optional = true, default-features = false }
 byteorder = { workspace = true, optional = true }
 paste = { workspace = true }
-lol_alloc = "0.4.0"
+lol_alloc = { version = "0.4.0" }
 
 [dev-dependencies]
 

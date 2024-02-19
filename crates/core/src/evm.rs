@@ -12,6 +12,7 @@ use fluentbase_sdk::{
     LowLevelSDK,
 };
 use fluentbase_types::{KECCAK_EMPTY, POSEIDON_EMPTY};
+use keccak_hash::keccak256;
 use revm_interpreter::{
     primitives::{Bytecode, Env, HashMap},
     CallInputs,
