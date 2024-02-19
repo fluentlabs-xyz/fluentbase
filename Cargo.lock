@@ -51,6 +51,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-primitives"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef197eb250c64962003cb08b90b17f0882c192f4a6f2f544809d424fd7cb0e7d"
+dependencies = [
+ "alloy-rlp",
+ "bytes",
+ "cfg-if",
+ "const-hex",
+ "derive_more",
+ "hex-literal",
+ "itoa",
+ "ruint",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "alloy-rlp"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -903,7 +920,7 @@ dependencies = [
 name = "fluentbase-codec"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.5.4",
  "byteorder",
  "casey",
  "hashbrown",
@@ -959,10 +976,12 @@ dependencies = [
  "cairo-platinum-prover",
  "fluentbase-codec",
  "fluentbase-sdk",
+ "fluentbase-types",
  "hashbrown",
  "hex",
  "hex-literal",
  "lambdaworks-math",
+ "revm-primitives 2.0.1",
  "rwasm-codegen",
  "serde",
  "serial_test",
@@ -1021,7 +1040,7 @@ dependencies = [
 name = "fluentbase-rwasm-evm"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.5.4",
  "bitvec",
  "ctor",
  "env_logger 0.10.2",
@@ -1055,7 +1074,7 @@ dependencies = [
 name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.5.4",
  "hashbrown",
  "rwasm",
  "strum",
@@ -1876,20 +1895,36 @@ name = "revm-interpreter"
 version = "1.3.0"
 dependencies = [
  "fluentbase-sdk",
- "revm-primitives",
+ "revm-primitives 1.3.0",
 ]
 
 [[package]]
 name = "revm-primitives"
 version = "1.3.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.5.4",
  "alloy-rlp",
  "auto_impl",
  "bitflags 2.4.2",
  "bitvec",
  "enumn",
  "fluentbase-sdk",
+ "hashbrown",
+ "hex",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093dc5df253eececaf03ffe0c12d3fd7ce5dea3342bc9de109d1aac2647ffa81"
+dependencies = [
+ "alloy-primitives 0.6.3",
+ "auto_impl",
+ "bitflags 2.4.2",
+ "bitvec",
+ "cfg-if",
+ "enumn",
  "hashbrown",
  "hex",
 ]

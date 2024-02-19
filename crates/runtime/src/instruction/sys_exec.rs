@@ -57,6 +57,9 @@ impl SysExec {
         if return_len > 0 && output.len() > return_len as usize {
             return Err(ExitCode::OutputOverflow);
         }
+        if execution_result.data().exit_code != ExitCode::Ok.into_i32() {
+            return Err(ExitCode::from(execution_result.data().exit_code));
+        }
         ctx.consumed_fuel += fuel_consumed;
         ctx.return_data = output.clone();
         Ok((output.clone(), fuel_limit - fuel_consumed))
