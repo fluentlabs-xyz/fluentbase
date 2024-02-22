@@ -10,19 +10,25 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
+fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../types", default-features = false }
+fluentbase-codec = { path = "../codec", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
-revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
+hashbrown = { workspace = true }
+#revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
+revm-interpreter = { path = "../../../../../git/External/revm/crates/interpreter", default-features = false }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
+#revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
 
 [dev-dependencies]
+fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
+fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []

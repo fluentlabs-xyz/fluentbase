@@ -29,6 +29,7 @@ pub enum ExitCode {
     FatalExternalError = -1017,
     CompilationError = -1018,
     OverflowPayment = -1019,
+    CallError = -1020,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -106,6 +107,8 @@ impl From<i32> for ExitCode {
             -1017 => Some(ExitCode::FatalExternalError),
             -1018 => Some(ExitCode::CompilationError),
             -1019 => Some(ExitCode::OverflowPayment),
+            -1020 => Some(ExitCode::CallError),
+
             -2006 => Some(ExitCode::UnreachableCodeReached),
             -2007 => Some(ExitCode::MemoryOutOfBounds),
             -2008 => Some(ExitCode::TableOutOfBounds),
