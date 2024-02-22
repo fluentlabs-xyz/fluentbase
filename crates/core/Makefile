@@ -1,5 +1,3 @@
-.PHONY: build build2
-
 #build2:
 #	export RUSTFLAGS='-C target-feature=+bulk-memory'
 #	mkdir -p bin
@@ -12,10 +10,11 @@
 
 TARGET=wasm32-unknown-unknown
 PROFILE=release
-TMP_FOLDER=bin
+TMP_FOLDER=tmp
 SOURCE_NAME=fluentbase_core
 DEST_NAME=core
 
+.PHONY: build
 build:
 	mkdir -p "${TMP_FOLDER}"
 	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --release --target=wasm32-unknown-unknown
@@ -23,5 +22,11 @@ build:
 	wasm2wat ./${TMP_FOLDER}/${DEST_NAME}.wasm > ./${TMP_FOLDER}/${DEST_NAME}.wat
 	ls -alh ${TMP_FOLDER}
 
+.PHONY: test
 test:
-	cargo test create_correctness
+	cargo test -q
+
+
+.PHONY: clean
+clean:
+	cargo clean
