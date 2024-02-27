@@ -1,21 +1,55 @@
 mod balance;
 mod call;
 mod create;
-#[cfg(test)]
-mod create_tests;
 mod selfbalance;
-
-use crate::account::JZKT_ACCOUNT_BALANCE_FIELD;
-
 #[cfg(test)]
-mod call_tests;
+mod tests;
 
+// opcodes to implement:
+// LOG
+// RETURN
+// REVERT
+
+pub(crate) mod calldatacopy;
+pub(crate) mod calldataload;
+pub(crate) mod calldatasize;
+pub(crate) mod codecopy;
+pub(crate) mod codehash;
+pub(crate) mod codesize;
+pub(crate) mod extcodecopy;
+pub(crate) mod extcodehash;
+pub(crate) mod extcodesize;
+pub(crate) mod log0;
+pub(crate) mod log1;
+pub(crate) mod log2;
+pub(crate) mod log3;
+mod log4;
+pub(crate) mod r#return;
+pub(crate) mod revert;
+pub(crate) mod sload;
+pub(crate) mod sstore;
+
+use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
+use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{Address, B256, U256},
+    evm::{Address, ContractInput, IContractInput, B256, U256},
+    Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
+
+#[inline]
+pub(crate) fn get_calldata_input_offset_and_len() -> (u32, u32) {
+    let mut header = [0u8; 8];
+    LowLevelSDK::sys_read(
+        &mut header,
+        <ContractInput as IContractInput>::ContractInput::FIELD_OFFSET as u32,
+    );
+    let offset = LittleEndian::read_u32(&header[0..4]);
+    let length = LittleEndian::read_u32(&header[4..8]);
+    (offset, length)
+}
 
 #[inline(always)]
 fn read_address_from_input(offset: usize) -> Address {
@@ -26,7 +60,7 @@ fn read_address_from_input(offset: usize) -> Address {
 
 #[inline(always)]
 fn read_balance(address: Address, value: &mut U256) {
-    let mut bytes32 = [0u8; 32];
+    let mut bytes32 = Bytes32::default();
     unsafe {
         ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
     }

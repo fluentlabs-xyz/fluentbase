@@ -1,5 +1,6 @@
 use crate::{
-    account::{Account, MAX_CODE_SIZE},
+    account::Account,
+    account_types::MAX_CODE_SIZE,
     evm::{calc_create_address, read_address_from_input},
 };
 use alloc::{alloc::alloc, boxed::Box};

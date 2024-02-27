@@ -8,6 +8,7 @@ use strum::IntoEnumIterator;
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
+    // warning: when adding new codes dont forget to add them to impls below
     Ok = 0,
     Panic = -71,
     // fluentbase error codes
@@ -29,7 +30,9 @@ pub enum ExitCode {
     FatalExternalError = -1017,
     CompilationError = -1018,
     OverflowPayment = -1019,
-    CallError = -1020,
+    EVMCreateError = -1020,
+    EVMCallError = -1021,
+    EVMNotFound = -1022,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -107,7 +110,9 @@ impl From<i32> for ExitCode {
             -1017 => Some(ExitCode::FatalExternalError),
             -1018 => Some(ExitCode::CompilationError),
             -1019 => Some(ExitCode::OverflowPayment),
-            -1020 => Some(ExitCode::CallError),
+            -1020 => Some(ExitCode::EVMCreateError),
+            -1021 => Some(ExitCode::EVMCallError),
+            -1022 => Some(ExitCode::EVMNotFound),
 
             -2006 => Some(ExitCode::UnreachableCodeReached),
             -2007 => Some(ExitCode::MemoryOutOfBounds),

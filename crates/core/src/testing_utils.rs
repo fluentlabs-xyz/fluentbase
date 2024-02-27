@@ -6,7 +6,7 @@ use fluentbase_runtime::{types::B256, zktrie::ZkTrieStateDb, JournaledTrie};
 use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, InMemoryAccountDb, U256};
 use hashbrown::HashMap;
-use keccak_hash::{keccak, H256};
+use keccak_hash::keccak;
 
 #[derive(Default)]
 pub(crate) struct TestingContext {
