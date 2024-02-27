@@ -5,11 +5,6 @@ mod selfbalance;
 #[cfg(test)]
 mod tests;
 
-// opcodes to implement:
-// LOG
-// RETURN
-// REVERT
-
 pub(crate) mod calldatacopy;
 pub(crate) mod calldataload;
 pub(crate) mod calldatasize;

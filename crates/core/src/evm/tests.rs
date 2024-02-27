@@ -5,7 +5,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::evm::Address;
-use fluentbase_types::{address, Bytes, ExitCode, B256, U256};
+use fluentbase_types::{address, Bytes, B256, U256};
 use keccak_hash::keccak;
 use revm_interpreter::primitives::hex;
 

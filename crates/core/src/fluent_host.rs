@@ -1,28 +1,64 @@
 use crate::{
     account::Account,
+    account_types::MAX_CODE_SIZE,
     evm::{sload::_evm_sload, sstore::_evm_sstore},
 };
-use alloc::vec::Vec;
-use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
+use alloc::{vec, vec::Vec};
+use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
-use hashbrown::HashMap;
 use revm_interpreter::{
-    primitives::{Address, Bytecode, Bytes, Env, Log, B256, U256},
+    primitives::{
+        Address,
+        AnalysisKind,
+        BlockEnv,
+        Bytecode,
+        Bytes,
+        CfgEnv,
+        Env,
+        Log,
+        TransactTo,
+        TxEnv,
+        B256,
+        U256,
+    },
     Host,
     SelfDestructResult,
 };
 
-/// A dummy [Host] implementation.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct FluentHost {
     env: Env,
-    storage: HashMap<U256, U256>,
-    transient_storage: HashMap<U256, U256>,
-    log: Vec<Log>,
+    need_to_init_env: bool,
+    // storage: HashMap<U256, U256>,
+    // transient_storage: HashMap<U256, U256>,
+    // log: Vec<Log>,
+}
+
+impl Default for FluentHost {
+    fn default() -> Self {
+        Self {
+            env: Env {
+                cfg: Default::default(),
+                block: BlockEnv {
+                    number: U256::from_be_slice(
+                        ExecutionContext::block_number().to_be_bytes().as_slice(),
+                    ),
+                    coinbase: Default::default(),
+                    timestamp: Default::default(),
+                    gas_limit: Default::default(),
+                    basefee: Default::default(),
+                    difficulty: Default::default(),
+                    prevrandao: None,
+                    blob_excess_gas_and_price: None,
+                },
+                tx: Default::default(),
+            },
+            need_to_init_env: true,
+        }
+    }
 }
 
 impl FluentHost {
-    /// Create a new dummy host with the given [`Env`].
     #[inline]
     pub fn new(env: Env) -> Self {
         Self {
@@ -31,23 +67,71 @@ impl FluentHost {
         }
     }
 
-    /// Clears the storage and logs of the dummy host.
     #[inline]
-    pub fn clear(&mut self) {
-        self.storage.clear();
-        self.log.clear();
+    pub fn clear(&mut self) {}
+
+    fn init_from_context(env: &mut Env) {
+        let mut cfg_env = CfgEnv::default();
+        cfg_env.chain_id = ExecutionContext::env_chain_id();
+        cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw; // do not analyze
+        cfg_env.limit_contract_code_size = Some(MAX_CODE_SIZE as usize);
+        *env = Env {
+            cfg: cfg_env,
+            block: BlockEnv {
+                number: U256::from_be_slice(
+                    ExecutionContext::block_number().to_be_bytes().as_slice(),
+                ),
+                coinbase: Address::from_slice(ExecutionContext::block_coinbase().as_ref()),
+                timestamp: U256::from_be_slice(
+                    ExecutionContext::block_timestamp().to_be_bytes().as_slice(),
+                ),
+                gas_limit: U256::from_be_slice(
+                    ExecutionContext::block_gas_limit().to_be_bytes().as_slice(),
+                ),
+                basefee: ExecutionContext::block_base_fee(),
+                difficulty: U256::from_be_slice(
+                    ExecutionContext::block_difficulty()
+                        .to_be_bytes()
+                        .as_slice(),
+                ),
+                prevrandao: None,
+                blob_excess_gas_and_price: None,
+            },
+            tx: TxEnv {
+                caller: Address::from_slice(ExecutionContext::tx_caller().as_ref()),
+                gas_limit: Default::default(),
+                gas_price: ExecutionContext::tx_gas_price(),
+                transact_to: TransactTo::Call(Address::ZERO), // will do nothing
+                value: ExecutionContext::contract_value(),
+                data: Default::default(), // no data?
+                nonce: None,              // no checks
+                chain_id: None,           // no checks
+                access_list: vec![],
+                gas_priority_fee: None,
+                blob_hashes: vec![],
+                max_fee_per_blob_gas: None,
+            },
+        }
     }
 }
 
 impl Host for FluentHost {
     fn env(&self) -> &Env {
-        // TODO check who calls this method and what params it requires (and initialize those params
-        // from context) TODO probably must be lazily generated/created
+        if self.need_to_init_env {
+            #[allow(mutable_transmutes)]
+            let self_mut: &mut FluentHost = unsafe { core::mem::transmute(&self) };
+            Self::init_from_context(&mut self_mut.env);
+            self_mut.need_to_init_env = false;
+        }
         &self.env
     }
 
     fn env_mut(&mut self) -> &mut Env {
-        todo!()
+        if self.need_to_init_env {
+            Self::init_from_context(&mut self.env);
+            self.need_to_init_env = false;
+        }
+        &mut self.env
     }
 
     #[inline]
