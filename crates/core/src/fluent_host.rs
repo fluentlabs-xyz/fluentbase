@@ -36,46 +36,33 @@ pub struct FluentHost {
 
 impl Default for FluentHost {
     fn default() -> Self {
+        let env = Default::default();
         Self {
-            env: Env {
-                cfg: Default::default(),
-                block: BlockEnv {
-                    number: U256::from_be_slice(
-                        ExecutionContext::block_number().to_be_bytes().as_slice(),
-                    ),
-                    coinbase: Default::default(),
-                    timestamp: Default::default(),
-                    gas_limit: Default::default(),
-                    basefee: Default::default(),
-                    difficulty: Default::default(),
-                    prevrandao: None,
-                    blob_excess_gas_and_price: None,
-                },
-                tx: Default::default(),
-            },
+            env,
             need_to_init_env: true,
+            // _phantom: Default::default(),
         }
     }
 }
 
 impl FluentHost {
-    #[inline]
-    pub fn new(env: Env) -> Self {
-        Self {
-            env,
-            ..Default::default()
-        }
-    }
+    // #[inline]
+    // pub fn new(env: Env) -> Self {
+    //     Self {
+    //         env: Rc::new(RefCell::new(Some(&env))),
+    //         ..Default::default()
+    //     }
+    // }
 
     #[inline]
     pub fn clear(&mut self) {}
 
-    fn init_from_context(env: &mut Env) {
+    fn env_from_context() -> Env {
         let mut cfg_env = CfgEnv::default();
         cfg_env.chain_id = ExecutionContext::env_chain_id();
         cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw; // do not analyze
-        cfg_env.limit_contract_code_size = Some(MAX_CODE_SIZE as usize);
-        *env = Env {
+        cfg_env.limit_contract_code_size = Some(MAX_CODE_SIZE as usize); // do not analyze
+        Env {
             cfg: cfg_env,
             block: BlockEnv {
                 number: U256::from_be_slice(
@@ -112,6 +99,10 @@ impl FluentHost {
                 max_fee_per_blob_gas: None,
             },
         }
+    }
+
+    fn init_from_context(env: &mut Env) {
+        *env = Self::env_from_context();
     }
 }
 

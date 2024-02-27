@@ -1,11 +1,8 @@
-use crate::{account::Account, evm::read_address_from_input};
+use crate::account::Account;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
-use fluentbase_sdk::{
-    evm::{ContractInput, IContractInput},
-    Bytes32,
-};
+use fluentbase_sdk::Bytes32;
 
 #[no_mangle]
 pub fn _evm_extcodecopy(

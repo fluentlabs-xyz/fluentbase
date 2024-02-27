@@ -3,7 +3,10 @@ use alloc::{rc::Rc, vec};
 use core::cell::RefCell;
 use fluentbase_codec::Encoder;
 use fluentbase_runtime::{types::B256, zktrie::ZkTrieStateDb, JournaledTrie};
-use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
+use fluentbase_sdk::{
+    evm::{ContractInput, JournalCheckpoint},
+    LowLevelSDK,
+};
 use fluentbase_types::{Address, Bytes, InMemoryAccountDb, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
@@ -39,12 +42,16 @@ impl TestingContext {
         self.accounts.get_mut(&address).unwrap()
     }
 
-    pub fn apply_ctx(&mut self) -> &mut Self {
+    pub fn init_jzkt(&mut self) -> &mut Self {
         let db = InMemoryAccountDb::default();
         let storage = ZkTrieStateDb::new_empty(db);
         let journal = JournaledTrie::new(storage);
         LowLevelSDK::with_jzkt(Rc::new(RefCell::new(journal)));
 
+        self
+    }
+
+    pub fn apply_ctx(&mut self) -> &mut Self {
         for (_address, account) in &self.accounts {
             account.write_to_jzkt();
         }
@@ -97,6 +104,11 @@ macro_rules! impl_once_setter {
 pub(crate) struct ContractInputWrapper(ContractInput);
 
 impl ContractInputWrapper {
+    impl_once_setter!(
+        set_journal_checkpoint,
+        journal_checkpoint,
+        JournalCheckpoint
+    );
     impl_once_setter!(set_contract_input, contract_input, Bytes);
     impl_once_setter!(set_contract_input_size, contract_input_size, u32);
     impl_once_setter!(set_env_chain_id, env_chain_id, u64);

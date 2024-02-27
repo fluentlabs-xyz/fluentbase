@@ -54,11 +54,11 @@ impl Into<(u32, u32)> for JournalCheckpoint {
 }
 
 impl JournalCheckpoint {
-    fn state(&self) -> usize {
+    pub fn state(&self) -> usize {
         self.0 as usize
     }
 
-    fn logs(&self) -> usize {
+    pub fn logs(&self) -> usize {
         self.1 as usize
     }
 }
