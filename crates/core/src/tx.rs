@@ -37,11 +37,11 @@ impl Database for TxDb {
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         let mut result = AccountInfo::default();
-        let mut bytes32 = [0u8; 32];
+        let mut bytes32 = Bytes32::default();
         unsafe {
             core::ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
         }
-        let mut code_size_nonce = [0u8; 32];
+        let mut code_size_nonce = Bytes32::default();
         LowLevelSDK::zktrie_field(
             bytes32.as_ptr(),
             ZKTRIE_CODESIZE_NONCE_FIELD,
@@ -89,7 +89,7 @@ impl Database for TxDb {
 impl DatabaseCommit for TxDb {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         for (k, v) in changes.into_iter() {
-            let mut values: [Bytes32; 5] = [[0u8; 32]; 5];
+            let mut values: [Bytes32; 5] = [Bytes32::default(); 5];
             let code_size =
                 v.info.code.map(|v| v.len() as u64).unwrap_or_else(|| {
                     LowLevelSDK::preimage_size(v.info.code_hash.as_ptr()) as u64
@@ -101,7 +101,7 @@ impl DatabaseCommit for TxDb {
             // values[2].copy_from_slice(v.info.root.as_slice());
             values[3].copy_from_slice(v.info.code_hash.as_slice());
             // values[4].copy_from_slice(v.info.poseidon_code_hash.as_slice());
-            let mut key32 = [0u8; 32];
+            let mut key32 = Bytes32::default();
             unsafe {
                 core::ptr::copy(k.as_ptr(), key32.as_mut_ptr(), 20);
             }

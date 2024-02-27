@@ -1,4 +1,4 @@
-use crate::{account::Account, evm::read_address_from_input};
+use crate::{account::Account, evm::read_address_from_input, fluent_host::FluentHost};
 use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
@@ -13,7 +13,6 @@ use revm_interpreter::{
     primitives::{Address, Bytecode, Bytes, ShanghaiSpec, B256},
     BytecodeLocked,
     Contract,
-    DummyHost,
     Interpreter,
     SharedMemory,
 };
@@ -48,7 +47,7 @@ pub fn _evm_call(
     let contract = Contract {
         input,
         hash: B256::from_slice(account.source_code_hash.as_slice()),
-        // TODO simplify, we have already 'analyzed' code inside
+        // TODO simplify, we have already analyzed code
         bytecode: BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(Bytes::copy_from_slice(
             source_bytecode.as_ref(),
         ))))
@@ -58,20 +57,20 @@ pub fn _evm_call(
         value: U256::ZERO,
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
-    let instruction_table = make_instruction_table::<DummyHost, ShanghaiSpec>();
-    let mut host = DummyHost::default();
+    let instruction_table = make_instruction_table::<FluentHost, ShanghaiSpec>();
+    let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
     let evm_run_result = interpreter.run(shared_memory, &instruction_table, &mut host);
     let interpreter_result = if let Some(v) = evm_run_result.into_result_return() {
         v
     } else {
-        return ExitCode::CallError;
+        return ExitCode::EVMCallError;
     };
     if interpreter_result.is_error()
         || interpreter_result.is_revert()
         || !interpreter_result.is_ok()
     {
-        return ExitCode::CallError;
+        return ExitCode::EVMCallError;
     }
     let output = interpreter_result.output;
     LowLevelSDK::sys_write(&output);

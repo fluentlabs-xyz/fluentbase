@@ -17,7 +17,7 @@ byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
 #revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
-revm-interpreter = { path = "../../../../../git/External/revm/crates/interpreter", default-features = false }
+revm-interpreter = { path = "../../../../other/revm/crates/interpreter", default-features = false }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
 #revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
 

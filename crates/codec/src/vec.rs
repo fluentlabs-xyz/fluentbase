@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 /// - body
 /// - + raw bytes of the vector
 ///
-/// We don't encode empty vectors, instead of store only 0 length,
+/// We don't encode empty vectors, instead we store 0 as length,
 /// it helps to reduce empty vector size from 12 to 4 bytes.
 impl<T: Default + Sized + Encoder<T>> Encoder<Vec<T>> for Vec<T> {
     // u32: length + values (bytes)
