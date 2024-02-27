@@ -4,7 +4,11 @@ use crate::{
     testing_utils::{generate_address_original_impl, TestingContext},
 };
 use alloc::{vec, vec::Vec};
-use fluentbase_sdk::evm::Address;
+use fluentbase_sdk::{
+    evm::{Address, JournalCheckpoint},
+    LowLevelAPI,
+    LowLevelSDK,
+};
 use fluentbase_types::{address, Bytes, B256, U256};
 use keccak_hash::keccak;
 use revm_interpreter::primitives::hex;
@@ -100,6 +104,7 @@ fn create_contract_test() {
 
     let mut test_ctx = TestingContext::new();
     test_ctx
+        .init_jzkt()
         .try_add_account(
             caller_address.clone(),
             Account {
@@ -114,6 +119,7 @@ fn create_contract_test() {
             },
         )
         .contract_input_wrapper
+        .set_journal_checkpoint(LowLevelSDK::jzkt_checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_str.as_bytes()))
         .set_contract_input_size(contract_input_data_str.as_bytes().len() as u32)
         .set_env_chain_id(env_chain_id)
@@ -169,6 +175,7 @@ fn call_contract_test() {
 
     let mut test_ctx = TestingContext::new();
     test_ctx
+        .init_jzkt()
         .try_add_account(
             caller_address.clone(),
             Account {

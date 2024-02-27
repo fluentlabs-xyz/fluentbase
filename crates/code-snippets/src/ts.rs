@@ -22,7 +22,7 @@ pub fn ts_get(index: U256) -> Option<U256> {
         let mut hm = TS.get();
         if let Some(hm) = hm {
             let r = hm.get(&index);
-            if let Some(res) = r {
+            if let Some(_res) = r {
                 return r.cloned();
             }
         }

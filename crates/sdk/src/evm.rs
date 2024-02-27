@@ -4,7 +4,40 @@ use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
 pub use fluentbase_types::{Address, Bytes, B256, U256};
 
 define_codec_struct! {
+    pub struct JournalCheckpoint {
+        state: u32,
+        logs: u32,
+    }
+}
+
+impl JournalCheckpoint {
+    pub fn new(state: u32, logs: u32) -> Self {
+        Self { state, logs }
+    }
+}
+
+impl From<(u32, u32)> for JournalCheckpoint {
+    fn from(value: (u32, u32)) -> Self {
+        Self {
+            state: value.0,
+            logs: value.1,
+        }
+    }
+}
+
+impl From<fluentbase_runtime::JournalCheckpoint> for JournalCheckpoint {
+    fn from(value: fluentbase_runtime::JournalCheckpoint) -> Self {
+        Self {
+            state: value.state() as u32,
+            logs: value.logs() as u32,
+        }
+    }
+}
+
+define_codec_struct! {
     pub struct ContractInput {
+        // journal
+        journal_checkpoint: JournalCheckpoint,
         // env info
         env_chain_id: u64,
         // contract info
@@ -92,6 +125,8 @@ macro_rules! impl_reader_func {
 pub struct ExecutionContext;
 
 impl ExecutionContext {
+    // journal
+    impl_reader_func!(fn journal_checkpoint() -> JournalCheckpoint, <ContractInput as IContractInput>::JournalCheckpoint);
     // env info
     impl_reader_func!(fn env_chain_id() -> u64, <ContractInput as IContractInput>::EnvChainId);
     // contract info
