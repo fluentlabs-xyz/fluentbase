@@ -12,6 +12,7 @@ pub(crate) mod calldatasize;
 pub(crate) mod codecopy;
 pub(crate) mod codehash;
 pub(crate) mod codesize;
+pub(crate) mod create2;
 pub(crate) mod extcodecopy;
 pub(crate) mod extcodehash;
 pub(crate) mod extcodesize;
