@@ -19,7 +19,7 @@ pub fn _evm_sstore(
         address20_offset,
         index32_offset,
         present_slot_value32.as_mut_ptr(),
-        is_cold as *mut u32,
+        &mut is_cold,
     );
     if sload_exit_code == ExitCode::Ok {
         let mut slot_value32 = Bytes32::default();
