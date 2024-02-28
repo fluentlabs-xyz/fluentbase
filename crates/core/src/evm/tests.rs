@@ -3,9 +3,11 @@ use crate::{
     evm::{
         address::_evm_address,
         balance::_evm_balance,
+        calc_create2_address,
         calc_create_address,
         call::_evm_call,
         create::_evm_create,
+        create2::_evm_create2,
         selfbalance::_evm_self_balance,
     },
     testing_utils::{generate_address_original_impl, TestingContext},
@@ -14,7 +16,7 @@ use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{address, Bytes, B256, U256};
 use keccak_hash::keccak;
-use revm_interpreter::primitives::hex;
+use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
 
 // used contract:
 // // SPDX-License-Identifier: MIT
@@ -247,7 +249,80 @@ fn _evm_call_after_create_test() {
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args_data = Vec::from(CONTRACT_BYTECODE_METHOD_SAY_HELLO_WORLD_ID); // method
+    let mut args_data = Vec::from(CONTRACT_BYTECODE_METHOD_SAY_HELLO_WORLD_ID);
+    let mut return_data: Vec<u8> = vec![0; 96];
+    let call_value = U256::from_be_slice(&hex!("00"));
+    let exit_code = _evm_call(
+        gas_limit,
+        created_address.as_ptr(),
+        call_value.to_be_bytes::<32>().as_ptr(),
+        args_data.as_ptr(),
+        args_data.len() as u32,
+        return_data.as_mut_ptr(),
+        return_data.len() as u32,
+    );
+    assert!(exit_code.is_ok());
+}
+
+#[test]
+fn _evm_call_after_create2_test() {
+    let caller_address = address!("000000000000000000000000000000000000000c");
+    let caller_nonce = 1;
+    let caller_account = Account {
+        address: caller_address,
+        nonce: caller_nonce,
+        balance: U256::from_be_slice(1000000000u128.to_be_bytes().as_slice()),
+        ..Default::default()
+    };
+
+    let contract_bytecode_ =
+        Bytecode::new_raw(alloy_primitives::Bytes::copy_from_slice(CONTRACT_BYTECODE));
+    let contract_bytecode_hash = B256::from_slice(contract_bytecode_.hash_slow().as_slice());
+    let salt = B256::left_padding_from(hex!("bc162382638a").as_slice());
+    let computed_contract_address =
+        calc_create2_address(&caller_address, &salt, &contract_bytecode_hash);
+    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
+    let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
+    let contract_is_static = false;
+    let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
+    let env_chain_id = 1;
+
+    let contract_input_data_bytes = "some contract input".as_bytes();
+
+    let mut test_ctx = TestingContext::new(true);
+    test_ctx
+        .try_add_account(&caller_account)
+        .contract_input_wrapper
+        .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
+        .set_contract_input_size(contract_input_data_bytes.len() as u32)
+        .set_env_chain_id(env_chain_id)
+        .set_contract_address(computed_contract_address)
+        .set_contract_caller(caller_address)
+        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE))
+        .set_contract_code_size(CONTRACT_BYTECODE.len() as u32)
+        .set_contract_code_hash(contract_bytecode_hash)
+        .set_contract_value(contract_value)
+        .set_block_hash(block_hash)
+        .set_block_coinbase(block_coinbase)
+        .set_tx_caller(caller_address)
+        .set_contract_is_static(contract_is_static);
+    test_ctx.apply_ctx();
+
+    let create_value = U256::from_be_slice(&hex!("1000"));
+    let gas_limit: u32 = 10_000_000;
+    let mut created_address = Address::default();
+    let exit_code = _evm_create2(
+        create_value.to_be_bytes::<32>().as_ptr(),
+        CONTRACT_BYTECODE.as_ptr(),
+        CONTRACT_BYTECODE.len() as u32,
+        salt.as_ptr(),
+        created_address.0.as_mut_ptr(),
+        gas_limit,
+    );
+    assert!(exit_code.is_ok());
+    assert_eq!(computed_contract_address, created_address);
+
+    let mut args_data = Vec::from(CONTRACT_BYTECODE_METHOD_SAY_HELLO_WORLD_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(

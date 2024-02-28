@@ -1,7 +1,7 @@
 use crate::{
     account::Account,
     account_types::MAX_CODE_SIZE,
-    evm::{calc_create_address, read_address_from_input, DefaultSpec},
+    evm::{calc_create2_address, read_address_from_input, DefaultSpec},
     fluent_host::FluentHost,
 };
 use alloc::{alloc::alloc, boxed::Box};
@@ -11,7 +11,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
@@ -23,10 +23,11 @@ use revm_interpreter::{
 };
 
 #[no_mangle]
-pub fn _evm_create(
+pub fn _evm_create2(
     value32_be_offset: *const u8,
     code_offset: *const u8,
     code_length: u32,
+    salt32_offset: *const u8,
     output20_offset: *mut u8,
     gas_limit: u32,
 ) -> ExitCode {
@@ -38,12 +39,26 @@ pub fn _evm_create(
     }
     // read value input and contract address
     let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_be_offset, 32) };
+    let salt32_slice = unsafe { &*ptr::slice_from_raw_parts(salt32_offset, 32) };
     let value = U256::from_be_slice(value32_slice);
     let tx_caller_address =
         read_address_from_input(<ContractInput as IContractInput>::TxCaller::FIELD_OFFSET);
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&tx_caller_address);
-    let deployed_contract_address = calc_create_address(&tx_caller_address, deployer_account.nonce);
+    let salt = B256::from_slice(salt32_slice);
+
+    let deployer_bytecode_slice =
+        unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let deployer_bytecode_bytes = Bytes::from_static(deployer_bytecode_slice);
+    let deployer_bytecode = to_analysed(Bytecode::new_raw(deployer_bytecode_bytes));
+    let deployer_bytecode_locked = BytecodeLocked::try_from(deployer_bytecode).unwrap();
+    let deployer_bytecode_hash = deployer_bytecode_locked.hash_slow();
+
+    let deployed_contract_address = calc_create2_address(
+        &tx_caller_address,
+        &salt,
+        &B256::from_slice(deployer_bytecode_hash.as_slice()),
+    );
     let mut contract_account = Account::new_from_jzkt(&deployed_contract_address);
     // if nonce or code is not empty then its collision
     if contract_account.is_not_empty() {
@@ -55,14 +70,9 @@ pub fn _evm_create(
     if !deployer_account.transfer_value(&mut contract_account, &value) {
         return ExitCode::InsufficientBalance;
     }
-    let deployer_bytecode_slice =
-        unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let deployer_bytecode_bytes = Bytes::from_static(deployer_bytecode_slice);
-    let deployer_bytecode = to_analysed(Bytecode::new_raw(deployer_bytecode_bytes));
-    let deployer_bytecode_locked = BytecodeLocked::try_from(deployer_bytecode).unwrap();
 
     let contract = Contract {
-        hash: deployer_bytecode_locked.hash_slow(),
+        hash: deployer_bytecode_hash,
         bytecode: deployer_bytecode_locked,
         address: Address::new(deployed_contract_address.into_array()),
         caller: Address::new(tx_caller_address.into_array()),
