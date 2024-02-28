@@ -25,6 +25,7 @@ impl From<(u32, u32)> for JournalCheckpoint {
     }
 }
 
+#[cfg(feature = "runtime")]
 impl From<fluentbase_runtime::JournalCheckpoint> for JournalCheckpoint {
     fn from(value: fluentbase_runtime::JournalCheckpoint) -> Self {
         Self {

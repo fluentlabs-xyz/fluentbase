@@ -15,7 +15,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Account {
     pub address: Address,
     pub source_code_size: u64,
@@ -43,7 +43,7 @@ impl Default for Account {
 }
 
 impl Account {
-    pub fn new(address: &Address) -> Self {
+    fn new(address: &Address) -> Self {
         Self {
             address: address.clone(),
             ..Default::default()
@@ -54,68 +54,76 @@ impl Account {
         let mut result = Self::new(address);
         let address_word = address.into_word();
         // code size and nonce
-        let mut buffer = Bytes32::default();
+        let mut buffer32 = Bytes32::default();
 
-        Account::get_code_size(address_word.as_ptr(), buffer.as_mut_ptr());
-        result.code_size = LittleEndian::read_u64(&buffer);
+        Account::jzkt_get_code_size(address_word.as_ptr(), buffer32.as_mut_ptr());
+        result.code_size = LittleEndian::read_u64(&buffer32);
 
-        Account::get_nonce(address_word.as_ptr(), buffer.as_mut_ptr());
-        result.nonce = LittleEndian::read_u64(&buffer);
+        Account::jzkt_get_nonce(address_word.as_ptr(), buffer32.as_mut_ptr());
+        result.nonce = LittleEndian::read_u64(&buffer32);
 
-        let balance_mut = unsafe { result.balance.as_le_slice_mut() };
-        Account::get_balance(address_word.as_ptr(), balance_mut.as_mut_ptr());
+        Account::jzkt_get_balance(address_word.as_ptr(), unsafe {
+            result.balance.as_le_slice_mut().as_mut_ptr()
+        });
 
-        Account::get_root(address_word.as_ptr(), result.root.as_mut_ptr());
+        Account::jzkt_get_root(address_word.as_ptr(), result.root.as_mut_ptr());
 
-        Account::get_source_code_hash(address_word.as_ptr(), result.source_code_hash.as_mut_ptr());
+        Account::jzkt_get_source_code_hash(
+            address_word.as_ptr(),
+            result.source_code_hash.as_mut_ptr(),
+        );
 
-        Account::get_code_hash(address_word.as_ptr(), result.code_hash.as_mut_ptr());
+        Account::jzkt_get_code_hash(address_word.as_ptr(), result.code_hash.as_mut_ptr());
 
-        Account::get_source_code_size(address_word.as_ptr(), buffer.as_mut_ptr());
-        result.source_code_size = LittleEndian::read_u64(&buffer);
+        Account::jzkt_get_source_code_size(address_word.as_ptr(), buffer32.as_mut_ptr());
+        result.source_code_size = LittleEndian::read_u64(&buffer32);
 
         result
     }
 
     #[inline]
-    pub fn get_root(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_root(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(address32_offset, JZKT_ACCOUNT_ROOT_FIELD, buffer32_offset);
     }
 
     #[inline]
-    pub fn get_nonce(address32_offset: *const u8, buffer32_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(address32_offset, JZKT_ACCOUNT_NONCE_FIELD, buffer32_offset);
+    pub fn jzkt_get_nonce(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
+        LowLevelSDK::jzkt_get(
+            address32_offset,
+            JZKT_ACCOUNT_NONCE_FIELD,
+            buffer32_le_offset,
+        );
     }
 
     #[inline]
-    pub fn get_balance(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_balance(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_BALANCE_FIELD,
-            buffer32_offset,
+            buffer32_le_offset,
         );
     }
 
     #[inline]
-    pub fn get_code_size(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_code_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_CODE_SIZE_FIELD,
-            buffer32_offset,
+            buffer32_le_offset,
         );
     }
 
     #[inline]
-    pub fn get_source_code_size(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_source_code_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-            buffer32_offset,
+            buffer32_le_offset,
         );
     }
 
     #[inline]
-    pub fn get_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_CODE_HASH_FIELD,
@@ -124,7 +132,7 @@ impl Account {
     }
 
     #[inline]
-    pub fn get_source_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_source_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
@@ -134,38 +142,51 @@ impl Account {
 
     #[inline(always)]
     pub(crate) fn transfer_value(&mut self, to: &mut Self, value: &U256) -> bool {
-        self.balance.checked_sub(*value).is_some() && to.balance.checked_add(*value).is_some()
+        let from_balance = self.balance.checked_sub(*value);
+        if let Some(from_balance) = from_balance {
+            let to_balance = to.balance.checked_add(*value);
+            if let Some(to_balance) = to_balance {
+                self.balance = from_balance;
+                to.balance = to_balance;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        true
     }
 
     pub fn write_to_jzkt(&self) {
-        let mut values: AccountFields = Default::default();
+        let mut account_fields: AccountFields = Default::default();
         LittleEndian::write_u64(
-            &mut values[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize][..],
+            &mut account_fields[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize][..],
             self.code_size,
         );
         LittleEndian::write_u64(
-            &mut values[JZKT_ACCOUNT_NONCE_FIELD as usize][..],
+            &mut account_fields[JZKT_ACCOUNT_NONCE_FIELD as usize][..],
             self.nonce,
         );
-        values[JZKT_ACCOUNT_BALANCE_FIELD as usize]
-            .copy_from_slice(&self.balance.to_be_bytes::<32>());
+        account_fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]
+            .copy_from_slice(&self.balance.as_le_slice());
 
-        values[JZKT_ACCOUNT_ROOT_FIELD as usize].copy_from_slice(&self.root.as_slice());
+        account_fields[JZKT_ACCOUNT_ROOT_FIELD as usize].copy_from_slice(&self.root.as_slice());
 
-        values[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]
+        account_fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]
             .copy_from_slice(self.source_code_hash.as_slice());
-        values[JZKT_ACCOUNT_CODE_HASH_FIELD as usize].copy_from_slice(self.code_hash.as_slice());
+        account_fields[JZKT_ACCOUNT_CODE_HASH_FIELD as usize]
+            .copy_from_slice(self.code_hash.as_slice());
         LittleEndian::write_u64(
-            &mut values[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
+            &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
             self.source_code_size,
         );
 
-        let address_word = self.address.into_word();
         LowLevelSDK::jzkt_update(
-            address_word.as_ptr(),
+            self.address.into_word().as_ptr(),
             JZKT_COMPRESSION_FLAGS,
-            values.as_ptr(),
-            32 * values.len() as u32,
+            account_fields.as_ptr(),
+            32 * account_fields.len() as u32,
         );
     }
 
@@ -311,10 +332,5 @@ impl Account {
     #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
         self.nonce != 0 || self.source_code_hash != KECCAK_EMPTY || self.code_hash != POSEIDON_EMPTY
-    }
-
-    #[inline(always)]
-    pub fn is_newly_created(&self) -> bool {
-        !self.is_not_empty()
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
     account::Account,
     account_types::MAX_CODE_SIZE,
-    evm::{calc_create_address, read_address_from_input},
+    evm::{calc_create_address, read_address_from_input, DefaultSpec},
+    fluent_host::FluentHost,
 };
 use alloc::{alloc::alloc, boxed::Box};
 use core::{alloc::Layout, ptr};
@@ -17,14 +18,13 @@ use revm_interpreter::{
     primitives::{Address, Bytecode, Bytes, ShanghaiSpec},
     BytecodeLocked,
     Contract,
-    DummyHost,
     Interpreter,
     SharedMemory,
 };
 
 #[no_mangle]
 pub fn _evm_create(
-    value32_offset: *const u8,
+    value32_be_offset: *const u8,
     code_offset: *const u8,
     code_length: u32,
     output20_offset: *mut u8,
@@ -37,11 +37,10 @@ pub fn _evm_create(
         return ExitCode::WriteProtection;
     }
     // read value input and contract address
-    let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) });
+    let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_be_offset, 32) };
+    let value = U256::from_be_slice(value32_slice);
     let tx_caller_address =
         read_address_from_input(<ContractInput as IContractInput>::TxCaller::FIELD_OFFSET);
-    // let contract_address =
-    //     read_input_address(<ContractInput as IContractInput>::ContractAddress::FIELD_OFFSET);
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&tx_caller_address);
     let deployed_contract_address = calc_create_address(&tx_caller_address, deployer_account.nonce);
@@ -63,36 +62,34 @@ pub fn _evm_create(
     let deployer_evm_bytecode_locked = BytecodeLocked::try_from(deployer_evm_bytecode).unwrap();
 
     let contract = Contract {
-        input: Bytes::new(),
         hash: deployer_evm_bytecode_locked.hash_slow(),
         bytecode: deployer_evm_bytecode_locked,
         address: Address::new(deployed_contract_address.into_array()),
         caller: Address::new(tx_caller_address.into_array()),
-        value: U256::ZERO,
+        ..Default::default()
     };
     let mut evm_interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, false);
-    let instruction_table = make_instruction_table::<DummyHost, ShanghaiSpec>();
-    let mut host = DummyHost::default();
+    let instruction_table = make_instruction_table::<FluentHost, DefaultSpec>();
+    let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
-    let evm_run_result = evm_interpreter.run(shared_memory, &instruction_table, &mut host);
-    let interpreter_result = if let Some(v) = evm_run_result.into_result_return() {
+    let interpreter_result = evm_interpreter.run(shared_memory, &instruction_table, &mut host);
+    let interpreter_result = if let Some(v) = interpreter_result.into_result_return() {
         v
     } else {
-        return ExitCode::CreateError;
+        return ExitCode::EVMCreateError;
     };
     if interpreter_result.is_error()
         || interpreter_result.is_revert()
         || !interpreter_result.is_ok()
     {
-        return ExitCode::CreateError;
+        return ExitCode::EVMCreateError;
     }
     assert!(interpreter_result.is_ok());
     let deployed_evm_bytecode =
         fluentbase_types::Bytes::copy_from_slice(interpreter_result.output.iter().as_slice());
 
-    // save $deployed_evm_bytecode into account
-    let mut deployed_account = Account::new(&deployed_contract_address);
-    deployed_account.update_source_bytecode(&deployed_evm_bytecode);
+    deployer_account.write_to_jzkt();
+    contract_account.update_source_bytecode(&deployed_evm_bytecode);
 
     // TODO convert $deployed_evm_bytecode into rwasm code ($deployed_rwasm_bytecode)
     // TODO save $deployed_rwasm_bytecode into account (with its poseidon hash)

@@ -18,11 +18,15 @@ pub(crate) struct TestingContext {
 }
 
 impl TestingContext {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(init_jzkt: bool) -> Self {
+        let mut instance = Self {
             accounts: Default::default(),
             contract_input_wrapper: ContractInputWrapper::default(),
+        };
+        if init_jzkt {
+            instance.init_jzkt();
         }
+        instance
     }
 
     pub fn reset_contract_input_wrapper(&mut self) -> &mut Self {
@@ -30,8 +34,10 @@ impl TestingContext {
         self
     }
 
-    pub fn try_add_account(&mut self, address: Address, account: Account) -> &mut Self {
-        self.accounts.try_insert(address, account).unwrap();
+    pub fn try_add_account(&mut self, account: &Account) -> &mut Self {
+        self.accounts
+            .try_insert(account.address, (*account).clone())
+            .unwrap();
         self
     }
 

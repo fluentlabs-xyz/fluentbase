@@ -22,7 +22,7 @@ mod runtime;
 mod rwasm;
 mod types;
 
-pub use types::Bytes32;
+pub use types::{Bytes20, Bytes32};
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]

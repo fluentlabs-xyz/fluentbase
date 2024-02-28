@@ -5,6 +5,7 @@ mod selfbalance;
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod address;
 pub(crate) mod calldatacopy;
 pub(crate) mod calldataload;
 pub(crate) mod calldatasize;
@@ -33,6 +34,9 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
+use revm_interpreter::primitives::ShanghaiSpec;
+
+type DefaultSpec = ShanghaiSpec;
 
 #[inline]
 pub(crate) fn get_calldata_input_offset_and_len() -> (u32, u32) {
