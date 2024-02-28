@@ -29,9 +29,6 @@ use revm_interpreter::{
 pub struct FluentHost {
     env: Env,
     need_to_init_env: bool,
-    // storage: HashMap<U256, U256>,
-    // transient_storage: HashMap<U256, U256>,
-    // log: Vec<Log>,
 }
 
 impl Default for FluentHost {
@@ -138,14 +135,15 @@ impl Host for FluentHost {
 
     #[inline]
     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        let account = Account::new(&fluentbase_types::Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
 
         Some((account.balance, false))
     }
 
     #[inline]
     fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
-        let account = Account::new(&fluentbase_types::Address::new(address.into_array()));
+        // TODO optimize using separate methods
+        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
         let bytecode_bytes = Bytes::copy_from_slice(account.load_source_bytecode().as_ref());
 
         Some((Bytecode::new_raw(bytecode_bytes), false))
@@ -153,7 +151,8 @@ impl Host for FluentHost {
 
     #[inline]
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        let account = Account::new(&fluentbase_types::Address::new(address.into_array()));
+        // TODO optimize using separate methods
+        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
         let code_hash = B256::from_slice(account.source_code_hash.as_slice());
 
         Some((code_hash, false))
@@ -201,20 +200,6 @@ impl Host for FluentHost {
         if sload_exit_code == ExitCode::Ok {
             return Some((previous_or_original_value, present, new_value, is_cold != 0));
         }
-        // if let Some((present, is_cold)) = self.sload(address, index) {
-        //     let mut slot_value32 = Bytes32::default();
-        //     let _slot_value32_load_res =
-        //         LowLevelSDK::jzkt_load(index.as_le_slice().as_ptr(), slot_value32.as_mut_ptr());
-        //     // new value is same as present, we don't need to do anything
-        //     if present == value {
-        //         return Some((U256::from_be_bytes(slot_value32), present, value, is_cold));
-        //     }
-        //
-        //     // insert value into present state.
-        //     LowLevelSDK::jzkt_store(index.as_le_slice().as_ptr(), value.as_le_slice().as_ptr());
-        //     // Ok((slot.previous_or_original_value, present, new, is_cold))
-        //     return Some((U256::from_be_bytes(slot_value32), present, value, is_cold));
-        // }
         return None;
     }
 
