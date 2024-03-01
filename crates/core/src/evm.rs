@@ -1,30 +1,30 @@
-mod balance;
-mod call;
-mod create;
-mod selfbalance;
+pub mod balance;
+pub mod call;
+pub mod create;
+pub mod selfbalance;
 #[cfg(test)]
 mod tests;
 
-pub(crate) mod address;
-pub(crate) mod calldatacopy;
-pub(crate) mod calldataload;
-pub(crate) mod calldatasize;
-pub(crate) mod codecopy;
-pub(crate) mod codehash;
-pub(crate) mod codesize;
-pub(crate) mod create2;
-pub(crate) mod extcodecopy;
-pub(crate) mod extcodehash;
-pub(crate) mod extcodesize;
-pub(crate) mod log0;
-pub(crate) mod log1;
-pub(crate) mod log2;
-pub(crate) mod log3;
+pub mod address;
+pub mod calldatacopy;
+pub mod calldataload;
+pub mod calldatasize;
+pub mod codecopy;
+pub mod codehash;
+pub mod codesize;
+pub mod create2;
+pub mod extcodecopy;
+pub mod extcodehash;
+pub mod extcodesize;
+pub mod log0;
+pub mod log1;
+pub mod log2;
+pub mod log3;
 mod log4;
-pub(crate) mod r#return;
-pub(crate) mod revert;
-pub(crate) mod sload;
-pub(crate) mod sstore;
+pub mod r#return;
+pub mod revert;
+pub mod sload;
+pub mod sstore;
 
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 use byteorder::{ByteOrder, LittleEndian};
@@ -40,7 +40,7 @@ use revm_interpreter::primitives::ShanghaiSpec;
 type DefaultSpec = ShanghaiSpec;
 
 #[inline]
-pub(crate) fn get_calldata_input_offset_and_len() -> (u32, u32) {
+pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {
     let mut header = [0u8; 8];
     LowLevelSDK::sys_read(
         &mut header,

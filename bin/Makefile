@@ -20,7 +20,7 @@ CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --do-not-inject-fuel --skip-type-
 
 .PHONY: $(FILES)
 $(FILES):
-	cargo run -- --skip-translate-sections ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path=../../rwasm/code-snippets/bin/$@.wat
+	cargo run -- --skip-translate-sections ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path=../crates/code-snippets/bin/$@.wat
 
 solid_file:
-	cargo run -- ${CARGO_OPTIONS} --file-in-path=../code-snippets/bin/$@.wat
+	cargo run -- ${CARGO_OPTIONS} --file-in-path=../crates/code-snippets/bin/$@.wat --restricted-fn-names= --restricted-fn-name-prefixes=_evm

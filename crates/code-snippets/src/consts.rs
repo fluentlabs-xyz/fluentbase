@@ -13,3 +13,5 @@ pub const U64_BYTES_COUNT: u64 = 8;
 pub const U256_BYTES_COUNT: u64 = 32;
 pub const U64_BITS_COUNT: u64 = 64;
 pub const U64_HALF_BITS_COUNT: u64 = U64_BITS_COUNT / 2;
+// TODO fix hardcode
+pub(crate) const GAS_LIMIT_HARDCODED: u32 = 10_000_000;

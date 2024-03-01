@@ -1019,6 +1019,7 @@ dependencies = [
  "env_logger 0.10.2",
  "ethereum-types",
  "fluentbase-codec",
+ "fluentbase-core",
  "fluentbase-sdk",
  "hashbrown",
  "log",

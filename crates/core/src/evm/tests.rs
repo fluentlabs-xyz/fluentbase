@@ -134,7 +134,12 @@ fn create2_address_correctness_test() {
         let salt: [u8; 32] = salt.try_into().unwrap();
 
         let init_code = hex::decode(init_code).unwrap();
-        let init_code_hash: B256 = keccak(&init_code).0.into();
+        let mut init_code_hash: B256 = B256::default();
+        LowLevelSDK::crypto_keccak256(
+            init_code.as_ptr(),
+            init_code.len() as u32,
+            init_code_hash.as_mut_ptr(),
+        );
 
         let expected = expected.parse::<Address>().unwrap();
 

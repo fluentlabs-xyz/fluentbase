@@ -223,7 +223,6 @@ impl Account {
             self.source_code_hash.as_mut_ptr(),
         );
         self.source_code_size = code.len() as u64;
-        // write new changes into ZKT
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
