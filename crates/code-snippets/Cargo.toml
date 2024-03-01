@@ -16,6 +16,9 @@ rwasm-codegen = { workspace = true }
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 hashbrown = { workspace = true }
 once_cell = { version = "1.19.0", default-features = false }
+#fluentbase-core = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+#fluentbase-core = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "FLU-56-based-on-no-tracer" }
+fluentbase-core = { path = "../core" }
 
 [build-dependencies]
 rwasm-codegen = { workspace = true }

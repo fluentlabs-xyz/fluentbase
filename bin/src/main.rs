@@ -52,6 +52,12 @@ struct Args {
     #[arg(long, default_value = "")]
     entry_fn_name: String,
 
+    #[arg(long, default_value = "")]
+    restricted_fn_names: String,
+
+    #[arg(long, default_value = "")]
+    restricted_fn_name_prefixes: String,
+
     #[arg(long, default_value_t = false)]
     entry_fn_name_matches_file_in_name: bool,
 }
@@ -116,7 +122,27 @@ fn main() {
         entry_point_fn.length
     );
     let mut as_rust_vec: Vec<String> = vec![];
-    let restricted_fn_names = &[];
+    let restricted_fn_names = args
+        .restricted_fn_names
+        .split(",")
+        .collect::<Vec<&str>>()
+        .iter()
+        .map(|v| v.to_lowercase())
+        .collect::<Vec<_>>();
+    let restricted_fn_name_prefixes = args
+        .restricted_fn_name_prefixes
+        .split(",")
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<&str>>()
+        .iter()
+        .map(|v| v.to_lowercase())
+        .collect::<Vec<_>>();
+    println!("restricted_fn_names {:?}", restricted_fn_names.as_slice());
+    println!(
+        "restricted_fn_name_prefixes {:?}",
+        restricted_fn_name_prefixes.as_slice()
+    );
+    const FUNC_SYSTEM_PREFIX: &'static str = "$__";
     for func_source_map in &func_source_maps {
         debug!("func_source_map '{:?}'", func_source_map);
         let fn_name = func_source_map.fn_name.as_str();
@@ -125,13 +151,23 @@ fn main() {
         if fn_name == FUNC_SOURCE_MAP_ENTRYPOINT_NAME {
             let opcode = FUNC_SOURCE_MAP_ENTRYPOINT_IDX;
             as_rust_vec.push(format!("({opcode}, {fn_beginning}, {fn_length})"));
-        } else if !fn_name.starts_with("$__") && !restricted_fn_names.contains(&fn_name) {
-            let fn_name = fn_name.to_uppercase();
-            let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
-            let opcode_name = fn_name_split[fn_name_split.len() - 1];
-            as_rust_vec.push(format!(
-                "(opcode::{opcode_name} as u32, {fn_beginning}, {fn_length})"
-            ));
+        } else {
+            let mut is_restricted = fn_name.starts_with(FUNC_SYSTEM_PREFIX)
+                || restricted_fn_names.contains(&fn_name.to_string());
+            if !is_restricted && !restricted_fn_name_prefixes.is_empty() {
+                is_restricted = restricted_fn_name_prefixes
+                    .iter()
+                    .find(|&p| fn_name.starts_with(p))
+                    .is_some();
+            };
+            if !is_restricted {
+                let fn_name = fn_name.to_uppercase();
+                let fn_name_split = fn_name.split("_").collect::<Vec<_>>();
+                let opcode_name = fn_name_split[fn_name_split.len() - 1];
+                as_rust_vec.push(format!(
+                    "(opcode::{opcode_name} as u32, {fn_beginning}, {fn_length})"
+                ));
+            }
         }
     }
     let rs_str = format!("[\n    {}\n]", as_rust_vec.join(",\n    "));

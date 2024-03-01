@@ -4,9 +4,11 @@
 extern crate alloc;
 extern crate core;
 
+pub use fluentbase_types::ExitCode;
+
 pub mod account;
 pub mod account_types;
-mod evm;
+pub mod evm;
 pub mod fluent_host;
 #[cfg(test)]
 mod testing_utils;
