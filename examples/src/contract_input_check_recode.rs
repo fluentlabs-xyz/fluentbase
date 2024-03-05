@@ -30,6 +30,8 @@ pub fn main() {
         panic!("contract code hash doesnt match")
     }
 
+    let journal_checkpoint = ExecutionContext::journal_checkpoint();
+
     let contract_value = ExecutionContext::contract_value();
 
     let contract_is_static = ExecutionContext::contract_is_static();
@@ -47,6 +49,7 @@ pub fn main() {
     let tx_caller = ExecutionContext::tx_caller();
 
     let mut contract_input_struct = ContractInput {
+        journal_checkpoint,
         contract_input: contract_input.clone(),
         contract_input_size,
         env_chain_id,

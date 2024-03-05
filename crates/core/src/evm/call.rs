@@ -1,4 +1,8 @@
-use crate::{account::Account, evm::read_address_from_input, fluent_host::FluentHost};
+use crate::{
+    account::Account,
+    evm::{read_address_from_input, SpecDefault},
+    fluent_host::FluentHost,
+};
 use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
@@ -10,7 +14,7 @@ use fluentbase_types::ExitCode;
 use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
-    primitives::{Address, Bytecode, Bytes, ShanghaiSpec, B256},
+    primitives::{Address, Bytecode, Bytes, B256},
     BytecodeLocked,
     Contract,
     Interpreter,
@@ -20,44 +24,46 @@ use revm_interpreter::{
 #[no_mangle]
 pub fn _evm_call(
     gas_limit: u32,
-    address20_offset: *const u8,
-    value32_be_offset: *const u8,
+    callee_address20_offset: *const u8,
+    value32_offset: *const u8,
     args_offset: *const u8,
     args_size: u32,
     ret_offset: *mut u8,
     ret_size: u32,
 ) -> ExitCode {
-    let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_be_offset, 32) });
+    let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) });
     let is_static = ExecutionContext::contract_is_static();
     if is_static && value != U256::ZERO {
         return ExitCode::WriteProtection;
     }
 
-    let address = Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(address20_offset, 20) });
+    let callee_address =
+        Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
 
     let tx_caller_address =
         read_address_from_input(<ContractInput as IContractInput>::TxCaller::FIELD_OFFSET);
-    let account =
-        Account::new_from_jzkt(&fluentbase_types::Address::from_slice(address.as_slice()));
+    let callee_account = Account::new_from_jzkt(&fluentbase_types::Address::from_slice(
+        callee_address.as_slice(),
+    ));
 
-    let source_bytecode = account.load_source_bytecode();
+    let callee_source_bytecode = callee_account.load_source_bytecode();
     let input = Bytes::copy_from_slice(unsafe {
         &*ptr::slice_from_raw_parts(args_offset, args_size as usize)
     });
     let contract = Contract {
         input,
-        hash: B256::from_slice(account.source_code_hash.as_slice()),
+        hash: B256::from_slice(callee_account.source_code_hash.as_slice()),
         // TODO simplify
         bytecode: BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(Bytes::copy_from_slice(
-            source_bytecode.as_ref(),
+            callee_source_bytecode.as_ref(),
         ))))
         .unwrap(),
-        address: Address::new(account.address.into_array()),
+        address: Address::new(callee_account.address.into_array()),
         caller: Address::new(tx_caller_address.into_array()),
         value,
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
-    let instruction_table = make_instruction_table::<FluentHost, ShanghaiSpec>();
+    let instruction_table = make_instruction_table::<FluentHost, SpecDefault>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
     let interpreter_result = interpreter.run(shared_memory, &instruction_table, &mut host);

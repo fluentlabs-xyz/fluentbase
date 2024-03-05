@@ -37,7 +37,7 @@ use fluentbase_sdk::{
 };
 use revm_interpreter::primitives::ShanghaiSpec;
 
-type DefaultSpec = ShanghaiSpec;
+pub type SpecDefault = ShanghaiSpec;
 
 #[inline]
 pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {
@@ -70,7 +70,7 @@ fn read_balance(address: Address, value: &mut U256) {
 }
 
 #[inline(always)]
-fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
+pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
     use alloy_rlp::{Encodable, EMPTY_LIST_CODE, EMPTY_STRING_CODE};
     const MAX_LEN: usize = 1 + (1 + 20) + 9;
     let len = 22 + nonce.length();
@@ -85,7 +85,7 @@ fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
 }
 
 #[inline(always)]
-fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B256) -> Address {
+pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B256) -> Address {
     let mut bytes = [0; 85];
     bytes[0] = 0xff;
     bytes[1..21].copy_from_slice(deployer.as_slice());

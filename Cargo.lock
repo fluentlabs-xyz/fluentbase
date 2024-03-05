@@ -940,6 +940,23 @@ dependencies = [
  "hashbrown",
  "hex",
  "keccak-hash",
+ "paste",
+ "revm-interpreter",
+]
+
+[[package]]
+name = "fluentbase-core-api"
+version = "0.1.0"
+dependencies = [
+ "alloy-rlp",
+ "byteorder",
+ "fluentbase-codec",
+ "fluentbase-runtime",
+ "fluentbase-sdk",
+ "fluentbase-types",
+ "hashbrown",
+ "hex",
+ "keccak-hash",
  "revm-interpreter",
 ]
 
@@ -947,13 +964,20 @@ dependencies = [
 name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
+ "alloy-rlp",
+ "byteorder",
  "fluentbase-codec",
+ "fluentbase-core",
  "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-sdk",
+ "fluentbase-types",
+ "hashbrown",
  "hex",
  "hex-literal",
  "keccak-hash",
+ "paste",
+ "revm-interpreter",
  "rwasm-codegen",
  "serde_json",
  "wasmi",

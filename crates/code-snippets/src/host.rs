@@ -251,7 +251,7 @@ pub fn host_create_impl_v2<const IS_CREATE2: bool>() {
             GAS_LIMIT_HARDCODED,
         )
     };
-    if exit_code != fluentbase_core::ExitCode::Ok {
+    if !exit_code.is_ok() {
         stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, [0u8; U256_BYTES_COUNT as usize]);
         return;
     }

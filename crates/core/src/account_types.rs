@@ -12,7 +12,7 @@ pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 6;
 
 /// Compression flags for upper fields, we compress
 /// only code hash and balance fields (0b1100)
-pub(crate) const JZKT_COMPRESSION_FLAGS: u32 = 0b1100;
+pub const JZKT_COMPRESSION_FLAGS: u32 = 0b1100;
 
 /// EIP-170: Contract code size limit
 ///

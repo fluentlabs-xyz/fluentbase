@@ -1,7 +1,7 @@
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput},
+    evm::{ContractInput, IContractInput},
     LowLevelAPI,
     LowLevelSDK,
 };

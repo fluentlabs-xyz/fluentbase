@@ -169,7 +169,7 @@ impl Host for FluentHost {
             slot_value32.as_mut_ptr(),
             &mut is_cold,
         );
-        if exit_code != ExitCode::Ok {
+        if !exit_code.is_ok() {
             return None;
         }
 
