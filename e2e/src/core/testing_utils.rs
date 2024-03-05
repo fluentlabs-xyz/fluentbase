@@ -118,23 +118,21 @@ impl<'t, T, const IS_RUNTIME: bool> TestingContext<'_, T, IS_RUNTIME> {
         self
     }
 
-    // pub fn run_rwasm_with_evm_input(
-    //     &self,
-    //     // wasm_binary: &[u8],
-    //     evm_input: &[u8],
-    //     mut runtime_ctx: RuntimeContext<T>,
-    //     import_linker: &ImportLinker,
-    // ) -> ExecutionResult<T> {
-    //     // let rwasm_binary = wasm2rwasm(wasm_binary, false);
-    //     runtime_ctx
-    //         .with_state(STATE_MAIN)
-    //         .with_fuel_limit(10_000_000)
-    //         .with_input(evm_input.to_vec())
-    //         .with_catch_trap(true);
-    //     let mut runtime = Runtime::<T>::new(runtime_ctx, &import_linker).unwrap();
-    //     runtime.data_mut().clean_output();
-    //     runtime.call().unwrap()
-    // }
+    pub fn run_rwasm_with_evm_input<'t2>(
+        &self,
+        // wasm_binary: &[u8],
+        mut runtime_ctx: RuntimeContext<'t2, T>,
+        import_linker: &ImportLinker,
+    ) -> ExecutionResult<'t2, T> {
+        // let rwasm_binary = wasm2rwasm(wasm_binary, false);
+        runtime_ctx
+            .with_state(STATE_MAIN)
+            .with_fuel_limit(10_000_000)
+            .with_catch_trap(true);
+        let mut runtime = Runtime::new(runtime_ctx, &import_linker).unwrap();
+        runtime.data_mut().clean_output();
+        runtime.call().unwrap()
+    }
 }
 
 pub(crate) fn generate_address_original_impl(address: &Address, nonce: u64) -> Address {
