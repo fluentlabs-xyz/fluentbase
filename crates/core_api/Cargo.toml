@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-core"
+name = "fluentbase-core-api"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true
@@ -16,8 +16,10 @@ fluentbase-codec = { path = "../codec", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
-revm-interpreter = { workspace = true }
-paste = { workspace = true }
+#revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
+revm-interpreter = { path = "../../../../other/revm/crates/interpreter", default-features = false }
+#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
+#revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }

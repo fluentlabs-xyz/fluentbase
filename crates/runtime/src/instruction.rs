@@ -268,9 +268,9 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     JzktStore::register_handler(linker, store);
     JzktLoad::register_handler(linker, store);
     if IS_SOVEREIGN {
-        // JzktPreimageSize::register_linker::<T>(import_linker);
-        // JzktPreimageCopy::register_linker::<T>(import_linker);
-        // JzktUpdatePreimage::register_linker::<T>(import_linker);
+        JzktPreimageSize::register_handler(linker, store);
+        JzktPreimageCopy::register_handler(linker, store);
+        JzktUpdatePreimage::register_handler(linker, store);
     }
     RwasmTransact::register_handler(linker, store);
     RwasmCompile::register_handler(linker, store);

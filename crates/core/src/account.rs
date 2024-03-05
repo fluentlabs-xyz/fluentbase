@@ -158,7 +158,7 @@ impl Account {
         true
     }
 
-    pub fn write_to_jzkt(&self) {
+    pub fn get_fields(&self) -> AccountFields {
         let mut account_fields: AccountFields = Default::default();
         LittleEndian::write_u64(
             &mut account_fields[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize][..],
@@ -181,6 +181,12 @@ impl Account {
             &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
             self.source_code_size,
         );
+
+        account_fields
+    }
+
+    pub fn write_to_jzkt(&self) {
+        let mut account_fields = self.get_fields();
 
         LowLevelSDK::jzkt_update(
             self.address.into_word().as_ptr(),
@@ -231,7 +237,7 @@ impl Account {
             code.as_ptr(),
             code.len() as u32,
         );
-        assert!(r);
+        assert!(r, "account update_source_bytecode failed");
     }
 
     pub fn update_bytecode(&mut self, code: &Bytes) {
@@ -252,7 +258,7 @@ impl Account {
             code.as_ptr(),
             code.len() as u32,
         );
-        assert!(r);
+        assert!(r, "account update_bytecode failed");
     }
 
     pub fn checkpoint() -> AccountCheckpoint {

@@ -76,8 +76,8 @@ impl RwasmTransact {
         }
         // init shared runtime
         let import_linker = Runtime::<()>::new_shared_linker();
-        let mut ctx = RuntimeContext::new(code)
-            .with_input(input.to_vec())
+        let mut ctx = RuntimeContext::new(code);
+        ctx.with_input(input.to_vec())
             .with_is_static(is_static)
             .with_state(STATE_MAIN)
             .with_fuel_limit(fuel)
@@ -85,9 +85,9 @@ impl RwasmTransact {
             .with_account_db(account_db)
             .with_is_shared(true);
         if is_delegate {
-            ctx = ctx.with_caller(context.caller);
+            ctx.with_caller(context.caller);
         } else {
-            ctx = ctx.with_caller(context.address);
+            ctx.with_caller(context.address);
         }
         let execution_result = Runtime::<()>::run_with_context(ctx, &import_linker)
             .map_err(|_| ExitCode::TransactError)?;

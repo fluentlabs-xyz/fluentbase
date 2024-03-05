@@ -45,7 +45,8 @@ impl SysExec {
         _state: u32,
     ) -> Result<(Vec<u8>, u32), ExitCode> {
         let import_linker = Runtime::<()>::new_shared_linker();
-        let next_ctx = RuntimeContext::new(bytecode)
+        let mut next_ctx = RuntimeContext::new(bytecode);
+        next_ctx
             .with_input(input)
             .with_state(STATE_MAIN)
             .with_is_shared(true)

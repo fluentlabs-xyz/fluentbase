@@ -32,6 +32,10 @@ casey = "0.4.0"
 halo2curves = { git = "https://github.com/fluentlabs-xyz/halo2curves", branch = "0.3.1-derive-serde" }
 paste = "1.0"
 alloy-rlp = { version = "0.3.4", default-features = false }
+#revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
+revm-interpreter = { path = "../../other/revm/crates/interpreter", default-features = false }
+#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
+#revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
 
 [profile.bench]
 lto = "fat"

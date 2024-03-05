@@ -345,8 +345,9 @@ impl LowLevelAPI for LowLevelSDK {
 impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
         CONTEXT.with(|ctx| {
-            let ctx2 = ctx.take();
-            ctx.set(ctx2.with_input(input));
+            let mut ctx2 = ctx.take();
+            ctx2.with_input(input);
+            ctx.set(ctx2);
         });
     }
 
@@ -362,15 +363,17 @@ impl LowLevelSDK {
 
     pub fn with_test_state(state: u32) {
         CONTEXT.with(|ctx| {
-            let ctx2 = ctx.take();
-            ctx.set(ctx2.with_state(state));
+            let mut ctx2 = ctx.take();
+            ctx2.with_state(state);
+            ctx.set(ctx2);
         });
     }
 
     pub fn with_jzkt(v: Rc<RefCell<dyn IJournaledTrie>>) {
         CONTEXT.with(|ctx| {
-            let ctx2 = ctx.take();
-            ctx.set(ctx2.with_jzkt(v));
+            let mut ctx2 = ctx.take();
+            ctx2.with_jzkt(v);
+            ctx.set(ctx2);
         });
     }
 }

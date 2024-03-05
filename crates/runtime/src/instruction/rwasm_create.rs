@@ -79,8 +79,8 @@ impl RwasmCreate {
         // init shared runtime
         let import_linker = Runtime::<()>::new_shared_linker();
         let bytecode = Bytes::copy_from_slice(init_bytecode);
-        let ctx = RuntimeContext::new(bytecode)
-            .with_state(STATE_DEPLOY)
+        let mut ctx = RuntimeContext::new(bytecode);
+        ctx.with_state(STATE_DEPLOY)
             .with_caller(context.address)
             .with_address(dc_address)
             .with_account_db(account_db.clone())

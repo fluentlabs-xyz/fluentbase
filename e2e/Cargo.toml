@@ -11,10 +11,18 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-runtime = { path = "../crates/runtime" }
-fluentbase-sdk = { path = "../crates/sdk" }
+fluentbase-sdk = { path = "../crates/sdk", default-features = false, features = ["evm", "runtime"] }
 fluentbase-poseidon = { path = "../crates/poseidon" }
 fluentbase-codec = { path = "../crates/codec" }
+fluentbase-core = { path = "../crates/core" }
+fluentbase-types = { path = "../crates/types" }
 rwasm-codegen = { workspace = true }
+revm-interpreter = { workspace = true }
+
+byteorder = { workspace = true }
+alloy-rlp = { workspace = true }
+hashbrown = { workspace = true }
+paste = { workspace = true }
 wasmi = "0.31.2"
 
 [dev-dependencies]

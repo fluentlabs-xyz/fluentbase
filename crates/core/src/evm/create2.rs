@@ -1,7 +1,7 @@
 use crate::{
     account::Account,
     account_types::MAX_CODE_SIZE,
-    evm::{calc_create2_address, read_address_from_input, DefaultSpec},
+    evm::{calc_create2_address, read_address_from_input, SpecDefault},
     fluent_host::FluentHost,
 };
 use alloc::{alloc::alloc, boxed::Box};
@@ -24,7 +24,7 @@ use revm_interpreter::{
 
 #[no_mangle]
 pub fn _evm_create2(
-    value32_be_offset: *const u8,
+    value32_offset: *const u8,
     code_offset: *const u8,
     code_length: u32,
     salt32_offset: *const u8,
@@ -38,7 +38,7 @@ pub fn _evm_create2(
         return ExitCode::WriteProtection;
     }
     // read value input and contract address
-    let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_be_offset, 32) };
+    let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) };
     let salt32_slice = unsafe { &*ptr::slice_from_raw_parts(salt32_offset, 32) };
     let value = U256::from_be_slice(value32_slice);
     let tx_caller_address =
@@ -79,7 +79,7 @@ pub fn _evm_create2(
         ..Default::default()
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, false);
-    let instruction_table = make_instruction_table::<FluentHost, DefaultSpec>();
+    let instruction_table = make_instruction_table::<FluentHost, SpecDefault>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
     let interpreter_result = interpreter.run(shared_memory, &instruction_table, &mut host);

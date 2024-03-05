@@ -110,64 +110,68 @@ impl<'t, T> RuntimeContext<'t, T> {
         }
     }
 
-    pub fn with_func_type(mut self, func_type: FuncType) -> Self {
+    pub fn with_func_type(&mut self, func_type: FuncType) -> &mut Self {
         self.func_type = Some(func_type);
         self
     }
 
-    pub fn with_context(mut self, context: &'t mut T) -> Self {
+    pub fn with_context(&mut self, context: &'t mut T) -> &mut Self {
         self.context = Some(context);
         self
     }
 
-    pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
+    pub fn with_input(&mut self, input_data: Vec<u8>) -> &mut Self {
         self.input = input_data;
         self
     }
 
-    pub fn with_is_static(mut self, is_static: bool) -> Self {
+    pub fn with_is_static(&mut self, is_static: bool) -> &mut Self {
         self.is_static = is_static;
         self
     }
 
-    pub fn with_state(mut self, state: u32) -> Self {
+    pub fn with_state(&mut self, state: u32) -> &mut Self {
         self.state = state;
         self
     }
 
-    pub fn with_is_shared(mut self, is_shared: bool) -> Self {
+    pub fn with_is_shared(&mut self, is_shared: bool) -> &mut Self {
         self.is_shared = is_shared;
         self
     }
 
-    pub fn with_catch_trap(mut self, catch_trap: bool) -> Self {
+    pub fn with_catch_trap(&mut self, catch_trap: bool) -> &mut Self {
         self.catch_trap = catch_trap;
         self
     }
 
-    pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
+    pub fn with_fuel_limit(&mut self, fuel_limit: u32) -> &mut Self {
         self.fuel_limit = fuel_limit;
         self
     }
 
-    pub fn with_caller(mut self, caller: Address) -> Self {
+    pub fn with_caller(&mut self, caller: Address) -> &mut Self {
         self.caller = caller;
         self
     }
 
-    pub fn with_address(mut self, address: Address) -> Self {
+    pub fn with_address(&mut self, address: Address) -> &mut Self {
         self.address = address;
         self
     }
 
-    pub fn with_account_db(mut self, account: Rc<RefCell<dyn AccountDb>>) -> Self {
+    pub fn with_account_db(&mut self, account: Rc<RefCell<dyn AccountDb>>) -> &mut Self {
         self.account_db = Some(account);
         self
     }
 
-    pub fn with_jzkt(mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> Self {
+    pub fn with_jzkt(&mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> &mut Self {
         self.jzkt = Some(jzkt);
         self
+    }
+
+    pub fn jzkt(&mut self) -> Option<Rc<RefCell<dyn IJournaledTrie>>> {
+        self.jzkt.clone()
     }
 
     pub fn take_context<F>(&mut self, func: F)
