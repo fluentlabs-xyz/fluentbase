@@ -251,16 +251,16 @@ impl<'t, T> ExecutionResult<'t, T> {
 }
 
 #[allow(dead_code)]
-pub struct Runtime<'t, T> {
+pub struct Runtime<'t1, T> {
     engine: Engine,
     bytecode: InstructionSet,
     module: Module,
-    linker: Linker<RuntimeContext<'t, T>>,
-    store: Store<RuntimeContext<'t, T>>,
+    linker: Linker<RuntimeContext<'t1, T>>,
+    store: Store<RuntimeContext<'t1, T>>,
     instance: Option<Instance>,
 }
 
-impl<'t, T> Runtime<'t, T> {
+impl<'t1, T> Runtime<'t1, T> {
     pub fn new_sovereign_linker() -> ImportLinker {
         let mut import_linker = ImportLinker::default();
         runtime_register_sovereign_linkers::<T>(&mut import_linker);
@@ -274,9 +274,9 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn run_with_context(
-        mut runtime_context: RuntimeContext<'t, T>,
+        mut runtime_context: RuntimeContext<'t1, T>,
         import_linker: &ImportLinker,
-    ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
+    ) -> Result<ExecutionResult<'t1, T>, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
@@ -293,7 +293,7 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn new(
-        runtime_context: RuntimeContext<'t, T>,
+        runtime_context: RuntimeContext<'t1, T>,
         import_linker: &ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let mut result = Self::new_uninit(runtime_context, import_linker)?;
@@ -303,7 +303,7 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn new_uninit(
-        runtime_context: RuntimeContext<'t, T>,
+        runtime_context: RuntimeContext<'t1, T>,
         import_linker: &ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
@@ -363,7 +363,7 @@ impl<'t, T> Runtime<'t, T> {
         Ok(())
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult<'t, T>, RuntimeError> {
+    pub fn call(&mut self) -> Result<ExecutionResult<'t1, T>, RuntimeError> {
         let func = self
             .instance
             .unwrap()
@@ -393,13 +393,13 @@ impl<'t, T> Runtime<'t, T> {
         &mut self,
         module: &'static str,
         name: &'static str,
-        func: impl IntoFunc<RuntimeContext<'t, T>, Params, Results>,
+        func: impl IntoFunc<RuntimeContext<'t1, T>, Params, Results>,
     ) {
         self.linker
             .define(
                 module,
                 name,
-                Func::wrap::<RuntimeContext<'t, T>, Params, Results>(
+                Func::wrap::<RuntimeContext<'t1, T>, Params, Results>(
                     self.store.as_context_mut(),
                     func,
                 ),
@@ -436,11 +436,11 @@ impl<'t, T> Runtime<'t, T> {
         ExitCode::UnknownError as i32
     }
 
-    pub fn data(&self) -> &RuntimeContext<'t, T> {
+    pub fn data(&self) -> &RuntimeContext<'t1, T> {
         self.store.data()
     }
 
-    pub fn data_mut(&mut self) -> &mut RuntimeContext<'t, T> {
+    pub fn data_mut(&mut self) -> &mut RuntimeContext<'t1, T> {
         self.store.data_mut()
     }
 }

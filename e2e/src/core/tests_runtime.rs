@@ -71,16 +71,7 @@ fn test_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    // TODO fix
-    // let output = test_ctx.run_rwasm_with_evm_input(&core_input_vec, runtime_ctx, &import_linker);
-
-    runtime_ctx
-        .with_state(STATE_MAIN)
-        .with_fuel_limit(10_000_000)
-        .with_catch_trap(true);
-    let mut runtime = Runtime::<()>::new(runtime_ctx, &import_linker).unwrap();
-    runtime.data_mut().clean_output();
-    let output = runtime.call().unwrap();
+    let mut output = test_ctx.run_rwasm_with_evm_input(runtime_ctx, &import_linker);
 
     assert_eq!(output.data().exit_code(), 0);
     assert_eq!(&expected_contract_address.to_vec(), output.data().output(),);
