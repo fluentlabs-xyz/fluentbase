@@ -13,6 +13,7 @@ categories.workspace = true
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
+fluentbase-core-api = { path = "../core-api", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }

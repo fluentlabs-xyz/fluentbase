@@ -27,7 +27,7 @@ pub fn _evm_create(
     value32_offset: *const u8,
     code_offset: *const u8,
     code_length: u32,
-    output20_offset: *mut u8,
+    out_address20_offset: *mut u8,
     gas_limit: u32,
 ) -> ExitCode {
     // TODO: "gas calculations"
@@ -107,7 +107,7 @@ pub fn _evm_create(
     };
     LowLevelSDK::sys_read_output(bytecode, 0, bytecode_length);
 
-    unsafe { ptr::copy(deployed_contract_address.as_ptr(), output20_offset, 20) }
+    unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 
     ExitCode::Ok
 }
