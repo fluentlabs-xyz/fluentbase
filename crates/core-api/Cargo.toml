@@ -13,6 +13,7 @@ categories.workspace = true
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
+fluentbase-core-macros = { path = "../core-macros", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
@@ -20,6 +21,7 @@ hashbrown = { workspace = true }
 revm-interpreter = { path = "../../../../other/revm/crates/interpreter", default-features = false }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
 #revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
+paste = { workspace = true }
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
@@ -39,3 +41,4 @@ std = [
     "alloy-rlp/std",
 ]
 runtime = []
+debug = ["fluentbase-core-macros/debug"]

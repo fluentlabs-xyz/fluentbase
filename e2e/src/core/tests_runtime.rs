@@ -4,14 +4,16 @@ use crate::{
     test_helpers::wasm2rwasm,
 };
 use fluentbase_codec::Encoder;
-use fluentbase_core::{account::Account, api::CREATE_METHOD_ID, evm::calc_create_address};
+use fluentbase_core::{account::Account, evm::calc_create_address};
+use fluentbase_core_api::{
+    api::CoreInput,
+    bindings::{EvmCreateMethodInput, EVM_CREATE_METHOD_ID},
+};
 use fluentbase_runtime::{
     types::{address, Address, Bytes, B256, U256},
     Runtime,
     RuntimeContext,
 };
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::STATE_MAIN;
 use hex_literal::hex;
 use keccak_hash::keccak;
 
@@ -37,13 +39,12 @@ fn test_create() {
 
     let value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
-    let evm_create_method_input = fluentbase_core::CreateMethodInput::new(
-        value.0,
-        evm_contract_input_bytes.to_vec(),
-        gas_limit,
+    let evm_create_method_input =
+        EvmCreateMethodInput::new(value.0, evm_contract_input_bytes.to_vec(), gas_limit);
+    let core_input = CoreInput::new(
+        EVM_CREATE_METHOD_ID,
+        evm_create_method_input.encode_to_vec(0),
     );
-    let core_input =
-        fluentbase_core::CoreInput::new(CREATE_METHOD_ID, evm_create_method_input.encode_to_vec(0));
     let core_input_vec = core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;

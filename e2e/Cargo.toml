@@ -16,6 +16,7 @@ fluentbase-poseidon = { path = "../crates/poseidon" }
 fluentbase-codec = { path = "../crates/codec" }
 fluentbase-core = { path = "../crates/core" }
 fluentbase-types = { path = "../crates/types" }
+fluentbase-core-api = { path = "../crates/core-api" }
 rwasm-codegen = { workspace = true }
 revm-interpreter = { workspace = true }
 
