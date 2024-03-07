@@ -1,3 +1,5 @@
+// use hex_literal::hex;
+
 use hex_literal::hex;
 
 // // SPDX-License-Identifier: MIT

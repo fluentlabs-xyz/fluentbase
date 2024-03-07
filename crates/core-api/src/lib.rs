@@ -9,5 +9,6 @@ pub use fluentbase_types::ExitCode;
 
 pub mod api;
 pub mod bindings;
+
 #[cfg(test)]
 mod tests;

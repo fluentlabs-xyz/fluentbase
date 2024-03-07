@@ -15,6 +15,4 @@ pub mod account_types;
 mod contract_entry;
 pub mod evm;
 pub mod fluent_host;
-#[cfg(test)]
-mod testing_utils;
 mod utils;

@@ -11,6 +11,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{convert::TryInto, fmt::Debug, hash::Hash};
+use crypto_hashes::md2::{Digest, Md2};
 use proc_macro::TokenStream;
 use syn::{
     punctuated::Punctuated,
@@ -25,7 +26,7 @@ use syn::{
 };
 
 #[proc_macro]
-pub fn derive_codec_structs_from_extern_bindings(tokens: TokenStream) -> TokenStream {
+pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
     let foreign_mod_ast = syn::parse::<ItemForeignMod>(tokens.clone()).unwrap();
     assert_eq!("C", foreign_mod_ast.clone().abi.name.unwrap().value());
 
@@ -69,10 +70,10 @@ pub fn derive_codec_structs_from_extern_bindings(tokens: TokenStream) -> TokenSt
                     let struct_ident = format!("{}{}", struct_ident_prefix, "MethodInput");
                     struct_ident_prefix_to_const_ident
                         .push((struct_ident_prefix.clone(), const_ident.clone()));
-                    let mut h = keccak_hash::H256::zero();
-                    keccak_hash::keccak_256(struct_ident.as_bytes(), h.as_bytes_mut());
+                    let mut h = Md2::default();
+                    h.update(struct_ident.clone());
                     let mut dst = [0u8; 4];
-                    dst.copy_from_slice(h[0..4].as_ref());
+                    dst.copy_from_slice(h.finalize().as_slice()[0..4].as_ref());
                     let mut method_id: u32 = u32::from_be_bytes(dst);
                     const_decls.push_str(
                         format!("pub const {const_ident}: u32 = {method_id};\n").as_str(),
@@ -98,7 +99,11 @@ pub fn derive_codec_structs_from_extern_bindings(tokens: TokenStream) -> TokenSt
                                             if !(field_ident.ends_with("_len")
                                                 && source_field_idents.contains(
                                                     &field_ident.replace("_len", "_offset"),
-                                                ))
+                                                )
+                                                || field_ident.ends_with("_size")
+                                                    && source_field_idents.contains(
+                                                        &field_ident.replace("_size", "_offset"),
+                                                    ))
                                             {
                                                 field_name_and_type
                                                     .push((field_ident, variable_ident));

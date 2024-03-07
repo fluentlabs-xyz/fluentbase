@@ -17,7 +17,7 @@ DEST_NAME=core
 .PHONY: build
 build:
 	mkdir -p "${OUT_FOLDER}"
-	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --release --target=wasm32-unknown-unknown
+	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --release --target=wasm32-unknown-unknown --features=contract_entry
 	cp ../../target/${TARGET}/${PROFILE}/${SOURCE_NAME}.wasm ./${OUT_FOLDER}/${DEST_NAME}.wasm
 	wasm2wat ./${OUT_FOLDER}/${DEST_NAME}.wasm > ./${OUT_FOLDER}/${DEST_NAME}.wat
 	ls -alh ${OUT_FOLDER}
