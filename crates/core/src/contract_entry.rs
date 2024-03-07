@@ -6,6 +6,7 @@ use fluentbase_core_api::{
     bindings::{EVMMethodName, EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput},
 };
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use revm_interpreter::primitives::hex;
 
 macro_rules! decode_input {
     ($core_input: ident, $method_input: ident) => {{

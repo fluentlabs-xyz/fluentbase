@@ -210,19 +210,28 @@ fn _evm_call_after_create_test() {
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args_data = Vec::from(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
+    let mut args = Vec::from(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
         gas_limit,
         created_address.as_ptr(),
         call_value.to_be_bytes::<32>().as_ptr(),
-        args_data.as_ptr(),
-        args_data.len() as u32,
+        args.as_ptr(),
+        args.len() as u32,
         return_data.as_mut_ptr(),
         return_data.len() as u32,
     );
     assert!(exit_code.is_ok());
+    assert_eq!(
+        return_data.as_slice(),
+        &[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 11, 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
 }
 
 #[test]
@@ -296,6 +305,15 @@ fn _evm_call_after_create2_test() {
         return_data.len() as u32,
     );
     assert!(exit_code.is_ok());
+    assert_eq!(
+        return_data.as_slice(),
+        &[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 11, 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
 }
 
 #[test]
