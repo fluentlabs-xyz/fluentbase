@@ -22,6 +22,7 @@ use fluentbase_runtime::{
     Runtime,
     RuntimeContext,
 };
+use fluentbase_types::ExitCode;
 use hex_literal::hex;
 use keccak_hash::keccak;
 
@@ -67,7 +68,6 @@ fn test_create() {
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
         .set_contract_input_size(evm_create_core_input_vec.len() as u32)
         .set_env_chain_id(env_chain_id)
-        .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
         .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
@@ -107,7 +107,7 @@ fn test_call_after_create() {
     let evm_contract_input_bytes = CONTRACT_BYTECODE1;
 
     let create_value = B256::left_padding_from(&hex!("1000"));
-    let call_value = B256::left_padding_from(&hex!("1000"));
+    let call_value = B256::left_padding_from(&hex!("00"));
     let gas_limit: u32 = 10_000_000;
     let evm_create_method_input =
         EvmCreateMethodInput::new(create_value.0, evm_contract_input_bytes.to_vec(), gas_limit);
@@ -123,6 +123,7 @@ fn test_call_after_create() {
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
     let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
+    let jzkt = runtime_ctx.jzkt().clone();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -130,7 +131,6 @@ fn test_call_after_create() {
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
         .set_contract_input_size(evm_create_core_input_vec.len() as u32)
         .set_env_chain_id(env_chain_id)
-        .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
         .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
@@ -142,9 +142,8 @@ fn test_call_after_create() {
         .set_contract_is_static(contract_is_static);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
     let mut output = test_ctx.run_rwasm_with_evm_input(runtime_ctx, &import_linker);
+    assert_eq!(output.data().exit_code(), ExitCode::Ok.into_i32());
     let contract_address = Address::from_slice(output.data().output());
-
-    assert_eq!(output.data().exit_code(), 0);
     assert_eq!(
         expected_contract_address.as_slice(),
         contract_address.as_slice()
@@ -161,23 +160,27 @@ fn test_call_after_create() {
     let evm_call_core_input_vec = evm_call_core_input.encode_to_vec(0);
 
     let mut runtime_ctx = RuntimeContext::new(rwasm_binary);
+    runtime_ctx.with_jzkt(jzkt.unwrap());
     test_ctx
         .contract_input_wrapper
         .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
-        .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-        .set_contract_input_size(evm_create_core_input_vec.len() as u32)
-        .set_env_chain_id(env_chain_id)
-        .set_contract_address(expected_contract_address)
-        .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
-        .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
-        .set_block_coinbase(block_coinbase)
-        .set_tx_caller(caller_address)
+        .reset_contract_input()
+        .set_contract_input(Bytes::copy_from_slice(&evm_call_core_input_vec))
+        .reset_contract_input_size()
+        .set_contract_input_size(evm_call_core_input_vec.len() as u32)
+        .set_contract_address(contract_address)
         .set_contract_is_static(contract_is_static);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
     let mut output = test_ctx.run_rwasm_with_evm_input(runtime_ctx, &import_linker);
-    let contract_address = Address::from_slice(output.data().output());
+    assert_eq!(output.data().exit_code(), ExitCode::Ok.into_i32());
+    let call_output = output.data().output();
+    assert_eq!(
+        call_output,
+        &[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 11, 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
 }
