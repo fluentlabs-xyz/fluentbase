@@ -1,4 +1,3 @@
-use crate::test_helpers::wasm2rwasm;
 use alloc::{rc::Rc, vec};
 use core::cell::RefCell;
 use fluentbase_codec::Encoder;
@@ -120,11 +119,9 @@ impl<'t, T, const IS_RUNTIME: bool> TestingContext<'_, T, IS_RUNTIME> {
 
     pub fn run_rwasm_with_evm_input<'t2>(
         &self,
-        // wasm_binary: &[u8],
         mut runtime_ctx: RuntimeContext<'t2, T>,
         import_linker: &ImportLinker,
     ) -> ExecutionResult<'t2, T> {
-        // let rwasm_binary = wasm2rwasm(wasm_binary, false);
         runtime_ctx
             .with_state(STATE_MAIN)
             .with_fuel_limit(10_000_000)

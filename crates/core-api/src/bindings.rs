@@ -1,6 +1,6 @@
-use fluentbase_core_macros::derive_codec_structs_from_extern_bindings;
+use fluentbase_core_macros::derive_helpers_and_structs;
 
-derive_codec_structs_from_extern_bindings! {
+derive_helpers_and_structs! {
     extern "C" {
         fn _evm_create(
             value32_offset: *const u8,
