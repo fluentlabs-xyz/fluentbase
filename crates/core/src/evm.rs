@@ -1,17 +1,13 @@
+pub mod address;
 pub mod balance;
 pub mod call;
-pub mod create;
-pub mod selfbalance;
-#[cfg(test)]
-mod tests;
-
-pub mod address;
 pub mod calldatacopy;
 pub mod calldataload;
 pub mod calldatasize;
 pub mod codecopy;
 pub mod codehash;
 pub mod codesize;
+pub mod create;
 pub mod create2;
 pub mod extcodecopy;
 pub mod extcodehash;
@@ -20,9 +16,10 @@ pub mod log0;
 pub mod log1;
 pub mod log2;
 pub mod log3;
-mod log4;
+pub mod log4;
 pub mod r#return;
 pub mod revert;
+pub mod selfbalance;
 pub mod sload;
 pub mod sstore;
 

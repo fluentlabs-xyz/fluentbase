@@ -114,20 +114,20 @@ impl Account {
     }
 
     #[inline]
-    pub fn jzkt_get_source_code_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-            buffer32_le_offset,
-        );
-    }
-
-    #[inline]
     pub fn jzkt_get_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_CODE_HASH_FIELD,
             buffer32_offset,
+        );
+    }
+
+    #[inline]
+    pub fn jzkt_get_source_code_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
+        LowLevelSDK::jzkt_get(
+            address32_offset,
+            JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
+            buffer32_le_offset,
         );
     }
 

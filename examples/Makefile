@@ -1,4 +1,4 @@
-FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack cairo contract_input_check_recode
+FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack cairo contract_input_check_recode evm_call_from_wasm
 
 all: $(FILES) $(MANUAL)
 

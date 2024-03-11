@@ -7,6 +7,7 @@ edition = "2021"
 fluentbase-codec = { path = "../crates/codec", default-features = false }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../crates/types", default-features = false }
+fluentbase-core = { path = "../crates/core", default-features = false }
 rwasm-codegen = { workspace = true, default-features = false }
 #revm = { version = "3.3.0", default-features = false }
 #revm-primitives = { version = "1.1.2", default-features = false }
@@ -49,6 +50,7 @@ poseidon = []
 rwasm = []
 secp256k1 = []
 stack = []
+evm_call_from_wasm = []
 cairo = [
     "fluentbase-sdk/std",
     "dep:cairo-platinum-prover",

@@ -28,7 +28,7 @@ keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [features]
 default = []
@@ -39,4 +39,5 @@ std = [
     "alloy-rlp/std",
 ]
 runtime = []
-contract_entry = []
+evm_contract_entry = []
+evm_loader_entry = []

@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, LittleEndian};
+use paste::paste;
 
 pub trait WritableBuffer {
     fn write_i8(&mut self, field_offset: usize, value: i8) -> usize;
@@ -14,10 +15,12 @@ pub trait WritableBuffer {
 }
 
 macro_rules! encode_le_int {
-    ($typ:ty, $write_fn:ident) => {
-        fn $write_fn(&mut self, field_offset: usize, value: $typ) -> usize {
-            LittleEndian::$write_fn(&mut self.buffer[field_offset..], value);
-            core::mem::size_of::<$typ>()
+    ($typ:ty) => {
+        paste! {
+            fn [<write_ $typ>](&mut self, field_offset: usize, value: $typ) -> usize {
+                LittleEndian::[<write_ $typ>](&mut self.buffer[field_offset..], value);
+                core::mem::size_of::<$typ>()
+            }
         }
     };
 }
@@ -49,7 +52,7 @@ impl<const N: usize> FixedEncoder<N> {
 
     #[allow(dead_code)]
     pub fn finalize(self) -> ([u8; N], usize) {
-        (self.buffer, self.header_length + self.body_length)
+        (self.buffer, self.len())
     }
 }
 
@@ -63,15 +66,15 @@ impl<const N: usize> WritableBuffer for FixedEncoder<N> {
         1
     }
 
-    encode_le_int!(u16, write_u16);
-    encode_le_int!(i16, write_i16);
-    encode_le_int!(u32, write_u32);
-    encode_le_int!(i32, write_i32);
-    encode_le_int!(u64, write_u64);
-    encode_le_int!(i64, write_i64);
+    encode_le_int!(u16);
+    encode_le_int!(i16);
+    encode_le_int!(u32);
+    encode_le_int!(i32);
+    encode_le_int!(u64);
+    encode_le_int!(i64);
 
     fn write_bytes(&mut self, field_offset: usize, bytes: &[u8]) -> usize {
-        let data_offset = self.header_length + self.body_length;
+        let data_offset = self.len();
         let data_length = bytes.len();
         // write header with data offset and length
         self.write_u32(field_offset + 0, data_offset as u32);
@@ -110,12 +113,12 @@ impl WritableBuffer for BufferEncoder {
         1
     }
 
-    encode_le_int!(u16, write_u16);
-    encode_le_int!(i16, write_i16);
-    encode_le_int!(u32, write_u32);
-    encode_le_int!(i32, write_i32);
-    encode_le_int!(u64, write_u64);
-    encode_le_int!(i64, write_i64);
+    encode_le_int!(u16);
+    encode_le_int!(i16);
+    encode_le_int!(u32);
+    encode_le_int!(i32);
+    encode_le_int!(u64);
+    encode_le_int!(i64);
 
     fn write_bytes(&mut self, field_offset: usize, bytes: &[u8]) -> usize {
         let data_offset = self.buffer.len();
@@ -135,9 +138,11 @@ pub struct BufferDecoder<'a> {
 }
 
 macro_rules! decode_le_int {
-    ($typ:ty, $fn_name:ident) => {
-        pub fn $fn_name(&mut self, field_offset: usize) -> $typ {
-            LittleEndian::$fn_name(&self.buffer[field_offset..])
+    ($typ:ty) => {
+        paste! {
+            pub fn [<read_ $typ>](&self, field_offset: usize) -> $typ {
+                LittleEndian::[<read_ $typ>](&self.buffer[field_offset..])
+            }
         }
     };
 }
@@ -154,30 +159,28 @@ impl<'a> BufferDecoder<'a> {
         self.buffer[field_offset]
     }
 
-    decode_le_int!(i16, read_i16);
-    decode_le_int!(u16, read_u16);
-    decode_le_int!(i32, read_i32);
-    decode_le_int!(u32, read_u32);
-    decode_le_int!(i64, read_i64);
-    decode_le_int!(u64, read_u64);
+    decode_le_int!(i16);
+    decode_le_int!(u16);
+    decode_le_int!(i32);
+    decode_le_int!(u32);
+    decode_le_int!(i64);
+    decode_le_int!(u64);
 
-    pub fn read_bytes_header(&mut self, field_offset: usize) -> (usize, usize) {
+    pub fn read_bytes_header(&self, field_offset: usize) -> (usize, usize) {
         let bytes_offset = self.read_u32(field_offset + 0) as usize;
         let bytes_length = self.read_u32(field_offset + 4) as usize;
         (bytes_offset, bytes_length)
     }
 
-    pub fn read_bytes(&mut self, field_offset: usize) -> &[u8] {
+    pub fn read_bytes(&self, field_offset: usize) -> &[u8] {
         let (bytes_offset, bytes_length) = self.read_bytes_header(field_offset);
         &self.buffer[bytes_offset..(bytes_offset + bytes_length)]
     }
 
-    pub fn read_bytes2(&mut self, field1_offset: usize, field2_offset: usize) -> (&[u8], &[u8]) {
-        let (bytes1_offset, bytes1_length) = self.read_bytes_header(field1_offset);
-        let (bytes2_offset, bytes2_length) = self.read_bytes_header(field2_offset);
+    pub fn read_bytes2(&self, field1_offset: usize, field2_offset: usize) -> (&[u8], &[u8]) {
         (
-            &self.buffer[bytes1_offset..(bytes1_offset + bytes1_length)],
-            &self.buffer[bytes2_offset..(bytes2_offset + bytes2_length)],
+            self.read_bytes(field1_offset),
+            self.read_bytes(field2_offset),
         )
     }
 }

@@ -1164,6 +1164,7 @@ dependencies = [
  "bincode 2.0.0-rc.2",
  "cairo-platinum-prover",
  "fluentbase-codec",
+ "fluentbase-core",
  "fluentbase-sdk",
  "fluentbase-types",
  "hashbrown",

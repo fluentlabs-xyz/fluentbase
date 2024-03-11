@@ -1,5 +1,4 @@
 use proc_macro::TokenStream;
-use quote::quote;
 use syn::{self, Data, Fields};
 
 fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {

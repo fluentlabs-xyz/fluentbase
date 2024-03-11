@@ -52,6 +52,9 @@ impl ExitCode {
     pub fn is_ok(&self) -> bool {
         *self == Self::Ok
     }
+    pub fn is_not_ok(&self) -> bool {
+        *self != Self::Ok
+    }
 
     pub fn into_i32(self) -> i32 {
         self as i32

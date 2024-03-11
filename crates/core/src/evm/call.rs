@@ -47,9 +47,7 @@ pub fn _evm_call(
     ));
 
     let callee_source_bytecode = callee_account.load_source_bytecode();
-    let input = Bytes::copy_from_slice(unsafe {
-        &*ptr::slice_from_raw_parts(args_offset, args_size as usize)
-    });
+    let input = unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) }.into();
     let contract = Contract {
         input,
         hash: B256::from_slice(callee_account.source_code_hash.as_slice()),

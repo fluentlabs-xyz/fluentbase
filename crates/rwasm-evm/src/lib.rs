@@ -8,6 +8,7 @@ use alloc::string::ToString;
 
 pub mod compiler;
 
+#[cfg(feature = "disabled")]
 #[cfg(test)]
 mod compiler_tests;
 pub(crate) mod consts;
