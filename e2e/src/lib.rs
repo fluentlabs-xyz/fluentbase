@@ -1,5 +1,5 @@
 extern crate alloc;
-mod assets;
+pub mod assets;
 mod core;
 mod test_helpers;
 #[cfg(test)]

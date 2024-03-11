@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
-use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
-use paste;
+use fluentbase_codec::define_codec_struct;
 
 define_codec_struct! {
     pub struct CoreInput {

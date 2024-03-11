@@ -3,11 +3,11 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 pub trait Encoder<T: Sized> {
+    const HEADER_SIZE: usize;
+
     fn header_size(&self) -> usize {
         Self::HEADER_SIZE
     }
-
-    const HEADER_SIZE: usize;
 
     fn encode_to_fixed<const N: usize>(&self, field_offset: usize) -> ([u8; N], usize) {
         let mut buffer_encoder = FixedEncoder::<N>::new(Self::HEADER_SIZE);
@@ -49,7 +49,7 @@ impl<T: Sized + Encoder<T>, const FIELD_OFFSET: usize> FieldEncoder<T, FIELD_OFF
         result: &mut T,
     ) -> (usize, usize) {
         let mut buffer_decoder = BufferDecoder::new(buffer);
-        <T as Encoder<T>>::decode_header(&mut buffer_decoder, field_offset, result)
+        T::decode_header(&mut buffer_decoder, field_offset, result)
     }
 
     pub fn decode_field_body(buffer: &[u8], result: &mut T) {
@@ -58,6 +58,6 @@ impl<T: Sized + Encoder<T>, const FIELD_OFFSET: usize> FieldEncoder<T, FIELD_OFF
 
     pub fn decode_field_body_at(buffer: &[u8], field_offset: usize, result: &mut T) {
         let mut buffer_decoder = BufferDecoder::new(buffer);
-        <T as Encoder<T>>::decode_body(&mut buffer_decoder, field_offset, result)
+        T::decode_body(&mut buffer_decoder, field_offset, result)
     }
 }

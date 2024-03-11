@@ -14,7 +14,7 @@ use fluentbase_sdk::{
     evm::{ContractInput, JournalCheckpoint},
     LowLevelSDK,
 };
-use fluentbase_types::{Address, Bytes, InMemoryAccountDb, STATE_MAIN, U256};
+use fluentbase_types::{Address, Bytes, InMemoryAccountDb, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
 use paste::paste;
@@ -66,8 +66,8 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
         let journal = JournaledTrie::new(storage);
         let journal_ref = Rc::new(RefCell::new(journal));
         if IS_RUNTIME {
-            assert!(runtime_ctx.is_some());
-            runtime_ctx.map(|v| v.with_jzkt(journal_ref.clone()));
+            let runtime_ctx = runtime_ctx.unwrap();
+            runtime_ctx.with_jzkt(journal_ref.clone());
         } else {
             LowLevelSDK::with_jzkt(journal_ref.clone());
         }
@@ -76,39 +76,25 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
     }
 
     pub fn apply_ctx(&mut self, runtime_ctx: Option<&mut RuntimeContext<'_, T>>) -> &mut Self {
+        let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
         if IS_RUNTIME {
-            let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
-            assert!(runtime_ctx.is_some());
-            if let Some(runtime_ctx) = runtime_ctx {
-                let jzkt = runtime_ctx.jzkt();
-                assert!(jzkt.is_some());
-                let jzkt = jzkt.unwrap();
-                for (address, account) in &self.accounts {
-                    jzkt.borrow_mut().update(
-                        &address.into_word(),
-                        &account.get_fields().to_vec(),
-                        JZKT_COMPRESSION_FLAGS,
-                    )
-                }
-                runtime_ctx.with_input(contract_input_vec);
+            let runtime_ctx = runtime_ctx.unwrap();
+            let jzkt = runtime_ctx.jzkt().unwrap();
+            for (address, account) in &self.accounts {
+                jzkt.borrow_mut().update(
+                    &address.into_word(),
+                    &account.get_fields().to_vec(),
+                    JZKT_COMPRESSION_FLAGS,
+                )
             }
-            // runtime_ctx.map(|rc| {
-            //
-            //     let jzkt = rc.jzkt();
-            //     assert!(jzkt.is_some());
-            //     let jzkt = jzkt.unwrap();
-            //     for (address, account) in &self.accounts {
-            //         jzkt.borrow_mut().update(
-            //             &address.into_word(),
-            //             &account.get_fields().to_vec(),
-            //             JZKT_COMPRESSION_FLAGS,
-            //         )
-            //     }
-            // });
+            runtime_ctx.with_input(contract_input_vec);
         } else {
-            let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
             for (_address, account) in &self.accounts {
                 account.write_to_jzkt();
+            }
+            if runtime_ctx.is_some() {
+                let runtime_ctx = runtime_ctx.unwrap();
+                LowLevelSDK::with_jzkt(runtime_ctx.jzkt().unwrap());
             }
             LowLevelSDK::with_test_input(contract_input_vec);
         }
@@ -116,11 +102,11 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
         self
     }
 
-    pub fn run_rwasm_with_evm_input<'t1>(
+    pub fn run_rwasm_with_input<'t>(
         &self,
-        mut runtime_ctx: RuntimeContext<'t1, T>,
+        mut runtime_ctx: RuntimeContext<'t, T>,
         import_linker: &ImportLinker,
-    ) -> ExecutionResult<'t1, T> {
+    ) -> ExecutionResult<'t, T> {
         runtime_ctx
             .with_state(STATE_MAIN)
             .with_fuel_limit(10_000_000)
@@ -150,7 +136,7 @@ macro_rules! impl_once_setter {
         paste! {
             pub fn [<set_ $field_name>](&mut self, v: Option<$field_type>) -> &mut Self {
                 if self.0.$field_name != Option::default() {
-                    panic!("cannot change '{}' field value from non-default value. use reset fn", stringify!($field_name))
+                    panic!("updating '{}' field is not allowed when it contains non-default value. use reset before updating", stringify!($field_name));
                 }
                 self.0.$field_name = v;
 
@@ -167,7 +153,7 @@ macro_rules! impl_once_setter {
         paste! {
             pub fn [<set_ $field_name>](&mut self, v: $field_type) -> &mut Self {
                 if self.0.$field_name != $field_type::default() {
-                    panic!("cannot change '{}' field value from non-default value. use reset fn", stringify!($field_name))
+                    panic!("updating '{}' field is not allowed when it contains non-default value. use reset before updating", stringify!($field_name));
                 }
                 self.0.$field_name = v;
 

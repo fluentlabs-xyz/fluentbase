@@ -139,7 +139,7 @@ impl LowLevelAPI for LowLevelSDK {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel_offset: *mut u32,
+        fuel_offset: *const u32,
         state: u32,
     ) -> i32 {
         let bytecode =
@@ -198,7 +198,7 @@ impl LowLevelAPI for LowLevelSDK {
     fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         let values =
-            unsafe { &*ptr::slice_from_raw_parts(vals32_ptr, vals32_len as usize) }.to_vec();
+            unsafe { &*ptr::slice_from_raw_parts(vals32_ptr, vals32_len as usize / 32) }.to_vec();
         with_context_mut(|ctx| JzktUpdate::fn_impl(ctx, key, flags, values.clone()).unwrap());
     }
     fn jzkt_update_preimage(

@@ -170,6 +170,15 @@ impl ExecutionContext {
     pub fn exit(&self, exit_code: i32) {
         LowLevelSDK::sys_halt(exit_code);
     }
+
+    pub fn contract_input() -> ContractInput {
+        let mut buffer = vec![];
+        LowLevelSDK::sys_read(&mut buffer, 0);
+        let mut contract_input = ContractInput::default();
+        let mut buffer_decoder = BufferDecoder::new(&buffer);
+        ContractInput::decode_body(&mut buffer_decoder, 0, &mut contract_input);
+        contract_input
+    }
 }
 
 #[cfg(test)]

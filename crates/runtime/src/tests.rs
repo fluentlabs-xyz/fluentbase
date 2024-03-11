@@ -38,7 +38,8 @@ fn test_simple() {
     "#,
         true,
     );
-    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
+    let mut ctx = RuntimeContext::new(rwasm_binary);
+    ctx.with_fuel_limit(10_000_000);
     let import_linker = Runtime::<()>::new_sovereign_linker();
     Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
 }
@@ -94,14 +95,11 @@ fn test_input_output() {
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
-    let mut runtime = Runtime::<()>::new(
-        RuntimeContext::new(rwasm_bytecode.as_slice())
-            .with_input(vec![64, 0, 0, 0, 0, 0, 0, 0])
-            .with_state(0)
-            .with_fuel_limit(1_000_000),
-        &import_linker,
-    )
-    .unwrap();
+    let mut ctx = RuntimeContext::new(rwasm_bytecode.as_slice());
+    ctx.with_input(vec![64, 0, 0, 0, 0, 0, 0, 0])
+        .with_state(0)
+        .with_fuel_limit(1_000_000);
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
     runtime.data_mut().clean_output();
     runtime.call().unwrap();
 
@@ -152,13 +150,9 @@ fn test_wrong_indirect_type() {
         .unwrap();
     let rwasm_bytecode = compiler.finalize().unwrap();
 
-    let mut runtime = Runtime::<()>::new(
-        RuntimeContext::new(rwasm_bytecode.as_slice())
-            .with_fuel_limit(1_000_000)
-            .with_state(1000),
-        &import_linker,
-    )
-    .unwrap();
+    let mut ctx = RuntimeContext::new(rwasm_bytecode.as_slice());
+    ctx.with_fuel_limit(1_000_000).with_state(1000);
+    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
 
     runtime.call().unwrap();
     runtime.data_mut().state = 0;

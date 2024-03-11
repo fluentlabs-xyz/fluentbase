@@ -99,6 +99,9 @@ pub fn _evm_create2(
         fluentbase_types::Bytes::copy_from_slice(interpreter_result.output.iter().as_slice());
 
     deployer_account.write_to_jzkt();
+    // let evm_loader_bytecode =
+    //     fluentbase_types::Bytes::from_static(include_bytes!("../../bin/evm_loader.wasm"));
+    // contract_account.update_bytecode(&evm_loader_bytecode);
     contract_account.update_source_bytecode(&deployed_bytecode);
 
     // TODO convert $deployed_bytecode into rwasm code ($deployed_rwasm_bytecode)

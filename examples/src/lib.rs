@@ -12,6 +12,8 @@ mod cairo;
 mod contract_input_check_recode;
 #[cfg(feature = "erc20")]
 mod erc20;
+#[cfg(feature = "evm_call_from_wasm")]
+mod evm_call_from_wasm;
 #[cfg(feature = "greeting")]
 mod greeting;
 #[cfg(feature = "keccak256")]
@@ -41,6 +43,8 @@ macro_rules! export_and_forward {
             greeting::$fn_name();
             #[cfg(feature = "contract_input_check_recode")]
             contract_input_check_recode::$fn_name();
+            #[cfg(feature = "evm_call_from_wasm")]
+            evm_call_from_wasm::$fn_name();
             #[cfg(feature = "keccak256")]
             keccak256::$fn_name();
             #[cfg(feature = "poseidon")]
