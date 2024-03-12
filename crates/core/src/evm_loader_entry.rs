@@ -5,7 +5,7 @@ use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use revm_interpreter::primitives::hex;
 
 pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../bin/evm_loader.wasm"));
+    LowLevelSDK::sys_write(include_bytes!("../bin/evm_loader_contract.wasm"));
     LowLevelSDK::sys_halt(0);
 }
 

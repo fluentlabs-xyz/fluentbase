@@ -171,8 +171,9 @@ impl ExecutionContext {
         LowLevelSDK::sys_halt(exit_code);
     }
 
-    pub fn contract_input() -> ContractInput {
-        let mut buffer = vec![];
+    pub fn contract_input_full() -> ContractInput {
+        let input_size = LowLevelSDK::sys_input_size();
+        let mut buffer = vec![0u8; input_size as usize];
         LowLevelSDK::sys_read(&mut buffer, 0);
         let mut contract_input = ContractInput::default();
         let mut buffer_decoder = BufferDecoder::new(&buffer);

@@ -16,7 +16,7 @@ all: solid_file
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 
-CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --do-not-inject-fuel --skip-type-check --no-router #--skip-translate-sections
+CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --do-not-inject-fuel --skip-type-check --no-router
 
 .PHONY: $(FILES)
 $(FILES):
@@ -24,3 +24,7 @@ $(FILES):
 
 solid_file:
 	cargo run -- ${CARGO_OPTIONS} --file-in-path=../crates/code-snippets/bin/$@.wat --restricted-fn-names= --restricted-fn-name-prefixes=_evm
+
+.PHONY: custom_file
+custom_file:
+	cargo run -- ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"

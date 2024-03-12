@@ -40,4 +40,4 @@ std = [
 ]
 runtime = []
 evm_contract_entry = []
-evm_loader_entry = []
+evm_loader_contract_entry = []

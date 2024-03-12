@@ -60,6 +60,9 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     entry_fn_name_matches_file_in_name: bool,
+
+    #[arg(long, default_value_t = false)]
+    debug: bool,
 }
 
 fn main() {

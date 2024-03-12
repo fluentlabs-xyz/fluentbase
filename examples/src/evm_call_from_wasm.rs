@@ -6,7 +6,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{address, ExitCode, STATE_MAIN};
+use fluentbase_types::{address, Bytes, ExitCode, STATE_MAIN};
 use hex_literal::hex;
 
 pub fn deploy() {
@@ -17,31 +17,27 @@ pub fn deploy() {
 pub fn main() {
     let ctx = ExecutionContext::default();
 
-    // TODO call to evm
-    // TODO should we pass evm_contract_address inside contract_input_data?
-
-    // TODO must be evm_loader address
-    let evm_loader_contract_address = address!("3927493649269146216491659123123997139871");
-    // TODO codec encoded input so EVM contract could decode it and reroute to ECL?
-    let evm_method = hex!("45773e4e").as_slice();
+    // must be evm_loader address
+    let evm_loader_contract_address = ExecutionContext::contract_address();
+    let contract_input = ExecutionContext::contract_input();
 
     // TODO 4test
     {
-        if evm_loader_contract_address != ExecutionContext::contract_address() {
+        if evm_loader_contract_address != address!("0000000000000000000000000000000000000002") {
             panic!()
         }
-        let contract_input_bytes = ExecutionContext::contract_input();
-        if evm_method != contract_input_bytes.as_ref() {
+        if contract_input != Bytes::copy_from_slice(&hex!("45773e4e")) {
             panic!()
         }
     }
+
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
         contract_address: evm_loader_contract_address,
         contract_caller: ExecutionContext::contract_caller(),
-        contract_input_size: evm_method.len() as u32,
-        contract_input: evm_method.into(),
-        // tx_caller: ExecutionContext::tx_caller(),
+        contract_input_size: contract_input.len() as u32,
+        contract_input,
+        tx_caller: ExecutionContext::tx_caller(),
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
@@ -49,12 +45,11 @@ pub fn main() {
     let fuel: u32 = 10_000_000;
     let account = Account::new_from_jzkt(&evm_loader_contract_address);
     let bytecode = account.load_bytecode();
-    if !bytecode.starts_with(&hex!("ef")) {
+    // TODO 4test
+    if bytecode.len() != 649341 {
         panic!()
-    }
-    if bytecode.len() != 650124 {
-        panic!()
-    }
+    };
+
     LowLevelSDK::sys_exec(
         bytecode.as_ptr(),
         bytecode.len() as u32,
