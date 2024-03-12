@@ -16,7 +16,12 @@ macro_rules! decode_input {
     }};
 }
 
-#[no_mangle]
+pub fn deploy() {
+    LowLevelSDK::sys_write(include_bytes!("../bin/evm_contract.wasm"));
+    LowLevelSDK::sys_halt(0);
+}
+
+// #[no_mangle]
 pub fn main() {
     let mut input = ExecutionContext::contract_input();
     let mut buffer = BufferDecoder::new(&mut input);

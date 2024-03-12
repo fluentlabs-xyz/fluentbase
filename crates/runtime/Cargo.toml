@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-rwasm-codegen = { workspace = true, default-features = false, optional = false }
+rwasm-codegen = { workspace = true }
 rwasm = { workspace = true, default-features = false, optional = false }
 fluentbase-poseidon = { path = "../poseidon" }
 fluentbase-zktrie = { path = "../zktrie" }
@@ -33,6 +33,6 @@ hex-literal = "0.4.1"
 
 [features]
 rwasm = [
-#    "dep:rwasm-codegen",
-#    "dep:rwasm",
+    #    "dep:rwasm-codegen",
+    #    "dep:rwasm",
 ]

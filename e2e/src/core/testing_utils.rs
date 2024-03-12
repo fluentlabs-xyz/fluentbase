@@ -106,9 +106,10 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
         &self,
         mut runtime_ctx: RuntimeContext<'t, T>,
         import_linker: &ImportLinker,
+        is_deploy: bool,
     ) -> ExecutionResult<'t, T> {
         runtime_ctx
-            .with_state(STATE_MAIN)
+            .with_state(if is_deploy { STATE_DEPLOY } else { STATE_MAIN })
             .with_fuel_limit(10_000_000)
             .with_catch_trap(true);
         let mut runtime = Runtime::new(runtime_ctx, &import_linker).unwrap();

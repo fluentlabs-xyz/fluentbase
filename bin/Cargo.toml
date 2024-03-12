@@ -8,7 +8,7 @@ name = "rwasmc"
 path = "src/main.rs"
 
 [dependencies]
-rwasm-codegen = { workspace = true, default-features = false }
+rwasm-codegen = { workspace = true }
 #rwasm = { workspace = true, default-features = false, features = ["std"] }
 # we need runtime here only to obtain sys call indices
 fluentbase-runtime = { path = "../crates/runtime" }

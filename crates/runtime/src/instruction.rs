@@ -198,11 +198,11 @@ fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut
     if IS_SOVEREIGN {
         JzktOpen::register_linker::<T>(import_linker);
         JzktCheckpoint::register_linker::<T>(import_linker);
-        JzktGet::register_linker::<T>(import_linker);
         JzktUpdate::register_linker::<T>(import_linker);
         JzktRemove::register_linker::<T>(import_linker);
         JzktComputeRoot::register_linker::<T>(import_linker);
     }
+    JzktGet::register_linker::<T>(import_linker);
     JzktEmitLog::register_linker::<T>(import_linker);
     if IS_SOVEREIGN {
         JzktCommit::register_linker::<T>(import_linker);
@@ -212,9 +212,9 @@ fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut
     JzktLoad::register_linker::<T>(import_linker);
     if IS_SOVEREIGN {
         JzktPreimageSize::register_linker::<T>(import_linker);
-        JzktPreimageCopy::register_linker::<T>(import_linker);
         JzktUpdatePreimage::register_linker::<T>(import_linker);
     }
+    JzktPreimageCopy::register_linker::<T>(import_linker);
     RwasmTransact::register_linker::<T>(import_linker);
     RwasmCompile::register_linker::<T>(import_linker);
     RwasmCreate::register_linker::<T>(import_linker);
@@ -255,11 +255,11 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     if IS_SOVEREIGN {
         JzktOpen::register_handler(linker, store);
         JzktCheckpoint::register_handler(linker, store);
-        JzktGet::register_handler(linker, store);
         JzktUpdate::register_handler(linker, store);
         JzktRemove::register_handler(linker, store);
         JzktComputeRoot::register_handler(linker, store);
     }
+    JzktGet::register_handler(linker, store);
     JzktEmitLog::register_handler(linker, store);
     if IS_SOVEREIGN {
         JzktCommit::register_handler(linker, store);
@@ -269,9 +269,9 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     JzktLoad::register_handler(linker, store);
     if IS_SOVEREIGN {
         JzktPreimageSize::register_handler(linker, store);
-        JzktPreimageCopy::register_handler(linker, store);
         JzktUpdatePreimage::register_handler(linker, store);
     }
+    JzktPreimageCopy::register_handler(linker, store);
     RwasmTransact::register_handler(linker, store);
     RwasmCompile::register_handler(linker, store);
     RwasmCreate::register_handler(linker, store);
