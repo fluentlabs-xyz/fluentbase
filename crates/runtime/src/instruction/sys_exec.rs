@@ -1,5 +1,5 @@
 use crate::{Runtime, RuntimeContext};
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use fluentbase_types::{ExitCode, STATE_MAIN};
 use rwasm::{common::Trap, Caller};
 
@@ -19,7 +19,8 @@ impl SysExec {
     ) -> Result<i32, Trap> {
         let code = caller.read_memory(code_offset, code_len).to_vec();
         let input = caller.read_memory(input_offset, input_len).to_vec();
-        let fuel = BigEndian::read_u32(caller.read_memory(fuel_offset, 4));
+        let fuel_data = caller.read_memory(fuel_offset, 4);
+        let fuel = LittleEndian::read_u32(fuel_data);
         let exit_code = match Self::fn_impl(caller.data_mut(), code, input, return_len, fuel, state)
         {
             Ok((return_data, remaining_fuel)) => {
@@ -27,7 +28,7 @@ impl SysExec {
                     caller.write_memory(return_offset, &return_data);
                 }
                 let mut fuel_buffer = [0u8; 4];
-                BigEndian::write_u32(&mut fuel_buffer, remaining_fuel);
+                LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel);
                 caller.write_memory(fuel_offset, &fuel_buffer);
                 ExitCode::Ok
             }
@@ -44,13 +45,14 @@ impl SysExec {
         fuel_limit: u32,
         _state: u32,
     ) -> Result<(Vec<u8>, u32), ExitCode> {
-        let import_linker = Runtime::<()>::new_shared_linker();
+        let import_linker = Runtime::<()>::new_sovereign_linker();
         let mut next_ctx = RuntimeContext::new(bytecode);
         next_ctx
             .with_input(input)
             .with_state(STATE_MAIN)
-            .with_is_shared(true)
-            .with_fuel_limit(fuel_limit);
+            .with_is_shared(false)
+            .with_fuel_limit(fuel_limit)
+            .with_jzkt(ctx.jzkt.clone().unwrap());
         let execution_result = Runtime::<()>::run_with_context(next_ctx, &import_linker)
             .map_err(|_| ExitCode::TransactError)?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;

@@ -13,7 +13,7 @@ CUR_DIR="$(shell pwd)"
 all: build
 
 .PHONY: build
-build: build_evm_contract build_evm_loader_contract # build_all_wat
+build: build_all_contracts
 
 .PHONY: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm:
@@ -46,8 +46,8 @@ build_evm_loader_contract_rwasm: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.
 .PHONY: build_evm_loader_contract
 build_evm_loader_contract: \
 	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm \
-	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm \
-	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm
+	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm \
+	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
 
 .PHONY: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm:
@@ -74,15 +74,25 @@ ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wat: ${OUT_FOLDER}/${EVM_CONTRACT
 .PHONY: build_evm_contract
 build_evm_contract: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wasm
 
+.PHONY: build_all_contracts
+build_all_contracts: build_evm_loader_contract build_evm_loader_contract_rwasm build_evm_contract
+
+.PHONY: build_evm_contract_wat
+build_evm_contract_wat: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wat
+
+.PHONY: build_evm_loader_contract_wat
+build_evm_loader_contract_wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wat
+
+.PHONY: build_all_contracts_with_wat
+build_all_contracts_with_wat: build_evm_loader_contract build_evm_loader_contract_wat build_evm_contract_wat
+
 .PHONY: build_evm_call_from_wasm_example
-build_evm_call_from_wasm_example: build_evm_loader_contract
+build_evm_call_from_wasm_example: build_all_contracts
 	cd ../../examples; make evm_call_from_wasm
 
-build_all_wat: \
-	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat \
-	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wat \
-	${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wat \
-	${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wat
+.PHONY: run_evm_call_from_wasm_example
+run_evm_call_from_wasm_example: build_evm_call_from_wasm_example
+	cd ../../e2e; cargo test test_call_evm_from_wasm
 
 .PHONY: test
 test:

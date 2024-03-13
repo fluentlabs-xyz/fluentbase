@@ -171,12 +171,17 @@ impl ExecutionContext {
         LowLevelSDK::sys_halt(exit_code);
     }
 
-    pub fn contract_input_full() -> ContractInput {
+    pub fn raw_input() -> Vec<u8> {
         let input_size = LowLevelSDK::sys_input_size();
         let mut buffer = vec![0u8; input_size as usize];
         LowLevelSDK::sys_read(&mut buffer, 0);
+        buffer
+    }
+
+    pub fn full_contract_input() -> ContractInput {
+        let input = Self::raw_input();
         let mut contract_input = ContractInput::default();
-        let mut buffer_decoder = BufferDecoder::new(&buffer);
+        let mut buffer_decoder = BufferDecoder::new(&input);
         ContractInput::decode_body(&mut buffer_decoder, 0, &mut contract_input);
         contract_input
     }

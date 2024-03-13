@@ -14,12 +14,8 @@ pub mod account;
 pub mod account_types;
 pub mod evm;
 
-#[cfg(any(
-    feature = "evm_contract_entry",
-    feature = "evm_contract_entry_as_wasm_contract"
-))]
+#[cfg(feature = "evm_contract_entry")]
 mod evm_contract_entry;
-
 #[cfg(feature = "evm_loader_contract_entry")]
 mod evm_loader_entry;
 pub mod fluent_host;

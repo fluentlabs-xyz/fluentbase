@@ -1,12 +1,8 @@
-use crate::{
-    account::Account,
-    evm::{read_address_from_input, SpecDefault},
-    fluent_host::FluentHost,
-};
+use crate::{account::Account, evm::SpecDefault, fluent_host::FluentHost};
 use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput, U256},
+    evm::{ExecutionContext, IContractInput, U256},
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -40,24 +36,27 @@ pub fn _evm_call(
     let callee_address =
         Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
 
-    let tx_caller_address =
-        read_address_from_input(<ContractInput as IContractInput>::TxCaller::FIELD_OFFSET);
+    let caller_address = ExecutionContext::contract_caller();
     let callee_account = Account::new_from_jzkt(&fluentbase_types::Address::from_slice(
         callee_address.as_slice(),
     ));
 
-    let callee_source_bytecode = callee_account.load_source_bytecode();
-    let input = unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) }.into();
+    let source_code_hash = callee_account.source_code_hash.as_slice();
+    let source_bytecode = callee_account.load_source_bytecode();
+    if value != U256::ZERO {
+        return ExitCode::UnknownError;
+    };
+    let args = unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) };
     let contract = Contract {
-        input,
-        hash: B256::from_slice(callee_account.source_code_hash.as_slice()),
+        input: args.into(),
+        hash: B256::from_slice(source_code_hash),
         // TODO simplify
         bytecode: BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(Bytes::copy_from_slice(
-            callee_source_bytecode.as_ref(),
+            source_bytecode.as_ref(),
         ))))
         .unwrap(),
         address: Address::new(callee_account.address.into_array()),
-        caller: Address::new(tx_caller_address.into_array()),
+        caller: Address::new(caller_address.into_array()),
         value,
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
