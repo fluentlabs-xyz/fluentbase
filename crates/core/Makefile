@@ -40,11 +40,8 @@ ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wat: ${OUT_FOLDER}/${EVM_L
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
 	cd ../../bin; FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@" make custom_file
 
-.PHONY: build_evm_loader_contract_rwasm
-build_evm_loader_contract_rwasm: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm
-
-.PHONY: build_evm_loader_contract
-build_evm_loader_contract: \
+.PHONY: build_evm_loader
+build_evm_loader: \
 	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm \
 	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm \
 	${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
@@ -57,6 +54,10 @@ ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm:
 	clang stack.s -c --target=${TARGET}
 	wasm-ld --allow-undefined --static --no-entry --export=main --strip-all --stack-first ../../target/${TARGET}/${PROFILE}/${SOURCE_LIB_NAME}.a stack.o -o $@
 	rm stack.o
+
+.PHONY: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.rwasm
+${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm
+	cd ../../bin; FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@" make custom_file
 
 .PHONY: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wasm:
@@ -72,10 +73,13 @@ ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wat: ${OUT_FOLDER}/${EVM_CONTRACT
 	wasm2wat $^ > $@
 
 .PHONY: build_evm_contract
-build_evm_contract: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wasm
+build_evm_contract: \
+	${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wasm \
+	${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.rwasm \
+	${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wasm
 
 .PHONY: build_all_contracts
-build_all_contracts: build_evm_loader_contract build_evm_loader_contract_rwasm build_evm_contract
+build_all_contracts: build_evm_loader build_evm_contract
 
 .PHONY: build_evm_contract_wat
 build_evm_contract_wat: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}-deploy.wat
@@ -84,7 +88,7 @@ build_evm_contract_wat: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER
 build_evm_loader_contract_wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wat
 
 .PHONY: build_all_contracts_with_wats
-build_all_contracts_with_wats: build_evm_loader_contract build_evm_loader_contract_wat build_evm_contract_wat
+build_all_contracts_with_wats: build_evm_loader build_evm_loader_contract_wat build_evm_contract_wat
 
 .PHONY: build_evm_call_from_wasm_example
 #build_evm_call_from_wasm_example: build_all_contracts_with_wats

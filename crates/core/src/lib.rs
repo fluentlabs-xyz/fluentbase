@@ -14,6 +14,7 @@ pub mod account;
 pub mod account_types;
 pub mod evm;
 
+mod consts;
 #[cfg(feature = "evm_contract_entry")]
 mod evm_contract_entry;
 #[cfg(feature = "evm_loader_contract_entry")]

@@ -180,7 +180,7 @@ impl ExecutionContext {
         buffer
     }
 
-    pub fn full_contract_input() -> ContractInput {
+    pub fn contract_input_full() -> ContractInput {
         let input = Self::raw_input();
         let mut contract_input = ContractInput::default();
         let mut buffer_decoder = BufferDecoder::new(&input);

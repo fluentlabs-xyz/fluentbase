@@ -196,11 +196,28 @@ fn test_call_evm_from_wasm() {
     let gas_limit: u32 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
+    const ECL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
     let import_linker = Runtime::<()>::new_sovereign_linker();
 
-    let (jzkt, evm_contract_address) = {
+    let (jzkt) = {
+        let mut runtime_ctx = RuntimeContext::new(&[]);
+        let mut test_ctx =
+            TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
+        let mut jzkt = test_ctx.init_jzkt(Some(&mut runtime_ctx));
+        let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
+        ecl_account.update_source_bytecode(
+            &include_bytes!("../../../crates/core/bin/evm_contract.wasm").into(),
+        );
+        ecl_account
+            .update_bytecode(&include_bytes!("../../../crates/core/bin/evm_contract.rwasm").into());
+        ecl_account.write_to_jzkt();
+        Account::commit();
+
+        (jzkt)
+    };
+
+    let (jzkt, evm_test_contract_address) = {
         let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
-        let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
         let evm_contract_input_bytes = CONTRACT_BYTECODE1;
         let create_value = B256::left_padding_from(&hex!("1000"));
         let evm_create_method_input =
@@ -213,7 +230,8 @@ fn test_call_evm_from_wasm() {
         let wasm_binary = include_bytes!("../../../crates/core/bin/evm_contract.wasm");
         let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
         let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
-        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
+        runtime_ctx.with_jzkt(jzkt);
+        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
         test_ctx
             .try_add_account(&caller_account)
             .contract_input_wrapper
@@ -225,7 +243,6 @@ fn test_call_evm_from_wasm() {
             .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
             .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
             .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
-            .set_contract_value(contract_value)
             .set_tx_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
@@ -254,7 +271,7 @@ fn test_call_evm_from_wasm() {
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input_size(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.len() as u32)
             .set_contract_input(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into())
-            .set_contract_address(evm_contract_address)
+            .set_contract_address(evm_test_contract_address)
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false);
