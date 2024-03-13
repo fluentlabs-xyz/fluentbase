@@ -15,11 +15,8 @@ pub fn deploy() {
 
 pub fn main() {
     let ctx = ExecutionContext::default();
-
     let contract_input = ExecutionContext::contract_input();
-
     let evm_contract_address = ExecutionContext::contract_address();
-
     let gas_limit: u32 = ExecutionContext::contract_gas_limit() as u32;
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),

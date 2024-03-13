@@ -21,7 +21,6 @@ pub fn deploy() {
     LowLevelSDK::sys_halt(0);
 }
 
-// #[no_mangle]
 pub fn main() {
     let mut input = ExecutionContext::contract_input();
     let mut buffer = BufferDecoder::new(&mut input);

@@ -6,6 +6,7 @@ use fluentbase_runtime::{
     types::B256,
     zktrie::ZkTrieStateDb,
     ExecutionResult,
+    IJournaledTrie,
     JournaledTrie,
     Runtime,
     RuntimeContext,
@@ -60,7 +61,10 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
         self.accounts.get_mut(&address).unwrap()
     }
 
-    pub fn init_jzkt(&mut self, runtime_ctx: Option<&mut RuntimeContext<'_, T>>) -> &mut Self {
+    pub fn init_jzkt(
+        &mut self,
+        runtime_ctx: Option<&mut RuntimeContext<'_, T>>,
+    ) -> Rc<RefCell<JournaledTrie<ZkTrieStateDb<InMemoryAccountDb>>>> {
         let db = InMemoryAccountDb::default();
         let storage = ZkTrieStateDb::new_empty(db);
         let journal = JournaledTrie::new(storage);
@@ -72,7 +76,7 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
             LowLevelSDK::with_jzkt(journal_ref.clone());
         }
 
-        self
+        journal_ref
     }
 
     pub fn apply_ctx(&mut self, runtime_ctx: Option<&mut RuntimeContext<'_, T>>) -> &mut Self {

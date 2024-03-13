@@ -38,6 +38,5 @@ std = [
     "byteorder/std",
     "alloy-rlp/std",
 ]
-runtime = []
 evm_contract_entry = []
 evm_loader_contract_entry = []
