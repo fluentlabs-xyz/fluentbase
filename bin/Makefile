@@ -16,15 +16,15 @@ all: solid_file
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 
-CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --no-magic-prefix --do-not-inject-fuel --skip-type-check --no-router
+CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --no-magic-prefix --skip-type-check --no-router --retranslate-main --inject-init-bytecode
 
 .PHONY: $(FILES)
 $(FILES):
-	cargo run -- --skip-translate-sections ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path=../crates/code-snippets/bin/$@.wat
+	cargo run -- --do-not-translate-sections ${CARGO_OPTIONS} $(OPTIONS) --file-in-path=../crates/code-snippets/bin/$@.wat
 
 solid_file:
-	cargo run -- ${CARGO_OPTIONS} --file-in-path=../crates/code-snippets/bin/$@.wat --restricted-fn-names= --restricted-fn-name-prefixes=_evm
+	cargo run -- ${CARGO_OPTIONS} --gen-source-map --file-in-path=../crates/code-snippets/bin/$@.wat --restricted-fn-names= --restricted-fn-name-prefixes=_evm
 
 .PHONY: custom_file
 custom_file:
-	cargo run -- $(OPTIONS) --skip-source-map --do-not-inject-fuel --do-not-inject-init-bytecode --do-not-translate-main --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"
+	cargo run -- $(OPTIONS) --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"

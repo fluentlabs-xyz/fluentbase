@@ -32,19 +32,19 @@ struct Args {
     rs_file_out_path: String,
 
     #[arg(long, default_value_t = false)]
-    print_bytes: bool,
+    print_rwasm_bytes: bool,
 
     #[arg(long, default_value_t = false)]
-    skip_source_map: bool,
+    gen_source_map: bool,
 
     #[arg(long, default_value_t = false)]
-    skip_translate_sections: bool,
+    do_not_translate_sections: bool,
 
     #[arg(long, default_value_t = false)]
     skip_type_check: bool,
 
     #[arg(long, default_value_t = false)]
-    do_not_inject_fuel: bool,
+    inject_fuel: bool,
 
     #[arg(long, default_value_t = false)]
     no_router: bool,
@@ -68,10 +68,10 @@ struct Args {
     no_magic_prefix: bool,
 
     #[arg(long, default_value_t = false)]
-    do_not_inject_init_bytecode: bool,
+    inject_init_bytecode: bool,
 
     #[arg(long, default_value_t = false)]
-    do_not_translate_main: bool,
+    retranslate_main: bool,
 }
 
 fn main() {
@@ -100,9 +100,9 @@ fn main() {
     let mut compiler = Compiler::new_with_linker(
         &wasm_binary,
         CompilerConfig::default()
-            .translate_sections(!args.skip_translate_sections)
+            .translate_sections(!args.do_not_translate_sections)
             .type_check(!args.skip_type_check)
-            .fuel_consume(!args.do_not_inject_fuel)
+            .fuel_consume(args.inject_fuel)
             .with_router(!args.no_router)
             .with_magic_prefix(!args.no_magic_prefix),
         Some(&import_linker),
@@ -123,7 +123,7 @@ fn main() {
             .unwrap()
             .unwrap();
     };
-    if !args.do_not_translate_main {
+    if args.retranslate_main {
         compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
     }
     let func_source_maps = compiler.build_source_map();
@@ -151,8 +151,8 @@ fn main() {
         .iter()
         .map(|v| v.to_lowercase())
         .collect::<Vec<_>>();
-    println!("restricted_fn_names {:?}", restricted_fn_names.as_slice());
-    println!(
+    debug!("restricted_fn_names {:?}", restricted_fn_names.as_slice());
+    debug!(
         "restricted_fn_name_prefixes {:?}",
         restricted_fn_name_prefixes.as_slice()
     );
@@ -187,9 +187,13 @@ fn main() {
     let rs_str = format!("[\n    {}\n]", as_rust_vec.join(",\n    "));
     let mut rwasm_binary = compiler.finalize().unwrap();
     // let init_bytecode_instruction_to_cut = 4; // redundant instruction inside init bytecode
-    let init_bytecode = rwasm_binary[entry_point_fn.position as usize * INSTRUCTION_SIZE_BYTES
-        ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES]
-        .to_vec();
+    let init_bytecode = if args.inject_init_bytecode {
+        rwasm_binary[entry_point_fn.position as usize * INSTRUCTION_SIZE_BYTES
+            ..(entry_point_fn.position + entry_point_fn.length) as usize * INSTRUCTION_SIZE_BYTES]
+            .to_vec()
+    } else {
+        vec![]
+    };
     debug!(
         "extending rwasm_binary (byte len {}, instruction len {}) with init_bytecode (instruction position {} len {} fact len {})",
         rwasm_binary.len(),
@@ -198,7 +202,7 @@ fn main() {
         entry_point_fn.length,
         init_bytecode.len() / INSTRUCTION_SIZE_BYTES
     );
-    if !args.do_not_inject_init_bytecode {
+    if args.inject_init_bytecode {
         rwasm_binary.extend(&init_bytecode);
     }
     let rwasm_file_out_path;
@@ -217,12 +221,12 @@ fn main() {
         rwasm_binary.len(),
         rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
     );
-    if args.print_bytes {
+    if args.print_rwasm_bytes {
         debug!("rwasm bytes: {:?}", rwasm_binary);
     }
     fs::write(rwasm_file_out_path, rwasm_binary).unwrap();
 
-    if !args.skip_source_map {
+    if args.gen_source_map {
         let rs_source_map_file_out_path;
         if args.rs_file_out_path != "" {
             rs_source_map_file_out_path = args.rs_file_out_path;
