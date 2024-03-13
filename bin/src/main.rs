@@ -63,6 +63,15 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     debug: bool,
+
+    #[arg(long, default_value_t = false)]
+    no_magic_prefix: bool,
+
+    #[arg(long, default_value_t = false)]
+    do_not_inject_init_bytecode: bool,
+
+    #[arg(long, default_value_t = false)]
+    do_not_translate_main: bool,
 }
 
 fn main() {
@@ -95,7 +104,7 @@ fn main() {
             .type_check(!args.skip_type_check)
             .fuel_consume(!args.do_not_inject_fuel)
             .with_router(!args.no_router)
-            .with_magic_prefix(false),
+            .with_magic_prefix(!args.no_magic_prefix),
         Some(&import_linker),
     )
     .unwrap();
@@ -114,7 +123,9 @@ fn main() {
             .unwrap()
             .unwrap();
     };
-    compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+    if !args.do_not_translate_main {
+        compiler.translate(FuncOrExport::Func(fn_idx)).unwrap();
+    }
     let func_source_maps = compiler.build_source_map();
     let entry_point_fn = &func_source_maps[0];
     debug!(
@@ -187,7 +198,9 @@ fn main() {
         entry_point_fn.length,
         init_bytecode.len() / INSTRUCTION_SIZE_BYTES
     );
-    rwasm_binary.extend(&init_bytecode);
+    if !args.do_not_inject_init_bytecode {
+        rwasm_binary.extend(&init_bytecode);
+    }
     let rwasm_file_out_path;
     let oud_dir_path = file_in_path.parent().unwrap().to_str().unwrap();
     if args.rwasm_file_out_path != "" {

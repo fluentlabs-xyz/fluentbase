@@ -25,7 +25,7 @@ use fluentbase_runtime::{
 use fluentbase_types::ExitCode;
 use hex_literal::hex;
 use keccak_hash::keccak;
-use std::{ptr::slice_from_raw_parts, slice};
+use std::{fs, ptr::slice_from_raw_parts, slice};
 
 #[test]
 fn test_create() {
@@ -245,39 +245,6 @@ fn test_call_evm_from_wasm() {
         (jzkt, evm_contract_address)
     };
 
-    let (jzkt, evm_loader_contract_address) = {
-        let evm_loader_wasm_binary =
-            include_bytes!("../../../crates/core/bin/evm_loader_contract.wasm");
-        let evm_loader_rwasm_binary = wasm2rwasm(evm_loader_wasm_binary.as_slice(), false);
-
-        let evm_loader_contract_address = address!("0000000000000000000000000000000000000002");
-        println!(
-            "evm_loader_contract_address {:x?}",
-            evm_loader_contract_address
-        );
-
-        // deploy contract using account
-        let mut runtime_ctx = RuntimeContext::new(&[]);
-        runtime_ctx.with_jzkt(jzkt.clone().unwrap().clone());
-        let mut test_ctx =
-            TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
-        test_ctx.apply_ctx(Some(&mut runtime_ctx));
-        let mut account = Account::new_from_jzkt(&evm_loader_contract_address);
-        assert_eq!(0, account.load_bytecode().len());
-        let evm_loader_rwasm_binary_len = evm_loader_rwasm_binary.len();
-        account.update_bytecode(&evm_loader_rwasm_binary.into());
-        account.update_source_bytecode(&evm_loader_wasm_binary.into());
-        account.write_to_jzkt();
-        Account::commit();
-        assert_eq!(evm_loader_rwasm_binary_len, account.load_bytecode().len());
-        println!(
-            "evm_loader_rwasm_binary_len {}",
-            evm_loader_rwasm_binary_len
-        );
-
-        (jzkt, evm_loader_contract_address)
-    };
-
     {
         let evm_call_from_wasm_wasm_binary =
             include_bytes!("../../../examples/bin/evm_call_from_wasm.wasm");
@@ -292,7 +259,7 @@ fn test_call_evm_from_wasm() {
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
             .set_contract_input_size(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.len() as u32)
             .set_contract_input(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into())
-            .set_contract_address(evm_loader_contract_address)
+            .set_contract_address(evm_contract_address)
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false);

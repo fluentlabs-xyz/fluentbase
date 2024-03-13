@@ -83,10 +83,11 @@ build_evm_contract_wat: ${OUT_FOLDER}/${EVM_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER
 .PHONY: build_evm_loader_contract_wat
 build_evm_loader_contract_wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wat
 
-.PHONY: build_all_contracts_with_wat
-build_all_contracts_with_wat: build_evm_loader_contract build_evm_loader_contract_wat build_evm_contract_wat
+.PHONY: build_all_contracts_with_wats
+build_all_contracts_with_wats: build_evm_loader_contract build_evm_loader_contract_wat build_evm_contract_wat
 
 .PHONY: build_evm_call_from_wasm_example
+#build_evm_call_from_wasm_example: build_all_contracts_with_wats
 build_evm_call_from_wasm_example: build_all_contracts
 	cd ../../examples; make evm_call_from_wasm
 
