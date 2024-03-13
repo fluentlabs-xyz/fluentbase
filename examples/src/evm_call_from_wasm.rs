@@ -6,7 +6,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{address, ExitCode, STATE_MAIN};
+use fluentbase_types::{ExitCode, STATE_MAIN};
 
 pub fn deploy() {
     LowLevelSDK::sys_write(include_bytes!("../bin/evm_call_from_wasm.wasm"));
@@ -16,15 +16,14 @@ pub fn deploy() {
 pub fn main() {
     let ctx = ExecutionContext::default();
 
-    // must be evm_loader address
-    let contract_address = ExecutionContext::contract_address();
     let contract_input = ExecutionContext::contract_input();
 
-    let evm_loader_contract_address = address!("0000000000000000000000000000000000000002");
-    let evm_contract_address = address!("199e3643d07aefc7672aaa66aada5347e67e6076");
+    let evm_contract_address = ExecutionContext::contract_address();
 
+    let gas_limit: u32 = ExecutionContext::contract_gas_limit() as u32;
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
+        contract_gas_limit: gas_limit as u64,
         contract_address: evm_contract_address,
         contract_caller: ExecutionContext::contract_caller(),
         contract_input_size: contract_input.len() as u32,
@@ -33,8 +32,6 @@ pub fn main() {
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
-    let fuel: u32 = 10_000_000;
-    // TODO rewrite using basic funcs
     let account = Account::new_from_jzkt(&evm_contract_address);
     let bytecode = account.load_bytecode();
 
@@ -45,7 +42,7 @@ pub fn main() {
         contract_input_vec.len() as u32,
         core::ptr::null_mut(),
         0,
-        &fuel as *const u32,
+        &gas_limit as *const u32,
         STATE_MAIN,
     );
     if exit_code != ExitCode::Ok.into_i32() {

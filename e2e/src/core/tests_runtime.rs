@@ -25,7 +25,6 @@ use fluentbase_runtime::{
 use fluentbase_types::ExitCode;
 use hex_literal::hex;
 use keccak_hash::keccak;
-use std::{fs, ptr::slice_from_raw_parts, slice};
 
 #[test]
 fn test_create() {
@@ -194,19 +193,16 @@ fn test_call_evm_from_wasm() {
         balance: U256::from_be_slice(1000000000u128.to_be_bytes().as_slice()),
         ..Default::default()
     };
+    let gas_limit: u32 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
     let import_linker = Runtime::<()>::new_sovereign_linker();
 
     let (jzkt, evm_contract_address) = {
         let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
-        let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
         let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
-        let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
-        let env_chain_id = 1;
         let evm_contract_input_bytes = CONTRACT_BYTECODE1;
         let create_value = B256::left_padding_from(&hex!("1000"));
-        let gas_limit: u32 = 10_000_000;
         let evm_create_method_input =
             EvmCreateMethodInput::new(create_value.0, evm_contract_input_bytes.to_vec(), gas_limit);
         let evm_create_core_input = CoreInput::new(
@@ -222,16 +218,14 @@ fn test_call_evm_from_wasm() {
             .try_add_account(&caller_account)
             .contract_input_wrapper
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_contract_input_size(evm_create_core_input_vec.len() as u32)
-            .set_env_chain_id(env_chain_id)
             .set_contract_caller(caller_address)
             .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
             .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
             .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
             .set_contract_value(contract_value)
-            .set_block_hash(block_hash)
-            .set_block_coinbase(block_coinbase)
             .set_tx_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
@@ -257,6 +251,7 @@ fn test_call_evm_from_wasm() {
         test_ctx
             .contract_input_wrapper
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_contract_gas_limit(gas_limit.into())
             .set_contract_input_size(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.len() as u32)
             .set_contract_input(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into())
             .set_contract_address(evm_contract_address)
