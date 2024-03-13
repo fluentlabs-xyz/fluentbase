@@ -2,8 +2,6 @@ use crate::evm::call::_evm_call;
 use alloc::vec;
 use core::ptr::null_mut;
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::address;
-use revm_interpreter::primitives::hex;
 
 pub fn deploy() {
     LowLevelSDK::sys_write(include_bytes!("../bin/evm_loader_contract.wasm"));
@@ -11,13 +9,13 @@ pub fn deploy() {
 }
 
 pub fn main() {
+    let contract_gas_limit = ExecutionContext::contract_gas_limit() as u32;
     let mut contract_input = ExecutionContext::contract_input();
     let callee_address20 = ExecutionContext::contract_address();
     let contract_value = ExecutionContext::contract_value();
     // TODO forward to ECL instead of calling _evm_call directly
     let exit_code = _evm_call(
-        // TODO take gas limit from contract_input
-        10_000_000,
+        contract_gas_limit,
         callee_address20.as_ptr(),
         contract_value.to_be_bytes::<32>().as_ptr(),
         contract_input.as_ptr(),

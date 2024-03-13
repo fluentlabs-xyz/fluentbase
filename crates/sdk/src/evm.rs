@@ -42,6 +42,7 @@ define_codec_struct! {
         // env info
         env_chain_id: u64,
         // contract info
+        contract_gas_limit: u64,
         contract_address: Address,
         contract_caller: Address,
         contract_bytecode: Bytes,
@@ -131,6 +132,7 @@ impl ExecutionContext {
     // env info
     impl_reader_func!(fn env_chain_id() -> u64, <ContractInput as IContractInput>::EnvChainId);
     // contract info
+    impl_reader_func!(fn contract_gas_limit() -> u64, <ContractInput as IContractInput>::ContractGasLimit);
     impl_reader_func!(fn contract_address() -> Address, <ContractInput as IContractInput>::ContractAddress);
     impl_reader_func!(fn contract_caller() -> Address, <ContractInput as IContractInput>::ContractCaller);
     impl_reader_func!(@dynamic fn contract_bytecode() -> Bytes, <ContractInput as IContractInput>::ContractBytecode);
