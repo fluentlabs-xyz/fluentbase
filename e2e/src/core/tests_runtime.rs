@@ -25,6 +25,7 @@ use fluentbase_runtime::{
 use fluentbase_types::ExitCode;
 use hex_literal::hex;
 use keccak_hash::keccak;
+use std::{ptr::slice_from_raw_parts, slice};
 
 #[test]
 fn test_create() {
@@ -187,6 +188,7 @@ fn test_call_after_create() {
 #[test]
 fn test_call_evm_from_wasm() {
     let caller_address = address!("000000000000000000000000000000000000000c");
+    println!("caller_address {:x?}", caller_address);
     let caller_account = Account {
         address: caller_address,
         balance: U256::from_be_slice(1000000000u128.to_be_bytes().as_slice()),
@@ -235,7 +237,8 @@ fn test_call_evm_from_wasm() {
         let jzkt = runtime_ctx.jzkt().clone();
         let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
-        let evm_contract_address = Address::from_slice(output.data().output());
+        let output = output.data().output();
+        let evm_contract_address = Address::from_slice(output);
         println!("evm_contract_address {:x?}", evm_contract_address);
         assert_eq!(&expected_contract_address, &evm_contract_address);
 
@@ -256,7 +259,8 @@ fn test_call_evm_from_wasm() {
         // deploy contract using account
         let mut runtime_ctx = RuntimeContext::new(&[]);
         runtime_ctx.with_jzkt(jzkt.clone().unwrap().clone());
-        let mut test_ctx = TestingContext::<(), { !IS_RUNTIME }>::new(true, Some(&mut runtime_ctx));
+        let mut test_ctx =
+            TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut account = Account::new_from_jzkt(&evm_loader_contract_address);
         assert_eq!(0, account.load_bytecode().len());
@@ -266,15 +270,21 @@ fn test_call_evm_from_wasm() {
         account.write_to_jzkt();
         Account::commit();
         assert_eq!(evm_loader_rwasm_binary_len, account.load_bytecode().len());
+        println!(
+            "evm_loader_rwasm_binary_len {}",
+            evm_loader_rwasm_binary_len
+        );
 
         (jzkt, evm_loader_contract_address)
     };
 
     {
-        let wasm_binary = include_bytes!("../../../examples/bin/evm_call_from_wasm.wasm");
-        let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
+        let evm_call_from_wasm_wasm_binary =
+            include_bytes!("../../../examples/bin/evm_call_from_wasm.wasm");
+        let evm_call_from_wasm_rwasm_binary =
+            wasm2rwasm(evm_call_from_wasm_wasm_binary.as_slice(), false);
 
-        let mut runtime_ctx = RuntimeContext::new(rwasm_binary);
+        let mut runtime_ctx = RuntimeContext::new(evm_call_from_wasm_rwasm_binary);
         runtime_ctx.with_jzkt(jzkt.unwrap());
         let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
         test_ctx
@@ -282,7 +292,8 @@ fn test_call_evm_from_wasm() {
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
             .set_contract_input_size(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.len() as u32)
             .set_contract_input(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into())
-            .set_contract_address(evm_loader_contract_address);
+            .set_contract_address(evm_loader_contract_address)
+            .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false);
         assert_eq!(output.data().exit_code(), ExitCode::Ok.into_i32());
