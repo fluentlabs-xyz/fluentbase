@@ -16,7 +16,7 @@ all: solid_file
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 
-CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --do-not-inject-fuel --skip-type-check --no-router
+CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --no-magic-prefix --do-not-inject-fuel --skip-type-check --no-router
 
 .PHONY: $(FILES)
 $(FILES):
@@ -27,4 +27,4 @@ solid_file:
 
 .PHONY: custom_file
 custom_file:
-	cargo run -- ${CARGO_OPTIONS} $(OPTIONS) --skip-source-map --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"
+	cargo run -- $(OPTIONS) --skip-source-map --do-not-inject-fuel --do-not-inject-init-bytecode --do-not-translate-main --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"

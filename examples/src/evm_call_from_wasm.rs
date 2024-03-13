@@ -35,7 +35,7 @@ pub fn main() {
     let contract_input_vec = contract_input.encode_to_vec(0);
     let fuel: u32 = 10_000_000;
     // TODO rewrite using basic funcs
-    let account = Account::new_from_jzkt(&evm_loader_contract_address);
+    let account = Account::new_from_jzkt(&evm_contract_address);
     let bytecode = account.load_bytecode();
 
     let exit_code = LowLevelSDK::sys_exec(
