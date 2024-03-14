@@ -19,8 +19,8 @@ pub fn _wasm_create2(
     code_offset: *const u8,
     code_length: u32,
     salt32_offset: *const u8,
-    out_address20_offset: *mut u8,
     gas_limit: u32,
+    out_address20_offset: *mut u8,
 ) -> ExitCode {
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
@@ -57,8 +57,15 @@ pub fn _wasm_create2(
         return ExitCode::InsufficientBalance;
     }
 
+    let deployer_wasm_bytecode_slice =
+        unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let deployer_wasm_bytecode_bytes = Bytes::from_static(deployer_wasm_bytecode_slice);
+
+    // TODO execute wasm bytecode and get wasm result (deployed_wasm_bytecode_bytes)
+
+    let deployed_wasm_bytecode_bytes: Bytes = Bytes::new();
     deployer_account.write_to_jzkt();
-    contract_account.update_source_bytecode(&Bytes::from_static(bytecode_slice));
+    contract_account.update_source_bytecode(&deployed_wasm_bytecode_bytes);
     contract_account
         .update_bytecode(&include_bytes!("../../bin/wasm_loader_contract.rwasm").into());
 

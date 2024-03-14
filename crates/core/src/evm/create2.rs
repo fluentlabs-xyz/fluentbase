@@ -42,7 +42,7 @@ pub fn _evm_create2(
     let salt32_slice = unsafe { &*ptr::slice_from_raw_parts(salt32_offset, 32) };
     let value = U256::from_be_slice(value32_slice);
     let tx_caller_address =
-        read_address_from_input(<ContractInput as IContractInput>::TxCaller::FIELD_OFFSET);
+        read_address_from_input(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&tx_caller_address);
     let salt = B256::from_slice(salt32_slice);

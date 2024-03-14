@@ -63,7 +63,7 @@ ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm:
 	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${ECL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm
-	cd ../../bin;  make custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
+	cd ../../bin;  $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}-deploy.wasm:
@@ -115,7 +115,7 @@ ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm:
 	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WCL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
-	cd ../../bin; make custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
+	cd ../../bin; $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}-deploy.wasm:
@@ -151,21 +151,25 @@ build_wasm_contracts: build_wasm_loader_contract build_wcl_contract
 .PHONY: build_all_contracts
 build_all_contracts: build_evm_contracts build_wasm_contracts
 
-.PHONY: build_evm_call_from_wasm_example
-#build_evm_call_from_wasm_example: build_all_contracts_with_wats
-build_evm_call_from_wasm_example: build_all_contracts
-	cd ../../examples; $(MAKE) evm_call_from_wasm
-
 .PHONY: run_evm_call_from_wasm_example
-run_evm_call_from_wasm_example: build_evm_call_from_wasm_example
-	cd ../../e2e; cargo test test_call_evm_from_wasm
+run_evm_call_from_wasm_example:
+	#cd ../../examples; $(MAKE) evm_call_from_wasm
+	cd ../../e2e; cargo test test_call_evm_from_wasm -- --nocapture
+
+.PHONY: run_test_wasm_create
+run_test_wasm_create: build_wcl_contract
+	cd ../../e2e; cargo test test_wasm_create -- --nocapture
 
 .PHONY: test
 test:
 	cargo test -q
 
+.PHONY: clean_tmp_files
+clean_tmp_files:
+	rm stack.o >/dev/null 2>&1 || true
+	rm ${OUT_FOLDER}/*.wat >/dev/null 2>&1 || true
+
 .PHONY: clean
 clean:
-	rm stack.o || true
-	rm ${OUT_FOLDER}/*.wat || true
+	$(MAKE) clean_tmp_files
 	cargo clean

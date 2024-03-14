@@ -36,12 +36,12 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
     let mut enum_decls = String::new();
     let mut fn_decls = String::new();
 
-    use_decls.push_str(
-        r#"
-            use ::fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
-            use ::alloc::{vec::Vec, string::{String, ToString}};
-        "#,
-    );
+    // use_decls.push_str(
+    //     r#"
+    //         use ::fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
+    //         use ::alloc::{vec::Vec, string::{String, ToString}};
+    //     "#,
+    // );
 
     let mut struct_name_prefix = "".to_string();
     let mut struct_ident_prefix_to_const_ident = Vec::<(String, String)>::new();

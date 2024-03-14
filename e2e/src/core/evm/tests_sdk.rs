@@ -1,9 +1,9 @@
 use crate::{
-    assets::test_contracts::{
-        CONTRACT_BYTECODE1,
-        CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID,
-        CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID,
-        CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
+    assets::evm_test_contracts::{
+        EVM_CONTRACT_BYTECODE1,
+        EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID,
+        EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID,
+        EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
     core::testing_utils::{generate_address_original_impl, TestingContext},
 };
@@ -133,9 +133,9 @@ fn _evm_create_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
+        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
+        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
+        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -148,8 +148,8 @@ fn _evm_create_test() {
     let mut created_contract_address = Address::default();
     let exit_code = _evm_create(
         value.0.as_ptr(),
-        CONTRACT_BYTECODE1.as_ptr(),
-        CONTRACT_BYTECODE1.len() as u32,
+        EVM_CONTRACT_BYTECODE1.as_ptr(),
+        EVM_CONTRACT_BYTECODE1.len() as u32,
         created_contract_address.0.as_mut_ptr(),
         gas_limit,
     );
@@ -186,9 +186,9 @@ fn _evm_call_after_create_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
+        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
+        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
+        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -201,15 +201,15 @@ fn _evm_call_after_create_test() {
     let mut created_address = Address::default();
     let exit_code = _evm_create(
         create_value.to_be_bytes::<32>().as_ptr(),
-        CONTRACT_BYTECODE1.as_ptr(),
-        CONTRACT_BYTECODE1.len() as u32,
+        EVM_CONTRACT_BYTECODE1.as_ptr(),
+        EVM_CONTRACT_BYTECODE1.len() as u32,
         created_address.0.as_mut_ptr(),
         gas_limit,
     );
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args = Vec::from(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
+    let mut args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -244,8 +244,9 @@ fn _evm_call_after_create2_test() {
         ..Default::default()
     };
 
-    let contract_bytecode_ =
-        Bytecode::new_raw(alloy_primitives::Bytes::copy_from_slice(CONTRACT_BYTECODE1));
+    let contract_bytecode_ = Bytecode::new_raw(alloy_primitives::Bytes::copy_from_slice(
+        EVM_CONTRACT_BYTECODE1,
+    ));
     let contract_bytecode_hash = B256::from_slice(contract_bytecode_.hash_slow().as_slice());
     let salt = B256::left_padding_from(hex!("bc162382638a").as_slice());
     let computed_contract_address =
@@ -267,8 +268,8 @@ fn _evm_call_after_create2_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
+        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
+        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
         .set_contract_code_hash(contract_bytecode_hash)
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
@@ -282,8 +283,8 @@ fn _evm_call_after_create2_test() {
     let mut created_address = Address::default();
     let exit_code = _evm_create2(
         create_value.to_be_bytes::<32>().as_ptr(),
-        CONTRACT_BYTECODE1.as_ptr(),
-        CONTRACT_BYTECODE1.len() as u32,
+        EVM_CONTRACT_BYTECODE1.as_ptr(),
+        EVM_CONTRACT_BYTECODE1.len() as u32,
         salt.as_ptr(),
         created_address.0.as_mut_ptr(),
         gas_limit,
@@ -291,7 +292,7 @@ fn _evm_call_after_create2_test() {
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args_data = Vec::from(CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
+    let mut args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -459,9 +460,9 @@ fn _evm_selfbalance_from_contract_call_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
+        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
+        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
+        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -475,8 +476,8 @@ fn _evm_selfbalance_from_contract_call_test() {
     let mut created_address = Address::default();
     assert!(_evm_create(
         create_value.to_be_bytes::<32>().as_ptr(),
-        CONTRACT_BYTECODE1.as_ptr(),
-        CONTRACT_BYTECODE1.len() as u32,
+        EVM_CONTRACT_BYTECODE1.as_ptr(),
+        EVM_CONTRACT_BYTECODE1.len() as u32,
         created_address.0.as_mut_ptr(),
         gas_limit,
     )
@@ -488,7 +489,7 @@ fn _evm_selfbalance_from_contract_call_test() {
     });
     assert_eq!(create_value, created_address_balance);
 
-    let mut args_data = CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
+    let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
     let mut return_data = [0u8; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -539,9 +540,9 @@ fn _evm_balance_from_contract_call_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(CONTRACT_BYTECODE1))
-        .set_contract_code_size(CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(CONTRACT_BYTECODE1).as_bytes()))
+        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
+        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
+        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -555,8 +556,8 @@ fn _evm_balance_from_contract_call_test() {
     let mut created_address = Address::default();
     assert!(_evm_create(
         create_value.to_be_bytes::<32>().as_ptr(),
-        CONTRACT_BYTECODE1.as_ptr(),
-        CONTRACT_BYTECODE1.len() as u32,
+        EVM_CONTRACT_BYTECODE1.as_ptr(),
+        EVM_CONTRACT_BYTECODE1.len() as u32,
         created_address.0.as_mut_ptr(),
         gas_limit,
     )
@@ -568,7 +569,7 @@ fn _evm_balance_from_contract_call_test() {
     });
     assert_eq!(create_value, created_address_balance);
 
-    let mut args_data = CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID.to_vec();
+    let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID.to_vec();
     args_data.extend_from_slice(caller_address.into_word().as_slice());
     let mut return_data = [0u8; 96];
     let call_value = U256::from_be_slice(&hex!("00"));

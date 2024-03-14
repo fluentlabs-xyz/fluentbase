@@ -73,7 +73,7 @@ pub fn main() {
                     0,
                 );
                 if !exit_code.is_ok() {
-                    panic!("create2 method failed, exit code: {}", exit_code.into_i32())
+                    panic!("call method failed, exit code: {}", exit_code.into_i32())
                 }
             }
         }
