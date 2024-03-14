@@ -23,7 +23,7 @@ build: build_all_contracts
 build_wasm_main:
 	mkdir -p ${OUT_FOLDER}
 	touch "$(FILE_IN)"
-	cargo b --release --target=${TARGET} --features=${EVM_LOADER_CONTRACT_FEATURE_FLAG}
+	cargo b --release --target=${TARGET} --features="$(FEATURES)"
 	clang stack.s -c --target=${TARGET}
 	wasm-ld --allow-undefined --static --no-entry --export=main --strip-all --stack-first ../../target/${TARGET}/${PROFILE}/${SOURCE_LIB_NAME}.a stack.o -o "$(FILE_IN)"
 	rm stack.o
@@ -32,16 +32,16 @@ build_wasm_main:
 build_wasm_deploy:
 	mkdir -p ${OUT_FOLDER}
 	touch "$(FILE_IN)"
-	cargo b --release --target=${TARGET} --features=${EVM_LOADER_CONTRACT_FEATURE_FLAG}
+	cargo b --release --target=${TARGET} --features="$(FEATURES)"
 	wasm-ld --allow-undefined --static --no-entry --export=deploy --strip-all --stack-first ../../target/${TARGET}/${PROFILE}/${SOURCE_LIB_NAME}.a -o "$(FILE_IN)"
 
 .PHONY: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm:
-	$(MAKE) build_wasm_main FILE_IN="$@"
+	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${EVM_LOADER_CONTRACT_FEATURE_FLAG}"
 
 .PHONY: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm:
-	$(MAKE) build_wasm_deploy FILE_IN="$@"
+	$(MAKE) build_wasm_deploy FILE_IN="$@" FEATURES="${EVM_LOADER_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
 	wasm2wat $^ > $@
@@ -60,14 +60,14 @@ build_evm_loader_contract: \
 
 .PHONY: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm:
-	$(MAKE) build_wasm_main FILE_IN="$@"
+	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${ECL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm
 	cd ../../bin;  make custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}-deploy.wasm:
-	$(MAKE) build_wasm_deploy FILE_IN="$@"
+	$(MAKE) build_wasm_deploy FILE_IN="$@" FEATURES="${ECL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm
 	wasm2wat $^ > $@
@@ -89,11 +89,11 @@ build_evm_loader_contract_wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wa
 
 .PHONY: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm:
-	$(MAKE) build_wasm_main FILE_IN="$@"
+	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WASM_LOADER_CONTRACT_FEATURE_FLAG}"
 
 .PHONY: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm:
-	$(MAKE) build_wasm_deploy FILE_IN="$@"
+	$(MAKE) build_wasm_deploy FILE_IN="$@" FEATURES="${WASM_LOADER_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
 	wasm2wat $^ > $@
@@ -112,14 +112,14 @@ build_wasm_loader_contract: \
 
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm:
-	$(MAKE) build_wasm_main FILE_IN="$@"
+	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WCL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 	cd ../../bin; make custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}-deploy.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}-deploy.wasm:
-	$(MAKE) build_wasm_deploy FILE_IN="$@"
+	$(MAKE) build_wasm_deploy FILE_IN="$@" FEATURES="${WCL_CONTRACT_FEATURE_FLAG}"
 
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 	wasm2wat $^ > $@

@@ -25,14 +25,14 @@ pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {
 }
 
 #[inline(always)]
-fn read_address_from_input(offset: usize) -> Address {
+pub(crate) fn read_address_from_input(offset: usize) -> Address {
     let mut address = [0u8; Address::len_bytes()];
     LowLevelSDK::sys_read(&mut address, offset as u32);
     Address::from(address)
 }
 
 #[inline(always)]
-fn read_balance(address: Address, value: &mut U256) {
+pub(crate) fn read_balance(address: Address, value: &mut U256) {
     let mut bytes32 = Bytes32::default();
     unsafe {
         ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
