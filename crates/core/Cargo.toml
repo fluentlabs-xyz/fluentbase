@@ -14,6 +14,7 @@ fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"]
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-core-api = { path = "../core-api", default-features = false }
+rwasm-codegen = { workspace = true }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
@@ -23,7 +24,6 @@ paste = { workspace = true }
 [dev-dependencies]
 fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
-rwasm-codegen = { workspace = true }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 

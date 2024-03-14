@@ -1,5 +1,4 @@
 use crate::wasm::{call::_wasm_call, create::_wasm_create, create2::_wasm_create2};
-use core::ptr::null_mut;
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core_api::{
     api::CoreInput,
@@ -42,8 +41,8 @@ pub fn main() {
                     method_input.value32.as_ptr(),
                     method_input.code.as_ptr(),
                     method_input.code.len() as u32,
-                    output20.as_mut_ptr(),
                     method_input.gas_limit,
+                    output20.as_mut_ptr(),
                 );
                 if !exit_code.is_ok() {
                     panic!("create method failed, exit code: {}", exit_code.into_i32())
@@ -52,19 +51,19 @@ pub fn main() {
             }
             WasmMethodName::WasmCreate2 => {
                 let method_input = decode_input!(core_input, WasmCreate2MethodInput);
-                let mut output20 = [0u8; 20];
+                let mut out_address = [0u8; 20];
                 let exit_code = _wasm_create2(
                     method_input.value32.as_ptr(),
                     method_input.code.as_ptr(),
                     method_input.code.len() as u32,
                     method_input.salt32.as_ptr(),
-                    output20.as_mut_ptr(),
                     method_input.gas_limit,
+                    out_address.as_mut_ptr(),
                 );
                 if !exit_code.is_ok() {
                     panic!("create2 method failed, exit code: {}", exit_code.into_i32())
                 }
-                LowLevelSDK::sys_write(&output20);
+                LowLevelSDK::sys_write(&out_address);
             }
             WasmMethodName::WasmCall => {
                 let method_input = decode_input!(core_input, WasmCallMethodInput);
@@ -72,13 +71,11 @@ pub fn main() {
                     method_input.gas_limit,
                     method_input.callee_address20.as_ptr(),
                     method_input.value32.as_ptr(),
-                    method_input.args.as_ptr(),
-                    method_input.args.len() as u32,
-                    null_mut(),
+                    core::ptr::null_mut(),
                     0,
                 );
                 if !exit_code.is_ok() {
-                    panic!("create2 method failed, exit code: {}", exit_code.into_i32())
+                    panic!("call method failed, exit code: {}", exit_code.into_i32())
                 }
             }
         }

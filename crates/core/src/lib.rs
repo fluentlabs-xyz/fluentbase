@@ -19,7 +19,7 @@ mod contracts;
 pub mod fluent_host;
 pub mod helpers;
 mod utils;
-// pub mod wasm;
+pub mod wasm;
 
 macro_rules! export_and_forward {
     ($fn_name:ident) => {

@@ -1,21 +1,13 @@
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
-use alloc::boxed::Box;
-use core::ptr;
+use crate::account::Account;
+use alloc::vec;
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::{ExecutionContext, U256},
+    evm::{ContractInput, ExecutionContext, U256},
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::ExitCode;
-use revm_interpreter::{
-    analysis::to_analysed,
-    opcode::make_instruction_table,
-    primitives::{Address, Bytecode, Bytes, B256},
-    BytecodeLocked,
-    Contract,
-    Interpreter,
-    SharedMemory,
-};
+use fluentbase_types::{ExitCode, STATE_MAIN};
+use revm_interpreter::primitives::Address;
 
 #[no_mangle]
 pub fn _wasm_call(
@@ -24,63 +16,59 @@ pub fn _wasm_call(
     value32_offset: *const u8,
     args_offset: *const u8,
     args_size: u32,
-    ret_offset: *mut u8,
-    ret_size: u32,
 ) -> ExitCode {
-    let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) });
+    let value =
+        U256::from_be_slice(unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) });
     let is_static = ExecutionContext::contract_is_static();
     if is_static && value != U256::ZERO {
         return ExitCode::WriteProtection;
     }
 
-    let callee_address =
-        Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
+    let callee_address = Address::from_slice(unsafe {
+        &*core::ptr::slice_from_raw_parts(callee_address20_offset, 20)
+    });
 
     let caller_address = ExecutionContext::contract_caller();
     let callee_account = Account::new_from_jzkt(&fluentbase_types::Address::from_slice(
         callee_address.as_slice(),
     ));
 
-    let source_code_hash = callee_account.source_code_hash.as_slice();
-    let source_bytecode = callee_account.load_source_bytecode();
+    let contract_input = ExecutionContext::contract_input();
+    let contract_address = ExecutionContext::contract_address();
+    let contract_input = ContractInput {
+        journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
+        contract_gas_limit: gas_limit as u64,
+        contract_address,
+        contract_caller: ExecutionContext::contract_caller(),
+        contract_input_size: contract_input.len() as u32,
+        contract_input,
+        tx_caller: ExecutionContext::tx_caller(),
+        ..Default::default()
+    };
+    let contract_input_vec = contract_input.encode_to_vec(0);
+
+    let bytecode = callee_account.load_bytecode();
     if value != U256::ZERO {
         return ExitCode::UnknownError;
     };
-    let args = unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) };
-    let contract = Contract {
-        input: args.into(),
-        hash: B256::from_slice(source_code_hash),
-        // TODO simplify
-        bytecode: BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(Bytes::copy_from_slice(
-            source_bytecode.as_ref(),
-        ))))
-        .unwrap(),
-        address: Address::new(callee_account.address.into_array()),
-        caller: Address::new(caller_address.into_array()),
-        value,
-    };
-    let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
-    let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
-    let mut host = FluentHost::default();
-    let shared_memory = SharedMemory::new();
-    let interpreter_result = interpreter.run(shared_memory, &instruction_table, &mut host);
-    let interpreter_result = if let Some(v) = interpreter_result.into_result_return() {
-        v
-    } else {
-        return ExitCode::EVMCallError;
-    };
-    if interpreter_result.is_error()
-        || interpreter_result.is_revert()
-        || !interpreter_result.is_ok()
-    {
-        return ExitCode::EVMCallError;
+    let exit_code = LowLevelSDK::sys_exec(
+        bytecode.as_ptr(),
+        bytecode.len() as u32,
+        contract_input_vec.as_ptr(),
+        contract_input_vec.len() as u32,
+        core::ptr::null_mut(),
+        0,
+        &gas_limit as *const u32,
+        STATE_MAIN,
+    );
+    if exit_code != ExitCode::Ok.into_i32() {
+        panic!("wasm call failed, exit code: {}", exit_code);
     }
-    let output = interpreter_result.output;
+    let out_size = LowLevelSDK::sys_output_size();
+    let mut output = vec![0u8; out_size as usize];
+    // TODO optimize, copy from source to dest without buffer
+    LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
     LowLevelSDK::sys_write(&output);
-    if ret_size > 0 {
-        let ret_size_actual = core::cmp::min(output.len(), ret_size as usize);
-        unsafe { ptr::copy(output.as_ptr(), ret_offset, ret_size_actual) };
-    }
 
     ExitCode::Ok
 }
