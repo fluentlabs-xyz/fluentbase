@@ -7,7 +7,7 @@ use crate::{
     test_helpers::wasm2rwasm,
 };
 use fluentbase_codec::Encoder;
-use fluentbase_core::{account::Account, evm::calc_create_address};
+use fluentbase_core::{account::Account, helpers::calc_create_address};
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
@@ -55,7 +55,7 @@ fn test_create() {
     let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;
-    let evm_contract_wasm_binary = include_bytes!("../../../crates/core/bin/evm_contract.wasm");
+    let evm_contract_wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
     let evm_contract_rwasm_binary = wasm2rwasm(evm_contract_wasm_binary.as_slice(), false);
     let mut runtime_ctx = RuntimeContext::new(evm_contract_rwasm_binary);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
@@ -120,7 +120,7 @@ fn test_call_after_create() {
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
     const IS_RUNTIME: bool = true;
-    let wasm_binary = include_bytes!("../../../crates/core/bin/evm_contract.wasm");
+    let wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
     let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
@@ -206,10 +206,10 @@ fn test_call_evm_from_wasm() {
         let mut jzkt = test_ctx.init_jzkt(Some(&mut runtime_ctx));
         let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
         ecl_account.update_source_bytecode(
-            &include_bytes!("../../../crates/core/bin/evm_contract.wasm").into(),
+            &include_bytes!("../../../crates/core/bin/ecl_contract.wasm").into(),
         );
         ecl_account
-            .update_bytecode(&include_bytes!("../../../crates/core/bin/evm_contract.rwasm").into());
+            .update_bytecode(&include_bytes!("../../../crates/core/bin/ecl_contract.rwasm").into());
         ecl_account.write_to_jzkt();
         Account::commit();
 
@@ -227,7 +227,7 @@ fn test_call_evm_from_wasm() {
             evm_create_method_input.encode_to_vec(0),
         );
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
-        let wasm_binary = include_bytes!("../../../crates/core/bin/evm_contract.wasm");
+        let wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
         let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
         let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
         runtime_ctx.with_jzkt(jzkt);

@@ -3,7 +3,7 @@ use core::ptr::null_mut;
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core_api::{
     api::CoreInput,
-    bindings::{EVMMethodName, EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput},
+    bindings::{EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput, EvmMethodName},
 };
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 
@@ -17,7 +17,7 @@ macro_rules! decode_input {
 }
 
 pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../bin/evm_contract.wasm"));
+    LowLevelSDK::sys_write(include_bytes!("../../bin/ecl_contract.wasm"));
     LowLevelSDK::sys_halt(0);
 }
 
@@ -27,10 +27,10 @@ pub fn main() {
     let mut core_input = CoreInput::default();
     CoreInput::decode_body(&mut buffer, 0, &mut core_input);
 
-    let method_name = EVMMethodName::try_from(core_input.method_id);
+    let method_name = EvmMethodName::try_from(core_input.method_id);
     if let Ok(method_name) = method_name {
         match method_name {
-            EVMMethodName::EvmCreate => {
+            EvmMethodName::EvmCreate => {
                 let method_input = decode_input!(core_input, EvmCreateMethodInput);
                 let mut output20 = [0u8; 20];
                 let exit_code = _evm_create(
@@ -45,7 +45,7 @@ pub fn main() {
                 }
                 LowLevelSDK::sys_write(&output20);
             }
-            EVMMethodName::EvmCreate2 => {
+            EvmMethodName::EvmCreate2 => {
                 let method_input = decode_input!(core_input, EvmCreate2MethodInput);
                 let mut output20 = [0u8; 20];
                 let exit_code = _evm_create2(
@@ -61,7 +61,7 @@ pub fn main() {
                 }
                 LowLevelSDK::sys_write(&output20);
             }
-            EVMMethodName::EvmCall => {
+            EvmMethodName::EvmCall => {
                 let method_input = decode_input!(core_input, EvmCallMethodInput);
                 let exit_code = _evm_call(
                     method_input.gas_limit,

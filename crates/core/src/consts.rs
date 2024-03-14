@@ -1,3 +1,4 @@
 use fluentbase_types::{address, Address};
 
 pub const ECL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
+pub const WCL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000002");

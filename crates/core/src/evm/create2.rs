@@ -1,8 +1,8 @@
 use crate::{
     account::Account,
     account_types::MAX_CODE_SIZE,
-    evm::{calc_create2_address, read_address_from_input, SpecDefault},
     fluent_host::FluentHost,
+    helpers::{calc_create2_address, read_address_from_input, DefaultEvmSpec},
 };
 use alloc::{alloc::alloc, boxed::Box};
 use core::{alloc::Layout, ptr};
@@ -79,7 +79,7 @@ pub fn _evm_create2(
         ..Default::default()
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, false);
-    let instruction_table = make_instruction_table::<FluentHost, SpecDefault>();
+    let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
     let interpreter_result = interpreter.run(shared_memory, &instruction_table, &mut host);

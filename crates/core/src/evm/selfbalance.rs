@@ -1,4 +1,4 @@
-use crate::{account_types::JZKT_ACCOUNT_BALANCE_FIELD, evm::read_address_from_input};
+use crate::{account_types::JZKT_ACCOUNT_BALANCE_FIELD, helpers::read_address_from_input};
 use core::ptr;
 use fluentbase_sdk::{
     evm::{ContractInput, IContractInput},

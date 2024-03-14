@@ -2,7 +2,7 @@ use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{ExecutionContext, IContractInput, U256},
+    evm::{ExecutionContext, U256},
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -18,7 +18,7 @@ use revm_interpreter::{
 };
 
 #[no_mangle]
-pub fn _evm_call(
+pub fn _wasm_call(
     gas_limit: u32,
     callee_address20_offset: *const u8,
     value32_offset: *const u8,

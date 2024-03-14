@@ -1,4 +1,4 @@
-use crate::evm::get_contract_input_offset_and_len;
+use crate::helpers::get_contract_input_offset_and_len;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 #[no_mangle]
