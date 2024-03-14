@@ -1,4 +1,4 @@
-use crate::evm::read_address_from_input;
+use crate::helpers::read_address_from_input;
 use core::ptr;
 use fluentbase_sdk::evm::{ContractInput, IContractInput};
 

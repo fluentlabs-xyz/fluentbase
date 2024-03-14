@@ -38,11 +38,12 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
 
     use_decls.push_str(
         r#"
-            use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
-            use alloc::{vec::Vec, string::{String, ToString}};
+            use ::fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
+            use ::alloc::{vec::Vec, string::{String, ToString}};
         "#,
     );
 
+    let mut struct_name_prefix = "".to_string();
     let mut struct_ident_prefix_to_const_ident = Vec::<(String, String)>::new();
     for fn_item in &foreign_mod_ast.clone().items {
         match fn_item {
@@ -66,6 +67,10 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
                         })
                         .into_iter()
                         .collect();
+                    if struct_name_prefix.is_empty() {
+                        let names = struct_ident_prefix.split("_");
+                        struct_name_prefix = names.take(1).next().unwrap().to_string();
+                    }
                     struct_ident_prefix = struct_ident_prefix.replace("_", "");
                     let struct_ident = format!("{}{}", struct_ident_prefix, "MethodInput");
                     struct_ident_prefix_to_const_ident
@@ -206,7 +211,7 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
                         .as_str(),
                     );
                 } else {
-                    panic!("each function name must start with underscore prefix")
+                    panic!("each function name must start with underscore")
                 }
             }
             _ => {
@@ -229,7 +234,7 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
             
                 fn try_from(value: u32) -> Result<Self, Self::Error> {
                     match value {
-                        // EVM_CREATE_METHOD_ID => Ok(EVMMethodName::EvmCreate),
+                        // EVM_CREATE_METHOD_ID => Ok(ECLMethodName::EvmCreate),
                         #ENUM_TRY_FROM_IMPL_HANDS#
                         _ => Err(Self::Error::default()),
                     }
@@ -265,7 +270,10 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
             res.push_str(", ");
             res
         })
-        .replace("#STRUCT_NAME#", "EVMMethodName")
+        .replace(
+            "#STRUCT_NAME#",
+            format!("{struct_name_prefix}MethodName").as_str(),
+        )
         .as_str(),
     );
 
