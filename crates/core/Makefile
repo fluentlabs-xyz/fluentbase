@@ -151,23 +151,6 @@ build_wasm_contracts: build_wcl_contract
 .PHONY: build_all_contracts
 build_all_contracts: build_evm_contracts build_wasm_contracts
 
-.PHONY: run_evm_call_from_wasm_example
-run_evm_call_from_wasm_example:
-	#cd ../../examples; $(MAKE) evm_call_from_wasm
-	cd ../../e2e; cargo test test_call_evm_from_wasm -- --nocapture
-
-.PHONY: run_test_wasm_create
-run_test_wasm_create: build_wcl_contract
-	cd ../../e2e; cargo test test_wasm_create -- --nocapture
-
-.PHONY: run_test_wasm_create
-run_test_wasm_create: build_wcl_contract
-	cd ../../e2e; cargo test test_wasm_create -- --nocapture
-
-.PHONY: run_test_wasm_call_after_create
-run_test_wasm_call_after_create: build_wcl_contract
-	cd ../../e2e; cargo test test_wasm_call_after_create -- --nocapture
-
 .PHONY: test
 test:
 	cargo test -q
