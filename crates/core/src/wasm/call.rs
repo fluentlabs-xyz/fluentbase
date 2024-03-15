@@ -1,5 +1,6 @@
-use crate::account::Account;
-use alloc::vec;
+use crate::{account::Account, account_types::MAX_CODE_SIZE};
+use alloc::{alloc::alloc, vec};
+use core::alloc::Layout;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
@@ -64,10 +65,8 @@ pub fn _wasm_call(
         panic!("wasm call failed, exit code: {}", exit_code);
     }
     let out_size = LowLevelSDK::sys_output_size();
-    let mut output = vec![0u8; out_size as usize];
-    // TODO optimize, copy from source to dest without buffer
-    LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
-    LowLevelSDK::sys_write(&output);
+
+    LowLevelSDK::sys_forward_output(0, out_size);
 
     ExitCode::Ok
 }

@@ -36,6 +36,7 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
     let mut enum_decls = String::new();
     let mut fn_decls = String::new();
 
+    // TODO solve collision problem
     // use_decls.push_str(
     //     r#"
     //         use ::fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
@@ -291,13 +292,15 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
     if cfg!(feature = "debug") {
         builder.push_str(
             r#"
-            pub fn ast_debug_str() -> String { "__AST_STR__".to_string() }
-            pub fn use_decls_debug_str() -> String { "__USE_DECLS__".to_string() }
-            pub fn const_decls_debug_str() -> String { "__CONST_DECLS__".to_string() }
-            pub fn enum_decls_debug_str() -> String { "__ENUM_DECLS__".to_string() }
-            pub fn struct_decls_debug_str() -> String { "__STRUCT_DECLS__".to_string() }
-            pub fn fn_decls_debug_str() -> String { "__FN_DECLS__".to_string() }
-        "#,
+            pub fn ast_debug_str_for___SNP__() -> String { "__AST_STR__".to_string() }
+            pub fn use_decls_debug_str_for___SNP__() -> String { "__USE_DECLS__".to_string() }
+            pub fn const_decls_debug_str_for___SNP__() -> String { "__CONST_DECLS__".to_string() }
+            pub fn enum_decls_debug_str_for___SNP__() -> String { "__ENUM_DECLS__".to_string() }
+            pub fn struct_decls_debug_str_for___SNP__() -> String { "__STRUCT_DECLS__".to_string() }
+            pub fn fn_decls_debug_str_for___SNP__() -> String { "__FN_DECLS__".to_string() }
+        "#
+            .replace("__SNP__", struct_name_prefix.as_str())
+            .as_str(),
         )
     }
     builder

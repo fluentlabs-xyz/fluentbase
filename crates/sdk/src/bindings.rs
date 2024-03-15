@@ -30,6 +30,7 @@ extern "C" {
     pub(crate) fn _sys_read(target: *mut u8, offset: u32, length: u32);
     pub(crate) fn _sys_output_size() -> u32;
     pub(crate) fn _sys_read_output(target: *mut u8, offset: u32, length: u32);
+    pub(crate) fn _sys_forward_output(offset: u32, len: u32);
     pub(crate) fn _sys_state() -> u32;
     pub(crate) fn _sys_exec(
         code_offset: *const u8,

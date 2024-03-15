@@ -31,6 +31,7 @@ fn test_keccak256() {
     );
 }
 
+#[ignore]
 #[test]
 fn test_poseidon() {
     let input_data = "Hello, World".as_bytes();

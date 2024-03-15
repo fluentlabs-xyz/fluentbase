@@ -28,6 +28,7 @@ pub mod statedb_get_storage;
 pub mod statedb_update_code;
 pub mod statedb_update_storage;
 pub mod sys_exec;
+pub mod sys_forward_output;
 pub mod sys_halt;
 pub mod sys_input_size;
 pub mod sys_output_size;
@@ -69,6 +70,7 @@ use crate::{
         statedb_update_code::StateDbUpdateCode,
         statedb_update_storage::StateDbUpdateStorage,
         sys_exec::SysExec,
+        sys_forward_output::SysForwardOutput,
         sys_halt::SysHalt,
         sys_input_size::SysInputSize,
         sys_output_size::SysOutputSize,
@@ -96,6 +98,7 @@ use crate::{
             RWASM_TRANSACT,
             STATEDB_GET_STORAGE,
             STATEDB_UPDATE_STORAGE,
+            SYS_FORWARD_OUTPUT,
             SYS_HALT,
             SYS_INPUT_SIZE,
             SYS_READ,
@@ -153,6 +156,7 @@ impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sy
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
 impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
+impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> (u32, u32));
@@ -189,6 +193,7 @@ fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut
     CryptoEcrecover::register_linker::<T>(import_linker);
     SysHalt::register_linker::<T>(import_linker);
     SysWrite::register_linker::<T>(import_linker);
+    SysForwardOutput::register_linker::<T>(import_linker);
     SysInputSize::register_linker::<T>(import_linker);
     SysRead::register_linker::<T>(import_linker);
     SysOutputSize::register_linker::<T>(import_linker);
@@ -246,6 +251,7 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     CryptoEcrecover::register_handler(linker, store);
     SysHalt::register_handler(linker, store);
     SysWrite::register_handler(linker, store);
+    SysForwardOutput::register_handler(linker, store);
     SysInputSize::register_handler(linker, store);
     SysRead::register_handler(linker, store);
     SysOutputSize::register_handler(linker, store);
