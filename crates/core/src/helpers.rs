@@ -1,14 +1,15 @@
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
+use alloc::vec::Vec;
 use byteorder::{ByteOrder, LittleEndian};
-use core::ptr;
 use fluentbase_sdk::{
     evm::{ContractInput, IContractInput},
     Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{Address, B256, U256};
+use fluentbase_types::{Address, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use revm_interpreter::primitives::ShanghaiSpec;
+use rwasm_codegen::{Compiler, CompilerConfig, FuncOrExport, ImportLinker, ImportLinkerDefaults};
 
 pub type DefaultEvmSpec = ShanghaiSpec;
 
@@ -35,7 +36,7 @@ pub(crate) fn read_address_from_input(offset: usize) -> Address {
 pub(crate) fn read_balance(address: Address, value: &mut U256) {
     let mut bytes32 = Bytes32::default();
     unsafe {
-        ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
+        core::ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
     }
     LowLevelSDK::jzkt_get(bytes32.as_ptr(), JZKT_ACCOUNT_BALANCE_FIELD, unsafe {
         value.as_le_slice_mut().as_mut_ptr()
@@ -67,4 +68,38 @@ pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B2
     LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
     let bytes32: [u8; 32] = bytes[0..32].try_into().unwrap();
     Address::from_word(B256::from(bytes32))
+}
+
+#[inline(always)]
+pub fn wasm2rwasm(bytecode: &[u8], is_deploy: bool) -> Vec<u8> {
+    let mut import_linker = ImportLinker::default();
+    ImportLinkerDefaults::new_v1alpha().register_import_funcs(&mut import_linker);
+    let mut compiler =
+        Compiler::new_with_linker(bytecode, CompilerConfig::default(), Some(&import_linker))
+            .unwrap();
+    compiler
+        .translate(FuncOrExport::Export(if is_deploy {
+            "deploy"
+        } else {
+            "main"
+        }))
+        .unwrap();
+    compiler.finalize().unwrap()
+}
+
+#[inline(always)]
+pub fn rwasm_exec(bytecode: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool) {
+    let exit_code = LowLevelSDK::sys_exec(
+        bytecode.as_ptr(),
+        bytecode.len() as u32,
+        core::ptr::null_mut(),
+        0,
+        core::ptr::null_mut(),
+        0,
+        &gas_limit as *const u32,
+        if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
+    );
+    if exit_code != 0 {
+        panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
+    }
 }

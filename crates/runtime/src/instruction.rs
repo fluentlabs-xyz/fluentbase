@@ -182,7 +182,7 @@ impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v
 impl_runtime_handler!(StateDbEmitLog, STATEDB_EMIT_LOG, fn fluentbase_v1alpha::_statedb_emit_log(topics32_offset: u32, topics32_length: u32, data_offset: u32, data_len: u32) -> ());
 impl_runtime_handler!(StateDbGetBalance, STATEDB_GET_BALANCE, fn fluentbase_v1alpha::_statedb_get_balance(address20_offset: u32, out_balance32_offset: u32, is_self: u32) -> ());
 
-fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut ImportLinker) {
+pub fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut ImportLinker) {
     CryptoKeccak256::register_linker::<T>(import_linker);
     CryptoPoseidon::register_linker::<T>(import_linker);
     CryptoPoseidon2::register_linker::<T>(import_linker);

@@ -104,11 +104,11 @@ ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wat: ${OUT_FOLDER}/${WASM
 ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
 	cd ../../bin; $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
-.PHONY: build_wasm_loader_contract
-build_wasm_loader_contract: \
-	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm \
-	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.rwasm \
-	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
+#.PHONY: build_wasm_loader_contract
+#build_wasm_loader_contract: \
+#	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm \
+#	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.rwasm \
+#	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wasm
 
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm:
@@ -136,17 +136,17 @@ build_wcl_contract: \
 .PHONY: build_wcl_contract_wat
 build_wcl_contract_wat: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}-deploy.wat
 
-.PHONY: build_wasm_loader_contract_wat
-build_wasm_loader_contract_wat: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wat
+#.PHONY: build_wasm_loader_contract_wat
+#build_wasm_loader_contract_wat: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wat ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}-deploy.wat
 
 .PHONY: build_all_contracts_with_wats
-build_all_contracts_with_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wasm_loader_contract_wat build_wcl_contract_wat
+build_all_contracts_with_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wcl_contract_wat
 
 .PHONY: build_evm_contracts
 build_evm_contracts: build_evm_loader_contract build_ecl_contract
 
 .PHONY: build_wasm_contracts
-build_wasm_contracts: build_wasm_loader_contract build_wcl_contract
+build_wasm_contracts: build_wcl_contract
 
 .PHONY: build_all_contracts
 build_all_contracts: build_evm_contracts build_wasm_contracts
@@ -159,6 +159,14 @@ run_evm_call_from_wasm_example:
 .PHONY: run_test_wasm_create
 run_test_wasm_create: build_wcl_contract
 	cd ../../e2e; cargo test test_wasm_create -- --nocapture
+
+.PHONY: run_test_wasm_create
+run_test_wasm_create: build_wcl_contract
+	cd ../../e2e; cargo test test_wasm_create -- --nocapture
+
+.PHONY: run_test_wasm_call_after_create
+run_test_wasm_call_after_create: build_wcl_contract
+	cd ../../e2e; cargo test test_wasm_call_after_create -- --nocapture
 
 .PHONY: test
 test:

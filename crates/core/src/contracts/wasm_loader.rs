@@ -5,7 +5,7 @@ use fluentbase_core_api::{
     api::CoreInput,
     bindings::{WasmCallMethodInput, WASM_CALL_METHOD_ID},
 };
-use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{evm::ExecutionContext, panic, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::STATE_MAIN;
 
 pub fn deploy() {
@@ -20,6 +20,7 @@ pub fn main() {
     let method_data = WasmCallMethodInput::new(
         contract_input_data.contract_address.into_array(),
         contract_input_data.contract_value.to_be_bytes(),
+        contract_input_data.contract_input.to_vec(),
         gas_limit,
     );
     let core_input = CoreInput::new(WASM_CALL_METHOD_ID, method_data.encode_to_vec(0));
@@ -45,7 +46,7 @@ pub fn main() {
     }
     // TODO LowLevelSDK::sys_forward_output to get rid of redundant copy
     let out_size = LowLevelSDK::sys_output_size();
-    let mut output = vec![0u8; out_size as usize];
-    LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
+    let mut output = vec![1u8; 3 as usize];
+    // LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
     LowLevelSDK::sys_write(&output);
 }

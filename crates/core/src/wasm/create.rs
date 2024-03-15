@@ -1,6 +1,6 @@
 use crate::{
     account::Account,
-    helpers::{calc_create_address, read_address_from_input},
+    helpers::{calc_create_address, read_address_from_input, rwasm_exec, wasm2rwasm},
 };
 use alloc::vec;
 use fluentbase_sdk::{
@@ -8,8 +8,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
-use rwasm_codegen::{Compiler, CompilerConfig, FuncOrExport, ImportLinker, ImportLinkerDefaults};
+use fluentbase_types::ExitCode;
 
 #[no_mangle]
 pub fn _wasm_create(
@@ -44,44 +43,21 @@ pub fn _wasm_create(
     if !deployer_account.transfer_value(&mut contract_account, &value) {
         return ExitCode::InsufficientBalance;
     }
-    let deployer_wasm_bytecode_slice =
-        unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let bytecode = unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
 
-    let mut import_linker = ImportLinker::default();
-    ImportLinkerDefaults::new_v1alpha()
-        .with_base_index(2)
-        .register_import_funcs(&mut import_linker);
-    let mut compiler = Compiler::new_with_linker(
-        deployer_wasm_bytecode_slice,
-        CompilerConfig::default(),
-        Some(&import_linker),
-    )
-    .unwrap();
-    compiler.translate(FuncOrExport::Export("deploy")).unwrap();
-    let rwasm_bytecode = compiler.finalize().unwrap();
-    let exit_code = LowLevelSDK::sys_exec(
-        rwasm_bytecode.as_ptr(),
-        rwasm_bytecode.len() as u32,
-        core::ptr::null_mut(),
+    let bytecode_rwasm = wasm2rwasm(bytecode, true);
+    rwasm_exec(&bytecode_rwasm, &[], gas_limit, false);
+    let source_bytecode_out_length = LowLevelSDK::sys_output_size();
+    let mut source_bytecode_out = vec![0u8; source_bytecode_out_length as usize];
+    LowLevelSDK::sys_read_output(
+        source_bytecode_out.as_mut_ptr(),
         0,
-        core::ptr::null_mut(),
-        0,
-        &gas_limit as *const u32,
-        STATE_MAIN,
+        source_bytecode_out_length,
     );
-    if exit_code != 0 {
-        panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
-    }
-    // read output bytecode
-    let bytecode_length = LowLevelSDK::sys_output_size();
-    let mut bytecode_out = vec![0u8; bytecode_length as usize];
-    LowLevelSDK::sys_read(&mut bytecode_out, 0);
-
-    let deployed_bytecode_bytes: Bytes = bytecode_out.into();
+    let bytecode_out = wasm2rwasm(&source_bytecode_out, false);
     deployer_account.write_to_jzkt();
-    contract_account.update_source_bytecode(&deployed_bytecode_bytes);
-    contract_account
-        .update_bytecode(&include_bytes!("../../bin/wasm_loader_contract.rwasm").into());
+    contract_account.update_source_bytecode(&source_bytecode_out.into());
+    contract_account.update_bytecode(&bytecode_out.into());
 
     unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 

@@ -1,10 +1,10 @@
 use crate::{
     account::Account,
     account_types::MAX_CODE_SIZE,
-    helpers::{calc_create2_address, read_address_from_input},
+    helpers::{calc_create2_address, read_address_from_input, rwasm_exec, wasm2rwasm},
 };
-use alloc::alloc::alloc;
-use core::{alloc::Layout, ptr};
+use alloc::{alloc::alloc, vec};
+use core::alloc::Layout;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput, U256},
     LowLevelAPI,
@@ -29,16 +29,16 @@ pub fn _wasm_create2(
         return ExitCode::WriteProtection;
     }
     // read value input and contract address
-    let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) };
-    let salt32_slice = unsafe { &*ptr::slice_from_raw_parts(salt32_offset, 32) };
+    let value32_slice = unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) };
+    let salt32_slice = unsafe { &*core::ptr::slice_from_raw_parts(salt32_offset, 32) };
     let salt = B256::from_slice(salt32_slice);
     let value = U256::from_be_slice(value32_slice);
     let caller_address =
         read_address_from_input(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&caller_address);
-    let bytecode_slice = unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let bytecode_bytes = alloy_primitives::Bytes::from_static(bytecode_slice);
+    let bytecode = unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let bytecode_bytes = alloy_primitives::Bytes::from_static(bytecode);
     let deployer_bytecode = Bytecode::new_raw(bytecode_bytes);
     let deployed_contract_address = calc_create2_address(
         &caller_address,
@@ -57,17 +57,19 @@ pub fn _wasm_create2(
         return ExitCode::InsufficientBalance;
     }
 
-    let deployer_wasm_bytecode_slice =
-        unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let deployer_wasm_bytecode_bytes = Bytes::from_static(deployer_wasm_bytecode_slice);
-
-    // TODO execute wasm bytecode and get wasm result (deployed_wasm_bytecode_bytes)
-
-    let deployed_wasm_bytecode_bytes: Bytes = Bytes::new();
+    let bytecode_rwasm = wasm2rwasm(bytecode, true);
+    rwasm_exec(&bytecode_rwasm, &[], gas_limit, false);
+    let source_bytecode_out_length = LowLevelSDK::sys_output_size();
+    let mut source_bytecode_out = vec![0u8; source_bytecode_out_length as usize];
+    LowLevelSDK::sys_read_output(
+        source_bytecode_out.as_mut_ptr(),
+        0,
+        source_bytecode_out_length,
+    );
+    let bytecode_out = wasm2rwasm(&source_bytecode_out, false);
     deployer_account.write_to_jzkt();
-    contract_account.update_source_bytecode(&deployed_wasm_bytecode_bytes);
-    contract_account
-        .update_bytecode(&include_bytes!("../../bin/wasm_loader_contract.rwasm").into());
+    contract_account.update_source_bytecode(&source_bytecode_out.into());
+    contract_account.update_bytecode(&bytecode_out.into());
 
     // read output bytecode
     let bytecode_length = LowLevelSDK::sys_output_size();
@@ -82,7 +84,7 @@ pub fn _wasm_create2(
     };
     LowLevelSDK::sys_read_output(bytecode, 0, bytecode_length);
 
-    unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
+    unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 
     ExitCode::Ok
 }

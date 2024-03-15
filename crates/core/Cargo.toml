@@ -22,7 +22,7 @@ revm-interpreter = { workspace = true }
 paste = { workspace = true }
 
 [dev-dependencies]
-fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
+fluentbase-runtime = { path = "../runtime", default-features = false }
 fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
