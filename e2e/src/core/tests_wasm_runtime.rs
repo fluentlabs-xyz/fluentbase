@@ -270,10 +270,7 @@ fn test_wasm_call_after_create() {
         let output = output_res.data().output();
         println!("output_vec {:?}", output);
         assert!(output.len() > 0);
-        assert_eq!(
-            &[72, 101, 108, 108, 111, 44, 32, 87, 111, 114, 108, 100],
-            output.as_slice(),
-        );
+        assert_eq!("Hello, World".as_bytes(), output.as_slice());
 
         (jzkt)
     };

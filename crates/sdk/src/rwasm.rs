@@ -30,6 +30,7 @@ use crate::{
         _statedb_set_code,
         _statedb_update_storage,
         _sys_exec,
+        _sys_forward_output,
         _sys_halt,
         _sys_input_size,
         _sys_output_size,
@@ -57,6 +58,11 @@ impl LowLevelAPI for LowLevelSDK {
     #[inline(always)]
     fn sys_write(value: &[u8]) {
         unsafe { _sys_write(value.as_ptr(), value.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn sys_forward_output(offset: u32, len: u32) {
+        unsafe { _sys_forward_output(offset, len) }
     }
 
     #[inline(always)]

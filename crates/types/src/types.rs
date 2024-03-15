@@ -174,6 +174,8 @@ pub enum SysFuncIdx {
     SYS_READ_OUTPUT = 0x0007,
     // fluentbase_v1alpha::_sys_read_output
     SYS_EXEC = 0x0008,
+    // fluentbase_v1alpha::_sys_forward_output
+    SYS_FORWARD_OUTPUT = 0x0009,
     // fluentbase_v1alpha::_sys_exec
     SYS_STATE = 0x0002, // fluentbase_v1alpha::_sys_state
 

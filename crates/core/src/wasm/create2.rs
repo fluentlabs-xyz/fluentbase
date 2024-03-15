@@ -71,19 +71,6 @@ pub fn _wasm_create2(
     contract_account.update_source_bytecode(&source_bytecode_out.into());
     contract_account.update_bytecode(&bytecode_out.into());
 
-    // read output bytecode
-    let bytecode_length = LowLevelSDK::sys_output_size();
-    if bytecode_length > MAX_CODE_SIZE {
-        return ExitCode::ContractSizeLimit;
-    }
-    let bytecode = unsafe {
-        alloc(Layout::from_size_align_unchecked(
-            bytecode_length as usize,
-            8,
-        ))
-    };
-    LowLevelSDK::sys_read_output(bytecode, 0, bytecode_length);
-
     unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 
     ExitCode::Ok

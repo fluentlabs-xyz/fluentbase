@@ -25,6 +25,7 @@ use fluentbase_runtime::{
         jzkt_update_preimage::JzktUpdatePreimage,
         rwasm_compile::RwasmCompile,
         sys_exec::SysExec,
+        sys_forward_output::SysForwardOutput,
         sys_halt::SysHalt,
         sys_input_size::SysInputSize,
         sys_output_size::SysOutputSize,
@@ -117,6 +118,9 @@ impl LowLevelAPI for LowLevelSDK {
 
     fn sys_write(value: &[u8]) {
         with_context_mut(|ctx| SysWrite::fn_impl(ctx, value))
+    }
+    fn sys_forward_output(offset: u32, len: u32) {
+        with_context_mut(|ctx| SysForwardOutput::fn_impl(ctx, offset, len)).unwrap()
     }
 
     fn sys_halt(exit_code: i32) {

@@ -92,8 +92,8 @@ pub fn rwasm_exec(bytecode: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool
     let exit_code = LowLevelSDK::sys_exec(
         bytecode.as_ptr(),
         bytecode.len() as u32,
-        core::ptr::null_mut(),
-        0,
+        input.as_ptr(),
+        input.len() as u32,
         core::ptr::null_mut(),
         0,
         &gas_limit as *const u32,
