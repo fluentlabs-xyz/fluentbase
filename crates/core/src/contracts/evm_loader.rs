@@ -44,9 +44,6 @@ pub fn main() {
     if exit_code != 0 {
         panic!("ecl: call failed, exit code: {}", exit_code)
     }
-    // TODO LowLevelSDK::sys_forward_output to get rid of redundant copy
     let out_size = LowLevelSDK::sys_output_size();
-    let mut output = vec![0u8; out_size as usize];
-    LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
-    LowLevelSDK::sys_write(&output);
+    LowLevelSDK::sys_forward_output(0, out_size);
 }

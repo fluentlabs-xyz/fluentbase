@@ -66,7 +66,6 @@ pub fn _evm_create2(
     }
     deployer_account.inc_nonce();
     contract_account.nonce = 1;
-    // transfer value to the just created account
     if !deployer_account.transfer_value(&mut contract_account, &value) {
         return ExitCode::InsufficientBalance;
     }
@@ -102,23 +101,7 @@ pub fn _evm_create2(
     contract_account.update_source_bytecode(&deployed_bytecode);
     contract_account.update_bytecode(&include_bytes!("../../bin/evm_loader_contract.rwasm").into());
 
-    // TODO convert $deployed_bytecode into rwasm code ($deployed_rwasm_bytecode)
-    // TODO save $deployed_rwasm_bytecode into account (with its poseidon hash)
-
-    // read output bytecode
-    let bytecode_length = LowLevelSDK::sys_output_size();
-    if bytecode_length > MAX_CODE_SIZE {
-        return ExitCode::ContractSizeLimit;
-    }
-    let bytecode = unsafe {
-        alloc(Layout::from_size_align_unchecked(
-            bytecode_length as usize,
-            8,
-        ))
-    };
-    LowLevelSDK::sys_read_output(bytecode, 0, bytecode_length);
-
-    unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
+    // TODO convert deployed bytecode into rwasm code using evm translator and save result into
 
     ExitCode::Ok
 }

@@ -52,7 +52,7 @@ pub fn _wasm_create2(
     }
     deployer_account.inc_nonce();
     contract_account.nonce = 1;
-    // transfer value to the just created account
+
     if !deployer_account.transfer_value(&mut contract_account, &value) {
         return ExitCode::InsufficientBalance;
     }
