@@ -1,16 +1,14 @@
 use crate::{
     account::Account,
-    account_types::MAX_CODE_SIZE,
     helpers::{calc_create2_address, read_address_from_input, rwasm_exec, wasm2rwasm},
 };
-use alloc::{alloc::alloc, vec};
-use core::alloc::Layout;
+use alloc::vec;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput, U256},
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{Bytes, ExitCode, B256};
+use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::primitives::{alloy_primitives, Bytecode};
 
 #[no_mangle]

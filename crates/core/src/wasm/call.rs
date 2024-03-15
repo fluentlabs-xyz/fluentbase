@@ -1,6 +1,5 @@
-use crate::{account::Account, account_types::MAX_CODE_SIZE};
-use alloc::{alloc::alloc, vec};
-use core::alloc::Layout;
+use revm_interpreter::primitives::Address;
+
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
@@ -8,7 +7,8 @@ use fluentbase_sdk::{
     LowLevelSDK,
 };
 use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
-use revm_interpreter::primitives::Address;
+
+use crate::account::Account;
 
 #[no_mangle]
 pub fn _wasm_call(
