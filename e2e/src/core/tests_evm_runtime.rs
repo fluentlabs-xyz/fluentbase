@@ -79,7 +79,6 @@ fn test_evm_create() {
     let contract_address_vec = output.data().output();
     let contract_address = Address::from_slice(contract_address_vec);
 
-    println!("contract_address {:x?}", contract_address);
     assert_eq!(expected_contract_address, contract_address);
 }
 
@@ -139,7 +138,6 @@ fn test_evm_call_after_create() {
             test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let contract_address = Address::from_slice(output.data().output());
-        println!("deployed contract_address {:x?}", contract_address);
         assert_eq!(&expected_contract_address, &contract_address);
 
         (jzkt, contract_address)
@@ -185,7 +183,6 @@ fn test_evm_call_after_create() {
 #[test]
 fn test_evm_call_from_wasm() {
     let caller_address = address!("000000000000000000000000000000000000000c");
-    println!("caller_address {:x?}", caller_address);
     let caller_account = Account {
         address: caller_address,
         balance: U256::from_be_slice(1000000000u128.to_be_bytes().as_slice()),
@@ -248,7 +245,6 @@ fn test_evm_call_from_wasm() {
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output = output.data().output();
         let evm_contract_address = Address::from_slice(output);
-        println!("evm_contract_address {:x?}", evm_contract_address);
         assert_eq!(&expected_contract_address, &evm_contract_address);
 
         (jzkt, evm_contract_address)

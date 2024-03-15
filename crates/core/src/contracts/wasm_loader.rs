@@ -5,7 +5,7 @@ use fluentbase_core_api::{
     api::CoreInput,
     bindings::{WasmCallMethodInput, WASM_CALL_METHOD_ID},
 };
-use fluentbase_sdk::{evm::ExecutionContext, panic, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::STATE_MAIN;
 
 pub fn deploy() {
@@ -13,6 +13,7 @@ pub fn deploy() {
     LowLevelSDK::sys_halt(0);
 }
 
+#[deprecated]
 pub fn main() {
     let mut contract_input_data = ExecutionContext::contract_input_full();
 
@@ -44,9 +45,5 @@ pub fn main() {
     if exit_code != 0 {
         panic!("ecl: call failed, exit code: {}", exit_code)
     }
-    // TODO LowLevelSDK::sys_forward_output to get rid of redundant copy
-    let out_size = LowLevelSDK::sys_output_size();
-    let mut output = vec![1u8; 3 as usize];
-    // LowLevelSDK::sys_read_output(output.as_mut_ptr(), 0, output.len() as u32);
-    LowLevelSDK::sys_write(&output);
+    LowLevelSDK::sys_forward_output(0, out_size);
 }

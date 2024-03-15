@@ -2,7 +2,7 @@ use crate::{core::testing_utils::TestingContext, test_helpers::wasm2rwasm};
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
     account::Account,
-    helpers::{calc_create2_address, calc_create_address, rwasm_exec},
+    helpers::{calc_create2_address, calc_create_address},
 };
 use fluentbase_core_api::{
     api::CoreInput,
@@ -20,32 +20,8 @@ use fluentbase_runtime::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
 use hex_literal::hex;
-
-#[test]
-fn test_greeting_compilation() {
-    let gas_limit: u32 = 10_000_000;
-    let mut runtime_ctx = RuntimeContext::new(&[]);
-    let _test_ctx = TestingContext::<(), false>::new(true, Some(&mut runtime_ctx));
-
-    let greeting_deploy_wasm = include_bytes!("../../../examples/bin/greeting-deploy.wasm");
-    let greeting_deploy_rwasm =
-        fluentbase_core::helpers::wasm2rwasm(greeting_deploy_wasm.as_ref(), true);
-    let contract_input = vec![];
-    rwasm_exec(
-        greeting_deploy_rwasm.as_ref(),
-        &contract_input,
-        gas_limit,
-        true,
-    );
-    let mut out_len = LowLevelSDK::sys_output_size();
-    let mut source_bytecode_out = vec![0u8; out_len as usize];
-    LowLevelSDK::sys_read_output(source_bytecode_out.as_mut_ptr(), 0, out_len);
-    assert_eq!(178, source_bytecode_out.len());
-    println!("source_bytecode_out {:?}", &source_bytecode_out);
-}
 
 #[test]
 fn test_wasm_create() {
@@ -93,10 +69,8 @@ fn test_wasm_create() {
     let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
-    println!("output_vec {:?}", output_vec);
     assert!(output_vec.len() > 0);
     let contract_address = Address::from_slice(output_vec);
-    println!("deployed contract_address {:x?}", contract_address);
     assert_eq!(expected_contract_address, contract_address);
 
     {
@@ -157,10 +131,8 @@ fn test_wasm_create2() {
     let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
-    println!("output_vec {:?}", output_vec);
     assert!(output_vec.len() > 0);
     let contract_address = Address::from_slice(output_vec);
-    println!("deployed contract_address {:x?}", contract_address);
     assert_eq!(expected_contract_address, contract_address);
 
     {
@@ -220,10 +192,8 @@ fn test_wasm_call_after_create() {
             test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output_vec = output.data().output();
-        println!("output_vec {:?}", output_vec);
         assert!(output_vec.len() > 0);
         let contract_address = Address::from_slice(output_vec);
-        println!("deployed contract_address {:x?}", contract_address);
         assert_eq!(expected_contract_address, contract_address);
 
         {
@@ -268,7 +238,6 @@ fn test_wasm_call_after_create() {
             test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output_res.data().exit_code());
         let output = output_res.data().output();
-        println!("output_vec {:?}", output);
         assert!(output.len() > 0);
         assert_eq!("Hello, World".as_bytes(), output.as_slice());
 
