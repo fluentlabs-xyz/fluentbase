@@ -71,8 +71,8 @@ pub fn main() {
                     method_input.gas_limit,
                     method_input.callee_address20.as_ptr(),
                     method_input.value32.as_ptr(),
-                    core::ptr::null_mut(),
-                    0,
+                    method_input.args.as_ptr(),
+                    method_input.args.len() as u32,
                 );
                 if !exit_code.is_ok() {
                     panic!("call method failed, exit code: {}", exit_code.into_i32())

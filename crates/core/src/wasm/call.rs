@@ -6,7 +6,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{ExitCode, STATE_MAIN};
+use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
 use revm_interpreter::primitives::Address;
 
 #[no_mangle]
@@ -23,25 +23,24 @@ pub fn _wasm_call(
     if is_static && value != U256::ZERO {
         return ExitCode::WriteProtection;
     }
+    let args = unsafe { &*core::ptr::slice_from_raw_parts(args_offset, args_size as usize) };
 
     let callee_address = Address::from_slice(unsafe {
         &*core::ptr::slice_from_raw_parts(callee_address20_offset, 20)
     });
 
-    let caller_address = ExecutionContext::contract_caller();
     let callee_account = Account::new_from_jzkt(&fluentbase_types::Address::from_slice(
         callee_address.as_slice(),
     ));
 
-    let contract_input = ExecutionContext::contract_input();
     let contract_address = ExecutionContext::contract_address();
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
         contract_address,
         contract_caller: ExecutionContext::contract_caller(),
-        contract_input_size: contract_input.len() as u32,
-        contract_input,
+        contract_input_size: args.len() as u32,
+        contract_input: Bytes::from_static(args),
         tx_caller: ExecutionContext::tx_caller(),
         ..Default::default()
     };
