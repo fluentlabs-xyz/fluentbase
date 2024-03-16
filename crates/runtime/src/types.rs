@@ -1,15 +1,16 @@
-use rwasm_codegen::{rwasm::Error as RwasmError, ReducedModuleError};
+use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    ReducedModule(ReducedModuleError),
+    BinaryFormatError(BinaryFormatError),
     Rwasm(RwasmError),
     StorageError(String),
+    MissingEntrypoint,
 }
 
-impl From<ReducedModuleError> for RuntimeError {
-    fn from(value: ReducedModuleError) -> Self {
-        Self::ReducedModule(value)
+impl From<BinaryFormatError> for RuntimeError {
+    fn from(value: BinaryFormatError) -> Self {
+        Self::BinaryFormatError(value)
     }
 }
 
@@ -18,8 +19,6 @@ impl From<RwasmError> for RuntimeError {
         Self::Rwasm(value)
     }
 }
-
-pub use fluentbase_types::*;
 
 macro_rules! rwasm_error {
     ($error_type:path) => {

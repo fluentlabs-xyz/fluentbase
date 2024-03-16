@@ -12,16 +12,12 @@ proc-macro = false
 [dependencies]
 byteorder = { workspace = true }
 fluentbase-codec = { path = "../codec", default-features = false }
-rwasm-codegen = { workspace = true }
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
+fluentbase-sdk = { path = "../sdk", default-features = false }
 hashbrown = { workspace = true }
 once_cell = { version = "1.19.0", default-features = false }
 #fluentbase-core = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
 #fluentbase-core = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "FLU-56-based-on-no-tracer" }
 fluentbase-core = { path = "../core" }
-
-[build-dependencies]
-rwasm-codegen = { workspace = true }
 
 [dev-dependencies]
 wat = "1.0.77"

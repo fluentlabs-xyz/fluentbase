@@ -1,6 +1,4 @@
-use crate::evm::B256;
-#[allow(dead_code)]
-use crate::{Bytes32, LowLevelAPI, LowLevelSDK};
+use crate::{evm::B256, LowLevelAPI, LowLevelSDK};
 use alloc::rc::Rc;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
@@ -23,7 +21,6 @@ use fluentbase_runtime::{
         jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
-        rwasm_compile::RwasmCompile,
         sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_halt::SysHalt,
@@ -275,77 +272,12 @@ impl LowLevelAPI for LowLevelSDK {
     fn jzkt_preimage_copy(key32_ptr: *const u8, preimage_ptr: *mut u8) {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         let preimage_copy = with_context_mut(|ctx| JzktPreimageCopy::fn_impl(ctx, key).unwrap());
-        let mut dest =
+        let dest =
             unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
         dest.copy_from_slice(&preimage_copy);
     }
-
-    fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32 {
-        match RwasmCompile::fn_impl(input, output.len() as u32) {
-            Ok(result) => {
-                output[0..result.len()].copy_from_slice(&result);
-                0
-            }
-            Err(err_code) => err_code,
-        }
-    }
-
-    fn rwasm_transact(
-        _address: &[u8],
-        _value: &[u8],
-        _input: &[u8],
-        _output: &mut [u8],
-        _fuel: u32,
-        _is_delegate: bool,
-        _is_static: bool,
-    ) -> i32 {
-        unreachable!("rwasm methods are not available in this mode")
-    }
-
-    fn rwasm_create(
-        _value32_offset: &[u8],
-        _input_bytecode: &[u8],
-        _salt32: &[u8],
-        _deployed_contract_address20_output: &mut [u8],
-        _is_create2: bool,
-    ) -> i32 {
-        unreachable!("rwasm methods are not available in this mode")
-    }
-
-    fn statedb_get_code(_key: &[u8], _output: &mut [u8], _code_offset: u32) {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_get_code_size(_key: &[u8]) -> u32 {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_get_code_hash(_key: &[u8], _out_hash32: &mut [u8]) -> () {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_get_balance(_address20: &[u8], _out_balance32: &mut [u8], _is_self: bool) -> () {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_set_code(_key: &[u8], _code: &[u8]) {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_get_storage(_key: &[u8], _value: &mut [u8]) {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_update_storage(_key: &[u8], _value: &[u8]) {
-        unreachable!("statedb methods are not available in this mode")
-    }
-
-    fn statedb_emit_log(_topics: &[Bytes32], _data: &[u8]) {
-        unreachable!("statedb methods are not available in this mode")
-    }
 }
 
-// #[cfg(test)]
 impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
         CONTEXT.with(|ctx| {

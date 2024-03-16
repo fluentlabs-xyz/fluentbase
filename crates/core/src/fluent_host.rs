@@ -195,7 +195,7 @@ impl Host for FluentHost {
             unsafe { previous_or_original_value.as_le_slice_mut().as_mut_ptr() },
             unsafe { present.as_le_slice_mut().as_mut_ptr() },
             unsafe { new_value.as_le_slice_mut().as_mut_ptr() },
-            is_cold as *mut u32,
+            &mut is_cold as *mut u32,
         );
         if sload_exit_code == ExitCode::Ok {
             return Some((previous_or_original_value, present, new_value, is_cold != 0));
@@ -204,12 +204,12 @@ impl Host for FluentHost {
     }
 
     #[inline]
-    fn tload(&mut self, _address: Address, index: U256) -> U256 {
+    fn tload(&mut self, _address: Address, _index: U256) -> U256 {
         panic!("tload not supported")
     }
 
     #[inline]
-    fn tstore(&mut self, _address: Address, index: U256, value: U256) {
+    fn tstore(&mut self, _address: Address, _index: U256, _value: U256) {
         panic!("tstore not supported")
     }
 

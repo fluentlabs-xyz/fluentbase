@@ -15,12 +15,8 @@ use fluentbase_core_api::{
         WASM_CREATE_METHOD_ID,
     },
 };
-use fluentbase_runtime::{
-    types::{address, Address, Bytes, B256, U256},
-    Runtime,
-    RuntimeContext,
-};
-use fluentbase_types::ExitCode;
+use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_types::{address, Address, Bytes, ExitCode, B256, U256};
 use hex_literal::hex;
 
 #[test]
@@ -36,7 +32,7 @@ fn test_wasm_create() {
     let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
 
-    let wasm_bytecode = include_bytes!("../../../examples/bin/greeting-deploy.wasm");
+    let wasm_bytecode = include_bytes!("../../../examples/bin/greeting.wasm");
 
     let create_value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
@@ -66,7 +62,7 @@ fn test_wasm_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -94,7 +90,7 @@ fn test_wasm_create2() {
         ..Default::default()
     };
 
-    let wasm_bytecode = include_bytes!("../../../examples/bin/greeting-deploy.wasm");
+    let wasm_bytecode = include_bytes!("../../../examples/bin/greeting.wasm");
     let mut wasm_bytecode_hash = B256::default();
     keccak_hash::keccak_256(wasm_bytecode.as_ref(), wasm_bytecode_hash.as_mut_slice());
 
@@ -128,7 +124,7 @@ fn test_wasm_create2() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -163,7 +159,7 @@ fn test_wasm_call_after_create() {
     let gas_limit: u32 = 10_000_000;
     let create_value = B256::left_padding_from(&hex!("1000"));
     let call_value = B256::left_padding_from(&hex!("00"));
-    let deploy_wasm = include_bytes!("../../../examples/bin/greeting-deploy.wasm");
+    let deploy_wasm = include_bytes!("../../../examples/bin/greeting.wasm");
     let import_linker = Runtime::<()>::new_sovereign_linker();
 
     let (jzkt, deployed_contract_address) = {
@@ -189,7 +185,7 @@ fn test_wasm_call_after_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
         let mut output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output_vec = output.data().output();
         assert!(output_vec.len() > 0);
@@ -235,7 +231,7 @@ fn test_wasm_call_after_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
         let mut output_res =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output_res.data().exit_code());
         let output = output_res.data().output();
         assert!(output.len() > 0);

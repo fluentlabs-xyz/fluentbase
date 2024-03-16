@@ -10,7 +10,8 @@ use crate::{
 };
 use alloc::boxed::Box;
 use alloy_primitives::Bytes;
-use rwasm_codegen::{ImportLinker, InstructionSet, FUNC_SOURCE_MAP_ENTRYPOINT_IDX};
+use rwasm::core::ImportLinker;
+use rwasm_codegen::InstructionSet;
 
 #[derive()]
 pub struct EvmCompiler<'a> {

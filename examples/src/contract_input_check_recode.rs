@@ -1,12 +1,12 @@
-use crate::deploy_internal;
 use fluentbase_codec::Encoder;
-use fluentbase_sdk::evm::{ContractInput, ExecutionContext};
+use fluentbase_sdk::{
+    evm::{ContractInput, ExecutionContext},
+    LowLevelAPI,
+    LowLevelSDK,
+};
 use fluentbase_types::ExitCode;
-use revm_primitives::keccak256;
 
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/contract_input_check_recode.wasm"))
-}
+pub fn deploy() {}
 
 pub fn main() {
     let ctx = ExecutionContext::default();
@@ -17,6 +17,7 @@ pub fn main() {
         panic!("contract input size doesnt match")
     }
     let env_chain_id = ExecutionContext::env_chain_id();
+    let contract_gas_limit = ExecutionContext::contract_gas_limit();
     let contract_address = ExecutionContext::contract_address();
     let contract_caller = ExecutionContext::contract_caller();
 
@@ -26,7 +27,13 @@ pub fn main() {
         panic!("contract bytecode size doesnt match")
     }
     let contract_code_hash = ExecutionContext::contract_code_hash();
-    if contract_code_hash.0 != keccak256(&contract_bytecode).0 {
+    let mut code_hash: [u8; 32] = [0u8; 32];
+    LowLevelSDK::crypto_keccak256(
+        contract_bytecode.as_ptr(),
+        contract_bytecode.len() as u32,
+        code_hash.as_mut_ptr(),
+    );
+    if contract_code_hash.0 != code_hash {
         panic!("contract code hash doesnt match")
     }
 
@@ -48,11 +55,12 @@ pub fn main() {
     let tx_gas_priority_fee = ExecutionContext::tx_gas_priority_fee();
     let tx_caller = ExecutionContext::tx_caller();
 
-    let mut contract_input_struct = ContractInput {
+    let contract_input_struct = ContractInput {
         journal_checkpoint,
-        contract_input: contract_input.clone(),
+        contract_input,
         contract_input_size,
         env_chain_id,
+        contract_gas_limit,
         contract_address,
         contract_caller,
         contract_bytecode,

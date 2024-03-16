@@ -1,14 +1,9 @@
-use rwasm::{
-    common::{Trap, TrapCode},
-    engine::{bytecode::FuncIdx, CompiledFunc},
-};
-#[cfg(feature = "std")]
-use strum::IntoEnumIterator;
+use rwasm::core::{Trap, TrapCode};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
-    // warning: when adding new codes dont forget to add them to impls below
+    // warning: when adding new codes don't forget to add them to impls below
     Ok = 0,
     Panic = -71,
     // fluentbase error codes
@@ -46,14 +41,12 @@ pub enum ExitCode {
     OutOfFuel = -2015,
     GrowthOperationLimited = -2016,
     UnknownError = -2017,
+    UnresolvedFunction = -2018,
 }
 
 impl ExitCode {
     pub fn is_ok(&self) -> bool {
         *self == Self::Ok
-    }
-    pub fn is_not_ok(&self) -> bool {
-        *self != Self::Ok
     }
 
     pub fn into_i32(self) -> i32 {
@@ -79,6 +72,7 @@ impl From<TrapCode> for ExitCode {
             TrapCode::BadSignature => ExitCode::BadSignature,
             TrapCode::OutOfFuel => ExitCode::OutOfFuel,
             TrapCode::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
+            TrapCode::UnresolvedFunction => ExitCode::UnresolvedFunction,
         }
     }
 }
@@ -89,52 +83,50 @@ impl Into<Trap> for ExitCode {
     }
 }
 
-// #[cfg(feature = "std")]
 impl From<i32> for ExitCode {
     fn from(value: i32) -> ExitCode {
-        let v = match value {
-            0 => Some(ExitCode::Ok),
-            -71 => Some(ExitCode::Panic),
-            -1001 => Some(ExitCode::ExecutionHalted),
-            -1003 => Some(ExitCode::NotSupportedCall),
-            -1004 => Some(ExitCode::TransactError),
-            -1005 => Some(ExitCode::OutputOverflow),
-            -1006 => Some(ExitCode::InputDecodeFailure),
-            -1007 => Some(ExitCode::PoseidonError),
-            -1008 => Some(ExitCode::PersistentStorageError),
-            -1009 => Some(ExitCode::WriteProtection),
-            -1010 => Some(ExitCode::CreateError),
-            -1011 => Some(ExitCode::PreimageUnavailable),
-            -1012 => Some(ExitCode::InsufficientBalance),
-            -1013 => Some(ExitCode::CreateCollision),
-            -1014 => Some(ExitCode::ContractSizeLimit),
-            -1015 => Some(ExitCode::StorageSlotOverflow),
-            -1016 => Some(ExitCode::CallDepthOverflow),
-            -1017 => Some(ExitCode::FatalExternalError),
-            -1018 => Some(ExitCode::CompilationError),
-            -1019 => Some(ExitCode::OverflowPayment),
-            -1020 => Some(ExitCode::EVMCreateError),
-            -1021 => Some(ExitCode::EVMCallError),
-            -1022 => Some(ExitCode::EVMNotFound),
-
-            -2006 => Some(ExitCode::UnreachableCodeReached),
-            -2007 => Some(ExitCode::MemoryOutOfBounds),
-            -2008 => Some(ExitCode::TableOutOfBounds),
-            -2009 => Some(ExitCode::IndirectCallToNull),
-            -2010 => Some(ExitCode::IntegerDivisionByZero),
-            -2011 => Some(ExitCode::IntegerOverflow),
-            -2012 => Some(ExitCode::BadConversionToInteger),
-            -2013 => Some(ExitCode::StackOverflow),
-            -2014 => Some(ExitCode::BadSignature),
-            -2015 => Some(ExitCode::OutOfFuel),
-            -2016 => Some(ExitCode::GrowthOperationLimited),
-            -2017 => Some(ExitCode::UnknownError),
-            _ => None,
-        };
-        if let Some(v) = v {
-            return v;
+        match value {
+            0 => ExitCode::Ok,
+            -71 => ExitCode::Panic,
+            // fluentbase error codes
+            -1001 => ExitCode::ExecutionHalted,
+            -1003 => ExitCode::NotSupportedCall,
+            -1004 => ExitCode::TransactError,
+            -1005 => ExitCode::OutputOverflow,
+            -1006 => ExitCode::InputDecodeFailure,
+            -1007 => ExitCode::PoseidonError,
+            -1008 => ExitCode::PersistentStorageError,
+            -1009 => ExitCode::WriteProtection,
+            -1010 => ExitCode::CreateError,
+            -1011 => ExitCode::PreimageUnavailable,
+            -1012 => ExitCode::InsufficientBalance,
+            -1013 => ExitCode::CreateCollision,
+            -1014 => ExitCode::ContractSizeLimit,
+            -1015 => ExitCode::StorageSlotOverflow,
+            -1016 => ExitCode::CallDepthOverflow,
+            -1017 => ExitCode::FatalExternalError,
+            -1018 => ExitCode::CompilationError,
+            -1019 => ExitCode::OverflowPayment,
+            -1020 => ExitCode::EVMCreateError,
+            -1021 => ExitCode::EVMCallError,
+            -1022 => ExitCode::EVMNotFound,
+            // trap error codes
+            -2006 => ExitCode::UnreachableCodeReached,
+            -2007 => ExitCode::MemoryOutOfBounds,
+            -2008 => ExitCode::TableOutOfBounds,
+            -2009 => ExitCode::IndirectCallToNull,
+            -2010 => ExitCode::IntegerDivisionByZero,
+            -2011 => ExitCode::IntegerOverflow,
+            -2012 => ExitCode::BadConversionToInteger,
+            -2013 => ExitCode::StackOverflow,
+            -2014 => ExitCode::BadSignature,
+            -2015 => ExitCode::OutOfFuel,
+            -2016 => ExitCode::GrowthOperationLimited,
+            -2017 => ExitCode::UnknownError,
+            -2018 => ExitCode::UnresolvedFunction,
+            // this is 100% unknown error
+            _ => ExitCode::UnresolvedFunction,
         }
-        ExitCode::UnknownError
     }
 }
 
@@ -194,43 +186,6 @@ pub enum SysFuncIdx {
     JZKT_LOAD = 0x070C,
     JZKT_PREIMAGE_SIZE = 0x070D,
     JZKT_PREIMAGE_COPY = 0x070E,
-
-    // RWASM
-    RWASM_TRANSACT = 0x000A,
-    // fluentbase_v1alpha::_rwasm_transact
-    RWASM_COMPILE = 0x000B,
-    // fluentbase_v1alpha::_rwasm_compile
-    RWASM_CREATE = 0x000C, // fluentbase_v1alpha::_rwasm_create
-
-    // statedb functions
-    STATEDB_GET_CODE = 0x0501,
-    // fluentbase_v1alpha::_statedb_get_code
-    STATEDB_GET_CODE_SIZE = 0x0502,
-    // fluentbase_v1alpha::_statedb_get_code_size
-    STATEDB_UPDATE_CODE = 0x0503,
-    // fluentbase_v1alpha::_statedb_update_code
-    STATEDB_GET_STORAGE = 0x0504,
-    // fluentbase_v1alpha::_statedb_get_storage
-    STATEDB_UPDATE_STORAGE = 0x0505,
-    // fluentbase_v1alpha::_statedb_update_storage
-    STATEDB_EMIT_LOG = 0x0506,
-    // fluentbase_v1alpha::_statedb_add_log
-    STATEDB_GET_BALANCE = 0x0507,
-    // fluentbase_v1alpha::_statedb_get_balance
-    STATEDB_GET_CODE_HASH = 0x0508, // fluentbase_v1alpha::_statedb_get_code_hash
-
-    // WASI runtime
-    WASI_PROC_EXIT = 0x0301,
-    // wasi_snapshot_preview1::proc_exit
-    WASI_FD_WRITE = 0x0302,
-    // wasi_snapshot_preview1::fd_write
-    WASI_ENVIRON_SIZES_GET = 0x0303,
-    // wasi_snapshot_preview1::environ_sizes_get
-    WASI_ENVIRON_GET = 0x0304,
-    // wasi_snapshot_preview1::environ_get
-    WASI_ARGS_SIZES_GET = 0x0305,
-    // wasi_snapshot_preview1::args_sizes_get
-    WASI_ARGS_GET = 0x0306, // wasi_snapshot_preview1::args_get
 }
 
 impl SysFuncIdx {
@@ -241,9 +196,6 @@ impl SysFuncIdx {
             SysFuncIdx::SYS_READ => 1,
             SysFuncIdx::SYS_INPUT_SIZE => 1,
             SysFuncIdx::SYS_WRITE => 1,
-            SysFuncIdx::RWASM_TRANSACT => 1,
-            SysFuncIdx::RWASM_COMPILE => 1,
-            SysFuncIdx::RWASM_CREATE => 1,
             SysFuncIdx::CRYPTO_KECCAK256 => 1,
             SysFuncIdx::CRYPTO_POSEIDON => 1,
             SysFuncIdx::CRYPTO_POSEIDON2 => 1,
@@ -254,42 +206,13 @@ impl SysFuncIdx {
             SysFuncIdx::JZKT_COMPUTE_ROOT => 1,
             SysFuncIdx::JZKT_ROLLBACK => 1,
             SysFuncIdx::JZKT_COMMIT => 1,
-            SysFuncIdx::STATEDB_GET_STORAGE => 1,
-            SysFuncIdx::STATEDB_UPDATE_STORAGE => 1,
-            SysFuncIdx::STATEDB_EMIT_LOG => 1,
-            SysFuncIdx::STATEDB_GET_BALANCE => 1,
-            SysFuncIdx::STATEDB_GET_CODE_HASH => 1,
-            SysFuncIdx::WASI_PROC_EXIT => 1,
-            SysFuncIdx::WASI_FD_WRITE => 1,
-            SysFuncIdx::WASI_ENVIRON_SIZES_GET => 1,
-            SysFuncIdx::WASI_ENVIRON_GET => 1,
-            SysFuncIdx::WASI_ARGS_SIZES_GET => 1,
-            SysFuncIdx::WASI_ARGS_GET => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
     }
 }
 
-#[cfg(feature = "std")]
-impl From<FuncIdx> for SysFuncIdx {
-    fn from(value: FuncIdx) -> Self {
-        for item in Self::iter() {
-            if value.to_u32() == item as u32 {
-                return item;
-            }
-        }
-        Self::UNKNOWN
-    }
-}
-
-impl Into<CompiledFunc> for SysFuncIdx {
-    fn into(self) -> CompiledFunc {
-        CompiledFunc::from(self as u32)
-    }
-}
-
-impl Into<FuncIdx> for SysFuncIdx {
-    fn into(self) -> FuncIdx {
-        FuncIdx::from(self as u32)
+impl Into<u32> for SysFuncIdx {
+    fn into(self) -> u32 {
+        self as u32
     }
 }

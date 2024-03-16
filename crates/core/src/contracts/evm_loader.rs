@@ -1,5 +1,4 @@
 use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS};
-use alloc::vec;
 use fluentbase_codec::Encoder;
 use fluentbase_core_api::{
     api::CoreInput,

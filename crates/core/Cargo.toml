@@ -10,11 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../types", default-features = false }
+fluentbase-sdk = { path = "../sdk", default-features = false }
+#fluentbase-runtime-api = { path = "../runtime-api", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-core-api = { path = "../core-api", default-features = false }
-rwasm-codegen = { workspace = true }
+rwasm = { workspace = true, default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
@@ -23,7 +24,7 @@ paste = { workspace = true }
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../runtime", default-features = false }
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
+fluentbase-sdk = { path = "../sdk", default-features = false, features = ["runtime"] }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 
@@ -34,6 +35,7 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 default = []
 std = [
     "fluentbase-sdk/runtime",
+    #    "fluentbase-runtime-api/std",
     "fluentbase-types/std",
     "byteorder/std",
     "alloy-rlp/std",

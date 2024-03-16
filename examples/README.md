@@ -57,6 +57,7 @@ extern "C" fn main() {
 ```
 
 As you can see there two functions that must be exported with exact names:
+
 - `deploy` - this function is called before creating app (similar to Solidity's constructor)
 - `main` - this one is getting called on each contract interaction
 
@@ -64,7 +65,7 @@ To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file
 
 ```toml
 [dependencies]
-fluentbase-sdk = { path = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false, features = ["evm"] }
+fluentbase-sdk = { path = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false }
 ```
 
 If you don't want to use EVM features then just disable `evm` feature flag.
@@ -120,7 +121,8 @@ For example, we can also call one of existing apps, lets say `keccak256` using t
 node deploy-contract.js --dev ./bin/keccak256.wasm
 ```
 
-It returns next message `0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` that is equal to empty Keccak256 hash.
+It returns next message `0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` that is equal to empty
+Keccak256 hash.
 
 ## Codecs and contexts
 

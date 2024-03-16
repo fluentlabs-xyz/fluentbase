@@ -1,9 +1,6 @@
-use crate::deploy_internal;
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/poseidon.wasm"))
-}
+pub fn deploy() {}
 
 pub fn main() {
     let input = ExecutionContext::contract_input();

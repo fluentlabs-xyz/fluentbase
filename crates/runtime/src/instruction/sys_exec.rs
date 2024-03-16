@@ -1,7 +1,7 @@
 use crate::{Runtime, RuntimeContext};
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
+use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{ExitCode, STATE_MAIN};
-use rwasm::{common::Trap, Caller};
+use rwasm::{core::Trap, Caller};
 
 pub struct SysExec;
 
@@ -53,7 +53,7 @@ impl SysExec {
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(ctx.jzkt.clone().unwrap());
-        let execution_result = Runtime::<()>::run_with_context(next_ctx, &import_linker)
+        let execution_result = Runtime::<()>::run_with_context(next_ctx, import_linker)
             .map_err(|_| ExitCode::TransactError)?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
         let output = execution_result.data().output();

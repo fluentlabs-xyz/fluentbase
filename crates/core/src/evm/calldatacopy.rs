@@ -7,7 +7,7 @@ pub fn _evm_calldatacopy(calldata_idx: u32, len: u32, output32_offset: *mut u8) 
         return;
     }
     let (calldata_offset, calldata_len) = get_contract_input_offset_and_len();
-    let mut output = unsafe { core::slice::from_raw_parts_mut(output32_offset, len as usize) };
+    let output = unsafe { core::slice::from_raw_parts_mut(output32_offset, len as usize) };
     if calldata_idx < calldata_len {
         let copy_len = core::cmp::min(calldata_len - calldata_idx, len) as usize;
         if copy_len > 0 {

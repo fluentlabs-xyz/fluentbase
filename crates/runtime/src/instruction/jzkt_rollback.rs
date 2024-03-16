@@ -1,5 +1,5 @@
 use crate::{journal::JournalCheckpoint, RuntimeContext};
-use rwasm::{common::Trap, Caller};
+use rwasm::{core::Trap, Caller};
 
 pub struct JzktRollback;
 

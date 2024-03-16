@@ -1,5 +1,4 @@
-use crate::types::Bytes;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{Bytes, ExitCode};
 
 pub trait TrieStorage {
     fn open(&mut self, root32: &[u8]) -> bool;

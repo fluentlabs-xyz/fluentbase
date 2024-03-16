@@ -2,7 +2,7 @@ use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{ExecutionContext, IContractInput, U256},
+    evm::{ExecutionContext, U256},
     LowLevelAPI,
     LowLevelSDK,
 };

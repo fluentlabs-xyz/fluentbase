@@ -142,19 +142,22 @@ impl Account {
 
     #[inline(always)]
     pub(crate) fn transfer_value(&mut self, to: &mut Self, value: &U256) -> bool {
-        let from_balance = self.balance.checked_sub(*value);
-        if let Some(from_balance) = from_balance {
-            let to_balance = to.balance.checked_add(*value);
-            if let Some(to_balance) = to_balance {
-                self.balance = from_balance;
-                to.balance = to_balance;
-            } else {
+        let from_balance = {
+            let new_value = self.balance.checked_sub(*value);
+            if new_value.is_none() {
                 return false;
             }
-        } else {
-            return false;
-        }
-
+            new_value.unwrap()
+        };
+        let to_balance = {
+            let new_value = to.balance.checked_add(*value);
+            if new_value.is_none() {
+                return false;
+            }
+            new_value.unwrap()
+        };
+        self.balance = from_balance;
+        to.balance = to_balance;
         true
     }
 
@@ -186,7 +189,7 @@ impl Account {
     }
 
     pub fn write_to_jzkt(&self) {
-        let mut account_fields = self.get_fields();
+        let account_fields = self.get_fields();
 
         LowLevelSDK::jzkt_update(
             self.address.into_word().as_ptr(),

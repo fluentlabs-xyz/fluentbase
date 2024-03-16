@@ -17,12 +17,8 @@ use fluentbase_core_api::{
         EVM_CREATE_METHOD_ID,
     },
 };
-use fluentbase_runtime::{
-    types::{address, Address, Bytes, B256, U256},
-    Runtime,
-    RuntimeContext,
-};
-use fluentbase_types::ExitCode;
+use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_types::{address, Address, Bytes, ExitCode, B256, U256};
 use hex_literal::hex;
 use keccak_hash::keccak;
 
@@ -74,7 +70,7 @@ fn test_evm_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let contract_address_vec = output.data().output();
     let contract_address = Address::from_slice(contract_address_vec);
@@ -135,7 +131,7 @@ fn test_evm_call_after_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
         let mut output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let contract_address = Address::from_slice(output.data().output());
         assert_eq!(&expected_contract_address, &contract_address);
@@ -165,7 +161,7 @@ fn test_evm_call_after_create() {
             .set_contract_address(deployed_contract_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut output_res =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output_res.data().exit_code());
         let output = output_res.data().output();
         assert_eq!(
@@ -223,7 +219,7 @@ fn test_evm_call_from_wasm() {
         );
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
         let wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
-        let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
+        let rwasm_binary = wasm2rwasm(wasm_binary, false);
         let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
         runtime_ctx.with_jzkt(jzkt);
         let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
@@ -241,7 +237,7 @@ fn test_evm_call_from_wasm() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
         let mut output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output = output.data().output();
         let evm_contract_address = Address::from_slice(output);
@@ -253,8 +249,7 @@ fn test_evm_call_from_wasm() {
     {
         let evm_call_from_wasm_wasm_binary =
             include_bytes!("../../../examples/bin/evm_call_from_wasm.wasm");
-        let evm_call_from_wasm_rwasm_binary =
-            wasm2rwasm(evm_call_from_wasm_wasm_binary.as_slice(), false);
+        let evm_call_from_wasm_rwasm_binary = wasm2rwasm(evm_call_from_wasm_wasm_binary, false);
 
         let mut runtime_ctx = RuntimeContext::new(evm_call_from_wasm_rwasm_binary);
         runtime_ctx.with_jzkt(jzkt.unwrap());
@@ -270,7 +265,7 @@ fn test_evm_call_from_wasm() {
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let mut output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, &import_linker, false, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
         assert_eq!(output.data().exit_code(), ExitCode::Ok.into_i32());
         let call_output = output.data().output();
         assert_eq!(

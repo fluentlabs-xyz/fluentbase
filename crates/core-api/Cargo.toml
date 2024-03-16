@@ -10,22 +10,22 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
 fluentbase-types = { path = "../types", default-features = false }
+fluentbase-sdk = { path = "../sdk", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-core-macros = { path = "../core-macros", default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
 #revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
-revm-interpreter = { path = "../../../../other/revm/crates/interpreter", default-features = false }
+#revm-interpreter = { path = "../../../../fluent/revm/crates/interpreter", default-features = false }
+revm-interpreter = { workspace = true }
 #revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
 #revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
 paste = { workspace = true }
 
 [dev-dependencies]
 fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm", "runtime"] }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 

@@ -1,9 +1,6 @@
-use crate::{
-    types::{Address, Bytes},
-    RuntimeContext,
-};
-use fluentbase_types::B256;
-use rwasm::{common::Trap, Caller};
+use crate::RuntimeContext;
+use fluentbase_types::{Address, Bytes, B256};
+use rwasm::{core::Trap, Caller};
 
 pub struct JzktEmitLog;
 

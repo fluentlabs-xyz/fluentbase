@@ -1,10 +1,7 @@
-use crate::deploy_internal;
 use core::{alloc::Layout, ptr};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/keccak256.wasm"))
-}
+pub fn deploy() {}
 
 pub fn main() {
     let input_size = LowLevelSDK::sys_input_size();

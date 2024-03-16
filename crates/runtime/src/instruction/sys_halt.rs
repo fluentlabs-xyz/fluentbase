@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use rwasm::{common::Trap, Caller};
+use rwasm::{core::Trap, Caller};
 
 pub struct SysHalt;
 
