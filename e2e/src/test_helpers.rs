@@ -1,28 +1,28 @@
 use fluentbase_codec::Encoder;
 use fluentbase_runtime::{
     instruction::runtime_register_sovereign_handlers,
-    types::{Bytes, RuntimeError, STATE_MAIN},
+    types::RuntimeError,
     ExecutionResult,
     Runtime,
     RuntimeContext,
 };
 use fluentbase_sdk::evm::ContractInput;
-use rwasm_codegen::{
-    rwasm::{Config, Engine, Linker, Module, Store},
-    Compiler,
-    CompilerConfig,
+use fluentbase_types::{Bytes, STATE_MAIN};
+use rwasm::{
+    rwasm::{BinaryFormat, RwasmModule},
+    Config,
+    Engine,
+    Linker,
+    Module,
+    Store,
 };
 
-pub(crate) fn wasm2rwasm(wasm_binary: &[u8], inject_fuel_consumption: bool) -> Vec<u8> {
+pub(crate) fn wasm2rwasm(wasm_binary: &[u8], _is_deploy: bool) -> Vec<u8> {
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    Compiler::new_with_linker(
-        &wasm_binary.to_vec(),
-        CompilerConfig::default().fuel_consume(inject_fuel_consumption),
-        Some(&import_linker),
-    )
-    .unwrap()
-    .finalize()
-    .unwrap()
+    let rwasm_module = RwasmModule::compile(wasm_binary, Some(import_linker)).unwrap();
+    let mut rwasm_buffer = Vec::new();
+    rwasm_module.write_binary_to_vec(&mut rwasm_buffer).unwrap();
+    rwasm_buffer
 }
 
 pub(crate) fn run_rwasm_with_evm_input(
@@ -41,9 +41,19 @@ pub(crate) fn run_rwasm_with_evm_input(
         .with_input(input_data)
         .with_catch_trap(true);
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    let mut runtime = Runtime::<()>::new(ctx, import_linker).unwrap();
     runtime.data_mut().clean_output();
     runtime.call().unwrap()
+}
+
+pub(crate) fn catch_panic<T>(ctx: &ExecutionResult<T>) {
+    if ctx.data().exit_code() != -71 {
+        return;
+    }
+    println!(
+        "panic with err: {}",
+        std::str::from_utf8(&ctx.data().output()).unwrap()
+    );
 }
 
 pub(crate) fn run_rwasm_with_raw_input(
@@ -101,11 +111,11 @@ pub(crate) fn run_rwasm_with_raw_input(
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
     let mut ctx = RuntimeContext::new(rwasm_binary);
     ctx.with_state(STATE_MAIN)
-        .with_fuel_limit(10_000_000)
+        .with_fuel_limit(100_000_000)
         .with_input(input_data.to_vec())
         .with_catch_trap(true);
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut runtime = Runtime::<()>::new(ctx, &import_linker).unwrap();
+    let mut runtime = Runtime::<()>::new(ctx, import_linker).unwrap();
     runtime.data_mut().clean_output();
     let execution_result = runtime.call().unwrap();
     if let Some(wasm_exit_code) = wasm_exit_code {

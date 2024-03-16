@@ -1,15 +1,19 @@
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
+// use fluentbase_runtime_api::create_sovereign_import_linker;
 use fluentbase_sdk::{
     evm::{ContractInput, IContractInput},
     Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{Address, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use revm_interpreter::primitives::ShanghaiSpec;
-use rwasm_codegen::{Compiler, CompilerConfig, FuncOrExport, ImportLinker, ImportLinkerDefaults};
+use rwasm::{
+    core::ImportLinker,
+    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+};
 
 pub type DefaultEvmSpec = ShanghaiSpec;
 
@@ -71,20 +75,35 @@ pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B2
 }
 
 #[inline(always)]
-pub fn wasm2rwasm(bytecode: &[u8], is_deploy: bool) -> Vec<u8> {
-    let mut import_linker = ImportLinker::default();
-    ImportLinkerDefaults::new_v1alpha().register_import_funcs(&mut import_linker);
-    let mut compiler =
-        Compiler::new_with_linker(bytecode, CompilerConfig::default(), Some(&import_linker))
-            .unwrap();
-    compiler
-        .translate(FuncOrExport::Export(if is_deploy {
-            "deploy"
-        } else {
-            "main"
-        }))
-        .unwrap();
-    compiler.finalize().unwrap()
+pub fn wasm2rwasm(bytecode: &[u8]) -> Result<Vec<u8>, ExitCode> {
+    // let import_linker = create_sovereign_import_linker();
+    let import_linker = ImportLinker::default();
+    let rwasm_module = RwasmModule::compile(bytecode, Some(import_linker));
+    if rwasm_module.is_err() {
+        return Err(ExitCode::CompilationError);
+    }
+    let rwasm_module = rwasm_module.unwrap();
+    let length = rwasm_module.encoded_length();
+    let mut rwasm_bytecode = vec![0u8; length];
+    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
+    rwasm_module
+        .write_binary(&mut binary_format_writer)
+        .expect("failed to encode rwasm bytecode");
+    Ok(rwasm_bytecode)
+
+    // let mut import_linker = ImportLinker::default();
+    // ImportLinkerDefaults::new_v1alpha().register_import_funcs(&mut import_linker);
+    // let mut compiler =
+    //     Compiler::new_with_linker(bytecode, CompilerConfig::default(), Some(&import_linker))
+    //         .unwrap();
+    // compiler
+    //     .translate(FuncOrExport::Export(if is_deploy {
+    //         "deploy"
+    //     } else {
+    //         "main"
+    //     }))
+    //     .unwrap();
+    // compiler.finalize().unwrap()
 }
 
 #[inline(always)]

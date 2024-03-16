@@ -10,13 +10,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [lib]
-#crate-type = ["rlib"]
 proc-macro = true
 
 [dependencies]
 crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
 fluentbase-codec = { path = "../codec", default-features = false }
-r3bl_rs_utils = "0.9.15"
 syn = { version = "2.0.52" }
 
 [features]

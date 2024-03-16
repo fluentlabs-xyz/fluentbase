@@ -101,33 +101,23 @@ macro_rules! impl_runtime_handler {
             const MODULE_NAME: &'static str = stringify!($module);
             const FUNC_NAME: &'static str = stringify!($name);
 
-            const FUNC_INDEX: $crate::types::SysFuncIdx = $crate::types::SysFuncIdx::$sys_func;
-
-            fn register_linker<'t, T>(import_linker: &mut rwasm_codegen::ImportLinker) {
-                use rwasm_codegen::ImportFunc;
-                import_linker.insert_function(ImportFunc::new_env(
-                    stringify!($module).to_string(),
-                    stringify!($name).to_string(),
-                    $sys_func as u16,
-                    &[rwasm::common::ValueType::I32; $crate::count_call_args!($($t)*)],
-                    &[rwasm::common::ValueType::I32; $crate::count_ret_args!($out)],
-                    $crate::types::SysFuncIdx::$sys_func.fuel_cost(),
-                ));
-            }
+            const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
 
             fn register_handler<'t, T>(
                 linker: &mut rwasm::Linker<RuntimeContext<'t, T>>,
                 store: &mut rwasm::Store<RuntimeContext<'t, T>>,
             ) {
                 use rwasm::AsContextMut;
+                let func = rwasm::Func::wrap(
+                    store.as_context_mut(),
+                    |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
+                        return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
+                    });
+                linker.engine().register_trampoline(Self::FUNC_INDEX as u32, func);
                 linker.define(
                     stringify!($module),
                     stringify!($name),
-                    rwasm::Func::wrap(
-                        store.as_context_mut(),
-                        |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, rwasm::common::Trap> {
-                            return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
-                        })
+                    func
                 ).unwrap();
             }
         }

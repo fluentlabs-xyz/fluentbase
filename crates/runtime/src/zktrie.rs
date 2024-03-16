@@ -1,5 +1,5 @@
-use crate::{storage::TrieStorage, types::Bytes};
-use fluentbase_types::{ExitCode, TrieDb, POSEIDON_EMPTY};
+use crate::storage::TrieStorage;
+use fluentbase_types::{Bytes, ExitCode, TrieDb, POSEIDON_EMPTY};
 use fluentbase_zktrie::{
     Byte32,
     Database,

@@ -41,11 +41,7 @@ pub fn verify_cairo_proof_wasm(proof_bytes: &[u8], proof_options: &ProofOptions)
     )
 }
 
-use crate::deploy_internal;
-
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/cairo.wasm"))
-}
+pub fn deploy() {}
 
 pub fn main() {
     let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);

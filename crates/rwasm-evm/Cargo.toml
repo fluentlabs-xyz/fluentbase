@@ -10,9 +10,8 @@ proc-macro = false
 
 [dependencies]
 fluentbase-rwasm-code-snippets = { path = "../code-snippets" }
-rwasm = { workspace = true, default-features = false, features = ["std"] }
-rwasm-codegen = { workspace = true }
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
+rwasm = { workspace = true, features = ["std"] }
+fluentbase-sdk = { path = "../sdk", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
 hashbrown = { version = "0.14", default-features = false }

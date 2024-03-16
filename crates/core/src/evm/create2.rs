@@ -1,16 +1,11 @@
 use crate::{
     account::Account,
-    account_types::MAX_CODE_SIZE,
     fluent_host::FluentHost,
     helpers::{calc_create2_address, read_address_from_input, DefaultEvmSpec},
 };
-use alloc::{alloc::alloc, boxed::Box};
-use core::{alloc::Layout, ptr};
-use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput, U256},
-    LowLevelAPI,
-    LowLevelSDK,
-};
+use alloc::boxed::Box;
+use core::ptr;
+use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
 use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::{
     analysis::to_analysed,

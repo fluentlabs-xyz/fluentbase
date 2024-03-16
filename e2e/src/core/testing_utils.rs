@@ -3,7 +3,6 @@ use core::cell::RefCell;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{account::Account, account_types::JZKT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{
-    types::B256,
     zktrie::ZkTrieStateDb,
     ExecutionResult,
     IJournaledTrie,
@@ -15,11 +14,11 @@ use fluentbase_sdk::{
     evm::{ContractInput, JournalCheckpoint},
     LowLevelSDK,
 };
-use fluentbase_types::{Address, Bytes, InMemoryAccountDb, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_types::{Address, Bytes, InMemoryAccountDb, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
 use paste::paste;
-use rwasm_codegen::ImportLinker;
+use rwasm::core::ImportLinker;
 use std::marker::PhantomData;
 
 #[derive(Default)]
@@ -109,7 +108,7 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
     pub fn run_rwasm_with_input<'t>(
         &self,
         mut runtime_ctx: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
+        import_linker: ImportLinker,
         is_deploy: bool,
         gas_limit: u32,
     ) -> ExecutionResult<'t, T> {
@@ -117,7 +116,7 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
             .with_state(if is_deploy { STATE_DEPLOY } else { STATE_MAIN })
             .with_fuel_limit(gas_limit)
             .with_catch_trap(true);
-        let mut runtime = Runtime::new(runtime_ctx, &import_linker).unwrap();
+        let mut runtime = Runtime::new(runtime_ctx, import_linker).unwrap();
         runtime.data_mut().clean_output();
         runtime.call().unwrap()
     }

@@ -16,17 +16,6 @@ pub mod jzkt_rollback;
 pub mod jzkt_store;
 pub mod jzkt_update;
 pub mod jzkt_update_preimage;
-pub mod rwasm_compile;
-pub mod rwasm_create;
-pub mod rwasm_transact;
-pub mod statedb_emit_log;
-pub mod statedb_get_balance;
-pub mod statedb_get_code;
-pub mod statedb_get_code_hash;
-pub mod statedb_get_code_size;
-pub mod statedb_get_storage;
-pub mod statedb_update_code;
-pub mod statedb_update_storage;
 pub mod sys_exec;
 pub mod sys_forward_output;
 pub mod sys_halt;
@@ -58,17 +47,6 @@ use crate::{
         jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
-        rwasm_compile::RwasmCompile,
-        rwasm_create::RwasmCreate,
-        rwasm_transact::RwasmTransact,
-        statedb_emit_log::StateDbEmitLog,
-        statedb_get_balance::StateDbGetBalance,
-        statedb_get_code::StateDbGetCode,
-        statedb_get_code_hash::StateDbGetCodeHash,
-        statedb_get_code_size::StateDbGetCodeSize,
-        statedb_get_storage::StateDbGetStorage,
-        statedb_update_code::StateDbUpdateCode,
-        statedb_update_storage::StateDbUpdateStorage,
         sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_halt::SysHalt,
@@ -80,63 +58,15 @@ use crate::{
         sys_write::SysWrite,
     },
     runtime::RuntimeContext,
-    types::{
-        SysFuncIdx,
-        SysFuncIdx::{
-            CRYPTO_ECRECOVER,
-            CRYPTO_KECCAK256,
-            CRYPTO_POSEIDON,
-            CRYPTO_POSEIDON2,
-            JZKT_COMMIT,
-            JZKT_COMPUTE_ROOT,
-            JZKT_GET,
-            JZKT_OPEN,
-            JZKT_ROLLBACK,
-            JZKT_UPDATE,
-            RWASM_COMPILE,
-            RWASM_CREATE,
-            RWASM_TRANSACT,
-            STATEDB_GET_STORAGE,
-            STATEDB_UPDATE_STORAGE,
-            SYS_FORWARD_OUTPUT,
-            SYS_HALT,
-            SYS_INPUT_SIZE,
-            SYS_READ,
-            SYS_STATE,
-            SYS_WRITE,
-        },
-    },
 };
-use fluentbase_types::SysFuncIdx::{
-    JZKT_CHECKPOINT,
-    JZKT_EMIT_LOG,
-    JZKT_LOAD,
-    JZKT_PREIMAGE_COPY,
-    JZKT_PREIMAGE_SIZE,
-    JZKT_REMOVE,
-    JZKT_STORE,
-    JZKT_UPDATE_PREIMAGE,
-    STATEDB_EMIT_LOG,
-    STATEDB_GET_BALANCE,
-    STATEDB_GET_CODE,
-    STATEDB_GET_CODE_HASH,
-    STATEDB_GET_CODE_SIZE,
-    STATEDB_UPDATE_CODE,
-    SYS_EXEC,
-    SYS_OUTPUT_SIZE,
-    SYS_READ_OUTPUT,
-};
-use rwasm_codegen::{
-    rwasm::{Caller, Linker, Store},
-    ImportLinker,
-};
+use fluentbase_types::SysFuncIdx;
+use rwasm::{Caller, Linker, Store};
 
 pub trait RuntimeHandler {
     const MODULE_NAME: &'static str;
     const FUNC_NAME: &'static str;
     const FUNC_INDEX: SysFuncIdx;
 
-    fn register_linker<'t, T>(import_linker: &mut ImportLinker);
     fn register_handler<'t, T>(
         linker: &mut Linker<RuntimeContext<'t, T>>,
         store: &mut Store<RuntimeContext<'t, T>>,
@@ -172,74 +102,6 @@ impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slo
 impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
-
-// TODO: "remove these impls"
-impl_runtime_handler!(RwasmTransact, RWASM_TRANSACT, fn fluentbase_v1alpha::_rwasm_transact(address20_offset: u32, value32_offset: u32, input_offset: u32, input_length: u32, return_offset: u32, return_length: u32, fuel: u32, is_delegate: u32, is_static: u32) -> i32);
-impl_runtime_handler!(RwasmCompile, RWASM_COMPILE, fn fluentbase_v1alpha::_rwasm_compile(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
-impl_runtime_handler!(RwasmCreate, RWASM_CREATE, fn fluentbase_v1alpha::_rwasm_create(value32_offset: u32, input_bytecode_offset: u32, input_bytecode_length: u32, salt32_offset: u32, return_address20_offset: u32, is_create2: u32) -> i32);
-impl_runtime_handler!(StateDbGetCode, STATEDB_GET_CODE, fn fluentbase_v1alpha::_statedb_get_code(key20_offset: u32, output_offset: u32, code_offset: u32, output_len: u32) -> ());
-impl_runtime_handler!(StateDbGetCodeSize, STATEDB_GET_CODE_SIZE, fn fluentbase_v1alpha::_statedb_get_code_size(key20_offset: u32) -> u32);
-impl_runtime_handler!(StateDbGetCodeHash, STATEDB_GET_CODE_HASH, fn fluentbase_v1alpha::_statedb_get_code_hash(key20_offset: u32, out_hash32_offset: u32) -> ());
-impl_runtime_handler!(StateDbUpdateCode, STATEDB_UPDATE_CODE, fn fluentbase_v1alpha::_statedb_set_code(key20_offset: u32, code_offset: u32, code_len: u32) -> ());
-impl_runtime_handler!(StateDbUpdateStorage, STATEDB_GET_STORAGE, fn fluentbase_v1alpha::_statedb_get_storage(key32_offset: u32, val32_offset: u32) -> ());
-impl_runtime_handler!(StateDbGetStorage, STATEDB_UPDATE_STORAGE, fn fluentbase_v1alpha::_statedb_update_storage(key32_offset: u32, val32_offset: u32) -> ());
-impl_runtime_handler!(StateDbEmitLog, STATEDB_EMIT_LOG, fn fluentbase_v1alpha::_statedb_emit_log(topics32_offset: u32, topics32_length: u32, data_offset: u32, data_len: u32) -> ());
-impl_runtime_handler!(StateDbGetBalance, STATEDB_GET_BALANCE, fn fluentbase_v1alpha::_statedb_get_balance(address20_offset: u32, out_balance32_offset: u32, is_self: u32) -> ());
-
-fn runtime_register_linkers<'t, T, const IS_SOVEREIGN: bool>(import_linker: &mut ImportLinker) {
-    CryptoKeccak256::register_linker::<T>(import_linker);
-    CryptoPoseidon::register_linker::<T>(import_linker);
-    CryptoPoseidon2::register_linker::<T>(import_linker);
-    CryptoEcrecover::register_linker::<T>(import_linker);
-    SysHalt::register_linker::<T>(import_linker);
-    SysWrite::register_linker::<T>(import_linker);
-    SysForwardOutput::register_linker::<T>(import_linker);
-    SysInputSize::register_linker::<T>(import_linker);
-    SysRead::register_linker::<T>(import_linker);
-    SysOutputSize::register_linker::<T>(import_linker);
-    SysReadOutput::register_linker::<T>(import_linker);
-    SysExec::register_linker::<T>(import_linker);
-    SysState::register_linker::<T>(import_linker);
-    if IS_SOVEREIGN {
-        JzktOpen::register_linker::<T>(import_linker);
-        JzktCheckpoint::register_linker::<T>(import_linker);
-        JzktUpdate::register_linker::<T>(import_linker);
-        JzktRemove::register_linker::<T>(import_linker);
-        JzktComputeRoot::register_linker::<T>(import_linker);
-    }
-    JzktGet::register_linker::<T>(import_linker);
-    JzktEmitLog::register_linker::<T>(import_linker);
-    if IS_SOVEREIGN {
-        JzktCommit::register_linker::<T>(import_linker);
-        JzktRollback::register_linker::<T>(import_linker);
-    }
-    JzktStore::register_linker::<T>(import_linker);
-    JzktLoad::register_linker::<T>(import_linker);
-    if IS_SOVEREIGN {
-        JzktPreimageSize::register_linker::<T>(import_linker);
-        JzktUpdatePreimage::register_linker::<T>(import_linker);
-    }
-    JzktPreimageCopy::register_linker::<T>(import_linker);
-    RwasmTransact::register_linker::<T>(import_linker);
-    RwasmCompile::register_linker::<T>(import_linker);
-    RwasmCreate::register_linker::<T>(import_linker);
-    StateDbGetCode::register_linker::<T>(import_linker);
-    StateDbGetCodeSize::register_linker::<T>(import_linker);
-    StateDbGetCodeHash::register_linker::<T>(import_linker);
-    StateDbUpdateCode::register_linker::<T>(import_linker);
-    StateDbUpdateStorage::register_linker::<T>(import_linker);
-    StateDbGetStorage::register_linker::<T>(import_linker);
-    StateDbEmitLog::register_linker::<T>(import_linker);
-    StateDbGetBalance::register_linker::<T>(import_linker);
-}
-
-pub(crate) fn runtime_register_sovereign_linkers<'t, T>(import_linker: &mut ImportLinker) {
-    runtime_register_linkers::<T, true>(import_linker);
-}
-
-pub(crate) fn runtime_register_shared_linkers<'t, T>(import_linker: &mut ImportLinker) {
-    runtime_register_linkers::<T, false>(import_linker);
-}
 
 fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     linker: &mut Linker<RuntimeContext<'t, T>>,
@@ -278,17 +140,6 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
         JzktUpdatePreimage::register_handler(linker, store);
     }
     JzktPreimageCopy::register_handler(linker, store);
-    RwasmTransact::register_handler(linker, store);
-    RwasmCompile::register_handler(linker, store);
-    RwasmCreate::register_handler(linker, store);
-    StateDbGetCode::register_handler(linker, store);
-    StateDbGetCodeSize::register_handler(linker, store);
-    StateDbGetCodeHash::register_handler(linker, store);
-    StateDbUpdateCode::register_handler(linker, store);
-    StateDbUpdateStorage::register_handler(linker, store);
-    StateDbGetStorage::register_handler(linker, store);
-    StateDbEmitLog::register_handler(linker, store);
-    StateDbGetBalance::register_handler(linker, store);
 }
 
 pub fn runtime_register_sovereign_handlers<'t, T>(

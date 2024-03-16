@@ -14,8 +14,11 @@ use alloc::{boxed::Box, vec, vec::Vec};
 pub use analysis::BytecodeLocked;
 use core::marker::PhantomData;
 use hashbrown::HashMap;
-use rwasm::{common::UntypedValue, engine::bytecode::Instruction};
-use rwasm_codegen::{ImportLinker, InstructionSet, ReducedModule};
+use rwasm::{
+    core::{ImportLinker, UntypedValue},
+    engine::bytecode::Instruction,
+};
+use rwasm_codegen::InstructionSet;
 
 pub mod analysis;
 pub mod contract;

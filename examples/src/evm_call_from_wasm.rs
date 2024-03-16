@@ -8,10 +8,7 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{ExitCode, STATE_MAIN};
 
-pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../bin/evm_call_from_wasm.wasm"));
-    LowLevelSDK::sys_halt(0);
-}
+pub fn deploy() {}
 
 pub fn main() {
     let ctx = ExecutionContext::default();

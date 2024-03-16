@@ -1,5 +1,4 @@
 use crate::test_helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input, wasm2rwasm};
-use fluentbase_codec::Encoder;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use hex_literal::hex;
@@ -59,7 +58,7 @@ fn test_rwasm() {
 
 #[test]
 fn test_rwasm_fast() {
-    let input_data = include_bytes!("../../examples/bin/stack.wasm");
+    let input_data = include_bytes!("../../examples/bin/greeting.wasm");
     let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/rwasm.wasm").to_vec(),
         input_data,
@@ -77,20 +76,6 @@ fn test_cairo() {
         input_data,
         false,
     );
-    // let tracer = output.tracer();
-    // {
-    //     let mut lines = String::new();
-    //     for log in tracer.logs.iter() {
-    //         let stack = log
-    //             .stack
-    //             .iter()
-    //             .map(|v| v.to_bits() as i64)
-    //             .collect::<Vec<_>>();
-    //         lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode,
-    // stack).as_str();     }
-    //     let _ = fs::create_dir("./tmp");
-    //     fs::write("./tmp/cairo.txt", lines).unwrap();
-    // }
     println!(
         "Return data: {}",
         hex::encode(output.data().output().clone())
@@ -133,7 +118,7 @@ fn test_secp256k1_verify() {
         ctx.with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
         let import_linker = Runtime::<()>::new_sovereign_linker();
-        let output = Runtime::<()>::run_with_context(ctx, &import_linker).unwrap();
+        let output = Runtime::<()>::run_with_context(ctx, import_linker).unwrap();
         assert_eq!(output.data().output().clone(), Vec::<u8>::new());
     }
 }

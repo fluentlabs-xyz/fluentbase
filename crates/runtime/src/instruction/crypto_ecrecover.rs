@@ -5,7 +5,7 @@ use k256::{
     EncodedPoint,
     PublicKey,
 };
-use rwasm::{common::Trap, Caller};
+use rwasm::{core::Trap, Caller};
 
 pub struct CryptoEcrecover;
 

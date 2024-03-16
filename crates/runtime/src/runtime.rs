@@ -1,33 +1,28 @@
 use crate::{
-    instruction::{
-        runtime_register_shared_handlers,
-        runtime_register_shared_linkers,
-        runtime_register_sovereign_handlers,
-        runtime_register_sovereign_linkers,
-    },
+    instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
     journal::IJournaledTrie,
     types::RuntimeError,
 };
-use fluentbase_types::{AccountDb, Address, ExitCode, RECURSIVE_MAX_DEPTH, STACK_MAX_HEIGHT};
-use rwasm_codegen::{
-    rwasm::{
-        AsContextMut,
-        Config,
-        Engine,
-        FuelConsumptionMode,
-        Func,
-        FuncType,
-        Instance,
-        IntoFunc,
-        Linker,
-        Module,
-        StackLimits,
-        Store,
-    },
-    ImportLinker,
-    InstructionSet,
-    ReducedModule,
-    ReducedModuleError,
+use fluentbase_types::{
+    create_shared_import_linker,
+    create_sovereign_import_linker,
+    AccountDb,
+    Address,
+    ExitCode,
+};
+use rwasm::{
+    core::ImportLinker,
+    rwasm::RwasmModule,
+    AsContextMut,
+    Engine,
+    FuelConsumptionMode,
+    Func,
+    FuncType,
+    Instance,
+    IntoFunc,
+    Linker,
+    Module,
+    Store,
 };
 use std::{cell::RefCell, mem::take, rc::Rc};
 
@@ -253,7 +248,6 @@ impl<'t, T> ExecutionResult<'t, T> {
 #[allow(dead_code)]
 pub struct Runtime<'t, T> {
     engine: Engine,
-    bytecode: InstructionSet,
     module: Module,
     linker: Linker<RuntimeContext<'t, T>>,
     store: Store<RuntimeContext<'t, T>>,
@@ -262,20 +256,16 @@ pub struct Runtime<'t, T> {
 
 impl<'t, T> Runtime<'t, T> {
     pub fn new_sovereign_linker() -> ImportLinker {
-        let mut import_linker = ImportLinker::default();
-        runtime_register_sovereign_linkers::<T>(&mut import_linker);
-        import_linker
+        create_sovereign_import_linker()
     }
 
     pub fn new_shared_linker() -> ImportLinker {
-        let mut import_linker = ImportLinker::default();
-        runtime_register_shared_linkers::<T>(&mut import_linker);
-        import_linker
+        create_shared_import_linker()
     }
 
     pub fn run_with_context(
         mut runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
+        import_linker: ImportLinker,
     ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
         let runtime = Self::new(runtime_context.clone(), import_linker);
@@ -294,7 +284,7 @@ impl<'t, T> Runtime<'t, T> {
 
     pub fn new(
         runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
+        import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let mut result = Self::new_uninit(runtime_context, import_linker)?;
         result.register_bindings();
@@ -304,15 +294,12 @@ impl<'t, T> Runtime<'t, T> {
 
     pub fn new_uninit(
         runtime_context: RuntimeContext<'t, T>,
-        import_linker: &ImportLinker,
+        import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
 
         let engine = {
-            let mut config = Config::default();
-            config.set_stack_limits(
-                StackLimits::new(STACK_MAX_HEIGHT, STACK_MAX_HEIGHT, RECURSIVE_MAX_DEPTH).unwrap(),
-            );
+            let mut config = RwasmModule::default_config(Some(import_linker));
             config.floats(false);
             if fuel_limit > 0 {
                 config.fuel_consumption_mode(FuelConsumptionMode::Eager);
@@ -321,16 +308,11 @@ impl<'t, T> Runtime<'t, T> {
             Engine::new(&config)
         };
 
-        let (module, bytecode) = {
-            let reduced_module = ReducedModule::new(runtime_context.bytecode.as_slice())
+        let module = {
+            let reduced_module = RwasmModule::new(runtime_context.bytecode.as_slice())
                 .map_err(Into::<RuntimeError>::into)?;
-            let func_type = runtime_context
-                .func_type
-                .clone()
-                .unwrap_or(FuncType::new([], []));
-            let module_builder =
-                reduced_module.to_module_builder(&engine, import_linker, func_type);
-            (module_builder.finish(), reduced_module.bytecode().clone())
+            let module_builder = reduced_module.to_module_builder(&engine);
+            module_builder.finish()
         };
 
         let linker = Linker::<RuntimeContext<T>>::new(&engine);
@@ -342,7 +324,6 @@ impl<'t, T> Runtime<'t, T> {
 
         let result = Self {
             engine,
-            bytecode,
             module,
             linker,
             store,
@@ -368,9 +349,7 @@ impl<'t, T> Runtime<'t, T> {
             .instance
             .unwrap()
             .get_func(&mut self.store, "main")
-            .ok_or(RuntimeError::ReducedModule(
-                ReducedModuleError::MissingEntrypoint,
-            ))?;
+            .ok_or(RuntimeError::MissingEntrypoint)?;
         let res = func
             .call(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);

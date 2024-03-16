@@ -1,9 +1,6 @@
-use crate::deploy_internal;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/secp256k1.wasm"))
-}
+pub fn deploy() {}
 
 pub fn main() {
     const DIGEST_OFFSET: usize = 0;

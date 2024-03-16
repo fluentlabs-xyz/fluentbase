@@ -7,9 +7,7 @@ extern crate lol_alloc;
 
 pub struct LowLevelSDK;
 
-#[cfg(feature = "evm")]
 pub mod evm;
-
 mod sdk;
 
 pub use sdk::LowLevelAPI;

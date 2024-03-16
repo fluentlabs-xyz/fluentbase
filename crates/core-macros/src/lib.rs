@@ -4,37 +4,24 @@ extern crate alloc;
 extern crate proc_macro;
 
 use alloc::{
-    boxed::Box,
     format,
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
-use core::{convert::TryInto, fmt::Debug, hash::Hash};
 use crypto_hashes::md2::{Digest, Md2};
 use proc_macro::TokenStream;
-use syn::{
-    punctuated::Punctuated,
-    token::PathSep,
-    FnArg,
-    ForeignItem,
-    ItemForeignMod,
-    Pat,
-    Path,
-    PathSegment,
-    Type,
-};
+use syn::{FnArg, ForeignItem, ItemForeignMod, Pat, Type};
 
 #[proc_macro]
 pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
     let foreign_mod_ast = syn::parse::<ItemForeignMod>(tokens.clone()).unwrap();
     assert_eq!("C", foreign_mod_ast.clone().abi.name.unwrap().value());
 
-    let mut use_decls = String::new();
+    let use_decls = String::new();
     let mut const_decls = String::new();
     let mut struct_decls = String::new();
     let mut enum_decls = String::new();
-    let mut fn_decls = String::new();
+    let fn_decls = String::new();
 
     // TODO solve collision problem
     // use_decls.push_str(
@@ -80,7 +67,7 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
                     h.update(struct_ident.clone());
                     let mut dst = [0u8; 4];
                     dst.copy_from_slice(h.finalize().as_slice()[0..4].as_ref());
-                    let mut method_id: u32 = u32::from_be_bytes(dst);
+                    let method_id: u32 = u32::from_be_bytes(dst);
                     const_decls.push_str(
                         format!("pub const {const_ident}: u32 = {method_id};\n").as_str(),
                     );
@@ -278,7 +265,7 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
         .as_str(),
     );
 
-    let ast_debug_string = format!("{:#?}", foreign_mod_ast);
+    // let ast_debug_string = format!("{:#?}", foreign_mod_ast);
     let mut builder = String::new();
     builder.push_str(
         r#"
@@ -304,10 +291,10 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
         )
     }
     builder
-        .replace(
-            r#"__AST_STR__"#,
-            &ast_debug_string.escape_unicode().to_string(),
-        )
+        // .replace(
+        //     r#"__AST_STR__"#,
+        //     &ast_debug_string.escape_unicode().to_string(),
+        // )
         .replace(r#"__USE_DECLS__"#, &use_decls.to_string())
         .replace(r#"__CONST_DECLS__"#, &const_decls.to_string())
         .replace(r#"__ENUM_DECLS__"#, &enum_decls.to_string())

@@ -55,31 +55,4 @@ pub trait LowLevelAPI {
     fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32;
     fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32;
     fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
-
-    fn rwasm_compile(input: &[u8], output: &mut [u8]) -> i32;
-    fn rwasm_transact(
-        address: &[u8],
-        value: &[u8],
-        input: &[u8],
-        output: &mut [u8],
-        fuel: u32,
-        is_delegate: bool,
-        is_static: bool,
-    ) -> i32;
-    fn rwasm_create(
-        value32: &[u8],
-        input_bytecode: &[u8],
-        salt32: &[u8],
-        deployed_contract_address20_output: &mut [u8],
-        is_create2: bool,
-    ) -> i32;
-
-    fn statedb_get_code(key: &[u8], output: &mut [u8], code_offset: u32);
-    fn statedb_get_code_size(key: &[u8]) -> u32;
-    fn statedb_get_code_hash(key: &[u8], out_hash32: &mut [u8]) -> ();
-    fn statedb_get_balance(address20: &[u8], out_balance32: &mut [u8], is_self: bool) -> ();
-    fn statedb_set_code(key: &[u8], code: &[u8]);
-    fn statedb_get_storage(key: &[u8], value: &mut [u8]);
-    fn statedb_update_storage(key: &[u8], value: &[u8]);
-    fn statedb_emit_log(topics: &[Bytes32], data: &[u8]);
 }

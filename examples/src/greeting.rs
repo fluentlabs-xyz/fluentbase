@@ -1,9 +1,6 @@
-use crate::deploy_internal;
 use fluentbase_sdk::evm::ExecutionContext;
 
-pub fn deploy() {
-    deploy_internal(include_bytes!("../bin/greeting.wasm"))
-}
+pub fn deploy() {}
 
 const HELLO_WORLD: [u8; 12] = [
     'H' as u8, 'e' as u8, 'l' as u8, 'l' as u8, 'o' as u8, ',' as u8, ' ' as u8, 'W' as u8,
