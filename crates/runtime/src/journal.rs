@@ -1,5 +1,5 @@
 use crate::TrieStorage;
-use fluentbase_poseidon::{Hashable, Poseidon};
+use fluentbase_poseidon::{hash_with_domain, Poseidon};
 use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
@@ -144,16 +144,14 @@ impl<DB: TrieStorage> JournaledTrie<DB> {
         let val1 = Fr::from_bytes(&bytes32).unwrap();
         bytes32[0..16].copy_from_slice(&val[16..]);
         let val2 = Fr::from_bytes(&bytes32).unwrap();
-        let hasher = Fr::hasher();
-        hasher.hash([val1, val2], Self::DOMAIN)
+        hash_with_domain(&[val1, val2], &Self::DOMAIN)
     }
 
     pub fn storage_key(address: &Address, slot: &[u8; 32]) -> [u8; 32] {
         // storage key is `p(address, p(slot_0, slot_1, d), d)`
         let address = Fr::from_bytes(&address.into_word()).unwrap();
         let slot = Self::compress_value(slot);
-        let hasher = Fr::hasher();
-        let key = hasher.hash([address, slot], Self::DOMAIN);
+        let key = hash_with_domain(&[address, slot], &Self::DOMAIN);
         key.to_bytes()
     }
 }

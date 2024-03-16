@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let mut db = InMemoryAccountDb::default();
+        let db = InMemoryAccountDb::default();
         // create new zkt
         let mut zkt = ZkTrieStateDb::new_empty(db);
         zkt.update(

@@ -1,11 +1,5 @@
-pub mod hash;
-pub use hash::*;
-mod primitives;
-pub use primitives::*;
-mod septidon;
 use halo2curves::bn256::Fr;
 pub use poseidon::Poseidon;
-pub use septidon::*;
 
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
@@ -20,11 +14,17 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     h.to_bytes()
 }
 
+pub fn hash_with_domain(arr: &[Fr], domain: &Fr) -> Fr {
+    let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
+    hasher.update(arr);
+    hasher.squeeze()
+}
+
 #[cfg(test)]
 mod poseidon_tests {
     extern crate alloc;
 
-    use crate::{poseidon_hash, Hashable};
+    use crate::{hash_with_domain, poseidon_hash};
     use halo2curves::{bn256::Fr, group::ff::PrimeField};
 
     #[test]
@@ -70,8 +70,7 @@ mod poseidon_tests {
         let fb = Fr::from_bytes(&b.try_into().unwrap()).unwrap();
         let fdomain = Fr::from_bytes(&domain.try_into().unwrap()).unwrap();
 
-        let hasher = Fr::hasher();
-        let h2 = hasher.hash([fa, fb], fdomain);
+        let h2 = hash_with_domain(&[fa, fb], &fdomain);
         let repr_h2 = h2.to_repr();
 
         let expected_repr = [
