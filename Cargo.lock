@@ -768,9 +768,9 @@ dependencies = [
  "base16ct",
  "crypto-bigint",
  "digest 0.10.7",
- "ff 0.13.0",
+ "ff",
  "generic-array",
- "group 0.13.0",
+ "group",
  "pkcs8",
  "rand_core",
  "sec1",
@@ -847,21 +847,11 @@ dependencies = [
 
 [[package]]
 name = "ff"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d013fc25338cc558c5c2cfbad646908fb23591e2404481826742b651c9af7160"
-dependencies = [
- "bitvec",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "ff"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ded41244b729663b1e574f1b4fb731469f69f79c17667b5d776b16cda0479449"
 dependencies = [
+ "bitvec",
  "rand_core",
  "subtle",
 ]
@@ -1010,7 +1000,7 @@ name = "fluentbase-poseidon"
 version = "0.1.0"
 dependencies = [
  "bitvec",
- "halo2curves 0.3.1",
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "lazy_static",
  "poseidon",
 ]
@@ -1023,7 +1013,7 @@ dependencies = [
  "fluentbase-poseidon",
  "fluentbase-types",
  "fluentbase-zktrie",
- "halo2curves 0.3.1",
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown",
  "hex",
  "hex-literal",
@@ -1063,7 +1053,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "fluentbase-poseidon",
- "halo2curves 0.3.1",
+ "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hex",
  "lazy_static",
  "uint",
@@ -1202,22 +1192,11 @@ dependencies = [
 
 [[package]]
 name = "group"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dfbfb3a6cfbd390d5c9564ab283a0349b9b9fcd46a706c1eb10e0db70bfbac7"
-dependencies = [
- "ff 0.12.1",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
- "ff 0.13.0",
+ "ff",
  "rand_core",
  "subtle",
 ]
@@ -1230,36 +1209,43 @@ checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "halo2curves"
-version = "0.2.1"
-source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=0.3.0#83c72d49762343ffc9576ca11a2aa615efe1029b"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db81d01d0bbfec9f624d7590fc6929ee2537a64ec1e080d8f8c9e2d2da291405"
 dependencies = [
- "ff 0.12.1",
- "group 0.12.1",
+ "blake2b_simd",
+ "ff",
+ "group",
  "lazy_static",
  "num-bigint",
  "num-traits",
+ "pairing",
  "pasta_curves",
+ "paste",
  "rand",
  "rand_core",
+ "rayon",
  "static_assertions",
  "subtle",
 ]
 
 [[package]]
 name = "halo2curves"
-version = "0.3.1"
-source = "git+https://github.com/fluentlabs-xyz/halo2curves?branch=0.3.1-derive-serde#969f1e44d9713ee4cd552563bd0c762c5d53b56e"
+version = "0.6.1"
+source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1#3c43d3c0c3b697c411cfd07f026798998f55073a"
 dependencies = [
- "ff 0.12.1",
- "group 0.12.1",
+ "blake2b_simd",
+ "ff",
+ "group",
  "lazy_static",
  "num-bigint",
  "num-traits",
+ "pairing",
  "pasta_curves",
  "paste",
  "rand",
  "rand_core",
- "serde",
+ "rayon",
  "static_assertions",
  "subtle",
 ]
@@ -1594,6 +1580,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
+name = "pairing"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81fec4625e73cf41ef4bb6846cafa6d44736525f442ba45e407c4a000a13996f"
+dependencies = [
+ "group",
+]
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1644,13 +1639,13 @@ dependencies = [
 
 [[package]]
 name = "pasta_curves"
-version = "0.4.1"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cc65faf8e7313b4b1fbaa9f7ca917a0eed499a9663be71477f87993604341d8"
+checksum = "d3e57598f73cc7e1b2ac63c79c517b31a0877cd7c402cdcaa311b5208de7a095"
 dependencies = [
  "blake2b_simd",
- "ff 0.12.1",
- "group 0.12.1",
+ "ff",
+ "group",
  "lazy_static",
  "rand",
  "static_assertions",
@@ -1699,10 +1694,9 @@ dependencies = [
 [[package]]
 name = "poseidon"
 version = "0.2.0"
-source = "git+https://github.com/scroll-tech/poseidon?rev=0b9965fbcd9e03559088b8f68489592286bc55e0#0b9965fbcd9e03559088b8f68489592286bc55e0"
+source = "git+https://github.com/privacy-scaling-explorations/poseidon?tag=v2024_01_31#d29f35d9744e0c58b63679a15730ff2fab470ef2"
 dependencies = [
- "group 0.12.1",
- "halo2curves 0.2.1",
+ "halo2curves 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "subtle",
 ]
 
