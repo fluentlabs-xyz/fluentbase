@@ -9,9 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 rwasm = { workspace = true }
-#rwasm = { workspace = true, default-features = false, features = ["std"] }
-# we need runtime here only to obtain sys call indices
-fluentbase-runtime = { path = "../crates/runtime" }
+fluentbase-types = { path = "../crates/types" }
 wat = "1.0.80"
 clap = { version = "4.4.11", features = ["derive"] }
 log = "0.4.20"

@@ -1,11 +1,10 @@
 use crate::account_types::{
     AccountCheckpoint,
     AccountFields,
+    JZKT_ACCOUNT_AOT_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_AOT_CODE_SIZE_FIELD,
     JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_CODE_SIZE_FIELD,
     JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_ROOT_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
     JZKT_COMPRESSION_FLAGS,
@@ -18,26 +17,24 @@ use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EM
 #[derive(Debug, Clone)]
 pub struct Account {
     pub address: Address,
-    pub source_code_size: u64,
-    pub source_code_hash: B256,
-    pub code_size: u64,
-    pub code_hash: B256,
     pub balance: U256,
     pub nonce: u64,
-    pub root: B256,
+    pub source_code_size: u64,
+    pub source_code_hash: B256,
+    pub aot_code_size: u64,
+    pub aot_code_hash: B256,
 }
 
 impl Default for Account {
     fn default() -> Self {
         Self {
             address: Address::ZERO,
-            code_size: 0,
+            aot_code_size: 0,
             source_code_size: 0,
             nonce: 0,
             balance: U256::ZERO,
-            code_hash: POSEIDON_EMPTY,
+            aot_code_hash: POSEIDON_EMPTY,
             source_code_hash: KECCAK_EMPTY,
-            root: B256::ZERO,
         }
     }
 }
@@ -57,7 +54,7 @@ impl Account {
         let mut buffer32 = Bytes32::default();
 
         Account::jzkt_get_code_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.code_size = LittleEndian::read_u64(&buffer32);
+        result.aot_code_size = LittleEndian::read_u64(&buffer32);
 
         Account::jzkt_get_nonce(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.nonce = LittleEndian::read_u64(&buffer32);
@@ -66,24 +63,17 @@ impl Account {
             result.balance.as_le_slice_mut().as_mut_ptr()
         });
 
-        Account::jzkt_get_root(address_word.as_ptr(), result.root.as_mut_ptr());
-
         Account::jzkt_get_source_code_hash(
             address_word.as_ptr(),
             result.source_code_hash.as_mut_ptr(),
         );
 
-        Account::jzkt_get_code_hash(address_word.as_ptr(), result.code_hash.as_mut_ptr());
+        Account::jzkt_get_code_hash(address_word.as_ptr(), result.aot_code_hash.as_mut_ptr());
 
         Account::jzkt_get_source_code_size(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.source_code_size = LittleEndian::read_u64(&buffer32);
 
         result
-    }
-
-    #[inline]
-    pub fn jzkt_get_root(address32_offset: *const u8, buffer32_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(address32_offset, JZKT_ACCOUNT_ROOT_FIELD, buffer32_offset);
     }
 
     #[inline]
@@ -108,7 +98,7 @@ impl Account {
     pub fn jzkt_get_code_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_CODE_SIZE_FIELD,
+            JZKT_ACCOUNT_AOT_CODE_SIZE_FIELD,
             buffer32_le_offset,
         );
     }
@@ -117,7 +107,7 @@ impl Account {
     pub fn jzkt_get_code_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_CODE_HASH_FIELD,
+            JZKT_ACCOUNT_AOT_CODE_HASH_FIELD,
             buffer32_offset,
         );
     }
@@ -164,8 +154,8 @@ impl Account {
     pub fn get_fields(&self) -> AccountFields {
         let mut account_fields: AccountFields = Default::default();
         LittleEndian::write_u64(
-            &mut account_fields[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize][..],
-            self.code_size,
+            &mut account_fields[JZKT_ACCOUNT_AOT_CODE_SIZE_FIELD as usize][..],
+            self.aot_code_size,
         );
         LittleEndian::write_u64(
             &mut account_fields[JZKT_ACCOUNT_NONCE_FIELD as usize][..],
@@ -174,12 +164,10 @@ impl Account {
         account_fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]
             .copy_from_slice(&self.balance.as_le_slice());
 
-        account_fields[JZKT_ACCOUNT_ROOT_FIELD as usize].copy_from_slice(&self.root.as_slice());
-
         account_fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]
             .copy_from_slice(self.source_code_hash.as_slice());
-        account_fields[JZKT_ACCOUNT_CODE_HASH_FIELD as usize]
-            .copy_from_slice(self.code_hash.as_slice());
+        account_fields[JZKT_ACCOUNT_AOT_CODE_HASH_FIELD as usize]
+            .copy_from_slice(self.aot_code_hash.as_slice());
         LittleEndian::write_u64(
             &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
             self.source_code_size,
@@ -218,8 +206,8 @@ impl Account {
     }
 
     pub fn load_bytecode(&self) -> Bytes {
-        let mut bytecode = vec![0u8; self.code_size as usize];
-        Account::copy_bytecode(self.code_hash.as_ptr(), bytecode.as_mut_ptr());
+        let mut bytecode = vec![0u8; self.aot_code_size as usize];
+        Account::copy_bytecode(self.aot_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
@@ -249,15 +237,15 @@ impl Account {
         LowLevelSDK::crypto_poseidon(
             code.as_ptr(),
             code.len() as u32,
-            self.code_hash.as_mut_ptr(),
+            self.aot_code_hash.as_mut_ptr(),
         );
-        self.code_size = code.len() as u64;
+        self.aot_code_size = code.len() as u64;
         // write new changes into ZKT
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
             address_word.as_ptr(),
-            JZKT_ACCOUNT_CODE_HASH_FIELD,
+            JZKT_ACCOUNT_AOT_CODE_HASH_FIELD,
             code.as_ptr(),
             code.len() as u32,
         );
@@ -285,7 +273,7 @@ impl Account {
     ) -> Result<AccountCheckpoint, ExitCode> {
         let checkpoint: AccountCheckpoint = Self::checkpoint();
         // make sure there is no creation collision
-        if callee.code_hash != POSEIDON_EMPTY || callee.nonce != 0 {
+        if callee.aot_code_hash != POSEIDON_EMPTY || callee.nonce != 0 {
             LowLevelSDK::jzkt_rollback(checkpoint.0, checkpoint.1);
             return Err(ExitCode::CreateCollision);
         }
@@ -339,6 +327,8 @@ impl Account {
 
     #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
-        self.nonce != 0 || self.source_code_hash != KECCAK_EMPTY || self.code_hash != POSEIDON_EMPTY
+        self.nonce != 0
+            || self.source_code_hash != KECCAK_EMPTY
+            || self.aot_code_hash != POSEIDON_EMPTY
     }
 }

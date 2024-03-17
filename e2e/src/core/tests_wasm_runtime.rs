@@ -16,7 +16,7 @@ use fluentbase_core_api::{
     },
 };
 use fluentbase_runtime::{Runtime, RuntimeContext};
-use fluentbase_types::{address, Address, Bytes, ExitCode, B256, U256};
+use fluentbase_types::{address, Address, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hex_literal::hex;
 
 #[test]
@@ -43,14 +43,15 @@ fn test_wasm_create() {
 
     const IS_RUNTIME: bool = true;
     let contract_wasm_binary = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
-    let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary.as_slice(), false);
+    let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary);
     let mut runtime_ctx = RuntimeContext::new(contract_rwasm_binary);
+    runtime_ctx.with_state(STATE_MAIN);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
     let jzkt = runtime_ctx.jzkt().unwrap();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
-        .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+        .set_journal_checkpoint(jzkt.borrow_mut().checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
         .set_contract_input_size(core_input_vec.len() as u32)
         .set_contract_caller(caller_address)
@@ -62,7 +63,7 @@ fn test_wasm_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -107,8 +108,9 @@ fn test_wasm_create2() {
 
     const IS_RUNTIME: bool = true;
     let contract_wasm_binary = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
-    let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary.as_slice(), false);
+    let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary.as_slice());
     let mut runtime_ctx = RuntimeContext::new(contract_rwasm_binary);
+    runtime_ctx.with_state(STATE_MAIN);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
     let jzkt = runtime_ctx.jzkt().unwrap();
     test_ctx
@@ -124,7 +126,7 @@ fn test_wasm_create2() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -154,7 +156,7 @@ fn test_wasm_call_after_create() {
 
     const IS_RUNTIME: bool = true;
     let wcl_contract_wasm = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
-    let wcl_contract_rwasm = wasm2rwasm(wcl_contract_wasm.as_slice(), false);
+    let wcl_contract_rwasm = wasm2rwasm(wcl_contract_wasm.as_slice());
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let gas_limit: u32 = 10_000_000;
     let create_value = B256::left_padding_from(&hex!("1000"));
@@ -170,6 +172,7 @@ fn test_wasm_call_after_create() {
         let core_input_vec = core_input.encode_to_vec(0);
 
         let mut runtime_ctx = RuntimeContext::new(wcl_contract_rwasm.clone());
+        runtime_ctx.with_state(STATE_MAIN);
         let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().unwrap();
         test_ctx
@@ -184,7 +187,7 @@ fn test_wasm_call_after_create() {
             .set_block_coinbase(block_coinbase);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
-        let mut output =
+        let output =
             test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output_vec = output.data().output();
@@ -206,7 +209,7 @@ fn test_wasm_call_after_create() {
         (jzkt, contract_address)
     };
 
-    let (jzkt) = {
+    let _jzkt = {
         let ecl_method_input = WasmCallMethodInput::new(
             deployed_contract_address.into_array(),
             call_value.0,
@@ -230,13 +233,13 @@ fn test_wasm_call_after_create() {
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
-        let mut output_res =
+        let output_res =
             test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output_res.data().exit_code());
         let output = output_res.data().output();
         assert!(output.len() > 0);
         assert_eq!("Hello, World".as_bytes(), output.as_slice());
 
-        (jzkt)
+        jzkt
     };
 }

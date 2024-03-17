@@ -96,7 +96,7 @@ pub fn _evm_create2(
     contract_account.update_source_bytecode(&deployed_bytecode);
     contract_account.update_bytecode(&include_bytes!("../../bin/evm_loader_contract.rwasm").into());
 
-    // TODO convert deployed bytecode into rwasm code using evm translator and save result into
+    unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 
     ExitCode::Ok
 }

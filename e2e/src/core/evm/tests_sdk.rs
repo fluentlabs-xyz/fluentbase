@@ -209,7 +209,7 @@ fn _evm_call_after_create_test() {
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
+    let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -292,7 +292,7 @@ fn _evm_call_after_create2_test() {
     assert!(exit_code.is_ok());
     assert_eq!(computed_contract_address, created_address);
 
-    let mut args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
+    let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -489,7 +489,7 @@ fn _evm_selfbalance_from_contract_call_test() {
     });
     assert_eq!(create_value, created_address_balance);
 
-    let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
+    let args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
     let mut return_data = [0u8; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
     let exit_code = _evm_call(
@@ -502,7 +502,7 @@ fn _evm_selfbalance_from_contract_call_test() {
         return_data.len() as u32,
     );
     assert!(exit_code.is_ok());
-    let mut expected_return_data = [
+    let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 4, 52, 48, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -583,7 +583,7 @@ fn _evm_balance_from_contract_call_test() {
         return_data.len() as u32,
     );
     assert!(exit_code.is_ok());
-    let mut expected_return_data = [
+    let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 12, 52, 51, 48, 50, 48, 55, 52, 50, 54, 51, 56, 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

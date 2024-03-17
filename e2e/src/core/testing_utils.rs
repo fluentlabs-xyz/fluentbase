@@ -5,7 +5,6 @@ use fluentbase_core::{account::Account, account_types::JZKT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{
     zktrie::ZkTrieStateDb,
     ExecutionResult,
-    IJournaledTrie,
     JournaledTrie,
     Runtime,
     RuntimeContext,

@@ -1,4 +1,7 @@
-use rwasm::core::{Trap, TrapCode};
+use rwasm::{
+    core::{Trap, TrapCode},
+    engine::bytecode::FuncIdx,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
@@ -214,5 +217,11 @@ impl SysFuncIdx {
 impl Into<u32> for SysFuncIdx {
     fn into(self) -> u32 {
         self as u32
+    }
+}
+
+impl Into<FuncIdx> for SysFuncIdx {
+    fn into(self) -> FuncIdx {
+        (self as u32).into()
     }
 }
