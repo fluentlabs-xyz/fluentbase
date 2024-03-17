@@ -5,7 +5,7 @@ pub trait TrieStorage {
 
     fn compute_root(&self) -> [u8; 32];
 
-    fn get(&self, key: &[u8]) -> Option<Vec<[u8; 32]>>;
+    fn get(&self, key: &[u8]) -> Option<(Vec<[u8; 32]>, u32)>;
 
     fn update(
         &mut self,

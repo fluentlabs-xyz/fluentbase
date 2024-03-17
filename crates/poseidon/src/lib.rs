@@ -14,7 +14,7 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     h.to_bytes()
 }
 
-pub fn hash_with_domain(arr: &[Fr], domain: &Fr) -> Fr {
+pub fn hash_with_domain(arr: &[Fr], _domain: &Fr) -> Fr {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
     hasher.update(arr);
     hasher.squeeze()

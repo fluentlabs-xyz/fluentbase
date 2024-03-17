@@ -7,8 +7,15 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_sdk::evm::ContractInput;
-use fluentbase_types::{Bytes, STATE_MAIN};
+use fluentbase_types::{
+    create_sovereign_import_linker,
+    Bytes,
+    SysFuncIdx::SYS_STATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
 use rwasm::{
+    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, RwasmModule},
     Config,
     Engine,
@@ -17,9 +24,22 @@ use rwasm::{
     Store,
 };
 
-pub(crate) fn wasm2rwasm(wasm_binary: &[u8], _is_deploy: bool) -> Vec<u8> {
-    let import_linker = Runtime::<()>::new_sovereign_linker();
-    let rwasm_module = RwasmModule::compile(wasm_binary, Some(import_linker)).unwrap();
+pub(crate) fn wasm2rwasm(wasm_binary: &[u8]) -> Vec<u8> {
+    let mut config = RwasmModule::default_config(None);
+    config.rwasm_config(RwasmConfig {
+        state_router: Some(StateRouterConfig {
+            states: Box::new([
+                ("deploy".to_string(), STATE_DEPLOY),
+                ("main".to_string(), STATE_MAIN),
+            ]),
+            opcode: Instruction::Call(SYS_STATE.into()),
+        }),
+        entrypoint_name: None,
+        import_linker: Some(create_sovereign_import_linker()),
+        wrap_import_functions: true,
+    });
+    let rwasm_module =
+        RwasmModule::compile_with_config(wasm_binary, &config).expect("failed to compile to rWASM");
     let mut rwasm_buffer = Vec::new();
     rwasm_module.write_binary_to_vec(&mut rwasm_buffer).unwrap();
     rwasm_buffer
@@ -34,7 +54,7 @@ pub(crate) fn run_rwasm_with_evm_input(
         contract_input.contract_input = Bytes::copy_from_slice(input_data);
         contract_input.encode_to_vec(0)
     };
-    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
+    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice());
     let mut ctx = RuntimeContext::new(rwasm_binary);
     ctx.with_state(STATE_MAIN)
         .with_fuel_limit(100_000)
@@ -108,7 +128,7 @@ pub(crate) fn run_rwasm_with_raw_input(
         None
     };
     // compile and run wasm binary
-    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice(), false);
+    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice());
     let mut ctx = RuntimeContext::new(rwasm_binary);
     ctx.with_state(STATE_MAIN)
         .with_fuel_limit(100_000_000)

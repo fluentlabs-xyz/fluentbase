@@ -45,24 +45,6 @@ pub fn _wasm_create(
     }
     let bytecode = unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
 
-    // let rwasm_bytecode = {
-    //     let rwasm_module = RwasmModule::compile(deployer_wasm_bytecode_slice,
-    // Some(import_linker));     if rwasm_module.is_err() {
-    //         return ExitCode::CompilationError;
-    //     }
-    //     let rwasm_module = rwasm_module.unwrap();
-    //     let length = rwasm_module.encoded_length();
-    //     let rwasm_bytecode = unsafe {
-    //         let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(length, 1));
-    //         &mut *ptr::slice_from_raw_parts_mut(ptr, length)
-    //     };
-    //     let mut binary_format_writer = BinaryFormatWriter::new(rwasm_bytecode);
-    //     rwasm_module
-    //         .write_binary(&mut binary_format_writer)
-    //         .expect("failed to encode rwasm bytecode");
-    //     rwasm_bytecode
-    // };
-
     let bytecode_rwasm = wasm2rwasm(bytecode).unwrap();
     rwasm_exec(&bytecode_rwasm, &[], gas_limit, false);
     let source_bytecode_out_length = LowLevelSDK::sys_output_size();

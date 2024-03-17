@@ -110,12 +110,12 @@ impl<DB: TrieDb> TrieStorage for ZkTrieStateDb<DB> {
             .bytes()
     }
 
-    fn get(&self, key: &[u8]) -> Option<Vec<[u8; 32]>> {
+    fn get(&self, key: &[u8]) -> Option<(Vec<[u8; 32]>, u32)> {
         if let Ok(val) = self.trie.as_ref()?.get_data(&self.storage, key) {
             match val {
                 TrieData::Node(node) => {
-                    let result = node
-                        .data()
+                    let (data, flags) = node.data_with_flags();
+                    let result = data
                         .to_vec()
                         .chunks(32)
                         .map(|val| {
@@ -124,7 +124,7 @@ impl<DB: TrieDb> TrieStorage for ZkTrieStateDb<DB> {
                             bytes
                         })
                         .collect::<Vec<_>>();
-                    Some(result)
+                    Some((result, flags))
                 }
                 TrieData::NotFound => None,
             }

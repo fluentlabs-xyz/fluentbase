@@ -1,9 +1,9 @@
 use crate::TrieStorage;
+use core::mem::take;
 use fluentbase_poseidon::{hash_with_domain, Poseidon};
 use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
-use std::mem::take;
 
 enum JournalEvent {
     ItemChanged {
@@ -71,7 +71,7 @@ pub struct JournalLog {
 
 pub trait IJournaledTrie {
     fn checkpoint(&mut self) -> JournalCheckpoint;
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, bool)>;
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)>;
     fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32);
     fn store(&mut self, address: &Address, slot: &[u8; 32], value: &[u8; 32]);
     fn load(&mut self, address: &Address, slot: &[u8; 32]) -> Option<([u8; 32], bool)>;
@@ -161,16 +161,18 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
         JournalCheckpoint(self.journal.len() as u32, 0)
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, bool)> {
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
         match self.state.get(key) {
             Some(index) => self
                 .journal
                 .get(*index)
                 .unwrap()
                 .preimage()
-                .map(|v| v.0)
-                .map(|v| (v, false)),
-            None => self.storage.get(key).map(|v| (v, true)),
+                .map(|(values, flags)| (values, flags, false)),
+            None => self
+                .storage
+                .get(key)
+                .map(|(values, flags)| (values, flags, true)),
         }
     }
 
@@ -192,7 +194,7 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
 
     fn load(&mut self, address: &Address, slot: &[u8; 32]) -> Option<([u8; 32], bool)> {
         let storage_key = Self::storage_key(address, slot);
-        let (values, is_cold) = self.get(&storage_key)?;
+        let (values, _flags, is_cold) = self.get(&storage_key)?;
         assert_eq!(
             values.len(),
             1,
@@ -277,12 +279,21 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
     }
 
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
-        let value = match self.get(key).and_then(|v| v.0.get(field as usize).cloned()) {
+        // find and decode value and hash
+        let value_hash = match self.get(key).and_then(|(values, flags, _is_cold)| {
+            let value = values.get(field as usize)?;
+            Some(Fr::from_bytes(&value).unwrap())
+            // let result = if flags & (1 << field) != 0 {
+            //     Byte32::from(*value).hash::<PoseidonHash>().unwrap()
+            // } else {
+            //     Fr::from_bytes(&value).unwrap()
+            // };
+            // Some(result)
+        }) {
             Some(value) => value,
             None => return false,
         };
         // value hash stored inside trie must be equal to the provided value hash
-        let value_hash = Fr::from_bytes(&value).unwrap();
         if Self::message_hash(preimage) != value_hash {
             return false;
         }

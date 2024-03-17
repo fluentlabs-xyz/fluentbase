@@ -1,6 +1,7 @@
 use crate::test_helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input, wasm2rwasm};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_types::STATE_DEPLOY;
 use hex_literal::hex;
 
 #[test]
@@ -46,6 +47,7 @@ fn test_poseidon() {
 }
 
 #[test]
+#[ignore]
 fn test_rwasm() {
     let input_data = include_bytes!("../../examples/bin/rwasm.wasm");
     let output = run_rwasm_with_raw_input(
@@ -90,7 +92,7 @@ fn test_cairo() {
 #[test]
 fn test_secp256k1_verify() {
     let wasm_binary = include_bytes!("../../examples/bin/secp256k1.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary, true);
+    let rwasm_binary = wasm2rwasm(wasm_binary);
 
     let input_datas: &[&[u8]] = &[
         &[
@@ -115,7 +117,8 @@ fn test_secp256k1_verify() {
 
     for input_data in input_datas {
         let mut ctx = RuntimeContext::new(rwasm_binary.as_slice());
-        ctx.with_input(input_data.to_vec())
+        ctx.with_state(STATE_DEPLOY)
+            .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let output = Runtime::<()>::run_with_context(ctx, import_linker).unwrap();

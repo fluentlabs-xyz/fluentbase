@@ -320,6 +320,13 @@ impl<H: HashScheme> Node<H> {
         }
     }
 
+    pub fn data_with_flags(&self) -> (&[u8], u32) {
+        match &self.value {
+            NodeValue::Leaf(leaf) => (leaf.data(), leaf.compressed_flags),
+            _ => (&[], 0),
+        }
+    }
+
     pub fn leaf_set_keypreimage(self, preimage: Option<Byte32>) -> Result<Self, Error> {
         match self.value {
             NodeValue::Leaf(leaf) => Self::new_leaf(
