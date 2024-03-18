@@ -22,7 +22,6 @@ use fluentbase_core_api::{
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_types::{address, Address, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hex_literal::hex;
-use keccak_hash::keccak;
 
 #[test]
 fn test_evm_create() {
@@ -64,9 +63,6 @@ fn test_evm_create() {
         .set_contract_input_size(evm_create_core_input_vec.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address);
@@ -126,9 +122,6 @@ fn test_evm_call_after_create() {
             .set_contract_input_size(evm_create_core_input_vec.len() as u32)
             .set_env_chain_id(env_chain_id)
             .set_contract_caller(caller_address)
-            .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-            .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-            .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
             .set_block_hash(block_hash)
             .set_block_coinbase(block_coinbase)
             .set_tx_caller(caller_address);
@@ -237,10 +230,7 @@ fn test_evm_call_from_wasm() {
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_contract_input_size(evm_create_core_input_vec.len() as u32)
-            .set_contract_caller(caller_address)
-            .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-            .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-            .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()));
+            .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
         let output =

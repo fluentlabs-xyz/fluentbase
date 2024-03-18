@@ -20,10 +20,7 @@ macro_rules! decode_input {
     }};
 }
 
-pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../../bin/wcl_contract.wasm"));
-    LowLevelSDK::sys_halt(0);
-}
+pub fn deploy() {}
 
 pub fn main() {
     let contract_input = ExecutionContext::contract_input();

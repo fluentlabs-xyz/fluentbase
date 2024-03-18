@@ -67,8 +67,6 @@ fn test_wasm_create() {
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
         .set_contract_input_size(core_input_vec.len() as u32)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(wasm_bytecode))
-        .set_contract_code_size(wasm_bytecode.len() as u32)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address);
@@ -90,7 +88,7 @@ fn test_wasm_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let account = Account::new_from_jzkt(&contract_address);
         assert_eq!(236, account.load_source_bytecode().len());
-        assert_eq!(479, account.load_bytecode().len());
+        assert_eq!(479, account.load_rwasm_bytecode().len());
     }
 }
 
@@ -132,8 +130,6 @@ fn test_wasm_create2() {
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
         .set_contract_input_size(core_input_vec.len() as u32)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(wasm_bytecode))
-        .set_contract_code_size(wasm_bytecode.len() as u32)
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
@@ -153,7 +149,7 @@ fn test_wasm_create2() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let account = Account::new_from_jzkt(&contract_address);
         assert_eq!(236, account.load_source_bytecode().len());
-        assert_eq!(479, account.load_bytecode().len());
+        assert_eq!(479, account.load_rwasm_bytecode().len());
     }
 }
 
@@ -191,11 +187,9 @@ fn test_wasm_call_after_create() {
             .try_add_account(&caller_account)
             .contract_input_wrapper
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
-            .set_contract_bytecode(Bytes::copy_from_slice(deploy_wasm))
             .set_contract_caller(caller_address)
             .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
             .set_contract_input_size(core_input_vec.len() as u32)
-            .set_contract_code_size(deploy_wasm.len() as u32)
             .set_block_coinbase(block_coinbase);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
@@ -215,7 +209,7 @@ fn test_wasm_call_after_create() {
             test_ctx.apply_ctx(Some(&mut runtime_ctx));
             let account = Account::new_from_jzkt(&contract_address);
             assert_eq!(236, account.load_source_bytecode().len());
-            assert_eq!(479, account.load_bytecode().len());
+            assert_eq!(479, account.load_rwasm_bytecode().len());
         }
 
         (jzkt, contract_address)
@@ -238,7 +232,6 @@ fn test_wasm_call_after_create() {
             .try_add_account(&caller_account)
             .contract_input_wrapper
             .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
-            .set_contract_bytecode(Bytes::copy_from_slice(deploy_wasm))
             .set_contract_address(deployed_contract_address)
             .set_contract_input(Bytes::copy_from_slice(&ecl_core_input_vec))
             .set_contract_input_size(ecl_core_input_vec.len() as u32)

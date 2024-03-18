@@ -45,9 +45,6 @@ define_codec_struct! {
         contract_gas_limit: u64,
         contract_address: Address,
         contract_caller: Address,
-        contract_bytecode: Bytes,
-        contract_code_size: u32,
-        contract_code_hash: B256,
         contract_input: Bytes,
         contract_input_size: u32,
         contract_value: U256,
@@ -135,9 +132,6 @@ impl ExecutionContext {
     impl_reader_func!(fn contract_gas_limit() -> u64, <ContractInput as IContractInput>::ContractGasLimit);
     impl_reader_func!(fn contract_address() -> Address, <ContractInput as IContractInput>::ContractAddress);
     impl_reader_func!(fn contract_caller() -> Address, <ContractInput as IContractInput>::ContractCaller);
-    impl_reader_func!(@dynamic fn contract_bytecode() -> Bytes, <ContractInput as IContractInput>::ContractBytecode);
-    impl_reader_func!(fn contract_code_size() -> u32, <ContractInput as IContractInput>::ContractCodeSize);
-    impl_reader_func!(fn contract_code_hash() -> B256, <ContractInput as IContractInput>::ContractCodeHash);
     impl_reader_func!(@dynamic fn contract_input() -> Bytes, <ContractInput as IContractInput>::ContractInput);
     impl_reader_func!(fn contract_input_size() -> u32, <ContractInput as IContractInput>::ContractInputSize);
     impl_reader_func!(fn contract_value() -> U256, <ContractInput as IContractInput>::ContractValue);
@@ -203,7 +197,6 @@ mod test {
         // encode input and put into global var
         let contract_input = ContractInput {
             contract_input: Bytes::from_static(&[0, 1, 2, 3]),
-            contract_bytecode: Bytes::from_static(&[4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
             block_hash: B256::from(U256::from(7)),
             ..Default::default()
         };
@@ -212,8 +205,6 @@ mod test {
         // read input fields
         let input = ExecutionContext::contract_input();
         assert_eq!(input, contract_input.contract_input);
-        let bytecode = ExecutionContext::contract_bytecode();
-        assert_eq!(bytecode, contract_input.contract_bytecode);
         let block_hash = ExecutionContext::block_hash();
         assert_eq!(block_hash, contract_input.block_hash);
     }

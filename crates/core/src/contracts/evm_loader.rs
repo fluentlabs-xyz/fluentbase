@@ -7,10 +7,7 @@ use fluentbase_core_api::{
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::STATE_MAIN;
 
-pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../../bin/evm_loader_contract.wasm"));
-    LowLevelSDK::sys_halt(0);
-}
+pub fn deploy() {}
 
 pub fn main() {
     let mut contract_input_data = ExecutionContext::contract_input_full();
@@ -27,7 +24,7 @@ pub fn main() {
     contract_input_data.contract_address = ECL_CONTRACT_ADDRESS;
     let ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
     // TODO simplify bytecode loading with basic methods
-    let bytecode = ecl_account.load_bytecode();
+    let bytecode = ecl_account.load_rwasm_bytecode();
     let contract_input_data_vec = contract_input_data.encode_to_vec(0);
 
     let exit_code = LowLevelSDK::sys_exec(
