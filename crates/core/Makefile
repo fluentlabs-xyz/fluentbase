@@ -4,13 +4,11 @@ OUT_FOLDER=bin
 SOURCE_NAME=fluentbase_core
 SOURCE_LIB_NAME=lib${SOURCE_NAME}
 ECL_CONTRACT_DEST_NAME=ecl_contract
-ECL_CONTRACT_FEATURE_FLAG=ecl_contract_entry
+ECL_CONTRACT_FEATURE_FLAG=ecl
 EVM_LOADER_CONTRACT_DEST_NAME=evm_loader_contract
-EVM_LOADER_CONTRACT_FEATURE_FLAG=evm_loader_contract_entry
+EVM_LOADER_CONTRACT_FEATURE_FLAG=evm_loader
 WCL_CONTRACT_DEST_NAME=wcl_contract
-WCL_CONTRACT_FEATURE_FLAG=wcl_contract_entry
-WASM_LOADER_CONTRACT_DEST_NAME=wasm_loader_contract
-WASM_LOADER_CONTRACT_FEATURE_FLAG=wasm_loader_contract_entry
+WCL_CONTRACT_FEATURE_FLAG=wcl
 CUR_DIR="$(shell pwd)"
 
 .PHONY: build
@@ -36,6 +34,7 @@ ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${EVM_LOADER_C
 	wasm2wat $^ > $@
 
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
+	touch $@
 	cd ../../bin; $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: build_evm_loader_contract
@@ -58,21 +57,6 @@ build_ecl_contract: \
 	${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm \
 	${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.rwasm
 
-.PHONY: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
-${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm:
-	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WASM_LOADER_CONTRACT_FEATURE_FLAG}"
-
-${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
-	wasm2wat $^ > $@
-
-${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm
-	cd ../../bin; $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
-
-#.PHONY: build_wasm_loader_contract
-#build_wasm_loader_contract: \
-#	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.wasm \
-#	${OUT_FOLDER}/${WASM_LOADER_CONTRACT_DEST_NAME}.rwasm
-
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm:
 	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WCL_CONTRACT_FEATURE_FLAG}"
@@ -84,9 +68,7 @@ ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_N
 	wasm2wat $^ > $@
 
 .PHONY: build_wcl_contract
-build_wcl_contract: \
-	${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm \
-	${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.rwasm
+build_wcl_contract: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 
 .PHONY: build_all_contracts_with_wats
 build_all_contracts_with_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wcl_contract_wat

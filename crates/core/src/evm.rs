@@ -7,9 +7,9 @@ pub mod calldatasize;
 pub mod codecopy;
 pub mod codehash;
 pub mod codesize;
-#[cfg(not(feature = "evm_loader_contract_entry"))]
+#[cfg(not(feature = "evm_loader"))]
 pub mod create;
-#[cfg(not(feature = "evm_loader_contract_entry"))]
+#[cfg(not(feature = "evm_loader"))]
 pub mod create2;
 pub mod extcodecopy;
 pub mod extcodehash;
