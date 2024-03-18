@@ -280,7 +280,7 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
 
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
         // find and decode value and hash
-        let value_hash = match self.get(key).and_then(|(values, flags, _is_cold)| {
+        let value_hash = match self.get(key).and_then(|(values, _flags, _is_cold)| {
             let value = values.get(field as usize)?;
             Some(Fr::from_bytes(&value).unwrap())
             // let result = if flags & (1 << field) != 0 {
