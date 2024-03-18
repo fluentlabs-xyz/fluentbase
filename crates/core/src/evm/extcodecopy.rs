@@ -2,7 +2,7 @@ use crate::account::Account;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
-use fluentbase_sdk::Bytes32;
+use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
 #[no_mangle]
 pub fn _evm_extcodecopy(
@@ -20,7 +20,7 @@ pub fn _evm_extcodecopy(
     Account::jzkt_get_source_code_size(address_bytes32.as_ptr(), source_code_size32.as_mut_ptr());
     let source_code_size = LittleEndian::read_u64(&source_code_size32);
     let mut bytecode = vec![0u8; source_code_size as usize];
-    Account::copy_bytecode(source_code_hash32.as_ptr(), bytecode.as_mut_ptr());
+    LowLevelSDK::jzkt_preimage_copy(source_code_hash32.as_ptr(), bytecode.as_mut_ptr());
     let bytecode_tail_idx = bytecode.len() as u32;
     let required_tail_idx = code_index + len;
     let min_tail_idx = core::cmp::min(bytecode_tail_idx, required_tail_idx);

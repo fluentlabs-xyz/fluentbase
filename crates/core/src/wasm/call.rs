@@ -1,5 +1,4 @@
-use revm_interpreter::primitives::Address;
-
+use crate::account::Account;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
@@ -7,8 +6,7 @@ use fluentbase_sdk::{
     LowLevelSDK,
 };
 use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
-
-use crate::account::Account;
+use revm_interpreter::primitives::Address;
 
 #[no_mangle]
 pub fn _wasm_call(
@@ -47,7 +45,7 @@ pub fn _wasm_call(
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
 
-    let bytecode = callee_account.load_bytecode();
+    let bytecode = callee_account.load_rwasm_bytecode();
     if value != U256::ZERO {
         return ExitCode::UnknownError;
     };

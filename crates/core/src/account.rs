@@ -12,7 +12,7 @@ use crate::account_types::{
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK256_EMPTY, POSEIDON_EMPTY, U256};
 
 #[derive(Debug, Clone)]
 pub struct Account {
@@ -34,7 +34,7 @@ impl Default for Account {
             nonce: 0,
             balance: U256::ZERO,
             aot_code_hash: POSEIDON_EMPTY,
-            source_code_hash: KECCAK_EMPTY,
+            source_code_hash: KECCAK256_EMPTY,
         }
     }
 }
@@ -194,20 +194,15 @@ impl Account {
         prev_nonce
     }
 
-    #[inline]
-    pub fn copy_bytecode(bytecode_hash32_offset: *const u8, output_offset: *mut u8) {
-        LowLevelSDK::jzkt_preimage_copy(bytecode_hash32_offset, output_offset);
-    }
-
     pub fn load_source_bytecode(&self) -> Bytes {
         let mut bytecode = vec![0u8; self.source_code_size as usize];
-        Account::copy_bytecode(self.source_code_hash.as_ptr(), bytecode.as_mut_ptr());
+        LowLevelSDK::jzkt_preimage_copy(self.source_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
-    pub fn load_bytecode(&self) -> Bytes {
+    pub fn load_rwasm_bytecode(&self) -> Bytes {
         let mut bytecode = vec![0u8; self.aot_code_size as usize];
-        Account::copy_bytecode(self.aot_code_hash.as_ptr(), bytecode.as_mut_ptr());
+        LowLevelSDK::jzkt_preimage_copy(self.aot_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
@@ -326,7 +321,7 @@ impl Account {
     #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
         self.nonce != 0
-            || self.source_code_hash != KECCAK_EMPTY
+            || self.source_code_hash != KECCAK256_EMPTY
             || self.aot_code_hash != POSEIDON_EMPTY
     }
 }

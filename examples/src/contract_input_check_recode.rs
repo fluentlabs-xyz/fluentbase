@@ -1,9 +1,5 @@
 use fluentbase_codec::Encoder;
-use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext},
-    LowLevelAPI,
-    LowLevelSDK,
-};
+use fluentbase_sdk::evm::{ContractInput, ExecutionContext};
 use fluentbase_types::ExitCode;
 
 pub fn deploy() {}
@@ -20,29 +16,9 @@ pub fn main() {
     let contract_gas_limit = ExecutionContext::contract_gas_limit();
     let contract_address = ExecutionContext::contract_address();
     let contract_caller = ExecutionContext::contract_caller();
-
-    let contract_bytecode = ExecutionContext::contract_bytecode();
-    let contract_code_size = ExecutionContext::contract_code_size();
-    if contract_bytecode.len() != contract_code_size as usize {
-        panic!("contract bytecode size doesnt match")
-    }
-    let contract_code_hash = ExecutionContext::contract_code_hash();
-    let mut code_hash: [u8; 32] = [0u8; 32];
-    LowLevelSDK::crypto_keccak256(
-        contract_bytecode.as_ptr(),
-        contract_bytecode.len() as u32,
-        code_hash.as_mut_ptr(),
-    );
-    if contract_code_hash.0 != code_hash {
-        panic!("contract code hash doesnt match")
-    }
-
     let journal_checkpoint = ExecutionContext::journal_checkpoint();
-
     let contract_value = ExecutionContext::contract_value();
-
     let contract_is_static = ExecutionContext::contract_is_static();
-
     let block_hash = ExecutionContext::block_hash();
     let block_coinbase = ExecutionContext::block_coinbase();
     let block_timestamp = ExecutionContext::block_timestamp();
@@ -63,9 +39,6 @@ pub fn main() {
         contract_gas_limit,
         contract_address,
         contract_caller,
-        contract_bytecode,
-        contract_code_size,
-        contract_code_hash,
         contract_value,
         contract_is_static,
         block_hash,

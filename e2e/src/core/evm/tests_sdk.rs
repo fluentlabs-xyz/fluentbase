@@ -22,7 +22,6 @@ use fluentbase_core::{
 };
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{address, Bytes, B256, U256};
-use keccak_hash::keccak;
 use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
 
 #[test]
@@ -124,8 +123,8 @@ fn _evm_create_test() {
     let contract_input_data_bytes = "some contract input".as_bytes();
 
     let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    test_ctx.try_add_account(&caller_account);
     test_ctx
-        .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_journal_checkpoint(LowLevelSDK::jzkt_checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
@@ -133,9 +132,6 @@ fn _evm_create_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -186,9 +182,6 @@ fn _evm_call_after_create_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -268,9 +261,6 @@ fn _evm_call_after_create2_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(contract_bytecode_hash)
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -460,9 +450,6 @@ fn _evm_selfbalance_from_contract_call_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
@@ -540,9 +527,6 @@ fn _evm_balance_from_contract_call_test() {
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
-        .set_contract_bytecode(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1))
-        .set_contract_code_size(EVM_CONTRACT_BYTECODE1.len() as u32)
-        .set_contract_code_hash(B256::from_slice(keccak(EVM_CONTRACT_BYTECODE1).as_bytes()))
         .set_contract_value(contract_value)
         .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)

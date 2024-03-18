@@ -16,10 +16,7 @@ macro_rules! decode_input {
     }};
 }
 
-pub fn deploy() {
-    LowLevelSDK::sys_write(include_bytes!("../../bin/ecl_contract.wasm"));
-    LowLevelSDK::sys_halt(0);
-}
+pub fn deploy() {}
 
 pub fn main() {
     let mut input = ExecutionContext::contract_input();
@@ -27,57 +24,54 @@ pub fn main() {
     let mut core_input = CoreInput::default();
     CoreInput::decode_body(&mut buffer, 0, &mut core_input);
 
-    let method_name = EvmMethodName::try_from(core_input.method_id);
-    if let Ok(method_name) = method_name {
-        match method_name {
-            EvmMethodName::EvmCreate => {
-                let method_input = decode_input!(core_input, EvmCreateMethodInput);
-                let mut output20 = [0u8; 20];
-                let exit_code = _evm_create(
-                    method_input.value32.as_ptr(),
-                    method_input.code.as_ptr(),
-                    method_input.code.len() as u32,
-                    output20.as_mut_ptr(),
-                    method_input.gas_limit,
-                );
-                if !exit_code.is_ok() {
-                    panic!("create method failed, exit code: {}", exit_code.into_i32())
-                }
-                LowLevelSDK::sys_write(&output20);
+    let method_name = EvmMethodName::try_from(core_input.method_id).expect("unknown method id");
+
+    match method_name {
+        EvmMethodName::EvmCreate => {
+            let method_input = decode_input!(core_input, EvmCreateMethodInput);
+            let mut output20 = [0u8; 20];
+            let exit_code = _evm_create(
+                method_input.value32.as_ptr(),
+                method_input.code.as_ptr(),
+                method_input.code.len() as u32,
+                output20.as_mut_ptr(),
+                method_input.gas_limit,
+            );
+            if !exit_code.is_ok() {
+                panic!("create method failed, exit code: {}", exit_code.into_i32())
             }
-            EvmMethodName::EvmCreate2 => {
-                let method_input = decode_input!(core_input, EvmCreate2MethodInput);
-                let mut output20 = [0u8; 20];
-                let exit_code = _evm_create2(
-                    method_input.value32.as_ptr(),
-                    method_input.code.as_ptr(),
-                    method_input.code.len() as u32,
-                    method_input.salt32.as_ptr(),
-                    output20.as_mut_ptr(),
-                    method_input.gas_limit,
-                );
-                if !exit_code.is_ok() {
-                    panic!("create2 method failed, exit code: {}", exit_code.into_i32())
-                }
-                LowLevelSDK::sys_write(&output20);
+            LowLevelSDK::sys_write(&output20);
+        }
+        EvmMethodName::EvmCreate2 => {
+            let method_input = decode_input!(core_input, EvmCreate2MethodInput);
+            let mut output20 = [0u8; 20];
+            let exit_code = _evm_create2(
+                method_input.value32.as_ptr(),
+                method_input.code.as_ptr(),
+                method_input.code.len() as u32,
+                method_input.salt32.as_ptr(),
+                output20.as_mut_ptr(),
+                method_input.gas_limit,
+            );
+            if !exit_code.is_ok() {
+                panic!("create2 method failed, exit code: {}", exit_code.into_i32())
             }
-            EvmMethodName::EvmCall => {
-                let method_input = decode_input!(core_input, EvmCallMethodInput);
-                let exit_code = _evm_call(
-                    method_input.gas_limit,
-                    method_input.callee_address20.as_ptr(),
-                    method_input.value32.as_ptr(),
-                    method_input.args.as_ptr(),
-                    method_input.args.len() as u32,
-                    null_mut(),
-                    0,
-                );
-                if !exit_code.is_ok() {
-                    panic!("call method failed, exit code: {}", exit_code.into_i32())
-                }
+            LowLevelSDK::sys_write(&output20);
+        }
+        EvmMethodName::EvmCall => {
+            let method_input = decode_input!(core_input, EvmCallMethodInput);
+            let exit_code = _evm_call(
+                method_input.gas_limit,
+                method_input.callee_address20.as_ptr(),
+                method_input.value32.as_ptr(),
+                method_input.args.as_ptr(),
+                method_input.args.len() as u32,
+                null_mut(),
+                0,
+            );
+            if !exit_code.is_ok() {
+                panic!("call method failed, exit code: {}", exit_code.into_i32())
             }
         }
-    } else {
-        panic!("unknown method id: {}", core_input.method_id);
     }
 }

@@ -185,9 +185,6 @@ impl ContractInputWrapper {
     impl_once_setter!(contract_input_size, u32);
     impl_once_setter!(contract_address, Address);
     impl_once_setter!(contract_caller, Address);
-    impl_once_setter!(contract_bytecode, Bytes);
-    impl_once_setter!(contract_code_size, u32);
-    impl_once_setter!(contract_code_hash, B256);
     impl_once_setter!(contract_value, U256);
     impl_once_setter!(contract_is_static, bool);
     impl_once_setter!(block_hash, B256);
