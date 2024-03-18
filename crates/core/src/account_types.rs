@@ -10,13 +10,15 @@ pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
 pub(crate) const JZKT_ACCOUNT_AOT_CODE_SIZE_FIELD: u32 = 4;
 pub(crate) const JZKT_ACCOUNT_AOT_CODE_HASH_FIELD: u32 = 5;
 
+// [2^254, 2^256]
+
 /// Compression flags for upper fields.
 ///
 /// We compress following fields:
 /// - balance (0) because of balance overflow
 /// - source code hash (3) because its keccak256
 ///
-/// Mask is: 0b100100
+/// Mask is: 0b00001001
 pub const JZKT_COMPRESSION_FLAGS: u32 =
     (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD);
 

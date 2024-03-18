@@ -2,12 +2,7 @@ use crate::{
     account::Account,
     helpers::{calc_create2_address, read_address_from_input, rwasm_exec, wasm2rwasm},
 };
-use alloc::vec;
-use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput, U256},
-    LowLevelAPI,
-    LowLevelSDK,
-};
+use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
 use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::primitives::{alloy_primitives, Bytecode};
 
@@ -18,7 +13,7 @@ pub fn _wasm_create2(
     code_length: u32,
     salt32_offset: *const u8,
     gas_limit: u32,
-    out_address20_offset: *mut u8,
+    address20_offset: *mut u8,
 ) -> ExitCode {
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
@@ -55,21 +50,21 @@ pub fn _wasm_create2(
         return ExitCode::InsufficientBalance;
     }
 
-    let bytecode_rwasm = wasm2rwasm(bytecode).unwrap();
-    rwasm_exec(&bytecode_rwasm, &[], gas_limit, false);
-    let source_bytecode_out_length = LowLevelSDK::sys_output_size();
-    let mut source_bytecode_out = vec![0u8; source_bytecode_out_length as usize];
-    LowLevelSDK::sys_read_output(
-        source_bytecode_out.as_mut_ptr(),
-        0,
-        source_bytecode_out_length,
-    );
-    let bytecode_out = wasm2rwasm(&source_bytecode_out).unwrap();
-    deployer_account.write_to_jzkt();
-    contract_account.update_source_bytecode(&source_bytecode_out.into());
-    contract_account.update_bytecode(&bytecode_out.into());
+    // translate WASM to rWASM
+    let bytecode_wasm =
+        unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let bytecode_rwasm = wasm2rwasm(bytecode_wasm).unwrap();
+    rwasm_exec(&bytecode_rwasm, &[], gas_limit, true);
 
-    unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
+    // write deployer to the trie
+    deployer_account.write_to_jzkt();
+
+    // write contract to the trie
+    contract_account.update_source_bytecode(&bytecode_wasm.into());
+    contract_account.update_rwasm_bytecode(&bytecode_rwasm.into());
+
+    // copy output address
+    unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }
 
     ExitCode::Ok
 }

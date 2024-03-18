@@ -60,13 +60,14 @@ fn test_rwasm() {
 }
 
 #[test]
-fn test_rwasm_fast() {
+fn test_rwasm_greeting() {
     let input_data = include_bytes!("../../examples/bin/greeting.wasm");
     let output = run_rwasm_with_raw_input(
         include_bytes!("../../examples/bin/rwasm.wasm").to_vec(),
         input_data,
         false,
     );
+    println!("fuel spent: {}", output.fuel_consumed().unwrap_or_default());
     assert_eq!(output.data().exit_code(), 0);
 }
 

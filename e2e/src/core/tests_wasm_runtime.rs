@@ -28,6 +28,17 @@ fn test_wasm_create() {
         ..Default::default()
     };
 
+    // let wcl_address = address!("0000000000000000000000000000000000000777");
+    // let wcl_wasm_bytecode = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
+    // let wcl_account = Account {
+    //     address: wcl_address,
+    //     source_code_size: wcl_wasm_bytecode.len() as u64,
+    //     source_code_hash: keccak_hash::keccak(wcl_wasm_bytecode).0.into(),
+    //     aot_code_size: 0,
+    //     aot_code_hash: Default::default(),
+    //     ..Default::default()
+    // };
+
     let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
     let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -44,12 +55,13 @@ fn test_wasm_create() {
     const IS_RUNTIME: bool = true;
     let contract_wasm_binary = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
     let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary).unwrap();
+
     let mut runtime_ctx = RuntimeContext::new(contract_rwasm_binary);
     runtime_ctx.with_state(STATE_MAIN);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
     let jzkt = runtime_ctx.jzkt().unwrap();
+    test_ctx.try_add_account(&caller_account);
     test_ctx
-        .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_journal_checkpoint(jzkt.borrow_mut().checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
@@ -63,7 +75,7 @@ fn test_wasm_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, true, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -77,8 +89,8 @@ fn test_wasm_create() {
             TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let account = Account::new_from_jzkt(&contract_address);
-        assert_eq!(178, account.load_source_bytecode().len());
-        assert_eq!(432, account.load_bytecode().len());
+        assert_eq!(236, account.load_source_bytecode().len());
+        assert_eq!(479, account.load_bytecode().len());
     }
 }
 
@@ -126,7 +138,7 @@ fn test_wasm_create2() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, true, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let output_vec = output.data().output();
     assert!(output_vec.len() > 0);
@@ -140,8 +152,8 @@ fn test_wasm_create2() {
             TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let account = Account::new_from_jzkt(&contract_address);
-        assert_eq!(178, account.load_source_bytecode().len());
-        assert_eq!(432, account.load_bytecode().len());
+        assert_eq!(236, account.load_source_bytecode().len());
+        assert_eq!(479, account.load_bytecode().len());
     }
 }
 
@@ -188,7 +200,7 @@ fn test_wasm_call_after_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
         let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), true, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output_vec = output.data().output();
         assert!(output_vec.len() > 0);
@@ -202,8 +214,8 @@ fn test_wasm_call_after_create() {
                 TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
             test_ctx.apply_ctx(Some(&mut runtime_ctx));
             let account = Account::new_from_jzkt(&contract_address);
-            assert_eq!(178, account.load_source_bytecode().len());
-            assert_eq!(432, account.load_bytecode().len());
+            assert_eq!(236, account.load_source_bytecode().len());
+            assert_eq!(479, account.load_bytecode().len());
         }
 
         (jzkt, contract_address)

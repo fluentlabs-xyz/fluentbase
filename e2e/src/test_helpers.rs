@@ -32,6 +32,7 @@ pub(crate) fn run_rwasm_with_evm_input(
     runtime.call().unwrap()
 }
 
+#[allow(dead_code)]
 pub(crate) fn catch_panic<T>(ctx: &ExecutionResult<T>) {
     if ctx.data().exit_code() != -71 {
         return;
@@ -97,7 +98,7 @@ pub(crate) fn run_rwasm_with_raw_input(
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
     let mut ctx = RuntimeContext::new(rwasm_binary);
     ctx.with_state(STATE_MAIN)
-        .with_fuel_limit(100_000_000)
+        .with_fuel_limit(3_000_000)
         .with_input(input_data.to_vec())
         .with_catch_trap(true);
     let import_linker = Runtime::<()>::new_sovereign_linker();

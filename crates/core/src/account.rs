@@ -213,8 +213,7 @@ impl Account {
 
     pub fn update_source_bytecode(&mut self, code: &Bytes) {
         let address_word = self.address.into_word();
-        // TODO this must be keccak
-        LowLevelSDK::crypto_poseidon(
+        LowLevelSDK::crypto_keccak256(
             code.as_ptr(),
             code.len() as u32,
             self.source_code_hash.as_mut_ptr(),
@@ -231,7 +230,7 @@ impl Account {
         assert!(r, "account update_source_bytecode failed");
     }
 
-    pub fn update_bytecode(&mut self, code: &Bytes) {
+    pub fn update_rwasm_bytecode(&mut self, code: &Bytes) {
         let address_word = self.address.into_word();
         // refresh code hash
         LowLevelSDK::crypto_poseidon(
@@ -240,7 +239,6 @@ impl Account {
             self.aot_code_hash.as_mut_ptr(),
         );
         self.aot_code_size = code.len() as u64;
-        // write new changes into ZKT
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
