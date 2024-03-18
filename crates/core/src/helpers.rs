@@ -21,6 +21,7 @@ use revm_interpreter::primitives::ShanghaiSpec;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    Error,
 };
 
 pub type DefaultEvmSpec = ShanghaiSpec;
@@ -83,7 +84,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B2
 }
 
 #[inline(always)]
-pub fn wasm2rwasm(bytecode: &[u8]) -> Result<Vec<u8>, ExitCode> {
+pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
     let mut config = RwasmModule::default_config(None);
     config.rwasm_config(RwasmConfig {
         state_router: Some(StateRouterConfig {
@@ -97,7 +98,12 @@ pub fn wasm2rwasm(bytecode: &[u8]) -> Result<Vec<u8>, ExitCode> {
         import_linker: Some(create_sovereign_import_linker()),
         wrap_import_functions: true,
     });
-    let rwasm_module = RwasmModule::compile_with_config(bytecode, &config);
+    RwasmModule::compile_with_config(wasm_binary, &config)
+}
+
+#[inline(always)]
+pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
+    let rwasm_module = rwasm_module(wasm_binary);
     if rwasm_module.is_err() {
         return Err(ExitCode::CompilationError);
     }
