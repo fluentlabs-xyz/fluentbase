@@ -4,6 +4,7 @@ extern crate core;
 
 use crate::types::FileFormat;
 use clap::Parser;
+use fluentbase_core::helpers::rwasm_module;
 use fluentbase_types::{
     create_sovereign_import_linker,
     SysFuncIdx::SYS_STATE,
@@ -97,20 +98,7 @@ fn main() {
         }
     }
 
-    let mut config = RwasmModule::default_config(None);
-    config.rwasm_config(RwasmConfig {
-        state_router: Some(StateRouterConfig {
-            states: Box::new([
-                ("deploy".to_string(), STATE_DEPLOY),
-                ("main".to_string(), STATE_MAIN),
-            ]),
-            opcode: Instruction::Call(SYS_STATE.into()),
-        }),
-        entrypoint_name: None,
-        import_linker: Some(create_sovereign_import_linker()),
-        wrap_import_functions: true,
-    });
-    let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &config).unwrap();
+    let rwasm_module = rwasm_module(&wasm_binary).unwrap();
 
     let file_in_path = Path::new(&args.file_in_path);
     let file_in_name = file_in_path.file_stem().unwrap().to_str().unwrap();

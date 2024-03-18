@@ -1,4 +1,5 @@
-use crate::test_helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input, wasm2rwasm};
+use crate::test_helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
+use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{Runtime, RuntimeContext};
 use fluentbase_types::STATE_DEPLOY;
@@ -92,7 +93,7 @@ fn test_cairo() {
 #[test]
 fn test_secp256k1_verify() {
     let wasm_binary = include_bytes!("../../examples/bin/secp256k1.wasm");
-    let rwasm_binary = wasm2rwasm(wasm_binary);
+    let rwasm_binary = wasm2rwasm(wasm_binary).unwrap();
 
     let input_datas: &[&[u8]] = &[
         &[

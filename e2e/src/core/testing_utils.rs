@@ -178,7 +178,6 @@ pub(crate) struct ContractInputWrapper(ContractInput);
 impl ContractInputWrapper {
     impl_once_setter!(journal_checkpoint, JournalCheckpoint);
     impl_once_setter!(env_chain_id, u64);
-
     impl_once_setter!(contract_gas_limit, u64);
     impl_once_setter!(contract_input, Bytes);
     impl_once_setter!(contract_input_size, u32);

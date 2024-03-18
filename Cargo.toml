@@ -30,7 +30,7 @@ byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.5.4", default-features = false, features = ["rlp"] }
 hashbrown = { version = "0.14.3" }
 serde = { version = "1.0.193", default-features = false }
-casey = "0.4.0"
+casey = { version = "0.4.0" }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 paste = { version = "1.0", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }

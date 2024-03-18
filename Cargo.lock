@@ -875,6 +875,7 @@ dependencies = [
  "clap",
  "ctor",
  "env_logger",
+ "fluentbase-core",
  "fluentbase-types",
  "log",
  "rwasm",
