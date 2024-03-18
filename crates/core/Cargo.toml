@@ -12,7 +12,6 @@ categories.workspace = true
 [dependencies]
 fluentbase-types = { path = "../types", default-features = false }
 fluentbase-sdk = { path = "../sdk", default-features = false }
-#fluentbase-runtime-api = { path = "../runtime-api", default-features = false }
 fluentbase-codec = { path = "../codec", default-features = false }
 fluentbase-core-api = { path = "../core-api", default-features = false }
 rwasm = { workspace = true, default-features = false }
@@ -32,10 +31,9 @@ hex = { version = "0.4.3" }
 crate-type = ["cdylib", "rlib", "staticlib"]
 
 [features]
-default = []
+default = ["std"]
 std = [
     "fluentbase-sdk/runtime",
-    #    "fluentbase-runtime-api/std",
     "fluentbase-types/std",
     "byteorder/std",
     "alloy-rlp/std",

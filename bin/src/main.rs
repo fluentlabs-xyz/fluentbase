@@ -5,17 +5,8 @@ extern crate core;
 use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_core::helpers::rwasm_module;
-use fluentbase_types::{
-    create_sovereign_import_linker,
-    SysFuncIdx::SYS_STATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
 use log::debug;
-use rwasm::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
-    rwasm::{instruction::INSTRUCTION_SIZE_BYTES, BinaryFormat, RwasmModule},
-};
+use rwasm::rwasm::{instruction::INSTRUCTION_SIZE_BYTES, BinaryFormat};
 use std::{fs, path::Path};
 
 mod types;
