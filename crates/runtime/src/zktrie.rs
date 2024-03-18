@@ -202,7 +202,7 @@ mod tests {
         println!("root: {:?}", hex::encode(root));
         // open and read value
         let zkt2 = ZkTrieStateDb::new_opened(zkt.storage.0.borrow_mut().clone(), &root);
-        let data = zkt2.get(bytes32!("key1")).unwrap();
+        let (data, _flags) = zkt2.get(bytes32!("key1")).unwrap();
         assert_eq!(data[0], *bytes32!("value1"));
         assert_eq!(data[1], *bytes32!("value2"));
     }
