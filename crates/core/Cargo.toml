@@ -38,7 +38,6 @@ std = [
     "byteorder/std",
     "alloy-rlp/std",
 ]
-ecl_contract_entry = []
-evm_loader_contract_entry = []
-wcl_contract_entry = []
-wasm_loader_contract_entry = []
+ecl = []
+evm_loader = []
+wcl = []
