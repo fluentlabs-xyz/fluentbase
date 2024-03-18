@@ -173,8 +173,7 @@ impl<DB: TrieDb> TrieStorage for ZkTrieStateDb<DB> {
 #[cfg(test)]
 mod tests {
     use crate::{storage::TrieStorage, zktrie::ZkTrieStateDb};
-    use fluentbase_types::InMemoryAccountDb;
-    use std::ops::DerefMut;
+    use fluentbase_types::InMemoryTrieDb;
 
     macro_rules! bytes32 {
         ($val:expr) => {{
@@ -190,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         // create new zkt
         let mut zkt = ZkTrieStateDb::new_empty(db);
         zkt.update(

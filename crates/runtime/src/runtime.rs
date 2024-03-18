@@ -6,7 +6,6 @@ use crate::{
 use fluentbase_types::{
     create_shared_import_linker,
     create_sovereign_import_linker,
-    AccountDb,
     Address,
     ExitCode,
 };
@@ -45,7 +44,6 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) consumed_fuel: u32,
     pub(crate) return_data: Vec<u8>,
     // storage
-    pub(crate) account_db: Option<Rc<RefCell<dyn AccountDb>>>,
     pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
 }
 
@@ -67,7 +65,6 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
             output: self.output.clone(),
             consumed_fuel: self.consumed_fuel.clone(),
             return_data: self.return_data.clone(),
-            account_db: self.account_db.clone(),
             jzkt: self.jzkt.clone(),
         }
     }
@@ -91,7 +88,6 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
             output: vec![],
             consumed_fuel: 0,
             return_data: vec![],
-            account_db: None,
             jzkt: None,
         }
     }
@@ -152,11 +148,6 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_address(&mut self, address: Address) -> &mut Self {
         self.address = address;
-        self
-    }
-
-    pub fn with_account_db(&mut self, account: Rc<RefCell<dyn AccountDb>>) -> &mut Self {
-        self.account_db = Some(account);
         self
     }
 

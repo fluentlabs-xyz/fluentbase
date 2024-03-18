@@ -54,7 +54,7 @@ fn test_evm_create() {
     let evm_contract_wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
     let evm_contract_rwasm_binary = wasm2rwasm(evm_contract_wasm_binary.as_slice()).unwrap();
     let mut runtime_ctx = RuntimeContext::new(evm_contract_rwasm_binary);
-    runtime_ctx.with_state(STATE_DEPLOY);
+    runtime_ctx.with_state(STATE_MAIN);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
     test_ctx
         .try_add_account(&caller_account)
@@ -73,7 +73,7 @@ fn test_evm_create() {
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, true, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let contract_address_vec = output.data().output();
     let contract_address = Address::from_slice(contract_address_vec);
@@ -135,7 +135,7 @@ fn test_evm_call_after_create() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
         let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), true, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output = output.data().output();
         assert!(output.len() > 0);
@@ -205,8 +205,9 @@ fn test_evm_call_from_wasm() {
         ecl_account.update_source_bytecode(
             &include_bytes!("../../../crates/core/bin/ecl_contract.wasm").into(),
         );
-        ecl_account
-            .update_bytecode(&include_bytes!("../../../crates/core/bin/ecl_contract.rwasm").into());
+        ecl_account.update_rwasm_bytecode(
+            &include_bytes!("../../../crates/core/bin/ecl_contract.rwasm").into(),
+        );
         ecl_account.write_to_jzkt();
         Account::commit();
         jzkt
@@ -243,7 +244,7 @@ fn test_evm_call_from_wasm() {
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
         let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), true, gas_limit);
+            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
         let output = output.data().output();
         assert!(output.len() > 0);

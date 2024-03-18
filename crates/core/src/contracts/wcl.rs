@@ -26,8 +26,8 @@ pub fn deploy() {
 }
 
 pub fn main() {
-    let mut input = ExecutionContext::contract_input();
-    let mut buffer = BufferDecoder::new(&mut input);
+    let contract_input = ExecutionContext::contract_input();
+    let mut buffer = BufferDecoder::new(contract_input.as_ref());
     let mut core_input = CoreInput::default();
     CoreInput::decode_body(&mut buffer, 0, &mut core_input);
 
@@ -81,5 +81,47 @@ pub fn main() {
         }
     } else {
         panic!("unknown method id: {}", core_input.method_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::rc::Rc;
+    use core::cell::RefCell;
+    use fluentbase_codec::Encoder;
+    use fluentbase_core_api::{
+        api::CoreInput,
+        bindings::{WasmCreateMethodInput, WASM_CREATE_METHOD_ID},
+    };
+    use fluentbase_runtime::{zktrie::ZkTrieStateDb, JournaledTrie};
+    use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
+    use fluentbase_types::{Address, Bytes, InMemoryTrieDb};
+
+    #[test]
+    fn test_greeting_deploy() {
+        let wasm_bytecode = include_bytes!("../../../../examples/bin/greeting.wasm");
+        let wasm_call_input = WasmCreateMethodInput {
+            value32: [0u8; 32],
+            code: wasm_bytecode.to_vec(),
+            gas_limit: 3_000_000,
+        };
+        let core_input = CoreInput {
+            method_id: WASM_CREATE_METHOD_ID,
+            method_data: wasm_call_input.encode_to_vec(0),
+        };
+        let contract_input = ContractInput {
+            contract_address: Address::new([0u8; 20]),
+            contract_caller: Address::new([3u8; 20]),
+            contract_input: Bytes::from(core_input.encode_to_vec(0)),
+            ..Default::default()
+        };
+        let db = InMemoryTrieDb::default();
+        let storage = ZkTrieStateDb::new_empty(db);
+        let journal = JournaledTrie::new(storage);
+        let journal_ref = Rc::new(RefCell::new(journal));
+        LowLevelSDK::with_jzkt(journal_ref);
+        LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
+        super::main();
+        assert!(LowLevelSDK::get_test_output().len() > 0);
     }
 }

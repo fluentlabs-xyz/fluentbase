@@ -22,7 +22,7 @@ pub fn _evm_create(
     value32_offset: *const u8,
     code_offset: *const u8,
     code_length: u32,
-    out_address20_offset: *mut u8,
+    address20_offset: *mut u8,
     gas_limit: u32,
 ) -> ExitCode {
     // TODO: "gas calculations"
@@ -84,11 +84,10 @@ pub fn _evm_create(
 
     deployer_account.write_to_jzkt();
     contract_account.update_source_bytecode(&deployed_bytecode);
-    contract_account.update_bytecode(&include_bytes!("../../bin/evm_loader_contract.rwasm").into());
+    contract_account
+        .update_rwasm_bytecode(&include_bytes!("../../bin/evm_loader_contract.rwasm").into());
 
-    // TODO convert deployed bytecode into rwasm code using evm translator and save result into
-
-    unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
+    unsafe { ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }
 
     ExitCode::Ok
 }

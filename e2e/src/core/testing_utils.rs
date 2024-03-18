@@ -13,7 +13,7 @@ use fluentbase_sdk::{
     evm::{ContractInput, JournalCheckpoint},
     LowLevelSDK,
 };
-use fluentbase_types::{Address, Bytes, InMemoryAccountDb, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_types::{Address, Bytes, InMemoryTrieDb, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
 use paste::paste;
@@ -27,6 +27,7 @@ pub(crate) struct TestingContext<T, const IS_RUNTIME: bool> {
     _type_ghost: PhantomData<T>,
 }
 
+#[allow(dead_code)]
 impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
     pub fn new(init_jzkt: bool, runtime_ctx: Option<&mut RuntimeContext<'_, T>>) -> Self {
         let mut instance = Self {
@@ -62,8 +63,8 @@ impl<T, const IS_RUNTIME: bool> TestingContext<T, IS_RUNTIME> {
     pub fn init_jzkt(
         &mut self,
         runtime_ctx: Option<&mut RuntimeContext<'_, T>>,
-    ) -> Rc<RefCell<JournaledTrie<ZkTrieStateDb<InMemoryAccountDb>>>> {
-        let db = InMemoryAccountDb::default();
+    ) -> Rc<RefCell<JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>>> {
+        let db = InMemoryTrieDb::default();
         let storage = ZkTrieStateDb::new_empty(db);
         let journal = JournaledTrie::new(storage);
         let journal_ref = Rc::new(RefCell::new(journal));
@@ -175,6 +176,7 @@ macro_rules! impl_once_setter {
 #[derive(Default)]
 pub(crate) struct ContractInputWrapper(ContractInput);
 
+#[allow(dead_code)]
 impl ContractInputWrapper {
     impl_once_setter!(journal_checkpoint, JournalCheckpoint);
     impl_once_setter!(env_chain_id, u64);

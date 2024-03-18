@@ -280,26 +280,17 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
 
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
         // find and decode value and hash
-        let value_hash = match self.get(key).and_then(|(values, _flags, _is_cold)| {
-            let value = values.get(field as usize)?;
-            Some(Fr::from_bytes(&value).unwrap())
-            // let result = if flags & (1 << field) != 0 {
-            //     Byte32::from(*value).hash::<PoseidonHash>().unwrap()
-            // } else {
-            //     Fr::from_bytes(&value).unwrap()
-            // };
-            // Some(result)
-        }) {
+        let value_hash = match self
+            .get(key)
+            .and_then(|(values, _flags, _is_cold)| values.get(field as usize).copied())
+        {
             Some(value) => value,
             None => return false,
         };
         // value hash stored inside trie must be equal to the provided value hash
-        if Self::message_hash(preimage) != value_hash {
-            return false;
-        }
+        // TODO(dmitry123): "we can't do this check here because hash can also be keccak256"
         // write new preimage value into database
-        self.preimages
-            .insert(value_hash.to_bytes(), preimage.to_vec());
+        self.preimages.insert(value_hash, preimage.to_vec());
         true
     }
 
@@ -333,10 +324,10 @@ mod tests {
         TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
-    use fluentbase_types::{address, InMemoryAccountDb};
+    use fluentbase_types::{address, InMemoryTrieDb};
 
     fn calc_trie_root(values: Vec<([u8; 32], Vec<[u8; 32]>, u32)>) -> [u8; 32] {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let mut zktrie = ZkTrieStateDb::new_empty(db);
         values
             .iter()
@@ -346,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_commit_multiple_values() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         let key1 = bytes32!("key1");
@@ -381,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_code_preimage_update_and_check() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         let address1 = bytes32!("address1");
@@ -403,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_commit_and_rollback() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         journal.update(&bytes32!("key1"), &vec![bytes32!("val1")], 0);
@@ -445,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_rollback_to_empty() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         let checkpoint = journal.checkpoint();
@@ -464,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_storage_store_load() {
-        let db = InMemoryAccountDb::default();
+        let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         let address = address!("0000000000000000000000000000000000000001");
