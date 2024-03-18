@@ -21,23 +21,16 @@ pub mod wasm;
 
 macro_rules! export_and_forward {
     ($fn_name:ident) => {
-        #[cfg(any(
-            feature = "evm_loader_contract_entry",
-            feature = "ecl_contract_entry",
-            feature = "wasm_loader_contract_entry",
-            feature = "wcl_contract_entry"
-        ))]
+        #[cfg(any(feature = "evm_loader", feature = "ecl", feature = "wcl"))]
         #[cfg(not(feature = "std"))]
         #[no_mangle]
         #[cfg(target_arch = "wasm32")]
         pub extern "C" fn $fn_name() {
-            #[cfg(feature = "evm_loader_contract_entry")]
+            #[cfg(feature = "evm_loader")]
             contracts::evm_loader::$fn_name();
-            #[cfg(feature = "ecl_contract_entry")]
+            #[cfg(feature = "ecl")]
             contracts::ecl::$fn_name();
-            #[cfg(feature = "wasm_loader_contract_entry")]
-            contracts::wasm_loader::$fn_name();
-            #[cfg(feature = "wcl_contract_entry")]
+            #[cfg(feature = "wcl")]
             contracts::wcl::$fn_name();
         }
     };
