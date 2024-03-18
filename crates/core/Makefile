@@ -34,7 +34,6 @@ ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${EVM_LOADER_C
 	wasm2wat $^ > $@
 
 ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.rwasm: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wasm
-	touch $@
 	cd ../../bin; $(MAKE) custom_file FILE_IN="${CUR_DIR}/$^" FILE_OUT="${CUR_DIR}/$@"
 
 .PHONY: build_evm_loader_contract
@@ -57,6 +56,12 @@ build_ecl_contract: \
 	${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wasm \
 	${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.rwasm
 
+.PHONY: build_ecl_contract_wat
+build_ecl_contract_wat: ${OUT_FOLDER}/${ECL_CONTRACT_DEST_NAME}.wat
+
+.PHONY: build_evm_loader_contract_wat
+build_evm_loader_contract_wat: ${OUT_FOLDER}/${EVM_LOADER_CONTRACT_DEST_NAME}.wat
+
 .PHONY: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm:
 	$(MAKE) build_wasm_main FILE_IN="$@" FEATURES="${WCL_CONTRACT_FEATURE_FLAG}"
@@ -70,8 +75,8 @@ ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wat: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_N
 .PHONY: build_wcl_contract
 build_wcl_contract: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wasm
 
-.PHONY: build_all_contracts_with_wats
-build_all_contracts_with_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wcl_contract_wat
+.PHONY: build_wcl_contract_wat
+build_wcl_contract_wat: ${OUT_FOLDER}/${WCL_CONTRACT_DEST_NAME}.wat
 
 .PHONY: build_evm_contracts
 build_evm_contracts: build_evm_loader_contract build_ecl_contract
@@ -81,6 +86,9 @@ build_wasm_contracts: build_wcl_contract
 
 .PHONY: build_all_contracts
 build_all_contracts: build_evm_contracts build_wasm_contracts
+
+.PHONY: build_all_contracts_wats
+build_all_contracts_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wcl_contract_wat
 
 .PHONY: test
 test:
