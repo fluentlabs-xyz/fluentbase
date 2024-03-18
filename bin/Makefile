@@ -13,7 +13,6 @@ control_return control_revert control_pc
 
 all: solid_file
 
-#TARGET=wasm32-unknown-unknown
 PROFILE=release
 
 CARGO_OPTIONS=--entry-fn-name=$(ENTRY_FN_NAME) --no-magic-prefix --skip-type-check --no-router --retranslate-main --inject-init-bytecode
@@ -27,4 +26,5 @@ solid_file:
 
 .PHONY: custom_file
 custom_file:
+	touch "$(FILE_OUT)"
 	cargo run -- $(OPTIONS) --file-in-path="$(FILE_IN)" --rwasm-file-out-path="$(FILE_OUT)"
