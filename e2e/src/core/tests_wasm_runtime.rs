@@ -81,7 +81,7 @@ fn test_wasm_create() {
     assert_eq!(expected_contract_address, contract_address);
 
     {
-        let mut runtime_ctx = RuntimeContext::new(&[]);
+        let mut runtime_ctx = RuntimeContext::new(&[0u8; 0]);
         runtime_ctx.with_jzkt(jzkt.clone());
         let mut test_ctx =
             TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
@@ -142,7 +142,7 @@ fn test_wasm_create2() {
     assert_eq!(expected_contract_address, contract_address);
 
     {
-        let mut runtime_ctx = RuntimeContext::new(&[]);
+        let mut runtime_ctx = RuntimeContext::new(&[0u8; 0]);
         runtime_ctx.with_jzkt(jzkt.clone());
         let mut test_ctx =
             TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
@@ -202,7 +202,7 @@ fn test_wasm_call_after_create() {
         assert_eq!(expected_contract_address, contract_address);
 
         {
-            let mut runtime_ctx = RuntimeContext::new(&[]);
+            let mut runtime_ctx = RuntimeContext::new(&[0u8; 0]);
             runtime_ctx.with_jzkt(jzkt.clone());
             let mut test_ctx =
                 TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));

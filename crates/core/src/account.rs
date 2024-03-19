@@ -53,9 +53,6 @@ impl Account {
         // code size and nonce
         let mut buffer32 = Bytes32::default();
 
-        Account::jzkt_get_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.rwasm_bytecode_size = LittleEndian::read_u64(&buffer32);
-
         Account::jzkt_get_nonce(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.nonce = LittleEndian::read_u64(&buffer32);
 
@@ -63,10 +60,8 @@ impl Account {
             result.balance.as_le_slice_mut().as_mut_ptr()
         });
 
-        Account::jzkt_get_source_bytecode_hash(
-            address_word.as_ptr(),
-            result.source_bytecode_hash.as_mut_ptr(),
-        );
+        Account::jzkt_get_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
+        result.rwasm_bytecode_size = LittleEndian::read_u64(&buffer32);
 
         Account::jzkt_get_bytecode_hash(
             address_word.as_ptr(),
@@ -75,6 +70,11 @@ impl Account {
 
         Account::jzkt_get_source_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.source_bytecode_size = LittleEndian::read_u64(&buffer32);
+
+        Account::jzkt_get_source_bytecode_hash(
+            address_word.as_ptr(),
+            result.source_bytecode_hash.as_mut_ptr(),
+        );
 
         result
     }
@@ -209,41 +209,40 @@ impl Account {
         bytecode.into()
     }
 
-    pub fn update_source_bytecode(&mut self, code: &Bytes) {
+    pub fn update_source_bytecode(&mut self, bytecode: &Bytes) {
         let address_word = self.address.into_word();
         LowLevelSDK::crypto_keccak256(
-            code.as_ptr(),
-            code.len() as u32,
+            bytecode.as_ptr(),
+            bytecode.len() as u32,
             self.source_bytecode_hash.as_mut_ptr(),
         );
-        self.source_bytecode_size = code.len() as u64;
+        self.source_bytecode_size = bytecode.len() as u64;
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
             address_word.as_ptr(),
             JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD,
-            code.as_ptr(),
-            code.len() as u32,
+            bytecode.as_ptr(),
+            bytecode.len() as u32,
         );
         assert!(r, "account update_source_bytecode failed");
     }
 
-    pub fn update_rwasm_bytecode(&mut self, code: &Bytes) {
+    pub fn update_rwasm_bytecode(&mut self, bytecode: &Bytes) {
         let address_word = self.address.into_word();
-        // refresh code hash
         LowLevelSDK::crypto_poseidon(
-            code.as_ptr(),
-            code.len() as u32,
+            bytecode.as_ptr(),
+            bytecode.len() as u32,
             self.rwasm_bytecode_hash.as_mut_ptr(),
         );
-        self.rwasm_bytecode_size = code.len() as u64;
+        self.rwasm_bytecode_size = bytecode.len() as u64;
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
             address_word.as_ptr(),
             JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD,
-            code.as_ptr(),
-            code.len() as u32,
+            bytecode.as_ptr(),
+            bytecode.len() as u32,
         );
         assert!(r, "account update_bytecode failed");
     }
