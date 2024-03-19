@@ -377,7 +377,7 @@ mod tests {
         let zktrie = ZkTrieStateDb::new_empty(db);
         let mut journal = JournaledTrie::new(zktrie);
         let address1 = bytes32!("address1");
-        let address1_hash = poseidon_hash(&address1);
+        let _address1_hash = poseidon_hash(&address1);
         let code1 = vec![1, 2, 3, 4, 5, 6];
         let code1_hash = poseidon_hash(&code1);
         let mut account1_fields: [[u8; 32]; 4] = [[0u8; 32]; 4];
