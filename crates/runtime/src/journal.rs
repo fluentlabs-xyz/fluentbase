@@ -320,11 +320,12 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
 mod tests {
     use crate::{
         journal::{IJournaledTrie, JournaledTrie},
+        types::InMemoryTrieDb,
         zktrie::ZkTrieStateDb,
         TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
-    use fluentbase_types::{address, InMemoryTrieDb};
+    use fluentbase_types::address;
 
     fn calc_trie_root(values: Vec<([u8; 32], Vec<[u8; 32]>, u32)>) -> [u8; 32] {
         let db = InMemoryTrieDb::default();
