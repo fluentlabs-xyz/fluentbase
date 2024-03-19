@@ -208,7 +208,7 @@ impl Host for FluentHost {
     fn log(&mut self, log: Log) {
         let address_word = log.address.into_word();
         let data = log.data.data.0.clone();
-        let topics: Vec<[u8; 32]> = log.topics().iter().copied().map(|v| v.0).collect();
+        let topics: Vec<Bytes32> = log.topics().iter().copied().map(|v| v.0).collect();
         LowLevelSDK::jzkt_emit_log(
             address_word.as_ptr(),
             topics.as_ptr(),

@@ -3,6 +3,9 @@ use rwasm::{
     engine::bytecode::FuncIdx,
 };
 
+pub type Bytes32 = [u8; 32];
+pub type Bytes20 = [u8; 20];
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
