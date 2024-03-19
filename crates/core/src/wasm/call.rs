@@ -45,13 +45,12 @@ pub fn _wasm_call(
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
 
-    let bytecode = callee_account.load_rwasm_bytecode();
     if value != U256::ZERO {
         return ExitCode::UnknownError;
     };
-    let exit_code = LowLevelSDK::sys_exec(
-        bytecode.as_ptr(),
-        bytecode.len() as u32,
+    let code_hash = callee_account.rwasm_bytecode_hash;
+    let exit_code = LowLevelSDK::sys_exec_hash(
+        code_hash.as_ptr(),
         contract_input_vec.as_ptr(),
         contract_input_vec.len() as u32,
         core::ptr::null_mut(),

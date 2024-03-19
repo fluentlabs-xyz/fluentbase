@@ -1,6 +1,6 @@
 use crate::{
     account::Account,
-    account_types::MAX_CODE_SIZE,
+    account_types::MAX_BYTECODE_SIZE,
     evm::{sload::_evm_sload, sstore::_evm_sstore},
 };
 use alloc::{vec, vec::Vec};
@@ -58,7 +58,7 @@ impl FluentHost {
         let mut cfg_env = CfgEnv::default();
         cfg_env.chain_id = ExecutionContext::env_chain_id();
         cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw; // do not analyze
-        cfg_env.limit_contract_code_size = Some(MAX_CODE_SIZE as usize); // do not analyze
+        cfg_env.limit_contract_code_size = Some(MAX_BYTECODE_SIZE as usize); // do not analyze
         Env {
             cfg: cfg_env,
             block: BlockEnv {
@@ -153,7 +153,7 @@ impl Host for FluentHost {
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
         // TODO optimize using separate methods
         let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
-        let code_hash = B256::from_slice(account.source_code_hash.as_slice());
+        let code_hash = B256::from_slice(account.source_bytecode_hash.as_slice());
 
         Some((code_hash, false))
     }

@@ -27,11 +27,10 @@ pub fn main() {
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
     let account = Account::new_from_jzkt(&evm_contract_address);
-    let bytecode = account.load_rwasm_bytecode();
+    let bytecode_hash = account.rwasm_bytecode_hash;
 
-    let exit_code = LowLevelSDK::sys_exec(
-        bytecode.as_ptr(),
-        bytecode.len() as u32,
+    let exit_code = LowLevelSDK::sys_exec_hash(
+        bytecode_hash.as_ptr(),
         contract_input_vec.as_ptr(),
         contract_input_vec.len() as u32,
         core::ptr::null_mut(),
