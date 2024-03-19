@@ -190,7 +190,7 @@ fn test_evm_call_from_wasm() {
     let import_linker = Runtime::<()>::new_sovereign_linker();
 
     let jzkt = {
-        let mut runtime_ctx = RuntimeContext::new(&[0u8; 0]);
+        let mut runtime_ctx = RuntimeContext::new(&[]);
         let mut test_ctx =
             TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
         let jzkt = test_ctx.init_jzkt(Some(&mut runtime_ctx));
