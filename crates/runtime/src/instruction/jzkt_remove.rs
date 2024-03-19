@@ -9,7 +9,7 @@ impl JzktRemove {
         mut caller: Caller<'_, RuntimeContext<T>>,
         key32_offset: u32,
     ) -> Result<(), Trap> {
-        let key = caller.read_memory(key32_offset, 32).to_vec();
+        let key = caller.read_memory(key32_offset, 32)?.to_vec();
         Self::fn_impl(caller.data_mut(), &key).map_err(|err| err.into_trap())?;
         Ok(())
     }

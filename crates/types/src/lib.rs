@@ -2,15 +2,16 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 
 pub use consts::*;
-pub use evm::*;
 pub use linker::*;
-pub use mock::*;
-pub use storage::*;
 pub use types::*;
 
 mod consts;
-mod evm;
 mod linker;
-mod mock;
-mod storage;
 mod types;
+
+pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+
+pub const KECCAK256_EMPTY: B256 =
+    b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+pub const POSEIDON_EMPTY: B256 =
+    b256!("2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864");

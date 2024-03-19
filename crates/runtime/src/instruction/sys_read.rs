@@ -12,7 +12,7 @@ impl SysRead {
         length: u32,
     ) -> Result<(), Trap> {
         let input = Self::fn_impl(caller.data(), offset, length).map_err(|err| err.into_trap())?;
-        caller.write_memory(target, &input);
+        let _ = caller.write_memory(target, &input)?;
         Ok(())
     }
 

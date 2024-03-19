@@ -9,7 +9,7 @@ impl JzktComputeRoot {
         output32_offset: u32,
     ) -> Result<(), Trap> {
         let root = Self::fn_impl(caller.data_mut());
-        caller.write_memory(output32_offset, &root);
+        caller.write_memory(output32_offset, &root)?;
         Ok(())
     }
 

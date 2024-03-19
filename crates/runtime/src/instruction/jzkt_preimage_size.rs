@@ -9,7 +9,7 @@ impl JzktPreimageSize {
         mut caller: Caller<'_, RuntimeContext<T>>,
         hash32_offset: u32,
     ) -> Result<u32, Trap> {
-        let hash = caller.read_memory(hash32_offset, 32).to_vec();
+        let hash = caller.read_memory(hash32_offset, 32)?.to_vec();
         Self::fn_impl(caller.data_mut(), &hash).map_err(|err| err.into_trap())
     }
 

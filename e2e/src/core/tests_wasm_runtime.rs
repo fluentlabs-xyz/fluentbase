@@ -240,6 +240,8 @@ fn test_wasm_call_after_create() {
 
         let output_res =
             test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+
+        println!("total opcodes spent: {}", output_res.tracer().logs.len());
         assert_eq!(ExitCode::Ok.into_i32(), output_res.data().exit_code());
         let output = output_res.data().output();
         assert!(output.len() > 0);

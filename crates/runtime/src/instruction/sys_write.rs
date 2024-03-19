@@ -9,7 +9,7 @@ impl SysWrite {
         offset: u32,
         length: u32,
     ) -> Result<(), Trap> {
-        let data = caller.read_memory(offset, length).to_vec();
+        let data = caller.read_memory(offset, length)?.to_vec();
         Self::fn_impl(caller.data_mut(), &data);
         Ok(())
     }

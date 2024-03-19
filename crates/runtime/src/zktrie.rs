@@ -1,5 +1,5 @@
-use crate::storage::TrieStorage;
-use fluentbase_types::{Bytes, ExitCode, TrieDb, POSEIDON_EMPTY};
+use crate::{storage::TrieStorage, types::TrieDb};
+use fluentbase_types::{Bytes, ExitCode, POSEIDON_EMPTY};
 use fluentbase_zktrie::{
     Byte32,
     Database,
@@ -172,8 +172,7 @@ impl<DB: TrieDb> TrieStorage for ZkTrieStateDb<DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{storage::TrieStorage, zktrie::ZkTrieStateDb};
-    use fluentbase_types::InMemoryTrieDb;
+    use crate::{storage::TrieStorage, types::InMemoryTrieDb, zktrie::ZkTrieStateDb};
 
     macro_rules! bytes32 {
         ($val:expr) => {{
