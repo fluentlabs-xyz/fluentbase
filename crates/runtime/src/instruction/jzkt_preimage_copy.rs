@@ -10,9 +10,9 @@ impl JzktPreimageCopy {
         hash32_ptr: u32,
         preimage_ptr: u32,
     ) -> Result<(), Trap> {
-        let hash = caller.read_memory(hash32_ptr, 32).to_vec();
+        let hash = caller.read_memory(hash32_ptr, 32)?.to_vec();
         let preimage = Self::fn_impl(caller.data_mut(), &hash).map_err(|err| err.into_trap())?;
-        caller.write_memory(preimage_ptr, &preimage);
+        caller.write_memory(preimage_ptr, &preimage)?;
         Ok(())
     }
 

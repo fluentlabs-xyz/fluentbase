@@ -10,12 +10,12 @@ impl JzktLoad {
         slot32_ptr: u32,
         value32_ptr: u32,
     ) -> Result<i32, Trap> {
-        let slot = caller.read_memory(slot32_ptr, 32).to_vec();
+        let slot = caller.read_memory(slot32_ptr, 32)?.to_vec();
         let value = Self::fn_impl(caller.data_mut(), slot.as_slice().try_into().unwrap())
             .map_err(|err| err.into_trap())?;
         let result = match value {
             Some((value, is_cold)) => {
-                caller.write_memory(value32_ptr, &value);
+                caller.write_memory(value32_ptr, &value)?;
                 is_cold as i32
             }
             None => -1,

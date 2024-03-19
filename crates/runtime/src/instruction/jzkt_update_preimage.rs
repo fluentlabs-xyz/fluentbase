@@ -12,8 +12,8 @@ impl JzktUpdatePreimage {
         preimage_ptr: u32,
         preimage_len: u32,
     ) -> Result<i32, Trap> {
-        let key = caller.read_memory(key32_ptr, 32).to_vec();
-        let preimage = caller.read_memory(preimage_ptr, preimage_len).to_vec();
+        let key = caller.read_memory(key32_ptr, 32)?.to_vec();
+        let preimage = caller.read_memory(preimage_ptr, preimage_len)?.to_vec();
         let res = Self::fn_impl(caller.data_mut(), &key, field, &preimage)
             .map_err(|err| err.into_trap())?;
         Ok(res as i32)

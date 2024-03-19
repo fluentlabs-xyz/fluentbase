@@ -10,10 +10,10 @@ impl JzktGet {
         field: u32,
         output32_offset: u32,
     ) -> Result<u32, Trap> {
-        let key = caller.read_memory(key32_offset, 32).to_vec();
+        let key = caller.read_memory(key32_offset, 32)?.to_vec();
         let is_cold = match Self::fn_impl(caller.data_mut(), &key, field) {
             Some((value, is_cold)) => {
-                caller.write_memory(output32_offset, &value);
+                caller.write_memory(output32_offset, &value)?;
                 is_cold
             }
             None => true,
