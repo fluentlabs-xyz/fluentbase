@@ -22,6 +22,7 @@ use fluentbase_runtime::{
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
         sys_exec::SysExec,
+        sys_exec_hash::SysExecHash,
         sys_forward_output::SysForwardOutput,
         sys_halt::SysHalt,
         sys_input_size::SysInputSize,
@@ -38,7 +39,7 @@ use fluentbase_runtime::{
 use std::{cell::RefCell, ptr};
 
 thread_local! {
-    pub static CONTEXT: std::cell::Cell<RuntimeContext<'static, ()>> = std::cell::Cell::new(RuntimeContext::new(&[]));
+    pub static CONTEXT: std::cell::Cell<RuntimeContext<'static, ()>> = std::cell::Cell::new(RuntimeContext::new(&[0u8; 0]));
 }
 
 fn with_context<F, R>(func: F) -> R
@@ -154,6 +155,45 @@ impl LowLevelAPI for LowLevelSDK {
             SysExec::fn_impl(
                 ctx,
                 bytecode.clone(),
+                input.clone(),
+                return_len,
+                fuel,
+                state,
+            )
+        }) {
+            Ok((result, remaining_fuel)) => {
+                if return_len > 0 {
+                    unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
+                }
+                LittleEndian::write_u32(
+                    unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
+                    remaining_fuel,
+                );
+                0
+            }
+            Err(err) => err.into_i32(),
+        }
+    }
+
+    fn sys_exec_hash(
+        bytecode_hash32_offset: *const u8,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel_offset: *const u32,
+        state: u32,
+    ) -> i32 {
+        let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_offset, 32) };
+        let input =
+            unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
+        let fuel = LittleEndian::read_u32(unsafe {
+            &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
+        });
+        match with_context_mut(move |ctx| {
+            SysExecHash::fn_impl(
+                ctx,
+                bytecode_hash32.try_into().unwrap(),
                 input.clone(),
                 return_len,
                 fuel,

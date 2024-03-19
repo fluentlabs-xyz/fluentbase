@@ -12,7 +12,7 @@ pub mod account;
 pub mod account_types;
 pub mod evm;
 
-mod consts;
+pub mod consts;
 mod contracts;
 pub mod fluent_host;
 pub mod helpers;

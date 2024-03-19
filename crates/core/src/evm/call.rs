@@ -41,7 +41,7 @@ pub fn _evm_call(
         callee_address.as_slice(),
     ));
 
-    let source_code_hash = callee_account.source_code_hash.as_slice();
+    let source_code_hash = callee_account.source_bytecode_hash.as_slice();
     let source_bytecode = callee_account.load_source_bytecode();
     if value != U256::ZERO {
         return ExitCode::UnknownError;

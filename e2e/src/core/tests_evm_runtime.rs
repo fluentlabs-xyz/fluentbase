@@ -8,6 +8,7 @@ use crate::{
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
     account::Account,
+    consts::ECL_CONTRACT_ADDRESS,
     helpers::{calc_create_address, wasm2rwasm},
 };
 use fluentbase_core_api::{
@@ -186,7 +187,6 @@ fn test_evm_call_from_wasm() {
     let gas_limit: u32 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
-    const ECL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
     let import_linker = Runtime::<()>::new_sovereign_linker();
 
     let jzkt = {
@@ -202,6 +202,10 @@ fn test_evm_call_from_wasm() {
             &include_bytes!("../../../crates/core/bin/ecl_contract.rwasm").into(),
         );
         ecl_account.write_to_jzkt();
+        println!(
+            "ecl_account.rwasm_bytecode_hash {}",
+            ecl_account.rwasm_bytecode_hash
+        );
         Account::commit();
         jzkt
     };

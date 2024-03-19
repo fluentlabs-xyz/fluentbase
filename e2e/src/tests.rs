@@ -118,7 +118,7 @@ fn test_secp256k1_verify() {
     ];
 
     for input_data in input_datas {
-        let mut ctx = RuntimeContext::new(rwasm_binary.as_slice());
+        let mut ctx = RuntimeContext::new(rwasm_binary.clone());
         ctx.with_state(STATE_DEPLOY)
             .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
