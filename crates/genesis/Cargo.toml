@@ -12,4 +12,4 @@ categories.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reth-primitives = { git = "https://github.com/fluentlabs-xyz/fluent.git", default-features = false }
+#reth-primitives = { git = "https://github.com/fluentlabs-xyz/fluent.git", default-features = false }
