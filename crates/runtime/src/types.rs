@@ -1,7 +1,6 @@
 use fluentbase_types::Bytes;
 use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
-use std::cell::RefCell;
 
 pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
