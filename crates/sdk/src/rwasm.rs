@@ -19,6 +19,7 @@ use crate::{
         _jzkt_update,
         _jzkt_update_preimage,
         _sys_exec,
+        _sys_exec_hash,
         _sys_forward_output,
         _sys_halt,
         _sys_input_size,
@@ -89,6 +90,29 @@ impl LowLevelAPI for LowLevelSDK {
             _sys_exec(
                 code_offset,
                 code_len,
+                input_offset,
+                input_len,
+                return_offset,
+                return_len,
+                fuel_offset,
+                state,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn sys_exec_hash(
+        code_hash32_offset: *const u8,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel_offset: *const u32,
+        state: u32,
+    ) -> i32 {
+        unsafe {
+            _sys_exec_hash(
+                code_hash32_offset,
                 input_offset,
                 input_len,
                 return_offset,

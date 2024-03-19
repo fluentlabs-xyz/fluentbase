@@ -82,6 +82,7 @@ pub trait IJournaledTrie {
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool;
     fn preimage(&mut self, hash: &[u8; 32]) -> Vec<u8>;
+    fn preimage_ptr(&mut self, hash: &[u8; 32]) -> (*const u8, u32);
     fn preimage_size(&mut self, hash: &[u8; 32]) -> u32;
 }
 
@@ -306,6 +307,20 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
             .map(|v| v.to_vec())
             .unwrap_or_default();
         preimage
+    }
+
+    fn preimage_ptr(&mut self, hash: &[u8; 32]) -> (*const u8, u32) {
+        // maybe its just changed preimage and we have it in the state
+        if let Some(preimage) = self.preimages.get(hash) {
+            return (preimage.as_ptr(), preimage.len() as u32);
+        }
+        // get preimage from database
+        let preimage = self
+            .storage
+            .get_preimage(hash)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        return (preimage.as_ptr(), preimage.len() as u32);
     }
 
     fn preimage_size(&mut self, hash: &[u8; 32]) -> u32 {

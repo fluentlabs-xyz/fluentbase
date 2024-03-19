@@ -30,6 +30,16 @@ pub trait LowLevelAPI {
         state: u32,
     ) -> i32;
 
+    fn sys_exec_hash(
+        code_hash32_offset: *const u8,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel_offset: *const u32,
+        state: u32,
+    ) -> i32;
+
     fn jzkt_open(root32_ptr: *const u8);
     fn jzkt_checkpoint() -> (u32, u32);
     fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool;

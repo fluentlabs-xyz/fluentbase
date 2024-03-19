@@ -133,3 +133,19 @@ pub fn rwasm_exec(bytecode: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool
         panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
     }
 }
+
+#[inline(always)]
+pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool) {
+    let exit_code = LowLevelSDK::sys_exec_hash(
+        code_hash32.as_ptr(),
+        input.as_ptr(),
+        input.len() as u32,
+        core::ptr::null_mut(),
+        0,
+        &gas_limit as *const u32,
+        if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
+    );
+    if exit_code != 0 {
+        panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
+    }
+}

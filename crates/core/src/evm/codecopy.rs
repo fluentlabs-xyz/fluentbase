@@ -18,8 +18,14 @@ pub fn _evm_codecopy(output_offset: *mut u8, code_index: u32, len: u32) {
 
     let mut source_code_hash32 = Bytes32::default();
     let mut source_code_size32 = Bytes32::default();
-    Account::jzkt_get_source_code_hash(address_bytes32.as_ptr(), source_code_hash32.as_mut_ptr());
-    Account::jzkt_get_source_code_size(address_bytes32.as_ptr(), source_code_size32.as_mut_ptr());
+    Account::jzkt_get_source_bytecode_hash(
+        address_bytes32.as_ptr(),
+        source_code_hash32.as_mut_ptr(),
+    );
+    Account::jzkt_get_source_bytecode_size(
+        address_bytes32.as_ptr(),
+        source_code_size32.as_mut_ptr(),
+    );
     let source_code_size = LittleEndian::read_u64(&source_code_size32);
     let mut bytecode = vec![0u8; source_code_size as usize];
     LowLevelSDK::jzkt_preimage_copy(source_code_hash32.as_ptr(), bytecode.as_mut_ptr());

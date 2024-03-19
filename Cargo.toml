@@ -8,7 +8,6 @@ members = [
 exclude = [
     "crates/code-snippets",
     "crates/rwasm-evm",
-    "crates/runtime-api",
 ]
 resolver = "2"
 
