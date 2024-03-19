@@ -90,6 +90,10 @@ build_all_contracts: build_evm_contracts build_wasm_contracts
 .PHONY: build_all_contracts_wats
 build_all_contracts_wats: build_evm_loader_contract_wat build_ecl_contract_wat build_wcl_contract_wat
 
+.PHONY: run_test_evm_call_from_wasm
+run_test_evm_call_from_wasm: build_evm_contracts
+	cd ../../e2e; cargo test --lib core::tests_evm_runtime::test_evm_call_from_wasm -- --nocapture
+
 .PHONY: test
 test:
 	cargo test -q

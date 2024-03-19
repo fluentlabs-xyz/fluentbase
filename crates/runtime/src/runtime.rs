@@ -1,7 +1,7 @@
 use crate::{
     instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
     journal::IJournaledTrie,
-    types::RuntimeError,
+    types::{BytecodeRepr, RuntimeError},
 };
 use fluentbase_types::{
     create_shared_import_linker,
@@ -29,7 +29,7 @@ use std::{cell::RefCell, mem::take, rc::Rc};
 pub struct RuntimeContext<'t, T> {
     pub context: Option<&'t mut T>,
     // context inputs
-    pub(crate) bytecode: Vec<u8>,
+    pub(crate) bytecode: BytecodeRepr,
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
@@ -76,7 +76,7 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
         Self {
             context: None,
             func_type: None,
-            bytecode: vec![],
+            bytecode: Default::default(),
             fuel_limit: 0,
             state: 0,
             is_shared: false,
@@ -95,7 +95,7 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
 }
 
 impl<'t, T> RuntimeContext<'t, T> {
-    pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
+    pub fn new<I: Into<BytecodeRepr>>(bytecode: I) -> Self {
         Self {
             bytecode: bytecode.into(),
             ..Default::default()
@@ -227,8 +227,8 @@ impl<'t, T> ExecutionResult<'t, T> {
         }
     }
 
-    pub fn bytecode(&self) -> &Vec<u8> {
-        &self.runtime_context.bytecode
+    pub fn bytecode(&self) -> &[u8] {
+        &self.runtime_context.bytecode.as_ref()
     }
 
     pub fn data(&self) -> &RuntimeContext<'t, T> {
@@ -309,7 +309,7 @@ impl<'t, T> Runtime<'t, T> {
         };
 
         let module = {
-            let reduced_module = RwasmModule::new(runtime_context.bytecode.as_slice())
+            let reduced_module = RwasmModule::new(runtime_context.bytecode.as_ref())
                 .map_err(Into::<RuntimeError>::into)?;
             let module_builder = reduced_module.to_module_builder(&engine);
             module_builder.finish()

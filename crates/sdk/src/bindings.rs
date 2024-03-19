@@ -38,6 +38,15 @@ extern "C" {
         fuel_offset: *const u32,
         state: u32,
     ) -> i32;
+    pub fn _sys_exec_hash(
+        code_hash32_offset: *const u8,
+        input_offset: *const u8,
+        input_len: u32,
+        return_offset: *mut u8,
+        return_len: u32,
+        fuel_offset: *const u32,
+        state: u32,
+    ) -> i32;
 
     /// Journaled ZK Trie methods to work with blockchain state
     pub fn _jzkt_open(root32_ptr: *const u8);

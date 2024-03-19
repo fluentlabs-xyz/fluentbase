@@ -65,7 +65,7 @@ fn test_wrong_indirect_type() {
     "#,
     );
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut ctx = RuntimeContext::new(rwasm_bytecode.as_slice());
+    let mut ctx = RuntimeContext::new(rwasm_bytecode);
     ctx.with_fuel_limit(1_000_000).with_state(1000);
     let mut runtime = Runtime::<()>::new(ctx, import_linker).unwrap();
     runtime.call().unwrap();

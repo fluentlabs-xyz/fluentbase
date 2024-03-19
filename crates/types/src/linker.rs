@@ -9,7 +9,7 @@ macro_rules! import_func {
     };
 }
 
-const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 20] = [
+const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 21] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -23,6 +23,7 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 20] = [
     import_func!("_sys_forward_output", SYS_FORWARD_OUTPUT),
     import_func!("_sys_state", SYS_STATE),
     import_func!("_sys_exec", SYS_EXEC),
+    import_func!("_sys_exec_hash", SYS_EXEC_HASH),
     // import_func!("_jzkt_open", JZKT_OPEN),
     // import_func!("_jzkt_checkpoint", JZKT_CHECKPOINT),
     import_func!("_jzkt_get", JZKT_GET),
@@ -39,11 +40,11 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 20] = [
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
 ];
 
-pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 20]>>() -> F {
+pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 21]>>() -> F {
     F::from(SHARED_IMPORT_LINKER)
 }
 
-const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 27] = [
+const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 28] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -57,6 +58,7 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 27] = [
     import_func!("_sys_forward_output", SYS_FORWARD_OUTPUT),
     import_func!("_sys_state", SYS_STATE),
     import_func!("_sys_exec", SYS_EXEC),
+    import_func!("_sys_exec_hash", SYS_EXEC_HASH),
     import_func!("_jzkt_open", JZKT_OPEN),
     import_func!("_jzkt_checkpoint", JZKT_CHECKPOINT),
     import_func!("_jzkt_get", JZKT_GET),
@@ -73,7 +75,7 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 27] = [
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
 ];
 
-pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 27]>>() -> F
+pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 28]>>() -> F
 {
     F::from(SOVEREIGN_IMPORT_LINKER)
 }

@@ -1,6 +1,12 @@
 use crate::{
     account::Account,
-    helpers::{calc_create2_address, read_address_from_input, rwasm_exec, wasm2rwasm},
+    helpers::{
+        calc_create2_address,
+        read_address_from_input,
+        rwasm_exec,
+        rwasm_exec_hash,
+        wasm2rwasm,
+    },
 };
 use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
 use fluentbase_types::{ExitCode, B256};
@@ -54,7 +60,6 @@ pub fn _wasm_create2(
     let bytecode_wasm =
         unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
     let bytecode_rwasm = wasm2rwasm(bytecode_wasm).unwrap();
-    rwasm_exec(&bytecode_rwasm, &[], gas_limit, true);
 
     // write deployer to the trie
     deployer_account.write_to_jzkt();
@@ -62,6 +67,12 @@ pub fn _wasm_create2(
     // write contract to the trie
     contract_account.update_source_bytecode(&bytecode_wasm.into());
     contract_account.update_rwasm_bytecode(&bytecode_rwasm.into());
+    rwasm_exec_hash(
+        contract_account.rwasm_bytecode_hash.as_slice(),
+        &[],
+        gas_limit,
+        true,
+    );
 
     // copy output address
     unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }

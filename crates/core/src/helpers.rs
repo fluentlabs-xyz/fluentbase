@@ -79,7 +79,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B2
     bytes[21..53].copy_from_slice(salt.as_slice());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
     LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
-    let bytes32: [u8; 32] = bytes[0..32].try_into().unwrap();
+    let bytes32: Bytes32 = bytes[0..32].try_into().unwrap();
     Address::from_word(B256::from(bytes32))
 }
 
@@ -122,6 +122,22 @@ pub fn rwasm_exec(bytecode: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool
     let exit_code = LowLevelSDK::sys_exec(
         bytecode.as_ptr(),
         bytecode.len() as u32,
+        input.as_ptr(),
+        input.len() as u32,
+        core::ptr::null_mut(),
+        0,
+        &gas_limit as *const u32,
+        if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
+    );
+    if exit_code != 0 {
+        panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
+    }
+}
+
+#[inline(always)]
+pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool) {
+    let exit_code = LowLevelSDK::sys_exec_hash(
+        code_hash32.as_ptr(),
         input.as_ptr(),
         input.len() as u32,
         core::ptr::null_mut(),
