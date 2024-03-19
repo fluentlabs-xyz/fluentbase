@@ -3,6 +3,7 @@ use core::cell::RefCell;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{account::Account, account_types::JZKT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{
+    types::InMemoryTrieDb,
     zktrie::ZkTrieStateDb,
     ExecutionResult,
     JournaledTrie,
@@ -13,7 +14,7 @@ use fluentbase_sdk::{
     evm::{ContractInput, JournalCheckpoint},
     LowLevelSDK,
 };
-use fluentbase_types::{Address, Bytes, InMemoryTrieDb, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_types::{Address, Bytes, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
 use paste::paste;
