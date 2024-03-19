@@ -11,6 +11,7 @@ use fluentbase_types::{
 };
 use rwasm::{
     core::ImportLinker,
+    engine::Tracer,
     rwasm::RwasmModule,
     AsContextMut,
     Engine,
@@ -204,6 +205,7 @@ impl<'t, T> RuntimeContext<'t, T> {
 
 pub struct ExecutionResult<'t, T> {
     runtime_context: RuntimeContext<'t, T>,
+    tracer: Tracer,
     fuel_consumed: Option<u64>,
 }
 
@@ -211,6 +213,7 @@ impl<'t, T> ExecutionResult<'t, T> {
     pub fn cloned(store: &Store<RuntimeContext<'t, T>>) -> Self {
         Self {
             runtime_context: store.data().clone(),
+            tracer: store.tracer().clone(),
             fuel_consumed: store.fuel_consumed(),
         }
     }
@@ -219,6 +222,7 @@ impl<'t, T> ExecutionResult<'t, T> {
         let fuel_consumed = store.fuel_consumed();
         Self {
             runtime_context: take(store.data_mut()),
+            tracer: take(store.tracer_mut()),
             fuel_consumed,
         }
     }
@@ -229,6 +233,10 @@ impl<'t, T> ExecutionResult<'t, T> {
 
     pub fn data(&self) -> &RuntimeContext<'t, T> {
         &self.runtime_context
+    }
+
+    pub fn tracer(&self) -> &Tracer {
+        &self.tracer
     }
 
     pub fn fuel_consumed(&self) -> Option<u64> {
@@ -264,6 +272,7 @@ impl<'t, T> Runtime<'t, T> {
             runtime_context.exit_code = Self::catch_trap(&runtime.err().unwrap());
             Ok(ExecutionResult {
                 runtime_context,
+                tracer: Default::default(),
                 fuel_consumed: None,
             })
         } else {

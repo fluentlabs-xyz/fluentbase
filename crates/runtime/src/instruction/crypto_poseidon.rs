@@ -10,8 +10,8 @@ impl CryptoPoseidon {
         f32s_len: u32,
         output_offset: u32,
     ) -> Result<(), Trap> {
-        let data = caller.read_memory(f32s_offset, f32s_len);
-        caller.write_memory(output_offset, &Self::fn_impl(data));
+        let data = caller.read_memory(f32s_offset, f32s_len)?;
+        caller.write_memory(output_offset, &Self::fn_impl(data))?;
         Ok(())
     }
 

@@ -10,7 +10,7 @@ fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
         Fields::Named(named_fields) => named_fields,
         _ => panic!("not supported yet"),
     };
-    for field in named_fields.named.iter() {
+    for _field in named_fields.named.iter() {
         // field.ty;
     }
     panic!("not supported yet")

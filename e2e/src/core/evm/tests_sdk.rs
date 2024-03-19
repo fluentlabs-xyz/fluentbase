@@ -7,7 +7,6 @@ use crate::{
     },
     core::testing_utils::{generate_address_original_impl, TestingContext},
 };
-use alloc::{vec, vec::Vec};
 use fluentbase_core::{
     account::Account,
     evm::{
