@@ -223,8 +223,8 @@ impl<'t, T> ExecutionResult<'t, T> {
         }
     }
 
-    pub fn bytecode(&self) -> &BytecodeRepr {
-        &self.runtime_context.bytecode
+    pub fn bytecode(&self) -> &[u8] {
+        &self.runtime_context.bytecode.as_ref()
     }
 
     pub fn data(&self) -> &RuntimeContext<'t, T> {

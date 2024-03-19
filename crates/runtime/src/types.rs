@@ -37,11 +37,11 @@ rwasm_error!(rwasm::table::TableError);
 rwasm_error!(rwasm::linker::LinkerError);
 rwasm_error!(rwasm::module::ModuleError);
 
-pub type BytecodePtrAndSize = (*const u8, u32);
+pub type PtrAndSize = (*const u8, u32);
 #[derive(Clone)]
 pub enum BytecodeRepr {
     Vector(Vec<u8>),
-    PtrAndSize(BytecodePtrAndSize),
+    Unsafe(PtrAndSize),
 }
 
 impl Default for BytecodeRepr {
@@ -62,9 +62,9 @@ impl Into<BytecodeRepr> for Vec<u8> {
     }
 }
 
-impl Into<BytecodeRepr> for BytecodePtrAndSize {
+impl Into<BytecodeRepr> for PtrAndSize {
     fn into(self) -> BytecodeRepr {
-        BytecodeRepr::PtrAndSize(self)
+        BytecodeRepr::Unsafe(self)
     }
 }
 
@@ -72,7 +72,7 @@ impl<'t> AsRef<[u8]> for BytecodeRepr {
     fn as_ref(&self) -> &[u8] {
         match self {
             BytecodeRepr::Vector(v) => v,
-            BytecodeRepr::PtrAndSize(v) => {
+            BytecodeRepr::Unsafe(v) => {
                 let r = unsafe { &*core::ptr::slice_from_raw_parts(v.0, v.1 as usize) };
                 r
             }
