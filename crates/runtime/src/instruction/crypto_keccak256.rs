@@ -10,8 +10,8 @@ impl CryptoKeccak256 {
         data_len: u32,
         output_offset: u32,
     ) -> Result<(), Trap> {
-        let data = caller.read_memory(data_offset, data_len);
-        caller.write_memory(output_offset, &Self::fn_impl(data));
+        let data = caller.read_memory(data_offset, data_len)?;
+        caller.write_memory(output_offset, &Self::fn_impl(data))?;
         Ok(())
     }
 
