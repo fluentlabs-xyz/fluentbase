@@ -12,7 +12,6 @@ categories.workspace = true
 [dependencies]
 rwasm = { workspace = true, default-features = false }
 fluentbase-poseidon = { path = "../poseidon" }
-#fluentbase-runtime-api = { path = "../runtime-api", default-features = false }
 fluentbase-zktrie = { path = "../zktrie" }
 fluentbase-types = { path = "../types" }
 
@@ -32,7 +31,4 @@ wat = "1.0.69"
 hex-literal = "0.4.1"
 
 [features]
-rwasm = [
-    #    "dep:rwasm-codegen",
-    #    "dep:rwasm",
-]
+rwasm = []
