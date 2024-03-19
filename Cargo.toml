@@ -24,7 +24,7 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-#rwasm = { path = "../rwasm/rwasm", default-features = false }
+#rwasm = { path = "../rwasm", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.5.4", default-features = false, features = ["rlp"] }
 hashbrown = { version = "0.14.3" }
