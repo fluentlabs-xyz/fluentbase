@@ -17,11 +17,11 @@ impl SysExecHash {
         state: u32,
     ) -> Result<i32, Trap> {
         let bytecode_hash32: [u8; 32] = caller
-            .read_memory(bytecode_hash32_offset, 32)
+            .read_memory(bytecode_hash32_offset, 32)?
             .try_into()
             .unwrap();
-        let input = caller.read_memory(input_offset, input_len).to_vec();
-        let fuel_data = caller.read_memory(fuel_offset, 4);
+        let input = caller.read_memory(input_offset, input_len)?.to_vec();
+        let fuel_data = caller.read_memory(fuel_offset, 4)?;
         let fuel = LittleEndian::read_u32(fuel_data);
         let exit_code = match Self::fn_impl(
             caller.data_mut(),
@@ -33,11 +33,11 @@ impl SysExecHash {
         ) {
             Ok((return_data, remaining_fuel)) => {
                 if return_len > 0 {
-                    caller.write_memory(return_offset, &return_data);
+                    caller.write_memory(return_offset, &return_data)?;
                 }
                 let mut fuel_buffer = [0u8; 4];
                 LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel);
-                caller.write_memory(fuel_offset, &fuel_buffer);
+                caller.write_memory(fuel_offset, &fuel_buffer)?;
                 ExitCode::Ok
             }
             Err(err) => err,
