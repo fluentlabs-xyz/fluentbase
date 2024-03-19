@@ -19,7 +19,7 @@ jobs:
           target: wasm32-unknown-unknown
           override: true
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -71,7 +71,7 @@ jobs:
           toolchain: stable
           override: true
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -127,7 +127,7 @@ jobs:
           override: true
           components: rust-docs, rust-src
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -171,7 +171,7 @@ jobs:
           toolchain: nightly
           override: true
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -205,7 +205,7 @@ jobs:
           toolchain: nightly
           override: true
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -247,7 +247,7 @@ jobs:
           override: true
           components: miri
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -281,7 +281,7 @@ jobs:
           override: true
           components: clippy
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -327,7 +327,7 @@ jobs:
           toolchain: stable
           override: true
       - name: Set up Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
