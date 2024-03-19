@@ -210,7 +210,7 @@ mod test {
             buffer.finalize()
         };
         println!("{}", hex::encode(&buffer));
-        let mut decoder = BufferDecoder::new(buffer.as_slice());
+        let decoder = BufferDecoder::new(buffer.as_slice());
         assert_eq!(decoder.read_u32(0), 100);
         assert_eq!(decoder.read_u16(4), 20);
         assert_eq!(decoder.read_u64(6), 3);
@@ -237,7 +237,7 @@ mod test {
             buffer.bytes().to_vec()
         };
         println!("{}", hex::encode(&buffer));
-        let mut decoder = BufferDecoder::new(&buffer);
+        let decoder = BufferDecoder::new(&buffer);
         assert_eq!(decoder.read_u32(0), 100);
         assert_eq!(decoder.read_u16(4), 20);
         assert_eq!(decoder.read_u64(6), 3);
@@ -255,7 +255,7 @@ mod test {
             buffer.bytes().to_vec()
         };
         println!("{}", hex::encode(&buffer));
-        let mut decoder = BufferDecoder::new(buffer.as_slice());
+        let decoder = BufferDecoder::new(buffer.as_slice());
         assert_eq!(decoder.read_u32(0), 0xbadcab1e);
         assert_eq!(decoder.read_bytes(4).to_vec(), vec![0, 1, 2, 3, 4]);
         assert_eq!(decoder.read_u32(12), 0xdeadbeef);
@@ -275,7 +275,7 @@ mod test {
             buffer.finalize()
         };
         println!("{}", hex::encode(&buffer));
-        let mut decoder = BufferDecoder::new(buffer.as_slice());
+        let decoder = BufferDecoder::new(buffer.as_slice());
         assert_eq!(decoder.read_u32(0), 0xbadcab1e);
         assert_eq!(decoder.read_bytes(4).to_vec(), vec![0, 1, 2, 3, 4]);
         assert_eq!(decoder.read_u32(12), 0xdeadbeef);
