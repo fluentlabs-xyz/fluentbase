@@ -79,7 +79,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B2
     bytes[21..53].copy_from_slice(salt.as_slice());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
     LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
-    let bytes32: [u8; 32] = bytes[0..32].try_into().unwrap();
+    let bytes32: Bytes32 = bytes[0..32].try_into().unwrap();
     Address::from_word(B256::from(bytes32))
 }
 

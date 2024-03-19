@@ -1,4 +1,4 @@
-use crate::types::Bytes32;
+use fluentbase_types::Bytes32;
 
 pub trait LowLevelAPI {
     fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
