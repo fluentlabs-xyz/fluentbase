@@ -8,7 +8,7 @@ pub struct SysExecHash;
 impl SysExecHash {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
-        code_hash32_offset: u32,
+        bytecode_hash32_offset: u32,
         input_offset: u32,
         input_len: u32,
         return_offset: u32,
@@ -16,13 +16,16 @@ impl SysExecHash {
         fuel_offset: u32,
         state: u32,
     ) -> Result<i32, Trap> {
-        let code_hash32 = caller.read_memory(code_hash32_offset, 32).to_vec();
+        let bytecode_hash32: [u8; 32] = caller
+            .read_memory(bytecode_hash32_offset, 32)
+            .try_into()
+            .unwrap();
         let input = caller.read_memory(input_offset, input_len).to_vec();
         let fuel_data = caller.read_memory(fuel_offset, 4);
         let fuel = LittleEndian::read_u32(fuel_data);
         let exit_code = match Self::fn_impl(
             caller.data_mut(),
-            &code_hash32,
+            &bytecode_hash32,
             input,
             return_len,
             fuel,
@@ -44,7 +47,7 @@ impl SysExecHash {
 
     pub fn fn_impl<T>(
         ctx: &mut RuntimeContext<T>,
-        code_hash32: &[u8],
+        bytecode_hash32: &[u8; 32],
         input: Vec<u8>,
         return_len: u32,
         fuel_limit: u32,
@@ -52,8 +55,8 @@ impl SysExecHash {
     ) -> Result<(Vec<u8>, u32), ExitCode> {
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let mut jzkt = ctx.jzkt.clone().unwrap();
-        let bytecode = jzkt.borrow_mut().preimage(&code_hash32.try_into().unwrap());
-        let mut next_ctx = RuntimeContext::new(bytecode);
+        let bytecode_ptr_and_size = jzkt.borrow_mut().preimage_ptr_and_size(bytecode_hash32);
+        let mut next_ctx = RuntimeContext::new(bytecode_ptr_and_size);
         next_ctx
             .with_input(input)
             .with_state(STATE_MAIN)
