@@ -37,20 +37,11 @@ impl Default for FluentHost {
         Self {
             env,
             need_to_init_env: true,
-            // _phantom: Default::default(),
         }
     }
 }
 
 impl FluentHost {
-    // #[inline]
-    // pub fn new(env: Env) -> Self {
-    //     Self {
-    //         env: Rc::new(RefCell::new(Some(&env))),
-    //         ..Default::default()
-    //     }
-    // }
-
     #[inline]
     pub fn clear(&mut self) {}
 
