@@ -225,6 +225,7 @@ fn main() {
     //     fs::write(rs_source_map_file_out_path, rs_str).unwrap();
     // }
 }
+
 #[ctor::ctor]
 fn log_init() {
     let init_res =

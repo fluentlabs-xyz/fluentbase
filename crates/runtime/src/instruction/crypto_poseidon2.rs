@@ -15,11 +15,11 @@ impl CryptoPoseidon2 {
         output_offset: u32,
     ) -> Result<(), Trap> {
         let output = Self::fn_impl(
-            caller.read_memory(fa_offset, 32),
-            caller.read_memory(fb_offset, 32),
-            caller.read_memory(fd_offset, 32),
+            caller.read_memory(fa_offset, 32)?,
+            caller.read_memory(fb_offset, 32)?,
+            caller.read_memory(fd_offset, 32)?,
         )?;
-        caller.write_memory(output_offset, &output);
+        caller.write_memory(output_offset, &output)?;
         Ok(())
     }
 

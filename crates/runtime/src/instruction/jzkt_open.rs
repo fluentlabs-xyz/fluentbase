@@ -9,7 +9,7 @@ impl JzktOpen {
         mut caller: Caller<'_, RuntimeContext<T>>,
         root32_offset: u32,
     ) -> Result<(), Trap> {
-        let root32 = caller.read_memory(root32_offset, 32).to_vec();
+        let root32 = caller.read_memory(root32_offset, 32)?.to_vec();
         Self::fn_impl(caller.data_mut(), &root32).map_err(|err| err.into_trap())?;
         Ok(())
     }

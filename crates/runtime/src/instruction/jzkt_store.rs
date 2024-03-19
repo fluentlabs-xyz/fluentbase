@@ -10,8 +10,8 @@ impl JzktStore {
         slot32_ptr: u32,
         value32_ptr: u32,
     ) -> Result<(), Trap> {
-        let slot = caller.read_memory(slot32_ptr, 32).to_vec();
-        let value = caller.read_memory(value32_ptr, 32).to_vec();
+        let slot = caller.read_memory(slot32_ptr, 32)?.to_vec();
+        let value = caller.read_memory(value32_ptr, 32)?.to_vec();
         Self::fn_impl(
             caller.data_mut(),
             slot.as_slice().try_into().unwrap(),

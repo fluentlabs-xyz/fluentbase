@@ -13,9 +13,9 @@ impl JzktEmitLog {
         data_ptr: u32,
         data_len: u32,
     ) -> Result<(), Trap> {
-        let key = caller.read_memory(key32_ptr, 32).to_vec();
+        let key = caller.read_memory(key32_ptr, 32)?.to_vec();
         let topics = caller
-            .read_memory(topics32s_ptr, topics32s_len)
+            .read_memory(topics32s_ptr, topics32s_len)?
             .chunks(32)
             .map(|v| {
                 let mut res = B256::ZERO;
@@ -23,7 +23,7 @@ impl JzktEmitLog {
                 res
             })
             .collect::<Vec<_>>();
-        let data = caller.read_memory(data_ptr, data_len).to_vec();
+        let data = caller.read_memory(data_ptr, data_len)?.to_vec();
         Self::fn_impl(caller.data_mut(), &key, &topics, &data);
         Ok(())
     }

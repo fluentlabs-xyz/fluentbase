@@ -1,5 +1,41 @@
+use fluentbase_types::Bytes;
+use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 use std::cell::RefCell;
+
+pub trait TrieDb {
+    fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
+
+    fn update_node(&mut self, key: &[u8], value: Bytes);
+
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes>;
+
+    fn update_preimage(&mut self, key: &[u8], value: Bytes);
+}
+
+#[derive(Default, Clone)]
+pub struct InMemoryTrieDb {
+    nodes: HashMap<Bytes, Bytes>,
+    preimages: HashMap<Bytes, Bytes>,
+}
+
+impl TrieDb for InMemoryTrieDb {
+    fn get_node(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.nodes.get(&Bytes::copy_from_slice(key)).cloned()
+    }
+
+    fn update_node(&mut self, key: &[u8], value: Bytes) {
+        self.nodes.insert(Bytes::copy_from_slice(key), value);
+    }
+
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.preimages.get(&Bytes::copy_from_slice(key)).cloned()
+    }
+
+    fn update_preimage(&mut self, key: &[u8], value: Bytes) {
+        self.preimages.insert(Bytes::copy_from_slice(key), value);
+    }
+}
 
 #[derive(Debug)]
 pub enum RuntimeError {

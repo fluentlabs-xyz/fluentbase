@@ -12,9 +12,9 @@ impl JzktUpdate {
         vals32_offset: u32,
         vals32_len: u32,
     ) -> Result<(), Trap> {
-        let key = caller.read_memory(key32_offset, 32).to_vec();
+        let key = caller.read_memory(key32_offset, 32)?.to_vec();
         let vals32 = caller
-            .read_memory(vals32_offset, vals32_len)
+            .read_memory(vals32_offset, vals32_len)?
             .chunks(32)
             .map(|v| {
                 let mut res = [0u8; 32];

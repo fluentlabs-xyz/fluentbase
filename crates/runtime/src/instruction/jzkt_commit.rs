@@ -10,7 +10,7 @@ impl JzktCommit {
         root32_offset: u32,
     ) -> Result<(), Trap> {
         let output = Self::fn_impl(caller.data_mut()).map_err(|err| err.into_trap())?;
-        caller.write_memory(root32_offset, &output);
+        let _ = caller.write_memory(root32_offset, &output)?;
         Ok(())
     }
 

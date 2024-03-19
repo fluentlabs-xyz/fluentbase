@@ -17,9 +17,9 @@ impl CryptoEcrecover {
         output65_offset: u32,
         rec_id: u32,
     ) -> Result<(), Trap> {
-        let digest = caller.read_memory(digest32_offset, 32);
-        let sig = caller.read_memory(sig64_offset, 64);
-        caller.write_memory(output65_offset, &Self::fn_impl(digest, sig, rec_id));
+        let digest = caller.read_memory(digest32_offset, 32)?;
+        let sig = caller.read_memory(sig64_offset, 64)?;
+        caller.write_memory(output65_offset, &Self::fn_impl(digest, sig, rec_id))?;
         Ok(())
     }
 
