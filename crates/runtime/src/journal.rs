@@ -45,6 +45,7 @@ impl JournalEvent {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct JournalCheckpoint(pub u32, pub u32);
 
 impl Into<(u32, u32)> for JournalCheckpoint {
@@ -54,6 +55,14 @@ impl Into<(u32, u32)> for JournalCheckpoint {
 }
 
 impl JournalCheckpoint {
+    pub fn from_u64(value: u64) -> Self {
+        Self((value >> 32) as u32, value as u32)
+    }
+
+    pub fn to_u64(&self) -> u64 {
+        (self.0 as u64) << 32 | self.1 as u64
+    }
+
     pub fn state(&self) -> usize {
         self.0 as usize
     }
@@ -159,7 +168,7 @@ impl<DB: TrieStorage> JournaledTrie<DB> {
 
 impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
     fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint(self.journal.len() as u32, 0)
+        JournalCheckpoint(self.journal.len() as u32, self.logs.len() as u32)
     }
 
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
@@ -262,6 +271,12 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
     fn rollback(&mut self, checkpoint: JournalCheckpoint) {
         if checkpoint.state() < self.committed {
             panic!("reverting already committed changes is not allowed")
+        } else if checkpoint.state() > self.journal.len() {
+            panic!(
+                "checkpoint overflow during rollback ({} > {})",
+                checkpoint.state(),
+                self.journal.len()
+            )
         }
         self.journal
             .iter()
@@ -333,6 +348,7 @@ mod tests {
         journal::{IJournaledTrie, JournaledTrie},
         types::InMemoryTrieDb,
         zktrie::ZkTrieStateDb,
+        JournalCheckpoint,
         TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
@@ -345,6 +361,22 @@ mod tests {
             .iter()
             .for_each(|(key, value, flags)| zktrie.update(&key[..], *flags, value).unwrap());
         zktrie.compute_root()
+    }
+
+    #[test]
+    fn test_journal_u64() {
+        let test_checkpoint = |a: u32, b: u32| {
+            let jc = JournalCheckpoint(a, b);
+            assert_eq!(JournalCheckpoint::from_u64(jc.to_u64()), jc);
+        };
+        test_checkpoint(100, 0);
+        test_checkpoint(0, 100);
+        test_checkpoint(0xffffffff, 0x7fffffff);
+        test_checkpoint(0x7fffffff, 0xffffffff);
+        test_checkpoint(0xffffffff, 0xffffffff);
+        test_checkpoint(0xffffffff, 0);
+        test_checkpoint(0, 0xffffffff);
+        test_checkpoint(12312312, 74492);
     }
 
     #[test]

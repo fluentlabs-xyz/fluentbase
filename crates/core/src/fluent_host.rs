@@ -22,6 +22,7 @@ use revm_interpreter::{
         U256,
     },
     Host,
+    SStoreResult,
     SelfDestructResult,
 };
 
@@ -150,8 +151,7 @@ impl Host for FluentHost {
     }
 
     #[inline]
-    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> // ... -> (present, is_cold)
-    {
+    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
         let mut slot_value32 = Bytes32::default();
         let mut is_cold: u32 = 0;
         let exit_code = _evm_sload(
@@ -168,13 +168,7 @@ impl Host for FluentHost {
     }
 
     #[inline]
-    fn sstore(
-        &mut self,
-        address: Address,
-        index: U256,
-        value: U256,
-    ) -> Option<(U256, U256, U256, bool)> // ... -> (previous_or_original_value, present, new, is_cold)
-    {
+    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
         let mut previous_or_original_value = U256::default();
         let mut present = U256::default();
         let mut new_value = U256::default();
@@ -189,7 +183,12 @@ impl Host for FluentHost {
             &mut is_cold as *mut u32,
         );
         if sload_exit_code == ExitCode::Ok {
-            return Some((previous_or_original_value, present, new_value, is_cold != 0));
+            return Some(SStoreResult {
+                original_value: previous_or_original_value,
+                present_value: present,
+                new_value,
+                is_cold: is_cold != 0,
+            });
         }
         return None;
     }

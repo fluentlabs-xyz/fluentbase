@@ -32,8 +32,10 @@ pub enum ExitCode {
     CompilationError = -1018,
     OverflowPayment = -1019,
     EVMCreateError = -1020,
-    EVMCallError = -1021,
-    EVMNotFound = -1022,
+    EVMCreateRevert = -1021,
+    EVMCallError = -1022,
+    EVMCallRevert = -1023,
+    EVMNotFound = -1024,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,

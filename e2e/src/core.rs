@@ -1,4 +1,4 @@
-mod evm;
-mod testing_utils;
-mod tests_evm_runtime;
-mod tests_wasm_runtime;
+mod evm_call;
+mod evm_create;
+mod utils;
+mod wasm_create;

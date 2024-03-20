@@ -1045,6 +1045,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-revm"
+version = "0.1.0"
+dependencies = [
+ "auto_impl",
+ "byteorder",
+ "fluentbase-codec",
+ "fluentbase-core",
+ "fluentbase-sdk",
+ "fluentbase-types",
+ "revm-primitives",
+ "rwasm",
+]
+
+[[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1971,22 +1985,21 @@ checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 
 [[package]]
 name = "revm-interpreter"
-version = "2.1.0"
-source = "git+https://github.com/bluealloy/revm?tag=v28#63fd55a4431c9d41b58379c550c71e123a60e49f"
+version = "3.4.0"
+source = "git+https://github.com/bluealloy/revm?tag=v34#4c15846a81142ee446cee06f392288063ab70777"
 dependencies = [
- "revm-primitives 2.0.0",
+ "revm-primitives",
 ]
 
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9645a70f1df1e5bd7fa8718b9ba486fac9c3f0467aa6b58e7f590d5f6fd0f7"
+source = "git+https://github.com/bluealloy/revm?tag=v34#4c15846a81142ee446cee06f392288063ab70777"
 dependencies = [
  "aurora-engine-modexp",
  "k256",
  "once_cell",
- "revm-primitives 3.1.0",
+ "revm-primitives",
  "ripemd",
  "sha2",
  "substrate-bn",
@@ -1994,24 +2007,8 @@ dependencies = [
 
 [[package]]
 name = "revm-primitives"
-version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm?tag=v28#63fd55a4431c9d41b58379c550c71e123a60e49f"
-dependencies = [
- "alloy-primitives",
- "auto_impl",
- "bitflags 2.5.0",
- "bitvec",
- "cfg-if",
- "enumn",
- "hashbrown",
- "hex",
-]
-
-[[package]]
-name = "revm-primitives"
 version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "323ad597cf75ac9cb1d161be29fcc3562426f0278a1d04741697fca556e1ceea"
+source = "git+https://github.com/bluealloy/revm?tag=v34#4c15846a81142ee446cee06f392288063ab70777"
 dependencies = [
  "alloy-primitives",
  "auto_impl",

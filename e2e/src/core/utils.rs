@@ -10,10 +10,7 @@ use fluentbase_runtime::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_sdk::{
-    evm::{ContractInput, JournalCheckpoint},
-    LowLevelSDK,
-};
+use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use keccak_hash::keccak;
@@ -179,7 +176,7 @@ pub(crate) struct ContractInputWrapper(ContractInput);
 
 #[allow(dead_code)]
 impl ContractInputWrapper {
-    impl_once_setter!(journal_checkpoint, JournalCheckpoint);
+    impl_once_setter!(journal_checkpoint, u64);
     impl_once_setter!(env_chain_id, u64);
     impl_once_setter!(contract_gas_limit, u64);
     impl_once_setter!(contract_input, Bytes);

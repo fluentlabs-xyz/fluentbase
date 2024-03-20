@@ -270,16 +270,15 @@ impl<'t, T> Runtime<'t, T> {
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
             runtime_context.exit_code = Self::catch_trap(&runtime.err().unwrap());
-            Ok(ExecutionResult {
+            return Ok(ExecutionResult {
                 runtime_context,
                 tracer: Default::default(),
                 fuel_consumed: None,
-            })
-        } else {
-            let mut runtime = runtime?;
-            runtime.data_mut().clean_output();
-            runtime.call()
+            });
         }
+        let mut runtime = runtime?;
+        runtime.data_mut().clean_output();
+        runtime.call()
     }
 
     pub fn new(

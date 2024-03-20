@@ -25,6 +25,6 @@ pub const JZKT_COMPRESSION_FLAGS: u32 =
 /// By default this limit is 0x6000 (~24kb)
 pub(crate) const MAX_BYTECODE_SIZE: u32 = 0x6000;
 
-pub type AccountCheckpoint = (u32, u32);
+pub type AccountCheckpoint = u64;
 pub type AccountFields = [Bytes32; JZKT_ACCOUNT_FIELDS_COUNT as usize];
 pub type Topics<const TOPICS_COUNT: usize> = [Bytes32; TOPICS_COUNT];

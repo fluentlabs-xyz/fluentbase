@@ -222,9 +222,9 @@ impl LowLevelAPI for LowLevelSDK {
         let root = unsafe { &*ptr::slice_from_raw_parts(root32_ptr, 32) };
         with_context_mut(|ctx| JzktOpen::fn_impl(ctx, root).unwrap());
     }
-    fn jzkt_checkpoint() -> (u32, u32) {
+    fn jzkt_checkpoint() -> u64 {
         let result = with_context_mut(|ctx| JzktCheckpoint::fn_impl(ctx).unwrap());
-        result.into()
+        result.to_u64()
     }
     fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_offset, 32) };
@@ -279,10 +279,8 @@ impl LowLevelAPI for LowLevelSDK {
         let root = with_context_mut(|ctx| JzktCommit::fn_impl(ctx).unwrap());
         unsafe { ptr::copy(root.as_ptr(), root32_offset, 32) }
     }
-    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
-        with_context_mut(|ctx| {
-            JzktRollback::fn_impl(ctx, JournalCheckpoint(checkpoint0, checkpoint1))
-        });
+    fn jzkt_rollback(checkpoint: u64) {
+        with_context_mut(|ctx| JzktRollback::fn_impl(ctx, JournalCheckpoint::from_u64(checkpoint)));
     }
     fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {
         let slot: [u8; 32] = unsafe { &*ptr::slice_from_raw_parts(slot32_ptr, 32) }

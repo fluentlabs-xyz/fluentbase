@@ -6,13 +6,9 @@ pub struct JzktRollback;
 impl JzktRollback {
     pub fn fn_handler<T>(
         mut caller: Caller<'_, RuntimeContext<T>>,
-        checkpoint0: u32,
-        checkpoint1: u32,
+        checkpoint: u64,
     ) -> Result<(), Trap> {
-        Self::fn_impl(
-            caller.data_mut(),
-            JournalCheckpoint(checkpoint0, checkpoint1),
-        );
+        Self::fn_impl(caller.data_mut(), JournalCheckpoint::from_u64(checkpoint));
         Ok(())
     }
 
