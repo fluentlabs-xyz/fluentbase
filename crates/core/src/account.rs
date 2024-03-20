@@ -12,7 +12,7 @@ use crate::account_types::{
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK256_EMPTY, POSEIDON_EMPTY, U256};
+use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
 
 #[derive(Debug, Clone)]
 pub struct Account {
@@ -34,7 +34,7 @@ impl Default for Account {
             nonce: 0,
             balance: U256::ZERO,
             rwasm_bytecode_hash: POSEIDON_EMPTY,
-            source_bytecode_hash: KECCAK256_EMPTY,
+            source_bytecode_hash: KECCAK_EMPTY,
         }
     }
 }
@@ -323,7 +323,7 @@ impl Account {
     #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
         self.nonce != 0
-            || self.source_bytecode_hash != KECCAK256_EMPTY
+            || self.source_bytecode_hash != KECCAK_EMPTY
             || self.rwasm_bytecode_hash != POSEIDON_EMPTY
     }
 }

@@ -11,9 +11,9 @@ categories.workspace = true
 
 [dependencies]
 rwasm = { workspace = true, default-features = false }
-fluentbase-poseidon = { path = "../poseidon" }
-fluentbase-zktrie = { path = "../zktrie" }
-fluentbase-types = { path = "../types" }
+fluentbase-poseidon = { workspace = true }
+fluentbase-zktrie = { workspace = true }
+fluentbase-types = { workspace = true }
 
 # workspace
 halo2curves = { workspace = true }

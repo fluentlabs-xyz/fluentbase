@@ -29,7 +29,7 @@ fn test_wasm_create() {
     };
 
     // let wcl_address = address!("0000000000000000000000000000000000000777");
-    // let wcl_wasm_bytecode = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
+    // let wcl_wasm_bytecode = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
     // let wcl_account = Account {
     //     address: wcl_address,
     //     source_code_size: wcl_wasm_bytecode.len() as u64,
@@ -53,7 +53,7 @@ fn test_wasm_create() {
     let core_input_vec = core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;
-    let contract_wasm_binary = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
+    let contract_wasm_binary = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
     let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary).unwrap();
 
     let mut runtime_ctx = RuntimeContext::new(contract_rwasm_binary);
@@ -117,7 +117,7 @@ fn test_wasm_create2() {
         calc_create2_address(&caller_address, &salt, &wasm_bytecode_hash);
 
     const IS_RUNTIME: bool = true;
-    let contract_wasm_binary = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
+    let contract_wasm_binary = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
     let contract_rwasm_binary = wasm2rwasm(contract_wasm_binary.as_slice()).unwrap();
     let mut runtime_ctx = RuntimeContext::new(contract_rwasm_binary);
     runtime_ctx.with_state(STATE_MAIN);
@@ -163,7 +163,7 @@ fn test_wasm_call_after_create() {
     };
 
     const IS_RUNTIME: bool = true;
-    let wcl_contract_wasm = include_bytes!("../../../crates/core/bin/wcl_contract.wasm");
+    let wcl_contract_wasm = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
     let wcl_contract_rwasm = wasm2rwasm(wcl_contract_wasm.as_slice()).unwrap();
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let gas_limit: u32 = 10_000_000;

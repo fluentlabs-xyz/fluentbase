@@ -8,6 +8,7 @@ members = [
 exclude = [
     "crates/code-snippets",
     "crates/rwasm-evm",
+    #    "crates/genesis",
 ]
 resolver = "2"
 
@@ -23,21 +24,38 @@ keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
+fluentbase-types = { path = "./crates/types", default-features = false }
+fluentbase-codec = { path = "./crates/codec", default-features = false }
+fluentbase-sdk = { path = "./crates/sdk", default-features = false }
+fluentbase-core = { path = "./crates/core", default-features = false }
+fluentbase-core-api = { path = "./crates/core-api", default-features = false }
+fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
+fluentbase-runtime = { path = "./crates/runtime", default-features = false }
+fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
+fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
+
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-#rwasm = { path = "../rwasm", default-features = false }
+halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.5.4", default-features = false, features = ["rlp"] }
 hashbrown = { version = "0.14.3" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
-halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 paste = { version = "1.0", default-features = false }
-alloy-rlp = { version = "0.3.4", default-features = false }
-revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v28", default-features = false }
-#revm-interpreter = { path = "../../other/revm/crates/interpreter", default-features = false }
-#revm-interpreter = { package = "revm", default-features = false }
-#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm", branch = "devel", default-features = false }
-#revm-interpreter = { path = "../../../revm-rwasm/crates/interpreter", default-features = false }
+alloy-primitives = { version = "0.6", default-features = false, features = ["rlp"] }
+alloy-rlp = { version = "0.3", default-features = false }
+#alloy-chains = { version = "0.1", feature = ["serde", "rlp", "arbitrary"] }
+#alloy-dyn-abi = "0.6"
+#alloy-sol-types = "0.6"
+#alloy-trie = "0.3"
+#alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+#alloy-rpc-trace-types = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+#alloy-rpc-engine-types = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+#alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+#alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+revm-precompile = { version = "5.0.0", default-features = false }
+
+bytes = { version = "1.5" }
 
 [profile.bench]
 lto = "fat"

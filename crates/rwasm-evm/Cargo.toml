@@ -9,17 +9,17 @@ bench = false
 proc-macro = false
 
 [dependencies]
-fluentbase-rwasm-code-snippets = { path = "../code-snippets" }
+fluentbase-rwasm-code-snippets = { workspace = true, default-features = false }
 rwasm = { workspace = true, features = ["std"] }
-fluentbase-sdk = { path = "../sdk", default-features = false }
-fluentbase-codec = { path = "../codec", default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-codec = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, default-features = false }
 hashbrown = { version = "0.14", default-features = false }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
-fluentbase-types = { path = "../types", default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
 
 [dev-dependencies]
-fluentbase-runtime = { path = "../runtime" }
+fluentbase-runtime = { workspace = true }
 env_logger = { version = "0.10.2" }
 log = { version = "0.4.20" }
 ctor = "0.2.6"
