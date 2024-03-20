@@ -1,5 +1,6 @@
 use core::slice;
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::ExitCode;
 
 #[no_mangle]
 pub fn _evm_revert(output_offset: *mut u8, size: u32) {
@@ -10,5 +11,5 @@ pub fn _evm_revert(output_offset: *mut u8, size: u32) {
     let checkpoint = ExecutionContext::journal_checkpoint();
     LowLevelSDK::jzkt_rollback(checkpoint);
     LowLevelSDK::sys_write(mem_chunk);
-    LowLevelSDK::sys_halt(0);
+    LowLevelSDK::sys_halt(ExitCode::EVMCallRevert.into_i32());
 }

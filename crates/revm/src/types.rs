@@ -19,3 +19,21 @@ impl CallCreateResult {
         }
     }
 }
+
+enum BytecodeType {
+    Rwasm,
+    Evm,
+    Wasm,
+}
+
+impl BytecodeType {
+    pub(crate) fn from_slice(input: &[u8]) -> Self {
+        if input.len() >= 4 && input[0..4] == [0x00, 0x61, 0x73, 0x6d] {
+            Self::Wasm
+        } else if input.len() >= 1 && input[0] == 0xef {
+            Self::Rwasm
+        } else {
+            Self::Evm
+        }
+    }
+}

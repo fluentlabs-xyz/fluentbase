@@ -15,6 +15,7 @@ struct Args {
     #[arg(long, default_value = "")]
     genesis_type: String,
 }
+
 fn main() {
     let args = Args::parse();
 
@@ -28,7 +29,7 @@ fn main() {
         }
     };
 
-    let genesis_json = serde_json::to_string(&genesis).unwrap();
+    let genesis_json = serde_json::to_string_pretty(&genesis).unwrap();
     let dest_file_name = if args.dest_file_name.is_empty() {
         format!("genesis-{}.json", genesis_type)
     } else {

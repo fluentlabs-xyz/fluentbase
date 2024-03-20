@@ -17,7 +17,6 @@ generate_devnet_genesis:
 	mkdir -p $(OUT_DIR)
 	$(MAKE) generate_genesis OPTIONS="--genesis-type=devnet --out-dir=$(OUT_DIR)"
 
-
 .PHONY: build_wasm_main
 build_wasm_main:
 	mkdir -p $(OUT_DIR)
