@@ -41,7 +41,7 @@ pub trait LowLevelAPI {
     ) -> i32;
 
     fn jzkt_open(root32_ptr: *const u8);
-    fn jzkt_checkpoint() -> (u32, u32);
+    fn jzkt_checkpoint() -> u64;
     fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool;
     fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32);
     fn jzkt_update_preimage(
@@ -60,7 +60,7 @@ pub trait LowLevelAPI {
         data_len: u32,
     );
     fn jzkt_commit(root32_offset: *mut u8);
-    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32);
+    fn jzkt_rollback(checkpoint: u64);
     fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8);
     fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32;
     fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32;

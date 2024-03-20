@@ -1,4 +1,4 @@
-use crate::test_helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
+use crate::helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
 use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{Runtime, RuntimeContext};

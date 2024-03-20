@@ -1,9 +1,9 @@
 use crate::{
-    assets::evm_test_contracts::{
+    assets::evm_test_contract::{
         EVM_CONTRACT_BYTECODE1,
         EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
-    core::testing_utils::TestingContext,
+    core::utils::TestingContext,
 };
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
@@ -57,10 +57,17 @@ fn test_evm_create() {
     let mut runtime_ctx = RuntimeContext::new(evm_contract_rwasm_binary);
     runtime_ctx.with_state(STATE_MAIN);
     let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
+    test_ctx.try_add_account(&caller_account);
     test_ctx
-        .try_add_account(&caller_account)
         .contract_input_wrapper
-        .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+        .set_journal_checkpoint(
+            runtime_ctx
+                .jzkt()
+                .unwrap()
+                .borrow_mut()
+                .checkpoint()
+                .to_u64(),
+        )
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
         .set_contract_input_size(evm_create_core_input_vec.len() as u32)
         .set_env_chain_id(env_chain_id)
@@ -119,7 +126,14 @@ fn test_evm_call_after_create() {
         test_ctx
             .try_add_account(&caller_account)
             .contract_input_wrapper
-            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_journal_checkpoint(
+                runtime_ctx
+                    .jzkt()
+                    .unwrap()
+                    .borrow_mut()
+                    .checkpoint()
+                    .to_u64(),
+            )
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_contract_input_size(evm_create_core_input_vec.len() as u32)
             .set_env_chain_id(env_chain_id)
@@ -156,7 +170,14 @@ fn test_evm_call_after_create() {
         let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
         test_ctx
             .contract_input_wrapper
-            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_journal_checkpoint(
+                runtime_ctx
+                    .jzkt()
+                    .unwrap()
+                    .borrow_mut()
+                    .checkpoint()
+                    .to_u64(),
+            )
             .set_contract_input(Bytes::copy_from_slice(&evm_call_core_input_vec))
             .set_contract_input_size(evm_call_core_input_vec.len() as u32)
             .set_contract_address(deployed_contract_address);
@@ -231,7 +252,14 @@ fn test_evm_call_from_wasm() {
         test_ctx
             .try_add_account(&caller_account)
             .contract_input_wrapper
-            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_journal_checkpoint(
+                runtime_ctx
+                    .jzkt()
+                    .unwrap()
+                    .borrow_mut()
+                    .checkpoint()
+                    .to_u64(),
+            )
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_contract_input_size(evm_create_core_input_vec.len() as u32)
@@ -261,7 +289,14 @@ fn test_evm_call_from_wasm() {
         let contract_input = EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID;
         test_ctx
             .contract_input_wrapper
-            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().borrow_mut().checkpoint().into())
+            .set_journal_checkpoint(
+                runtime_ctx
+                    .jzkt()
+                    .unwrap()
+                    .borrow_mut()
+                    .checkpoint()
+                    .to_u64(),
+            )
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input_size(contract_input.len() as u32)
             .set_contract_input(contract_input.into())

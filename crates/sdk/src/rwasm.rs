@@ -167,7 +167,7 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { _jzkt_open(root32_ptr) }
     }
     #[inline(always)]
-    fn jzkt_checkpoint() -> (u32, u32) {
+    fn jzkt_checkpoint() -> u64 {
         unsafe { _jzkt_checkpoint() }
     }
     #[inline(always)]
@@ -212,8 +212,8 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { _jzkt_commit(root32_offset) }
     }
     #[inline(always)]
-    fn jzkt_rollback(checkpoint0: u32, checkpoint1: u32) {
-        unsafe { _jzkt_rollback(checkpoint0, checkpoint1) }
+    fn jzkt_rollback(checkpoint: u64) {
+        unsafe { _jzkt_rollback(checkpoint) }
     }
     #[inline(always)]
     fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {

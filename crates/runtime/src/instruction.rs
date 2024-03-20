@@ -92,14 +92,14 @@ impl_runtime_handler!(SysExecHash, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_ex
 impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
-impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> (u32, u32));
+impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
 impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32) -> u32);
 impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
 impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_offset: u32) -> ());
 impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_offset: u32) -> ());
 impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
 impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
-impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint0: u32, checkpoint1: u32) -> ());
+impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint: u64) -> ());
 impl_runtime_handler!(JzktStore, JZKT_STORE, fn fluentbase_v1alpha::_jzkt_store(slot32_ptr: u32, value32_ptr: u32) -> ());
 impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> i32);
 impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);

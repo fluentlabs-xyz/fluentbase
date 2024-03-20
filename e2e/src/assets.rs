@@ -1,1 +1,1 @@
-pub mod evm_test_contracts;
+pub mod evm_test_contract;

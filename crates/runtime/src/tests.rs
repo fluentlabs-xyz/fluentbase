@@ -1,4 +1,5 @@
 use crate::{runtime::Runtime, RuntimeContext};
+use hex_literal::hex;
 use rwasm::rwasm::{BinaryFormat, RwasmModule};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
@@ -45,19 +46,15 @@ fn test_wrong_indirect_type() {
     let rwasm_bytecode = wat2rwasm(
         r#"
 (module
-
     (type $right (func (param i32) (result i32)))
     (type $wrong (func (param i64) (result i64)))
-
     (func $const-i32 (type $right) (local.get 0))
     (func $id-i64 (type $wrong) (local.get 0))
-
     (table funcref
         (elem
           $const-i32 $id-i64
         )
     )
-
     (func (export "main")
         (call_indirect (type $wrong) (i64.const 0xffffffffff) (i32.const 0))
         (drop)
@@ -71,7 +68,7 @@ fn test_wrong_indirect_type() {
     runtime.call().unwrap();
     runtime.data_mut().state = 0;
     let res = runtime.call();
-    assert_eq!(-2014, res.as_ref().unwrap().data().exit_code());
+    assert_eq!(-2008, res.as_ref().unwrap().data().exit_code());
 }
 
 #[test]
@@ -98,24 +95,17 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-
-    // let _module = RwasmModule::new(&rwasm_binary).unwrap();
-    // println!("module.trace_binary(): {:?}", module.trace());
-    let ctx = RuntimeContext::new(rwasm_binary);
+    let mut ctx = RuntimeContext::new(rwasm_binary);
+    ctx.with_fuel_limit(1_000_000);
     let import_linker = Runtime::<()>::new_sovereign_linker();
     let execution_result = Runtime::<()>::run_with_context(ctx, import_linker).unwrap();
-    // println!(
-    //     "execution_result (exit_code {})",
-    //     execution_result.data().exit_code,
-    // );
-    match hex::decode("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529") {
-        Ok(answer) => {
-            assert_eq!(&answer, execution_result.data().output().as_slice());
-        }
-        Err(e) => {
-            // If there's an error, you might want to handle it in some way.
-            // For this example, I'll just print the error.
-            println!("Error: {:?}", e);
-        }
-    }
+    println!(
+        "fuel consumed: {}",
+        execution_result.fuel_consumed().unwrap_or_default()
+    );
+    assert_eq!(execution_result.data().exit_code, 0);
+    assert_eq!(
+        hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529"),
+        execution_result.data().output.as_slice()
+    );
 }

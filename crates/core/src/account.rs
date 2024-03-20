@@ -258,32 +258,25 @@ impl Account {
     }
 
     pub fn rollback(checkpoint: AccountCheckpoint) {
-        LowLevelSDK::jzkt_rollback(checkpoint.0, checkpoint.1);
+        LowLevelSDK::jzkt_rollback(checkpoint);
     }
 
-    pub fn create_account_checkpoint(
+    pub fn create_account(
         caller: &mut Account,
         callee: &mut Account,
         amount: U256,
-    ) -> Result<AccountCheckpoint, ExitCode> {
-        let checkpoint: AccountCheckpoint = Self::checkpoint();
+    ) -> Result<(), ExitCode> {
         // make sure there is no creation collision
         if callee.rwasm_bytecode_hash != POSEIDON_EMPTY || callee.nonce != 0 {
-            LowLevelSDK::jzkt_rollback(checkpoint.0, checkpoint.1);
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
-        caller.balance.checked_sub(amount).ok_or_else(|| {
-            LowLevelSDK::jzkt_rollback(checkpoint.0, checkpoint.1);
-            ExitCode::InsufficientBalance
-        })?;
-        callee.balance = callee.balance.checked_add(amount).ok_or_else(|| {
-            LowLevelSDK::jzkt_rollback(checkpoint.0, checkpoint.1);
-            ExitCode::OverflowPayment
-        })?;
+        if let Err(exit_code) = Self::transfer(caller, callee, amount) {
+            return Err(exit_code);
+        }
         // change nonce (we are always on spurious dragon)
         caller.nonce = 1;
-        Ok(checkpoint)
+        Ok(())
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

@@ -1,11 +1,11 @@
 use crate::{
-    assets::evm_test_contracts::{
+    assets::evm_test_contract::{
         EVM_CONTRACT_BYTECODE1,
         EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID,
         EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID,
         EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
-    core::testing_utils::{generate_address_original_impl, TestingContext},
+    core::utils::{generate_address_original_impl, TestingContext},
 };
 use fluentbase_core::{
     account::Account,
@@ -20,7 +20,7 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
 };
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{address, Bytes, B256, U256};
+use fluentbase_types::{address, Bytes, ExitCode, B256, U256};
 use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
 
 #[test]
@@ -102,7 +102,7 @@ fn create2_address_correctness_test() {
 }
 
 #[test]
-fn _evm_create_test() {
+fn evm_create_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -153,7 +153,7 @@ fn _evm_create_test() {
 }
 
 #[test]
-fn _evm_call_after_create_test() {
+fn evm_call_after_create_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -173,8 +173,8 @@ fn _evm_call_after_create_test() {
     let contract_input_data_bytes = "some contract input".as_bytes();
 
     let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    test_ctx.try_add_account(&caller_account);
     test_ctx
-        .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
         .set_contract_input_size(contract_input_data_bytes.len() as u32)
@@ -226,7 +226,7 @@ fn _evm_call_after_create_test() {
 }
 
 #[test]
-fn _evm_call_after_create2_test() {
+fn evm_call_after_create2_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -306,7 +306,7 @@ fn _evm_call_after_create2_test() {
 }
 
 #[test]
-fn _evm_balance_test() {
+fn evm_balance_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -347,7 +347,7 @@ fn _evm_balance_test() {
 }
 
 #[test]
-fn _evm_selfbalance_test() {
+fn evm_selfbalance_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -384,7 +384,7 @@ fn _evm_selfbalance_test() {
 }
 
 #[test]
-fn _evm_address_test() {
+fn evm_address_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let contract_address = address!("000000000000000000000000000000000000000b");
     let caller_nonce = 1;
@@ -421,7 +421,7 @@ fn _evm_address_test() {
 }
 
 #[test]
-fn _evm_selfbalance_from_contract_call_test() {
+fn evm_selfbalance_from_contract_call_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -494,11 +494,11 @@ fn _evm_selfbalance_from_contract_call_test() {
         0, 0, 0, 4, 52, 48, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_eq!(expected_return_data.as_slice(), return_data.as_slice());
+    assert_eq!(hex::encode(expected_return_data), hex::encode(return_data));
 }
 
 #[test]
-fn _evm_balance_from_contract_call_test() {
+fn evm_balance_from_contract_call_test() {
     let caller_address = address!("000000000000000000000000000000000000000c");
     let caller_nonce = 1;
     let caller_account = Account {
@@ -518,8 +518,8 @@ fn _evm_balance_from_contract_call_test() {
     let contract_input_data_bytes = "some contract input".as_bytes();
 
     let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    test_ctx.try_add_account(&caller_account);
     test_ctx
-        .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
         .set_contract_input_size(contract_input_data_bytes.len() as u32)
@@ -537,15 +537,20 @@ fn _evm_balance_from_contract_call_test() {
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
     let gas_limit: u32 = 10_000_000;
     let mut created_address = Address::default();
-    assert!(_evm_create(
-        create_value.to_be_bytes::<32>().as_ptr(),
-        EVM_CONTRACT_BYTECODE1.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.len() as u32,
-        created_address.0.as_mut_ptr(),
-        gas_limit,
-    )
-    .is_ok());
-    assert_eq!(computed_contract_address, created_address);
+    assert_eq!(
+        _evm_create(
+            create_value.to_be_bytes::<32>().as_ptr(),
+            EVM_CONTRACT_BYTECODE1.as_ptr(),
+            EVM_CONTRACT_BYTECODE1.len() as u32,
+            created_address.0.as_mut_ptr(),
+            gas_limit,
+        ),
+        ExitCode::Ok
+    );
+    assert_eq!(
+        hex::encode(computed_contract_address),
+        hex::encode(created_address)
+    );
     let mut created_address_balance = U256::default();
     Account::jzkt_get_balance(created_address.into_word().as_ptr(), unsafe {
         created_address_balance.as_le_slice_mut().as_mut_ptr()
@@ -572,5 +577,5 @@ fn _evm_balance_from_contract_call_test() {
         0, 0, 0, 12, 52, 51, 48, 50, 48, 55, 52, 50, 54, 51, 56, 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_eq!(expected_return_data.as_slice(), return_data.as_slice());
+    assert_eq!(hex::encode(expected_return_data), hex::encode(return_data));
 }
