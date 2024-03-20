@@ -16,12 +16,23 @@ pub mod consts;
 mod contracts;
 pub mod fluent_host;
 pub mod helpers;
+pub mod precompiles;
 mod utils;
 pub mod wasm;
 
 macro_rules! export_and_forward {
     ($fn_name:ident) => {
-        #[cfg(any(feature = "evm_loader", feature = "ecl", feature = "wcl"))]
+        #[cfg(any(
+            feature = "evm_loader",
+            feature = "ecl",
+            feature = "wcl",
+            feature = "precompile_blake2",
+            feature = "precompile_bn128",
+            feature = "precompile_identity",
+            feature = "precompile_kzg_point_evaluation",
+            feature = "precompile_modexp",
+            feature = "precompile_secp256k1",
+        ))]
         #[cfg(not(feature = "std"))]
         #[no_mangle]
         #[cfg(target_arch = "wasm32")]
@@ -32,6 +43,8 @@ macro_rules! export_and_forward {
             contracts::ecl::$fn_name();
             #[cfg(feature = "wcl")]
             contracts::wcl::$fn_name();
+            #[cfg(feature = "precompile_blake2")]
+            precompiles::blake2::$fn_name();
         }
     };
 }

@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-types = { path = "../crates/types", default-features = false }
-fluentbase-sdk = { path = "../crates/sdk", default-features = false }
-fluentbase-codec = { path = "../crates/codec", default-features = false }
-fluentbase-core = { path = "../crates/core", default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false }
 #fluentbase-runtime-api = { path = "../crates/runtime-api", default-features = false }
 rwasm = { workspace = true, default-features = false }
 #revm = { version = "3.3.0", default-features = false }
@@ -31,7 +31,7 @@ hex-literal = "0.4.1"
 hex = "0.4.3"
 serial_test = "3.0.0"
 wat = "1.0.77"
-    
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 

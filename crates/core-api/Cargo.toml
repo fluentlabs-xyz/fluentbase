@@ -10,10 +10,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-types = { path = "../types", default-features = false }
-fluentbase-sdk = { path = "../sdk", default-features = false }
-fluentbase-codec = { path = "../codec", default-features = false }
-fluentbase-core-macros = { path = "../core-macros", default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-core-macros = { workspace = true, default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
@@ -25,7 +25,7 @@ revm-interpreter = { workspace = true }
 paste = { workspace = true }
 
 [dev-dependencies]
-fluentbase-runtime = { path = "../runtime", default-features = false, features = [] }
+fluentbase-runtime = { workspace = true, default-features = false, features = [] }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 

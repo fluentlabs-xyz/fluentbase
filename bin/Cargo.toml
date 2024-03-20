@@ -9,8 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 rwasm = { workspace = true }
-fluentbase-types = { path = "../crates/types" }
-fluentbase-core = { path = "../crates/core" }
+fluentbase-types = { workspace = true }
+fluentbase-core = { workspace = true, features = ["std"] }
 wat = "1.0.80"
 clap = { version = "4.4.11", features = ["derive"] }
 log = "0.4.20"

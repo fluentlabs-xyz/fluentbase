@@ -94,8 +94,9 @@ pub fn _evm_create2(
 
     deployer_account.write_to_jzkt();
     contract_account.update_source_bytecode(&deployed_bytecode);
-    contract_account
-        .update_rwasm_bytecode(&include_bytes!("../../bin/evm_loader_contract.rwasm").into());
+    contract_account.update_rwasm_bytecode(
+        &include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into(),
+    );
 
     unsafe { ptr::copy(deployed_contract_address.as_ptr(), out_address20_offset, 20) }
 

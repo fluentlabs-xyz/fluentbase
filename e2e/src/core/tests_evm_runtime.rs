@@ -51,7 +51,8 @@ fn test_evm_create() {
     let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;
-    let evm_contract_wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
+    let evm_contract_wasm_binary =
+        include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
     let evm_contract_rwasm_binary = wasm2rwasm(evm_contract_wasm_binary.as_slice()).unwrap();
     let mut runtime_ctx = RuntimeContext::new(evm_contract_rwasm_binary);
     runtime_ctx.with_state(STATE_MAIN);
@@ -98,7 +99,7 @@ fn test_evm_call_after_create() {
     let gas_limit: u32 = 10_000_000;
     const IS_RUNTIME: bool = true;
     let import_linker = Runtime::<()>::new_sovereign_linker();
-    let ecl_wasm = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
+    let ecl_wasm = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
     let ecl_rwasm = wasm2rwasm(ecl_wasm.as_slice()).unwrap();
     let create_value = B256::left_padding_from(&hex!("1000"));
     let call_value = B256::left_padding_from(&hex!("00"));
@@ -196,10 +197,10 @@ fn test_evm_call_from_wasm() {
         let jzkt = test_ctx.init_jzkt(Some(&mut runtime_ctx));
         let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
         ecl_account.update_source_bytecode(
-            &include_bytes!("../../../crates/core/bin/ecl_contract.wasm").into(),
+            &include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm").into(),
         );
         ecl_account.update_rwasm_bytecode(
-            &include_bytes!("../../../crates/core/bin/ecl_contract.rwasm").into(),
+            &include_bytes!("../../../crates/contracts/assets/ecl_contract.rwasm").into(),
         );
         ecl_account.write_to_jzkt();
         println!(
@@ -221,7 +222,7 @@ fn test_evm_call_from_wasm() {
             evm_create_method_input.encode_to_vec(0),
         );
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
-        let wasm_binary = include_bytes!("../../../crates/core/bin/ecl_contract.wasm");
+        let wasm_binary = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
         let rwasm_binary = wasm2rwasm(wasm_binary).unwrap();
         let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
         runtime_ctx.with_state(STATE_MAIN);

@@ -5,9 +5,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-codec = { path = "../codec", default-features = false }
-fluentbase-types = { path = "../types", default-features = false }
-fluentbase-runtime = { path = "../runtime", default-features = false, optional = true }
+fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 byteorder = { workspace = true, optional = true }
 paste = { workspace = true }
 lol_alloc = { version = "0.4.0" }

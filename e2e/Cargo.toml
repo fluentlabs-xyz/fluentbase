@@ -10,13 +10,13 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-runtime = { path = "../crates/runtime" }
-fluentbase-sdk = { path = "../crates/sdk", default-features = false, features = ["runtime"] }
-fluentbase-poseidon = { path = "../crates/poseidon" }
-fluentbase-codec = { path = "../crates/codec" }
-fluentbase-core = { path = "../crates/core" }
-fluentbase-types = { path = "../crates/types" }
-fluentbase-core-api = { path = "../crates/core-api" }
+fluentbase-runtime = { workspace = true }
+fluentbase-sdk = { workspace = true, default-features = false, features = ["runtime"] }
+fluentbase-poseidon = { workspace = true }
+fluentbase-codec = { workspace = true }
+fluentbase-core = { workspace = true }
+fluentbase-types = { workspace = true }
+fluentbase-core-api = { workspace = true }
 rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false }
 

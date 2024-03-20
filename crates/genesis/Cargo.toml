@@ -9,7 +9,22 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "genesis"
+path = "src/main.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
-#reth-primitives = { git = "https://github.com/fluentlabs-xyz/fluent.git", default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+clap = { version = "4.4.11", features = ["derive"] }
+serde = { workspace = true, default-features = false, features = [] }
+serde_json = { version = "1.0.114" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "410850b" }
+
+byteorder = { workspace = true }
+bytes = { workspace = true }
+hashbrown.workspace = true
+
+[features]
