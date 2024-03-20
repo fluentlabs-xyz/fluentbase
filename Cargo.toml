@@ -24,6 +24,7 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 fluentbase-types = { path = "./crates/types", default-features = false }
+fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
@@ -45,9 +46,6 @@ alloy-rlp = { version = "0.3.4", default-features = false }
 revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-#revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
-#revm-primitives = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
-#revm-precompile = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
 bytes = { version = "1.5" }
 
 [profile.bench]
