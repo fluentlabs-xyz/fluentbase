@@ -171,7 +171,7 @@ impl LowLevelAPI for LowLevelSDK {
                 );
                 0
             }
-            Err(err) => err.into_i32(),
+            Err(err) => err,
         }
     }
 
@@ -210,7 +210,7 @@ impl LowLevelAPI for LowLevelSDK {
                 );
                 0
             }
-            Err(err) => err.into_i32(),
+            Err(err) => err,
         }
     }
 

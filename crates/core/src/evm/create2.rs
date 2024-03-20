@@ -10,11 +10,11 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{ExitCode, B256, Bytes};
+use fluentbase_types::{Bytes, ExitCode, B256};
 use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
-    primitives::{Bytecode},
+    primitives::Bytecode,
     BytecodeLocked,
     Contract,
     Interpreter,

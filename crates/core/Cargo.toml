@@ -36,6 +36,7 @@ default = ["std"]
 std = [
     "fluentbase-sdk/runtime",
     "fluentbase-types/std",
+    "revm-interpreter/std",
     "byteorder/std",
     "alloy-rlp/std",
 ]

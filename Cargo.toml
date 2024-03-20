@@ -15,7 +15,7 @@ resolver = "2"
 authors = [
     "Dmitry Savonin <dmitry@fluentlabs.xyz>",
 ]
-repository = "https://github.com/wasm0/fuentbase"
+repository = "https://github.com/fluentlabs-xyz/fuentbase"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -42,9 +42,12 @@ serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }
-revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
-revm-primitives = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
-revm-precompile = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+#revm-interpreter = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
+#revm-primitives = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
+#revm-precompile = { git = "https://github.com/bluealloy/revm", tag = "v34", default-features = false }
 bytes = { version = "1.5" }
 
 [profile.bench]

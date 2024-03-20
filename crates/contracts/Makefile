@@ -22,6 +22,10 @@ build: build_core_contracts build_precompiles
 build_core_contracts:
 	cd ../core; $(MAKE) build_all_contracts OUT_DIR=$(OUT_DIR)
 
+.PHONY: build_all_contracts_wats
+build_all_contracts_wats:
+	cd ../core; $(MAKE) build_all_contracts_wats OUT_DIR=$(OUT_DIR)
+
 .PHONY: build_precompiles
 build_precompiles:
 	cd ../core; $(MAKE) precompile_blake2 OUT_DIR=$(OUT_DIR)

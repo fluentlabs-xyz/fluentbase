@@ -38,11 +38,11 @@ impl SysExecHash {
                 let mut fuel_buffer = [0u8; 4];
                 LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel);
                 caller.write_memory(fuel_offset, &fuel_buffer)?;
-                ExitCode::Ok
+                ExitCode::Ok.into_i32()
             }
             Err(err) => err,
         };
-        Ok(exit_code.into_i32())
+        Ok(exit_code)
     }
 
     pub fn fn_impl<T>(
@@ -52,7 +52,7 @@ impl SysExecHash {
         return_len: u32,
         fuel_limit: u32,
         _state: u32,
-    ) -> Result<(Vec<u8>, u32), ExitCode> {
+    ) -> Result<(Vec<u8>, u32), i32> {
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let jzkt = ctx.jzkt.clone().unwrap();
         let bytecode_ptr_and_size = jzkt.borrow_mut().preimage_ptr_and_size(bytecode_hash32);
@@ -64,14 +64,14 @@ impl SysExecHash {
             .with_fuel_limit(fuel_limit)
             .with_jzkt(ctx.jzkt.clone().unwrap());
         let execution_result = Runtime::<()>::run_with_context(next_ctx, import_linker)
-            .map_err(|_| ExitCode::TransactError)?;
+            .map_err(|_| ExitCode::TransactError.into_i32())?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
         let output = execution_result.data().output();
         if return_len > 0 && output.len() > return_len as usize {
-            return Err(ExitCode::OutputOverflow);
+            return Err(ExitCode::OutputOverflow.into_i32());
         }
         if execution_result.data().exit_code != ExitCode::Ok.into_i32() {
-            return Err(ExitCode::from(execution_result.data().exit_code));
+            return Err(execution_result.data().exit_code);
         }
         ctx.consumed_fuel += fuel_consumed;
         ctx.return_data = output.clone();

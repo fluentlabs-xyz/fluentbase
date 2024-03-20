@@ -91,53 +91,6 @@ impl Into<Trap> for ExitCode {
     }
 }
 
-impl From<i32> for ExitCode {
-    fn from(value: i32) -> ExitCode {
-        match value {
-            0 => ExitCode::Ok,
-            -71 => ExitCode::Panic,
-            // fluentbase error codes
-            -1001 => ExitCode::ExecutionHalted,
-            -1003 => ExitCode::NotSupportedCall,
-            -1004 => ExitCode::TransactError,
-            -1005 => ExitCode::OutputOverflow,
-            -1006 => ExitCode::InputDecodeFailure,
-            -1007 => ExitCode::PoseidonError,
-            -1008 => ExitCode::PersistentStorageError,
-            -1009 => ExitCode::WriteProtection,
-            -1010 => ExitCode::CreateError,
-            -1011 => ExitCode::PreimageUnavailable,
-            -1012 => ExitCode::InsufficientBalance,
-            -1013 => ExitCode::CreateCollision,
-            -1014 => ExitCode::ContractSizeLimit,
-            -1015 => ExitCode::StorageSlotOverflow,
-            -1016 => ExitCode::CallDepthOverflow,
-            -1017 => ExitCode::FatalExternalError,
-            -1018 => ExitCode::CompilationError,
-            -1019 => ExitCode::OverflowPayment,
-            -1020 => ExitCode::EVMCreateError,
-            -1021 => ExitCode::EVMCallError,
-            -1022 => ExitCode::EVMNotFound,
-            // trap error codes
-            -2006 => ExitCode::UnreachableCodeReached,
-            -2007 => ExitCode::MemoryOutOfBounds,
-            -2008 => ExitCode::TableOutOfBounds,
-            -2009 => ExitCode::IndirectCallToNull,
-            -2010 => ExitCode::IntegerDivisionByZero,
-            -2011 => ExitCode::IntegerOverflow,
-            -2012 => ExitCode::BadConversionToInteger,
-            -2013 => ExitCode::StackOverflow,
-            -2014 => ExitCode::BadSignature,
-            -2015 => ExitCode::OutOfFuel,
-            -2016 => ExitCode::GrowthOperationLimited,
-            -2017 => ExitCode::UnknownError,
-            -2018 => ExitCode::UnresolvedFunction,
-            // this is 100% unknown error
-            _ => ExitCode::UnresolvedFunction,
-        }
-    }
-}
-
 impl Into<i32> for ExitCode {
     fn into(self) -> i32 {
         self as i32
