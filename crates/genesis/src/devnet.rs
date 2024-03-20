@@ -1,5 +1,5 @@
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_types::address;
+use fluentbase_contracts::{ECL_CONTRACT_ADDRESS, PRECOMPILE_BLAKE2_ADDRESS, WCL_CONTRACT_ADDRESS};
 use std::collections::HashMap;
 
 fn devnet_chain_config() -> ChainConfig {
@@ -8,13 +8,6 @@ fn devnet_chain_config() -> ChainConfig {
         ..Default::default()
     }
 }
-
-pub const ECL_CONTRACT_ADDRESS: fluentbase_types::Address =
-    address!("5200000000000000000000000000000000000001");
-pub const WCL_CONTRACT_ADDRESS: fluentbase_types::Address =
-    address!("5200000000000000000000000000000000000002");
-pub const PRECOMPILE_BLAKE2_ADDRESS: fluentbase_types::Address =
-    address!("0000000000000000000000000000000000000001");
 
 pub fn devnet_genesis() -> Genesis {
     let mut alloc = HashMap::new();

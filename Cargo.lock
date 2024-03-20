@@ -446,7 +446,7 @@ dependencies = [
 [[package]]
 name = "cairo-platinum-prover"
 version = "0.5.0"
-source = "git+https://github.com/lambdaclass/lambdaworks?branch=main#019cfcfdc82ee51f50be81ee5bfbb479a0482181"
+source = "git+https://github.com/lambdaclass/lambdaworks?rev=212c040c5fa21fcb5095a0b1ac92501292517db0#212c040c5fa21fcb5095a0b1ac92501292517db0"
 dependencies = [
  "bincode 2.0.0-rc.2",
  "cairo-vm",
@@ -931,6 +931,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-contracts"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-core",
+ "fluentbase-types",
+]
+
+[[package]]
 name = "fluentbase-core"
 version = "0.1.0"
 dependencies = [
@@ -1028,6 +1036,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "clap",
+ "fluentbase-contracts",
  "fluentbase-types",
  "hashbrown",
  "serde",
@@ -1110,13 +1119,6 @@ dependencies = [
  "hex",
  "lazy_static",
  "uint",
-]
-
-[[package]]
-name = "fluetbase-contracts"
-version = "0.1.0"
-dependencies = [
- "fluentbase-core",
 ]
 
 [[package]]
@@ -1478,7 +1480,7 @@ dependencies = [
 [[package]]
 name = "lambdaworks-crypto"
 version = "0.5.0"
-source = "git+https://github.com/lambdaclass/lambdaworks?branch=main#019cfcfdc82ee51f50be81ee5bfbb479a0482181"
+source = "git+https://github.com/lambdaclass/lambdaworks?rev=212c040c5fa21fcb5095a0b1ac92501292517db0#212c040c5fa21fcb5095a0b1ac92501292517db0"
 dependencies = [
  "lambdaworks-math",
  "serde",
@@ -1489,7 +1491,7 @@ dependencies = [
 [[package]]
 name = "lambdaworks-math"
 version = "0.5.0"
-source = "git+https://github.com/lambdaclass/lambdaworks?branch=main#019cfcfdc82ee51f50be81ee5bfbb479a0482181"
+source = "git+https://github.com/lambdaclass/lambdaworks?rev=212c040c5fa21fcb5095a0b1ac92501292517db0#212c040c5fa21fcb5095a0b1ac92501292517db0"
 dependencies = [
  "rayon",
  "serde",
@@ -2375,7 +2377,7 @@ dependencies = [
 [[package]]
 name = "stark-platinum-prover"
 version = "0.5.0"
-source = "git+https://github.com/lambdaclass/lambdaworks?branch=main#019cfcfdc82ee51f50be81ee5bfbb479a0482181"
+source = "git+https://github.com/lambdaclass/lambdaworks?rev=212c040c5fa21fcb5095a0b1ac92501292517db0#212c040c5fa21fcb5095a0b1ac92501292517db0"
 dependencies = [
  "bincode 2.0.0-rc.2",
  "itertools 0.11.0",

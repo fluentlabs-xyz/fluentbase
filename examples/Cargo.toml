@@ -20,9 +20,9 @@ rwasm = { workspace = true, default-features = false }
 #alloy-sol-types = { version = "0.5.1", default-features = false }
 #byteorder = { workspace = true }
 bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
-cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
-stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
-lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }
+cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
+stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
+lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }
 #serde = { version = "1.0", features = ["derive"], default-features = false }
 #hashbrown = { workspace = true, default-features = false }
 

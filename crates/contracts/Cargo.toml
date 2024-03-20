@@ -1,5 +1,5 @@
 [package]
-name = "fluetbase-contracts"
+name = "fluentbase-contracts"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true
@@ -14,3 +14,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 fluentbase-core = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }

@@ -18,7 +18,7 @@ fluentbase-core = { workspace = true }
 fluentbase-types = { workspace = true }
 fluentbase-core-api = { workspace = true }
 rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true, default-features = false }
+revm-interpreter = { workspace = true, default-features = false, features = ["std"] }
 
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
