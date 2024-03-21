@@ -4,6 +4,7 @@ use crate::{
 };
 use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
 use fluentbase_types::ExitCode;
+use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 #[no_mangle]
 pub fn _wasm_create(
@@ -19,6 +20,11 @@ pub fn _wasm_create(
     if ExecutionContext::contract_is_static() {
         return ExitCode::WriteProtection;
     }
+    // code length can't exceed max limit
+    if code_length > RWASM_MAX_CODE_SIZE as u32 {
+        return ExitCode::ContractSizeLimit;
+    }
+
     // read value input and contract address
     let value32_slice = unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) };
     let value = U256::from_be_slice(value32_slice);
