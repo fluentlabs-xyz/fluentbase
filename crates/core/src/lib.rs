@@ -29,7 +29,6 @@ pub mod helpers;
     feature = "precompile_secp256k1",
 ))]
 pub mod precompiles;
-mod utils;
 pub mod wasm;
 
 macro_rules! export_and_forward {

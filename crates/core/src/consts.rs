@@ -1,4 +1,4 @@
 use fluentbase_types::{address, Address};
 
-pub const ECL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
-pub const WCL_CONTRACT_ADDRESS: Address = address!("0000000000000000000000000000000000000002");
+#[deprecated(note = "think how to use this variable from genesis crate")]
+pub const ECL_CONTRACT_ADDRESS: Address = address!("5200000000000000000000000000000000000001");

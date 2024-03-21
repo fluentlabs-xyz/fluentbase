@@ -1,11 +1,32 @@
-use crate::{gas::Gas, handler::Handler, types::CallCreateResult, EVMData};
+use crate::{
+    gas::Gas,
+    handler::Handler,
+    types::{BytecodeType, CallCreateResult},
+    EVMData,
+};
 use core::marker::PhantomData;
+use fluentbase_codec::Encoder;
 use fluentbase_core::{
     evm::{call::_evm_call, create::_evm_create, create2::_evm_create2},
     Account,
+    AccountCheckpoint,
 };
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, U256};
+use fluentbase_core_api::{
+    api::CoreInput,
+    bindings::{
+        EvmCreate2MethodInput,
+        EvmCreateMethodInput,
+        WasmCreate2MethodInput,
+        WasmCreateMethodInput,
+        EVM_CREATE2_METHOD_ID,
+        EVM_CREATE_METHOD_ID,
+        WASM_CREATE2_METHOD_ID,
+        WASM_CREATE_METHOD_ID,
+    },
+};
+use fluentbase_genesis::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
+use fluentbase_sdk::{evm::ContractInput, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
 use revm_primitives::{
     CreateScheme,
     EVMError,
@@ -203,7 +224,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
         gas_limit: u64,
         salt: Option<U256>,
     ) -> CallCreateResult {
-        let gas = Gas::new(gas_limit);
+        let mut gas = Gas::new(gas_limit);
         if self.depth > CALL_STACK_LIMIT {
             return CallCreateResult::from_error(ExitCode::CallDepthOverflow, gas);
         } else if caller_account.balance < value {
@@ -212,32 +233,91 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
 
         let checkpoint = LowLevelSDK::jzkt_checkpoint();
 
-        let mut result_address = Address::default();
-        let exit_code = match salt {
-            Some(salt) => _evm_create2(
-                value.to_be_bytes::<32>().as_ptr(),
-                input.as_ptr(),
-                input.len() as u32,
-                salt.to_be_bytes::<32>().as_ptr(),
-                result_address.as_mut_ptr(),
-                gas_limit as u32,
-            ),
-            None => _evm_create(
-                value.to_be_bytes::<32>().as_ptr(),
-                input.as_ptr(),
-                input.len() as u32,
-                result_address.as_mut_ptr(),
-                gas_limit as u32,
-            ),
+        let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
+            BytecodeType::EVM => {
+                let method_id = match salt {
+                    Some(_) => EVM_CREATE2_METHOD_ID,
+                    None => EVM_CREATE_METHOD_ID,
+                };
+                let method_data = match salt {
+                    Some(salt) => EvmCreate2MethodInput {
+                        value32: value.to_be_bytes(),
+                        salt32: salt.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                    None => EvmCreateMethodInput {
+                        value32: value.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                };
+                let input = CoreInput {
+                    method_id,
+                    method_data,
+                };
+                (
+                    Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS),
+                    input.encode_to_vec(0),
+                )
+            }
+            BytecodeType::WASM => {
+                let method_id = match salt {
+                    Some(_) => WASM_CREATE2_METHOD_ID,
+                    None => WASM_CREATE_METHOD_ID,
+                };
+                let method_data = match salt {
+                    Some(salt) => WasmCreate2MethodInput {
+                        value32: value.to_be_bytes(),
+                        salt32: salt.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                    None => WasmCreateMethodInput {
+                        value32: value.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                };
+                let input = CoreInput {
+                    method_id,
+                    method_data,
+                };
+                (
+                    Account::new_from_jzkt(&WCL_CONTRACT_ADDRESS),
+                    input.encode_to_vec(0),
+                )
+            }
         };
 
-        if exit_code != ExitCode::Ok {
+        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+            checkpoint,
+            &mut gas,
+            caller_account,
+            &mut middleware_account,
+            core_input.into(),
+            value,
+        );
+
+        let created_address = if exit_code == ExitCode::Ok.into_i32() {
+            assert_eq!(
+                output_buffer.len(),
+                20,
+                "output buffer is not 20 bytes after create/create2"
+            );
+            Some(Address::from_slice(output_buffer.as_ref()))
+        } else {
             LowLevelSDK::jzkt_rollback(checkpoint);
-        }
+            None
+        };
 
         CallCreateResult {
             result: exit_code,
-            created_address: Some(result_address),
+            created_address,
             gas,
             return_value: Bytes::new(),
         }
@@ -252,7 +332,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
         input: Bytes,
         gas_limit: u64,
     ) -> CallCreateResult {
-        let gas = Gas::new(gas_limit);
+        let mut gas = Gas::new(gas_limit);
 
         // check call stack limit
         if self.depth > CALL_STACK_LIMIT {
@@ -261,18 +341,15 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
 
         let checkpoint = Account::checkpoint();
 
-        let exit_code = _evm_call(
-            gas_limit as u32,
-            callee_account.address.as_ptr(),
-            value.as_le_slice().as_ptr(),
-            input.as_ptr(),
-            input.len() as u32,
-            core::ptr::null_mut(),
-            0,
+        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+            checkpoint,
+            &mut gas,
+            caller_account,
+            callee_account,
+            input,
+            value,
         );
-        let output_size = LowLevelSDK::sys_output_size();
-        let mut output_buffer = vec![0u8; output_size as usize];
-        LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
+
         let ret = CallCreateResult {
             result: exit_code,
             created_address: None,
@@ -281,10 +358,74 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
         };
 
         // revert changes or not
-        if exit_code != ExitCode::Ok {
+        if exit_code != ExitCode::Ok.into_i32() {
             Account::rollback(checkpoint);
         }
 
         ret
+    }
+
+    fn input_from_env(
+        &self,
+        checkpoint: AccountCheckpoint,
+        gas: &Gas,
+        caller: &mut Account,
+        callee: &mut Account,
+        input: Bytes,
+        value: U256,
+    ) -> ContractInput {
+        ContractInput {
+            journal_checkpoint: checkpoint,
+            env_chain_id: self.data.env.cfg.chain_id,
+            contract_gas_limit: gas.remaining(),
+            contract_address: callee.address,
+            contract_caller: caller.address,
+            contract_input: input,
+            contract_value: value,
+            contract_is_static: false,
+            block_coinbase: self.data.env.block.coinbase,
+            block_timestamp: self.data.env.block.timestamp.as_limbs()[0],
+            block_number: self.data.env.block.number.as_limbs()[0],
+            block_difficulty: self.data.env.block.difficulty.as_limbs()[0],
+            block_gas_limit: self.data.env.block.gas_limit.as_limbs()[0],
+            block_base_fee: self.data.env.block.basefee,
+            tx_gas_price: self.data.env.tx.gas_price,
+            tx_gas_priority_fee: self.data.env.tx.gas_priority_fee,
+            tx_caller: self.data.env.tx.caller,
+        }
+    }
+
+    fn exec_rwasm_binary(
+        &mut self,
+        checkpoint: AccountCheckpoint,
+        gas: &mut Gas,
+        caller: &mut Account,
+        callee: &mut Account,
+        input: Bytes,
+        value: U256,
+    ) -> (Bytes, i32) {
+        let input = self
+            .input_from_env(checkpoint, gas, caller, callee, input, value)
+            .encode_to_vec(0);
+
+        let mut gas_limit_ref = gas.remaining() as u32;
+        let gas_limit_ref = &mut gas_limit_ref as *mut u32;
+        let exit_code = LowLevelSDK::sys_exec_hash(
+            callee.rwasm_bytecode_hash.as_ptr(),
+            input.as_ptr(),
+            input.len() as u32,
+            core::ptr::null_mut(),
+            0,
+            gas_limit_ref,
+            STATE_MAIN,
+        );
+        let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
+        gas.record_cost(gas_used);
+
+        let output_size = LowLevelSDK::sys_output_size();
+        let mut output_buffer = vec![0u8; output_size as usize];
+        LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
+
+        (output_buffer.into(), exit_code)
     }
 }

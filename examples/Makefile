@@ -1,5 +1,9 @@
 FILES = keccak256 greeting secp256k1 poseidon rwasm panic stack cairo contract_input_check_recode evm_call_from_wasm
 
+CUR_DIR="$(shell pwd)"
+OUT_FOLDER="bin"
+OUT_DIR="${CUR_DIR}/${OUT_FOLDER}"
+
 all: $(FILES) $(MANUAL)
 
 .PHONY: $(FILES)
@@ -8,6 +12,7 @@ $(FILES):
 	mkdir -p bin
 	cp ../target/wasm32-unknown-unknown/release/fluentbase_example.wasm ./bin/$@.wasm
 	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+	cd ../bin; $(MAKE) custom_file FILE_IN="$(OUT_DIR)/$@.wasm" FILE_OUT="$(OUT_DIR)/$@.rwasm"
 
 #.PHONY: $(FILES)
 #$(FILES):

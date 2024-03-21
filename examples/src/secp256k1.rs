@@ -22,7 +22,12 @@ pub fn main() {
     LowLevelSDK::sys_read(&mut pk_expected, PK_EXPECTED_OFFSET as u32);
     let mut pk_output = [0u8; PK_EXPECTED_LEN];
 
-    LowLevelSDK::crypto_ecrecover(&digest, &sig, &mut pk_output, rec_id[0]);
+    LowLevelSDK::crypto_ecrecover(
+        digest.as_ptr(),
+        sig.as_ptr(),
+        pk_output.as_mut_ptr(),
+        rec_id[0],
+    );
     if pk_expected != pk_output {
         panic!("verification failed")
     }

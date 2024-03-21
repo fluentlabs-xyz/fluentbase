@@ -3,16 +3,16 @@ use fluentbase_types::ExitCode;
 use revm_primitives::{Address, Bytes};
 
 pub(crate) struct CallCreateResult {
-    pub(crate) result: ExitCode,
+    pub(crate) result: i32,
     pub(crate) created_address: Option<Address>,
     pub(crate) gas: Gas,
     pub(crate) return_value: Bytes,
 }
 
 impl CallCreateResult {
-    pub(crate) fn from_error(result: ExitCode, gas: Gas) -> Self {
+    pub(crate) fn from_error<T: Into<i32>>(result: T, gas: Gas) -> Self {
         Self {
-            result,
+            result: result.into(),
             created_address: None,
             gas,
             return_value: Bytes::new(),
@@ -20,20 +20,18 @@ impl CallCreateResult {
     }
 }
 
-enum BytecodeType {
-    Rwasm,
-    Evm,
-    Wasm,
+#[allow(non_camel_case_types)]
+pub enum BytecodeType {
+    EVM,
+    WASM,
 }
 
 impl BytecodeType {
     pub(crate) fn from_slice(input: &[u8]) -> Self {
         if input.len() >= 4 && input[0..4] == [0x00, 0x61, 0x73, 0x6d] {
-            Self::Wasm
-        } else if input.len() >= 1 && input[0] == 0xef {
-            Self::Rwasm
+            Self::WASM
         } else {
-            Self::Evm
+            Self::EVM
         }
     }
 }

@@ -46,7 +46,6 @@ pub fn _wasm_call(
         contract_gas_limit: gas_limit as u64,
         contract_address: callee_address,
         contract_caller: ExecutionContext::contract_caller(),
-        contract_input_size: args.len() as u32,
         contract_input: Bytes::from_static(args),
         tx_caller: ExecutionContext::tx_caller(),
         ..Default::default()
