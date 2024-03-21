@@ -1,4 +1,5 @@
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_types::ExitCode;
 
 pub fn deploy() {}
 
@@ -24,7 +25,8 @@ pub fn main() {
 
     LowLevelSDK::crypto_ecrecover(&digest, &sig, &mut pk_output, rec_id[0]);
     if pk_expected != pk_output {
-        panic!("verification failed")
+        LowLevelSDK::sys_halt(ExitCode::PrecompileError.into_i32());
+        return;
     }
     LowLevelSDK::sys_write(pk_output.as_ref());
 }
