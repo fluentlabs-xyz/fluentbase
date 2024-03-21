@@ -946,6 +946,7 @@ dependencies = [
  "paste",
  "revm-interpreter",
  "revm-precompile",
+ "revm-primitives",
  "rwasm",
 ]
 

@@ -21,6 +21,7 @@ hashbrown = { workspace = true }
 revm-interpreter = { workspace = true, optional = true }
 paste = { workspace = true }
 revm-precompile = { workspace = true, optional = true }
+revm-primitives = { workspace = true }
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }

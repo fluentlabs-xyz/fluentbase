@@ -6,11 +6,7 @@ use crate::{
 };
 use core::marker::PhantomData;
 use fluentbase_codec::Encoder;
-use fluentbase_core::{
-    evm::{call::_evm_call, create::_evm_create, create2::_evm_create2},
-    Account,
-    AccountCheckpoint,
-};
+use fluentbase_core::{Account, AccountCheckpoint};
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
