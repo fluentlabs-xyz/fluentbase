@@ -45,6 +45,12 @@ macro_rules! export_and_forward {
             contracts::wcl::$fn_name();
             #[cfg(feature = "precompile_blake2")]
             precompiles::blake2::$fn_name();
+            #[cfg(feature = "precompile_identity")]
+            precompiles::identity::$fn_name();
+            #[cfg(feature = "precompile_modexp")]
+            precompiles::modexp::$fn_name();
+            #[cfg(feature = "precompile_secp256k1")]
+            precompiles::secp256k1::$fn_name();
         }
     };
 }

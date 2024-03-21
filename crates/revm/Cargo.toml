@@ -18,10 +18,10 @@ proc-macro = false
 revm-primitives = { workspace = true, default-features = false }
 
 # fluentbase
-fluentbase-codec = { path = "../codec", default-features = false }
-fluentbase-sdk = { path = "../sdk", default-features = false }
-fluentbase-types = { path = "../types", default-features = false }
-fluentbase-core = { path = "../core", default-features = false }
+fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false }
 
 # rwasm
 rwasm = { workspace = true, optional = true, default-features = false }

@@ -11,7 +11,8 @@ EVM_LOADER_CONTRACT_FEATURE_FLAG=evm_loader
 WCL_CONTRACT_DEST_NAME=wcl_contract
 WCL_CONTRACT_FEATURE_FLAG=wcl
 CUR_DIR="$(shell pwd)"
-OUT_DIR="${CUR_DIR}/assets"
+OUT_FOLDER="assets"
+OUT_DIR="${CUR_DIR}/${OUT_FOLDER}"
 
 .PHONY: build
 all: build
