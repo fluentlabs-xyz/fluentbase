@@ -15,7 +15,7 @@ pub trait LowLevelAPI {
     fn sys_input_size() -> u32;
     fn sys_write(value: &[u8]);
     fn sys_forward_output(offset: u32, len: u32);
-    fn sys_halt(exit_code: i32) -> !;
+    fn sys_halt(exit_code: i32);
     fn sys_output_size() -> u32;
     fn sys_read_output(target: *mut u8, offset: u32, length: u32);
     fn sys_state() -> u32;
