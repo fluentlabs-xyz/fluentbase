@@ -56,7 +56,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn sys_halt(exit_code: i32) {
+    fn sys_halt(exit_code: i32) -> ! {
         unsafe { _sys_halt(exit_code) }
     }
 

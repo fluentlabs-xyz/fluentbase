@@ -121,7 +121,7 @@ impl LowLevelAPI for LowLevelSDK {
         with_context_mut(|ctx| SysForwardOutput::fn_impl(ctx, offset, len)).unwrap()
     }
 
-    fn sys_halt(exit_code: i32) {
+    fn sys_halt(exit_code: i32) -> ! {
         with_context_mut(|ctx| SysHalt::fn_impl(ctx, exit_code))
     }
 

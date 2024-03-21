@@ -36,6 +36,7 @@ pub enum ExitCode {
     EVMCallError = -1022,
     EVMCallRevert = -1023,
     EVMNotFound = -1024,
+    PrecompileError = -1025,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
