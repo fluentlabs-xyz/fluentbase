@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-runtime = { workspace = true }
-fluentbase-sdk = { workspace = true, default-features = false, features = ["runtime"] }
+fluentbase-sdk = { workspace = true, default-features = false, features = ["std"] }
 fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
 fluentbase-core = { workspace = true }

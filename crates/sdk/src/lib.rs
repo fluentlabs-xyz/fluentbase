@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "runtime"), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(unused_crate_dependencies)]
 
 extern crate alloc;
@@ -12,11 +12,11 @@ mod sdk;
 
 pub use sdk::LowLevelAPI;
 
-#[cfg(not(feature = "runtime"))]
+#[cfg(not(feature = "std"))]
 mod bindings;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "std")]
 mod runtime;
-#[cfg(not(feature = "runtime"))]
+#[cfg(not(feature = "std"))]
 mod rwasm;
 mod types;
 

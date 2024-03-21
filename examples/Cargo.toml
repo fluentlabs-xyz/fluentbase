@@ -38,7 +38,7 @@ crate-type = ["cdylib", "staticlib"]
 [features]
 default = []
 std = [
-    "fluentbase-sdk/runtime"
+    "fluentbase-sdk/std"
 ]
 erc20 = []
 greeting = []
