@@ -151,15 +151,13 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
-        unsafe {
-            _crypto_ecrecover(
-                digest.as_ptr(),
-                sig.as_ptr(),
-                output.as_mut_ptr(),
-                rec_id as u32,
-            )
-        }
+    fn crypto_ecrecover(
+        digest32_ptr: *const u8,
+        sig64_ptr: *const u8,
+        output65_ptr: *mut u8,
+        rec_id: u8,
+    ) {
+        unsafe { _crypto_ecrecover(digest32_ptr, sig64_ptr, output65_ptr, rec_id as u32) }
     }
 
     #[inline(always)]
