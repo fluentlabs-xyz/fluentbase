@@ -8,7 +8,6 @@ use crate::{
     core::utils::{generate_address_original_impl, TestingContext},
 };
 use fluentbase_core::{
-    account::Account,
     evm::{
         address::_evm_address,
         balance::_evm_balance,
@@ -18,6 +17,7 @@ use fluentbase_core::{
         selfbalance::_evm_self_balance,
     },
     helpers::{calc_create2_address, calc_create_address},
+    Account,
 };
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{address, Bytes, ExitCode, B256, U256};

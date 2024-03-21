@@ -8,14 +8,26 @@ extern crate paste;
 
 pub use fluentbase_types::ExitCode;
 
-pub mod account;
-pub mod account_types;
+mod account;
+pub use account::*;
+mod account_types;
+pub use account_types::*;
+#[cfg(feature = "ecl")]
 pub mod evm;
 
 pub mod consts;
 mod contracts;
+#[cfg(feature = "ecl")]
 pub mod fluent_host;
 pub mod helpers;
+#[cfg(any(
+    feature = "precompile_blake2",
+    feature = "precompile_bn128",
+    feature = "precompile_identity",
+    feature = "precompile_kzg_point_evaluation",
+    feature = "precompile_modexp",
+    feature = "precompile_secp256k1",
+))]
 pub mod precompiles;
 mod utils;
 pub mod wasm;

@@ -2,9 +2,13 @@ use crate::{
     account::Account,
     helpers::{calc_create2_address, read_address_from_input, rwasm_exec_hash, wasm2rwasm},
 };
-use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
+use core::ptr;
+use fluentbase_sdk::{
+    evm::{ContractInput, ExecutionContext, IContractInput, U256},
+    LowLevelAPI,
+    LowLevelSDK,
+};
 use fluentbase_types::{ExitCode, B256};
-use revm_interpreter::primitives::{alloy_primitives, Bytecode};
 
 #[no_mangle]
 pub fn _wasm_create2(
@@ -30,14 +34,16 @@ pub fn _wasm_create2(
         read_address_from_input(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&caller_address);
-    let bytecode = unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let bytecode_bytes = alloy_primitives::Bytes::from_static(bytecode);
-    let deployer_bytecode = Bytecode::new_raw(bytecode_bytes);
-    let deployed_contract_address = calc_create2_address(
-        &caller_address,
-        &salt,
-        &B256::from_slice(deployer_bytecode.hash_slow().as_slice()),
+
+    let init_code = unsafe { &*ptr::slice_from_raw_parts(code_offset, code_length as usize) };
+    let mut init_code_hash = B256::ZERO;
+    LowLevelSDK::crypto_keccak256(
+        init_code.as_ptr(),
+        init_code.len() as u32,
+        init_code_hash.as_mut_ptr(),
     );
+
+    let deployed_contract_address = calc_create2_address(&caller_address, &salt, &init_code_hash);
     let mut contract_account = Account::new_from_jzkt(&deployed_contract_address);
     // if nonce or code is not empty then its collision
     if contract_account.is_not_empty() {
@@ -51,15 +57,13 @@ pub fn _wasm_create2(
     }
 
     // translate WASM to rWASM
-    let bytecode_wasm =
-        unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let bytecode_rwasm = wasm2rwasm(bytecode_wasm).unwrap();
+    let bytecode_rwasm = wasm2rwasm(init_code).unwrap();
 
     // write deployer to the trie
     deployer_account.write_to_jzkt();
 
     // write contract to the trie
-    contract_account.update_source_bytecode(&bytecode_wasm.into());
+    contract_account.update_source_bytecode(&init_code.into());
     contract_account.update_rwasm_bytecode(&bytecode_rwasm.into());
     rwasm_exec_hash(
         contract_account.rwasm_bytecode_hash.as_slice(),

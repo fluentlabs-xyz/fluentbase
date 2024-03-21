@@ -1,8 +1,8 @@
 use crate::{gas::Gas, handler::Handler, types::CallCreateResult, EVMData};
 use core::marker::PhantomData;
 use fluentbase_core::{
-    account::Account,
     evm::{call::_evm_call, create::_evm_create, create2::_evm_create2},
+    Account,
 };
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, ExitCode, U256};

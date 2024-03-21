@@ -5,8 +5,7 @@ use fluentbase_sdk::{
     LowLevelAPI,
     LowLevelSDK,
 };
-use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
-use revm_interpreter::primitives::Address;
+use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN};
 
 #[no_mangle]
 pub fn _wasm_call(
@@ -16,27 +15,36 @@ pub fn _wasm_call(
     args_offset: *const u8,
     args_size: u32,
 ) -> ExitCode {
+    // parse input value
     let value =
         U256::from_be_slice(unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) });
+    // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
     if is_static && value != U256::ZERO {
         return ExitCode::WriteProtection;
     }
+    // parse args
     let args = unsafe { &*core::ptr::slice_from_raw_parts(args_offset, args_size as usize) };
-
+    // parse callee address
     let callee_address = Address::from_slice(unsafe {
         &*core::ptr::slice_from_raw_parts(callee_address20_offset, 20)
     });
+    let mut callee_account = Account::new_from_jzkt(&callee_address);
+    // read caller address from execution context
+    let caller_address = ExecutionContext::contract_caller();
+    let mut caller_account = Account::new_from_jzkt(&caller_address);
+    // if value is not zero then transfer funds from one account to another
+    if value != U256::ZERO {
+        match Account::transfer(&mut caller_account, &mut callee_account, value) {
+            Ok(_) => {}
+            Err(exit_code) => return exit_code,
+        }
+    };
 
-    let callee_account = Account::new_from_jzkt(&fluentbase_types::Address::from_slice(
-        callee_address.as_slice(),
-    ));
-
-    let contract_address = ExecutionContext::contract_address();
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
-        contract_address,
+        contract_address: callee_address,
         contract_caller: ExecutionContext::contract_caller(),
         contract_input_size: args.len() as u32,
         contract_input: Bytes::from_static(args),

@@ -14,6 +14,8 @@ pub mod handler;
 mod r#impl;
 
 mod gas;
+#[cfg(test)]
+mod test;
 mod types;
 
 pub use context::EVMData;

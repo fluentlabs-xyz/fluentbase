@@ -24,10 +24,12 @@ build: build_all_contracts
 build_wasm_main:
 	mkdir -p $(OUT_DIR)
 	touch "$(FILE_IN)"
-	cargo b --release --target=${TARGET} --features="$(FEATURES)" --no-default-features
-	clang stack.s -c --target=${TARGET}
-	wasm-ld --allow-undefined --static --no-entry --export=main --strip-all --stack-first ../../target/${TARGET}/${PROFILE}/${SOURCE_LIB_NAME}.a stack.o -o "$(FILE_IN)"
-	rm stack.o
+	RUSTFLAGS='-C link-arg=-zstack-size=65536 -C target-feature=+bulk-memory' cargo b --release --target=${TARGET} --features="$(FEATURES)" --no-default-features
+	cp ../../target/${TARGET}/${PROFILE}/${SOURCE_NAME}.wasm "$(FILE_IN)"
+	#clang stack.s -c --target=${TARGET}
+	# --strip-all
+	#wasm-ld --allow-undefined --static --no-entry --export=main --stack-first ../../target/${TARGET}/${PROFILE}/${SOURCE_LIB_NAME}.a stack.o -o "$(FILE_IN)"
+	#rm stack.o
 
 .PHONY: ${PRECOMPILES}
 ${PRECOMPILES}:

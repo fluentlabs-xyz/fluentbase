@@ -922,15 +922,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-codec-derive"
-version = "0.1.0"
-dependencies = [
- "quote",
- "serde",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "fluentbase-contracts"
 version = "0.1.0"
 dependencies = [
@@ -1036,10 +1027,19 @@ dependencies = [
  "byteorder",
  "bytes",
  "clap",
- "fluentbase-contracts",
+ "fluentbase-core",
  "fluentbase-types",
  "hashbrown",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fluentbase-genesis-bin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "fluentbase-genesis",
  "serde_json",
 ]
 
@@ -1061,6 +1061,7 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "fluentbase-core",
+ "fluentbase-genesis",
  "fluentbase-sdk",
  "fluentbase-types",
  "revm-primitives",
@@ -1988,7 +1989,7 @@ checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#228dacec0b00fcc55cfa57185d5c1a08bff82580"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9f9916239deb3f3dff1acb47a2ed23b349360176"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -1997,7 +1998,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#228dacec0b00fcc55cfa57185d5c1a08bff82580"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9f9916239deb3f3dff1acb47a2ed23b349360176"
 dependencies = [
  "aurora-engine-modexp",
  "k256",
@@ -2011,7 +2012,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#228dacec0b00fcc55cfa57185d5c1a08bff82580"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#9f9916239deb3f3dff1acb47a2ed23b349360176"
 dependencies = [
  "alloy-primitives",
  "auto_impl",

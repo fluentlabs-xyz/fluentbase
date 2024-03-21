@@ -2,12 +2,14 @@
 members = [
     "bin",
     "crates/*",
+    "crates/genesis/bin",
     "e2e",
     "examples",
 ]
 exclude = [
-    "crates/code-snippets",
-    "crates/rwasm-evm",
+    "crates/evm",
+    "crates/evm/evm-rwasm",
+    "crates/evm/evm-snippets",
 ]
 resolver = "2"
 
@@ -24,7 +26,6 @@ categories = ["wasm", "no-std", "virtualization"]
 
 [workspace.dependencies]
 fluentbase-types = { path = "./crates/types", default-features = false }
-fluentbase-contracts = { path = "./crates/contracts", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
@@ -33,6 +34,7 @@ fluentbase-core-macros = { path = "./crates/core-macros", default-features = fal
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
+fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
@@ -56,7 +58,7 @@ codegen-units = 1
 panic = "abort"
 lto = true
 opt-level = 3
-strip = true
+strip = false
 debug = false
 debug-assertions = false
 rpath = false

@@ -10,7 +10,7 @@ PROFILE=release
 
 .PHONY: generate_genesis
 generate_genesis:
-	cargo run -- $(OPTIONS)
+	cargo run --package fluentbase-genesis-bin --bin fluentbase-genesis-bin -- $(OPTIONS)
 
 .PHONY: generate_devnet_genesis
 generate_devnet_genesis:
