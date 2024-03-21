@@ -90,9 +90,9 @@ mod tests {
         api::CoreInput,
         bindings::{WasmCreateMethodInput, WASM_CREATE_METHOD_ID},
     };
-    use fluentbase_runtime::{zktrie::ZkTrieStateDb, JournaledTrie};
+    use fluentbase_runtime::{types::InMemoryTrieDb, zktrie::ZkTrieStateDb, JournaledTrie};
     use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
-    use fluentbase_types::{Address, Bytes, InMemoryTrieDb};
+    use fluentbase_types::{Address, Bytes};
 
     #[test]
     fn test_greeting_deploy() {

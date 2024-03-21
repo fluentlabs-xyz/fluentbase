@@ -1,8 +1,8 @@
 use crate::core::utils::TestingContext;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
-    account::Account,
     helpers::{calc_create2_address, calc_create_address, wasm2rwasm},
+    Account,
 };
 use fluentbase_core_api::{
     api::CoreInput,

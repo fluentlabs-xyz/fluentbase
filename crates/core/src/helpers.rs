@@ -17,14 +17,14 @@ use fluentbase_types::{
     STATE_MAIN,
     U256,
 };
-use revm_interpreter::primitives::ShanghaiSpec;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
     Error,
 };
 
-pub type DefaultEvmSpec = ShanghaiSpec;
+#[cfg(feature = "ecl")]
+pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
 #[inline]
 pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {

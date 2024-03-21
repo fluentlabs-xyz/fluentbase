@@ -9,16 +9,12 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-[[bin]]
-name = "genesis"
-path = "src/main.rs"
-
 [lib]
 crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
 fluentbase-types = { workspace = true, default-features = false }
-fluentbase-contracts = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false }
 clap = { version = "4.4.11", features = ["derive"] }
 serde = { workspace = true, default-features = false, features = [] }
 serde_json = { version = "1.0.114" }
@@ -32,5 +28,5 @@ hashbrown.workspace = true
 default = ["std"]
 std = [
     "fluentbase-types/std",
-    "fluentbase-contracts/std"
+    "fluentbase-core/std",
 ]

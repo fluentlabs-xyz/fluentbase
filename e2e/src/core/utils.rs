@@ -1,7 +1,7 @@
 use alloc::{rc::Rc, vec};
 use core::cell::RefCell;
 use fluentbase_codec::Encoder;
-use fluentbase_core::{account::Account, account_types::JZKT_COMPRESSION_FLAGS};
+use fluentbase_core::{Account, JZKT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{
     types::InMemoryTrieDb,
     zktrie::ZkTrieStateDb,

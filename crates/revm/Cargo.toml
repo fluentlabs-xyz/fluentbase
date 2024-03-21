@@ -30,6 +30,9 @@ rwasm = { workspace = true, optional = true, default-features = false }
 auto_impl = { version = "1.1", default-features = false }
 byteorder = { workspace = true, default-features = false }
 
+[dev-dependencies]
+fluentbase-genesis = { workspace = true }
+
 [features]
 default = ["std"]
 std = ["fluentbase-sdk/std", "revm-primitives/std"]

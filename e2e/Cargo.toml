@@ -14,7 +14,7 @@ fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true, default-features = false, features = ["std"] }
 fluentbase-poseidon = { workspace = true }
 fluentbase-codec = { workspace = true }
-fluentbase-core = { workspace = true }
+fluentbase-core = { workspace = true, features = ["ecl", "wcl"] }
 fluentbase-types = { workspace = true }
 fluentbase-core-api = { workspace = true }
 rwasm = { workspace = true, default-features = false }

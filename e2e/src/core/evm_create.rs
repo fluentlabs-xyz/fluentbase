@@ -7,9 +7,9 @@ use crate::{
 };
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
-    account::Account,
     consts::ECL_CONTRACT_ADDRESS,
     helpers::{calc_create_address, wasm2rwasm},
+    Account,
 };
 use fluentbase_core_api::{
     api::CoreInput,
