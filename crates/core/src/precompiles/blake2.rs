@@ -1,5 +1,5 @@
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{Bytes, ExitCode};
 use revm_interpreter::primitives::PrecompileError;
 
 pub fn deploy() {}
@@ -14,9 +14,11 @@ pub fn main() {
         Err(err) => match err {
             PrecompileError::OutOfGas => {
                 LowLevelSDK::sys_halt(ExitCode::OutOfFuel.into_i32());
+                Bytes::new()
             }
             _ => {
                 LowLevelSDK::sys_halt(ExitCode::PrecompileError.into_i32());
+                Bytes::new()
             }
         },
     };
