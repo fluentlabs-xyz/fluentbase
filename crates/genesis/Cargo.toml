@@ -29,3 +29,8 @@ bytes = { workspace = true }
 hashbrown.workspace = true
 
 [features]
+default = ["std"]
+std = [
+    "fluentbase-types/std",
+    "fluentbase-contracts/std"
+]

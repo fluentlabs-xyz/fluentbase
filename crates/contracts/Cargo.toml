@@ -15,3 +15,10 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fluentbase-core = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-core/std",
+    "fluentbase-types/std",
+]

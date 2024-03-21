@@ -18,11 +18,9 @@ lol_alloc = { version = "0.4.0" }
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std", "runtime"]
+default = ["std"]
 std = [
     "fluentbase-codec/std",
-]
-runtime = [
     "dep:fluentbase-runtime",
     "dep:byteorder",
 ]

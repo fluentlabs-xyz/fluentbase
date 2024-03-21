@@ -24,7 +24,7 @@ revm-precompile = { workspace = true }
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }
-fluentbase-sdk = { workspace = true, default-features = false, features = ["runtime"] }
+fluentbase-sdk = { workspace = true, default-features = false }
 keccak-hash = { version = "0.10.0" }
 hex = { version = "0.4.3" }
 
@@ -34,7 +34,7 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/runtime",
+    "fluentbase-sdk/std",
     "fluentbase-types/std",
     "revm-interpreter/std",
     "byteorder/std",

@@ -33,9 +33,9 @@ hex = { version = "0.4.3" }
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["std"]
 std = [
-    "fluentbase-sdk/runtime",
+    "fluentbase-sdk/std",
     "fluentbase-types/std",
     "byteorder/std",
     "alloy-rlp/std",

@@ -32,7 +32,7 @@ byteorder = { workspace = true, default-features = false }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/runtime"]
+std = ["fluentbase-sdk/std", "revm-primitives/std"]
 serde = []
 arbitrary = []
 sdk = []
