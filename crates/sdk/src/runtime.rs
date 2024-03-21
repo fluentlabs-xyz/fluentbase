@@ -99,7 +99,15 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8) {
+    fn crypto_ecrecover(
+        digest32_ptr: *const u8,
+        sig64_ptr: *const u8,
+        output65_ptr: *mut u8,
+        rec_id: u8,
+    ) {
+        let digest = unsafe { &*core::ptr::slice_from_raw_parts(digest32_ptr, 32) };
+        let sig = unsafe { &*core::ptr::slice_from_raw_parts(sig64_ptr, 64) };
+        let output = unsafe { &mut *core::ptr::slice_from_raw_parts_mut(output65_ptr, 65) };
         let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
         output.copy_from_slice(&result);
     }

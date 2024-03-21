@@ -42,6 +42,7 @@ mod secp256k1_tests {
 
     use crate::instruction::crypto_ecrecover::CryptoEcrecover;
     use hex_literal::hex;
+    use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
     use sha2::{Digest, Sha256};
 
     struct RecoveryTestVector {
@@ -83,9 +84,13 @@ mod secp256k1_tests {
             params_vec.push(vector.rec_id as u8);
             params_vec.extend(&vector.pk);
 
-            let _ = CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32);
-            // &vector.pk;
-            // assert_eq!(res, true);
+            let public_key = PublicKey::from_sec1_bytes(&vector.pk).unwrap();
+            let pk_uncompressed = public_key.to_encoded_point(false);
+            let mut pk = [0u8; 65];
+            pk.copy_from_slice(pk_uncompressed.as_bytes());
+
+            let result = CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32);
+            assert_eq!(result, pk);
         }
     }
 }

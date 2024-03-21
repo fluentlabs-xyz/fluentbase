@@ -9,7 +9,12 @@ pub trait LowLevelAPI {
         fd32_data: &Bytes32,
         output32: &mut [u8],
     );
-    fn crypto_ecrecover(digest: &[u8], sig: &[u8], output: &mut [u8], rec_id: u8);
+    fn crypto_ecrecover(
+        digest32_ptr: *const u8,
+        sig65_ptr: *const u8,
+        output65_ptr: *mut u8,
+        rec_id: u8,
+    );
 
     fn sys_read(target: &mut [u8], offset: u32);
     fn sys_input_size() -> u32;
