@@ -14,11 +14,9 @@ define_codec_struct! {
         contract_address: Address,
         contract_caller: Address,
         contract_input: Bytes,
-        contract_input_size: u32,
         contract_value: U256,
         contract_is_static: bool,
         // block info
-        block_hash: B256,
         block_coinbase: Address,
         block_timestamp: u64,
         block_number: u64,
@@ -58,6 +56,13 @@ macro_rules! impl_reader_helper {
         }
         result
     };
+    (@size $input_type:ty, $return_typ:ty) => {
+        let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
+        LowLevelSDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
+        let mut result: $return_typ = Default::default();
+        let (_, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+        length as u32
+    };
 }
 macro_rules! impl_reader_func {
     (fn $fn_name:ident() -> $return_typ:ty, $input_type:ty) => {
@@ -84,6 +89,10 @@ macro_rules! impl_reader_func {
             pub fn $fn_name() -> $return_typ {
                 impl_reader_helper!{@dynamic $input_type, $return_typ}
             }
+            #[inline(always)]
+            pub fn [<$fn_name _size>]() -> u32 {
+                impl_reader_helper!{@size $input_type, $return_typ}
+            }
         }
     };
 }
@@ -101,11 +110,9 @@ impl ExecutionContext {
     impl_reader_func!(fn contract_address() -> Address, <ContractInput as IContractInput>::ContractAddress);
     impl_reader_func!(fn contract_caller() -> Address, <ContractInput as IContractInput>::ContractCaller);
     impl_reader_func!(@dynamic fn contract_input() -> Bytes, <ContractInput as IContractInput>::ContractInput);
-    impl_reader_func!(fn contract_input_size() -> u32, <ContractInput as IContractInput>::ContractInputSize);
     impl_reader_func!(fn contract_value() -> U256, <ContractInput as IContractInput>::ContractValue);
     impl_reader_func!(fn contract_is_static() -> bool, <ContractInput as IContractInput>::ContractIsStatic);
     // block info
-    impl_reader_func!(fn block_hash() -> B256, <ContractInput as IContractInput>::BlockHash);
     impl_reader_func!(fn block_coinbase() -> Address, <ContractInput as IContractInput>::BlockCoinbase);
     impl_reader_func!(fn block_timestamp() -> u64, <ContractInput as IContractInput>::BlockTimestamp);
     impl_reader_func!(fn block_number() -> u64, <ContractInput as IContractInput>::BlockNumber);

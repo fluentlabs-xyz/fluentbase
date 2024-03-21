@@ -3,6 +3,7 @@ use crate::{
     Genesis,
     GenesisAccount,
     ECL_CONTRACT_ADDRESS,
+    EXAMPLE_GREETING_ADDRESS,
     PRECOMPILE_BLAKE2_ADDRESS,
     WCL_CONTRACT_ADDRESS,
 };
@@ -40,6 +41,10 @@ pub fn devnet_genesis() -> Genesis {
     enable_rwasm_contract!(
         PRECOMPILE_BLAKE2_ADDRESS,
         "../../contracts/assets/precompile_blake2.rwasm"
+    );
+    enable_rwasm_contract!(
+        EXAMPLE_GREETING_ADDRESS,
+        "../../../examples/bin/greeting.rwasm"
     );
     Genesis {
         config: devnet_chain_config(),

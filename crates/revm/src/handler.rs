@@ -11,7 +11,7 @@ use revm_primitives::{
 };
 
 /// Handle call return and return final gas value.
-type CallReturnHandle = fn(&Env, ExitCode, Gas) -> Gas;
+type CallReturnHandle = fn(&Env, i32, Gas) -> Gas;
 
 /// Reimburse the caller with ethereum it didn't spent.
 type ReimburseCallerHandle = fn(&mut EVMData<'_>, &Gas) -> EVMResultGeneric<(), ExitCode>;
@@ -24,7 +24,7 @@ type CalculateGasRefundHandle = fn(&Env, &Gas) -> u64;
 
 /// Main return handle, takes state from journal and transforms internal result to external.
 type MainReturnHandle =
-    fn(&mut EVMData<'_>, ExitCode, Output, &Gas) -> Result<ResultAndState, EVMError<ExitCode>>;
+    fn(&mut EVMData<'_>, i32, Output, &Gas) -> Result<ResultAndState, EVMError<ExitCode>>;
 
 /// End handle, takes result and state and returns final result.
 /// This will be called after all the other handlers.
@@ -69,7 +69,7 @@ impl Handler {
     }
 
     /// Handle call return, depending on instruction result gas will be reimbursed or not.
-    pub fn call_return(&self, env: &Env, call_result: ExitCode, returned_gas: Gas) -> Gas {
+    pub fn call_return(&self, env: &Env, call_result: i32, returned_gas: Gas) -> Gas {
         (self.call_return)(env, call_result, returned_gas)
     }
 
@@ -100,7 +100,7 @@ impl Handler {
     pub fn main_return(
         &self,
         data: &mut EVMData<'_>,
-        call_result: ExitCode,
+        call_result: i32,
         output: Output,
         gas: &Gas,
     ) -> Result<ResultAndState, EVMError<ExitCode>> {
@@ -139,7 +139,7 @@ mod mainnet {
     #[inline]
     pub(crate) fn handle_call_return<SPEC: Spec>(
         env: &Env,
-        call_result: ExitCode,
+        call_result: i32,
         returned_gas: Gas,
     ) -> Gas {
         let mut gas = Gas::new(env.tx.gas_limit);
@@ -147,7 +147,7 @@ mod mainnet {
         // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
         gas.record_cost(tx_gas_limit);
 
-        if call_result.is_ok() {
+        if call_result == ExitCode::Ok.into_i32() {
             gas.erase_cost(returned_gas.remaining());
             gas.record_refund(returned_gas.refunded());
         } else {
@@ -232,7 +232,7 @@ mod mainnet {
     #[inline]
     pub(crate) fn main_return(
         _data: &mut EVMData<'_>,
-        call_result: ExitCode,
+        call_result: i32,
         output: Output,
         gas: &Gas,
     ) -> Result<ResultAndState, EVMError<ExitCode>> {
@@ -241,14 +241,14 @@ mod mainnet {
         let final_gas_used = gas.spend() - gas_refunded;
 
         let result = match call_result {
-            ExitCode::Ok => ExecutionResult::Success {
+            0 => ExecutionResult::Success {
                 reason: SuccessReason::Return,
                 gas_used: final_gas_used,
                 gas_refunded,
                 logs: vec![],
                 output,
             },
-            ExitCode::Panic => ExecutionResult::Revert {
+            -71 => ExecutionResult::Revert {
                 gas_used: final_gas_used,
                 output: match output {
                     Output::Call(return_value) => return_value,
@@ -286,7 +286,8 @@ mod mainnet {
             let mut env = Env::default();
             env.tx.gas_limit = 100;
 
-            let gas = handle_call_return::<SpecDefault>(&env, ExitCode::Ok, Gas::new(90));
+            let gas =
+                handle_call_return::<SpecDefault>(&env, ExitCode::Ok.into_i32(), Gas::new(90));
             assert_eq!(gas.remaining(), 90);
             assert_eq!(gas.spend(), 10);
             assert_eq!(gas.refunded(), 0);
@@ -300,12 +301,13 @@ mod mainnet {
             let mut return_gas = Gas::new(90);
             return_gas.record_refund(30);
 
-            let gas = handle_call_return::<SpecDefault>(&env, ExitCode::Ok, return_gas);
+            let gas = handle_call_return::<SpecDefault>(&env, ExitCode::Ok.into_i32(), return_gas);
             assert_eq!(gas.remaining(), 90);
             assert_eq!(gas.spend(), 10);
             assert_eq!(gas.refunded(), 30);
 
-            let gas = handle_call_return::<SpecDefault>(&env, ExitCode::Panic, return_gas);
+            let gas =
+                handle_call_return::<SpecDefault>(&env, ExitCode::Panic.into_i32(), return_gas);
             assert_eq!(gas.remaining(), 90);
             assert_eq!(gas.spend(), 10);
             assert_eq!(gas.refunded(), 0);
@@ -316,7 +318,8 @@ mod mainnet {
             let mut env = Env::default();
             env.tx.gas_limit = 100;
 
-            let gas = handle_call_return::<SpecDefault>(&env, ExitCode::Panic, Gas::new(90));
+            let gas =
+                handle_call_return::<SpecDefault>(&env, ExitCode::Panic.into_i32(), Gas::new(90));
             assert_eq!(gas.remaining(), 90);
             assert_eq!(gas.spend(), 10);
             assert_eq!(gas.refunded(), 0);

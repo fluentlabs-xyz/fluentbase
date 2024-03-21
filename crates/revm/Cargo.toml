@@ -20,8 +20,10 @@ revm-primitives = { workspace = true, default-features = false }
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-genesis = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-core-api = { workspace = true, default-features = false }
 
 # rwasm
 rwasm = { workspace = true, optional = true, default-features = false }
@@ -31,11 +33,15 @@ auto_impl = { version = "1.1", default-features = false }
 byteorder = { workspace = true, default-features = false }
 
 [dev-dependencies]
-fluentbase-genesis = { workspace = true }
+fluentbase-runtime = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-primitives/std"]
+std = [
+    "fluentbase-sdk/std",
+    "fluentbase-genesis/std",
+    "revm-primitives/std",
+]
 serde = []
 arbitrary = []
 sdk = []

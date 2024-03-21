@@ -16,4 +16,7 @@ pub const PRECOMPILE_MODEXP_ADDRESS: Address = address!("00000000000000000000000
 pub const PRECOMPILE_SECP256K1_ADDRESS: Address =
     address!("0000000000000000000000000000000000000006");
 
+// example
+pub const EXAMPLE_GREETING_ADDRESS: Address = address!("5300000000000000000000000000000000000001");
+
 pub use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
