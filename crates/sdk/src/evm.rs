@@ -172,7 +172,6 @@ mod test {
         // encode input and put into global var
         let contract_input = ContractInput {
             contract_input: Bytes::from_static(&[0, 1, 2, 3]),
-            block_hash: B256::from(U256::from(7)),
             ..Default::default()
         };
         let encoded_input = contract_input.encode_to_vec(0);
@@ -180,7 +179,5 @@ mod test {
         // read input fields
         let input = ExecutionContext::contract_input();
         assert_eq!(input, contract_input.contract_input);
-        let block_hash = ExecutionContext::block_hash();
-        assert_eq!(block_hash, contract_input.block_hash);
     }
 }

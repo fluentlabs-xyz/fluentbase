@@ -40,7 +40,6 @@ fn test_wasm_create() {
     // };
 
     let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
 
     let wasm_bytecode = include_bytes!("../../../examples/bin/greeting.wasm");
@@ -65,9 +64,7 @@ fn test_wasm_create() {
         .contract_input_wrapper
         .set_journal_checkpoint(jzkt.borrow_mut().checkpoint().to_u64())
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
-        .set_contract_input_size(core_input_vec.len() as u32)
         .set_contract_caller(caller_address)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
@@ -135,7 +132,6 @@ fn test_wasm_create2() {
                 .to_u64(),
         )
         .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
-        .set_contract_input_size(core_input_vec.len() as u32)
         .set_contract_caller(caller_address)
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
@@ -203,7 +199,6 @@ fn test_wasm_call_after_create() {
             )
             .set_contract_caller(caller_address)
             .set_contract_input(Bytes::copy_from_slice(&core_input_vec))
-            .set_contract_input_size(core_input_vec.len() as u32)
             .set_block_coinbase(block_coinbase);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
@@ -255,7 +250,6 @@ fn test_wasm_call_after_create() {
             )
             .set_contract_address(deployed_contract_address)
             .set_contract_input(Bytes::copy_from_slice(&ecl_core_input_vec))
-            .set_contract_input_size(ecl_core_input_vec.len() as u32)
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
 

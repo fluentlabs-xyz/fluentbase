@@ -48,9 +48,11 @@ fn test_simple_greeting() {
     let _ctx = TestingContext::default();
     let mut env = Env::default();
     env.tx.transact_to = TransactTo::Call(EXAMPLE_GREETING_ADDRESS);
+    env.tx.gas_limit = 3_000_000;
     let mut evm = EVM::with_env(env);
     let result = evm.transact().unwrap();
     assert!(result.result.is_success());
+    println!("gas used (call): {}", result.result.gas_used());
     let bytes = result.result.output().unwrap_or_default();
     assert_eq!(
         "Hello, World",
@@ -67,16 +69,20 @@ fn test_deploy_greeting() {
     env.tx.caller = DEPLOYER_ADDRESS;
     env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
     env.tx.data = include_bytes!("../../../examples/bin/greeting.wasm").into();
+    env.tx.gas_limit = 3_000_000;
     let mut evm = EVM::with_env(env);
     let result = evm.transact().unwrap();
     assert!(result.result.is_success());
+    println!("gas used (deploy): {}", result.result.gas_used());
     let contract_address = calc_create_address(&DEPLOYER_ADDRESS, 0);
     // call greeting WASM contract
     let mut env = Env::default();
     env.tx.transact_to = TransactTo::Call(contract_address);
+    env.tx.gas_limit = 10_000_000;
     let mut evm = EVM::with_env(env);
     let result = evm.transact().unwrap();
     assert!(result.result.is_success());
+    println!("gas used (call): {}", result.result.gas_used());
     let bytes = result.result.output().unwrap_or_default();
     assert_eq!(
         "Hello, World",
