@@ -8,7 +8,8 @@ pub fn main() {
     let input = ExecutionContext::contract_input();
     let gas_limit = ExecutionContext::contract_gas_limit();
 
-    let result = match revm_precompile::blake2::run(&input, gas_limit) {
+    let result = revm_precompile::blake2::run(&input, gas_limit);
+    let result = match result {
         Ok((_, result)) => result,
         Err(err) => match err {
             PrecompileError::OutOfGas => {
