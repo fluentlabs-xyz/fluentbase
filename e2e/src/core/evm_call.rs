@@ -113,7 +113,6 @@ fn evm_create_test() {
     };
 
     let expected_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -127,12 +126,10 @@ fn evm_create_test() {
         .contract_input_wrapper
         .set_journal_checkpoint(LowLevelSDK::jzkt_checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_contract_input_size(contract_input_data_bytes.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -164,7 +161,6 @@ fn evm_call_after_create_test() {
     };
 
     let computed_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -177,12 +173,10 @@ fn evm_call_after_create_test() {
     test_ctx
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_contract_input_size(contract_input_data_bytes.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -243,7 +237,6 @@ fn evm_call_after_create2_test() {
     let salt = B256::left_padding_from(hex!("bc162382638a").as_slice());
     let computed_contract_address =
         calc_create2_address(&caller_address, &salt, &contract_bytecode_hash);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -256,12 +249,10 @@ fn evm_call_after_create2_test() {
         .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_contract_input_size(contract_input_data_bytes.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -317,7 +308,6 @@ fn evm_balance_test() {
     };
 
     let expected_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -331,7 +321,6 @@ fn evm_balance_test() {
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -357,7 +346,6 @@ fn evm_selfbalance_test() {
         ..Default::default()
     };
 
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -371,7 +359,6 @@ fn evm_selfbalance_test() {
         .set_contract_address(caller_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -395,7 +382,6 @@ fn evm_address_test() {
         ..Default::default()
     };
 
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -409,7 +395,6 @@ fn evm_address_test() {
         .set_contract_address(contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -432,7 +417,6 @@ fn evm_selfbalance_from_contract_call_test() {
     };
 
     let computed_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -445,12 +429,10 @@ fn evm_selfbalance_from_contract_call_test() {
         .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_contract_input_size(contract_input_data_bytes.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
@@ -509,7 +491,6 @@ fn evm_balance_from_contract_call_test() {
     };
 
     let computed_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -522,12 +503,10 @@ fn evm_balance_from_contract_call_test() {
     test_ctx
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_contract_input_size(contract_input_data_bytes.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);

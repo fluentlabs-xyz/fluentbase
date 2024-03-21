@@ -1,6 +1,6 @@
 use alloc::vec;
 use fluentbase_codec::Encoder;
-use fluentbase_core::account::Account;
+use fluentbase_core::Account;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext},
     LowLevelAPI,
@@ -20,7 +20,6 @@ pub fn main() {
         contract_gas_limit: gas_limit as u64,
         contract_address: evm_contract_address,
         contract_caller: ExecutionContext::contract_caller(),
-        contract_input_size: contract_input.len() as u32,
         contract_input,
         tx_caller: ExecutionContext::tx_caller(),
         ..Default::default()

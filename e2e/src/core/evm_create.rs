@@ -34,7 +34,6 @@ fn test_evm_create() {
     };
 
     let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
 
@@ -69,10 +68,8 @@ fn test_evm_create() {
                 .to_u64(),
         )
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-        .set_contract_input_size(evm_create_core_input_vec.len() as u32)
         .set_env_chain_id(env_chain_id)
         .set_contract_caller(caller_address)
-        .set_block_hash(block_hash)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
@@ -98,7 +95,6 @@ fn test_evm_call_after_create() {
     };
 
     let expected_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let block_hash = B256::left_padding_from(&hex!("0123456789abcdef"));
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
 
@@ -135,10 +131,8 @@ fn test_evm_call_after_create() {
                     .to_u64(),
             )
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-            .set_contract_input_size(evm_create_core_input_vec.len() as u32)
             .set_env_chain_id(env_chain_id)
             .set_contract_caller(caller_address)
-            .set_block_hash(block_hash)
             .set_block_coinbase(block_coinbase)
             .set_tx_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
@@ -179,7 +173,6 @@ fn test_evm_call_after_create() {
                     .to_u64(),
             )
             .set_contract_input(Bytes::copy_from_slice(&evm_call_core_input_vec))
-            .set_contract_input_size(evm_call_core_input_vec.len() as u32)
             .set_contract_address(deployed_contract_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let output_res =
@@ -262,7 +255,6 @@ fn test_evm_call_from_wasm() {
             )
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-            .set_contract_input_size(evm_create_core_input_vec.len() as u32)
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
         let jzkt = runtime_ctx.jzkt().clone();
@@ -298,7 +290,6 @@ fn test_evm_call_from_wasm() {
                     .to_u64(),
             )
             .set_contract_gas_limit(gas_limit.into())
-            .set_contract_input_size(contract_input.len() as u32)
             .set_contract_input(contract_input.into())
             .set_contract_address(deployed_contract_address)
             .set_contract_caller(caller_address);

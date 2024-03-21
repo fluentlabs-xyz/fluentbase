@@ -180,12 +180,10 @@ impl ContractInputWrapper {
     impl_once_setter!(env_chain_id, u64);
     impl_once_setter!(contract_gas_limit, u64);
     impl_once_setter!(contract_input, Bytes);
-    impl_once_setter!(contract_input_size, u32);
     impl_once_setter!(contract_address, Address);
     impl_once_setter!(contract_caller, Address);
     impl_once_setter!(contract_value, U256);
     impl_once_setter!(contract_is_static, bool);
-    impl_once_setter!(block_hash, B256);
     impl_once_setter!(block_coinbase, Address);
     impl_once_setter!(block_timestamp, u64);
     impl_once_setter!(block_number, u64);
