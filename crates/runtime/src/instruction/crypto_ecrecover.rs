@@ -1,4 +1,5 @@
 use crate::RuntimeContext;
+use fluentbase_types::ExitCode;
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
@@ -19,16 +20,19 @@ impl CryptoEcrecover {
     ) -> Result<(), Trap> {
         let digest = caller.read_memory(digest32_offset, 32)?;
         let sig = caller.read_memory(sig64_offset, 64)?;
-        caller.write_memory(output65_offset, &Self::fn_impl(digest, sig, rec_id))?;
+        let public_key = Self::fn_impl(digest, sig, rec_id).map_err(|err| err.into_trap())?;
+        caller.write_memory(output65_offset, &public_key)?;
         Ok(())
     }
 
-    pub fn fn_impl(digest: &[u8], sig: &[u8], rec_id: u32) -> [u8; 65] {
-        let sig = Signature::from_slice(sig).unwrap();
+    pub fn fn_impl(digest: &[u8], sig: &[u8], rec_id: u32) -> Result<[u8; 65], ExitCode> {
+        let sig = Signature::from_slice(sig).map_err(|_| ExitCode::EcrecoverBadSignature)?;
         let rec_id = RecoveryId::new(rec_id & 0b1 > 0, rec_id & 0b10 > 0);
-        let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id).unwrap();
+        let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id)
+            .map_err(|_| ExitCode::EcrecoverError)?;
         let pk_computed = EncodedPoint::from(&pk);
-        let public_key = PublicKey::from_encoded_point(&pk_computed).unwrap();
+        let public_key =
+            PublicKey::from_encoded_point(&pk_computed).map_err(|_| ExitCode::EcrecoverError)?;
         let pk_uncompressed = public_key.to_encoded_point(false);
         let mut result = [0u8; 65];
         result.copy_from_slice(pk_uncompressed.as_bytes());
