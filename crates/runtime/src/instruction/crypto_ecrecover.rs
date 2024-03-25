@@ -31,12 +31,16 @@ impl CryptoEcrecover {
         let pk = VerifyingKey::recover_from_prehash(digest, &sig, rec_id)
             .map_err(|_| ExitCode::EcrecoverError)?;
         let pk_computed = EncodedPoint::from(&pk);
-        let public_key =
-            PublicKey::from_encoded_point(&pk_computed).map_err(|_| ExitCode::EcrecoverError)?;
+        let public_key = PublicKey::from_encoded_point(&pk_computed);
+        let public_key = if public_key.is_some().into() {
+            public_key.unwrap()
+        } else {
+            return Err(ExitCode::EcrecoverError);
+        };
         let pk_uncompressed = public_key.to_encoded_point(false);
         let mut result = [0u8; 65];
         result.copy_from_slice(pk_uncompressed.as_bytes());
-        result
+        Ok(result)
     }
 }
 
