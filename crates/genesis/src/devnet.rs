@@ -1,7 +1,5 @@
-use crate::{
-    ChainConfig,
-    Genesis,
-    GenesisAccount,
+use crate::{ChainConfig, Genesis, GenesisAccount};
+use fluentbase_core::consts::{
     ECL_CONTRACT_ADDRESS,
     EXAMPLE_GREETING_ADDRESS,
     PRECOMPILE_BLAKE2_ADDRESS,
