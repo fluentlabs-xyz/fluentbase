@@ -2,6 +2,9 @@ use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_core::consts::{
     ECL_CONTRACT_ADDRESS,
     PRECOMPILE_BLAKE2_ADDRESS,
+    PRECOMPILE_IDENTITY_ADDRESS,
+    PRECOMPILE_MODEXP_ADDRESS,
+    PRECOMPILE_SECP256K1_ADDRESS,
     WCL_CONTRACT_ADDRESS,
 };
 use fluentbase_types::Bytes;
@@ -38,6 +41,26 @@ pub fn devnet_genesis() -> Genesis {
     enable_rwasm_contract!(
         PRECOMPILE_BLAKE2_ADDRESS,
         "../../contracts/assets/precompile_blake2.rwasm"
+    );
+    // enable_rwasm_contract!(
+    //     PRECOMPILE_BN128_ADDRESS,
+    //     "../../contracts/assets/precompile_bn128.rwasm"
+    // );
+    enable_rwasm_contract!(
+        PRECOMPILE_IDENTITY_ADDRESS,
+        "../../contracts/assets/precompile_identity.rwasm"
+    );
+    // enable_rwasm_contract!(
+    //     PRECOMPILE_KZG_POINT_EVALUATION_ADDRESS,
+    //     "../../contracts/assets/precompile_kzg_point_evaluation.rwasm"
+    // );
+    enable_rwasm_contract!(
+        PRECOMPILE_MODEXP_ADDRESS,
+        "../../contracts/assets/precompile_modexp.rwasm"
+    );
+    enable_rwasm_contract!(
+        PRECOMPILE_SECP256K1_ADDRESS,
+        "../../contracts/assets/precompile_secp256k1.rwasm"
     );
     enable_rwasm_contract!(
         EXAMPLE_GREETING_ADDRESS,

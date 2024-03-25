@@ -1,43 +1,40 @@
-use core::marker::PhantomData;
-
-use revm_primitives::{
-    CreateScheme,
-    Env,
-    EVMError,
-    EVMResult,
-    Output,
-    Spec,
-    SpecId::*,
-    TransactTo,
+use crate::{
+    gas::Gas,
+    handler::Handler,
+    types::{BytecodeType, CallCreateResult},
+    EVMData,
 };
-
+use core::marker::PhantomData;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
+    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     Account,
     AccountCheckpoint,
-    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
 };
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
-        EVM_CREATE2_METHOD_ID,
-        EVM_CREATE_METHOD_ID,
         EvmCreate2MethodInput,
         EvmCreateMethodInput,
-        WASM_CREATE2_METHOD_ID,
-        WASM_CREATE_METHOD_ID,
         WasmCreate2MethodInput,
         WasmCreateMethodInput,
+        EVM_CREATE2_METHOD_ID,
+        EVM_CREATE_METHOD_ID,
+        WASM_CREATE2_METHOD_ID,
+        WASM_CREATE_METHOD_ID,
     },
 };
 use fluentbase_sdk::{evm::ContractInput, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
-
-use crate::{
-    EVMData,
-    gas::Gas,
-    handler::Handler,
-    types::{BytecodeType, CallCreateResult},
+use fluentbase_types::{Address, Bytes, ExitCode, STATE_DEPLOY, STATE_MAIN, U256};
+use revm_primitives::{
+    CreateScheme,
+    EVMError,
+    EVMResult,
+    Env,
+    Output,
+    Spec,
+    SpecId::*,
+    TransactTo,
 };
 
 /// EVM call stack limit.
@@ -303,6 +300,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
             &mut middleware_account,
             core_input.into(),
             value,
+            STATE_DEPLOY,
         );
 
         let created_address = if exit_code == ExitCode::Ok.into_i32() {
@@ -350,6 +348,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
             callee_account,
             input,
             value,
+            STATE_MAIN,
         );
 
         let ret = CallCreateResult {
@@ -405,6 +404,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
         callee: &mut Account,
         input: Bytes,
         value: U256,
+        state: u32,
     ) -> (Bytes, i32) {
         let input = self
             .input_from_env(checkpoint, gas, caller, callee, input, value)
@@ -419,7 +419,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
             core::ptr::null_mut(),
             0,
             gas_limit_ref,
-            STATE_MAIN,
+            state,
         );
         let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
         gas.record_cost(gas_used);

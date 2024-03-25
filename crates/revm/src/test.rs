@@ -92,7 +92,7 @@ fn test_deploy_greeting() {
 
 #[test]
 fn test_evm_greeting() {
-    // deploy greeting WASM contract
+    // deploy greeting EVM contract
     let _ctx = TestingContext::default();
     let mut env = Env::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
@@ -105,7 +105,7 @@ fn test_evm_greeting() {
     assert!(result.result.is_success());
     println!("gas used (deploy): {}", result.result.gas_used());
     let contract_address = calc_create_address(&DEPLOYER_ADDRESS, 0);
-    // call greeting WASM contract
+    // call greeting EVM contract
     let mut env = Env::default();
     env.tx.transact_to = TransactTo::Call(contract_address);
     env.tx.data = Bytes::from_static(&hex!("45773e4e"));
