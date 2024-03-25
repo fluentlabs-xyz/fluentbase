@@ -1,37 +1,43 @@
-use crate::{
-    gas::Gas,
-    handler::Handler,
-    types::{BytecodeType, CallCreateResult},
-    EVMData,
-};
 use core::marker::PhantomData;
-use fluentbase_codec::Encoder;
-use fluentbase_core::{Account, AccountCheckpoint};
-use fluentbase_core_api::{
-    api::CoreInput,
-    bindings::{
-        EvmCreate2MethodInput,
-        EvmCreateMethodInput,
-        WasmCreate2MethodInput,
-        WasmCreateMethodInput,
-        EVM_CREATE2_METHOD_ID,
-        EVM_CREATE_METHOD_ID,
-        WASM_CREATE2_METHOD_ID,
-        WASM_CREATE_METHOD_ID,
-    },
-};
-use fluentbase_genesis::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
-use fluentbase_sdk::{evm::ContractInput, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
+
 use revm_primitives::{
     CreateScheme,
+    Env,
     EVMError,
     EVMResult,
-    Env,
     Output,
     Spec,
     SpecId::*,
     TransactTo,
+};
+
+use fluentbase_codec::Encoder;
+use fluentbase_core::{
+    Account,
+    AccountCheckpoint,
+    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
+};
+use fluentbase_core_api::{
+    api::CoreInput,
+    bindings::{
+        EVM_CREATE2_METHOD_ID,
+        EVM_CREATE_METHOD_ID,
+        EvmCreate2MethodInput,
+        EvmCreateMethodInput,
+        WASM_CREATE2_METHOD_ID,
+        WASM_CREATE_METHOD_ID,
+        WasmCreate2MethodInput,
+        WasmCreateMethodInput,
+    },
+};
+use fluentbase_sdk::{evm::ContractInput, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
+
+use crate::{
+    EVMData,
+    gas::Gas,
+    handler::Handler,
+    types::{BytecodeType, CallCreateResult},
 };
 
 /// EVM call stack limit.
