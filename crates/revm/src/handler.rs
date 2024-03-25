@@ -240,15 +240,17 @@ mod mainnet {
         let gas_refunded = gas.refunded() as u64;
         let final_gas_used = gas.spend() - gas_refunded;
 
+        const OK_EXIT_CODE: i32 = ExitCode::Ok.into_i32();
+        const PANIC_EXIT_CODE: i32 = ExitCode::Panic.into_i32();
         let result = match call_result {
-            0 => ExecutionResult::Success {
+            OK_EXIT_CODE => ExecutionResult::Success {
                 reason: SuccessReason::Return,
                 gas_used: final_gas_used,
                 gas_refunded,
                 logs: vec![],
                 output,
             },
-            -71 => ExecutionResult::Revert {
+            PANIC_EXIT_CODE => ExecutionResult::Revert {
                 gas_used: final_gas_used,
                 output: match output {
                     Output::Call(return_value) => return_value,
