@@ -105,10 +105,10 @@ impl LowLevelAPI for LowLevelSDK {
         output65_ptr: *mut u8,
         rec_id: u8,
     ) {
-        let digest = unsafe { &*core::ptr::slice_from_raw_parts(digest32_ptr, 32) };
-        let sig = unsafe { &*core::ptr::slice_from_raw_parts(sig64_ptr, 64) };
-        let output = unsafe { &mut *core::ptr::slice_from_raw_parts_mut(output65_ptr, 65) };
-        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32);
+        let digest = unsafe { &*ptr::slice_from_raw_parts(digest32_ptr, 32) };
+        let sig = unsafe { &*ptr::slice_from_raw_parts(sig64_ptr, 64) };
+        let output = unsafe { &mut *ptr::slice_from_raw_parts_mut(output65_ptr, 65) };
+        let result = CryptoEcrecover::fn_impl(digest, sig, rec_id as u32).expect("");
         output.copy_from_slice(&result);
     }
 
