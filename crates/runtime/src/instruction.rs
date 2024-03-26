@@ -7,13 +7,11 @@ pub mod jzkt_commit;
 pub mod jzkt_compute_root;
 pub mod jzkt_emit_log;
 pub mod jzkt_get;
-pub mod jzkt_load;
 pub mod jzkt_open;
 pub mod jzkt_preimage_copy;
 pub mod jzkt_preimage_size;
 pub mod jzkt_remove;
 pub mod jzkt_rollback;
-pub mod jzkt_store;
 pub mod jzkt_update;
 pub mod jzkt_update_preimage;
 pub mod sys_exec;
@@ -39,13 +37,11 @@ use crate::{
         jzkt_compute_root::JzktComputeRoot,
         jzkt_emit_log::JzktEmitLog,
         jzkt_get::JzktGet,
-        jzkt_load::JzktLoad,
         jzkt_open::JzktOpen,
         jzkt_preimage_copy::JzktPreimageCopy,
         jzkt_preimage_size::JzktPreimageSize,
         jzkt_remove::JzktRemove,
         jzkt_rollback::JzktRollback,
-        jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
         sys_exec::SysExec,
@@ -100,8 +96,6 @@ impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha:
 impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
 impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint: u64) -> ());
-impl_runtime_handler!(JzktStore, JZKT_STORE, fn fluentbase_v1alpha::_jzkt_store(slot32_ptr: u32, value32_ptr: u32) -> ());
-impl_runtime_handler!(JzktLoad, JZKT_LOAD, fn fluentbase_v1alpha::_jzkt_load(slot32_ptr: u32, value32_ptr: u32) -> i32);
 impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
@@ -137,8 +131,6 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
         JzktCommit::register_handler(linker, store);
         JzktRollback::register_handler(linker, store);
     }
-    JzktStore::register_handler(linker, store);
-    JzktLoad::register_handler(linker, store);
     if IS_SOVEREIGN {
         JzktPreimageSize::register_handler(linker, store);
         JzktUpdatePreimage::register_handler(linker, store);

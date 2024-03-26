@@ -75,8 +75,6 @@ extern "C" {
     );
     pub fn _jzkt_commit(root32_ptr: *mut u8);
     pub fn _jzkt_rollback(checkpoint: u64);
-    pub fn _jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8);
-    pub fn _jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32;
     pub fn _jzkt_preimage_size(hash32_ptr: *const u8) -> u32;
     pub fn _jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
 }

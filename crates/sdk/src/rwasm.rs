@@ -9,13 +9,11 @@ use crate::{
         _jzkt_compute_root,
         _jzkt_emit_log,
         _jzkt_get,
-        _jzkt_load,
         _jzkt_open,
         _jzkt_preimage_copy,
         _jzkt_preimage_size,
         _jzkt_remove,
         _jzkt_rollback,
-        _jzkt_store,
         _jzkt_update,
         _jzkt_update_preimage,
         _sys_exec,
@@ -204,14 +202,6 @@ impl LowLevelAPI for LowLevelSDK {
     #[inline(always)]
     fn jzkt_rollback(checkpoint: u64) {
         unsafe { _jzkt_rollback(checkpoint) }
-    }
-    #[inline(always)]
-    fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {
-        unsafe { _jzkt_store(slot32_ptr, value32_ptr) }
-    }
-    #[inline(always)]
-    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32 {
-        unsafe { _jzkt_load(slot32_ptr, value32_ptr) }
     }
     #[inline(always)]
     fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32 {

@@ -3,12 +3,7 @@ use crate::{
     journal::IJournaledTrie,
     types::{BytecodeRepr, RuntimeError},
 };
-use fluentbase_types::{
-    create_shared_import_linker,
-    create_sovereign_import_linker,
-    Address,
-    ExitCode,
-};
+use fluentbase_types::{create_shared_import_linker, create_sovereign_import_linker, ExitCode};
 use rwasm::{
     core::ImportLinker,
     engine::Tracer,
@@ -17,7 +12,6 @@ use rwasm::{
     Engine,
     FuelConsumptionMode,
     Func,
-    FuncType,
     Instance,
     IntoFunc,
     Linker,
@@ -35,10 +29,6 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) is_shared: bool,
     pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
-    pub(crate) is_static: bool,
-    pub(crate) caller: Address,
-    pub(crate) address: Address,
-    pub(crate) func_type: Option<FuncType>,
     // context outputs
     pub(crate) exit_code: i32,
     pub(crate) output: Vec<u8>,
@@ -52,16 +42,12 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
     fn clone(&self) -> Self {
         Self {
             context: None,
-            func_type: None,
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
             is_shared: self.is_shared.clone(),
             catch_trap: self.catch_trap.clone(),
             input: self.input.clone(),
-            is_static: self.is_static.clone(),
-            caller: self.caller.clone(),
-            address: self.address.clone(),
             exit_code: self.exit_code.clone(),
             output: self.output.clone(),
             consumed_fuel: self.consumed_fuel.clone(),
@@ -75,16 +61,12 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
     fn default() -> Self {
         Self {
             context: None,
-            func_type: None,
             bytecode: Default::default(),
             fuel_limit: 0,
             state: 0,
             is_shared: false,
             catch_trap: true,
             input: vec![],
-            is_static: false,
-            caller: Default::default(),
-            address: Default::default(),
             exit_code: 0,
             output: vec![],
             consumed_fuel: 0,
@@ -102,11 +84,6 @@ impl<'t, T> RuntimeContext<'t, T> {
         }
     }
 
-    pub fn with_func_type(&mut self, func_type: FuncType) -> &mut Self {
-        self.func_type = Some(func_type);
-        self
-    }
-
     pub fn with_context(&mut self, context: &'t mut T) -> &mut Self {
         self.context = Some(context);
         self
@@ -114,11 +91,6 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_input(&mut self, input_data: Vec<u8>) -> &mut Self {
         self.input = input_data;
-        self
-    }
-
-    pub fn with_is_static(&mut self, is_static: bool) -> &mut Self {
-        self.is_static = is_static;
         self
     }
 
@@ -139,16 +111,6 @@ impl<'t, T> RuntimeContext<'t, T> {
 
     pub fn with_fuel_limit(&mut self, fuel_limit: u32) -> &mut Self {
         self.fuel_limit = fuel_limit;
-        self
-    }
-
-    pub fn with_caller(&mut self, caller: Address) -> &mut Self {
-        self.caller = caller;
-        self
-    }
-
-    pub fn with_address(&mut self, address: Address) -> &mut Self {
-        self.address = address;
         self
     }
 

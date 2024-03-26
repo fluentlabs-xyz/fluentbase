@@ -9,7 +9,7 @@ macro_rules! import_func {
     };
 }
 
-const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 21] = [
+const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 19] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -34,17 +34,15 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 21] = [
     import_func!("_jzkt_emit_log", JZKT_EMIT_LOG),
     // import_func!("_jzkt_commit", JZKT_COMMIT),
     // import_func!("_jzkt_rollback", JZKT_ROLLBACK),
-    import_func!("_jzkt_store", JZKT_STORE),
-    import_func!("_jzkt_load", JZKT_LOAD),
     import_func!("_jzkt_preimage_size", JZKT_PREIMAGE_SIZE),
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
 ];
 
-pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 21]>>() -> F {
+pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 19]>>() -> F {
     F::from(SHARED_IMPORT_LINKER)
 }
 
-const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 28] = [
+const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 26] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -69,13 +67,11 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 28] = [
     import_func!("_jzkt_emit_log", JZKT_EMIT_LOG),
     import_func!("_jzkt_commit", JZKT_COMMIT),
     import_func!("_jzkt_rollback", JZKT_ROLLBACK),
-    import_func!("_jzkt_store", JZKT_STORE),
-    import_func!("_jzkt_load", JZKT_LOAD),
     import_func!("_jzkt_preimage_size", JZKT_PREIMAGE_SIZE),
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
 ];
 
-pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 28]>>() -> F
+pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 26]>>() -> F
 {
     F::from(SOVEREIGN_IMPORT_LINKER)
 }
