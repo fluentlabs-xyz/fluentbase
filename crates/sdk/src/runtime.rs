@@ -12,13 +12,11 @@ use fluentbase_runtime::{
         jzkt_compute_root::JzktComputeRoot,
         jzkt_emit_log::JzktEmitLog,
         jzkt_get::JzktGet,
-        jzkt_load::JzktLoad,
         jzkt_open::JzktOpen,
         jzkt_preimage_copy::JzktPreimageCopy,
         jzkt_preimage_size::JzktPreimageSize,
         jzkt_remove::JzktRemove,
         jzkt_rollback::JzktRollback,
-        jzkt_store::JzktStore,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
         sys_exec::SysExec,
@@ -295,27 +293,6 @@ impl LowLevelAPI for LowLevelSDK {
     }
     fn jzkt_rollback(checkpoint: u64) {
         with_context_mut(|ctx| JzktRollback::fn_impl(ctx, JournalCheckpoint::from_u64(checkpoint)));
-    }
-    fn jzkt_store(slot32_ptr: *const u8, value32_ptr: *const u8) {
-        let slot: [u8; 32] = unsafe { &*ptr::slice_from_raw_parts(slot32_ptr, 32) }
-            .try_into()
-            .unwrap();
-        let value: [u8; 32] = unsafe { &*ptr::slice_from_raw_parts(value32_ptr, 32) }
-            .try_into()
-            .unwrap();
-        with_context_mut(|ctx| JzktStore::fn_impl(ctx, &slot, &value).unwrap())
-    }
-    fn jzkt_load(slot32_ptr: *const u8, value32_ptr: *mut u8) -> i32 {
-        let slot: [u8; 32] = unsafe { &*ptr::slice_from_raw_parts(slot32_ptr, 32) }
-            .try_into()
-            .unwrap();
-        match with_context_mut(|ctx| JzktLoad::fn_impl(ctx, &slot).unwrap()) {
-            Some((value, is_cold)) => {
-                unsafe { ptr::copy(value.as_ptr(), value32_ptr, 32) }
-                is_cold as i32
-            }
-            None => -1,
-        }
     }
     fn jzkt_preimage_size(key32_ptr: *const u8) -> u32 {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
