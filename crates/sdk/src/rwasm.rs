@@ -29,7 +29,6 @@ use crate::{
         _sys_state,
         _sys_write,
     },
-    Bytes32,
     LowLevelAPI,
     LowLevelSDK,
 };
@@ -135,19 +134,12 @@ impl LowLevelAPI for LowLevelSDK {
 
     #[inline(always)]
     fn crypto_poseidon2(
-        fa32_data: &Bytes32,
-        fb32_data: &Bytes32,
-        fd32_data: &Bytes32,
-        output32: &mut [u8],
+        fa32_ptr: *const u8,
+        fb32_ptr: *const u8,
+        fd32_ptr: *const u8,
+        output32_ptr: *mut u8,
     ) {
-        unsafe {
-            _crypto_poseidon2(
-                fa32_data.as_ptr(),
-                fb32_data.as_ptr(),
-                fd32_data.as_ptr(),
-                output32.as_mut_ptr(),
-            )
-        }
+        unsafe { _crypto_poseidon2(fa32_ptr, fb32_ptr, fd32_ptr, output32_ptr) }
     }
 
     #[inline(always)]

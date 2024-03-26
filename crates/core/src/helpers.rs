@@ -2,7 +2,7 @@ use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
-    evm::{ContractInput, IContractInput},
+    evm::{ContractInput, ExecutionContext, IContractInput},
     Bytes32,
     LowLevelAPI,
     LowLevelSDK,
@@ -23,7 +23,6 @@ use rwasm::{
     Error,
 };
 
-#[cfg(feature = "ecl")]
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
 #[inline]
@@ -148,4 +147,36 @@ pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_depl
     if exit_code != 0 {
         panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
     }
+}
+
+const DOMAIN: [u8; 32] = [0u8; 32];
+
+#[inline(always)]
+pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
+    let mut slot0: [u8; 32] = [0u8; 32];
+    let mut slot1: [u8; 32] = [0u8; 32];
+    // split slot32 into two 16 byte values (slot is always 32 bytes)
+    unsafe {
+        core::ptr::copy(slot32_offset.offset(0), slot0.as_mut_ptr(), 16);
+        core::ptr::copy(slot32_offset.offset(16), slot1.as_mut_ptr(), 16);
+    }
+    // pad address to 32 bytes value
+    let mut address32: [u8; 32] = [0u8; 32];
+    let address = ExecutionContext::contract_address();
+    address32[12..].copy_from_slice(address.as_slice());
+    // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
+    let mut storage_key: [u8; 32] = [0u8; 32];
+    LowLevelSDK::crypto_poseidon2(
+        slot0.as_ptr(),
+        slot1.as_ptr(),
+        DOMAIN.as_ptr(),
+        storage_key.as_mut_ptr(),
+    );
+    LowLevelSDK::crypto_poseidon2(
+        address32.as_ptr(),
+        storage_key.as_ptr(),
+        DOMAIN.as_ptr(),
+        storage_key.as_mut_ptr(),
+    );
+    storage_key
 }

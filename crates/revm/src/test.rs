@@ -1,7 +1,7 @@
 use crate::EVM;
 use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::{devnet::devnet_genesis, Genesis, EXAMPLE_GREETING_ADDRESS};
-use fluentbase_runtime::{types::InMemoryTrieDb, zktrie::ZkTrieStateDb, JournaledTrie};
+use fluentbase_runtime::IJournaledTrie;
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_types::{Address, Bytes};
 use revm_primitives::{hex, CreateScheme, Env, TransactTo};
@@ -9,7 +9,7 @@ use std::{cell::RefCell, rc::Rc};
 
 struct TestingContext {
     genesis: Genesis,
-    jzkt: Rc<RefCell<JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>>>,
+    jzkt: Rc<RefCell<dyn IJournaledTrie>>,
 }
 
 impl Default for TestingContext {
@@ -21,10 +21,7 @@ impl Default for TestingContext {
 impl TestingContext {
     fn load_from_genesis(genesis: Genesis) -> Self {
         // create jzkt and put it into testing context
-        let jzkt = Rc::new(RefCell::new(JournaledTrie::new(ZkTrieStateDb::new(
-            InMemoryTrieDb::default(),
-        ))));
-        LowLevelSDK::with_jzkt(jzkt.clone());
+        let jzkt = LowLevelSDK::with_default_jzkt();
         // convert all accounts from genesis into jzkt
         for (k, v) in genesis.alloc.iter() {
             let mut account = Account {

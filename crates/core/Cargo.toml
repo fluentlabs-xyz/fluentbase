@@ -18,9 +18,9 @@ rwasm = { workspace = true, default-features = false }
 byteorder = { workspace = true }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
-revm-interpreter = { workspace = true, optional = true }
+revm-interpreter = { workspace = true }
 paste = { workspace = true }
-revm-precompile = { workspace = true, optional = true }
+revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
 
 [dev-dependencies]
@@ -41,14 +41,12 @@ std = [
     "byteorder/std",
     "alloy-rlp/std",
 ]
-ecl = [
-    "dep:revm-interpreter"
-]
+ecl = []
 evm_loader = []
 wcl = []
-precompile_blake2 = ["dep:revm-precompile", "dep:revm-interpreter"]
-precompile_bn128 = ["dep:revm-precompile", "dep:revm-interpreter"]
-precompile_identity = ["dep:revm-precompile", "dep:revm-interpreter"]
-precompile_kzg_point_evaluation = ["dep:revm-precompile", "dep:revm-interpreter"]
-precompile_modexp = ["dep:revm-precompile", "dep:revm-interpreter"]
-precompile_secp256k1 = ["dep:revm-precompile", "dep:revm-interpreter"]
+precompile_blake2 = []
+precompile_bn128 = []
+precompile_identity = []
+precompile_kzg_point_evaluation = []
+precompile_modexp = []
+precompile_secp256k1 = []

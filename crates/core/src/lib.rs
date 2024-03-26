@@ -12,12 +12,10 @@ mod account;
 pub use account::*;
 mod account_types;
 pub use account_types::*;
-#[cfg(feature = "ecl")]
 pub mod evm;
 
 pub mod consts;
 mod contracts;
-#[cfg(feature = "ecl")]
 pub mod fluent_host;
 pub mod helpers;
 #[cfg(any(

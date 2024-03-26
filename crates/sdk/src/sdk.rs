@@ -1,13 +1,11 @@
-use fluentbase_types::Bytes32;
-
 pub trait LowLevelAPI {
     fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     fn crypto_poseidon2(
-        fa32_data: &Bytes32,
-        fb32_data: &Bytes32,
-        fd32_data: &Bytes32,
-        output32: &mut [u8],
+        fa32_ptr: *const u8,
+        fb32_ptr: *const u8,
+        fd32_ptr: *const u8,
+        output32_ptr: *mut u8,
     );
     fn crypto_ecrecover(
         digest32_ptr: *const u8,
