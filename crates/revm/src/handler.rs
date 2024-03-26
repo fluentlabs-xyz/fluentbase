@@ -1,14 +1,6 @@
 use crate::{gas::Gas, EVMData};
 use fluentbase_types::ExitCode;
-use revm_primitives::{
-    db::Database,
-    EVMError,
-    EVMResultGeneric,
-    Env,
-    Output,
-    ResultAndState,
-    Spec,
-};
+use revm_primitives::{EVMError, EVMResultGeneric, Env, Output, ResultAndState, Spec};
 
 /// Handle call return and return final gas value.
 type CallReturnHandle = fn(&Env, i32, Gas) -> Gas;
@@ -121,7 +113,6 @@ mod mainnet {
     use crate::{gas::Gas, EVMData};
     use fluentbase_types::ExitCode;
     use revm_primitives::{
-        db::Database,
         EVMError,
         Env,
         ExecutionResult,

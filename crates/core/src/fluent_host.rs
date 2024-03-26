@@ -5,7 +5,6 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::ExitCode;
 use revm_interpreter::{
     primitives::{
         Address,
@@ -151,46 +150,27 @@ impl Host for FluentHost {
     }
 
     #[inline]
-    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
+    fn sload(&mut self, _address: Address, index: U256) -> Option<(U256, bool)> {
         let mut slot_value32 = Bytes32::default();
-        let mut is_cold: u32 = 0;
-        let exit_code = _evm_sload(
-            address.as_ptr(),
-            index.as_le_slice().as_ptr(),
-            slot_value32.as_mut_ptr(),
-            &mut is_cold,
-        );
-        if !exit_code.is_ok() {
-            return None;
-        }
-
-        Some((U256::from_be_bytes(slot_value32), is_cold != 0))
+        let is_cold = _evm_sload(index.as_le_slice().as_ptr(), slot_value32.as_mut_ptr()).ok()?;
+        Some((U256::from_be_bytes(slot_value32), is_cold))
     }
 
     #[inline]
-    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-        let mut previous_or_original_value = U256::default();
-        let mut present = U256::default();
-        let mut new_value = U256::default();
-        let mut is_cold: u32 = 0;
-        let sload_exit_code = _evm_sstore(
-            address.as_ptr(),
-            index.as_le_slice().as_ptr(),
-            value.as_le_slice().as_ptr(),
-            unsafe { previous_or_original_value.as_le_slice_mut().as_mut_ptr() },
-            unsafe { present.as_le_slice_mut().as_mut_ptr() },
-            unsafe { new_value.as_le_slice_mut().as_mut_ptr() },
-            &mut is_cold as *mut u32,
-        );
-        if sload_exit_code == ExitCode::Ok {
-            return Some(SStoreResult {
-                original_value: previous_or_original_value,
-                present_value: present,
-                new_value,
-                is_cold: is_cold != 0,
-            });
-        }
-        return None;
+    fn sstore(&mut self, _address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+        let mut previous = U256::default();
+        _evm_sload(index.as_le_slice().as_ptr(), unsafe {
+            previous.as_le_slice_mut().as_mut_ptr()
+        })
+        .ok()?;
+        let is_cold =
+            _evm_sstore(index.as_le_slice().as_ptr(), value.as_le_slice().as_ptr()).ok()?;
+        return Some(SStoreResult {
+            original_value: previous,
+            present_value: previous,
+            new_value: value,
+            is_cold,
+        });
     }
 
     #[inline]

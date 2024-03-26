@@ -1,5 +1,4 @@
 use crate::gas::Gas;
-use fluentbase_types::ExitCode;
 use revm_primitives::{Address, Bytes};
 
 pub(crate) struct CallCreateResult {
@@ -21,7 +20,7 @@ impl CallCreateResult {
 }
 
 #[allow(non_camel_case_types)]
-pub enum BytecodeType {
+pub(crate) enum BytecodeType {
     EVM,
     WASM,
 }

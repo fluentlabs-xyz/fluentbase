@@ -92,7 +92,8 @@ mod secp256k1_tests {
             let mut pk = [0u8; 65];
             pk.copy_from_slice(pk_uncompressed.as_bytes());
 
-            let result = CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32);
+            let result =
+                CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32).unwrap();
             assert_eq!(result, pk);
         }
     }

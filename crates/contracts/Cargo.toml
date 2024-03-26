@@ -22,3 +22,5 @@ std = [
     "fluentbase-core/std",
     "fluentbase-types/std",
 ]
+ecl = []
+wcl = []

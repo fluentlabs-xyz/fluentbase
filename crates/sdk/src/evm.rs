@@ -161,11 +161,11 @@ impl ExecutionContext {
 #[cfg(test)]
 mod test {
     use crate::{
-        evm::{ContractInput, ExecutionContext, U256},
+        evm::{ContractInput, ExecutionContext},
         LowLevelSDK,
     };
     use fluentbase_codec::Encoder;
-    use fluentbase_types::{Bytes, B256};
+    use fluentbase_types::Bytes;
 
     #[test]
     fn test_encode_decode() {

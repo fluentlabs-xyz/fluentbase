@@ -101,6 +101,5 @@ pub fn evm_inner<'a>(env: &'a mut Env, spec_id: SpecId) -> Box<dyn Transact<Exit
         SHANGHAI => create_evm!(ShanghaiSpec),
         CANCUN => create_evm!(CancunSpec),
         LATEST => create_evm!(LatestSpec),
-        _ => unreachable!("not supported spec id"),
     }
 }

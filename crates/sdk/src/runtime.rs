@@ -32,8 +32,11 @@ use fluentbase_runtime::{
         sys_state::SysState,
         sys_write::SysWrite,
     },
+    types::InMemoryTrieDb,
+    zktrie::ZkTrieStateDb,
     IJournaledTrie,
     JournalCheckpoint,
+    JournaledTrie,
     RuntimeContext,
 };
 use std::{cell::RefCell, ptr};
@@ -86,15 +89,18 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn crypto_poseidon2(
-        fa_data: &[u8; 32],
-        fb_data: &[u8; 32],
-        fd_data: &[u8; 32],
-        output: &mut [u8],
+        fa32_ptr: *const u8,
+        fb32_ptr: *const u8,
+        fd32_ptr: *const u8,
+        output32_ptr: *mut u8,
     ) {
-        match CryptoPoseidon2::fn_impl(fa_data, fb_data, fd_data) {
-            Ok(result) => {
-                output.copy_from_slice(&result);
-            }
+        let fa32 = unsafe { &*ptr::slice_from_raw_parts(fa32_ptr, 32) };
+        let fb32 = unsafe { &*ptr::slice_from_raw_parts(fb32_ptr, 32) };
+        let fd32 = unsafe { &*ptr::slice_from_raw_parts(fd32_ptr, 32) };
+        match CryptoPoseidon2::fn_impl(fa32, fb32, fd32) {
+            Ok(result) => unsafe {
+                ptr::copy(result.as_ptr(), output32_ptr, result.len());
+            },
             Err(_) => {}
         }
     }
@@ -349,6 +355,14 @@ impl LowLevelSDK {
             ctx2.with_state(state);
             ctx.set(ctx2);
         });
+    }
+
+    pub fn with_default_jzkt() -> Rc<RefCell<dyn IJournaledTrie>> {
+        let jzkt = Rc::new(RefCell::new(JournaledTrie::new(ZkTrieStateDb::new(
+            InMemoryTrieDb::default(),
+        ))));
+        LowLevelSDK::with_jzkt(jzkt.clone());
+        jzkt
     }
 
     pub fn with_jzkt(v: Rc<RefCell<dyn IJournaledTrie>>) {
