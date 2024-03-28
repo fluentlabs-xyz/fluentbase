@@ -1,15 +1,7 @@
 use crate::{storage::TrieStorage, types::TrieDb};
 use fluentbase_types::{Bytes, ExitCode, POSEIDON_EMPTY};
 use fluentbase_zktrie::{
-    Byte32,
-    Database,
-    Error,
-    Hash,
-    Node,
-    PoseidonHash,
-    PreimageDatabase,
-    TrieData,
-    ZkTrie,
+    Byte32, Database, Error, Hash, Node, PoseidonHash, PreimageDatabase, TrieData, ZkTrie,
 };
 use halo2curves::bn256::Fr;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
