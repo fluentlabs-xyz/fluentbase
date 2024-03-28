@@ -49,6 +49,11 @@ revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", b
 revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
 bytes = { version = "1.5" }
+#alloy-trie = { git = "https://github.com/fluentlabs-xyz/zk-alloy-trie.git", branch = "feature/FLU-71-jzkt" }
+#alloy-trie = { path = "../../fluentlabs-xyz/zk-alloy-trie" }
+#patricia-trie = { version = "0.3.0" }
+eth_trie = { version = "0.4.0" }
+hex-literal = { version = "0.4.1" }
 
 [profile.bench]
 lto = "fat"

@@ -1,19 +1,6 @@
 use crate::{
-    byte32_test::TestHash,
-    copy_truncated,
-    decode_smt_proofs,
-    to_secure_key,
-    Byte32,
-    Database,
-    Error,
-    Hash,
-    MemDB,
-    Node,
-    NodeValue,
-    PoseidonHash,
-    TrieData,
-    ZkTrie,
-    ZERO_HASH,
+    byte32_test::TestHash, copy_truncated, decode_smt_proofs, to_secure_key, Byte32, Database,
+    Error, Hash, MemDB, Node, NodeValue, PoseidonHash, TrieData, ZkTrie, ZERO_HASH,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
