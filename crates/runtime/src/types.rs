@@ -1,6 +1,7 @@
-use fluentbase_types::Bytes;
 use hashbrown::HashMap;
-use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
+use rwasm::{Error as RwasmError, rwasm::BinaryFormatError};
+
+use fluentbase_types::Bytes;
 
 pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
@@ -33,6 +34,24 @@ impl TrieDb for InMemoryTrieDb {
 
     fn update_preimage(&mut self, key: &[u8], value: Bytes) {
         self.preimages.insert(Bytes::copy_from_slice(key), value);
+    }
+}
+
+impl TrieDb for eth_trie::MemoryDB {
+    fn get_node(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.get_node(key)
+    }
+
+    fn update_node(&mut self, key: &[u8], value: Bytes) {
+        self.update_node(key, Bytes::copy_from_slice(&value));
+    }
+
+    fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.get_preimage(key)
+    }
+
+    fn update_preimage(&mut self, key: &[u8], value: Bytes) {
+        self.update_preimage(key, value);
     }
 }
 

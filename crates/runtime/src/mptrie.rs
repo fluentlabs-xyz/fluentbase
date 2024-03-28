@@ -53,12 +53,12 @@ impl<'a, DB: TrieDb> PreimageDatabase for MPTNodeDb<DB> {
 }
 
 // #[derive(Clone)]
-pub struct MPTrieStateDb<DB: eth_trie::DB> {
+pub struct MPTrieStateDb<DB: eth_trie::DB + TrieDb> {
     storage: Arc<DB>,
     trie: Option<RefCell<EthTrie<DB>>>,
 }
 
-impl<DB: eth_trie::DB> MPTrieStateDb<DB> {
+impl<DB: eth_trie::DB + TrieDb> MPTrieStateDb<DB> {
     pub fn new(storage: Arc<DB>) -> Self {
         Self {
             storage,
@@ -77,7 +77,7 @@ impl<DB: eth_trie::DB> MPTrieStateDb<DB> {
     }
 }
 
-impl<DB: eth_trie::DB> TrieStorage for MPTrieStateDb<DB> {
+impl<DB: eth_trie::DB + TrieDb> TrieStorage for MPTrieStateDb<DB> {
     fn open(&mut self, root32: &[u8]) -> bool {
         if self.trie.as_ref().is_some() {
             return false;
@@ -149,10 +149,6 @@ impl<DB: eth_trie::DB> TrieStorage for MPTrieStateDb<DB> {
     fn get_preimage(&mut self, key: &[u8]) -> Option<Bytes> {
         let r = self.storage.get(key).unwrap_or_default();
         r.map_or(None, |v| Some(Bytes::copy_from_slice(&v)))
-        // if let Some(v) = r {
-        //     return Some(Bytes::copy_from_slice(&v))
-        // }
-        // None
     }
 
     fn update_preimage(&mut self, key: &[u8], value: Bytes) {
