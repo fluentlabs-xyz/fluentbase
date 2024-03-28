@@ -15,6 +15,7 @@ mod journal;
 
 pub use journal::*;
 
+pub mod mptrie;
 #[cfg(test)]
 mod tests;
 pub mod types;
