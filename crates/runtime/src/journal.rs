@@ -87,6 +87,7 @@ pub trait IJournaledTrie {
     fn remove(&mut self, key: &[u8; 32]);
     fn compute_root(&self) -> [u8; 32];
     fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes);
+    fn events(&self) -> &Vec<JournalEvent>;
     fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode>;
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool;
@@ -234,6 +235,10 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
         });
     }
 
+    fn events(&self) -> &Vec<JournalEvent> {
+        return &self.journal;
+    }
+
     fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
         if self.committed >= self.journal.len() {
             panic!("nothing to commit")
@@ -348,8 +353,7 @@ mod tests {
         journal::{IJournaledTrie, JournaledTrie},
         types::InMemoryTrieDb,
         zktrie::ZkTrieStateDb,
-        JournalCheckpoint,
-        TrieStorage,
+        JournalCheckpoint, TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
     use fluentbase_types::address;
