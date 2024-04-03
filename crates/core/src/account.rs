@@ -1,12 +1,7 @@
 use crate::account_types::{
-    AccountCheckpoint,
-    AccountFields,
-    JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD,
-    JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD,
+    AccountCheckpoint, AccountFields, JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_NONCE_FIELD,
+    JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD, JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD,
+    JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD,
     JZKT_COMPRESSION_FLAGS,
 };
 use alloc::vec;
@@ -190,11 +185,13 @@ impl Account {
         );
     }
 
-    pub fn inc_nonce(&mut self) -> u64 {
+    pub fn inc_nonce(&mut self) -> Result<u64, ExitCode> {
         let prev_nonce = self.nonce;
         self.nonce += 1;
-        assert_ne!(self.nonce, u64::MAX);
-        prev_nonce
+        if self.nonce == u64::MAX {
+            return Err(ExitCode::NonceOverflow);
+        }
+        Ok(prev_nonce)
     }
 
     pub fn load_source_bytecode(&self) -> Bytes {
@@ -307,9 +304,6 @@ impl Account {
         // update balances
         from.sub_balance(amount)?;
         to.add_balance(amount)?;
-        // commit new balances into jzkt
-        from.write_to_jzkt();
-        to.write_to_jzkt();
         Ok(())
     }
 

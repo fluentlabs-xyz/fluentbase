@@ -8,33 +8,19 @@ use core::marker::PhantomData;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
-    Account,
-    AccountCheckpoint,
+    Account, AccountCheckpoint,
 };
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
-        EvmCreate2MethodInput,
-        EvmCreateMethodInput,
-        WasmCreate2MethodInput,
-        WasmCreateMethodInput,
-        EVM_CREATE2_METHOD_ID,
-        EVM_CREATE_METHOD_ID,
-        WASM_CREATE2_METHOD_ID,
-        WASM_CREATE_METHOD_ID,
+        EvmCreate2MethodInput, EvmCreateMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput,
+        EVM_CREATE2_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
     },
 };
 use fluentbase_sdk::{evm::ContractInput, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_DEPLOY, STATE_MAIN, U256};
 use revm_primitives::{
-    CreateScheme,
-    EVMError,
-    EVMResult,
-    Env,
-    Output,
-    Spec,
-    SpecId::*,
-    TransactTo,
+    CreateScheme, EVMError, EVMResult, Env, Output, Spec, SpecId::*, TransactTo,
 };
 
 /// EVM call stack limit.
@@ -149,7 +135,7 @@ impl<'a, GSPEC: Spec + 'static> EVMImpl<'a, GSPEC> {
         // call inner handling of call/create
         let (call_result, ret_gas, output) = match self.data.env.tx.transact_to {
             TransactTo::Call(address) => {
-                caller_account.inc_nonce();
+                caller_account.inc_nonce()?;
                 let mut callee_account = Account::new_from_jzkt(&address);
                 let result = self.call_inner(
                     &mut caller_account,

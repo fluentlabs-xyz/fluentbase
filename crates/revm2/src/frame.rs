@@ -1,8 +1,8 @@
-use crate::{
-    primitives::{Address, Output},
-    JournalCheckpoint,
-};
+use crate::primitives::{Address, Output};
+use crate::types::{CallOutcome, CreateOutcome, Gas, InterpreterResult};
 use core::ops::Range;
+use fluentbase_core::AccountCheckpoint;
+use fluentbase_types::ExitCode;
 use std::boxed::Box;
 
 /// Call CallStackFrame.
@@ -25,9 +25,7 @@ pub struct CreateFrame {
 #[derive(Debug)]
 pub struct FrameData {
     /// Journal checkpoint
-    pub checkpoint: JournalCheckpoint,
-    /// Interpreter
-    pub interpreter: Interpreter,
+    pub checkpoint: AccountCheckpoint,
 }
 
 /// Call stack frame.
@@ -101,7 +99,7 @@ impl FrameResult {
 
     /// Return Instruction result.
     #[inline]
-    pub fn instruction_result(&self) -> InstructionResult {
+    pub fn instruction_result(&self) -> ExitCode {
         self.interpreter_result().result
     }
 }
@@ -115,31 +113,17 @@ pub enum FrameOrResult {
 }
 
 impl Frame {
-    pub fn new_create(
-        created_address: Address,
-        checkpoint: JournalCheckpoint,
-        interpreter: Interpreter,
-    ) -> Self {
+    pub fn new_create(created_address: Address, checkpoint: AccountCheckpoint) -> Self {
         Frame::Create(Box::new(CreateFrame {
             created_address,
-            frame_data: FrameData {
-                checkpoint,
-                interpreter,
-            },
+            frame_data: FrameData { checkpoint },
         }))
     }
 
-    pub fn new_call(
-        return_memory_range: Range<usize>,
-        checkpoint: JournalCheckpoint,
-        interpreter: Interpreter,
-    ) -> Self {
+    pub fn new_call(return_memory_range: Range<usize>, checkpoint: AccountCheckpoint) -> Self {
         Frame::Call(Box::new(CallFrame {
             return_memory_range,
-            frame_data: FrameData {
-                checkpoint,
-                interpreter,
-            },
+            frame_data: FrameData { checkpoint },
         }))
     }
 
@@ -184,39 +168,20 @@ impl Frame {
             Self::Create(create_frame) => &mut create_frame.frame_data,
         }
     }
-
-    /// Returns a reference to the interpreter.
-    pub fn interpreter(&self) -> &Interpreter {
-        &self.frame_data().interpreter
-    }
-
-    /// Returns a mutable reference to the interpreter.
-    pub fn interpreter_mut(&mut self) -> &mut Interpreter {
-        &mut self.frame_data_mut().interpreter
-    }
 }
 
 impl FrameOrResult {
     /// Creates new create frame.
-    pub fn new_create_frame(
-        created_address: Address,
-        checkpoint: JournalCheckpoint,
-        interpreter: Interpreter,
-    ) -> Self {
-        Self::Frame(Frame::new_create(created_address, checkpoint, interpreter))
+    pub fn new_create_frame(created_address: Address, checkpoint: AccountCheckpoint) -> Self {
+        Self::Frame(Frame::new_create(created_address, checkpoint))
     }
 
     /// Creates new call frame.
     pub fn new_call_frame(
         return_memory_range: Range<usize>,
-        checkpoint: JournalCheckpoint,
-        interpreter: Interpreter,
+        checkpoint: AccountCheckpoint,
     ) -> Self {
-        Self::Frame(Frame::new_call(
-            return_memory_range,
-            checkpoint,
-            interpreter,
-        ))
+        Self::Frame(Frame::new_call(return_memory_range, checkpoint))
     }
 
     /// Creates new create result.

@@ -1,16 +1,17 @@
 use crate::types::{CreateInputs, Gas, InterpreterResult, SStoreResult, SelfDestructResult};
 use crate::{
     db::Database,
-    journaled_state::JournaledState,
     primitives::{
-        keccak256, Account, Address, AnalysisKind, Bytecode, Bytes, CreateScheme, EVMError, Env,
-        HashSet, Spec,
+        keccak256, Address, AnalysisKind, Bytecode, Bytes, CreateScheme, EVMError, Env, HashSet,
+        Spec,
         SpecId::{self, *},
         B256, U256,
     },
-    FrameOrResult, JournalCheckpoint, CALL_STACK_LIMIT,
+    FrameOrResult, CALL_STACK_LIMIT,
 };
+use fluentbase_core::{Account, AccountCheckpoint};
 use fluentbase_types::ExitCode;
+use revm_primitives::{MAX_CODE_SIZE, RWASM_MAX_CODE_SIZE};
 use std::boxed::Box;
 
 /// EVM contexts contains data that EVM needs for execution.
@@ -23,6 +24,10 @@ pub struct InnerEvmContext<DB: Database> {
     pub db: DB,
     /// Error that happened during execution.
     pub error: Result<(), EVMError<DB::Error>>,
+    /// Current recursion depth
+    pub depth: u64,
+    /// Spec id
+    pub spec_id: SpecId,
 }
 
 impl<DB: Database + Clone> Clone for InnerEvmContext<DB>
@@ -34,6 +39,8 @@ where
             env: self.env.clone(),
             db: self.db.clone(),
             error: self.error.clone(),
+            depth: self.depth.clone(),
+            spec_id: self.spec_id.clone(),
         }
     }
 }
@@ -44,6 +51,8 @@ impl<DB: Database> InnerEvmContext<DB> {
             env: Box::default(),
             db,
             error: Ok(()),
+            depth: 0,
+            spec_id: Default::default(),
         }
     }
 
@@ -54,6 +63,8 @@ impl<DB: Database> InnerEvmContext<DB> {
             env,
             db,
             error: Ok(()),
+            depth: 0,
+            spec_id: Default::default(),
         }
     }
 
@@ -66,13 +77,15 @@ impl<DB: Database> InnerEvmContext<DB> {
             env: self.env,
             db,
             error: Ok(()),
+            depth: 0,
+            spec_id: Default::default(),
         }
     }
 
     /// Returns the configured EVM spec ID.
     #[inline]
     pub const fn spec_id(&self) -> SpecId {
-        todo!("do we need this func?")
+        self.spec_id
     }
 
     /// Load access list for berlin hard fork.
@@ -80,8 +93,8 @@ impl<DB: Database> InnerEvmContext<DB> {
     /// Loading of accounts/storages is needed to make them warm.
     #[inline]
     pub fn load_access_list(&mut self) -> Result<(), EVMError<DB::Error>> {
-        for (address, slots) in self.env.tx.access_list.iter() {
-            todo!("do we need this func?")
+        for (address, _slots) in self.env.tx.access_list.iter() {
+            Account::new_from_jzkt(address);
         }
         Ok(())
     }
@@ -110,7 +123,7 @@ impl<DB: Database> InnerEvmContext<DB> {
         &mut self,
         address: Address,
     ) -> Result<(&mut Account, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
+        todo!("hmm")
     }
 
     /// Load account from database to JournaledState.
@@ -207,25 +220,20 @@ impl<DB: Database> InnerEvmContext<DB> {
         };
 
         // Check depth
-        if self.journaled_state.depth() > CALL_STACK_LIMIT {
+        if self.depth > CALL_STACK_LIMIT {
             return return_error(ExitCode::CallDepthOverflow);
         }
 
         // Fetch balance of caller.
-        let (caller_balance, _) = self.balance(inputs.caller)?;
+        let mut caller = Account::new_from_jzkt(&inputs.caller);
 
         // Check if caller has enough balance to send to the created contract.
-        if caller_balance < inputs.value {
+        if caller.balance < inputs.value {
             return return_error(ExitCode::InsufficientBalance);
         }
 
         // Increase nonce of caller and check if it overflows
-        let old_nonce;
-        if let Some(nonce) = self.journaled_state.inc_nonce(inputs.caller) {
-            old_nonce = nonce - 1;
-        } else {
-            return return_error(ExitCode::NonceOverflow);
-        }
+        let old_nonce = caller.inc_nonce()?;
 
         // Create address
         let mut init_code_hash = B256::ZERO;
@@ -236,23 +244,18 @@ impl<DB: Database> InnerEvmContext<DB> {
                 inputs.caller.create2(salt.to_be_bytes(), init_code_hash)
             }
         };
+        let mut callee = Account::new_from_jzkt(&created_address);
 
         // Load account so it needs to be marked as warm for access list.
-        self.journaled_state
-            .load_account(created_address, &mut self.db)?;
+        // TODO: "how can we load created account?"
+
+        let checkpoint = Account::checkpoint();
 
         // create account, transfer funds and make the journal checkpoint.
-        let checkpoint = match self.journaled_state.create_account_checkpoint(
-            inputs.caller,
-            created_address,
-            inputs.value,
-            spec_id,
-        ) {
-            Ok(checkpoint) => checkpoint,
-            Err(e) => {
-                return return_error(e);
-            }
-        };
+        match Account::create_account(&mut caller, &mut callee, inputs.value) {
+            Ok(_) => {}
+            Err(err) => return return_error(err),
+        }
 
         let bytecode = Bytecode::new_raw(inputs.init_code.clone());
 
@@ -265,11 +268,7 @@ impl<DB: Database> InnerEvmContext<DB> {
             inputs.value,
         ));
 
-        Ok(FrameOrResult::new_create_frame(
-            created_address,
-            checkpoint,
-            Interpreter::new(contract, gas.limit(), false),
-        ))
+        Ok(FrameOrResult::new_create_frame(created_address, checkpoint))
     }
 
     /// Handles call return.
@@ -277,13 +276,13 @@ impl<DB: Database> InnerEvmContext<DB> {
     pub fn call_return(
         &mut self,
         interpreter_result: &InterpreterResult,
-        journal_checkpoint: JournalCheckpoint,
+        journal_checkpoint: AccountCheckpoint,
     ) {
         // revert changes or not.
         if matches!(interpreter_result.result, ExitCode::Ok) {
-            self.journaled_state.checkpoint_commit();
+            Account::commit();
         } else {
-            self.journaled_state.checkpoint_revert(journal_checkpoint);
+            Account::rollback(journal_checkpoint);
         }
     }
 
@@ -293,11 +292,11 @@ impl<DB: Database> InnerEvmContext<DB> {
         &mut self,
         interpreter_result: &mut InterpreterResult,
         address: Address,
-        journal_checkpoint: JournalCheckpoint,
+        journal_checkpoint: AccountCheckpoint,
     ) {
         // if return is not ok revert and return.
-        if !matches!(interpreter_result.result, return_ok!()) {
-            self.journaled_state.checkpoint_revert(journal_checkpoint);
+        if !matches!(interpreter_result.result, ExitCode::Ok) {
+            Account::rollback(journal_checkpoint);
             return;
         }
         // Host error if present on execution
@@ -308,8 +307,8 @@ impl<DB: Database> InnerEvmContext<DB> {
             && !interpreter_result.output.is_empty()
             && interpreter_result.output.first() == Some(&0xEF)
         {
-            self.journaled_state.checkpoint_revert(journal_checkpoint);
-            interpreter_result.result = InstructionResult::CreateContractStartingWithEF;
+            Account::rollback(journal_checkpoint);
+            interpreter_result.result = ExitCode::CreateContractStartingWithEF;
             return;
         }
 
@@ -321,43 +320,34 @@ impl<DB: Database> InnerEvmContext<DB> {
                     .env
                     .cfg
                     .limit_contract_code_size
-                    .unwrap_or(MAX_CODE_SIZE)
+                    .unwrap_or(RWASM_MAX_CODE_SIZE)
         {
-            self.journaled_state.checkpoint_revert(journal_checkpoint);
-            interpreter_result.result = InstructionResult::CreateContractSizeLimit;
+            Account::rollback(journal_checkpoint);
+            interpreter_result.result = ExitCode::ContractSizeLimit;
             return;
         }
-        let gas_for_code = interpreter_result.output.len() as u64 * gas::CODEDEPOSIT;
+        let gas_for_code = interpreter_result.output.len() as u64 * 200; // 200 is CODEDEPOSIT cost
         if !interpreter_result.gas.record_cost(gas_for_code) {
             // record code deposit gas cost and check if we are out of gas.
             // EIP-2 point 3: If contract creation does not have enough gas to pay for the
             // final gas fee for adding the contract code to the state, the contract
             //  creation fails (i.e. goes out-of-gas) rather than leaving an empty contract.
             if SPEC::enabled(HOMESTEAD) {
-                self.journaled_state.checkpoint_revert(journal_checkpoint);
-                interpreter_result.result = InstructionResult::OutOfGas;
+                Account::rollback(journal_checkpoint);
+                interpreter_result.result = ExitCode::OutOfFuel;
                 return;
             } else {
                 interpreter_result.output = Bytes::new();
             }
         }
         // if we have enough gas we can commit changes.
-        self.journaled_state.checkpoint_commit();
-
-        // Do analysis of bytecode straight away.
-        let bytecode = match self.env.cfg.perf_analyse_created_bytecodes {
-            AnalysisKind::Raw => Bytecode::new_raw(interpreter_result.output.clone()),
-            AnalysisKind::Check => {
-                Bytecode::new_raw(interpreter_result.output.clone()).to_checked()
-            }
-            AnalysisKind::Analyse => {
-                to_analysed(Bytecode::new_raw(interpreter_result.output.clone()))
-            }
-        };
+        Account::commit();
 
         // set code
-        self.journaled_state.set_code(address, bytecode);
+        let mut contract = Account::new_from_jzkt(&address);
+        contract.update_rwasm_bytecode(&interpreter_result.output);
+        contract.write_to_jzkt();
 
-        interpreter_result.result = InstructionResult::Return;
+        interpreter_result.result = ExitCode::Ok;
     }
 }

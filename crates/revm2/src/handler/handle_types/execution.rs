@@ -1,3 +1,4 @@
+use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, InterpreterResult};
 use crate::{
     handler::mainnet,
     primitives::{db::Database, EVMError, Spec},

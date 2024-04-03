@@ -3,6 +3,11 @@ use fluentbase_sdk::evm::{Address, Bytes};
 use fluentbase_types::{ExitCode, U256};
 use revm_primitives::alloy_primitives::private::serde;
 use revm_primitives::{CreateScheme, TransactTo, TxEnv};
+use std::boxed::Box;
+
+pub struct Interpreter {
+    pub gas: Gas,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterpreterResult {
@@ -230,7 +235,7 @@ pub struct CallInputs {
 pub struct CreateInputs {
     /// Caller address of the EVM.
     pub caller: Address,
-    /// The create scheme.
+    /// The creation scheme.
     pub scheme: CreateScheme,
     /// The value to transfer.
     pub value: U256,
@@ -303,5 +308,159 @@ impl CreateInputs {
                 .caller
                 .create2_from_code(salt.to_be_bytes(), &self.init_code),
         }
+    }
+}
+
+/// Represents the outcome of a create operation in an interpreter.
+///
+/// This struct holds the result of the operation along with an optional address.
+/// It provides methods to determine the next action based on the result of the operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateOutcome {
+    // The result of the interpreter operation.
+    pub result: InterpreterResult,
+    // An optional address associated with the create operation.
+    pub address: Option<Address>,
+}
+
+impl CreateOutcome {
+    /// Constructs a new `CreateOutcome`.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - An `InterpreterResult` representing the result of the interpreter operation.
+    /// * `address` - An optional `Address` associated with the create operation.
+    ///
+    /// # Returns
+    ///
+    /// A new `CreateOutcome` instance.
+    pub fn new(result: InterpreterResult, address: Option<Address>) -> Self {
+        Self { result, address }
+    }
+
+    /// Retrieves a reference to the `InstructionResult` from the `InterpreterResult`.
+    ///
+    /// This method provides access to the `InstructionResult` which represents the
+    /// outcome of the instruction execution. It encapsulates the result information
+    /// such as whether the instruction was executed successfully, resulted in a revert,
+    /// or encountered a fatal error.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `InstructionResult`.
+    pub fn instruction_result(&self) -> &ExitCode {
+        &self.result.result
+    }
+
+    /// Retrieves a reference to the output bytes from the `InterpreterResult`.
+    ///
+    /// This method returns the output of the interpreted operation. The output is
+    /// typically used when the operation successfully completes and returns data.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the output `Bytes`.
+    pub fn output(&self) -> &Bytes {
+        &self.result.output
+    }
+
+    /// Retrieves a reference to the `Gas` details from the `InterpreterResult`.
+    ///
+    /// This method provides access to the gas details of the operation, which includes
+    /// information about gas used, remaining, and refunded. It is essential for
+    /// understanding the gas consumption of the operation.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `Gas` details.
+    pub fn gas(&self) -> &Gas {
+        &self.result.gas
+    }
+}
+
+/// Represents the outcome of a call operation in a virtual machine.
+///
+/// This struct encapsulates the result of executing an instruction by an interpreter, including
+/// the result itself, gas usage information, and the memory offset where output data is stored.
+///
+/// # Fields
+///
+/// * `result` - The result of the interpreter's execution, including output data and gas usage.
+/// * `memory_offset` - The range in memory where the output data is located.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallOutcome {
+    pub result: InterpreterResult,
+    pub memory_offset: Range<usize>,
+}
+
+impl CallOutcome {
+    /// Constructs a new `CallOutcome`.
+    ///
+    /// Creates an instance of `CallOutcome` with the given interpreter result and memory offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - The result of the interpreter's execution.
+    /// * `memory_offset` - The range in memory indicating where the output data is stored.
+    pub fn new(result: InterpreterResult, memory_offset: Range<usize>) -> Self {
+        Self {
+            result,
+            memory_offset,
+        }
+    }
+
+    /// Returns a reference to the instruction result.
+    ///
+    /// Provides access to the result of the executed instruction.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `InstructionResult`.
+    pub fn instruction_result(&self) -> &ExitCode {
+        &self.result.result
+    }
+
+    /// Returns the gas usage information.
+    ///
+    /// Provides access to the gas usage details of the executed instruction.
+    ///
+    /// # Returns
+    ///
+    /// An instance of `Gas` representing the gas usage.
+    pub fn gas(&self) -> Gas {
+        self.result.gas
+    }
+
+    /// Returns a reference to the output data.
+    ///
+    /// Provides access to the output data generated by the executed instruction.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the output data as `Bytes`.
+    pub fn output(&self) -> &Bytes {
+        &self.result.output
+    }
+
+    /// Returns the start position of the memory offset.
+    ///
+    /// Provides the starting index of the memory range where the output data is stored.
+    ///
+    /// # Returns
+    ///
+    /// The starting index of the memory offset as `usize`.
+    pub fn memory_start(&self) -> usize {
+        self.memory_offset.start
+    }
+
+    /// Returns the length of the memory range.
+    ///
+    /// Provides the length of the memory range where the output data is stored.
+    ///
+    /// # Returns
+    ///
+    /// The length of the memory range as `usize`.
+    pub fn memory_length(&self) -> usize {
+        self.memory_offset.len()
     }
 }

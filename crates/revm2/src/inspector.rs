@@ -14,6 +14,7 @@ mod noop;
 
 // Exports.
 
+use crate::types::Interpreter;
 pub use handler_register::{inspector_handle_register, inspector_instruction, GetInspector};
 
 /// [Inspector] implementations.

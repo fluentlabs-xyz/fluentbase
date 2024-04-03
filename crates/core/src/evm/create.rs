@@ -11,11 +11,7 @@ use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
     primitives::{Bytecode, Bytes},
-    BytecodeLocked,
-    Contract,
-    Interpreter,
-    SharedMemory,
-    MAX_CODE_SIZE,
+    BytecodeLocked, Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
 
 #[no_mangle]
@@ -45,7 +41,10 @@ pub fn _evm_create(
     if caller_account.balance < value {
         return ExitCode::InsufficientBalance;
     }
-    let old_nonce = caller_account.inc_nonce();
+    let old_nonce = match caller_account.inc_nonce() {
+        Ok(old_nonce) => old_nonce,
+        Err(err) => return err,
+    };
     let deployed_contract_address = calc_create_address(&caller_address, old_nonce);
     let mut callee_account = Account::new_from_jzkt(&deployed_contract_address);
 

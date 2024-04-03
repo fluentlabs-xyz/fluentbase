@@ -1,3 +1,4 @@
+use crate::types::{CallInputs, CreateInputs};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
@@ -60,7 +61,7 @@ impl<'a, EXT, DB: Database> Evm<'a, EXT, DB> {
         mut context: Context<EXT, DB>,
         handler: Handler<'a, Self, EXT, DB>,
     ) -> Evm<'a, EXT, DB> {
-        context.evm.journaled_state.set_spec_id(handler.cfg.spec_id);
+        context.evm.inner.spec_id = handler.cfg.spec_id;
         Evm { context, handler }
     }
 

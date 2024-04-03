@@ -40,6 +40,7 @@ pub enum ExitCode {
     EcrecoverBadSignature = -1026,
     EcrecoverError = -1027,
     NonceOverflow = -1028,
+    CreateContractStartingWithEF = 1029,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
