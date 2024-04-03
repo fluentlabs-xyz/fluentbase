@@ -6,7 +6,7 @@ use rwasm::{
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
     // warning: when adding new codes don't forget to add them to impls below
@@ -39,6 +39,7 @@ pub enum ExitCode {
     PrecompileError = -1025,
     EcrecoverBadSignature = -1026,
     EcrecoverError = -1027,
+    NonceOverflow = -1028,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,

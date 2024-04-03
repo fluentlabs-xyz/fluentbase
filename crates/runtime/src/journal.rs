@@ -200,7 +200,7 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
 
     fn store(&mut self, address: &Address, slot: &[u8; 32], value: &[u8; 32]) {
         let storage_key = Self::storage_key(address, slot);
-        self.update(&storage_key, &vec![*value], 1);
+        self.update(&storage_key, &vec![*value], 0);
     }
 
     fn load(&mut self, address: &Address, slot: &[u8; 32]) -> Option<([u8; 32], bool)> {
