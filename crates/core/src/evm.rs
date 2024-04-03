@@ -11,6 +11,7 @@ pub mod codesize;
 pub mod create;
 // #[cfg(not(any(feature = "evm_loader", feature = "wcl")))]
 pub mod create2;
+pub mod delegatecall;
 pub mod extcodecopy;
 pub mod extcodehash;
 pub mod extcodesize;
