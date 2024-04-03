@@ -1,0 +1,67 @@
+[package]
+name = "fluentbase-revm2"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+bench = false
+proc-macro = false
+
+[dependencies]
+revm-primitives = { workspace = true, default-features = false }
+revm-precompile = { workspace = true, default-features = false }
+
+# fluentbase
+fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-genesis = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-core-api = { workspace = true, default-features = false }
+
+# rwasm
+rwasm = { workspace = true, optional = true, default-features = false }
+
+#misc
+auto_impl = { version = "1.1", default-features = false }
+byteorder = { workspace = true, default-features = false }
+dyn-clone = "1.0.17"
+cfg-if = "1.0.0"
+
+[dev-dependencies]
+fluentbase-runtime = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+    "fluentbase-genesis/std",
+    "revm-primitives/std",
+    "revm-precompile/std",
+]
+serde = []
+arbitrary = []
+sdk = []
+dev = []
+
+# removed features (needed for reth compilation)
+optimism = []
+optimism-default-handler = []
+negate-optimism-default-handler = []
+ethersdb = []
+memory_limit = []
+optional_balance_check = []
+optional_block_gas_limit = []
+optional_eip3607 = []
+optional_gas_refund = []
+optional_no_base_fee = []
+optional_beneficiary_reward = []
+secp256k1 = []
+c-kzg = []
