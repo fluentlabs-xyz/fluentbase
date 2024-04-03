@@ -22,9 +22,6 @@ mod evm;
 mod frame;
 pub mod handler;
 mod inspector;
-mod journaled_state;
-#[cfg(feature = "optimism")]
-pub mod optimism;
 mod types;
 
 // Export items.
@@ -45,10 +42,6 @@ pub use handler::Handler;
 pub use inspector::{
     inspector_handle_register, inspector_instruction, inspectors, GetInspector, Inspector,
 };
-pub use journaled_state::{JournalCheckpoint, JournalEntry, JournaledState};
-// export Optimism types, helpers, and constants
-#[cfg(feature = "optimism")]
-pub use optimism::{L1BlockInfo, BASE_FEE_RECIPIENT, L1_BLOCK_CONTRACT, L1_FEE_RECIPIENT};
 
 #[doc(inline)]
 pub use revm_precompile as precompile;

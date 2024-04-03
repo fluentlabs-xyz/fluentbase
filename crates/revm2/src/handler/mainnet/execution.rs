@@ -1,8 +1,10 @@
+use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InterpreterResult};
 use crate::{
     db::Database,
     primitives::{EVMError, Env, Spec},
     CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
+use fluentbase_types::ExitCode;
 use std::boxed::Box;
 
 /// Helper function called inside [`last_frame_return`]
@@ -22,11 +24,11 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
     gas.record_cost(env.tx.gas_limit);
 
     match instruction_result {
-        return_ok!() => {
+        ExitCode::Ok => {
             gas.erase_cost(remaining);
             gas.record_refund(refunded);
         }
-        return_revert!() => {
+        ExitCode::Panic => {
             gas.erase_cost(remaining);
         }
         _ => {}
@@ -133,13 +135,13 @@ pub fn insert_create_outcome<EXT, DB: Database>(
 
 #[cfg(test)]
 mod tests {
-    use revm_interpreter::{primitives::CancunSpec, InterpreterResult};
     use revm_precompile::Bytes;
+    use revm_primitives::CancunSpec;
 
     use super::*;
 
     /// Creates frame result.
-    fn call_last_frame_return(instruction_result: InstructionResult, gas: Gas) -> Gas {
+    fn call_last_frame_return(instruction_result: ExitCode, gas: Gas) -> Gas {
         let mut env = Env::default();
         env.tx.gas_limit = 100;
 
@@ -157,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas() {
-        let gas = call_last_frame_return(InstructionResult::Stop, Gas::new(90));
+        let gas = call_last_frame_return(ExitCode::Panic, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);

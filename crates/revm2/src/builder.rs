@@ -448,8 +448,9 @@ mod test {
         },
         Context, ContextPrecompile, ContextStatefulPrecompile, Evm, InMemoryDB, InnerEvmContext,
     };
-    use revm_interpreter::{Host, Interpreter};
-    use std::{cell::RefCell, rc::Rc, sync::Arc};
+    use core::cell::RefCell;
+    use std::boxed::Box;
+    use std::{rc::Rc, sync::Arc};
 
     /// Custom evm context
     #[derive(Default, Clone, Debug)]

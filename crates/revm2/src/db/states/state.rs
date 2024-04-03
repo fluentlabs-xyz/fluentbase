@@ -305,7 +305,8 @@ mod tests {
         states::reverts::AccountInfoRevert, AccountRevert, AccountStatus, BundleAccount,
         RevertToSlot,
     };
-    use revm_interpreter::primitives::{keccak256, StorageSlot};
+    use revm_primitives::keccak256;
+    use std::string::ToString;
 
     #[test]
     fn block_hash_cache() {
