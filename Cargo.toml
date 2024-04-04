@@ -39,7 +39,7 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.6.4", default-features = false, features = ["rlp"] }
+alloy-primitives = { version = "=0.6.4", default-features = false, features = ["rlp"] }
 hashbrown = { version = "0.14.3" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
