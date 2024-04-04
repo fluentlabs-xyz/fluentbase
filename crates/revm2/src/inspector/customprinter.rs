@@ -27,7 +27,7 @@ impl<DB: Database> Inspector<DB> for CustomPrintTracer {
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // let opcode = interp.current_opcode;
         // let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
         //
@@ -118,9 +118,11 @@ mod test {
         primitives::{address, bytes, SpecId},
         Evm, InMemoryDB,
     };
+    use fluentbase_sdk::LowLevelSDK;
 
     #[test]
     fn gas_calculation_underflow() {
+        LowLevelSDK::with_default_jzkt();
         let callee = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
 
         // https://github.com/bluealloy/revm/issues/277

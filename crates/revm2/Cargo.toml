@@ -31,7 +31,6 @@ rwasm = { workspace = true, optional = true, default-features = false }
 
 #misc
 auto_impl = { version = "1.1", default-features = false }
-byteorder = { workspace = true, default-features = false }
 dyn-clone = "1.0.17"
 cfg-if = "1.0.0"
 

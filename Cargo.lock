@@ -1143,7 +1143,6 @@ name = "fluentbase-revm2"
 version = "0.1.0"
 dependencies = [
  "auto_impl",
- "byteorder",
  "cfg-if",
  "dyn-clone",
  "fluentbase-codec",

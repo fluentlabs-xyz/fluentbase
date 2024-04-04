@@ -278,8 +278,8 @@ impl<'a, BuilderStage, EXT, DB: Database> EvmBuilder<'a, BuilderStage, EXT, DB> 
     ///
     /// # Example
     /// ```rust
-    /// use revm::{EvmBuilder, Handler, primitives::{SpecId, HandlerCfg}};
-    /// use revm_interpreter::primitives::CancunSpec;
+    /// use fluentbase_revm2::{EvmBuilder, Handler, primitives::{SpecId, HandlerCfg}};
+    /// use revm_primitives::CancunSpec;
     /// let builder = EvmBuilder::default();
     ///
     /// // get the desired handler
@@ -444,12 +444,6 @@ mod test {
     };
     use core::cell::RefCell;
     use std::rc::Rc;
-
-    /// Custom evm context
-    #[derive(Default, Clone, Debug)]
-    pub(crate) struct CustomContext {
-        pub(crate) inner: Rc<RefCell<u8>>,
-    }
 
     #[test]
     fn simple_build() {

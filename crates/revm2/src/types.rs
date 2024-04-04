@@ -41,25 +41,25 @@ pub struct InterpreterResult {
 /// Represents the result of an `sstore` operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SStoreResult {
+pub(crate) struct SStoreResult {
     /// Value of the storage when it is first read
-    pub original_value: U256,
+    pub(crate) original_value: U256,
     /// Current value of the storage
-    pub present_value: U256,
+    pub(crate) present_value: U256,
     /// New value that is set
-    pub new_value: U256,
+    pub(crate) new_value: U256,
     /// Is storage slot loaded from database
-    pub is_cold: bool,
+    pub(crate) is_cold: bool,
 }
 
 /// Result of a call that resulted in a self destruct.
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SelfDestructResult {
-    pub had_value: bool,
-    pub target_exists: bool,
-    pub is_cold: bool,
-    pub previously_destroyed: bool,
+pub(crate) struct SelfDestructResult {
+    pub(crate) had_value: bool,
+    pub(crate) target_exists: bool,
+    pub(crate) is_cold: bool,
+    pub(crate) previously_destroyed: bool,
 }
 
 /// Represents the state of gas during execution.
