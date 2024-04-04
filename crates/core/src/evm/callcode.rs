@@ -27,12 +27,15 @@ pub fn _evm_callcode(
     let mut callee_account = Account::new_from_jzkt(&callee_address);
     let caller_address = ExecutionContext::contract_caller();
     let mut caller_account = Account::new_from_jzkt(&caller_address);
-    if value != U256::ZERO {
-        match Account::transfer(&mut caller_account, &mut caller_account, value) {
-            Ok(_) => {}
-            Err(exit_code) => return exit_code,
-        }
-    };
+    if caller_account.balance < value {
+        return ExitCode::InsufficientBalance
+    }
+    // if value != U256::ZERO {
+    //     match Account::transfer(&mut caller_account, &mut caller_account, value) {
+    //         Ok(_) => {}
+    //         Err(exit_code) => return exit_code,
+    //     }
+    // };
     let bytecode = BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(
         callee_account.load_source_bytecode(),
     )))
