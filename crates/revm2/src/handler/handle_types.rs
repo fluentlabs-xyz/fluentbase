@@ -12,8 +12,8 @@ pub use validation::{
 };
 
 pub use execution::{
-    ExecutionHandler, FrameCallHandle, FrameCallReturnHandle, FrameCreateHandle,
-    FrameCreateReturnHandle, InsertCallOutcomeHandle, InsertCreateOutcomeHandle,
+    ExecutionHandler, FrameCallHandle, FrameCallReturnHandle, FrameCreateReturnHandle,
+    InsertCallOutcomeHandle, InsertCreateOutcomeHandle,
 };
 
 pub use pre_execution::{

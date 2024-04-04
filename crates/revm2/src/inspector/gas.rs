@@ -2,7 +2,6 @@
 
 use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 use crate::{primitives::db::Database, EvmContext, Inspector};
-use fluentbase_types::ExitCode;
 
 /// Helper [Inspector] that keeps track of gas.
 #[allow(dead_code)]

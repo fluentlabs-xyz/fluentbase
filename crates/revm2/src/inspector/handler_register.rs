@@ -1,10 +1,4 @@
-use crate::types::Interpreter;
-use crate::{
-    db::Database, handler::register::EvmHandler, primitives::EVMError, Evm, FrameOrResult,
-    FrameResult, Inspector,
-};
-use core::cell::RefCell;
-use std::{boxed::Box, rc::Rc, sync::Arc, vec::Vec};
+use crate::{db::Database, handler::register::EvmHandler, Inspector};
 
 /// Provides access to an `Inspector` instance.
 pub trait GetInspector<DB: Database> {
@@ -222,6 +216,7 @@ pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
 mod tests {
 
     use super::*;
+    use crate::types::Interpreter;
     use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome};
     use crate::{inspectors::NoOpInspector, Database, Evm, EvmContext, Inspector};
 

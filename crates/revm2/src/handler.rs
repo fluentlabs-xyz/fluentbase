@@ -7,10 +7,7 @@ pub mod register;
 pub use handle_types::*;
 
 // Includes.
-use crate::{
-    primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId},
-    Evm,
-};
+use crate::primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId};
 use register::{EvmHandler, HandleRegisters};
 use std::vec::Vec;
 

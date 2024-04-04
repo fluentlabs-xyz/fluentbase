@@ -1,4 +1,4 @@
-use crate::{db::Database, handler::Handler, Evm};
+use crate::{db::Database, handler::Handler};
 use std::boxed::Box;
 
 /// EVM Handler

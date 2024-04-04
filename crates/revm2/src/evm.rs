@@ -1,18 +1,14 @@
-use crate::types::{
-    BytecodeType, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
-    InterpreterResult,
-};
-use crate::types::{Gas, SharedMemory};
+use crate::types::Gas;
+use crate::types::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
     handler::Handler,
     primitives::{
-        specification::SpecId, Address, BlockEnv, Bytecode, CfgEnv, EVMError, EVMResult, Env,
-        EnvWithHandlerCfg, ExecutionResult, HandlerCfg, Log, ResultAndState, TransactTo, TxEnv,
-        B256, U256,
+        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
+        ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, U256,
     },
-    Context, ContextWithHandlerCfg, Frame, FrameOrResult, FrameResult,
+    Context, ContextWithHandlerCfg, FrameResult,
 };
 use core::fmt;
 use fluentbase_codec::Encoder;
@@ -26,7 +22,7 @@ use fluentbase_core_api::bindings::{
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
-use revm_primitives::{CreateScheme, Output};
+use revm_primitives::CreateScheme;
 
 /// EVM call stack limit.
 pub const CALL_STACK_LIMIT: u64 = 1024;

@@ -1,10 +1,8 @@
-use crate::types::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InterpreterResult, SharedMemory,
-};
+use crate::types::{CallInputs, CallOutcome, CreateOutcome, Gas, InterpreterResult};
 use crate::{
     db::Database,
     primitives::{EVMError, Env, Spec},
-    CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
+    CallFrame, Context, CreateFrame, FrameOrResult, FrameResult,
 };
 use fluentbase_types::ExitCode;
 use std::boxed::Box;
@@ -78,15 +76,6 @@ pub fn call_return<EXT, DB: Database>(
         interpreter_result,
         frame.return_memory_range,
     ))
-}
-
-/// Handle frame sub create.
-#[inline]
-pub fn create<SPEC: Spec, EXT, DB: Database>(
-    context: &mut Context<EXT, DB>,
-    inputs: Box<CreateInputs>,
-) -> Result<FrameOrResult, EVMError<DB::Error>> {
-    context.evm.make_create_frame(SPEC::SPEC_ID, &inputs)
 }
 
 #[inline]
