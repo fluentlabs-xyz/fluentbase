@@ -1163,7 +1163,6 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "bytes",
  "eth_trie",
  "fluentbase-poseidon",
  "fluentbase-types",
