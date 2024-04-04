@@ -7,6 +7,8 @@ use fluentbase_core::Account;
 use fluentbase_sdk::evm::{Address, U256};
 use fluentbase_types::POSEIDON_EMPTY;
 use revm_primitives::{SpecId, BERLIN, HOMESTEAD, ISTANBUL, SHANGHAI};
+use std::boxed::Box;
+use std::vec::Vec;
 
 pub(crate) const TRANSACTION_ZERO_DATA: u64 = 4;
 

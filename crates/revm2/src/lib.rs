@@ -29,11 +29,7 @@ mod types;
 // Export items.
 
 pub use builder::EvmBuilder;
-pub use context::{
-    Context, ContextPrecompile, ContextPrecompiles, ContextStatefulPrecompile,
-    ContextStatefulPrecompileArc, ContextStatefulPrecompileBox, ContextStatefulPrecompileMut,
-    ContextWithHandlerCfg, EvmContext, InnerEvmContext,
-};
+pub use context::{Context, ContextWithHandlerCfg, EvmContext, InnerEvmContext};
 pub use db::{
     CacheState, DBBox, State, StateBuilder, StateDBBox, TransitionAccount, TransitionState,
 };
@@ -43,7 +39,5 @@ pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameRe
 pub use handler::Handler;
 pub use inspector::{inspector_handle_register, inspectors, GetInspector, Inspector};
 
-#[doc(inline)]
-pub use revm_precompile as precompile;
 #[doc(inline)]
 pub use revm_primitives as primitives;

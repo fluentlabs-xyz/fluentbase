@@ -97,8 +97,7 @@ pub fn create_return<SPEC: Spec, EXT, DB: Database>(
 
 #[cfg(test)]
 mod tests {
-    use revm_precompile::Bytes;
-    use revm_primitives::CancunSpec;
+    use revm_primitives::{Bytes, CancunSpec};
 
     use super::*;
 

@@ -16,9 +16,7 @@ pub use execution::{
     InsertCallOutcomeHandle, InsertCreateOutcomeHandle,
 };
 
-pub use pre_execution::{
-    DeductCallerHandle, LoadAccountsHandle, LoadPrecompilesHandle, PreExecutionHandler,
-};
+pub use pre_execution::{DeductCallerHandle, LoadAccountsHandle, PreExecutionHandler};
 
 pub use post_execution::{
     EndHandle, OutputHandle, PostExecutionHandler, ReimburseCallerHandle, RewardBeneficiaryHandle,

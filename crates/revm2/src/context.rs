@@ -1,11 +1,6 @@
-mod context_precompiles;
 pub(crate) mod evm_context;
 mod inner_evm_context;
 
-pub use context_precompiles::{
-    ContextPrecompile, ContextPrecompiles, ContextStatefulPrecompile, ContextStatefulPrecompileArc,
-    ContextStatefulPrecompileBox, ContextStatefulPrecompileMut,
-};
 pub use evm_context::EvmContext;
 pub use inner_evm_context::InnerEvmContext;
 

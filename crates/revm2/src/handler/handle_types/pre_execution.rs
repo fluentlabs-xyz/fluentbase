@@ -2,12 +2,9 @@
 use crate::{
     handler::mainnet,
     primitives::{db::Database, EVMError, EVMResultGeneric, Spec},
-    Context, ContextPrecompiles,
+    Context,
 };
 use std::sync::Arc;
-
-/// Loads precompiles into Evm
-pub type LoadPrecompilesHandle<'a, DB> = Arc<dyn Fn() -> ContextPrecompiles<DB> + 'a>;
 
 /// Load access list accounts and beneficiary.
 /// There is no need to load Caller as it is assumed that
