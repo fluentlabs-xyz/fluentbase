@@ -3,6 +3,7 @@ use super::{
     StorageWithOriginalValues, TransitionAccount,
 };
 use revm_precompile::HashMap;
+use revm_primitives::{AccountInfo, StorageSlot, U256};
 
 /// Account information focused on creating of database changesets
 /// and Reverts.

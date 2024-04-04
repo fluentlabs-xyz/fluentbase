@@ -1,4 +1,8 @@
-use crate::types::{CallInputs, CreateInputs};
+use crate::types::{
+    BytecodeType, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+    InterpreterResult,
+};
+use crate::types::{Gas, SharedMemory};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
@@ -11,7 +15,18 @@ use crate::{
     Context, ContextWithHandlerCfg, Frame, FrameOrResult, FrameResult,
 };
 use core::fmt;
-use std::vec::Vec;
+use fluentbase_codec::Encoder;
+use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
+use fluentbase_core::{Account, AccountCheckpoint};
+use fluentbase_core_api::api::CoreInput;
+use fluentbase_core_api::bindings::{
+    EvmCreate2MethodInput, EvmCreateMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput,
+    EVM_CREATE2_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
+};
+use fluentbase_sdk::evm::{Bytes, ContractInput};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
+use revm_primitives::{CreateScheme, Output};
 
 /// EVM call stack limit.
 pub const CALL_STACK_LIMIT: u64 = 1024;
@@ -23,7 +38,7 @@ pub struct Evm<'a, EXT, DB: Database> {
     pub context: Context<EXT, DB>,
     /// Handler of EVM that contains all the logic. Handler contains specification id
     /// and it different depending on the specified fork.
-    pub handler: Handler<'a, Self, EXT, DB>,
+    pub handler: Handler<'a, EXT, DB>,
 }
 
 impl<EXT, DB> fmt::Debug for Evm<'_, EXT, DB>
@@ -57,10 +72,7 @@ impl<'a> Evm<'a, (), EmptyDB> {
 
 impl<'a, EXT, DB: Database> Evm<'a, EXT, DB> {
     /// Create new EVM.
-    pub fn new(
-        mut context: Context<EXT, DB>,
-        handler: Handler<'a, Self, EXT, DB>,
-    ) -> Evm<'a, EXT, DB> {
+    pub fn new(mut context: Context<EXT, DB>, handler: Handler<'a, EXT, DB>) -> Evm<'a, EXT, DB> {
         context.evm.inner.spec_id = handler.cfg.spec_id;
         Evm { context, handler }
     }
@@ -116,7 +128,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// Returns the reference of Env configuration
     #[inline]
     pub fn cfg(&self) -> &CfgEnv {
-        &self.env().cfg
+        &self.context.evm.env.cfg
     }
 
     /// Returns the mutable reference of Env configuration
@@ -208,122 +220,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         ContextWithHandlerCfg::new(self.context, self.handler.cfg)
     }
 
-    /// Starts the main loop and returns outcome of the execution.
-    pub fn start_the_loop(
-        &mut self,
-        first_frame: Frame,
-    ) -> Result<FrameResult, EVMError<DB::Error>> {
-        // take instruction table
-        let table = self
-            .handler
-            .take_instruction_table()
-            .expect("Instruction table should be present");
-
-        // run main loop
-        let frame_result = match &table {
-            InstructionTables::Plain(table) => self.run_the_loop(table, first_frame),
-            InstructionTables::Boxed(table) => self.run_the_loop(table, first_frame),
-        };
-
-        // return back instruction table
-        self.handler.set_instruction_table(table);
-
-        frame_result
-    }
-
-    /// Runs main call loop.
-    #[inline]
-    pub fn run_the_loop<FN>(
-        &mut self,
-        instruction_table: &[FN; 256],
-        first_frame: Frame,
-    ) -> Result<FrameResult, EVMError<DB::Error>>
-    where
-        FN: Fn(&mut Interpreter, &mut Self),
-    {
-        let mut call_stack: Vec<Frame> = Vec::with_capacity(1025);
-        call_stack.push(first_frame);
-
-        #[cfg(feature = "memory_limit")]
-        let mut shared_memory =
-            SharedMemory::new_with_memory_limit(self.context.evm.env.cfg.memory_limit);
-        #[cfg(not(feature = "memory_limit"))]
-        let mut shared_memory = SharedMemory::new();
-
-        shared_memory.new_context();
-
-        // peek last stack frame.
-        let mut stack_frame = call_stack.last_mut().unwrap();
-
-        loop {
-            // run interpreter
-            let interpreter = &mut stack_frame.frame_data_mut().interpreter;
-            let next_action = interpreter.run(shared_memory, instruction_table, self);
-
-            // take error and break the loop if there is any.
-            // This error is set From Interpreter when its interacting with Host.
-            core::mem::replace(&mut self.context.evm.error, Ok(()))?;
-            // take shared memory back.
-            shared_memory = interpreter.take_memory();
-
-            let exec = &mut self.handler.execution;
-            let frame_or_result = match next_action {
-                InterpreterAction::Call { inputs } => exec.call(&mut self.context, inputs)?,
-                InterpreterAction::Create { inputs } => exec.create(&mut self.context, inputs)?,
-                InterpreterAction::Return { result } => {
-                    // free memory context.
-                    shared_memory.free_context();
-
-                    // pop last frame from the stack and consume it to create FrameResult.
-                    let returned_frame = call_stack
-                        .pop()
-                        .expect("We just returned from Interpreter frame");
-
-                    let ctx = &mut self.context;
-                    FrameOrResult::Result(match returned_frame {
-                        Frame::Call(frame) => {
-                            // return_call
-                            FrameResult::Call(exec.call_return(ctx, frame, result)?)
-                        }
-                        Frame::Create(frame) => {
-                            // return_create
-                            FrameResult::Create(exec.create_return(ctx, frame, result)?)
-                        }
-                    })
-                }
-                InterpreterAction::None => unreachable!("InterpreterAction::None is not expected"),
-            };
-
-            // handle result
-            match frame_or_result {
-                FrameOrResult::Frame(frame) => {
-                    shared_memory.new_context();
-                    call_stack.push(frame);
-                    stack_frame = call_stack.last_mut().unwrap();
-                }
-                FrameOrResult::Result(result) => {
-                    let Some(top_frame) = call_stack.last_mut() else {
-                        // Break the look if there are no more frames.
-                        return Ok(result);
-                    };
-                    stack_frame = top_frame;
-                    let ctx = &mut self.context;
-                    // Insert result to the top frame.
-                    match result {
-                        FrameResult::Call(outcome) => {
-                            // return_call
-                            exec.insert_call_outcome(ctx, stack_frame, &mut shared_memory, outcome)?
-                        }
-                        FrameResult::Create(outcome) => {
-                            // return_create
-                            exec.insert_create_outcome(ctx, stack_frame, outcome)?
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Transact pre-verified transaction.
     fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<DB::Error> {
         let ctx = &mut self.context;
@@ -335,25 +231,36 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         // deduce caller balance with its limit.
         pre_exec.deduct_caller(ctx)?;
 
+        let mut caller_account = Account::new_from_jzkt(&ctx.evm.env.tx.caller);
+
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
-        let exec = self.handler.execution();
         // call inner handling of call/create
-        let first_frame_or_result = match ctx.evm.env.tx.transact_to {
-            TransactTo::Call(_) => exec.call(
-                ctx,
-                CallInputs::new_boxed(&ctx.evm.env.tx, gas_limit).unwrap(),
-            )?,
-            TransactTo::Create(_) => exec.create(
-                ctx,
-                CreateInputs::new_boxed(&ctx.evm.env.tx, gas_limit).unwrap(),
-            )?,
-        };
-
-        // Starts the main running loop.
-        let mut result = match first_frame_or_result {
-            FrameOrResult::Frame(first_frame) => self.start_the_loop(first_frame)?,
-            FrameOrResult::Result(result) => result,
+        let (exit_code, mut frame_result) = match ctx.evm.env.tx.transact_to {
+            TransactTo::Call(address) => {
+                caller_account.inc_nonce().unwrap();
+                let mut callee_account = Account::new_from_jzkt(&address);
+                let value = ctx.evm.env.tx.value;
+                let data = ctx.evm.env.tx.data.clone();
+                let result = self.call_inner(
+                    &mut caller_account,
+                    &mut callee_account,
+                    value,
+                    data,
+                    gas_limit,
+                );
+                (result.result.result, FrameResult::Call(result))
+            }
+            TransactTo::Create(scheme) => {
+                let salt = match scheme {
+                    CreateScheme::Create2 { salt } => Some(salt),
+                    CreateScheme::Create => None,
+                };
+                let value = ctx.evm.env.tx.value;
+                let data = ctx.evm.env.tx.data.clone();
+                let result = self.create_inner(&mut caller_account, value, data, gas_limit, salt);
+                (result.result.result, FrameResult::Create(result))
+            }
         };
 
         let ctx = &mut self.context;
@@ -361,101 +268,259 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         // handle output of call/create calls.
         self.handler
             .execution()
-            .last_frame_return(ctx, &mut result)?;
+            .last_frame_return(ctx, &mut frame_result)?;
 
         let post_exec = self.handler.post_execution();
         // Reimburse the caller
-        post_exec.reimburse_caller(ctx, result.gas())?;
+        post_exec.reimburse_caller(ctx, frame_result.gas())?;
         // Reward beneficiary
-        post_exec.reward_beneficiary(ctx, result.gas())?;
+        post_exec.reward_beneficiary(ctx, frame_result.gas())?;
         // Returns output of transaction.
-        post_exec.output(ctx, result)
-    }
-}
-
-impl<EXT, DB: Database> Host for Evm<'_, EXT, DB> {
-    fn env_mut(&mut self) -> &mut Env {
-        &mut self.context.evm.env
-    }
-    fn env(&self) -> &Env {
-        &self.context.evm.env
+        post_exec.output(ctx, frame_result)
     }
 
-    fn block_hash(&mut self, number: U256) -> Option<B256> {
-        self.context
-            .evm
-            .block_hash(number)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
+    /// EVM create opcode for both initial crate and CREATE and CREATE2 opcodes.
+    fn create_inner(
+        &mut self,
+        caller_account: &mut Account,
+        value: U256,
+        input: Bytes,
+        gas_limit: u64,
+        salt: Option<U256>,
+    ) -> CreateOutcome {
+        let return_result = |instruction_result: ExitCode, gas: Gas| CreateOutcome {
+            result: InterpreterResult {
+                result: instruction_result,
+                output: Default::default(),
+                gas,
+            },
+            address: None,
+        };
+
+        let mut gas = Gas::new(gas_limit);
+
+        if self.context.evm.depth > CALL_STACK_LIMIT {
+            return return_result(ExitCode::CallDepthOverflow, gas);
+        } else if caller_account.balance < value {
+            return return_result(ExitCode::InsufficientBalance, gas);
+        }
+
+        let checkpoint = LowLevelSDK::jzkt_checkpoint();
+
+        let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
+            BytecodeType::EVM => {
+                let method_id = match salt {
+                    Some(_) => EVM_CREATE2_METHOD_ID,
+                    None => EVM_CREATE_METHOD_ID,
+                };
+                let method_data = match salt {
+                    Some(salt) => EvmCreate2MethodInput {
+                        value32: value.to_be_bytes(),
+                        salt32: salt.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                    None => EvmCreateMethodInput {
+                        value32: value.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                };
+                let input = CoreInput {
+                    method_id,
+                    method_data,
+                };
+                (
+                    Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS),
+                    input.encode_to_vec(0),
+                )
+            }
+            BytecodeType::WASM => {
+                let method_id = match salt {
+                    Some(_) => WASM_CREATE2_METHOD_ID,
+                    None => WASM_CREATE_METHOD_ID,
+                };
+                let method_data = match salt {
+                    Some(salt) => WasmCreate2MethodInput {
+                        value32: value.to_be_bytes(),
+                        salt32: salt.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                    None => WasmCreateMethodInput {
+                        value32: value.to_be_bytes(),
+                        code: input.to_vec(),
+                        gas_limit: gas.remaining() as u32,
+                    }
+                    .encode_to_vec(0),
+                };
+                let input = CoreInput {
+                    method_id,
+                    method_data,
+                };
+                (
+                    Account::new_from_jzkt(&WCL_CONTRACT_ADDRESS),
+                    input.encode_to_vec(0),
+                )
+            }
+        };
+
+        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+            checkpoint,
+            &mut gas,
+            caller_account,
+            &mut middleware_account,
+            core_input.into(),
+            value,
+            STATE_DEPLOY,
+        );
+
+        let created_address = if exit_code == ExitCode::Ok {
+            assert_eq!(
+                output_buffer.len(),
+                20,
+                "output buffer is not 20 bytes after create/create2"
+            );
+            Some(Address::from_slice(output_buffer.as_ref()))
+        } else {
+            LowLevelSDK::jzkt_rollback(checkpoint);
+            None
+        };
+
+        CreateOutcome {
+            result: InterpreterResult {
+                result: exit_code,
+                output: Bytes::new(),
+                gas,
+            },
+            address: created_address,
+        }
     }
 
-    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
-        self.context
-            .evm
-            .load_account_exist(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
+    /// Main contract call of the EVM.
+    fn call_inner(
+        &mut self,
+        caller_account: &mut Account,
+        callee_account: &mut Account,
+        value: U256,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> CallOutcome {
+        let return_result = |instruction_result: ExitCode, gas: Gas| CallOutcome {
+            result: InterpreterResult {
+                result: instruction_result,
+                output: Default::default(),
+                gas,
+            },
+            memory_offset: Default::default(),
+        };
+
+        let mut gas = Gas::new(gas_limit);
+
+        // check call stack limit
+        if self.context.evm.depth > CALL_STACK_LIMIT {
+            return return_result(ExitCode::CallDepthOverflow, gas);
+        }
+
+        let checkpoint = Account::checkpoint();
+
+        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+            checkpoint,
+            &mut gas,
+            caller_account,
+            callee_account,
+            input,
+            value,
+            STATE_MAIN,
+        );
+
+        let ret = CallOutcome {
+            result: InterpreterResult {
+                result: exit_code,
+                output: output_buffer.into(),
+                gas,
+            },
+            memory_offset: Default::default(),
+        };
+
+        // revert changes or not
+        if exit_code != ExitCode::Ok {
+            Account::rollback(checkpoint);
+        }
+
+        ret
     }
 
-    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        self.context
-            .evm
-            .balance(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
+    fn input_from_env(
+        &self,
+        checkpoint: AccountCheckpoint,
+        gas: &Gas,
+        caller: &mut Account,
+        callee: &mut Account,
+        input: Bytes,
+        value: U256,
+    ) -> ContractInput {
+        ContractInput {
+            journal_checkpoint: checkpoint,
+            env_chain_id: self.context.evm.env.cfg.chain_id,
+            contract_gas_limit: gas.remaining(),
+            contract_address: callee.address,
+            contract_caller: caller.address,
+            contract_input: input,
+            contract_value: value,
+            contract_is_static: false,
+            block_coinbase: self.context.evm.env.block.coinbase,
+            block_timestamp: self.context.evm.env.block.timestamp.as_limbs()[0],
+            block_number: self.context.evm.env.block.number.as_limbs()[0],
+            block_difficulty: self.context.evm.env.block.difficulty.as_limbs()[0],
+            block_gas_limit: self.context.evm.env.block.gas_limit.as_limbs()[0],
+            block_base_fee: self.context.evm.env.block.basefee,
+            tx_gas_price: self.context.evm.env.tx.gas_price,
+            tx_gas_priority_fee: self.context.evm.env.tx.gas_priority_fee,
+            tx_caller: self.context.evm.env.tx.caller,
+        }
     }
 
-    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
-        self.context
-            .evm
-            .code(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
+    fn exec_rwasm_binary(
+        &mut self,
+        checkpoint: AccountCheckpoint,
+        gas: &mut Gas,
+        caller: &mut Account,
+        callee: &mut Account,
+        input: Bytes,
+        value: U256,
+        state: u32,
+    ) -> (Bytes, ExitCode) {
+        let input = self
+            .input_from_env(checkpoint, gas, caller, callee, input, value)
+            .encode_to_vec(0);
 
-    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        self.context
-            .evm
-            .code_hash(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
+        let mut gas_limit_ref = gas.remaining() as u32;
+        let gas_limit_ref = &mut gas_limit_ref as *mut u32;
+        let exit_code = LowLevelSDK::sys_exec_hash(
+            callee.rwasm_bytecode_hash.as_ptr(),
+            input.as_ptr(),
+            input.len() as u32,
+            core::ptr::null_mut(),
+            0,
+            gas_limit_ref,
+            state,
+        );
+        let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
+        gas.record_cost(gas_used);
 
-    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        self.context
-            .evm
-            .sload(address, index)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
+        let output_size = LowLevelSDK::sys_output_size();
+        let mut output_buffer = vec![0u8; output_size as usize];
+        LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
 
-    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-        self.context
-            .evm
-            .sstore(address, index, value)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
+        let exit_code = match exit_code {
+            0 => ExitCode::Ok,
+            _ => ExitCode::ExecutionHalted,
+        };
 
-    fn tload(&mut self, address: Address, index: U256) -> U256 {
-        self.context.evm.tload(address, index)
-    }
-
-    fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        self.context.evm.tstore(address, index, value)
-    }
-
-    fn log(&mut self, log: Log) {
-        self.context.evm.journaled_state.log(log);
-    }
-
-    fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-        self.context
-            .evm
-            .inner
-            .journaled_state
-            .selfdestruct(address, target, &mut self.context.evm.inner.db)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
+        (output_buffer.into(), exit_code)
     }
 }

@@ -19,11 +19,9 @@ use self::register::{HandleRegister, HandleRegisterBox};
 /// Handler acts as a proxy and allow to define different behavior for different
 /// sections of the code. This allows nice integration of different chains or
 /// to disable some mainnet behavior.
-pub struct Handler<'a, H: Host + 'a, EXT, DB: Database> {
+pub struct Handler<'a, EXT, DB: Database> {
     /// Handler config.
     pub cfg: HandlerCfg,
-    /// Instruction table type.
-    pub instruction_table: Option<InstructionTables<'a, H>>,
     /// Registers that will be called on initialization.
     pub registers: Vec<HandleRegisters<EXT, DB>>,
     /// Validity handles.
@@ -59,35 +57,12 @@ impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
     pub fn mainnet<SPEC: Spec>() -> Self {
         Self {
             cfg: HandlerCfg::new(SPEC::SPEC_ID),
-            instruction_table: Some(InstructionTables::new_plain::<SPEC>()),
             registers: Vec::new(),
             validation: ValidationHandler::new::<SPEC>(),
             pre_execution: PreExecutionHandler::new::<SPEC>(),
             post_execution: PostExecutionHandler::new::<SPEC>(),
             execution: ExecutionHandler::new::<SPEC>(),
         }
-    }
-
-    /// Returns `true` if the optimism feature is enabled and flag is set to `true`.
-    pub fn is_optimism(&self) -> bool {
-        self.cfg.is_optimism()
-    }
-
-    /// Handler for optimism
-    #[cfg(feature = "optimism")]
-    pub fn optimism<SPEC: Spec>() -> Self {
-        let mut handler = Self::mainnet::<SPEC>();
-        handler.cfg.is_optimism = true;
-        handler.append_handler_register(HandleRegisters::Plain(
-            crate::optimism::optimism_handle_register::<DB, EXT>,
-        ));
-        handler
-    }
-
-    /// Optimism with spec. Similar to [`Self::mainnet_with_spec`]
-    #[cfg(feature = "optimism")]
-    pub fn optimism_with_spec(spec_id: SpecId) -> Self {
-        spec_to_generic!(spec_id, Self::optimism::<SPEC>())
     }
 
     /// Creates handler with variable spec id, inside it will call `mainnet::<SPEC>` for
@@ -99,16 +74,6 @@ impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
     /// Specification ID.
     pub fn cfg(&self) -> HandlerCfg {
         self.cfg
-    }
-
-    /// Take instruction table.
-    pub fn take_instruction_table(&mut self) -> Option<InstructionTables<'a, Evm<'a, EXT, DB>>> {
-        self.instruction_table.take()
-    }
-
-    /// Set instruction table.
-    pub fn set_instruction_table(&mut self, table: InstructionTables<'a, Evm<'a, EXT, DB>>) {
-        self.instruction_table = Some(table);
     }
 
     /// Returns reference to pre execution handler.

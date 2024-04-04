@@ -4,6 +4,7 @@ use crate::{
     types::{BytecodeType, CallCreateResult},
     EVMData,
 };
+use alloc::rc::Rc;
 use core::marker::PhantomData;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{

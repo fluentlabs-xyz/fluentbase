@@ -1,6 +1,11 @@
 //! Custom print inspector, it has step level information of execution.
 //! It is a great tool if some debugging is needed.
 
+use crate::types::CallInputs;
+use crate::types::CallOutcome;
+use crate::types::CreateInputs;
+use crate::types::CreateOutcome;
+use crate::types::Interpreter;
 use crate::{
     inspectors::GasInspector,
     primitives::{Address, U256},
@@ -23,28 +28,28 @@ impl<DB: Database> Inspector<DB> for CustomPrintTracer {
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        let opcode = interp.current_opcode();
-        let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
-
-        let gas_remaining = self.gas_inspector.gas_remaining();
-
-        let memory_size = interp.shared_memory.len();
-
-        println!(
-            "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
-            context.journaled_state.depth(),
-            interp.program_counter(),
-            gas_remaining,
-            gas_remaining,
-            opcode_str.unwrap_or("UNKNOWN"),
-            opcode,
-            interp.gas.refunded(),
-            interp.gas.refunded(),
-            interp.stack.data(),
-            memory_size,
-        );
-
-        self.gas_inspector.step(interp, context);
+        // let opcode = interp.current_opcode;
+        // let opcode_str = opcode::OPCODE_JUMPMAP[opcode as usize];
+        //
+        // let gas_remaining = self.gas_inspector.gas_remaining();
+        //
+        // let memory_size = interp.shared_memory.len();
+        //
+        // println!(
+        //     "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
+        //     context.journaled_state.depth(),
+        //     interp.program_counter(),
+        //     gas_remaining,
+        //     gas_remaining,
+        //     opcode_str.unwrap_or("UNKNOWN"),
+        //     opcode,
+        //     interp.gas.refunded(),
+        //     interp.gas.refunded(),
+        //     interp.stack.data(),
+        //     memory_size,
+        // );
+        //
+        // self.gas_inspector.step(interp, context);
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {

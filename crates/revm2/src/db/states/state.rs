@@ -305,7 +305,7 @@ mod tests {
         states::reverts::AccountInfoRevert, AccountRevert, AccountStatus, BundleAccount,
         RevertToSlot,
     };
-    use revm_primitives::keccak256;
+    use revm_primitives::{keccak256, StorageSlot};
     use std::string::ToString;
 
     #[test]

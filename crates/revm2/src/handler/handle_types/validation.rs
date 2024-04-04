@@ -19,7 +19,7 @@ pub type ValidateInitialTxGasHandle<'a, DB> =
     Arc<dyn Fn(&Env) -> Result<u64, EVMError<<DB as Database>::Error>> + 'a>;
 
 /// Handles related to validation.
-pub struct ValidationHandler<'a, EXT, DB: Database> {
+pub struct ValidationHandler<'a, EXT: 'a, DB: Database + 'a> {
     /// Validate and calculate initial transaction gas.
     pub initial_tx_gas: ValidateInitialTxGasHandle<'a, DB>,
     /// Validate transactions against state data.

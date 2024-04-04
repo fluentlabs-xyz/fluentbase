@@ -1,4 +1,6 @@
-use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InterpreterResult};
+use crate::types::{
+    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InterpreterResult, SharedMemory,
+};
 use crate::{
     db::Database,
     primitives::{EVMError, Env, Spec},
@@ -78,21 +80,6 @@ pub fn call_return<EXT, DB: Database>(
     ))
 }
 
-#[inline]
-pub fn insert_call_outcome<EXT, DB: Database>(
-    context: &mut Context<EXT, DB>,
-    frame: &mut Frame,
-    shared_memory: &mut SharedMemory,
-    outcome: CallOutcome,
-) -> Result<(), EVMError<DB::Error>> {
-    core::mem::replace(&mut context.evm.error, Ok(()))?;
-    frame
-        .frame_data_mut()
-        .interpreter
-        .insert_call_outcome(shared_memory, outcome);
-    Ok(())
-}
-
 /// Handle frame sub create.
 #[inline]
 pub fn create<SPEC: Spec, EXT, DB: Database>(
@@ -117,20 +104,6 @@ pub fn create_return<SPEC: Spec, EXT, DB: Database>(
         interpreter_result,
         Some(frame.created_address),
     ))
-}
-
-#[inline]
-pub fn insert_create_outcome<EXT, DB: Database>(
-    context: &mut Context<EXT, DB>,
-    frame: &mut Frame,
-    outcome: CreateOutcome,
-) -> Result<(), EVMError<DB::Error>> {
-    core::mem::replace(&mut context.evm.error, Ok(()))?;
-    frame
-        .frame_data_mut()
-        .interpreter
-        .insert_create_outcome(outcome);
-    Ok(())
 }
 
 #[cfg(test)]
@@ -171,12 +144,12 @@ mod tests {
         let mut return_gas = Gas::new(90);
         return_gas.record_refund(30);
 
-        let gas = call_last_frame_return(InstructionResult::Stop, return_gas);
+        let gas = call_last_frame_return(ExitCode::Ok, return_gas);
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 2);
 
-        let gas = call_last_frame_return(InstructionResult::Revert, return_gas);
+        let gas = call_last_frame_return(ExitCode::Panic, return_gas);
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);
@@ -184,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_revert_gas() {
-        let gas = call_last_frame_return(InstructionResult::Revert, Gas::new(90));
+        let gas = call_last_frame_return(ExitCode::Panic, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);

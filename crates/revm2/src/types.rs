@@ -2,11 +2,31 @@ use core::ops::Range;
 use fluentbase_sdk::evm::{Address, Bytes};
 use fluentbase_types::{ExitCode, U256};
 use revm_primitives::alloy_primitives::private::serde;
-use revm_primitives::{CreateScheme, TransactTo, TxEnv};
+use revm_primitives::{CreateScheme, Spec, TransactTo, TxEnv, LONDON};
 use std::boxed::Box;
 
 pub struct Interpreter {
     pub gas: Gas,
+    pub program_counter: usize,
+    pub current_opcode: u8,
+}
+
+pub struct SharedMemory;
+
+#[allow(non_camel_case_types)]
+pub(crate) enum BytecodeType {
+    EVM,
+    WASM,
+}
+
+impl BytecodeType {
+    pub(crate) fn from_slice(input: &[u8]) -> Self {
+        if input.len() >= 4 && input[0..4] == [0x00, 0x61, 0x73, 0x6d] {
+            Self::WASM
+        } else {
+            Self::EVM
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +135,16 @@ impl Gas {
     #[inline]
     pub fn record_refund(&mut self, refund: i64) {
         self.refunded += refund;
+    }
+
+    /// Set a refund value for final refund.
+    ///
+    /// Max refund value is limited to Nth part (depending of fork) of gas spend.
+    ///
+    /// Related to EIP-3529: Reduction in refunds
+    pub fn set_final_refund<SPEC: Spec>(&mut self) {
+        let max_refund_quotient = if SPEC::enabled(LONDON) { 5 } else { 2 };
+        self.refunded = (self.refunded() as u64).min(self.spend() / max_refund_quotient) as i64;
     }
 
     /// Set a refund value
