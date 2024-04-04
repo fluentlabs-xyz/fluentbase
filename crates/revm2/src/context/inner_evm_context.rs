@@ -233,7 +233,7 @@ impl<DB: Database> InnerEvmContext<DB> {
         }
 
         // Increase nonce of caller and check if it overflows
-        let old_nonce = caller.inc_nonce()?;
+        let old_nonce = caller.inc_nonce().unwrap();
 
         // Create address
         let mut init_code_hash = B256::ZERO;
@@ -259,14 +259,14 @@ impl<DB: Database> InnerEvmContext<DB> {
 
         let bytecode = Bytecode::new_raw(inputs.init_code.clone());
 
-        let contract = Box::new(Contract::new(
-            Bytes::new(),
-            bytecode,
-            init_code_hash,
-            created_address,
-            inputs.caller,
-            inputs.value,
-        ));
+        // let contract = Box::new(Contract::new(
+        //     Bytes::new(),
+        //     bytecode,
+        //     init_code_hash,
+        //     created_address,
+        //     inputs.caller,
+        //     inputs.value,
+        // ));
 
         Ok(FrameOrResult::new_create_frame(created_address, checkpoint))
     }

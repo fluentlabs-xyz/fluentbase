@@ -1,9 +1,13 @@
+use crate::types::Gas;
 use crate::{
     primitives::{
         db::Database, EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
     },
     Context, FrameResult,
 };
+use fluentbase_core::Account;
+use fluentbase_types::ExitCode;
+use revm_primitives::{HaltReason, OutOfGasError, SuccessReason};
 
 /// Mainnet end handle does not change the output.
 #[inline]
@@ -31,17 +35,12 @@ pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
         effective_gas_price
     };
 
-    let (coinbase_account, _) = context
-        .evm
-        .inner
-        .journaled_state
-        .load_account(beneficiary, &mut context.evm.inner.db)?;
+    let mut coinbase_account = Account::new_from_jzkt(&beneficiary);
 
-    coinbase_account.mark_touch();
-    coinbase_account.info.balance = coinbase_account
-        .info
-        .balance
-        .saturating_add(coinbase_gas_price * U256::from(gas.spend() - gas.refunded() as u64));
+    coinbase_account.add_balance_saturating(
+        coinbase_gas_price * U256::from(gas.spend() - gas.refunded() as u64),
+    );
+    coinbase_account.write_to_jzkt();
 
     Ok(())
 }
@@ -55,16 +54,11 @@ pub fn reimburse_caller<SPEC: Spec, EXT, DB: Database>(
     let effective_gas_price = context.evm.env.effective_gas_price();
 
     // return balance of not spend gas.
-    let (caller_account, _) = context
-        .evm
-        .inner
-        .journaled_state
-        .load_account(caller, &mut context.evm.inner.db)?;
-
-    caller_account.info.balance = caller_account
-        .info
-        .balance
-        .saturating_add(effective_gas_price * U256::from(gas.remaining() + gas.refunded() as u64));
+    let mut caller_account = Account::new_from_jzkt(&caller);
+    caller_account.add_balance_saturating(
+        effective_gas_price * U256::from(gas.remaining() + gas.refunded() as u64),
+    );
+    caller_account.write_to_jzkt();
 
     Ok(())
 }
@@ -82,35 +76,26 @@ pub fn output<EXT, DB: Database>(
     let output = result.output();
     let instruction_result = result.into_interpreter_result();
 
-    // reset journal and return present state.
-    let (state, logs) = context.evm.journaled_state.finalize();
-
     let result = match instruction_result.result.into() {
-        SuccessOrHalt::Success(reason) => ExecutionResult::Success {
-            reason,
+        ExitCode::Ok => ExecutionResult::Success {
+            reason: SuccessReason::Return,
             gas_used: final_gas_used,
             gas_refunded,
-            logs,
+            logs: vec![],
             output,
         },
-        SuccessOrHalt::Revert => ExecutionResult::Revert {
+        ExitCode::Panic => ExecutionResult::Revert {
             gas_used: final_gas_used,
             output: output.into_data(),
         },
-        SuccessOrHalt::Halt(reason) => ExecutionResult::Halt {
-            reason,
+        _ => ExecutionResult::Halt {
+            reason: HaltReason::OutOfGas(OutOfGasError::InvalidOperand),
             gas_used: final_gas_used,
         },
-        // Only two internal return flags.
-        flag @ (SuccessOrHalt::FatalExternalError
-        | SuccessOrHalt::InternalContinue
-        | SuccessOrHalt::InternalCallOrCreate) => {
-            panic!(
-                "Encountered unexpected internal return flag: {:?} with instruction result: {:?}",
-                flag, instruction_result
-            )
-        }
     };
 
-    Ok(ResultAndState { result, state })
+    Ok(ResultAndState {
+        result,
+        state: Default::default(),
+    })
 }

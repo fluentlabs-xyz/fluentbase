@@ -2,6 +2,7 @@
 
 use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 use crate::{primitives::db::Database, EvmContext, Inspector};
+use fluentbase_types::ExitCode;
 
 /// Helper [Inspector] that keeps track of gas.
 #[allow(dead_code)]
@@ -38,7 +39,7 @@ impl<DB: Database> Inspector<DB> for GasInspector {
         _inputs: &CallInputs,
         mut outcome: CallOutcome,
     ) -> CallOutcome {
-        if outcome.result.result.is_error() {
+        if !outcome.result.result.is_ok() {
             outcome
                 .result
                 .gas
@@ -77,7 +78,7 @@ mod tests {
         }
 
         fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-            self.pc = interp.program_counter();
+            self.pc = interp.program_counter;
             self.gas_inspector.step(interp, context);
         }
 

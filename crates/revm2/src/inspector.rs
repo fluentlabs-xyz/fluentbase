@@ -14,8 +14,8 @@ mod noop;
 
 // Exports.
 
-use crate::types::Interpreter;
-pub use handler_register::{inspector_handle_register, inspector_instruction, GetInspector};
+use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
+pub use handler_register::{inspector_handle_register, GetInspector};
 
 /// [Inspector] implementations.
 pub mod inspectors {

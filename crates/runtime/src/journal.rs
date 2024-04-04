@@ -5,7 +5,7 @@ use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
 
-enum JournalEvent {
+pub enum JournalEvent {
     ItemChanged {
         key: [u8; 32],
         preimage: Vec<[u8; 32]>,
@@ -240,9 +240,9 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
     }
 
     fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
-        if self.committed >= self.journal.len() {
-            panic!("nothing to commit")
-        }
+        // if self.committed >= self.journal.len() {
+        //     panic!("nothing to commit")
+        // }
         for (key, value) in self
             .journal
             .iter()

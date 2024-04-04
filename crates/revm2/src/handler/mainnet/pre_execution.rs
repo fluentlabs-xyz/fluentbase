@@ -49,7 +49,7 @@ pub fn deduct_caller_inner<SPEC: Spec>(caller_account: &mut Account, env: &Env) 
 
     // bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
     if matches!(env.tx.transact_to, TransactTo::Call(_)) {
-        caller_account.inc_nonce();
+        caller_account.inc_nonce().unwrap();
     }
 }
 

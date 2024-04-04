@@ -1,4 +1,5 @@
 // Includes.
+use crate::types::Gas;
 use crate::{
     handler::mainnet,
     primitives::{db::Database, EVMError, EVMResultGeneric, ResultAndState, Spec},
