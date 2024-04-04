@@ -1,13 +1,8 @@
 [workspace]
 members = [
+    "crates/*",
+    "e2e",
     "examples",
-    "poseidon",
-    "runtime",
-    "rwasm",
-    "rwasm/e2e",
-    "rwasm/evm",
-    "rwasm/rwasm-code-snippets",
-    "sdk",
 ]
 exclude = []
 resolver = "2"
@@ -23,32 +18,32 @@ license = "MIT"
 keywords = ["wasm", "webassembly", "interpreter", "vm"]
 categories = ["wasm", "no-std", "virtualization"]
 
-[patch.crates-io]
-ethers-core = { git = "https://github.com/scroll-tech/ethers-rs.git", branch = "v0.17.0" }
-#ethers-etherscan = { git = "https://github.com/scroll-tech/ethers-rs.git", branch = "v0.17.0" }
-[patch."https://github.com/privacy-scaling-explorations/halo2.git"]
-halo2_proofs = { git = "https://github.com/scroll-tech/halo2.git", branch = "develop" }
-#[patch."https://github.com/privacy-scaling-explorations/poseidon.git"]
-#poseidon = { git = "https://github.com/scroll-tech/poseidon.git", branch = "scroll-dev-0220" }
-[patch."https://github.com/privacy-scaling-explorations/halo2curves.git"]
-halo2curves = { git = "https://github.com/scroll-tech/halo2curves.git", branch = "0.3.1-derive-serde" }
-#[patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
-#maingate = { git = "https://github.com/scroll-tech/halo2wrong", branch = "halo2-ecc-snark-verifier-0323" }
+[workspace.dependencies]
+rwasm-codegen = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+#rwasm-codegen = { path = "../rwasm/codegen", default-features = false }
+#rwasm = { path = "../rwasm/rwasm", default-features = false }
+byteorder = { version = "1.5.0", default-features = false }
+alloy-primitives = { version = "0.5.2", default-features = false, features = ["rlp"] }
+hashbrown = "0.14.3"
+serde = { version = "1.0.193", default-features = false }
+casey = "0.4.0"
+halo2curves = { git = "https://github.com/scroll-tech/halo2curves", branch = "0.3.1-derive-serde" }
+paste = "1.0"
 
 [profile.bench]
 lto = "fat"
 codegen-units = 1
 
-[profile.dev]
-panic = "abort"
-[profile.test]
-panic = "abort"
-
 [profile.release]
 panic = "abort"
 lto = true
-opt-level = 'z'
-strip = true
+opt-level = 3
+strip = false
+debug = false
+debug-assertions = false
+rpath = false
+codegen-units = 1
 
 #[profile.release]
 #opt-level = 1

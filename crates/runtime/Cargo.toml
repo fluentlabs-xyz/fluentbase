@@ -1,0 +1,34 @@
+[package]
+name = "fluentbase-runtime"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rwasm-codegen = { workspace = true }
+rwasm = { workspace = true, default-features = false }
+fluentbase-poseidon = { path = "../poseidon" }
+fluentbase-zktrie = { path = "../zktrie" }
+fluentbase-types = { path = "../types" }
+
+# workspace
+halo2curves = { workspace = true }
+byteorder = { workspace = true }
+
+# misc
+keccak-hash = { version = "0.10.0" }
+k256 = { version = "0.13.1" }
+hashbrown.workspace = true
+
+[dev-dependencies]
+hex = { version = "0.4.3" }
+sha2 = { version = "0.10.8" }
+wat = "1.0.69"
+hex-literal = "0.4.1"
+
+[features]

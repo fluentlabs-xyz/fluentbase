@@ -1,0 +1,29 @@
+[package]
+name = "fluentbase-sdk"
+description = "Fluentbase SDK"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluentbase-codec = { path = "../codec", default-features = false }
+fluentbase-types = { path = "../types", default-features = false }
+fluentbase-runtime = { path = "../runtime", optional = true }
+byteorder = { workspace = true, optional = true }
+paste = { workspace = true }
+lol_alloc = "0.4.0"
+
+[dev-dependencies]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["std", "runtime", "evm"]
+std = [
+    "fluentbase-codec/std",
+]
+evm = []
+runtime = [
+    "dep:fluentbase-runtime",
+    "dep:byteorder",
+]

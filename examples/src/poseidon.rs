@@ -1,13 +1,14 @@
-use fluentbase_sdk::{CryptoPlatformSDK, SysPlatformSDK, SDK};
+use crate::deploy_internal;
+use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+
+pub fn deploy() {
+    deploy_internal(include_bytes!("../bin/poseidon.wasm"))
+}
 
 pub fn main() {
-    const MAX_BUFFER: usize = 1024;
-    let mut input = [0u8; MAX_BUFFER];
-    let input_len = SDK::sys_read(&mut input, 0);
-    if input_len as usize > MAX_BUFFER {
-        panic!("buffer is limited with {} bytes", MAX_BUFFER)
-    }
+    let input = ExecutionContext::contract_input();
     let mut output = [0u8; 32];
-    SDK::crypto_poseidon(&input[0..(input_len as usize)], &mut output);
-    SDK::sys_write(&output);
+    LowLevelSDK::crypto_poseidon(&input, &mut output);
+    let ctx = ExecutionContext::default();
+    ctx.fast_return_and_exit(output, 0);
 }

@@ -1,11 +1,12 @@
 [package]
-name = "fluentbase-runtime-example"
+name = "fluentbase-example"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-sdk = { path = "../sdk", default-features = false, features = ["evm"] }
-fluentbase-rwasm = { path = "../rwasm", default-features = false }
+fluentbase-codec = { path = "../crates/codec", default-features = false }
+fluentbase-sdk = { path = "../crates/sdk", default-features = false, features = ["evm"] }
+rwasm-codegen = { workspace = true, default-features = false }
 #revm = { version = "3.3.0", default-features = false }
 #revm-primitives = { version = "1.1.2", default-features = false }
 #revm-interpreter = { version = "1.1.2", default-features = false }
@@ -13,32 +14,28 @@ fluentbase-rwasm = { path = "../rwasm", default-features = false }
 #revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #wat = "1.0.77"
-#byteorder = { version = "1.5.0", default-features = false }
-alloy-sol-types = { version = "0.5.1", default-features = false }
-alloy-primitives = { version = "0.5.2", default-features = false }
+#alloy-sol-types = { version = "0.5.1", default-features = false }
+#byteorder = { workspace = true }
+bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features= ["serde"] }
+cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
+stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true }
+lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", branch = "main", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }
+serde = { version = "1.0", features = ["derive"] }
+hashbrown = { workspace = true }
+
 hex-literal = "0.4.1"
 
 [dev-dependencies]
 hex = "0.4.3"
+serial_test = "2.0.0"
 wat = "1.0.77"
 
 [lib]
-crate-type = ["cdylib"]
-
-[profile.dev]
-panic = "abort"
-[profile.test]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-lto = true
-opt-level = 'z'
-strip = true
+crate-type = ["cdylib", "staticlib"]
 
 [features]
+default = []
 std = [
-    "alloy-sol-types/std",
     "fluentbase-sdk/runtime"
 ]
 erc20 = []
@@ -48,5 +45,10 @@ panic = []
 poseidon = []
 rwasm = []
 secp256k1 = []
-state = []
-storage = []
+stack = []
+cairo = [
+    "fluentbase-sdk/std",
+    "dep:cairo-platinum-prover",
+    "dep:stark-platinum-prover",
+    "dep:lambdaworks-math",
+]
