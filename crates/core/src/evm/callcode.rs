@@ -28,7 +28,7 @@ pub fn _evm_callcode(
     let caller_address = ExecutionContext::contract_caller();
     let mut caller_account = Account::new_from_jzkt(&caller_address);
     if caller_account.balance < value {
-        return ExitCode::InsufficientBalance
+        return ExitCode::InsufficientBalance;
     }
     // if value != U256::ZERO {
     //     match Account::transfer(&mut caller_account, &mut caller_account, value) {

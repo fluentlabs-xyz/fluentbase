@@ -1,58 +1,18 @@
 use std::ops::Deref;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
 
 use eth_trie::{EthTrie, Trie, DB};
-use halo2curves::bn256::Fr;
 use hex_literal::hex;
 use keccak_hash::H256;
 
 use fluentbase_types::{Bytes, ExitCode};
-use fluentbase_zktrie::{Database, Error, Hash, Node, PoseidonHash, PreimageDatabase};
+use fluentbase_zktrie::{Database, PreimageDatabase};
 
 use crate::{storage::TrieStorage, types::TrieDb};
 
 pub const EMPTY_ROOT_HASH: [u8; 32] =
     hex!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
 
-#[derive(Clone)]
-struct MPTNodeDb<DB>(Rc<RefCell<DB>>);
-
-impl<DB: TrieDb> Database for MPTNodeDb<DB> {
-    type Node = Node<PoseidonHash>;
-
-    fn get_node(&self, key: &Hash) -> Result<Option<Arc<Self::Node>>, Error> {
-        match self.0.borrow_mut().get_node(key.raw_bytes()) {
-            Some(value) => Ok(Some(Arc::new(Node::from_bytes(&value)?))),
-            None => Ok(None),
-        }
-    }
-
-    fn update_node(&mut self, node: Self::Node) -> Result<Arc<Self::Node>, Error> {
-        self.0.borrow_mut().update_node(
-            node.hash().raw_bytes(),
-            Bytes::copy_from_slice(&node.canonical_value()),
-        );
-        Ok(Arc::new(node))
-    }
-}
-
-impl<'a, DB: TrieDb> PreimageDatabase for MPTNodeDb<DB> {
-    fn update_preimage(&mut self, preimage: &[u8], hash_field: &Fr) {
-        self.0
-            .borrow_mut()
-            .update_preimage(&hash_field.to_bytes(), Bytes::copy_from_slice(preimage));
-    }
-
-    fn preimage(&self, key: &Fr) -> Vec<u8> {
-        self.0
-            .borrow_mut()
-            .get_preimage(&key.to_bytes())
-            .unwrap_or_default()
-            .to_vec()
-    }
-}
-
-// #[derive(Clone)]
 pub struct MPTrieStateDb<DB: eth_trie::DB + TrieDb> {
     storage: Arc<DB>,
     trie: Option<RefCell<EthTrie<DB>>>,
@@ -160,9 +120,10 @@ impl<DB: eth_trie::DB + TrieDb> TrieStorage for MPTrieStateDb<DB> {
 mod tests {
     use std::sync::Arc;
 
+    use eth_trie::MemoryDB;
+
     use crate::mptrie::MPTrieStateDb;
     use crate::TrieStorage;
-    use eth_trie::MemoryDB;
 
     macro_rules! bytes32 {
         ($val:expr) => {{
