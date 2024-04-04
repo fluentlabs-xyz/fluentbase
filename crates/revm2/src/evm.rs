@@ -232,7 +232,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
         // call inner handling of call/create
-        let (exit_code, mut frame_result) = match ctx.evm.env.tx.transact_to {
+        let mut frame_result = match ctx.evm.env.tx.transact_to {
             TransactTo::Call(address) => {
                 caller_account.inc_nonce().unwrap();
                 let mut callee_account = Account::new_from_jzkt(&address);
@@ -245,7 +245,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     data,
                     gas_limit,
                 );
-                (result.result.result, FrameResult::Call(result))
+                FrameResult::Call(result)
             }
             TransactTo::Create(scheme) => {
                 let salt = match scheme {
@@ -255,7 +255,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 let value = ctx.evm.env.tx.value;
                 let data = ctx.evm.env.tx.data.clone();
                 let result = self.create_inner(&mut caller_account, value, data, gas_limit, salt);
-                (result.result.result, FrameResult::Create(result))
+                FrameResult::Create(result)
             }
         };
 

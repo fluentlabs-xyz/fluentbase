@@ -8,26 +8,14 @@ use fluentbase_sdk::evm::{Address, U256};
 use fluentbase_types::POSEIDON_EMPTY;
 use revm_primitives::{SpecId, BERLIN, HOMESTEAD, ISTANBUL, SHANGHAI};
 
-/// EIP-1884: Repricing for trie-size-dependent opcodes
-pub const INSTANBUL_SLOAD_GAS: u64 = 800;
-pub const SSTORE_SET: u64 = 20000;
-pub const SSTORE_RESET: u64 = 5000;
-pub const REFUND_SSTORE_CLEARS: i64 = 15000;
-
-pub const TRANSACTION_ZERO_DATA: u64 = 4;
-pub const TRANSACTION_NON_ZERO_DATA_INIT: u64 = 16;
-pub const TRANSACTION_NON_ZERO_DATA_FRONTIER: u64 = 68;
+pub(crate) const TRANSACTION_ZERO_DATA: u64 = 4;
 
 // berlin eip2929 constants
-pub const ACCESS_LIST_ADDRESS: u64 = 2400;
-pub const ACCESS_LIST_STORAGE_KEY: u64 = 1900;
-pub const COLD_SLOAD_COST: u64 = 2100;
-pub const COLD_ACCOUNT_ACCESS_COST: u64 = 2600;
-pub const WARM_STORAGE_READ_COST: u64 = 100;
-pub const WARM_SSTORE_RESET: u64 = SSTORE_RESET - COLD_SLOAD_COST;
+pub(crate) const ACCESS_LIST_ADDRESS: u64 = 2400;
+pub(crate) const ACCESS_LIST_STORAGE_KEY: u64 = 1900;
 
 /// EIP-3860 : Limit and meter initcode
-pub const INITCODE_WORD_COST: u64 = 2;
+pub(crate) const INITCODE_WORD_COST: u64 = 2;
 
 /// Validate environment for the mainnet.
 pub fn validate_env<SPEC: Spec, DB: Database>(env: &Env) -> Result<(), EVMError<DB::Error>> {

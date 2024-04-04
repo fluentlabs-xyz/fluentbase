@@ -26,7 +26,7 @@ impl<DB: Database, INSP: Inspector<DB>> GetInspector<DB> for INSP {
 /// and in case of Logs and Selfdestruct wrapper is wrapped again for the
 /// `log` and `selfdestruct` calls.
 pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
-    handler: &mut EvmHandler<'a, EXT, DB>,
+    _handler: &mut EvmHandler<'a, EXT, DB>,
 ) {
     // Every instruction inside flat table that is going to be wrapped by inspector calls.
     // let table = handler

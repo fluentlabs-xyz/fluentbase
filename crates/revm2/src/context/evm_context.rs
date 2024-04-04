@@ -243,7 +243,7 @@ mod tests {
     use crate::{
         db::{CacheDB, EmptyDB},
         primitives::{address, Bytecode, Bytes, Env, U256},
-        Frame, FrameOrResult,
+        FrameOrResult, FrameResult,
     };
     use fluentbase_sdk::LowLevelSDK;
     use fluentbase_types::ExitCode;
@@ -257,7 +257,7 @@ mod tests {
         let env = Env::default();
         let db = EmptyDB::default();
         let mut context = create_empty_evm_context(Box::new(env), db);
-        // context.journaled_state.depth = CALL_STACK_LIMIT as usize + 1;
+        context.depth = CALL_STACK_LIMIT + 1;
         let contract = address!("dead10000000000000000000000000000001dead");
         let call_inputs = create_mock_call_inputs(contract);
         let res = context.make_call_frame(&call_inputs);
@@ -326,11 +326,11 @@ mod tests {
             },
         );
         let mut evm_context = create_cache_db_evm_context_with_balance(Box::new(env), cdb, bal);
-        let call_inputs = test_utils::create_mock_call_inputs(contract);
+        let call_inputs = create_mock_call_inputs(contract);
         let res = evm_context.make_call_frame(&call_inputs);
-        let Ok(FrameOrResult::Frame(Frame::Call(call_frame))) = res else {
+        let Ok(FrameOrResult::Result(FrameResult::Call(call_outcome))) = res else {
             panic!("Expected FrameOrResult::Frame(Frame::Call(..))");
         };
-        assert_eq!(call_frame.return_memory_range, 0..0,);
+        assert_eq!(call_outcome.memory_offset, 0..0,);
     }
 }

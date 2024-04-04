@@ -1,10 +1,9 @@
-use crate::types::{InterpreterResult, SStoreResult, SelfDestructResult};
+use crate::types::InterpreterResult;
 use crate::{
     db::Database,
     primitives::{
-        Address, Bytecode, Bytes, EVMError, Env, Spec,
+        Address, Bytes, EVMError, Env, Spec,
         SpecId::{self, *},
-        B256, U256,
     },
 };
 use fluentbase_core::{Account, AccountCheckpoint};
@@ -101,99 +100,6 @@ impl<DB: Database> InnerEvmContext<DB> {
     #[inline]
     pub fn env(&mut self) -> &mut Env {
         &mut self.env
-    }
-
-    /// Fetch block hash from database.
-    #[inline]
-    pub fn block_hash(&mut self, number: U256) -> Result<B256, EVMError<DB::Error>> {
-        self.db.block_hash(number).map_err(EVMError::Database)
-    }
-
-    /// Mark account as touched as only touched accounts will be added to state.
-    #[inline]
-    pub fn touch(&mut self, address: &Address) {
-        todo!("do we need this func?")
-    }
-
-    /// Loads an account into memory. Returns `true` if it is cold accessed.
-    #[inline]
-    pub fn load_account(
-        &mut self,
-        address: Address,
-    ) -> Result<(&mut Account, bool), EVMError<DB::Error>> {
-        todo!("hmm")
-    }
-
-    /// Load account from database to JournaledState.
-    ///
-    /// Return boolean pair where first is `is_cold` second bool `exists`.
-    #[inline]
-    pub fn load_account_exist(
-        &mut self,
-        address: Address,
-    ) -> Result<(bool, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Return account balance and is_cold flag.
-    #[inline]
-    pub fn balance(&mut self, address: Address) -> Result<(U256, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Return account code and if address is cold loaded.
-    #[inline]
-    pub fn code(&mut self, address: Address) -> Result<(Bytecode, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Get code hash of address.
-    #[inline]
-    pub fn code_hash(&mut self, address: Address) -> Result<(B256, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Load storage slot, if storage is not present inside the account then it will be loaded from database.
-    #[inline]
-    pub fn sload(
-        &mut self,
-        address: Address,
-        index: U256,
-    ) -> Result<(U256, bool), EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Storage change of storage slot, before storing `sload` will be called for that slot.
-    #[inline]
-    pub fn sstore(
-        &mut self,
-        address: Address,
-        index: U256,
-        value: U256,
-    ) -> Result<SStoreResult, EVMError<DB::Error>> {
-        todo!("do we need this func?")
-    }
-
-    /// Returns transient storage value.
-    #[inline]
-    pub fn tload(&mut self, address: Address, index: U256) -> U256 {
-        todo!("do we need this func?")
-    }
-
-    /// Stores transient storage value.
-    #[inline]
-    pub fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        todo!("do we need this func?")
-    }
-
-    /// Selfdestructs the account.
-    #[inline]
-    pub fn selfdestruct(
-        &mut self,
-        address: Address,
-        target: Address,
-    ) -> Result<SelfDestructResult, EVMError<DB::Error>> {
-        todo!("do we need this func?")
     }
 
     /// Handles call return.
