@@ -1096,23 +1096,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-revm"
-version = "0.1.0"
-dependencies = [
- "auto_impl",
- "byteorder",
- "fluentbase-codec",
- "fluentbase-core",
- "fluentbase-core-api",
- "fluentbase-genesis",
- "fluentbase-runtime",
- "fluentbase-sdk",
- "fluentbase-types",
- "revm-primitives",
- "rwasm",
-]
-
-[[package]]
 name = "fluentbase-revm2"
 version = "0.1.0"
 dependencies = [

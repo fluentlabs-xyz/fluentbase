@@ -1,5 +1,5 @@
 [package]
-name = "fluentbase-revm"
+name = "fluentbase-revm2"
 version = "0.1.0"
 authors.workspace = true
 repository.workspace = true
@@ -15,12 +15,12 @@ bench = false
 proc-macro = false
 
 [dependencies]
+# revm
 revm-primitives = { workspace = true, default-features = false }
 
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-genesis = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
 fluentbase-core-api = { workspace = true, default-features = false }
@@ -30,16 +30,17 @@ rwasm = { workspace = true, optional = true, default-features = false }
 
 #misc
 auto_impl = { version = "1.1", default-features = false }
-byteorder = { workspace = true, default-features = false }
+cfg-if = "1.0.0"
+dyn-clone = "1.0.17"
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true }
+fluentbase-genesis = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    "fluentbase-genesis/std",
     "revm-primitives/std",
 ]
 serde = []
