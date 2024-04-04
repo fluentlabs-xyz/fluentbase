@@ -442,8 +442,6 @@ mod test {
     use crate::{
         db::EmptyDB, inspector::inspector_handle_register, inspectors::NoOpInspector, Context, Evm,
     };
-    use core::cell::RefCell;
-    use std::rc::Rc;
 
     #[test]
     fn simple_build() {
