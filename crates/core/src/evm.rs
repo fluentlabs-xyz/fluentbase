@@ -10,6 +10,7 @@ pub mod codesize;
 // #[cfg(not(any(feature = "evm_loader", feature = "wcl")))]
 pub mod create;
 // #[cfg(not(any(feature = "evm_loader", feature = "wcl")))]
+pub mod callcode;
 pub mod create2;
 pub mod delegatecall;
 pub mod extcodecopy;
@@ -25,3 +26,4 @@ pub mod revert;
 pub mod selfbalance;
 pub mod sload;
 pub mod sstore;
+pub mod staticcall;
