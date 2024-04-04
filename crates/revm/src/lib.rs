@@ -1,24 +1,43 @@
-#![warn(unreachable_pub)]
+#![doc = "Revm is a Rust EVM implementation."]
+#![warn(rustdoc::all, unreachable_pub)]
+#![allow(rustdoc::bare_urls)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code)]
 
 #[macro_use]
-extern crate alloc;
+#[cfg(not(feature = "std"))]
+extern crate alloc as std;
 
+// Define modules.
+
+mod builder;
 mod context;
-mod evm;
-pub mod handler;
-mod r#impl;
 
-mod gas;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
+pub mod db;
+mod evm;
+mod frame;
+pub mod handler;
+mod inspector;
 #[cfg(test)]
 mod test;
 mod types;
 
-pub use context::EVMData;
-pub use evm::{evm_inner, new, EVM};
+// Export items.
+
+pub use builder::EvmBuilder;
+pub use context::{Context, ContextWithHandlerCfg, EvmContext, InnerEvmContext};
+pub use db::{
+    CacheState, DBBox, State, StateBuilder, StateDBBox, TransitionAccount, TransitionState,
+};
+pub use db::{Database, DatabaseCommit, DatabaseRef, InMemoryDB};
+pub use evm::{Evm, CALL_STACK_LIMIT};
+pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameResult};
 pub use handler::Handler;
-pub use r#impl::{EVMImpl, Transact, CALL_STACK_LIMIT};
+pub use inspector::{inspector_handle_register, inspectors, GetInspector, Inspector};
+
+#[doc(inline)]
+pub use revm_primitives as primitives;
