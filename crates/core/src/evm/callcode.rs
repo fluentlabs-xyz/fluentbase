@@ -24,9 +24,9 @@ pub fn _evm_callcode(
     let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) });
     let callee_address =
         Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
-    let mut callee_account = Account::new_from_jzkt(&callee_address);
+    let callee_account = Account::new_from_jzkt(&callee_address);
     let caller_address = ExecutionContext::contract_caller();
-    let mut caller_account = Account::new_from_jzkt(&caller_address);
+    let caller_account = Account::new_from_jzkt(&caller_address);
     if caller_account.balance < value {
         return ExitCode::InsufficientBalance;
     }

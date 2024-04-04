@@ -1,17 +1,15 @@
-use crate::types::{CreateInputs, Gas, InterpreterResult, SStoreResult, SelfDestructResult};
+use crate::types::{InterpreterResult, SStoreResult, SelfDestructResult};
 use crate::{
     db::Database,
     primitives::{
-        keccak256, Address, AnalysisKind, Bytecode, Bytes, CreateScheme, EVMError, Env, HashSet,
-        Spec,
+        Address, Bytecode, Bytes, EVMError, Env, Spec,
         SpecId::{self, *},
         B256, U256,
     },
-    FrameOrResult, CALL_STACK_LIMIT,
 };
 use fluentbase_core::{Account, AccountCheckpoint};
 use fluentbase_types::ExitCode;
-use revm_primitives::{MAX_CODE_SIZE, RWASM_MAX_CODE_SIZE};
+use revm_primitives::RWASM_MAX_CODE_SIZE;
 use std::boxed::Box;
 
 /// EVM contexts contains data that EVM needs for execution.
@@ -196,79 +194,6 @@ impl<DB: Database> InnerEvmContext<DB> {
         target: Address,
     ) -> Result<SelfDestructResult, EVMError<DB::Error>> {
         todo!("do we need this func?")
-    }
-
-    /// Make create frame.
-    #[inline]
-    pub fn make_create_frame(
-        &mut self,
-        spec_id: SpecId,
-        inputs: &CreateInputs,
-    ) -> Result<FrameOrResult, EVMError<DB::Error>> {
-        // Prepare crate.
-        let gas = Gas::new(inputs.gas_limit);
-
-        let return_error = |e| {
-            Ok(FrameOrResult::new_create_result(
-                InterpreterResult {
-                    result: e,
-                    gas,
-                    output: Bytes::new(),
-                },
-                None,
-            ))
-        };
-
-        // Check depth
-        if self.depth > CALL_STACK_LIMIT {
-            return return_error(ExitCode::CallDepthOverflow);
-        }
-
-        // Fetch balance of caller.
-        let mut caller = Account::new_from_jzkt(&inputs.caller);
-
-        // Check if caller has enough balance to send to the created contract.
-        if caller.balance < inputs.value {
-            return return_error(ExitCode::InsufficientBalance);
-        }
-
-        // Increase nonce of caller and check if it overflows
-        let old_nonce = caller.inc_nonce().unwrap();
-
-        // Create address
-        let mut init_code_hash = B256::ZERO;
-        let created_address = match inputs.scheme {
-            CreateScheme::Create => inputs.caller.create(old_nonce),
-            CreateScheme::Create2 { salt } => {
-                init_code_hash = keccak256(&inputs.init_code);
-                inputs.caller.create2(salt.to_be_bytes(), init_code_hash)
-            }
-        };
-        let mut callee = Account::new_from_jzkt(&created_address);
-
-        // Load account so it needs to be marked as warm for access list.
-        // TODO: "how can we load created account?"
-
-        let checkpoint = Account::checkpoint();
-
-        // create account, transfer funds and make the journal checkpoint.
-        match Account::create_account(&mut caller, &mut callee, inputs.value) {
-            Ok(_) => {}
-            Err(err) => return return_error(err),
-        }
-
-        let bytecode = Bytecode::new_raw(inputs.init_code.clone());
-
-        // let contract = Box::new(Contract::new(
-        //     Bytes::new(),
-        //     bytecode,
-        //     init_code_hash,
-        //     created_address,
-        //     inputs.caller,
-        //     inputs.value,
-        // ));
-
-        Ok(FrameOrResult::new_create_frame(created_address, checkpoint))
     }
 
     /// Handles call return.

@@ -7,19 +7,12 @@ use alloc::boxed::Box;
 use core::ptr;
 use fluentbase_sdk::{
     evm::{ExecutionContext, U256},
-    LowLevelAPI,
-    LowLevelSDK,
+    LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Bytes, ExitCode, B256};
 use revm_interpreter::{
-    analysis::to_analysed,
-    opcode::make_instruction_table,
-    primitives::Bytecode,
-    BytecodeLocked,
-    Contract,
-    Interpreter,
-    SharedMemory,
-    MAX_CODE_SIZE,
+    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
+    Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
 
 #[no_mangle]
@@ -59,7 +52,7 @@ pub fn _evm_create2(
     if caller_account.balance < value {
         return ExitCode::InsufficientBalance;
     }
-    caller_account.inc_nonce();
+    caller_account.inc_nonce().expect("nonce inc failed");
     let deployed_contract_address = calc_create2_address(&caller_address, &salt, &init_code_hash);
     let mut callee_account = Account::new_from_jzkt(&deployed_contract_address);
 

@@ -22,6 +22,8 @@ mod evm;
 mod frame;
 pub mod handler;
 mod inspector;
+#[cfg(test)]
+mod test;
 mod types;
 
 // Export items.

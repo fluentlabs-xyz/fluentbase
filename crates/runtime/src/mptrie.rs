@@ -1,12 +1,10 @@
-use std::ops::Deref;
 use std::{cell::RefCell, sync::Arc};
 
-use eth_trie::{EthTrie, Trie, DB};
+use eth_trie::{EthTrie, Trie};
 use hex_literal::hex;
 use keccak_hash::H256;
 
 use fluentbase_types::{Bytes, ExitCode};
-use fluentbase_zktrie::{Database, PreimageDatabase};
 
 use crate::{storage::TrieStorage, types::TrieDb};
 
@@ -56,7 +54,7 @@ impl<DB: eth_trie::DB + TrieDb> TrieStorage for MPTrieStateDb<DB> {
     }
 
     fn get(&self, key: &[u8]) -> Option<(Vec<[u8; 32]>, u32)> {
-        let mut trie = self.trie.as_ref().unwrap().borrow_mut();
+        let trie = self.trie.as_ref().unwrap().borrow_mut();
         if let Ok(val) = trie.get(key) {
             match val {
                 Some(data) => {

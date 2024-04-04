@@ -1,7 +1,6 @@
 use core::ops::Range;
 use fluentbase_sdk::evm::{Address, Bytes};
 use fluentbase_types::{ExitCode, U256};
-use revm_primitives::alloy_primitives::private::serde;
 use revm_primitives::{CreateScheme, Spec, TransactTo, TxEnv, LONDON};
 use std::boxed::Box;
 

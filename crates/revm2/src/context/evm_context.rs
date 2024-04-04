@@ -2,7 +2,7 @@ use super::inner_evm_context::InnerEvmContext;
 use crate::types::{CallInputs, Gas, InterpreterResult};
 use crate::{
     db::Database,
-    primitives::{Address, Bytes, EVMError, Env, HashSet, U256},
+    primitives::{Bytes, EVMError, Env, U256},
     FrameOrResult, CALL_STACK_LIMIT,
 };
 use core::{
@@ -108,7 +108,7 @@ impl<DB: Database> EvmContext<DB> {
 
         let mut caller = Account::new_from_jzkt(&inputs.context.caller);
         let mut account = Account::new_from_jzkt(&inputs.contract);
-        let (code_hash, bytecode) = (account.rwasm_bytecode_hash, account.load_rwasm_bytecode());
+        let bytecode = account.load_rwasm_bytecode();
 
         // Create subroutine checkpoint
         let checkpoint = Account::checkpoint();
@@ -154,10 +154,9 @@ pub(crate) mod test_utils {
     use crate::types::{CallContext, CallInputs, CallScheme, Transfer};
     use crate::{
         db::{CacheDB, EmptyDB},
-        primitives::{address, Address, Bytes, Env, HashSet, B256, U256},
+        primitives::{address, Address, Bytes, Env, B256, U256},
         InnerEvmContext,
     };
-    use fluentbase_sdk::LowLevelSDK;
     use std::boxed::Box;
 
     /// Mock caller address.

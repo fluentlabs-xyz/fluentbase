@@ -439,18 +439,11 @@ impl<'a, BuilderStage, EXT, DB: Database> EvmBuilder<'a, BuilderStage, EXT, DB> 
 #[cfg(test)]
 mod test {
     use super::SpecId;
-    use crate::types::Interpreter;
     use crate::{
-        db::EmptyDB,
-        inspector::inspector_handle_register,
-        inspectors::NoOpInspector,
-        primitives::{
-            address, AccountInfo, Address, Bytecode, Bytes, PrecompileResult, TransactTo, U256,
-        },
-        Context, ContextPrecompile, ContextStatefulPrecompile, Evm, InMemoryDB, InnerEvmContext,
+        db::EmptyDB, inspector::inspector_handle_register, inspectors::NoOpInspector, Context, Evm,
     };
     use core::cell::RefCell;
-    use std::{rc::Rc, sync::Arc};
+    use std::rc::Rc;
 
     /// Custom evm context
     #[derive(Default, Clone, Debug)]

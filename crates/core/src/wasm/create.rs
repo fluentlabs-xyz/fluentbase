@@ -39,7 +39,7 @@ pub fn _wasm_create(
     if contract_account.is_not_empty() {
         return ExitCode::CreateCollision;
     }
-    deployer_account.inc_nonce();
+    deployer_account.inc_nonce().expect("nonce inc failed");
     contract_account.nonce = 1;
 
     if !deployer_account.transfer_value(&mut contract_account, &value) {
