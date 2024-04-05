@@ -1,7 +1,6 @@
 use crate::{
     assets::evm_test_contract::{
-        EVM_CONTRACT_BYTECODE1,
-        EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID,
+        EVM_CONTRACT_BYTECODE1, EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID,
         EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID,
         EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
@@ -9,12 +8,8 @@ use crate::{
 };
 use fluentbase_core::{
     evm::{
-        address::_evm_address,
-        balance::_evm_balance,
-        call::_evm_call,
-        create::_evm_create,
-        create2::_evm_create2,
-        selfbalance::_evm_self_balance,
+        address::_evm_address, balance::_evm_balance, call::_evm_call, create::_evm_create,
+        create2::_evm_create2, selfbalance::_evm_self_balance,
     },
     helpers::{calc_create2_address, calc_create_address},
     Account,
@@ -491,7 +486,7 @@ fn evm_balance_from_contract_call_test() {
     };
 
     let computed_contract_address = calc_create_address(&caller_address, caller_nonce);
-    let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
+    let contract_value = U256::from_be_slice(&hex!("84326482"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
@@ -513,7 +508,7 @@ fn evm_balance_from_contract_call_test() {
     test_ctx.apply_ctx(None);
 
     let create_value_hex_bytes = hex!("84326482");
-    let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
+    let create_value = U256::from_be_slice(&create_value_hex_bytes);
     let gas_limit: u32 = 10_000_000;
     let mut created_address = Address::default();
     assert_eq!(
