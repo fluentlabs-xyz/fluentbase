@@ -3,19 +3,11 @@ use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput},
-    Bytes32,
-    LowLevelAPI,
-    LowLevelSDK,
+    Bytes32, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{
-    create_sovereign_import_linker,
-    Address,
-    ExitCode,
-    SysFuncIdx::SYS_STATE,
-    B256,
-    STATE_DEPLOY,
-    STATE_MAIN,
-    U256,
+    create_sovereign_import_linker, Address, ExitCode, SysFuncIdx::SYS_STATE, B256, STATE_DEPLOY,
+    STATE_MAIN, U256,
 };
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -35,13 +27,6 @@ pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {
     let offset = LittleEndian::read_u32(&header[0..4]);
     let length = LittleEndian::read_u32(&header[4..8]);
     (offset, length)
-}
-
-#[inline(always)]
-pub(crate) fn read_address_from_input(offset: usize) -> Address {
-    let mut address = [0u8; Address::len_bytes()];
-    LowLevelSDK::sys_read(&mut address, offset as u32);
-    Address::from(address)
 }
 
 #[inline(always)]
@@ -114,23 +99,6 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
         .write_binary(&mut binary_format_writer)
         .expect("failed to encode rwasm bytecode");
     Ok(rwasm_bytecode)
-}
-
-#[inline(always)]
-pub fn rwasm_exec(bytecode: &[u8], input: &[u8], gas_limit: u32, is_deploy: bool) {
-    let exit_code = LowLevelSDK::sys_exec(
-        bytecode.as_ptr(),
-        bytecode.len() as u32,
-        input.as_ptr(),
-        input.len() as u32,
-        core::ptr::null_mut(),
-        0,
-        &gas_limit as *const u32,
-        if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
-    );
-    if exit_code != 0 {
-        panic!("failed to execute rwasm bytecode, exit code: {}", exit_code);
-    }
 }
 
 #[inline(always)]
