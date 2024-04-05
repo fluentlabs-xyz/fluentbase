@@ -48,10 +48,16 @@ pub fn _evm_create(
     let deployed_contract_address = calc_create_address(&caller_address, old_nonce);
     let mut callee_account = Account::new_from_jzkt(&deployed_contract_address);
 
+    // transfer value from caller to callee
+    match Account::transfer(&mut caller_account, &mut callee_account, value) {
+        Ok(_) => {}
+        Err(exit_code) => return exit_code,
+    }
+
     // create an account
-    if let Err(exit_code) = Account::create_account(&mut caller_account, &mut callee_account, value)
-    {
-        return exit_code;
+    match Account::create_account(&mut caller_account, &mut callee_account, value) {
+        Ok(_) => {}
+        Err(exit_code) => return exit_code,
     }
 
     let analyzed_bytecode = to_analysed(Bytecode::new_raw(Bytes::from_static(unsafe {

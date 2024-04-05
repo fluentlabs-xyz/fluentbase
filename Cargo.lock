@@ -1096,7 +1096,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-revm2"
+name = "fluentbase-revm"
 version = "0.1.0"
 dependencies = [
  "auto_impl",
