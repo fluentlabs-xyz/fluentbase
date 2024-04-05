@@ -1,8 +1,8 @@
 use crate::{
     account::Account,
-    helpers::{calc_create_address, read_address_from_input, rwasm_exec_hash, wasm2rwasm},
+    helpers::{calc_create_address, rwasm_exec_hash, wasm2rwasm},
 };
-use fluentbase_sdk::evm::{ContractInput, ExecutionContext, IContractInput, U256};
+use fluentbase_sdk::evm::{ExecutionContext, U256};
 use fluentbase_types::ExitCode;
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
@@ -28,8 +28,7 @@ pub fn _wasm_create(
     // read value input and contract address
     let value32_slice = unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) };
     let value = U256::from_be_slice(value32_slice);
-    let caller_address =
-        read_address_from_input(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
+    let caller_address = ExecutionContext::contract_caller();
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&caller_address);
     let deployed_contract_address = calc_create_address(&caller_address, deployer_account.nonce);

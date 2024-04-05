@@ -1,10 +1,10 @@
 use crate::{
     account::Account,
-    helpers::{calc_create2_address, read_address_from_input, rwasm_exec_hash, wasm2rwasm},
+    helpers::{calc_create2_address, rwasm_exec_hash, wasm2rwasm},
 };
 use core::ptr;
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput, U256},
+    evm::{ExecutionContext, U256},
     LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{ExitCode, B256};
@@ -25,12 +25,11 @@ pub fn _wasm_create2(
         return ExitCode::WriteProtection;
     }
     // read value input and contract address
-    let value32_slice = unsafe { &*core::ptr::slice_from_raw_parts(value32_offset, 32) };
-    let salt32_slice = unsafe { &*core::ptr::slice_from_raw_parts(salt32_offset, 32) };
+    let value32_slice = unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) };
+    let salt32_slice = unsafe { &*ptr::slice_from_raw_parts(salt32_offset, 32) };
     let salt = B256::from_slice(salt32_slice);
     let value = U256::from_be_slice(value32_slice);
-    let caller_address =
-        read_address_from_input(<ContractInput as IContractInput>::ContractCaller::FIELD_OFFSET);
+    let caller_address = ExecutionContext::contract_caller();
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(&caller_address);
 

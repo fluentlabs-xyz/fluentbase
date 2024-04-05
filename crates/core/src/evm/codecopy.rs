@@ -1,19 +1,14 @@
-use crate::{account::Account, helpers::read_address_from_input};
+use crate::account::Account;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
-use fluentbase_sdk::{
-    evm::{ContractInput, IContractInput},
-    Bytes32,
-    LowLevelAPI,
-    LowLevelSDK,
-};
+use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
 #[no_mangle]
 pub fn _evm_codecopy(output_offset: *mut u8, code_index: u32, len: u32) {
     let mut address_bytes32 = Bytes32::default();
-    let address =
-        read_address_from_input(<ContractInput as IContractInput>::ContractAddress::FIELD_OFFSET);
+    let address = ExecutionContext::contract_address();
     unsafe { ptr::copy(address.as_ptr(), address_bytes32[12..].as_mut_ptr(), 20) }
 
     let mut source_code_hash32 = Bytes32::default();
