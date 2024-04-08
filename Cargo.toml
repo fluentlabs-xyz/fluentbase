@@ -4,7 +4,9 @@ members = [
     "e2e",
     "examples",
 ]
-exclude = []
+exclude = [
+    "crates/core"
+]
 resolver = "2"
 
 [workspace.package]

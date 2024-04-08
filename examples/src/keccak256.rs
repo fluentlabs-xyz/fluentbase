@@ -8,7 +8,7 @@ pub fn deploy() {
 pub fn main() {
     let input = ExecutionContext::contract_input();
     let mut output = [0u8; 32];
-    LowLevelSDK::crypto_keccak256(&input, &mut output);
+    LowLevelSDK::crypto_keccak256(input.as_ptr(), input.len() as u32, output.as_mut_ptr());
     let ctx = ExecutionContext::default();
     ctx.fast_return_and_exit(output, 0);
 }
