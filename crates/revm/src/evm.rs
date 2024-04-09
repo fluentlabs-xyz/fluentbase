@@ -5,8 +5,8 @@ use crate::{
     db::{Database, DatabaseCommit, EmptyDB},
     handler::Handler,
     primitives::{
-        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
-        ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, U256,
+        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, Env,
+        EnvWithHandlerCfg, ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, U256,
     },
     Context, ContextWithHandlerCfg, FrameResult,
 };
@@ -86,6 +86,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// SpecId depends on the handler.
     pub fn spec_id(&self) -> SpecId {
         self.handler.cfg.spec_id
+    }
+
+    pub fn env(&self) -> &Env {
+        &self.context.evm.env
     }
 
     /// Pre verify transaction by checking Environment, initial gas spend and if caller

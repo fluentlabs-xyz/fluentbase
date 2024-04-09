@@ -32,7 +32,7 @@ checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
 [[package]]
 name = "alloy-genesis"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=75299e7a#75299e7a7145cb836527c741eb4492b86410506a"
+source = "git+https://github.com/alloy-rs/alloy?rev=7e39c85#7e39c85f9f51e6449a8b661f54df0ac213f18639"
 dependencies = [
  "alloy-primitives",
  "alloy-serde",
@@ -41,9 +41,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "0.7.0"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99bbad0a6b588ef4aec1b5ddbbfdacd9ef04e00b979617765b03174318ee1f3a"
+checksum = "600d34d8de81e23b6d909c094e23b3d357e01ca36b78a8c5424c501eedbe86f0"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -74,7 +74,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=75299e7a#75299e7a7145cb836527c741eb4492b86410506a"
+source = "git+https://github.com/alloy-rs/alloy?rev=7e39c85#7e39c85f9f51e6449a8b661f54df0ac213f18639"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -2102,7 +2102,7 @@ checksum = "adad44e29e4c806119491a7f06f03de4d1af22c3a680dd47f1e6e179439d1f56"
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#192d28e1330cad31735e56f9c336e9aa87031535"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ec43163547cc70f6e2488c85414ce353b053ea3c"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2111,7 +2111,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#192d28e1330cad31735e56f9c336e9aa87031535"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ec43163547cc70f6e2488c85414ce353b053ea3c"
 dependencies = [
  "aurora-engine-modexp",
  "k256",
@@ -2125,7 +2125,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#192d28e1330cad31735e56f9c336e9aa87031535"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ec43163547cc70f6e2488c85414ce353b053ea3c"
 dependencies = [
  "alloy-primitives",
  "auto_impl",

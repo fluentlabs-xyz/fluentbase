@@ -18,7 +18,7 @@ fluentbase-core = { workspace = true, default-features = false }
 clap = { version = "4.4.11", features = ["derive"] }
 serde = { workspace = true, default-features = false, features = [] }
 serde_json = { version = "1.0.114" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "75299e7a" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "7e39c85" }
 
 byteorder = { workspace = true }
 bytes = { workspace = true }
