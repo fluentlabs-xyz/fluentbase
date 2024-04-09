@@ -178,6 +178,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// This function will validate the transaction.
     #[inline]
     pub fn transact(&mut self) -> EVMResult<DB::Error> {
+        // TODO: "yes, we create empty jzkt here only for devnet purposes"
+        let jzkt = LowLevelSDK::with_default_jzkt();
+
         self.handler.validation().env(&self.context.evm.env)?;
         let initial_gas_spend = self
             .handler
@@ -222,9 +225,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
     /// Transact pre-verified transaction.
     fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<DB::Error> {
-        // TODO: "yes, we create empty jzkt here only for devnet purposes"
-        let jzkt = LowLevelSDK::with_default_jzkt();
-
         let ctx = &mut self.context;
         let pre_exec = self.handler.pre_execution();
 
@@ -282,6 +282,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         match post_exec.output(ctx, frame_result) {
             Ok(mut result) => {
                 let mut state: State = Default::default();
+                let jzkt = LowLevelSDK::with_default_jzkt();
                 for event in jzkt.borrow().journal() {
                     let address = Address::from_slice(&event.key()[12..]);
                     if !event.is_removed() {
