@@ -32,7 +32,7 @@ impl JzktUpdate {
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         jzkt.borrow_mut()
             .update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())

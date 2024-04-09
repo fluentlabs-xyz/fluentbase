@@ -4,13 +4,66 @@ use fluentbase_types::{ExitCode, U256};
 use revm_primitives::{CreateScheme, Spec, TransactTo, TxEnv, LONDON};
 use std::boxed::Box;
 
+pub type InstructionResult = ExitCode;
+
 pub struct Interpreter {
     pub gas: Gas,
     pub program_counter: usize,
     pub current_opcode: u8,
 }
 
+impl Interpreter {
+    pub fn current_opcode(&self) -> u8 {
+        self.current_opcode
+    }
+
+    pub fn gas(&self) -> &Gas {
+        &self.gas
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct OpCode(u8);
+
+impl OpCode {
+    pub fn new(value: u8) -> Option<Self> {
+        Some(Self(value))
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("opcode_{}", self.0).to_string()
+    }
+}
+
+#[derive(Clone, Default, Debug)]
 pub struct SharedMemory;
+
+impl SharedMemory {
+    #[deprecated(note = "will be removed")]
+    pub fn len(&self) -> usize {
+        0
+    }
+
+    #[deprecated(note = "will be removed")]
+    pub fn slice(&self, start: usize, end: usize) -> &[u8] {
+        &[]
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct Stack;
+
+impl Stack {
+    #[deprecated(note = "will be removed")]
+    pub fn len(&self) -> usize {
+        0
+    }
+
+    #[deprecated(note = "will be removed")]
+    pub fn peek(&self, index: usize) -> Result<U256, ExitCode> {
+        Ok(U256::ZERO)
+    }
+}
 
 #[allow(non_camel_case_types)]
 pub(crate) enum BytecodeType {

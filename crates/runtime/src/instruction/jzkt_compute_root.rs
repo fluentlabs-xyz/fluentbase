@@ -14,7 +14,7 @@ impl JzktComputeRoot {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>) -> [u8; 32] {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         let result = jzkt.borrow().compute_root();
         result
     }

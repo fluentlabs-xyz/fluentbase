@@ -16,7 +16,7 @@ impl JzktOpen {
 
     pub fn fn_impl<T>(_context: &mut RuntimeContext<T>, _root32: &[u8]) -> Result<(), ExitCode> {
         todo!("not implemented yet")
-        // let jzkt = context.jzkt.clone().unwrap();
+        // let jzkt = context.jzkt.clone().expect("jzkt is not set");
         // jzkt.borrow_mut().open(root32);
         // Ok(())
     }

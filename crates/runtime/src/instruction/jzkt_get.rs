@@ -26,7 +26,7 @@ impl JzktGet {
         key: &[u8],
         field: u32,
     ) -> Option<([u8; 32], bool)> {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         let (field_values, _flags, is_cold) = jzkt.borrow().get(key.try_into().unwrap())?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {

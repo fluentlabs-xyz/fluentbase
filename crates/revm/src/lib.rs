@@ -39,5 +39,9 @@ pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameRe
 pub use handler::Handler;
 pub use inspector::{inspector_handle_register, inspectors, GetInspector, Inspector};
 
+pub mod interpreter {
+    pub use super::types::*;
+}
+
 #[doc(inline)]
 pub use revm_primitives as primitives;

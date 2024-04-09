@@ -15,7 +15,7 @@ impl JzktRemove {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>, key: &[u8]) -> Result<(), ExitCode> {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         jzkt.borrow_mut().remove(key.try_into().unwrap());
         Ok(())
     }
