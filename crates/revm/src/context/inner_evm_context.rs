@@ -111,7 +111,7 @@ impl<DB: Database> InnerEvmContext<DB> {
     ) {
         // revert changes or not.
         if matches!(interpreter_result.result, ExitCode::Ok) {
-            Account::commit();
+            // Account::commit();
         } else {
             Account::rollback(journal_checkpoint);
         }
@@ -172,7 +172,7 @@ impl<DB: Database> InnerEvmContext<DB> {
             }
         }
         // if we have enough gas we can commit changes.
-        Account::commit();
+        // Account::commit();
 
         // set code
         let mut contract = Account::new_from_jzkt(&address);

@@ -4,13 +4,8 @@ use core::ptr;
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode};
 use revm_interpreter::{
-    analysis::to_analysed,
-    opcode::make_instruction_table,
-    primitives::Bytecode,
-    BytecodeLocked,
-    Contract,
-    Interpreter,
-    SharedMemory,
+    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
+    Contract, Interpreter, SharedMemory,
 };
 
 #[no_mangle]
@@ -39,7 +34,7 @@ pub fn _evm_delegatecall(
     // initiate contract instance and pass it to interpreter for and EVM transition
     let contract = Contract {
         input: unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) }.into(),
-        hash: callee_account.source_bytecode_hash,
+        hash: callee_account.source_code_hash,
         bytecode,
         address: callee_address,
         caller: ExecutionContext::contract_caller(),

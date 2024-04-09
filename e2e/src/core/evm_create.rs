@@ -1,7 +1,6 @@
 use crate::{
     assets::evm_test_contract::{
-        EVM_CONTRACT_BYTECODE1,
-        EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
+        EVM_CONTRACT_BYTECODE1, EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
     core::utils::TestingContext,
 };
@@ -14,10 +13,7 @@ use fluentbase_core::{
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
-        EvmCallMethodInput,
-        EvmCreateMethodInput,
-        EVM_CALL_METHOD_ID,
-        EVM_CREATE_METHOD_ID,
+        EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
     },
 };
 use fluentbase_runtime::{Runtime, RuntimeContext};
@@ -219,7 +215,7 @@ fn test_evm_call_from_wasm() {
         ecl_account.write_to_jzkt();
         println!(
             "ecl_account.rwasm_bytecode_hash {}",
-            ecl_account.rwasm_bytecode_hash
+            ecl_account.rwasm_code_hash
         );
         Account::commit();
         jzkt

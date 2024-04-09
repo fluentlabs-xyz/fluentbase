@@ -31,7 +31,7 @@ pub fn _evm_staticcall(
     .unwrap();
     let contract = Contract {
         input: unsafe { &*ptr::slice_from_raw_parts(args_offset, args_size as usize) }.into(),
-        hash: callee_account.source_bytecode_hash,
+        hash: callee_account.source_code_hash,
         bytecode,
         address: callee_address,
         caller: caller_address,

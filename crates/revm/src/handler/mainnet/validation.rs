@@ -40,7 +40,7 @@ pub fn validate_tx_against_state<SPEC: Spec, EXT, DB: Database>(
     // EIP-3607: Reject transactions from senders with deployed code
     // This EIP is introduced after london but there was no collision in the past,
     // so we can leave it enabled always
-    if !env.cfg.is_eip3607_disabled() && caller_account.rwasm_bytecode_hash != POSEIDON_EMPTY {
+    if !env.cfg.is_eip3607_disabled() && caller_account.rwasm_code_hash != POSEIDON_EMPTY {
         return Err(InvalidTransaction::RejectCallerWithCode.into());
     }
 

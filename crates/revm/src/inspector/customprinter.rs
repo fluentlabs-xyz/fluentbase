@@ -136,6 +136,7 @@ mod test {
                     code_hash: crate::primitives::keccak256(&code),
                     code: Some(crate::primitives::Bytecode::new_raw(code.clone())),
                     nonce: 1,
+                    ..Default::default()
                 };
                 db.insert_account_info(callee, info);
             })

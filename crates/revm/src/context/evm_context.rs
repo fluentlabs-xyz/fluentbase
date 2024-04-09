@@ -129,7 +129,6 @@ impl<DB: Database> EvmContext<DB> {
 
         // if bytecode is empty then just return Ok
         if bytecode.is_empty() {
-            Account::commit();
             return return_result(ExitCode::Ok);
         }
 
@@ -200,6 +199,7 @@ pub(crate) mod test_utils {
                 balance,
                 code_hash: B256::default(),
                 code: None,
+                ..Default::default()
             },
         );
         create_cache_db_evm_context(env, db)
@@ -323,6 +323,7 @@ mod tests {
                 balance: bal,
                 code_hash: by.clone().hash_slow(),
                 code: Some(by),
+                ..Default::default()
             },
         );
         let mut evm_context = create_cache_db_evm_context_with_balance(Box::new(env), cdb, bal);

@@ -7,22 +7,10 @@ use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
 use revm_interpreter::{
     primitives::{
-        Address,
-        AnalysisKind,
-        BlockEnv,
-        Bytecode,
-        Bytes,
-        CfgEnv,
-        Env,
-        Log,
-        TransactTo,
-        TxEnv,
-        B256,
-        U256,
+        Address, AnalysisKind, BlockEnv, Bytecode, Bytes, CfgEnv, Env, Log, TransactTo, TxEnv,
+        B256, U256,
     },
-    Host,
-    SStoreResult,
-    SelfDestructResult,
+    Host, SStoreResult, SelfDestructResult,
 };
 
 #[derive(Debug)]
@@ -144,7 +132,7 @@ impl Host for FluentHost {
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
         // TODO optimize using separate methods
         let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
-        let code_hash = B256::from_slice(account.source_bytecode_hash.as_slice());
+        let code_hash = B256::from_slice(account.source_code_hash.as_slice());
 
         Some((code_hash, false))
     }

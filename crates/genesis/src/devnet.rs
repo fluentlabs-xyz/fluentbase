@@ -1,7 +1,7 @@
 use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_types::Bytes;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
     ChainConfig {
@@ -33,7 +33,7 @@ pub fn devnet_chain_config() -> ChainConfig {
 }
 
 pub fn devnet_genesis() -> Genesis {
-    let mut alloc = HashMap::new();
+    let mut alloc = BTreeMap::new();
     macro_rules! enable_rwasm_contract {
         ($addr:ident, $file_path:literal) => {
             alloc.insert(

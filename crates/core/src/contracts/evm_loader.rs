@@ -24,7 +24,7 @@ pub fn main() {
     contract_input_data.contract_address = ECL_CONTRACT_ADDRESS;
     let ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
     let contract_input_data_vec = contract_input_data.encode_to_vec(0);
-    let rwasm_bytecode_hash = ecl_account.rwasm_bytecode_hash;
+    let rwasm_bytecode_hash = ecl_account.rwasm_code_hash;
     let exit_code = LowLevelSDK::sys_exec_hash(
         rwasm_bytecode_hash.as_ptr(),
         contract_input_data_vec.as_ptr(),

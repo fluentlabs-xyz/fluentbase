@@ -3,8 +3,7 @@ use fluentbase_codec::Encoder;
 use fluentbase_core::Account;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext},
-    LowLevelAPI,
-    LowLevelSDK,
+    LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{ExitCode, STATE_MAIN};
 
@@ -26,7 +25,7 @@ pub fn main() {
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
     let account = Account::new_from_jzkt(&evm_contract_address);
-    let rwasm_bytecode_hash = account.rwasm_bytecode_hash;
+    let rwasm_bytecode_hash = account.rwasm_code_hash;
 
     let exit_code = LowLevelSDK::sys_exec_hash(
         rwasm_bytecode_hash.as_ptr(),
