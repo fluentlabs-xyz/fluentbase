@@ -11,7 +11,7 @@ impl JzktCheckpoint {
     }
 
     pub fn fn_impl<T>(context: &mut RuntimeContext<T>) -> Result<JournalCheckpoint, ExitCode> {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         let checkpoint = jzkt.borrow_mut().checkpoint();
         Ok(checkpoint)
     }

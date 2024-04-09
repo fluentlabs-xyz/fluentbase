@@ -22,7 +22,7 @@ use fluentbase_core_api::bindings::{
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
-use revm_primitives::CreateScheme;
+use revm_primitives::{CreateScheme, Env};
 
 /// EVM call stack limit.
 pub const CALL_STACK_LIMIT: u64 = 1024;
@@ -86,6 +86,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// SpecId depends on the handler.
     pub fn spec_id(&self) -> SpecId {
         self.handler.cfg.spec_id
+    }
+
+    pub fn env(&self) -> &Env {
+        self.context.evm.env.as_ref()
     }
 
     /// Pre verify transaction by checking Environment, initial gas spend and if caller

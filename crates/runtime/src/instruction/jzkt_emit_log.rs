@@ -34,7 +34,7 @@ impl JzktEmitLog {
         topics: &Vec<B256>,
         data: &[u8],
     ) {
-        let jzkt = context.jzkt.clone().unwrap();
+        let jzkt = context.jzkt.clone().expect("jzkt is not set");
         jzkt.borrow_mut().emit_log(
             Address::from_slice(key),
             topics.clone(),

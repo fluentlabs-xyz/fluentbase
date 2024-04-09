@@ -6,10 +6,11 @@ use rwasm::{
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "std", derive(strum_macros::EnumIter))]
 pub enum ExitCode {
     // warning: when adding new codes don't forget to add them to impls below
+    #[default]
     Ok = 0,
     Panic = -71,
     // fluentbase error codes
@@ -58,11 +59,11 @@ pub enum ExitCode {
 }
 
 impl ExitCode {
-    pub fn is_ok(&self) -> bool {
-        *self == Self::Ok
+    pub const fn is_ok(&self) -> bool {
+        self.into_i32() == Self::Ok.into_i32()
     }
 
-    pub fn into_i32(self) -> i32 {
+    pub const fn into_i32(self) -> i32 {
         self as i32
     }
 

@@ -107,7 +107,7 @@ pub fn validate_initial_tx_gas<SPEC: Spec, DB: Database>(
     Ok(initial_gas_spend)
 }
 
-fn validate_initial_tx_gas_inner<SPEC: Spec>(
+pub fn validate_initial_tx_gas_inner<SPEC: Spec>(
     input: &[u8],
     is_create: bool,
     access_list: &[(Address, Vec<U256>)],
