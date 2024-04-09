@@ -55,8 +55,8 @@ impl SysExecHash {
     ) -> Result<(Vec<u8>, u32), i32> {
         let import_linker = Runtime::<()>::new_sovereign_linker();
         let jzkt = ctx.jzkt.clone().unwrap();
-        let bytecode_ptr_and_size = jzkt.borrow_mut().preimage_ptr_and_size(bytecode_hash32);
-        let mut next_ctx = RuntimeContext::new(bytecode_ptr_and_size);
+        let bytecode = jzkt.borrow_mut().preimage(bytecode_hash32);
+        let mut next_ctx = RuntimeContext::new(bytecode);
         next_ctx
             .with_input(input)
             .with_state(STATE_MAIN)

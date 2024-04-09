@@ -19,14 +19,21 @@ pub enum JournalEvent {
 }
 
 impl JournalEvent {
-    fn key(&self) -> &[u8; 32] {
+    pub fn key(&self) -> &[u8; 32] {
         match self {
             JournalEvent::ItemChanged { key, .. } => key,
             JournalEvent::ItemRemoved { key, .. } => key,
         }
     }
 
-    fn preimage(&self) -> Option<(Vec<[u8; 32]>, u32)> {
+    pub fn is_removed(&self) -> bool {
+        match self {
+            JournalEvent::ItemChanged { .. } => false,
+            JournalEvent::ItemRemoved { .. } => true,
+        }
+    }
+
+    pub fn preimage(&self) -> Option<(Vec<[u8; 32]>, u32)> {
         match self {
             JournalEvent::ItemChanged {
                 preimage: value,
@@ -37,7 +44,7 @@ impl JournalEvent {
         }
     }
 
-    fn prev_state(&self) -> Option<usize> {
+    pub fn prev_state(&self) -> Option<usize> {
         match self {
             JournalEvent::ItemChanged { prev_state, .. } => *prev_state,
             JournalEvent::ItemRemoved { prev_state, .. } => *prev_state,
@@ -87,13 +94,13 @@ pub trait IJournaledTrie {
     fn remove(&mut self, key: &[u8; 32]);
     fn compute_root(&self) -> [u8; 32];
     fn emit_log(&mut self, address: Address, topics: Vec<B256>, data: Bytes);
-    fn events(&self) -> &Vec<JournalEvent>;
     fn commit(&mut self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode>;
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool;
     fn preimage(&mut self, hash: &[u8; 32]) -> Vec<u8>;
     fn preimage_ptr_and_size(&mut self, hash: &[u8; 32]) -> (*const u8, u32);
     fn preimage_size(&mut self, hash: &[u8; 32]) -> u32;
+    fn journal(&self) -> &Vec<JournalEvent>;
 }
 
 macro_rules! bytes32 {
@@ -235,7 +242,7 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
         });
     }
 
-    fn events(&self) -> &Vec<JournalEvent> {
+    fn journal(&self) -> &Vec<JournalEvent> {
         return &self.journal;
     }
 

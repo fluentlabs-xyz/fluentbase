@@ -22,7 +22,7 @@ use fluentbase_core_api::bindings::{
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
-use revm_primitives::{CreateScheme, Env};
+use revm_primitives::{CreateScheme, State};
 
 /// EVM call stack limit.
 pub const CALL_STACK_LIMIT: u64 = 1024;
@@ -86,10 +86,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// SpecId depends on the handler.
     pub fn spec_id(&self) -> SpecId {
         self.handler.cfg.spec_id
-    }
-
-    pub fn env(&self) -> &Env {
-        self.context.evm.env.as_ref()
     }
 
     /// Pre verify transaction by checking Environment, initial gas spend and if caller
@@ -222,6 +218,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
     /// Transact pre-verified transaction.
     fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<DB::Error> {
+        // TODO: "yes, we create empty jzkt here only for devnet purposes"
+        let jzkt = LowLevelSDK::with_default_jzkt();
+
         let ctx = &mut self.context;
         let pre_exec = self.handler.pre_execution();
 
@@ -276,7 +275,30 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         // Reward beneficiary
         post_exec.reward_beneficiary(ctx, frame_result.gas())?;
         // Returns output of transaction.
-        post_exec.output(ctx, frame_result)
+        match post_exec.output(ctx, frame_result) {
+            Ok(mut result) => {
+                let mut state: State = Default::default();
+                for event in jzkt.borrow().journal() {
+                    let address = Address::from_slice(&event.key()[12..]);
+                    if !event.is_removed() {
+                        let fields = event.preimage().unwrap().0;
+                        state.insert(
+                            address,
+                            revm_primitives::Account {
+                                info: Account::new_from_fields(&address, &fields).into(),
+                                storage: Default::default(),
+                                status: Default::default(),
+                            },
+                        );
+                    } else {
+                        state.remove(&address);
+                    }
+                }
+                result.state = state;
+                Ok(result)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// EVM create opcode for both initial crate and CREATE and CREATE2 opcodes.
@@ -501,7 +523,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let mut gas_limit_ref = gas.remaining() as u32;
         let gas_limit_ref = &mut gas_limit_ref as *mut u32;
         let exit_code = LowLevelSDK::sys_exec_hash(
-            callee.rwasm_bytecode_hash.as_ptr(),
+            callee.rwasm_code_hash.as_ptr(),
             input.as_ptr(),
             input.len() as u32,
             core::ptr::null_mut(),

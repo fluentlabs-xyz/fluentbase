@@ -64,7 +64,7 @@ pub fn _wasm_create2(
     contract_account.update_source_bytecode(&init_code.into());
     contract_account.update_rwasm_bytecode(&bytecode_rwasm.into());
     rwasm_exec_hash(
-        contract_account.rwasm_bytecode_hash.as_slice(),
+        contract_account.rwasm_code_hash.as_slice(),
         &[],
         gas_limit,
         true,

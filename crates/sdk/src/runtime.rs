@@ -3,39 +3,20 @@ use alloc::rc::Rc;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
     instruction::{
-        crypto_ecrecover::CryptoEcrecover,
-        crypto_keccak256::CryptoKeccak256,
-        crypto_poseidon::CryptoPoseidon,
-        crypto_poseidon2::CryptoPoseidon2,
-        jzkt_checkpoint::JzktCheckpoint,
-        jzkt_commit::JzktCommit,
-        jzkt_compute_root::JzktComputeRoot,
-        jzkt_emit_log::JzktEmitLog,
-        jzkt_get::JzktGet,
-        jzkt_open::JzktOpen,
-        jzkt_preimage_copy::JzktPreimageCopy,
-        jzkt_preimage_size::JzktPreimageSize,
-        jzkt_remove::JzktRemove,
-        jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate,
-        jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec::SysExec,
-        sys_exec_hash::SysExecHash,
-        sys_forward_output::SysForwardOutput,
-        sys_halt::SysHalt,
-        sys_input_size::SysInputSize,
-        sys_output_size::SysOutputSize,
-        sys_read::SysRead,
-        sys_read_output::SysReadOutput,
-        sys_state::SysState,
-        sys_write::SysWrite,
+        crypto_ecrecover::CryptoEcrecover, crypto_keccak256::CryptoKeccak256,
+        crypto_poseidon::CryptoPoseidon, crypto_poseidon2::CryptoPoseidon2,
+        jzkt_checkpoint::JzktCheckpoint, jzkt_commit::JzktCommit,
+        jzkt_compute_root::JzktComputeRoot, jzkt_emit_log::JzktEmitLog, jzkt_get::JzktGet,
+        jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
+        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage, sys_exec::SysExec,
+        sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
+        sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
+        sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
     },
     types::InMemoryTrieDb,
     zktrie::ZkTrieStateDb,
-    IJournaledTrie,
-    JournalCheckpoint,
-    JournaledTrie,
-    RuntimeContext,
+    IJournaledTrie, JournalCheckpoint, JournaledTrie, RuntimeContext,
 };
 use std::{cell::RefCell, ptr};
 
@@ -335,11 +316,20 @@ impl LowLevelSDK {
     }
 
     pub fn with_default_jzkt() -> Rc<RefCell<dyn IJournaledTrie>> {
-        let jzkt = Rc::new(RefCell::new(JournaledTrie::new(ZkTrieStateDb::new(
-            InMemoryTrieDb::default(),
-        ))));
-        LowLevelSDK::with_jzkt(jzkt.clone());
-        jzkt
+        CONTEXT.with(|ctx| {
+            let mut ctx2 = ctx.take();
+            let jzkt = if ctx2.jzkt().is_none() {
+                let jzkt = Rc::new(RefCell::new(JournaledTrie::new(ZkTrieStateDb::new(
+                    InMemoryTrieDb::default(),
+                ))));
+                ctx2.with_jzkt(jzkt.clone());
+                jzkt
+            } else {
+                ctx2.jzkt().unwrap().clone()
+            };
+            ctx.set(ctx2);
+            jzkt
+        })
     }
 
     pub fn with_jzkt(v: Rc<RefCell<dyn IJournaledTrie>>) {

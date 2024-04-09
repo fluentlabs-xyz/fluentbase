@@ -2,8 +2,7 @@ use crate::account::Account;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
-    LowLevelAPI,
-    LowLevelSDK,
+    LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN};
 
@@ -55,7 +54,7 @@ pub fn _wasm_call(
     if value != U256::ZERO {
         return ExitCode::UnknownError;
     };
-    let bytecode_hash = callee_account.rwasm_bytecode_hash;
+    let bytecode_hash = callee_account.rwasm_code_hash;
     let exit_code = LowLevelSDK::sys_exec_hash(
         bytecode_hash.as_ptr(),
         contract_input_vec.as_ptr(),

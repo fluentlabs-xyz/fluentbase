@@ -5,10 +5,10 @@ pub(crate) const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
 
 pub(crate) const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
 pub(crate) const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
-pub(crate) const JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD: u32 = 2;
-pub(crate) const JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD: u32 = 3;
-pub(crate) const JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD: u32 = 4;
-pub(crate) const JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD: u32 = 5;
+pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD: u32 = 2;
+pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
+pub(crate) const JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD: u32 = 4;
+pub(crate) const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
 
 /// Compression flags for upper fields.
 ///
@@ -18,7 +18,7 @@ pub(crate) const JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD: u32 = 5;
 ///
 /// Mask is: 0b00001001
 pub const JZKT_COMPRESSION_FLAGS: u32 =
-    (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD);
+    (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD);
 
 /// EIP-170: Contract code size limit
 ///

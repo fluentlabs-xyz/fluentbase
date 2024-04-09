@@ -1,4 +1,4 @@
-use crate::account_types::JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD;
+use crate::account_types::JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD;
 use core::ptr;
 use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
@@ -11,7 +11,7 @@ pub fn _evm_codesize(output32_offset: *mut u8) {
 
     let _is_cold = LowLevelSDK::jzkt_get(
         address_bytes32.as_ptr(),
-        JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD,
+        JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
         output32_offset,
     );
 }

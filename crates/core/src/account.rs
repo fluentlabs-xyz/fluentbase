@@ -1,35 +1,48 @@
 use crate::account_types::{
     AccountCheckpoint, AccountFields, JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD, JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
     JZKT_COMPRESSION_FLAGS,
 };
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use fluentbase_types::{Address, Bytes, ExitCode, B256, F254, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use revm_primitives::AccountInfo;
 
 #[derive(Debug, Clone)]
 pub struct Account {
     pub address: Address,
     pub balance: U256,
     pub nonce: u64,
-    pub source_bytecode_size: u64,
-    pub source_bytecode_hash: B256,
-    pub rwasm_bytecode_size: u64,
-    pub rwasm_bytecode_hash: B256,
+    pub source_code_size: u64,
+    pub source_code_hash: B256,
+    pub rwasm_code_size: u64,
+    pub rwasm_code_hash: F254,
+}
+
+impl Into<AccountInfo> for Account {
+    fn into(self) -> AccountInfo {
+        AccountInfo {
+            balance: self.balance,
+            nonce: self.nonce,
+            code_hash: self.source_code_hash,
+            rwasm_code_hash: self.rwasm_code_hash,
+            code: None,
+        }
+    }
 }
 
 impl Default for Account {
     fn default() -> Self {
         Self {
             address: Address::ZERO,
-            rwasm_bytecode_size: 0,
-            source_bytecode_size: 0,
+            rwasm_code_size: 0,
+            source_code_size: 0,
             nonce: 0,
             balance: U256::ZERO,
-            rwasm_bytecode_hash: POSEIDON_EMPTY,
-            source_bytecode_hash: KECCAK_EMPTY,
+            rwasm_code_hash: POSEIDON_EMPTY,
+            source_code_hash: KECCAK_EMPTY,
         }
     }
 }
@@ -40,6 +53,29 @@ impl Account {
             address: address.clone(),
             ..Default::default()
         }
+    }
+
+    pub fn new_from_fields(address: &Address, fields: &[Bytes32]) -> Self {
+        let mut result = Self::new(address);
+        assert_eq!(fields.len(), 6, "account fields len mismatch");
+        unsafe {
+            result
+                .balance
+                .as_le_slice_mut()
+                .copy_from_slice(&fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]);
+        }
+        result.nonce = LittleEndian::read_u64(&fields[JZKT_ACCOUNT_NONCE_FIELD as usize]);
+        result.source_code_size =
+            LittleEndian::read_u64(&fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize]);
+        result
+            .source_code_hash
+            .copy_from_slice(&fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]);
+        result.rwasm_code_size =
+            LittleEndian::read_u64(&fields[JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD as usize]);
+        result
+            .rwasm_code_hash
+            .copy_from_slice(&fields[JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD as usize]);
+        result
     }
 
     pub fn new_from_jzkt(address: &Address) -> Self {
@@ -56,19 +92,16 @@ impl Account {
         });
 
         Account::jzkt_get_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.rwasm_bytecode_size = LittleEndian::read_u64(&buffer32);
+        result.rwasm_code_size = LittleEndian::read_u64(&buffer32);
 
-        Account::jzkt_get_bytecode_hash(
-            address_word.as_ptr(),
-            result.rwasm_bytecode_hash.as_mut_ptr(),
-        );
+        Account::jzkt_get_bytecode_hash(address_word.as_ptr(), result.rwasm_code_hash.as_mut_ptr());
 
         Account::jzkt_get_source_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.source_bytecode_size = LittleEndian::read_u64(&buffer32);
+        result.source_code_size = LittleEndian::read_u64(&buffer32);
 
         Account::jzkt_get_source_bytecode_hash(
             address_word.as_ptr(),
-            result.source_bytecode_hash.as_mut_ptr(),
+            result.source_code_hash.as_mut_ptr(),
         );
 
         result
@@ -96,7 +129,7 @@ impl Account {
     pub fn jzkt_get_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD,
+            JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
             buffer32_le_offset,
         );
     }
@@ -105,7 +138,7 @@ impl Account {
     pub fn jzkt_get_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD,
+            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
             buffer32_offset,
         );
     }
@@ -114,7 +147,7 @@ impl Account {
     pub fn jzkt_get_source_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD,
+            JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
             buffer32_le_offset,
         );
     }
@@ -123,7 +156,7 @@ impl Account {
     pub fn jzkt_get_source_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
-            JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD,
+            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
             buffer32_offset,
         );
     }
@@ -152,8 +185,8 @@ impl Account {
     pub fn get_fields(&self) -> AccountFields {
         let mut account_fields: AccountFields = Default::default();
         LittleEndian::write_u64(
-            &mut account_fields[JZKT_ACCOUNT_RWASM_BYTECODE_SIZE_FIELD as usize][..],
-            self.rwasm_bytecode_size,
+            &mut account_fields[JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD as usize][..],
+            self.rwasm_code_size,
         );
         LittleEndian::write_u64(
             &mut account_fields[JZKT_ACCOUNT_NONCE_FIELD as usize][..],
@@ -162,13 +195,13 @@ impl Account {
         account_fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]
             .copy_from_slice(&self.balance.as_le_slice());
 
-        account_fields[JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD as usize]
-            .copy_from_slice(self.source_bytecode_hash.as_slice());
-        account_fields[JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD as usize]
-            .copy_from_slice(self.rwasm_bytecode_hash.as_slice());
+        account_fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]
+            .copy_from_slice(self.source_code_hash.as_slice());
+        account_fields[JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD as usize]
+            .copy_from_slice(self.rwasm_code_hash.as_slice());
         LittleEndian::write_u64(
-            &mut account_fields[JZKT_ACCOUNT_SOURCE_BYTECODE_SIZE_FIELD as usize][..],
-            self.source_bytecode_size,
+            &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
+            self.source_code_size,
         );
 
         account_fields
@@ -195,14 +228,14 @@ impl Account {
     }
 
     pub fn load_source_bytecode(&self) -> Bytes {
-        let mut bytecode = vec![0u8; self.source_bytecode_size as usize];
-        LowLevelSDK::jzkt_preimage_copy(self.source_bytecode_hash.as_ptr(), bytecode.as_mut_ptr());
+        let mut bytecode = vec![0u8; self.source_code_size as usize];
+        LowLevelSDK::jzkt_preimage_copy(self.source_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
     pub fn load_rwasm_bytecode(&self) -> Bytes {
-        let mut bytecode = vec![0u8; self.rwasm_bytecode_size as usize];
-        LowLevelSDK::jzkt_preimage_copy(self.rwasm_bytecode_hash.as_ptr(), bytecode.as_mut_ptr());
+        let mut bytecode = vec![0u8; self.rwasm_code_size as usize];
+        LowLevelSDK::jzkt_preimage_copy(self.rwasm_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
@@ -211,14 +244,14 @@ impl Account {
         LowLevelSDK::crypto_keccak256(
             bytecode.as_ptr(),
             bytecode.len() as u32,
-            self.source_bytecode_hash.as_mut_ptr(),
+            self.source_code_hash.as_mut_ptr(),
         );
-        self.source_bytecode_size = bytecode.len() as u64;
+        self.source_code_size = bytecode.len() as u64;
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
             address_word.as_ptr(),
-            JZKT_ACCOUNT_SOURCE_BYTECODE_HASH_FIELD,
+            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
             bytecode.as_ptr(),
             bytecode.len() as u32,
         );
@@ -230,14 +263,14 @@ impl Account {
         LowLevelSDK::crypto_poseidon(
             bytecode.as_ptr(),
             bytecode.len() as u32,
-            self.rwasm_bytecode_hash.as_mut_ptr(),
+            self.rwasm_code_hash.as_mut_ptr(),
         );
-        self.rwasm_bytecode_size = bytecode.len() as u64;
+        self.rwasm_code_size = bytecode.len() as u64;
         self.write_to_jzkt();
         // make sure preimage of this hash is stored
         let r = LowLevelSDK::jzkt_update_preimage(
             address_word.as_ptr(),
-            JZKT_ACCOUNT_RWASM_BYTECODE_HASH_FIELD,
+            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
             bytecode.as_ptr(),
             bytecode.len() as u32,
         );
@@ -264,7 +297,7 @@ impl Account {
         amount: U256,
     ) -> Result<(), ExitCode> {
         // make sure there is no creation collision
-        if callee.rwasm_bytecode_hash != POSEIDON_EMPTY || callee.nonce != 0 {
+        if callee.rwasm_code_hash != POSEIDON_EMPTY || callee.nonce != 0 {
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
@@ -310,7 +343,7 @@ impl Account {
     #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
         self.nonce != 0
-            || self.source_bytecode_hash != KECCAK_EMPTY
-            || self.rwasm_bytecode_hash != POSEIDON_EMPTY
+            || self.source_code_hash != KECCAK_EMPTY
+            || self.rwasm_code_hash != POSEIDON_EMPTY
     }
 }
