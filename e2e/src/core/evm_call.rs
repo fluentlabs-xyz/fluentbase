@@ -115,7 +115,7 @@ fn evm_create_test() {
 
     let contract_input_data_bytes = "some contract input".as_bytes();
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx.try_add_account(&caller_account);
     test_ctx
         .contract_input_wrapper
@@ -163,7 +163,7 @@ fn evm_call_after_create_test() {
 
     let contract_input_data_bytes = "some contract input".as_bytes();
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx.try_add_account(&caller_account);
     test_ctx
         .contract_input_wrapper
@@ -239,7 +239,7 @@ fn evm_call_after_create2_test() {
 
     let contract_input_data_bytes = "some contract input".as_bytes();
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -308,7 +308,7 @@ fn evm_balance_test() {
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -346,7 +346,7 @@ fn evm_selfbalance_test() {
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -382,7 +382,7 @@ fn evm_address_test() {
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
     let env_chain_id = 1;
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -419,7 +419,7 @@ fn evm_selfbalance_from_contract_call_test() {
 
     let contract_input_data_bytes = "some contract input".as_bytes();
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
@@ -493,7 +493,7 @@ fn evm_balance_from_contract_call_test() {
 
     let contract_input_data_bytes = "some contract input".as_bytes();
 
-    let mut test_ctx = TestingContext::<(), false>::new(true, None);
+    let mut test_ctx = TestingContext::<false>::new();
     test_ctx.try_add_account(&caller_account);
     test_ctx
         .contract_input_wrapper

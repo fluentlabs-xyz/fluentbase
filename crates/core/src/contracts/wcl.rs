@@ -3,10 +3,7 @@ use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
-        WasmCallMethodInput,
-        WasmCreate2MethodInput,
-        WasmCreateMethodInput,
-        WasmMethodName,
+        WasmCallMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput, WasmMethodName,
     },
 };
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
@@ -83,14 +80,11 @@ pub fn main() {
 
 #[cfg(test)]
 mod tests {
-    use alloc::rc::Rc;
-    use core::cell::RefCell;
     use fluentbase_codec::Encoder;
     use fluentbase_core_api::{
         api::CoreInput,
         bindings::{WasmCreateMethodInput, WASM_CREATE_METHOD_ID},
     };
-    use fluentbase_runtime::{types::InMemoryTrieDb, zktrie::ZkTrieStateDb, JournaledTrie};
     use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
     use fluentbase_types::{Address, Bytes};
 
@@ -112,11 +106,6 @@ mod tests {
             contract_input: Bytes::from(core_input.encode_to_vec(0)),
             ..Default::default()
         };
-        let db = InMemoryTrieDb::default();
-        let storage = ZkTrieStateDb::new_empty(db);
-        let journal = JournaledTrie::new(storage);
-        let journal_ref = Rc::new(RefCell::new(journal));
-        LowLevelSDK::with_jzkt(journal_ref);
         LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
         super::main();
         assert!(LowLevelSDK::get_test_output().len() > 0);

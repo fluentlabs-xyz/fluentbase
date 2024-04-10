@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{Address, Bytes, B256};
+use fluentbase_types::{Address, Bytes, IJournaledTrie, B256};
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktEmitLog;
 
 impl JzktEmitLog {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         key32_ptr: u32,
         topics32s_ptr: u32,
         topics32s_len: u32,
@@ -28,14 +28,14 @@ impl JzktEmitLog {
         Ok(())
     }
 
-    pub fn fn_impl<T>(
-        context: &mut RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        context: &mut RuntimeContext<DB>,
         key: &[u8],
         topics: &Vec<B256>,
         data: &[u8],
     ) {
-        let jzkt = context.jzkt.clone().expect("jzkt is not set");
-        jzkt.borrow_mut().emit_log(
+        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
+        jzkt.emit_log(
             Address::from_slice(key),
             topics.clone(),
             Bytes::copy_from_slice(data),

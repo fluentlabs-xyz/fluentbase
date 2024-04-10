@@ -1,6 +1,7 @@
 use crate::{evm::B256, LowLevelAPI, LowLevelSDK};
-use alloc::rc::Rc;
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_runtime::types::InMemoryTrieDb;
+use fluentbase_runtime::zktrie::ZkTrieStateDb;
 use fluentbase_runtime::{
     instruction::{
         crypto_ecrecover::CryptoEcrecover, crypto_keccak256::CryptoKeccak256,
@@ -14,19 +15,21 @@ use fluentbase_runtime::{
         sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
         sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
     },
-    types::InMemoryTrieDb,
-    zktrie::ZkTrieStateDb,
-    IJournaledTrie, JournalCheckpoint, JournaledTrie, RuntimeContext,
+    DefaultEmptyRuntimeDatabase, RuntimeContext,
 };
-use std::{cell::RefCell, ptr};
+use fluentbase_types::JournalCheckpoint;
+use std::ptr;
+
+type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;
 
 thread_local! {
-    pub static CONTEXT: std::cell::Cell<RuntimeContext<'static, ()>> = std::cell::Cell::new(RuntimeContext::new(&[0u8; 0]));
+    pub static CONTEXT: std::cell::Cell<Context> = std::cell::Cell::new(Context::new(&[0u8; 0])
+        .with_jzkt(DefaultEmptyRuntimeDatabase::new(ZkTrieStateDb::new_empty(InMemoryTrieDb::default()))));
 }
 
 fn with_context<F, R>(func: F) -> R
 where
-    F: Fn(&RuntimeContext<'static, ()>) -> R,
+    F: Fn(&Context) -> R,
 {
     CONTEXT.with(|ctx| {
         let ctx2 = ctx.take();
@@ -38,7 +41,7 @@ where
 
 fn with_context_mut<F, R>(func: F) -> R
 where
-    F: Fn(&mut RuntimeContext<'static, ()>) -> R,
+    F: Fn(&mut Context) -> R,
 {
     CONTEXT.with(|ctx| {
         let mut ctx2 = ctx.take();
@@ -110,6 +113,7 @@ impl LowLevelAPI for LowLevelSDK {
     fn sys_write(value: &[u8]) {
         with_context_mut(|ctx| SysWrite::fn_impl(ctx, value))
     }
+
     fn sys_forward_output(offset: u32, len: u32) {
         with_context_mut(|ctx| SysForwardOutput::fn_impl(ctx, offset, len)).unwrap()
     }
@@ -125,6 +129,10 @@ impl LowLevelAPI for LowLevelSDK {
     fn sys_read_output(target: *mut u8, offset: u32, length: u32) {
         let result = with_context(|ctx| SysReadOutput::fn_impl(ctx, offset, length).unwrap());
         unsafe { ptr::copy(result.as_ptr(), target, length as usize) }
+    }
+
+    fn sys_state() -> u32 {
+        with_context(|ctx| SysState::fn_impl(ctx))
     }
 
     fn sys_exec(
@@ -207,10 +215,6 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
 
-    fn sys_state() -> u32 {
-        with_context(|ctx| SysState::fn_impl(ctx))
-    }
-
     fn jzkt_open(root32_ptr: *const u8) {
         let root = unsafe { &*ptr::slice_from_raw_parts(root32_ptr, 32) };
         with_context_mut(|ctx| JzktOpen::fn_impl(ctx, root).unwrap());
@@ -290,53 +294,20 @@ impl LowLevelAPI for LowLevelSDK {
 
 impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
-        CONTEXT.with(|ctx| {
-            let mut ctx2 = ctx.take();
-            ctx2.with_input(input);
-            ctx.set(ctx2);
+        with_context_mut(|ctx| {
+            ctx.change_input(input.clone());
         });
     }
 
     pub fn get_test_output() -> Vec<u8> {
-        CONTEXT.with(|ctx| {
-            let mut ctx2 = ctx.take();
-            let result = ctx2.output().clone();
-            ctx2.clean_output();
-            ctx.set(ctx2);
-            result
+        with_context_mut(|ctx| {
+            let output = ctx.output().clone();
+            ctx.clean_output();
+            output
         })
     }
 
-    pub fn with_test_state(state: u32) {
-        CONTEXT.with(|ctx| {
-            let mut ctx2 = ctx.take();
-            ctx2.with_state(state);
-            ctx.set(ctx2);
-        });
-    }
-
-    pub fn with_default_jzkt() -> Rc<RefCell<dyn IJournaledTrie>> {
-        CONTEXT.with(|ctx| {
-            let mut ctx2 = ctx.take();
-            let jzkt = if ctx2.jzkt().is_none() {
-                let jzkt = Rc::new(RefCell::new(JournaledTrie::new(ZkTrieStateDb::new(
-                    InMemoryTrieDb::default(),
-                ))));
-                ctx2.with_jzkt(jzkt.clone());
-                jzkt
-            } else {
-                ctx2.jzkt().unwrap().clone()
-            };
-            ctx.set(ctx2);
-            jzkt
-        })
-    }
-
-    pub fn with_jzkt(v: Rc<RefCell<dyn IJournaledTrie>>) {
-        CONTEXT.with(|ctx| {
-            let mut ctx2 = ctx.take();
-            ctx2.with_jzkt(v);
-            ctx.set(ctx2);
-        });
+    pub fn with_default_jzkt() -> DefaultEmptyRuntimeDatabase {
+        with_context_mut(|ctx| ctx.jzkt().unwrap())
     }
 }

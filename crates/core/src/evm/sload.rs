@@ -12,6 +12,7 @@ pub fn _evm_sload(slot32_offset: *const u8, value32_offset: *mut u8) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evm::sstore::_evm_sstore;
     use fluentbase_codec::Encoder;
     use fluentbase_sdk::evm::ContractInput;
     use fluentbase_types::{address, Address};
@@ -25,8 +26,7 @@ mod tests {
         let mut contract_input = ContractInput::default();
         contract_input.contract_address = ADDRESS;
         LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
-        let jzkt = LowLevelSDK::with_default_jzkt();
-        jzkt.borrow_mut().store(&ADDRESS, &SLOT, &VALUE);
+        _evm_sstore(SLOT.as_ptr(), VALUE.as_ptr()).unwrap();
         // read value from trie using SLOAD opcode
         let mut value = [0u8; 32];
         _evm_sload(SLOT.as_ptr(), value.as_mut_ptr()).unwrap();

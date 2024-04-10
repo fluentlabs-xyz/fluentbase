@@ -1,9 +1,9 @@
-use crate::{runtime::Runtime, RuntimeContext};
+use crate::{runtime::Runtime, DefaultEmptyRuntimeDatabase, RuntimeContext};
 use hex_literal::hex;
 use rwasm::rwasm::{BinaryFormat, RwasmModule};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
-    let import_linker = Runtime::<()>::new_sovereign_linker();
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let rwasm_module = RwasmModule::compile(&wasm_binary, Some(import_linker)).unwrap();
     let mut result = Vec::new();
@@ -35,10 +35,9 @@ fn test_simple() {
   (export "main" (func $main)))
     "#,
     );
-    let mut ctx = RuntimeContext::new(rwasm_binary);
-    ctx.with_fuel_limit(10_000_000);
-    let import_linker = Runtime::<()>::new_sovereign_linker();
-    Runtime::<()>::run_with_context(ctx, import_linker).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
 }
 
 #[test]
@@ -61,10 +60,11 @@ fn test_wrong_indirect_type() {
     ))
     "#,
     );
-    let import_linker = Runtime::<()>::new_sovereign_linker();
-    let mut ctx = RuntimeContext::new(rwasm_bytecode);
-    ctx.with_fuel_limit(1_000_000).with_state(1000);
-    let mut runtime = Runtime::<()>::new(ctx, import_linker).unwrap();
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let ctx = RuntimeContext::new(rwasm_bytecode)
+        .with_fuel_limit(1_000_000)
+        .with_state(1000);
+    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
     runtime.call().unwrap();
     runtime.data_mut().state = 0;
     let res = runtime.call();
@@ -95,10 +95,10 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-    let mut ctx = RuntimeContext::new(rwasm_binary);
-    ctx.with_fuel_limit(1_000_000);
-    let import_linker = Runtime::<()>::new_sovereign_linker();
-    let execution_result = Runtime::<()>::run_with_context(ctx, import_linker).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(1_000_000);
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let execution_result =
+        Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
     println!(
         "fuel consumed: {}",
         execution_result.fuel_consumed().unwrap_or_default()

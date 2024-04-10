@@ -1,7 +1,7 @@
 use crate::helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
 use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::{Runtime, RuntimeContext};
+use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
 use fluentbase_types::STATE_DEPLOY;
 use hex_literal::hex;
 
@@ -118,12 +118,13 @@ fn test_secp256k1_verify() {
     ];
 
     for input_data in input_datas {
-        let mut ctx = RuntimeContext::new(rwasm_binary.clone());
-        ctx.with_state(STATE_DEPLOY)
+        let ctx = RuntimeContext::new(rwasm_binary.clone())
+            .with_state(STATE_DEPLOY)
             .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
-        let import_linker = Runtime::<()>::new_sovereign_linker();
-        let output = Runtime::<()>::run_with_context(ctx, import_linker).unwrap();
+        let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+        let output =
+            Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
         assert_eq!(output.data().output().clone(), Vec::<u8>::new());
     }
 }

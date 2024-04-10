@@ -1,19 +1,23 @@
-use crate::{journal::JournalCheckpoint, RuntimeContext};
+use crate::RuntimeContext;
+use fluentbase_types::{IJournaledTrie, JournalCheckpoint};
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktRollback;
 
 impl JzktRollback {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         checkpoint: u64,
     ) -> Result<(), Trap> {
         Self::fn_impl(caller.data_mut(), JournalCheckpoint::from_u64(checkpoint));
         Ok(())
     }
 
-    pub fn fn_impl<T>(ctx: &mut RuntimeContext<T>, checkpoint: JournalCheckpoint) {
-        let jzkt = ctx.jzkt.clone().unwrap();
-        jzkt.borrow_mut().rollback(checkpoint);
+    pub fn fn_impl<DB: IJournaledTrie>(
+        ctx: &mut RuntimeContext<DB>,
+        checkpoint: JournalCheckpoint,
+    ) {
+        let jzkt = ctx.jzkt.as_mut().unwrap();
+        jzkt.rollback(checkpoint);
     }
 }

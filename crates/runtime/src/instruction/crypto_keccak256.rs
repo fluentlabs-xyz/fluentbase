@@ -1,11 +1,12 @@
 use crate::RuntimeContext;
+use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
 pub struct CryptoKeccak256;
 
 impl CryptoKeccak256 {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         data_offset: u32,
         data_len: u32,
         output_offset: u32,

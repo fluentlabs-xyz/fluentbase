@@ -21,7 +21,7 @@ use fluentbase_core_api::bindings::{
 };
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{ExitCode, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{ExitCode, IJournaledTrie, STATE_DEPLOY, STATE_MAIN};
 use revm_primitives::{CreateScheme, State};
 
 /// EVM call stack limit.
@@ -283,7 +283,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             Ok(mut result) => {
                 let mut state: State = Default::default();
                 let jzkt = LowLevelSDK::with_default_jzkt();
-                for event in jzkt.borrow().journal() {
+                for event in jzkt.journal() {
                     let address = Address::from_slice(&event.key()[12..]);
                     if !event.is_removed() {
                         let fields = event.preimage().unwrap().0;

@@ -1,18 +1,17 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
-    EncodedPoint,
-    PublicKey,
+    EncodedPoint, PublicKey,
 };
 use rwasm::{core::Trap, Caller};
 
 pub struct CryptoEcrecover;
 
 impl CryptoEcrecover {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         digest32_offset: u32,
         sig64_offset: u32,
         output65_offset: u32,

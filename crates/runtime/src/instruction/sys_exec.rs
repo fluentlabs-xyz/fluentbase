@@ -1,13 +1,13 @@
 use crate::{Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, STATE_MAIN};
+use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
 use rwasm::{core::Trap, Caller};
 
 pub struct SysExec;
 
 impl SysExec {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         code_offset: u32,
         code_len: u32,
         input_offset: u32,
@@ -37,23 +37,22 @@ impl SysExec {
         Ok(exit_code)
     }
 
-    pub fn fn_impl<T>(
-        ctx: &mut RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        ctx: &mut RuntimeContext<DB>,
         bytecode: Vec<u8>,
         input: Vec<u8>,
         return_len: u32,
         fuel_limit: u32,
         _state: u32,
     ) -> Result<(Vec<u8>, u32), i32> {
-        let import_linker = Runtime::<()>::new_sovereign_linker();
-        let mut next_ctx = RuntimeContext::new(bytecode);
-        next_ctx
+        let import_linker = Runtime::<DB>::new_sovereign_linker();
+        let next_ctx = RuntimeContext::new(bytecode)
             .with_input(input)
             .with_state(STATE_MAIN)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(ctx.jzkt.clone().unwrap());
-        let execution_result = Runtime::<()>::run_with_context(next_ctx, import_linker)
+        let execution_result = Runtime::<DB>::run_with_context(next_ctx, import_linker)
             .map_err(|_| ExitCode::TransactError.into_i32())?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
         let output = execution_result.data().output();

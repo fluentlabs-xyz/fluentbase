@@ -1,17 +1,15 @@
 use crate::Evm;
-use core::cell::RefCell;
 use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::{devnet::devnet_genesis, Genesis, EXAMPLE_GREETING_ADDRESS};
-use fluentbase_runtime::IJournaledTrie;
+use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_types::{Address, Bytes};
 use revm_primitives::{hex, CreateScheme, Env, TransactTo};
-use std::rc::Rc;
 
 #[allow(dead_code)]
 struct TestingContext {
     genesis: Genesis,
-    jzkt: Rc<RefCell<dyn IJournaledTrie>>,
+    jzkt: DefaultEmptyRuntimeDatabase,
 }
 
 impl Default for TestingContext {

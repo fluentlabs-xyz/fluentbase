@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktPreimageCopy;
 
 impl JzktPreimageCopy {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         hash32_ptr: u32,
         preimage_ptr: u32,
     ) -> Result<(), Trap> {
@@ -16,9 +16,12 @@ impl JzktPreimageCopy {
         Ok(())
     }
 
-    pub fn fn_impl<T>(ctx: &mut RuntimeContext<T>, hash: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        let jzkt = ctx.jzkt.clone().unwrap();
-        let preimage = jzkt.borrow_mut().preimage(hash.try_into().unwrap());
+    pub fn fn_impl<DB: IJournaledTrie>(
+        ctx: &mut RuntimeContext<DB>,
+        hash: &[u8],
+    ) -> Result<Vec<u8>, ExitCode> {
+        let jzkt = ctx.jzkt.as_mut().unwrap();
+        let preimage = jzkt.preimage(hash.try_into().unwrap());
         Ok(preimage)
     }
 }

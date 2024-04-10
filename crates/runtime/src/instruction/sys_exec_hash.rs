@@ -1,13 +1,13 @@
 use crate::{Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, STATE_MAIN};
+use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
 use rwasm::{core::Trap, Caller};
 
 pub struct SysExecHash;
 
 impl SysExecHash {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         bytecode_hash32_offset: u32,
         input_offset: u32,
         input_len: u32,
@@ -45,25 +45,24 @@ impl SysExecHash {
         Ok(exit_code)
     }
 
-    pub fn fn_impl<T>(
-        ctx: &mut RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        ctx: &mut RuntimeContext<DB>,
         bytecode_hash32: &[u8; 32],
         input: Vec<u8>,
         return_len: u32,
         fuel_limit: u32,
         _state: u32,
     ) -> Result<(Vec<u8>, u32), i32> {
-        let import_linker = Runtime::<()>::new_sovereign_linker();
-        let jzkt = ctx.jzkt.clone().unwrap();
-        let bytecode = jzkt.borrow_mut().preimage(bytecode_hash32);
-        let mut next_ctx = RuntimeContext::new(bytecode);
-        next_ctx
+        let import_linker = Runtime::<DB>::new_sovereign_linker();
+        let jzkt = ctx.jzkt.as_mut().unwrap();
+        let bytecode = jzkt.preimage(bytecode_hash32);
+        let next_ctx = RuntimeContext::new(bytecode)
             .with_input(input)
             .with_state(STATE_MAIN)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(ctx.jzkt.clone().unwrap());
-        let execution_result = Runtime::<()>::run_with_context(next_ctx, import_linker)
+        let execution_result = Runtime::<DB>::run_with_context(next_ctx, import_linker)
             .map_err(|_| ExitCode::TransactError.into_i32())?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
         let output = execution_result.data().output();

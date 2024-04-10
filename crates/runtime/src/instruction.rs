@@ -28,36 +28,20 @@ pub mod sys_write;
 use crate::{
     impl_runtime_handler,
     instruction::{
-        crypto_ecrecover::CryptoEcrecover,
-        crypto_keccak256::CryptoKeccak256,
-        crypto_poseidon::CryptoPoseidon,
-        crypto_poseidon2::CryptoPoseidon2,
-        jzkt_checkpoint::JzktCheckpoint,
-        jzkt_commit::JzktCommit,
-        jzkt_compute_root::JzktComputeRoot,
-        jzkt_emit_log::JzktEmitLog,
-        jzkt_get::JzktGet,
-        jzkt_open::JzktOpen,
-        jzkt_preimage_copy::JzktPreimageCopy,
-        jzkt_preimage_size::JzktPreimageSize,
-        jzkt_remove::JzktRemove,
-        jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate,
-        jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec::SysExec,
-        sys_exec_hash::SysExecHash,
-        sys_forward_output::SysForwardOutput,
-        sys_halt::SysHalt,
-        sys_input_size::SysInputSize,
-        sys_output_size::SysOutputSize,
-        sys_read::SysRead,
-        sys_read_output::SysReadOutput,
-        sys_state::SysState,
-        sys_write::SysWrite,
+        crypto_ecrecover::CryptoEcrecover, crypto_keccak256::CryptoKeccak256,
+        crypto_poseidon::CryptoPoseidon, crypto_poseidon2::CryptoPoseidon2,
+        jzkt_checkpoint::JzktCheckpoint, jzkt_commit::JzktCommit,
+        jzkt_compute_root::JzktComputeRoot, jzkt_emit_log::JzktEmitLog, jzkt_get::JzktGet,
+        jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
+        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage, sys_exec::SysExec,
+        sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
+        sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
+        sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
     },
-    runtime::RuntimeContext,
+    RuntimeContext,
 };
-use fluentbase_types::SysFuncIdx;
+use fluentbase_types::{IJournaledTrie, SysFuncIdx};
 use rwasm::{Caller, Linker, Store};
 
 pub trait RuntimeHandler {
@@ -65,9 +49,9 @@ pub trait RuntimeHandler {
     const FUNC_NAME: &'static str;
     const FUNC_INDEX: SysFuncIdx;
 
-    fn register_handler<'t, T>(
-        linker: &mut Linker<RuntimeContext<'t, T>>,
-        store: &mut Store<RuntimeContext<'t, T>>,
+    fn register_handler<DB: IJournaledTrie>(
+        linker: &mut Linker<RuntimeContext<DB>>,
+        store: &mut Store<RuntimeContext<DB>>,
     );
 }
 
@@ -100,9 +84,9 @@ impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alph
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
 
-fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
-    linker: &mut Linker<RuntimeContext<'t, T>>,
-    store: &mut Store<RuntimeContext<'t, T>>,
+fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
+    linker: &mut Linker<RuntimeContext<DB>>,
+    store: &mut Store<RuntimeContext<DB>>,
 ) {
     CryptoKeccak256::register_handler(linker, store);
     CryptoPoseidon::register_handler(linker, store);
@@ -138,16 +122,16 @@ fn runtime_register_handlers<'t, T, const IS_SOVEREIGN: bool>(
     JzktPreimageCopy::register_handler(linker, store);
 }
 
-pub fn runtime_register_sovereign_handlers<'t, T>(
-    linker: &mut Linker<RuntimeContext<'t, T>>,
-    store: &mut Store<RuntimeContext<'t, T>>,
+pub fn runtime_register_sovereign_handlers<DB: IJournaledTrie>(
+    linker: &mut Linker<RuntimeContext<DB>>,
+    store: &mut Store<RuntimeContext<DB>>,
 ) {
-    runtime_register_handlers::<T, true>(linker, store);
+    runtime_register_handlers::<DB, true>(linker, store);
 }
 
-pub fn runtime_register_shared_handlers<'t, T>(
-    linker: &mut Linker<RuntimeContext<'t, T>>,
-    store: &mut Store<RuntimeContext<'t, T>>,
+pub fn runtime_register_shared_handlers<DB: IJournaledTrie>(
+    linker: &mut Linker<RuntimeContext<DB>>,
+    store: &mut Store<RuntimeContext<DB>>,
 ) {
-    runtime_register_handlers::<T, false>(linker, store);
+    runtime_register_handlers::<DB, false>(linker, store);
 }
