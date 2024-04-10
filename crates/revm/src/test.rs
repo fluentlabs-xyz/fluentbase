@@ -8,6 +8,7 @@ use fluentbase_types::{Address, Bytes};
 use revm_primitives::{hex, CreateScheme, Env, TransactTo};
 use std::rc::Rc;
 
+#[allow(dead_code)]
 struct TestingContext {
     genesis: Genesis,
     jzkt: Rc<RefCell<dyn IJournaledTrie>>,
