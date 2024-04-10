@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
 pub struct SysRead;
 
 impl SysRead {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         target: u32,
         offset: u32,
         length: u32,
@@ -16,8 +16,8 @@ impl SysRead {
         Ok(())
     }
 
-    pub fn fn_impl<T>(
-        ctx: &RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        ctx: &RuntimeContext<DB>,
         offset: u32,
         length: u32,
     ) -> Result<Vec<u8>, ExitCode> {

@@ -16,8 +16,11 @@ use fluentbase_core_api::{
         EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
     },
 };
-use fluentbase_runtime::{Runtime, RuntimeContext};
-use fluentbase_types::{address, Address, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
+use fluentbase_sdk::LowLevelSDK;
+use fluentbase_types::{
+    address, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN, U256,
+};
 use hex_literal::hex;
 
 #[test]
@@ -49,20 +52,15 @@ fn test_evm_create() {
     let evm_contract_wasm_binary =
         include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
     let evm_contract_rwasm_binary = wasm2rwasm(evm_contract_wasm_binary.as_slice()).unwrap();
-    let mut runtime_ctx = RuntimeContext::new(evm_contract_rwasm_binary);
-    runtime_ctx.with_state(STATE_MAIN);
-    let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
+    let mut runtime_ctx =
+        RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(evm_contract_rwasm_binary)
+            .with_jzkt(LowLevelSDK::with_default_jzkt())
+            .with_state(STATE_MAIN);
+    let mut test_ctx = TestingContext::<IS_RUNTIME>::new();
     test_ctx.try_add_account(&caller_account);
     test_ctx
         .contract_input_wrapper
-        .set_journal_checkpoint(
-            runtime_ctx
-                .jzkt()
-                .unwrap()
-                .borrow_mut()
-                .checkpoint()
-                .to_u64(),
-        )
+        .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().checkpoint().to_u64())
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
         .set_env_chain_id(env_chain_id)
         .set_contract_caller(caller_address)
@@ -70,7 +68,7 @@ fn test_evm_create() {
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(Some(&mut runtime_ctx));
 
-    let import_linker = Runtime::<()>::new_sovereign_linker();
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
     let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.data().exit_code());
     let contract_address_vec = output.data().output();
@@ -97,7 +95,7 @@ fn test_evm_call_after_create() {
     let contract_input_code = EVM_CONTRACT_BYTECODE1;
     let gas_limit: u32 = 10_000_000;
     const IS_RUNTIME: bool = true;
-    let import_linker = Runtime::<()>::new_sovereign_linker();
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
     let ecl_wasm = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
     let ecl_rwasm = wasm2rwasm(ecl_wasm.as_slice()).unwrap();
     let create_value = B256::left_padding_from(&hex!("1000"));
@@ -112,20 +110,14 @@ fn test_evm_call_after_create() {
         );
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
 
-        let mut runtime_ctx = RuntimeContext::new(ecl_rwasm.clone());
-        runtime_ctx.with_state(STATE_DEPLOY);
-        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(true, Some(&mut runtime_ctx));
+        let mut runtime_ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(ecl_rwasm.clone())
+            .with_jzkt(LowLevelSDK::with_default_jzkt())
+            .with_state(STATE_DEPLOY);
+        let mut test_ctx = TestingContext::<IS_RUNTIME>::new();
         test_ctx
             .try_add_account(&caller_account)
             .contract_input_wrapper
-            .set_journal_checkpoint(
-                runtime_ctx
-                    .jzkt()
-                    .unwrap()
-                    .borrow_mut()
-                    .checkpoint()
-                    .to_u64(),
-            )
+            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().checkpoint().to_u64())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_env_chain_id(env_chain_id)
             .set_contract_caller(caller_address)
@@ -155,19 +147,13 @@ fn test_evm_call_after_create() {
             CoreInput::new(EVM_CALL_METHOD_ID, evm_call_method_input.encode_to_vec(0));
         let evm_call_core_input_vec = evm_call_core_input.encode_to_vec(0);
 
-        let mut runtime_ctx = RuntimeContext::new(ecl_rwasm.clone());
-        runtime_ctx.with_jzkt(jzkt.unwrap());
-        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
+        let mut runtime_ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(ecl_rwasm.clone())
+            .with_jzkt(LowLevelSDK::with_default_jzkt())
+            .with_jzkt(jzkt.unwrap().clone());
+        let mut test_ctx = TestingContext::<IS_RUNTIME>::new();
         test_ctx
             .contract_input_wrapper
-            .set_journal_checkpoint(
-                runtime_ctx
-                    .jzkt()
-                    .unwrap()
-                    .borrow_mut()
-                    .checkpoint()
-                    .to_u64(),
-            )
+            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().checkpoint().to_u64())
             .set_contract_input(Bytes::copy_from_slice(&evm_call_core_input_vec))
             .set_contract_address(deployed_contract_address);
         test_ctx.apply_ctx(Some(&mut runtime_ctx));
@@ -198,13 +184,10 @@ fn test_evm_call_from_wasm() {
     let gas_limit: u32 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
-    let import_linker = Runtime::<()>::new_sovereign_linker();
+    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
 
     let jzkt = {
-        let mut runtime_ctx = RuntimeContext::new(&[]);
-        let mut test_ctx =
-            TestingContext::<(), { !IS_RUNTIME }>::new(false, Some(&mut runtime_ctx));
-        let jzkt = test_ctx.init_jzkt(Some(&mut runtime_ctx));
+        let jzkt = LowLevelSDK::with_default_jzkt();
         let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
         ecl_account.update_source_bytecode(
             &include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm").into(),
@@ -234,21 +217,14 @@ fn test_evm_call_from_wasm() {
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
         let wasm_binary = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
         let rwasm_binary = wasm2rwasm(wasm_binary).unwrap();
-        let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone());
-        runtime_ctx.with_state(STATE_MAIN);
-        runtime_ctx.with_jzkt(jzkt);
-        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
+        let mut runtime_ctx = RuntimeContext::new(rwasm_binary.clone())
+            .with_state(STATE_MAIN)
+            .with_jzkt(jzkt);
+        let mut test_ctx = TestingContext::<IS_RUNTIME>::new();
         test_ctx
             .try_add_account(&caller_account)
             .contract_input_wrapper
-            .set_journal_checkpoint(
-                runtime_ctx
-                    .jzkt()
-                    .unwrap()
-                    .borrow_mut()
-                    .checkpoint()
-                    .to_u64(),
-            )
+            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().checkpoint().to_u64())
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
             .set_contract_caller(caller_address);
@@ -270,21 +246,14 @@ fn test_evm_call_from_wasm() {
             include_bytes!("../../../examples/bin/evm_call_from_wasm.wasm");
         let evm_call_from_wasm_rwasm_binary = wasm2rwasm(evm_call_from_wasm_wasm_binary).unwrap();
 
-        let mut runtime_ctx = RuntimeContext::new(evm_call_from_wasm_rwasm_binary);
-        runtime_ctx.with_state(STATE_MAIN);
-        runtime_ctx.with_jzkt(jzkt.unwrap());
-        let mut test_ctx = TestingContext::<(), IS_RUNTIME>::new(false, Some(&mut runtime_ctx));
+        let mut runtime_ctx = RuntimeContext::new(evm_call_from_wasm_rwasm_binary)
+            .with_state(STATE_MAIN)
+            .with_jzkt(jzkt.unwrap().clone());
+        let mut test_ctx = TestingContext::<IS_RUNTIME>::new();
         let contract_input = EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID;
         test_ctx
             .contract_input_wrapper
-            .set_journal_checkpoint(
-                runtime_ctx
-                    .jzkt()
-                    .unwrap()
-                    .borrow_mut()
-                    .checkpoint()
-                    .to_u64(),
-            )
+            .set_journal_checkpoint(runtime_ctx.jzkt().unwrap().checkpoint().to_u64())
             .set_contract_gas_limit(gas_limit.into())
             .set_contract_input(contract_input.into())
             .set_contract_address(deployed_contract_address)

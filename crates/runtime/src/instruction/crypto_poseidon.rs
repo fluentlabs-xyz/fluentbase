@@ -1,11 +1,12 @@
 use crate::RuntimeContext;
+use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
 pub struct CryptoPoseidon;
 
 impl CryptoPoseidon {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         f32s_offset: u32,
         f32s_len: u32,
         output_offset: u32,

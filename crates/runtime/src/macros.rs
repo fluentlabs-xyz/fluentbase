@@ -103,14 +103,14 @@ macro_rules! impl_runtime_handler {
 
             const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
 
-            fn register_handler<'t, T>(
-                linker: &mut rwasm::Linker<RuntimeContext<'t, T>>,
-                store: &mut rwasm::Store<RuntimeContext<'t, T>>,
+            fn register_handler<DB: IJournaledTrie>(
+                linker: &mut rwasm::Linker<RuntimeContext<DB>>,
+                store: &mut rwasm::Store<RuntimeContext<DB>>,
             ) {
                 use rwasm::AsContextMut;
                 let func = rwasm::Func::wrap(
                     store.as_context_mut(),
-                    |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
+                    |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
                         return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
                     });
                 linker.engine().register_trampoline(Self::FUNC_INDEX as u32, func);
@@ -132,7 +132,7 @@ macro_rules! forward_call {
             $name,
             Func::wrap(
                 $store.as_context_mut(),
-                |caller: Caller<'_, RuntimeContext<'t, T>>, $($t)*| -> Result<$out, Trap> {
+                |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, Trap> {
                     return forward_call_args! { $func, caller, [$($t)*] };
                 })
         ).unwrap();

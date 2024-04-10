@@ -1,29 +1,24 @@
+use crate::types::InMemoryTrieDb;
+use crate::zktrie::ZkTrieStateDb;
 use crate::{
     instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
-    journal::IJournaledTrie,
-    types::{BytecodeRepr, RuntimeError},
+    types::RuntimeError,
+    JournaledTrie,
 };
-use fluentbase_types::{create_shared_import_linker, create_sovereign_import_linker, ExitCode};
+use fluentbase_types::{
+    create_shared_import_linker, create_sovereign_import_linker, ExitCode, IJournaledTrie,
+};
 use rwasm::{
-    core::ImportLinker,
-    engine::Tracer,
-    rwasm::RwasmModule,
-    AsContextMut,
-    Engine,
-    FuelConsumptionMode,
-    Func,
-    Instance,
-    IntoFunc,
-    Linker,
-    Module,
-    Store,
+    core::ImportLinker, engine::Tracer, rwasm::RwasmModule, AsContextMut, Engine,
+    FuelConsumptionMode, Func, Instance, IntoFunc, Linker, Module, Store,
 };
-use std::{cell::RefCell, mem::take, rc::Rc};
+use std::mem::take;
 
-pub struct RuntimeContext<'t, T> {
-    pub context: Option<&'t mut T>,
+pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
+
+pub struct RuntimeContext<DB: IJournaledTrie> {
     // context inputs
-    pub(crate) bytecode: BytecodeRepr,
+    pub(crate) bytecode: Vec<u8>,
     pub(crate) fuel_limit: u32,
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
@@ -35,13 +30,12 @@ pub struct RuntimeContext<'t, T> {
     pub(crate) consumed_fuel: u32,
     pub(crate) return_data: Vec<u8>,
     // storage
-    pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
+    pub(crate) jzkt: Option<DB>,
 }
 
-impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
+impl<DB: IJournaledTrie> Clone for RuntimeContext<DB> {
     fn clone(&self) -> Self {
         Self {
-            context: None,
             bytecode: self.bytecode.clone(),
             fuel_limit: self.fuel_limit.clone(),
             state: self.state.clone(),
@@ -57,10 +51,9 @@ impl<'ctx, CTX> Clone for RuntimeContext<'ctx, CTX> {
     }
 }
 
-impl<'t, T> Default for RuntimeContext<'t, T> {
+impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
     fn default() -> Self {
         Self {
-            context: None,
             bytecode: Default::default(),
             fuel_limit: 0,
             state: 0,
@@ -76,60 +69,50 @@ impl<'t, T> Default for RuntimeContext<'t, T> {
     }
 }
 
-impl<'t, T> RuntimeContext<'t, T> {
-    pub fn new<I: Into<BytecodeRepr>>(bytecode: I) -> Self {
+impl<DB: IJournaledTrie> RuntimeContext<DB> {
+    pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
         Self {
             bytecode: bytecode.into(),
             ..Default::default()
         }
     }
 
-    pub fn with_context(&mut self, context: &'t mut T) -> &mut Self {
-        self.context = Some(context);
-        self
-    }
-
-    pub fn with_input(&mut self, input_data: Vec<u8>) -> &mut Self {
+    pub fn with_input(mut self, input_data: Vec<u8>) -> Self {
         self.input = input_data;
         self
     }
 
-    pub fn with_state(&mut self, state: u32) -> &mut Self {
+    pub fn change_input(&mut self, input_data: Vec<u8>) {
+        self.input = input_data;
+    }
+
+    pub fn with_state(mut self, state: u32) -> Self {
         self.state = state;
         self
     }
 
-    pub fn with_is_shared(&mut self, is_shared: bool) -> &mut Self {
+    pub fn with_is_shared(mut self, is_shared: bool) -> Self {
         self.is_shared = is_shared;
         self
     }
 
-    pub fn with_catch_trap(&mut self, catch_trap: bool) -> &mut Self {
+    pub fn with_catch_trap(mut self, catch_trap: bool) -> Self {
         self.catch_trap = catch_trap;
         self
     }
 
-    pub fn with_fuel_limit(&mut self, fuel_limit: u32) -> &mut Self {
+    pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
         self.fuel_limit = fuel_limit;
         self
     }
 
-    pub fn with_jzkt(&mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> &mut Self {
+    pub fn with_jzkt(mut self, jzkt: DB) -> Self {
         self.jzkt = Some(jzkt);
         self
     }
 
-    pub fn jzkt(&mut self) -> Option<Rc<RefCell<dyn IJournaledTrie>>> {
+    pub fn jzkt(&mut self) -> Option<DB> {
         self.jzkt.clone()
-    }
-
-    pub fn take_context<F>(&mut self, func: F)
-    where
-        F: FnOnce(&&'t mut T),
-    {
-        if let Some(context) = &self.context {
-            func(context)
-        }
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -165,14 +148,14 @@ impl<'t, T> RuntimeContext<'t, T> {
     }
 }
 
-pub struct ExecutionResult<'t, T> {
-    runtime_context: RuntimeContext<'t, T>,
+pub struct ExecutionResult<DB: IJournaledTrie> {
+    runtime_context: RuntimeContext<DB>,
     tracer: Tracer,
     fuel_consumed: Option<u64>,
 }
 
-impl<'t, T> ExecutionResult<'t, T> {
-    pub fn cloned(store: &Store<RuntimeContext<'t, T>>) -> Self {
+impl<DB: IJournaledTrie> ExecutionResult<DB> {
+    pub fn cloned(store: &Store<RuntimeContext<DB>>) -> Self {
         Self {
             runtime_context: store.data().clone(),
             tracer: store.tracer().clone(),
@@ -180,7 +163,7 @@ impl<'t, T> ExecutionResult<'t, T> {
         }
     }
 
-    pub fn taken(store: &mut Store<RuntimeContext<'t, T>>) -> Self {
+    pub fn taken(store: &mut Store<RuntimeContext<DB>>) -> Self {
         let fuel_consumed = store.fuel_consumed();
         Self {
             runtime_context: take(store.data_mut()),
@@ -193,7 +176,7 @@ impl<'t, T> ExecutionResult<'t, T> {
         &self.runtime_context.bytecode.as_ref()
     }
 
-    pub fn data(&self) -> &RuntimeContext<'t, T> {
+    pub fn data(&self) -> &RuntimeContext<DB> {
         &self.runtime_context
     }
 
@@ -206,16 +189,15 @@ impl<'t, T> ExecutionResult<'t, T> {
     }
 }
 
-#[allow(dead_code)]
-pub struct Runtime<'t, T> {
+pub struct Runtime<DB: IJournaledTrie> {
     engine: Engine,
     module: Module,
-    linker: Linker<RuntimeContext<'t, T>>,
-    store: Store<RuntimeContext<'t, T>>,
+    linker: Linker<RuntimeContext<DB>>,
+    store: Store<RuntimeContext<DB>>,
     instance: Option<Instance>,
 }
 
-impl<'t, T> Runtime<'t, T> {
+impl<DB: IJournaledTrie> Runtime<DB> {
     pub fn new_sovereign_linker() -> ImportLinker {
         create_sovereign_import_linker()
     }
@@ -225,9 +207,9 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn run_with_context(
-        mut runtime_context: RuntimeContext<'t, T>,
+        mut runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
-    ) -> Result<ExecutionResult<'t, T>, RuntimeError> {
+    ) -> Result<ExecutionResult<DB>, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
         let runtime = Self::new(runtime_context.clone(), import_linker);
         if catch_error && runtime.is_err() {
@@ -244,7 +226,7 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn new(
-        runtime_context: RuntimeContext<'t, T>,
+        runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let mut result = Self::new_uninit(runtime_context, import_linker)?;
@@ -254,7 +236,7 @@ impl<'t, T> Runtime<'t, T> {
     }
 
     pub fn new_uninit(
-        runtime_context: RuntimeContext<'t, T>,
+        runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let fuel_limit = runtime_context.fuel_limit;
@@ -276,8 +258,8 @@ impl<'t, T> Runtime<'t, T> {
             module_builder.finish()
         };
 
-        let linker = Linker::<RuntimeContext<T>>::new(&engine);
-        let mut store = Store::<RuntimeContext<T>>::new(&engine, runtime_context);
+        let linker = Linker::<RuntimeContext<DB>>::new(&engine);
+        let mut store = Store::<RuntimeContext<DB>>::new(&engine, runtime_context);
 
         if fuel_limit > 0 {
             store.add_fuel(fuel_limit as u64).unwrap();
@@ -305,7 +287,7 @@ impl<'t, T> Runtime<'t, T> {
         Ok(())
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult<'t, T>, RuntimeError> {
+    pub fn call(&mut self) -> Result<ExecutionResult<DB>, RuntimeError> {
         let func = self
             .instance
             .unwrap()
@@ -333,13 +315,13 @@ impl<'t, T> Runtime<'t, T> {
         &mut self,
         module: &'static str,
         name: &'static str,
-        func: impl IntoFunc<RuntimeContext<'t, T>, Params, Results>,
+        func: impl IntoFunc<RuntimeContext<DB>, Params, Results>,
     ) {
         self.linker
             .define(
                 module,
                 name,
-                Func::wrap::<RuntimeContext<'t, T>, Params, Results>(
+                Func::wrap::<RuntimeContext<DB>, Params, Results>(
                     self.store.as_context_mut(),
                     func,
                 ),
@@ -376,11 +358,11 @@ impl<'t, T> Runtime<'t, T> {
         ExitCode::UnknownError as i32
     }
 
-    pub fn data(&self) -> &RuntimeContext<'t, T> {
+    pub fn data(&self) -> &RuntimeContext<DB> {
         self.store.data()
     }
 
-    pub fn data_mut(&mut self) -> &mut RuntimeContext<'t, T> {
+    pub fn data_mut(&mut self) -> &mut RuntimeContext<DB> {
         self.store.data_mut()
     }
 }

@@ -1,11 +1,12 @@
 use crate::RuntimeContext;
+use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktGet;
 
 impl JzktGet {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         key32_offset: u32,
         field: u32,
         output32_offset: u32,
@@ -21,13 +22,13 @@ impl JzktGet {
         Ok(is_cold as u32)
     }
 
-    pub fn fn_impl<T>(
-        context: &mut RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        context: &mut RuntimeContext<DB>,
         key: &[u8],
         field: u32,
     ) -> Option<([u8; 32], bool)> {
-        let jzkt = context.jzkt.clone().expect("jzkt is not set");
-        let (field_values, _flags, is_cold) = jzkt.borrow().get(key.try_into().unwrap())?;
+        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
+        let (field_values, _flags, is_cold) = jzkt.get(key.try_into().unwrap())?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {
             return None;

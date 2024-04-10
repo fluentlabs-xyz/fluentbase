@@ -2,10 +2,14 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 
 pub use consts::*;
+pub use journal::*;
 pub use linker::*;
 pub use types::*;
 
+extern crate alloc;
+
 mod consts;
+mod journal;
 mod linker;
 mod types;
 

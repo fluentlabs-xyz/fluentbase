@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktUpdate;
 
 impl JzktUpdate {
-    pub fn fn_handler<T>(
-        mut caller: Caller<'_, RuntimeContext<T>>,
+    pub fn fn_handler<DB: IJournaledTrie>(
+        mut caller: Caller<'_, RuntimeContext<DB>>,
         key32_offset: u32,
         flags: u32,
         vals32_offset: u32,
@@ -26,15 +26,14 @@ impl JzktUpdate {
         Ok(())
     }
 
-    pub fn fn_impl<T>(
-        context: &mut RuntimeContext<T>,
+    pub fn fn_impl<DB: IJournaledTrie>(
+        context: &mut RuntimeContext<DB>,
         key: &[u8],
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
-        let jzkt = context.jzkt.clone().expect("jzkt is not set");
-        jzkt.borrow_mut()
-            .update(key.try_into().unwrap(), &vals, value_flags);
+        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
+        jzkt.update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())
     }
 }
