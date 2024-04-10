@@ -45,7 +45,7 @@ impl SharedMemory {
     }
 
     #[deprecated(note = "will be removed")]
-    pub fn slice(&self, start: usize, end: usize) -> &[u8] {
+    pub fn slice(&self, _start: usize, _end: usize) -> &[u8] {
         &[]
     }
 }
@@ -60,7 +60,7 @@ impl Stack {
     }
 
     #[deprecated(note = "will be removed")]
-    pub fn peek(&self, index: usize) -> Result<U256, ExitCode> {
+    pub fn peek(&self, _index: usize) -> Result<U256, ExitCode> {
         Ok(U256::ZERO)
     }
 }

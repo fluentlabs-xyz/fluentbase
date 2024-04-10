@@ -179,7 +179,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     #[inline]
     pub fn transact(&mut self) -> EVMResult<DB::Error> {
         // TODO: "yes, we create empty jzkt here only for devnet purposes"
-        let jzkt = LowLevelSDK::with_default_jzkt();
+        let _jzkt = LowLevelSDK::with_default_jzkt();
 
         self.handler.validation().env(&self.context.evm.env)?;
         let initial_gas_spend = self

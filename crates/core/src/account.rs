@@ -48,7 +48,7 @@ impl Default for Account {
 }
 
 impl Account {
-    fn new(address: &Address) -> Self {
+    pub fn new(address: &Address) -> Self {
         Self {
             address: address.clone(),
             ..Default::default()
