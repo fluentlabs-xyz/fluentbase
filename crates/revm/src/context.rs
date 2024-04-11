@@ -4,11 +4,8 @@ mod inner_evm_context;
 pub use evm_context::EvmContext;
 pub use inner_evm_context::InnerEvmContext;
 
-use crate::{
-    db::{Database, EmptyDB},
-    primitives::HandlerCfg,
-};
-use fluentbase_types::{EmptyJournalTrie, IJournaledTrie};
+use crate::{db::Database, primitives::HandlerCfg};
+use fluentbase_types::IJournaledTrie;
 use std::boxed::Box;
 
 /// Main Context structure that contains both EvmContext and External context.

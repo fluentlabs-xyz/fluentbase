@@ -1,8 +1,8 @@
 use super::{
     bundle_state::BundleRetention, cache::CacheState, plain_account::PlainStorage, BundleState,
-    CacheAccount, StateBuilder, TransitionAccount, TransitionState,
+    StateBuilder, TransitionAccount, TransitionState,
 };
-use fluentbase_types::{EmptyJournalTrie, ExitCode, IJournaledTrie};
+use fluentbase_types::{EmptyJournalTrie, ExitCode};
 use revm_primitives::{db::Database, AccountInfo, Address, B256};
 use std::{boxed::Box, collections::BTreeMap, vec::Vec};
 

@@ -1,11 +1,8 @@
-use crate::types::InterpreterResult;
-use crate::{
-    db::Database,
-    primitives::{
-        Address, Bytes, EVMError, Env, Spec,
-        SpecId::{self, *},
-    },
+use crate::primitives::{
+    Address, Bytes, EVMError, Env, Spec,
+    SpecId::{self, *},
 };
+use crate::types::InterpreterResult;
 use fluentbase_core::{Account, AccountCheckpoint};
 use fluentbase_types::{EmptyJournalTrie, ExitCode, IJournaledTrie};
 use revm_primitives::RWASM_MAX_CODE_SIZE;

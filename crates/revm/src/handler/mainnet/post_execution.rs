@@ -1,8 +1,6 @@
 use crate::types::Gas;
 use crate::{
-    primitives::{
-        EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
-    },
+    primitives::{EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256},
     Context, FrameResult,
 };
 use fluentbase_core::Account;

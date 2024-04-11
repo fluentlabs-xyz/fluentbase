@@ -1,4 +1,4 @@
-use crate::{handler::Handler};
+use crate::handler::Handler;
 use fluentbase_types::IJournaledTrie;
 use std::boxed::Box;
 

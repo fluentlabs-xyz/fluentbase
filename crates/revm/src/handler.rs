@@ -7,7 +7,7 @@ pub mod register;
 pub use handle_types::*;
 
 // Includes.
-use crate::primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId};
+use crate::primitives::{spec_to_generic, HandlerCfg, Spec, SpecId};
 use fluentbase_types::IJournaledTrie;
 use register::{EvmHandler, HandleRegisters};
 use std::vec::Vec;
@@ -161,7 +161,7 @@ impl<'a, EXT, DB: IJournaledTrie> EvmHandler<'a, EXT, DB> {
 mod test {
     use core::cell::RefCell;
 
-    use crate::{db::EmptyDB, primitives::EVMError};
+    use crate::primitives::EVMError;
     use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
     use std::{rc::Rc, sync::Arc};
 

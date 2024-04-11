@@ -1,4 +1,4 @@
-use crate::{db::Database, handler::register::EvmHandler, Inspector};
+use crate::{handler::register::EvmHandler, Inspector};
 use fluentbase_types::IJournaledTrie;
 
 /// Provides access to an `Inspector` instance.

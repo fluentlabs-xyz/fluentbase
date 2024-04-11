@@ -1,5 +1,4 @@
 use crate::{
-    db::Database,
     handler::register,
     primitives::{
         BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, Env, EnvWithHandlerCfg, HandlerCfg, SpecId, TxEnv,
@@ -22,14 +21,16 @@ pub struct EvmBuilder<'a, BuilderStage, EXT, DB: IJournaledTrie> {
     phantom: PhantomData<BuilderStage>,
 }
 
-impl<'a, BuilderStage> Default for EvmBuilder<'a, BuilderStage, (), EmptyJournalTrie> {
+impl<'a, BuilderStage, DB: IJournaledTrie + Default> Default
+    for EvmBuilder<'a, BuilderStage, (), DB>
+{
     fn default() -> Self {
         Self {
             context: Context {
                 evm: EvmContext {
                     inner: InnerEvmContext {
                         env: Box::new(Default::default()),
-                        db: EmptyJournalTrie {},
+                        db: DB::default(),
                         error: Ok(()),
                         depth: 0,
                         spec_id: Default::default(),

@@ -1,7 +1,6 @@
 use super::inner_evm_context::InnerEvmContext;
 use crate::types::{CallInputs, Gas, InterpreterResult};
 use crate::{
-    db::Database,
     primitives::{Bytes, EVMError, Env, U256},
     FrameOrResult, CALL_STACK_LIMIT,
 };
@@ -240,11 +239,9 @@ mod tests {
     use test_utils::*;
 
     use crate::{
-        db::{CacheDB, EmptyDB},
         primitives::{address, Bytecode, Bytes, Env, U256},
         FrameOrResult, FrameResult,
     };
-    use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
     use fluentbase_sdk::LowLevelSDK;
     use fluentbase_types::ExitCode;
     use std::boxed::Box;
