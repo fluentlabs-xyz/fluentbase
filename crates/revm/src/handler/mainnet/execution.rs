@@ -1,6 +1,5 @@
 use crate::types::{CallInputs, CallOutcome, CreateOutcome, Gas, InterpreterResult};
 use crate::{
-    db::Database,
     primitives::{EVMError, Env, Spec},
     CallFrame, Context, CreateFrame, FrameOrResult, FrameResult,
 };

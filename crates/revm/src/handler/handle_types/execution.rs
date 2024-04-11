@@ -1,7 +1,7 @@
 use crate::types::{CallInputs, CallOutcome, CreateOutcome, InterpreterResult, SharedMemory};
 use crate::{
     handler::mainnet,
-    primitives::{db::Database, EVMError, Spec},
+    primitives::{EVMError, Spec},
     CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
 use fluentbase_types::{ExitCode, IJournaledTrie};

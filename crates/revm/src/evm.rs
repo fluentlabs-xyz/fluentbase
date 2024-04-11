@@ -1,8 +1,8 @@
 use crate::types::Gas;
 use crate::types::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult};
 use crate::{
-    builder::{EvmBuilder, HandlerStage, SetGenericStage},
-    db::{Database, DatabaseCommit, EmptyDB},
+    builder::{EvmBuilder, HandlerStage},
+    db::DatabaseCommit,
     handler::Handler,
     primitives::{
         specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, Env,
@@ -170,9 +170,6 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
     /// This function will validate the transaction.
     #[inline]
     pub fn transact(&mut self) -> EVMResult<ExitCode> {
-        // TODO: "yes, we create empty jzkt here only for devnet purposes"
-        let _jzkt = LowLevelSDK::with_default_jzkt();
-
         self.handler.validation().env(&self.context.evm.env)?;
         let initial_gas_spend = self
             .handler
@@ -394,7 +391,6 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             &mut middleware_account,
             core_input.into(),
             value,
-            STATE_DEPLOY,
         );
 
         let created_address = if exit_code == ExitCode::Ok {
@@ -453,7 +449,6 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             callee_account,
             input,
             value,
-            STATE_MAIN,
         );
 
         let ret = CallOutcome {
@@ -512,20 +507,19 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         callee: &mut Account,
         input: Bytes,
         value: U256,
-        state: u32,
     ) -> (Bytes, ExitCode) {
         use fluentbase_runtime::{Runtime, RuntimeContext};
         let input = self
             .input_from_env(checkpoint, gas, caller, callee, input, value)
             .encode_to_vec(0);
-        let rwasm_bytecode = callee.load_rwasm_bytecode();
+        let rwasm_bytecode = self.db().preimage(&callee.rwasm_code_hash.0);
         let ctx = RuntimeContext::<DB>::new(rwasm_bytecode)
             .with_input(input)
             .with_fuel_limit(gas.remaining() as u32)
             .with_jzkt(self.context.evm.db.clone())
             .with_catch_trap(true)
-            .with_state(state);
-        let import_linker = Runtime::<DB>::new_shared_linker();
+            .with_state(STATE_MAIN);
+        let import_linker = Runtime::<DB>::new_sovereign_linker();
         let mut runtime = match Runtime::<DB>::new(ctx, import_linker) {
             Ok(runtime) => runtime,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
@@ -550,7 +544,6 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         callee: &mut Account,
         input: Bytes,
         value: U256,
-        state: u32,
     ) -> (Bytes, ExitCode) {
         let input = self
             .input_from_env(checkpoint, gas, caller, callee, input, value)
@@ -565,7 +558,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             core::ptr::null_mut(),
             0,
             gas_limit_ref,
-            state,
+            STATE_MAIN,
         );
         let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
         gas.record_cost(gas_used);

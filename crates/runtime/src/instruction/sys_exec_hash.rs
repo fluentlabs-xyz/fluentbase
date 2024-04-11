@@ -51,7 +51,7 @@ impl SysExecHash {
         input: Vec<u8>,
         return_len: u32,
         fuel_limit: u32,
-        _state: u32,
+        state: u32,
     ) -> Result<(Vec<u8>, u32), i32> {
         let import_linker = Runtime::<DB>::new_sovereign_linker();
         let jzkt = ctx.jzkt.as_mut().unwrap();
@@ -61,7 +61,9 @@ impl SysExecHash {
             .with_state(STATE_MAIN)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
-            .with_jzkt(ctx.jzkt.clone().unwrap());
+            .with_catch_trap(true)
+            .with_jzkt(ctx.jzkt.clone().unwrap())
+            .with_state(state);
         let execution_result = Runtime::<DB>::run_with_context(next_ctx, import_linker)
             .map_err(|_| ExitCode::TransactError.into_i32())?;
         let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;

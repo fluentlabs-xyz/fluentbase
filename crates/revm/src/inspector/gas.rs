@@ -1,7 +1,7 @@
 //! GasIspector. Helper Inspector to calculate gas for others.
 
 use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
-use crate::{primitives::db::Database, EvmContext, Inspector};
+use crate::{EvmContext, Inspector};
 use fluentbase_types::IJournaledTrie;
 
 /// Helper [Inspector] that keeps track of gas.
@@ -62,7 +62,7 @@ impl<DB: IJournaledTrie> Inspector<DB> for GasInspector {
 #[cfg(test)]
 mod tests {
     use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
-    use crate::{inspectors::GasInspector, primitives::Log, Database, EvmContext, Inspector};
+    use crate::{inspectors::GasInspector, primitives::Log, EvmContext, Inspector};
     use fluentbase_types::IJournaledTrie;
     use std::vec::Vec;
 
