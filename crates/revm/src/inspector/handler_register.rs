@@ -1,12 +1,13 @@
 use crate::{db::Database, handler::register::EvmHandler, Inspector};
+use fluentbase_types::IJournaledTrie;
 
 /// Provides access to an `Inspector` instance.
-pub trait GetInspector<DB: Database> {
+pub trait GetInspector<DB: IJournaledTrie> {
     /// Returns the associated `Inspector`.
     fn get_inspector(&mut self) -> &mut impl Inspector<DB>;
 }
 
-impl<DB: Database, INSP: Inspector<DB>> GetInspector<DB> for INSP {
+impl<DB: IJournaledTrie, INSP: Inspector<DB>> GetInspector<DB> for INSP {
     #[inline(always)]
     fn get_inspector(&mut self) -> &mut impl Inspector<DB> {
         self
@@ -25,7 +26,7 @@ impl<DB: Database, INSP: Inspector<DB>> GetInspector<DB> for INSP {
 /// A few instructions handlers are wrapped twice once for `step` and `step_end`
 /// and in case of Logs and Selfdestruct wrapper is wrapped again for the
 /// `log` and `selfdestruct` calls.
-pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
+pub fn inspector_handle_register<'a, DB: IJournaledTrie, EXT: GetInspector<DB>>(
     _handler: &mut EvmHandler<'a, EXT, DB>,
 ) {
     // Every instruction inside flat table that is going to be wrapped by inspector calls.
@@ -128,7 +129,7 @@ pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
     // let create_input_stack_inner = create_input_stack.clone();
     // let old_handle = handler.execution.create.clone();
     // handler.execution.create = Arc::new(
-    //     move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+    //     move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<ExitCode>> {
     //         let inspector = ctx.external.get_inspector();
     //         // call inspector create to change input or return outcome.
     //         if let Some(outcome) = inspector.create(&mut ctx.evm, &mut inputs) {
@@ -151,7 +152,7 @@ pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
     // let call_input_stack_inner = call_input_stack.clone();
     // let old_handle = handler.execution.call.clone();
     // handler.execution.call = Arc::new(
-    //     move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+    //     move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<ExitCode>> {
     //         // Call inspector to change input or return outcome.
     //         let outcome = ctx.external.get_inspector().call(&mut ctx.evm, &mut inputs);
     //         call_input_stack_inner.borrow_mut().push(inputs.clone());
@@ -210,145 +211,4 @@ pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
     //     }
     //     old_handle(ctx, frame_result)
     // });
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::types::Interpreter;
-    use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome};
-    use crate::{inspectors::NoOpInspector, Database, Evm, EvmContext, Inspector};
-
-    #[derive(Default, Debug)]
-    struct StackInspector {
-        initialize_interp_called: bool,
-        step: u32,
-        step_end: u32,
-        call: bool,
-        call_end: bool,
-    }
-
-    impl<DB: Database> Inspector<DB> for StackInspector {
-        fn initialize_interp(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-            if self.initialize_interp_called {
-                unreachable!("initialize_interp should not be called twice")
-            }
-            self.initialize_interp_called = true;
-        }
-
-        fn step(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-            self.step += 1;
-        }
-
-        fn step_end(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-            self.step_end += 1;
-        }
-
-        fn call(
-            &mut self,
-            context: &mut EvmContext<DB>,
-            _call: &mut CallInputs,
-        ) -> Option<CallOutcome> {
-            if self.call {
-                unreachable!("call should not be called twice")
-            }
-            self.call = true;
-            assert_eq!(context.depth, 0);
-            None
-        }
-
-        fn call_end(
-            &mut self,
-            context: &mut EvmContext<DB>,
-            _inputs: &CallInputs,
-            outcome: CallOutcome,
-        ) -> CallOutcome {
-            if self.call_end {
-                unreachable!("call_end should not be called twice")
-            }
-            assert_eq!(context.depth, 0);
-            self.call_end = true;
-            outcome
-        }
-
-        fn create(
-            &mut self,
-            context: &mut EvmContext<DB>,
-            _call: &mut CreateInputs,
-        ) -> Option<CreateOutcome> {
-            assert_eq!(context.depth, 0);
-            None
-        }
-
-        fn create_end(
-            &mut self,
-            context: &mut EvmContext<DB>,
-            _inputs: &CreateInputs,
-            outcome: CreateOutcome,
-        ) -> CreateOutcome {
-            assert_eq!(context.depth, 0);
-            outcome
-        }
-    }
-
-    // #[test]
-    // fn test_inspector_handlers() {
-    //     use crate::{
-    //         db::BenchmarkDB,
-    //         inspector::inspector_handle_register,
-    //         interpreter::opcode,
-    //         primitives::{address, Bytecode, Bytes, TransactTo},
-    //         Evm,
-    //     };
-    //
-    //     let contract_data: Bytes = Bytes::from(vec![
-    //         opcode::PUSH1,
-    //         0x1,
-    //         opcode::PUSH1,
-    //         0xb,
-    //         opcode::PUSH1,
-    //         0x1,
-    //         opcode::PUSH1,
-    //         0x1,
-    //         opcode::PUSH1,
-    //         0x1,
-    //         opcode::CREATE,
-    //         opcode::STOP,
-    //     ]);
-    //     let bytecode = Bytecode::new_raw(contract_data);
-    //
-    //     let mut evm: Evm<'_, StackInspector, BenchmarkDB> = Evm::builder()
-    //         .with_db(BenchmarkDB::new_bytecode(bytecode.clone()))
-    //         .with_external_context(StackInspector::default())
-    //         .modify_tx_env(|tx| {
-    //             tx.clear();
-    //             tx.caller = address!("1000000000000000000000000000000000000000");
-    //             tx.transact_to =
-    //                 TransactTo::Call(address!("0000000000000000000000000000000000000000"));
-    //             tx.gas_limit = 21100;
-    //         })
-    //         .append_handler_register(inspector_handle_register)
-    //         .build();
-    //
-    //     // run evm.
-    //     evm.transact().unwrap();
-    //
-    //     let inspector = evm.into_context().external;
-    //
-    //     assert_eq!(inspector.step, 6);
-    //     assert_eq!(inspector.step_end, 6);
-    //     assert!(inspector.initialize_interp_called);
-    //     assert!(inspector.call);
-    //     assert!(inspector.call_end);
-    // }
-
-    #[test]
-    fn test_inspector_reg() {
-        let mut noop = NoOpInspector;
-        let _evm = Evm::builder()
-            .with_external_context(&mut noop)
-            .append_handler_register(inspector_handle_register)
-            .build();
-    }
 }

@@ -8,20 +8,18 @@ use crate::{
     db::{Database, EmptyDB},
     primitives::HandlerCfg,
 };
+use fluentbase_types::{EmptyJournalTrie, IJournaledTrie};
 use std::boxed::Box;
 
 /// Main Context structure that contains both EvmContext and External context.
-pub struct Context<EXT, DB: Database> {
+pub struct Context<EXT, DB: IJournaledTrie> {
     /// Evm Context.
     pub evm: EvmContext<DB>,
     /// External contexts.
     pub external: EXT,
 }
 
-impl<EXT: Clone, DB: Database + Clone> Clone for Context<EXT, DB>
-where
-    DB::Error: Clone,
-{
+impl<EXT: Clone, DB: IJournaledTrie> Clone for Context<EXT, DB> {
     fn clone(&self) -> Self {
         Self {
             evm: self.evm.clone(),
@@ -30,23 +28,7 @@ where
     }
 }
 
-impl Default for Context<(), EmptyDB> {
-    fn default() -> Self {
-        Self::new_empty()
-    }
-}
-
-impl Context<(), EmptyDB> {
-    /// Creates empty context. This is useful for testing.
-    pub fn new_empty() -> Context<(), EmptyDB> {
-        Context {
-            evm: EvmContext::new(EmptyDB::new()),
-            external: (),
-        }
-    }
-}
-
-impl<DB: Database> Context<(), DB> {
+impl<DB: IJournaledTrie> Context<(), DB> {
     /// Creates new context with database.
     pub fn new_with_db(db: DB) -> Context<(), DB> {
         Context {
@@ -56,7 +38,7 @@ impl<DB: Database> Context<(), DB> {
     }
 }
 
-impl<EXT, DB: Database> Context<EXT, DB> {
+impl<EXT, DB: IJournaledTrie> Context<EXT, DB> {
     /// Creates new context with external and database.
     pub fn new(evm: EvmContext<DB>, external: EXT) -> Context<EXT, DB> {
         Context { evm, external }
@@ -64,24 +46,21 @@ impl<EXT, DB: Database> Context<EXT, DB> {
 }
 
 /// Context with handler configuration.
-pub struct ContextWithHandlerCfg<EXT, DB: Database> {
+pub struct ContextWithHandlerCfg<EXT, DB: IJournaledTrie> {
     /// Context of execution.
     pub context: Context<EXT, DB>,
     /// Handler configuration.
     pub cfg: HandlerCfg,
 }
 
-impl<EXT, DB: Database> ContextWithHandlerCfg<EXT, DB> {
+impl<EXT, DB: IJournaledTrie> ContextWithHandlerCfg<EXT, DB> {
     /// Creates new context with handler configuration.
     pub fn new(context: Context<EXT, DB>, cfg: HandlerCfg) -> Self {
         Self { cfg, context }
     }
 }
 
-impl<EXT: Clone, DB: Database + Clone> Clone for ContextWithHandlerCfg<EXT, DB>
-where
-    DB::Error: Clone,
-{
+impl<EXT: Clone, DB: IJournaledTrie> Clone for ContextWithHandlerCfg<EXT, DB> {
     fn clone(&self) -> Self {
         Self {
             context: self.context.clone(),

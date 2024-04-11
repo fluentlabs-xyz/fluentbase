@@ -2,6 +2,7 @@
 
 use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 use crate::{primitives::db::Database, EvmContext, Inspector};
+use fluentbase_types::IJournaledTrie;
 
 /// Helper [Inspector] that keeps track of gas.
 #[allow(dead_code)]
@@ -21,7 +22,7 @@ impl GasInspector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for GasInspector {
+impl<DB: IJournaledTrie> Inspector<DB> for GasInspector {
     fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         self.gas_remaining = interp.gas.limit();
     }
@@ -62,6 +63,7 @@ impl<DB: Database> Inspector<DB> for GasInspector {
 mod tests {
     use crate::types::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
     use crate::{inspectors::GasInspector, primitives::Log, Database, EvmContext, Inspector};
+    use fluentbase_types::IJournaledTrie;
     use std::vec::Vec;
 
     #[derive(Default, Debug)]
@@ -71,7 +73,7 @@ mod tests {
         gas_remaining_steps: Vec<(usize, u64)>,
     }
 
-    impl<DB: Database> Inspector<DB> for StackInspector {
+    impl<DB: IJournaledTrie> Inspector<DB> for StackInspector {
         fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
             self.gas_inspector.initialize_interp(interp, context);
         }

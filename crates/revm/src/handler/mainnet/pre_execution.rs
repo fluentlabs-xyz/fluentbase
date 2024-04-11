@@ -4,7 +4,6 @@
 
 use crate::{
     primitives::{
-        db::Database,
         EVMError, Env, Spec,
         SpecId::{CANCUN, SHANGHAI},
         TransactTo, U256,
@@ -12,12 +11,13 @@ use crate::{
     Context,
 };
 use fluentbase_core::Account;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 
 /// Main load handle
 #[inline]
-pub fn load_accounts<SPEC: Spec, EXT, DB: Database>(
+pub fn load_accounts<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     // set journaling state flag.
     context.evm.inner.spec_id = SPEC::SPEC_ID;
 
@@ -55,9 +55,9 @@ pub fn deduct_caller_inner<SPEC: Spec>(caller_account: &mut Account, env: &Env) 
 
 /// Deducts the caller balance to the transaction limit.
 #[inline]
-pub fn deduct_caller<SPEC: Spec, EXT, DB: Database>(
+pub fn deduct_caller<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     // load caller's account.
     let mut caller_account = Account::new_from_jzkt(&context.evm.inner.env.tx.caller);
     // deduct gas cost from caller's account.

@@ -1,8 +1,9 @@
 use crate::{
-    primitives::{db::Database, Address, Log, U256},
+    primitives::{Address, Log, U256},
     EvmContext,
 };
 use auto_impl::auto_impl;
+use fluentbase_types::IJournaledTrie;
 
 #[cfg(feature = "std")]
 mod customprinter;
@@ -29,7 +30,7 @@ pub mod inspectors {
 
 /// EVM [Interpreter] callbacks.
 #[auto_impl(&mut, Box)]
-pub trait Inspector<DB: Database> {
+pub trait Inspector<DB: IJournaledTrie> {
     /// Called before the interpreter is initialized.
     ///
     /// If `interp.instruction_result` is set to anything other than [crate::interpreter::InstructionResult::Continue] then the execution of the interpreter

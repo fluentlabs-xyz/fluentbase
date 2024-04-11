@@ -84,7 +84,7 @@ pub struct JournalLog {
     pub data: Bytes,
 }
 
-#[auto_impl(&, Box, Rc, Arc)]
+#[auto_impl(&mut, Box, Rc, Arc)]
 pub trait IJournaledTrie: Clone {
     fn checkpoint(&self) -> JournalCheckpoint;
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)>;
@@ -98,4 +98,57 @@ pub trait IJournaledTrie: Clone {
     fn preimage(&self, hash: &[u8; 32]) -> Vec<u8>;
     fn preimage_size(&self, hash: &[u8; 32]) -> u32;
     fn journal(&self) -> Vec<JournalEvent>;
+}
+
+#[derive(Default, Clone)]
+pub struct EmptyJournalTrie;
+
+impl IJournaledTrie for EmptyJournalTrie {
+    fn checkpoint(&self) -> JournalCheckpoint {
+        todo!()
+    }
+
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+        todo!()
+    }
+
+    fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32) {
+        todo!()
+    }
+
+    fn remove(&self, key: &[u8; 32]) {
+        todo!()
+    }
+
+    fn compute_root(&self) -> [u8; 32] {
+        todo!()
+    }
+
+    fn emit_log(&self, address: Address, topics: Vec<B256>, data: Bytes) {
+        todo!()
+    }
+
+    fn commit(&self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
+        todo!()
+    }
+
+    fn rollback(&self, checkpoint: JournalCheckpoint) {
+        todo!()
+    }
+
+    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
+        todo!()
+    }
+
+    fn preimage(&self, hash: &[u8; 32]) -> Vec<u8> {
+        todo!()
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> u32 {
+        todo!()
+    }
+
+    fn journal(&self) -> Vec<JournalEvent> {
+        todo!()
+    }
 }
