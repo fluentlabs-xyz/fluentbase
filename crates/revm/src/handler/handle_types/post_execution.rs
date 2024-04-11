@@ -2,25 +2,22 @@
 use crate::types::Gas;
 use crate::{
     handler::mainnet,
-    primitives::{db::Database, EVMError, EVMResultGeneric, ResultAndState, Spec},
+    primitives::{EVMError, EVMResultGeneric, ResultAndState, Spec},
     Context, FrameResult,
 };
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use std::sync::Arc;
 
-/// Reimburse the caller with ethereum it didn't spent.
+/// Reimburse the caller with ethereum it didn't spend.
 pub type ReimburseCallerHandle<'a, EXT, DB> =
-    Arc<dyn Fn(&mut Context<EXT, DB>, &Gas) -> EVMResultGeneric<(), <DB as Database>::Error> + 'a>;
+    Arc<dyn Fn(&mut Context<EXT, DB>, &Gas) -> EVMResultGeneric<(), ExitCode> + 'a>;
 
 /// Reward beneficiary with transaction rewards.
 pub type RewardBeneficiaryHandle<'a, EXT, DB> = ReimburseCallerHandle<'a, EXT, DB>;
 
 /// Main return handle, takes state from journal and transforms internal result to external.
 pub type OutputHandle<'a, EXT, DB> = Arc<
-    dyn Fn(
-            &mut Context<EXT, DB>,
-            FrameResult,
-        ) -> Result<ResultAndState, EVMError<<DB as Database>::Error>>
-        + 'a,
+    dyn Fn(&mut Context<EXT, DB>, FrameResult) -> Result<ResultAndState, EVMError<ExitCode>> + 'a,
 >;
 
 /// End handle, takes result and state and returns final result.
@@ -30,13 +27,13 @@ pub type OutputHandle<'a, EXT, DB> = Arc<
 pub type EndHandle<'a, EXT, DB> = Arc<
     dyn Fn(
             &mut Context<EXT, DB>,
-            Result<ResultAndState, EVMError<<DB as Database>::Error>>,
-        ) -> Result<ResultAndState, EVMError<<DB as Database>::Error>>
+            Result<ResultAndState, EVMError<ExitCode>>,
+        ) -> Result<ResultAndState, EVMError<ExitCode>>
         + 'a,
 >;
 
 /// Handles related to post execution after the stack loop is finished.
-pub struct PostExecutionHandler<'a, EXT, DB: Database> {
+pub struct PostExecutionHandler<'a, EXT, DB: IJournaledTrie> {
     /// Reimburse the caller with ethereum it didn't spent.
     pub reimburse_caller: ReimburseCallerHandle<'a, EXT, DB>,
     /// Reward the beneficiary with caller fee.
@@ -47,7 +44,7 @@ pub struct PostExecutionHandler<'a, EXT, DB: Database> {
     pub end: EndHandle<'a, EXT, DB>,
 }
 
-impl<'a, EXT: 'a, DB: Database + 'a> PostExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> PostExecutionHandler<'a, EXT, DB> {
     /// Creates mainnet MainHandles.
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
@@ -59,13 +56,13 @@ impl<'a, EXT: 'a, DB: Database + 'a> PostExecutionHandler<'a, EXT, DB> {
     }
 }
 
-impl<'a, EXT, DB: Database> PostExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: IJournaledTrie> PostExecutionHandler<'a, EXT, DB> {
     /// Reimburse the caller with gas that were not spend.
     pub fn reimburse_caller(
         &self,
         context: &mut Context<EXT, DB>,
         gas: &Gas,
-    ) -> Result<(), EVMError<DB::Error>> {
+    ) -> Result<(), EVMError<ExitCode>> {
         (self.reimburse_caller)(context, gas)
     }
     /// Reward beneficiary
@@ -73,7 +70,7 @@ impl<'a, EXT, DB: Database> PostExecutionHandler<'a, EXT, DB> {
         &self,
         context: &mut Context<EXT, DB>,
         gas: &Gas,
-    ) -> Result<(), EVMError<DB::Error>> {
+    ) -> Result<(), EVMError<ExitCode>> {
         (self.reward_beneficiary)(context, gas)
     }
 
@@ -82,7 +79,7 @@ impl<'a, EXT, DB: Database> PostExecutionHandler<'a, EXT, DB> {
         &self,
         context: &mut Context<EXT, DB>,
         result: FrameResult,
-    ) -> Result<ResultAndState, EVMError<DB::Error>> {
+    ) -> Result<ResultAndState, EVMError<ExitCode>> {
         (self.output)(context, result)
     }
 
@@ -90,8 +87,8 @@ impl<'a, EXT, DB: Database> PostExecutionHandler<'a, EXT, DB> {
     pub fn end(
         &self,
         context: &mut Context<EXT, DB>,
-        end_output: Result<ResultAndState, EVMError<DB::Error>>,
-    ) -> Result<ResultAndState, EVMError<DB::Error>> {
+        end_output: Result<ResultAndState, EVMError<ExitCode>>,
+    ) -> Result<ResultAndState, EVMError<ExitCode>> {
         (self.end)(context, end_output)
     }
 }

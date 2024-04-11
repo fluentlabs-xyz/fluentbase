@@ -1,11 +1,11 @@
 use crate::{
-    primitives::{db::Database, EVMError, Env, InvalidTransaction, Spec},
+    primitives::{EVMError, Env, InvalidTransaction, Spec},
     Context,
 };
 use core::cmp::Ordering;
 use fluentbase_core::Account;
 use fluentbase_sdk::evm::{Address, U256};
-use fluentbase_types::POSEIDON_EMPTY;
+use fluentbase_types::{ExitCode, IJournaledTrie, POSEIDON_EMPTY};
 use revm_primitives::{SpecId, BERLIN, HOMESTEAD, ISTANBUL, SHANGHAI};
 use std::boxed::Box;
 use std::vec::Vec;
@@ -20,7 +20,7 @@ pub(crate) const ACCESS_LIST_STORAGE_KEY: u64 = 1900;
 pub(crate) const INITCODE_WORD_COST: u64 = 2;
 
 /// Validate environment for the mainnet.
-pub fn validate_env<SPEC: Spec, DB: Database>(env: &Env) -> Result<(), EVMError<DB::Error>> {
+pub fn validate_env<SPEC: Spec, DB: IJournaledTrie>(env: &Env) -> Result<(), EVMError<ExitCode>> {
     // Important: validate block before tx.
     env.validate_block_env::<SPEC>()?;
     env.validate_tx::<SPEC>()?;
@@ -28,9 +28,9 @@ pub fn validate_env<SPEC: Spec, DB: Database>(env: &Env) -> Result<(), EVMError<
 }
 
 /// Validates transaction against the state.
-pub fn validate_tx_against_state<SPEC: Spec, EXT, DB: Database>(
+pub fn validate_tx_against_state<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     // load acc
     let tx_caller = context.evm.env.tx.caller;
     let mut caller_account = Account::new_from_jzkt(&tx_caller);
@@ -91,9 +91,9 @@ pub fn validate_tx_against_state<SPEC: Spec, EXT, DB: Database>(
 }
 
 /// Validate initial transaction gas.
-pub fn validate_initial_tx_gas<SPEC: Spec, DB: Database>(
+pub fn validate_initial_tx_gas<SPEC: Spec, DB: IJournaledTrie>(
     env: &Env,
-) -> Result<u64, EVMError<DB::Error>> {
+) -> Result<u64, EVMError<ExitCode>> {
     let input = &env.tx.data;
     let is_create = env.tx.transact_to.is_create();
     let access_list = &env.tx.access_list;

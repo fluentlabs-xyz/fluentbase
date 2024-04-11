@@ -24,6 +24,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
 fluentbase-core-api = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
+fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 
 # rwasm
 rwasm = { workspace = true, optional = true, default-features = false }
@@ -42,6 +43,7 @@ default = ["std"]
 std = [
     "fluentbase-sdk/std",
     "revm-primitives/std",
+    "dep:fluentbase-runtime",
 ]
 serde = []
 arbitrary = []

@@ -29,7 +29,7 @@ pub const CALL_STACK_LIMIT: u64 = 1024;
 
 /// EVM instance containing both internal EVM context and external context
 /// and the handler that dictates the logic of EVM (or hardfork specification).
-pub struct Evm<'a, EXT, DB: Database> {
+pub struct Evm<'a, EXT, DB: IJournaledTrie> {
     /// Context of execution, containing both EVM and external context.
     pub context: Context<EXT, DB>,
     /// Handler of EVM that contains all the logic. Handler contains specification id
@@ -40,8 +40,7 @@ pub struct Evm<'a, EXT, DB: Database> {
 impl<EXT, DB> fmt::Debug for Evm<'_, EXT, DB>
 where
     EXT: fmt::Debug,
-    DB: Database + fmt::Debug,
-    DB::Error: fmt::Debug,
+    DB: IJournaledTrie + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Evm")
@@ -50,23 +49,16 @@ where
     }
 }
 
-impl<EXT, DB: Database + DatabaseCommit> Evm<'_, EXT, DB> {
+impl<EXT, DB: IJournaledTrie + DatabaseCommit> Evm<'_, EXT, DB> {
     /// Commit the changes to the database.
-    pub fn transact_commit(&mut self) -> Result<ExecutionResult, EVMError<DB::Error>> {
-        let ResultAndState { result, state } = self.transact()?;
-        self.context.evm.db.commit(state);
+    pub fn transact_commit(&mut self) -> Result<ExecutionResult, EVMError<ExitCode>> {
+        let ResultAndState { result, .. } = self.transact()?;
+        self.context.evm.db.commit().expect("commit failed");
         Ok(result)
     }
 }
 
-impl<'a> Evm<'a, (), EmptyDB> {
-    /// Returns evm builder with empty database and empty external context.
-    pub fn builder() -> EvmBuilder<'a, SetGenericStage, (), EmptyDB> {
-        EvmBuilder::default()
-    }
-}
-
-impl<'a, EXT, DB: Database> Evm<'a, EXT, DB> {
+impl<'a, EXT, DB: IJournaledTrie> Evm<'a, EXT, DB> {
     /// Create new EVM.
     pub fn new(mut context: Context<EXT, DB>, handler: Handler<'a, EXT, DB>) -> Evm<'a, EXT, DB> {
         context.evm.inner.spec_id = handler.cfg.spec_id;
@@ -80,7 +72,7 @@ impl<'a, EXT, DB: Database> Evm<'a, EXT, DB> {
     }
 }
 
-impl<EXT, DB: Database> Evm<'_, EXT, DB> {
+impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
     /// Returns specification (hardfork) that the EVM is instanced with.
     ///
     /// SpecId depends on the handler.
@@ -95,7 +87,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// Pre verify transaction by checking Environment, initial gas spend and if caller
     /// has enough balance to pay for the gas.
     #[inline]
-    pub fn preverify_transaction(&mut self) -> Result<(), EVMError<DB::Error>> {
+    pub fn preverify_transaction(&mut self) -> Result<(), EVMError<ExitCode>> {
         self.handler.validation().env(&self.context.evm.env)?;
         self.handler
             .validation()
@@ -110,7 +102,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     ///
     /// This function will not validate the transaction.
     #[inline]
-    pub fn transact_preverified(&mut self) -> EVMResult<DB::Error> {
+    pub fn transact_preverified(&mut self) -> EVMResult<ExitCode> {
         let initial_gas_spend = self
             .handler
             .validation()
@@ -177,7 +169,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     ///
     /// This function will validate the transaction.
     #[inline]
-    pub fn transact(&mut self) -> EVMResult<DB::Error> {
+    pub fn transact(&mut self) -> EVMResult<ExitCode> {
         // TODO: "yes, we create empty jzkt here only for devnet purposes"
         let _jzkt = LowLevelSDK::with_default_jzkt();
 
@@ -224,7 +216,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     }
 
     /// Transact pre-verified transaction.
-    fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<DB::Error> {
+    fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<ExitCode> {
         let ctx = &mut self.context;
         let pre_exec = self.handler.pre_execution();
 
@@ -511,6 +503,45 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         }
     }
 
+    #[cfg(feature = "std")]
+    fn exec_rwasm_binary(
+        &mut self,
+        checkpoint: AccountCheckpoint,
+        gas: &mut Gas,
+        caller: &mut Account,
+        callee: &mut Account,
+        input: Bytes,
+        value: U256,
+        state: u32,
+    ) -> (Bytes, ExitCode) {
+        use fluentbase_runtime::{Runtime, RuntimeContext};
+        let input = self
+            .input_from_env(checkpoint, gas, caller, callee, input, value)
+            .encode_to_vec(0);
+        let rwasm_bytecode = callee.load_rwasm_bytecode();
+        let ctx = RuntimeContext::<DB>::new(rwasm_bytecode)
+            .with_input(input)
+            .with_fuel_limit(gas.remaining() as u32)
+            .with_jzkt(self.context.evm.db.clone())
+            .with_catch_trap(true)
+            .with_state(state);
+        let import_linker = Runtime::<DB>::new_shared_linker();
+        let mut runtime = match Runtime::<DB>::new(ctx, import_linker) {
+            Ok(runtime) => runtime,
+            Err(_) => return (Bytes::default(), ExitCode::TransactError),
+        };
+        let result = match runtime.call() {
+            Ok(result) => result,
+            Err(_) => return (Bytes::default(), ExitCode::TransactError),
+        };
+        gas.record_cost(result.fuel_consumed().unwrap_or_default());
+        (
+            Bytes::from(result.data().output().clone()),
+            result.data().exit_code().into(),
+        )
+    }
+
+    #[cfg(not(feature = "std"))]
     fn exec_rwasm_binary(
         &mut self,
         checkpoint: AccountCheckpoint,

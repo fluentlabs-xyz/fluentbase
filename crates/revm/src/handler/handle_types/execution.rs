@@ -4,20 +4,16 @@ use crate::{
     primitives::{db::Database, EVMError, Spec},
     CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use std::{boxed::Box, sync::Arc};
 
 /// Handles first frame return handle.
-pub type LastFrameReturnHandle<'a, EXT, DB> = Arc<
-    dyn Fn(&mut Context<EXT, DB>, &mut FrameResult) -> Result<(), EVMError<<DB as Database>::Error>>
-        + 'a,
->;
+pub type LastFrameReturnHandle<'a, EXT, DB> =
+    Arc<dyn Fn(&mut Context<EXT, DB>, &mut FrameResult) -> Result<(), EVMError<ExitCode>> + 'a>;
 
 /// Handle sub call.
 pub type FrameCallHandle<'a, EXT, DB> = Arc<
-    dyn Fn(
-            &mut Context<EXT, DB>,
-            Box<CallInputs>,
-        ) -> Result<FrameOrResult, EVMError<<DB as Database>::Error>>
+    dyn Fn(&mut Context<EXT, DB>, Box<CallInputs>) -> Result<FrameOrResult, EVMError<ExitCode>>
         + 'a,
 >;
 
@@ -27,7 +23,7 @@ pub type FrameCallReturnHandle<'a, EXT, DB> = Arc<
             &mut Context<EXT, DB>,
             Box<CallFrame>,
             InterpreterResult,
-        ) -> Result<CallOutcome, EVMError<<DB as Database>::Error>>
+        ) -> Result<CallOutcome, EVMError<ExitCode>>
         + 'a,
 >;
 
@@ -38,7 +34,7 @@ pub type InsertCallOutcomeHandle<'a, EXT, DB> = Arc<
             &mut Frame,
             &mut SharedMemory,
             CallOutcome,
-        ) -> Result<(), EVMError<<DB as Database>::Error>>
+        ) -> Result<(), EVMError<ExitCode>>
         + 'a,
 >;
 
@@ -48,22 +44,17 @@ pub type FrameCreateReturnHandle<'a, EXT, DB> = Arc<
             &mut Context<EXT, DB>,
             Box<CreateFrame>,
             InterpreterResult,
-        ) -> Result<CreateOutcome, EVMError<<DB as Database>::Error>>
+        ) -> Result<CreateOutcome, EVMError<ExitCode>>
         + 'a,
 >;
 
 /// Insert call outcome to the parent
 pub type InsertCreateOutcomeHandle<'a, EXT, DB> = Arc<
-    dyn Fn(
-            &mut Context<EXT, DB>,
-            &mut Frame,
-            CreateOutcome,
-        ) -> Result<(), EVMError<<DB as Database>::Error>>
-        + 'a,
+    dyn Fn(&mut Context<EXT, DB>, &mut Frame, CreateOutcome) -> Result<(), EVMError<ExitCode>> + 'a,
 >;
 
 /// Handles related to stack frames.
-pub struct ExecutionHandler<'a, EXT, DB: Database> {
+pub struct ExecutionHandler<'a, EXT, DB: IJournaledTrie> {
     /// Handles last frame return, modified gas for refund and
     /// sets tx gas limit.
     pub last_frame_return: LastFrameReturnHandle<'a, EXT, DB>,
@@ -75,7 +66,7 @@ pub struct ExecutionHandler<'a, EXT, DB: Database> {
     pub create_return: FrameCreateReturnHandle<'a, EXT, DB>,
 }
 
-impl<'a, EXT: 'a, DB: Database + 'a> ExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> ExecutionHandler<'a, EXT, DB> {
     /// Creates mainnet ExecutionHandler.
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
@@ -87,14 +78,14 @@ impl<'a, EXT: 'a, DB: Database + 'a> ExecutionHandler<'a, EXT, DB> {
     }
 }
 
-impl<'a, EXT, DB: Database> ExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: IJournaledTrie> ExecutionHandler<'a, EXT, DB> {
     /// Handle call return, depending on instruction result gas will be reimbursed or not.
     #[inline]
     pub fn last_frame_return(
         &self,
         context: &mut Context<EXT, DB>,
         frame_result: &mut FrameResult,
-    ) -> Result<(), EVMError<DB::Error>> {
+    ) -> Result<(), EVMError<ExitCode>> {
         (self.last_frame_return)(context, frame_result)
     }
 
@@ -104,7 +95,7 @@ impl<'a, EXT, DB: Database> ExecutionHandler<'a, EXT, DB> {
         &self,
         context: &mut Context<EXT, DB>,
         inputs: Box<CallInputs>,
-    ) -> Result<FrameOrResult, EVMError<DB::Error>> {
+    ) -> Result<FrameOrResult, EVMError<ExitCode>> {
         (self.call)(context, inputs.clone())
     }
 
@@ -115,7 +106,7 @@ impl<'a, EXT, DB: Database> ExecutionHandler<'a, EXT, DB> {
         context: &mut Context<EXT, DB>,
         frame: Box<CallFrame>,
         interpreter_result: InterpreterResult,
-    ) -> Result<CallOutcome, EVMError<DB::Error>> {
+    ) -> Result<CallOutcome, EVMError<ExitCode>> {
         (self.call_return)(context, frame, interpreter_result)
     }
 
@@ -126,7 +117,7 @@ impl<'a, EXT, DB: Database> ExecutionHandler<'a, EXT, DB> {
         context: &mut Context<EXT, DB>,
         frame: Box<CreateFrame>,
         interpreter_result: InterpreterResult,
-    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
+    ) -> Result<CreateOutcome, EVMError<ExitCode>> {
         (self.create_return)(context, frame, interpreter_result)
     }
 }

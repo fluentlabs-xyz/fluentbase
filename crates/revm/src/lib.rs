@@ -28,12 +28,12 @@ mod types;
 
 // Export items.
 
-pub use builder::EvmBuilder;
+pub use builder::{EvmBuilder, HandlerStage, SetGenericStage};
 pub use context::{Context, ContextWithHandlerCfg, EvmContext, InnerEvmContext};
 pub use db::{
     CacheState, DBBox, State, StateBuilder, StateDBBox, TransitionAccount, TransitionState,
 };
-pub use db::{Database, DatabaseCommit, DatabaseRef, InMemoryDB};
+pub use db::{Database, DatabaseCommit, DatabaseRef};
 pub use evm::{Evm, CALL_STACK_LIMIT};
 pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameResult};
 pub use handler::Handler;

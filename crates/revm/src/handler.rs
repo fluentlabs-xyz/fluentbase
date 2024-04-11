@@ -8,6 +8,7 @@ pub use handle_types::*;
 
 // Includes.
 use crate::primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId};
+use fluentbase_types::IJournaledTrie;
 use register::{EvmHandler, HandleRegisters};
 use std::vec::Vec;
 
@@ -16,7 +17,7 @@ use self::register::{HandleRegister, HandleRegisterBox};
 /// Handler acts as a proxy and allow to define different behavior for different
 /// sections of the code. This allows nice integration of different chains or
 /// to disable some mainnet behavior.
-pub struct Handler<'a, EXT, DB: Database> {
+pub struct Handler<'a, EXT, DB: IJournaledTrie> {
     /// Handler config.
     pub cfg: HandlerCfg,
     /// Registers that will be called on initialization.
@@ -31,7 +32,7 @@ pub struct Handler<'a, EXT, DB: Database> {
     pub execution: ExecutionHandler<'a, EXT, DB>,
 }
 
-impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: IJournaledTrie> EvmHandler<'a, EXT, DB> {
     /// Created new Handler with given configuration.
     ///
     /// Internaly it calls `mainnet_with_spec` with the given spec id.
@@ -161,21 +162,25 @@ mod test {
     use core::cell::RefCell;
 
     use crate::{db::EmptyDB, primitives::EVMError};
+    use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
     use std::{rc::Rc, sync::Arc};
 
     use super::*;
 
     #[test]
     fn test_handler_register_pop() {
-        let register = |inner: &Rc<RefCell<i32>>| -> HandleRegisterBox<(), EmptyDB> {
-            let inner = inner.clone();
-            Box::new(move |h| {
-                *inner.borrow_mut() += 1;
-                h.post_execution.output = Arc::new(|_, _| Err(EVMError::Custom("test".to_string())))
-            })
-        };
+        let register =
+            |inner: &Rc<RefCell<i32>>| -> HandleRegisterBox<(), DefaultEmptyRuntimeDatabase> {
+                let inner = inner.clone();
+                Box::new(move |h| {
+                    *inner.borrow_mut() += 1;
+                    h.post_execution.output =
+                        Arc::new(|_, _| Err(EVMError::Custom("test".to_string())))
+                })
+            };
 
-        let mut handler = EvmHandler::<(), EmptyDB>::new(HandlerCfg::new(SpecId::LATEST));
+        let mut handler =
+            EvmHandler::<(), DefaultEmptyRuntimeDatabase>::new(HandlerCfg::new(SpecId::LATEST));
         let test = Rc::new(RefCell::new(0));
 
         handler.append_handler_register_box(register(&test));

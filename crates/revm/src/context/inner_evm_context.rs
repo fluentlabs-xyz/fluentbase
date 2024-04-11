@@ -7,30 +7,39 @@ use crate::{
     },
 };
 use fluentbase_core::{Account, AccountCheckpoint};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{EmptyJournalTrie, ExitCode, IJournaledTrie};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 use std::boxed::Box;
 
 /// EVM contexts contains data that EVM needs for execution.
 #[derive(Debug)]
-pub struct InnerEvmContext<DB: Database> {
+pub struct InnerEvmContext<DB: IJournaledTrie> {
     /// EVM Environment contains all the information about config, block and transaction that
     /// evm needs.
     pub env: Box<Env>,
     /// Database to load data from.
     pub db: DB,
     /// Error that happened during execution.
-    pub error: Result<(), EVMError<DB::Error>>,
+    pub error: Result<(), EVMError<ExitCode>>,
     /// Current recursion depth
     pub depth: u64,
     /// Spec id
     pub spec_id: SpecId,
 }
 
-impl<DB: Database + Clone> Clone for InnerEvmContext<DB>
-where
-    DB::Error: Clone,
-{
+impl Default for InnerEvmContext<EmptyJournalTrie> {
+    fn default() -> Self {
+        Self {
+            env: Box::new(Default::default()),
+            db: EmptyJournalTrie::default(),
+            error: Ok(()),
+            depth: 0,
+            spec_id: Default::default(),
+        }
+    }
+}
+
+impl<DB: IJournaledTrie> Clone for InnerEvmContext<DB> {
     fn clone(&self) -> Self {
         Self {
             env: self.env.clone(),
@@ -42,7 +51,7 @@ where
     }
 }
 
-impl<DB: Database> InnerEvmContext<DB> {
+impl<DB: IJournaledTrie> InnerEvmContext<DB> {
     pub fn new(db: DB) -> Self {
         Self {
             env: Box::default(),
@@ -69,7 +78,7 @@ impl<DB: Database> InnerEvmContext<DB> {
     ///
     /// Note that this will ignore the previous `error` if set.
     #[inline]
-    pub fn with_db<ODB: Database>(self, db: ODB) -> InnerEvmContext<ODB> {
+    pub fn with_db<ODB: IJournaledTrie>(self, db: ODB) -> InnerEvmContext<ODB> {
         InnerEvmContext {
             env: self.env,
             db,
@@ -89,7 +98,7 @@ impl<DB: Database> InnerEvmContext<DB> {
     ///
     /// Loading of accounts/storages is needed to make them warm.
     #[inline]
-    pub fn load_access_list(&mut self) -> Result<(), EVMError<DB::Error>> {
+    pub fn load_access_list(&mut self) -> Result<(), EVMError<ExitCode>> {
         for (address, _slots) in self.env.tx.access_list.iter() {
             Account::new_from_jzkt(address);
         }

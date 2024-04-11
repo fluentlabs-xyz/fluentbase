@@ -120,7 +120,7 @@ impl TracerEip3155 {
     }
 }
 
-impl<DB: Database> Inspector<DB> for TracerEip3155 {
+impl<DB: IJournaledTrie> Inspector<DB> for TracerEip3155 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         self.gas_inspector.initialize_interp(interp, context);
     }

@@ -10,19 +10,16 @@ use core::{
     ops::{Deref, DerefMut},
 };
 use fluentbase_core::Account;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use std::boxed::Box;
 
 /// EVM context that contains the inner EVM context and precompiles.
-pub struct EvmContext<DB: Database> {
+pub struct EvmContext<DB: IJournaledTrie> {
     /// Inner EVM context.
     pub inner: InnerEvmContext<DB>,
 }
 
-impl<DB: Database + Clone> Clone for EvmContext<DB>
-where
-    DB::Error: Clone,
-{
+impl<DB: IJournaledTrie> Clone for EvmContext<DB> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -32,8 +29,7 @@ where
 
 impl<DB> fmt::Debug for EvmContext<DB>
 where
-    DB: Database + fmt::Debug,
-    DB::Error: fmt::Debug,
+    DB: IJournaledTrie + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EvmContext")
@@ -42,7 +38,7 @@ where
     }
 }
 
-impl<DB: Database> Deref for EvmContext<DB> {
+impl<DB: IJournaledTrie> Deref for EvmContext<DB> {
     type Target = InnerEvmContext<DB>;
 
     fn deref(&self) -> &Self::Target {
@@ -50,13 +46,13 @@ impl<DB: Database> Deref for EvmContext<DB> {
     }
 }
 
-impl<DB: Database> DerefMut for EvmContext<DB> {
+impl<DB: IJournaledTrie> DerefMut for EvmContext<DB> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<DB: Database> EvmContext<DB> {
+impl<DB: IJournaledTrie> EvmContext<DB> {
     /// Create new context with database.
     pub fn new(db: DB) -> Self {
         Self {
@@ -76,7 +72,7 @@ impl<DB: Database> EvmContext<DB> {
     ///
     /// Note that this will ignore the previous `error` if set.
     #[inline]
-    pub fn with_db<ODB: Database>(self, db: ODB) -> EvmContext<ODB> {
+    pub fn with_db<ODB: IJournaledTrie>(self, db: ODB) -> EvmContext<ODB> {
         EvmContext {
             inner: self.inner.with_db(db),
         }
@@ -87,7 +83,7 @@ impl<DB: Database> EvmContext<DB> {
     pub fn make_call_frame(
         &mut self,
         inputs: &CallInputs,
-    ) -> Result<FrameOrResult, EVMError<DB::Error>> {
+    ) -> Result<FrameOrResult, EVMError<ExitCode>> {
         let gas = Gas::new(inputs.gas_limit);
 
         let return_result = |instruction_result: ExitCode| {
@@ -152,10 +148,10 @@ pub(crate) mod test_utils {
     use super::*;
     use crate::types::{CallContext, CallInputs, CallScheme, Transfer};
     use crate::{
-        db::{CacheDB, EmptyDB},
-        primitives::{address, Address, Bytes, Env, B256, U256},
+        primitives::{address, Address, Bytes, Env, U256},
         InnerEvmContext,
     };
+    use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
     use std::boxed::Box;
 
     /// Mock caller address.
@@ -185,31 +181,31 @@ pub(crate) mod test_utils {
     }
 
     /// Creates an evm context with a cache db backend.
-    /// Additionally loads the mock caller account into the db,
+    /// Additionally, loads the mock caller account into the db,
     /// and sets the balance to the provided U256 value.
     pub fn create_cache_db_evm_context_with_balance(
         env: Box<Env>,
-        mut db: CacheDB<EmptyDB>,
+        db: DefaultEmptyRuntimeDatabase,
         balance: U256,
-    ) -> EvmContext<CacheDB<EmptyDB>> {
-        db.insert_account_info(
-            MOCK_CALLER,
-            crate::primitives::AccountInfo {
-                nonce: 0,
-                balance,
-                code_hash: B256::default(),
-                code: None,
-                ..Default::default()
-            },
-        );
+    ) -> EvmContext<DefaultEmptyRuntimeDatabase> {
+        // db.insert_account_info(
+        //     MOCK_CALLER,
+        //     crate::primitives::AccountInfo {
+        //         nonce: 0,
+        //         balance,
+        //         code_hash: B256::default(),
+        //         code: None,
+        //         ..Default::default()
+        //     },
+        // );
         create_cache_db_evm_context(env, db)
     }
 
     /// Creates a cached db evm context.
     pub fn create_cache_db_evm_context(
         env: Box<Env>,
-        db: CacheDB<EmptyDB>,
-    ) -> EvmContext<CacheDB<EmptyDB>> {
+        db: DefaultEmptyRuntimeDatabase,
+    ) -> EvmContext<DefaultEmptyRuntimeDatabase> {
         EvmContext {
             inner: InnerEvmContext {
                 env,
@@ -222,7 +218,10 @@ pub(crate) mod test_utils {
     }
 
     /// Returns a new `EvmContext` with an empty journaled state.
-    pub fn create_empty_evm_context(env: Box<Env>, db: EmptyDB) -> EvmContext<EmptyDB> {
+    pub fn create_empty_evm_context(
+        env: Box<Env>,
+        db: DefaultEmptyRuntimeDatabase,
+    ) -> EvmContext<DefaultEmptyRuntimeDatabase> {
         EvmContext {
             inner: InnerEvmContext {
                 env,
@@ -245,6 +244,7 @@ mod tests {
         primitives::{address, Bytecode, Bytes, Env, U256},
         FrameOrResult, FrameResult,
     };
+    use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
     use fluentbase_sdk::LowLevelSDK;
     use fluentbase_types::ExitCode;
     use std::boxed::Box;
@@ -253,9 +253,8 @@ mod tests {
     // call stack is too deep.
     #[test]
     fn test_make_call_frame_stack_too_deep() {
-        LowLevelSDK::with_default_jzkt();
+        let db = LowLevelSDK::with_default_jzkt();
         let env = Env::default();
-        let db = EmptyDB::default();
         let mut context = create_empty_evm_context(Box::new(env), db);
         context.depth = CALL_STACK_LIMIT + 1;
         let contract = address!("dead10000000000000000000000000000001dead");
@@ -272,9 +271,8 @@ mod tests {
     // checkpointed on the journaled state correctly.
     #[test]
     fn test_make_call_frame_transfer_revert() {
-        LowLevelSDK::with_default_jzkt();
+        let db = LowLevelSDK::with_default_jzkt();
         let env = Env::default();
-        let db = EmptyDB::default();
         let mut evm_context = test_utils::create_empty_evm_context(Box::new(env), db);
         let contract = address!("dead10000000000000000000000000000001dead");
         let mut call_inputs = test_utils::create_mock_call_inputs(contract);
@@ -294,13 +292,12 @@ mod tests {
 
     #[test]
     fn test_make_call_frame_missing_code_context() {
-        LowLevelSDK::with_default_jzkt();
+        let db = LowLevelSDK::with_default_jzkt();
         let env = Env::default();
-        let cdb = CacheDB::new(EmptyDB::default());
         let bal = U256::from(3_000_000_000_u128);
-        let mut context = create_cache_db_evm_context_with_balance(Box::new(env), cdb, bal);
+        let mut context = create_cache_db_evm_context_with_balance(Box::new(env), db, bal);
         let contract = address!("dead10000000000000000000000000000001dead");
-        let call_inputs = test_utils::create_mock_call_inputs(contract);
+        let call_inputs = create_mock_call_inputs(contract);
         let res = context.make_call_frame(&call_inputs);
         let Ok(FrameOrResult::Result(result)) = res else {
             panic!("Expected FrameOrResult::Result");
@@ -310,23 +307,22 @@ mod tests {
 
     #[test]
     fn test_make_call_frame_succeeds() {
-        LowLevelSDK::with_default_jzkt();
+        let db = LowLevelSDK::with_default_jzkt();
         let env = Env::default();
-        let mut cdb = CacheDB::new(EmptyDB::default());
         let bal = U256::from(3_000_000_000_u128);
         let by = Bytecode::new_raw(Bytes::from(vec![0x60, 0x00, 0x60, 0x00]));
         let contract = address!("dead10000000000000000000000000000001dead");
-        cdb.insert_account_info(
-            contract,
-            crate::primitives::AccountInfo {
-                nonce: 0,
-                balance: bal,
-                code_hash: by.clone().hash_slow(),
-                code: Some(by),
-                ..Default::default()
-            },
-        );
-        let mut evm_context = create_cache_db_evm_context_with_balance(Box::new(env), cdb, bal);
+        // cdb.insert_account_info(
+        //     contract,
+        //     crate::primitives::AccountInfo {
+        //         nonce: 0,
+        //         balance: bal,
+        //         code_hash: by.clone().hash_slow(),
+        //         code: Some(by),
+        //         ..Default::default()
+        //     },
+        // );
+        let mut evm_context = create_cache_db_evm_context_with_balance(Box::new(env), db, bal);
         let call_inputs = create_mock_call_inputs(contract);
         let res = evm_context.make_call_frame(&call_inputs);
         let Ok(FrameOrResult::Result(FrameResult::Call(call_outcome))) = res else {

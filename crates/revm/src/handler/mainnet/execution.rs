@@ -4,7 +4,7 @@ use crate::{
     primitives::{EVMError, Env, Spec},
     CallFrame, Context, CreateFrame, FrameOrResult, FrameResult,
 };
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use std::boxed::Box;
 
 /// Helper function called inside [`last_frame_return`]
@@ -46,29 +46,29 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
 
 /// Handle output of the transaction
 #[inline]
-pub fn last_frame_return<SPEC: Spec, EXT, DB: Database>(
+pub fn last_frame_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     frame_result: &mut FrameResult,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     frame_return_with_refund_flag::<SPEC>(&context.evm.env, frame_result, true);
     Ok(())
 }
 
 /// Handle frame sub call.
 #[inline]
-pub fn call<SPEC: Spec, EXT, DB: Database>(
+pub fn call<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     inputs: Box<CallInputs>,
-) -> Result<FrameOrResult, EVMError<DB::Error>> {
+) -> Result<FrameOrResult, EVMError<ExitCode>> {
     context.evm.make_call_frame(&inputs)
 }
 
 #[inline]
-pub fn call_return<EXT, DB: Database>(
+pub fn call_return<EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     frame: Box<CallFrame>,
     interpreter_result: InterpreterResult,
-) -> Result<CallOutcome, EVMError<DB::Error>> {
+) -> Result<CallOutcome, EVMError<ExitCode>> {
     context
         .evm
         .call_return(&interpreter_result, frame.frame_data.checkpoint);
@@ -79,11 +79,11 @@ pub fn call_return<EXT, DB: Database>(
 }
 
 #[inline]
-pub fn create_return<SPEC: Spec, EXT, DB: Database>(
+pub fn create_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     frame: Box<CreateFrame>,
     mut interpreter_result: InterpreterResult,
-) -> Result<CreateOutcome, EVMError<DB::Error>> {
+) -> Result<CreateOutcome, EVMError<ExitCode>> {
     context.evm.create_return::<SPEC>(
         &mut interpreter_result,
         frame.created_address,

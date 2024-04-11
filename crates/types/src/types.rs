@@ -58,6 +58,18 @@ pub enum ExitCode {
     UnresolvedFunction = -2018,
 }
 
+impl From<i32> for ExitCode {
+    fn from(value: i32) -> Self {
+        if value == Self::Ok.into_i32() {
+            Self::Ok
+        } else if value == Self::Panic.into_i32() {
+            Self::Panic
+        } else {
+            Self::TransactError
+        }
+    }
+}
+
 impl ExitCode {
     pub const fn is_ok(&self) -> bool {
         self.into_i32() == Self::Ok.into_i32()

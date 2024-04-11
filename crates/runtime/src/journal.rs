@@ -190,6 +190,14 @@ pub struct JournaledTrie<DB: TrieStorage> {
     inner: Arc<RwLock<JournalTrieInner<DB>>>,
 }
 
+impl<DB: TrieStorage> Clone for JournaledTrie<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl Default for JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>> {
     fn default() -> Self {
         Self::new(ZkTrieStateDb::new(InMemoryTrieDb::default()))
@@ -241,14 +249,6 @@ impl<DB: TrieStorage> JournaledTrie<DB> {
         let slot = Self::compress_value(slot);
         let key = hash_with_domain(&[address, slot], &Self::DOMAIN);
         key.to_bytes()
-    }
-}
-
-impl<DB: TrieStorage> Clone for JournaledTrie<DB> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
     }
 }
 
@@ -311,7 +311,7 @@ mod tests {
         journal::{IJournaledTrie, JournaledTrie},
         types::InMemoryTrieDb,
         zktrie::ZkTrieStateDb,
-        TrieStorage,
+        RuntimeContext, TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
     use fluentbase_types::JournalCheckpoint;

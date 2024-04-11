@@ -1,29 +1,29 @@
 use crate::types::Gas;
 use crate::{
     primitives::{
-        db::Database, EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
+        EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
     },
     Context, FrameResult,
 };
 use fluentbase_core::Account;
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use revm_primitives::{HaltReason, OutOfGasError, SuccessReason};
 
 /// Mainnet end handle does not change the output.
 #[inline]
-pub fn end<EXT, DB: Database>(
+pub fn end<EXT, DB: IJournaledTrie>(
     _context: &mut Context<EXT, DB>,
-    evm_output: Result<ResultAndState, EVMError<DB::Error>>,
-) -> Result<ResultAndState, EVMError<DB::Error>> {
+    evm_output: Result<ResultAndState, EVMError<ExitCode>>,
+) -> Result<ResultAndState, EVMError<ExitCode>> {
     evm_output
 }
 
 /// Reward beneficiary with gas fee.
 #[inline]
-pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
+pub fn reward_beneficiary<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     let beneficiary = context.evm.env.block.coinbase;
     let effective_gas_price = context.evm.env.effective_gas_price();
 
@@ -46,10 +46,10 @@ pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
 }
 
 #[inline]
-pub fn reimburse_caller<SPEC: Spec, EXT, DB: Database>(
+pub fn reimburse_caller<SPEC: Spec, EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
-) -> Result<(), EVMError<DB::Error>> {
+) -> Result<(), EVMError<ExitCode>> {
     let caller = context.evm.env.tx.caller;
     let effective_gas_price = context.evm.env.effective_gas_price();
 
@@ -65,10 +65,10 @@ pub fn reimburse_caller<SPEC: Spec, EXT, DB: Database>(
 
 /// Main return handle, returns the output of the transaction.
 #[inline]
-pub fn output<EXT, DB: Database>(
+pub fn output<EXT, DB: IJournaledTrie>(
     context: &mut Context<EXT, DB>,
     result: FrameResult,
-) -> Result<ResultAndState, EVMError<DB::Error>> {
+) -> Result<ResultAndState, EVMError<ExitCode>> {
     core::mem::replace(&mut context.evm.error, Ok(()))?;
     // used gas with refund calculated.
     let gas_refunded = result.gas().refunded() as u64;
