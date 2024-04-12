@@ -20,7 +20,7 @@ pub mod test_utils;
 pub mod db;
 mod evm;
 mod frame;
-mod gas;
+pub mod gas;
 pub mod handler;
 mod inspector;
 mod journaled_state;
