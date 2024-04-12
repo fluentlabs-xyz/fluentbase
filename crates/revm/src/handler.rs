@@ -7,8 +7,7 @@ pub mod register;
 pub use handle_types::*;
 
 // Includes.
-use crate::primitives::{spec_to_generic, HandlerCfg, Spec, SpecId};
-use fluentbase_types::IJournaledTrie;
+use crate::primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId};
 use register::{EvmHandler, HandleRegisters};
 use std::vec::Vec;
 
@@ -17,7 +16,7 @@ use self::register::{HandleRegister, HandleRegisterBox};
 /// Handler acts as a proxy and allow to define different behavior for different
 /// sections of the code. This allows nice integration of different chains or
 /// to disable some mainnet behavior.
-pub struct Handler<'a, EXT, DB: IJournaledTrie> {
+pub struct Handler<'a, EXT, DB: Database> {
     /// Handler config.
     pub cfg: HandlerCfg,
     /// Registers that will be called on initialization.
@@ -32,7 +31,7 @@ pub struct Handler<'a, EXT, DB: IJournaledTrie> {
     pub execution: ExecutionHandler<'a, EXT, DB>,
 }
 
-impl<'a, EXT, DB: IJournaledTrie> EvmHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
     /// Created new Handler with given configuration.
     ///
     /// Internaly it calls `mainnet_with_spec` with the given spec id.
@@ -61,6 +60,28 @@ impl<'a, EXT, DB: IJournaledTrie> EvmHandler<'a, EXT, DB> {
             post_execution: PostExecutionHandler::new::<SPEC>(),
             execution: ExecutionHandler::new::<SPEC>(),
         }
+    }
+
+    /// Returns `true` if the optimism feature is enabled and flag is set to `true`.
+    pub fn is_optimism(&self) -> bool {
+        self.cfg.is_optimism()
+    }
+
+    /// Handler for optimism
+    #[cfg(feature = "optimism")]
+    pub fn optimism<SPEC: Spec>() -> Self {
+        let mut handler = Self::mainnet::<SPEC>();
+        handler.cfg.is_optimism = true;
+        handler.append_handler_register(HandleRegisters::Plain(
+            crate::optimism::optimism_handle_register::<DB, EXT>,
+        ));
+        handler
+    }
+
+    /// Optimism with spec. Similar to [`Self::mainnet_with_spec`]
+    #[cfg(feature = "optimism")]
+    pub fn optimism_with_spec(spec_id: SpecId) -> Self {
+        spec_to_generic!(spec_id, Self::optimism::<SPEC>())
     }
 
     /// Creates handler with variable spec id, inside it will call `mainnet::<SPEC>` for
@@ -161,26 +182,22 @@ impl<'a, EXT, DB: IJournaledTrie> EvmHandler<'a, EXT, DB> {
 mod test {
     use core::cell::RefCell;
 
-    use crate::primitives::EVMError;
-    use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
+    use crate::{db::EmptyDB, primitives::EVMError};
     use std::{rc::Rc, sync::Arc};
 
     use super::*;
 
     #[test]
     fn test_handler_register_pop() {
-        let register =
-            |inner: &Rc<RefCell<i32>>| -> HandleRegisterBox<(), DefaultEmptyRuntimeDatabase> {
-                let inner = inner.clone();
-                Box::new(move |h| {
-                    *inner.borrow_mut() += 1;
-                    h.post_execution.output =
-                        Arc::new(|_, _| Err(EVMError::Custom("test".to_string())))
-                })
-            };
+        let register = |inner: &Rc<RefCell<i32>>| -> HandleRegisterBox<(), EmptyDB> {
+            let inner = inner.clone();
+            Box::new(move |h| {
+                *inner.borrow_mut() += 1;
+                h.post_execution.output = Arc::new(|_, _| Err(EVMError::Custom("test".to_string())))
+            })
+        };
 
-        let mut handler =
-            EvmHandler::<(), DefaultEmptyRuntimeDatabase>::new(HandlerCfg::new(SpecId::LATEST));
+        let mut handler = EvmHandler::<(), EmptyDB>::new(HandlerCfg::new(SpecId::LATEST));
         let test = Rc::new(RefCell::new(0));
 
         handler.append_handler_register_box(register(&test));

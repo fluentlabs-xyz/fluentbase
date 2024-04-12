@@ -1,14 +1,14 @@
 use fluentbase_sdk::Bytes32;
 
 /// Number of fields
-pub(crate) const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
+pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
 
-pub(crate) const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
-pub(crate) const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
-pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD: u32 = 2;
-pub(crate) const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
-pub(crate) const JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD: u32 = 4;
-pub(crate) const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
+pub const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
+pub const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
+pub const JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD: u32 = 2;
+pub const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
+pub const JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD: u32 = 4;
+pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
 
 /// Compression flags for upper fields.
 ///

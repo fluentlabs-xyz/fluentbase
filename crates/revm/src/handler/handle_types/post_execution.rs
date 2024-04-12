@@ -1,14 +1,14 @@
 // Includes.
-use crate::types::Gas;
 use crate::{
     handler::mainnet,
-    primitives::{EVMError, EVMResultGeneric, ResultAndState, Spec},
+    interpreter::Gas,
+    primitives::{db::Database, EVMError, EVMResultGeneric, ResultAndState, Spec},
     Context, FrameResult,
 };
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use std::sync::Arc;
 
-/// Reimburse the caller with ethereum it didn't spend.
+/// Reimburse the caller with ethereum it didn't spent.
 pub type ReimburseCallerHandle<'a, EXT, DB> =
     Arc<dyn Fn(&mut Context<EXT, DB>, &Gas) -> EVMResultGeneric<(), ExitCode> + 'a>;
 
@@ -33,7 +33,7 @@ pub type EndHandle<'a, EXT, DB> = Arc<
 >;
 
 /// Handles related to post execution after the stack loop is finished.
-pub struct PostExecutionHandler<'a, EXT, DB: IJournaledTrie> {
+pub struct PostExecutionHandler<'a, EXT, DB: Database> {
     /// Reimburse the caller with ethereum it didn't spent.
     pub reimburse_caller: ReimburseCallerHandle<'a, EXT, DB>,
     /// Reward the beneficiary with caller fee.
@@ -44,7 +44,7 @@ pub struct PostExecutionHandler<'a, EXT, DB: IJournaledTrie> {
     pub end: EndHandle<'a, EXT, DB>,
 }
 
-impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> PostExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: Database + 'a> PostExecutionHandler<'a, EXT, DB> {
     /// Creates mainnet MainHandles.
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
@@ -56,7 +56,7 @@ impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> PostExecutionHandler<'a, EXT, DB> {
     }
 }
 
-impl<'a, EXT, DB: IJournaledTrie> PostExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: Database> PostExecutionHandler<'a, EXT, DB> {
     /// Reimburse the caller with gas that were not spend.
     pub fn reimburse_caller(
         &self,

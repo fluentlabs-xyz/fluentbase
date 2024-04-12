@@ -1,13 +1,12 @@
-use crate::{handler::register::EvmHandler, Inspector};
-use fluentbase_types::IJournaledTrie;
+use crate::{db::Database, handler::register::EvmHandler, Inspector};
 
 /// Provides access to an `Inspector` instance.
-pub trait GetInspector<DB: IJournaledTrie> {
+pub trait GetInspector<DB: Database> {
     /// Returns the associated `Inspector`.
     fn get_inspector(&mut self) -> &mut impl Inspector<DB>;
 }
 
-impl<DB: IJournaledTrie, INSP: Inspector<DB>> GetInspector<DB> for INSP {
+impl<DB: Database, INSP: Inspector<DB>> GetInspector<DB> for INSP {
     #[inline(always)]
     fn get_inspector(&mut self) -> &mut impl Inspector<DB> {
         self
@@ -26,10 +25,10 @@ impl<DB: IJournaledTrie, INSP: Inspector<DB>> GetInspector<DB> for INSP {
 /// A few instructions handlers are wrapped twice once for `step` and `step_end`
 /// and in case of Logs and Selfdestruct wrapper is wrapped again for the
 /// `log` and `selfdestruct` calls.
-pub fn inspector_handle_register<'a, DB: IJournaledTrie, EXT: GetInspector<DB>>(
+pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
     _handler: &mut EvmHandler<'a, EXT, DB>,
 ) {
-    // Every instruction inside flat table that is going to be wrapped by inspector calls.
+    // // Every instruction inside flat table that is going to be wrapped by inspector calls.
     // let table = handler
     //     .take_instruction_table()
     //     .expect("Handler must have instruction table");
@@ -211,4 +210,98 @@ pub fn inspector_handle_register<'a, DB: IJournaledTrie, EXT: GetInspector<DB>>(
     //     }
     //     old_handle(ctx, frame_result)
     // });
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::{
+        inspectors::NoOpInspector,
+        interpreter::{CallInputs, CreateInputs, Interpreter},
+        Database, Evm, EvmContext, Inspector,
+    };
+
+    use crate::interpreter::{CallOutcome, CreateOutcome};
+
+    #[derive(Default, Debug)]
+    struct StackInspector {
+        initialize_interp_called: bool,
+        step: u32,
+        step_end: u32,
+        call: bool,
+        call_end: bool,
+    }
+
+    impl<DB: Database> Inspector<DB> for StackInspector {
+        fn initialize_interp(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+            if self.initialize_interp_called {
+                unreachable!("initialize_interp should not be called twice")
+            }
+            self.initialize_interp_called = true;
+        }
+
+        fn step(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+            self.step += 1;
+        }
+
+        fn step_end(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+            self.step_end += 1;
+        }
+
+        fn call(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            _call: &mut CallInputs,
+        ) -> Option<CallOutcome> {
+            if self.call {
+                unreachable!("call should not be called twice")
+            }
+            self.call = true;
+            assert_eq!(context.journaled_state.depth(), 0);
+            None
+        }
+
+        fn call_end(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            _inputs: &CallInputs,
+            outcome: CallOutcome,
+        ) -> CallOutcome {
+            if self.call_end {
+                unreachable!("call_end should not be called twice")
+            }
+            assert_eq!(context.journaled_state.depth(), 0);
+            self.call_end = true;
+            outcome
+        }
+
+        fn create(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            _call: &mut CreateInputs,
+        ) -> Option<CreateOutcome> {
+            assert_eq!(context.journaled_state.depth(), 0);
+            None
+        }
+
+        fn create_end(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            _inputs: &CreateInputs,
+            outcome: CreateOutcome,
+        ) -> CreateOutcome {
+            assert_eq!(context.journaled_state.depth(), 0);
+            outcome
+        }
+    }
+
+    #[test]
+    fn test_inspector_reg() {
+        let mut noop = NoOpInspector;
+        let _evm = Evm::builder()
+            .with_external_context(&mut noop)
+            .append_handler_register(inspector_handle_register)
+            .build();
+    }
 }

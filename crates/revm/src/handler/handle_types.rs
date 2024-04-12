@@ -12,11 +12,13 @@ pub use validation::{
 };
 
 pub use execution::{
-    ExecutionHandler, FrameCallHandle, FrameCallReturnHandle, FrameCreateReturnHandle,
-    InsertCallOutcomeHandle, InsertCreateOutcomeHandle,
+    ExecutionHandler, FrameCallHandle, FrameCallReturnHandle, FrameCreateHandle,
+    FrameCreateReturnHandle, InsertCallOutcomeHandle, InsertCreateOutcomeHandle,
 };
 
-pub use pre_execution::{DeductCallerHandle, LoadAccountsHandle, PreExecutionHandler};
+pub use pre_execution::{
+    DeductCallerHandle, LoadAccountsHandle, LoadPrecompilesHandle, PreExecutionHandler,
+};
 
 pub use post_execution::{
     EndHandle, OutputHandle, PostExecutionHandler, ReimburseCallerHandle, RewardBeneficiaryHandle,

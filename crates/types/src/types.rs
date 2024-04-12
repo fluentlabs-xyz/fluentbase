@@ -75,6 +75,10 @@ impl ExitCode {
         self.into_i32() == Self::Ok.into_i32()
     }
 
+    pub const fn is_error(&self) -> bool {
+        self.into_i32() != Self::Ok.into_i32()
+    }
+
     pub const fn into_i32(self) -> i32 {
         self as i32
     }

@@ -1,6 +1,7 @@
 use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
-use fluentbase_types::Bytes;
+use fluentbase_poseidon::poseidon_hash;
+use fluentbase_types::{b256, Bytes, B256};
 use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
@@ -32,18 +33,29 @@ pub fn devnet_chain_config() -> ChainConfig {
     }
 }
 
+pub const POSEIDON_HASH_KEY: B256 =
+    b256!("0000000000000000000000000000000000000000000000000000000000000001");
+
+pub fn devnet_genesis_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
+
 pub fn devnet_genesis() -> Genesis {
     let mut alloc = BTreeMap::new();
     macro_rules! enable_rwasm_contract {
-        ($addr:ident, $file_path:literal) => {
+        ($addr:ident, $file_path:literal) => {{
+            let bytecode = Bytes::from(include_bytes!($file_path));
+            let bytecode_hash = poseidon_hash(&bytecode);
             alloc.insert(
                 $addr,
                 GenesisAccount {
-                    code: Some(Bytes::from(include_bytes!($file_path))),
+                    code: Some(bytecode),
+                    storage: Some(BTreeMap::from([(POSEIDON_HASH_KEY, bytecode_hash.into())])),
                     ..Default::default()
                 },
             );
-        };
+        }};
     }
     enable_rwasm_contract!(
         ECL_CONTRACT_ADDRESS,

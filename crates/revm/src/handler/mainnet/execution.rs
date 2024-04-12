@@ -1,10 +1,13 @@
-use crate::types::{CallInputs, CallOutcome, CreateOutcome, Gas, InterpreterResult};
 use crate::{
+    db::Database,
+    interpreter::{CallInputs, CreateInputs, CreateOutcome, Gas, InstructionResult, SharedMemory},
     primitives::{EVMError, Env, Spec},
-    CallFrame, Context, CreateFrame, FrameOrResult, FrameResult,
+    return_ok, return_revert, CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use std::boxed::Box;
+
+use crate::interpreter::{CallOutcome, InterpreterResult};
 
 /// Helper function called inside [`last_frame_return`]
 #[inline]
@@ -23,11 +26,11 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
     gas.record_cost(env.tx.gas_limit);
 
     match instruction_result {
-        ExitCode::Ok => {
+        return_ok!() => {
             gas.erase_cost(remaining);
             gas.record_refund(refunded);
         }
-        ExitCode::Panic => {
+        return_revert!() => {
             gas.erase_cost(remaining);
         }
         _ => {}
@@ -45,7 +48,7 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
 
 /// Handle output of the transaction
 #[inline]
-pub fn last_frame_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn last_frame_return<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     frame_result: &mut FrameResult,
 ) -> Result<(), EVMError<ExitCode>> {
@@ -55,7 +58,7 @@ pub fn last_frame_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
 
 /// Handle frame sub call.
 #[inline]
-pub fn call<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn call<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     inputs: Box<CallInputs>,
 ) -> Result<FrameOrResult, EVMError<ExitCode>> {
@@ -63,7 +66,7 @@ pub fn call<SPEC: Spec, EXT, DB: IJournaledTrie>(
 }
 
 #[inline]
-pub fn call_return<EXT, DB: IJournaledTrie>(
+pub fn call_return<EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     frame: Box<CallFrame>,
     interpreter_result: InterpreterResult,
@@ -78,7 +81,31 @@ pub fn call_return<EXT, DB: IJournaledTrie>(
 }
 
 #[inline]
-pub fn create_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn insert_call_outcome<EXT, DB: Database>(
+    context: &mut Context<EXT, DB>,
+    frame: &mut Frame,
+    shared_memory: &mut SharedMemory,
+    outcome: CallOutcome,
+) -> Result<(), EVMError<ExitCode>> {
+    core::mem::replace(&mut context.evm.error, Ok(()))?;
+    frame
+        .frame_data_mut()
+        .interpreter
+        .insert_call_outcome(shared_memory, outcome);
+    Ok(())
+}
+
+/// Handle frame sub create.
+#[inline]
+pub fn create<SPEC: Spec, EXT, DB: Database>(
+    context: &mut Context<EXT, DB>,
+    inputs: Box<CreateInputs>,
+) -> Result<FrameOrResult, EVMError<ExitCode>> {
+    context.evm.make_create_frame(SPEC::SPEC_ID, &inputs)
+}
+
+#[inline]
+pub fn create_return<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     frame: Box<CreateFrame>,
     mut interpreter_result: InterpreterResult,
@@ -94,14 +121,30 @@ pub fn create_return<SPEC: Spec, EXT, DB: IJournaledTrie>(
     ))
 }
 
+#[inline]
+pub fn insert_create_outcome<EXT, DB: Database>(
+    context: &mut Context<EXT, DB>,
+    frame: &mut Frame,
+    outcome: CreateOutcome,
+) -> Result<(), EVMError<ExitCode>> {
+    core::mem::replace(&mut context.evm.error, Ok(()))?;
+    frame
+        .frame_data_mut()
+        .interpreter
+        .insert_create_outcome(outcome);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use revm_primitives::{Bytes, CancunSpec};
+    use crate::interpreter::InterpreterResult;
+    use revm_precompile::Bytes;
+    use revm_primitives::CancunSpec;
 
     use super::*;
 
     /// Creates frame result.
-    fn call_last_frame_return(instruction_result: ExitCode, gas: Gas) -> Gas {
+    fn call_last_frame_return(instruction_result: InstructionResult, gas: Gas) -> Gas {
         let mut env = Env::default();
         env.tx.gas_limit = 100;
 
@@ -119,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas() {
-        let gas = call_last_frame_return(ExitCode::Panic, Gas::new(90));
+        let gas = call_last_frame_return(InstructionResult::Ok, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);
@@ -131,12 +174,12 @@ mod tests {
         let mut return_gas = Gas::new(90);
         return_gas.record_refund(30);
 
-        let gas = call_last_frame_return(ExitCode::Ok, return_gas);
+        let gas = call_last_frame_return(InstructionResult::Ok, return_gas);
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 2);
 
-        let gas = call_last_frame_return(ExitCode::Panic, return_gas);
+        let gas = call_last_frame_return(InstructionResult::Panic, return_gas);
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);
@@ -144,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_revert_gas() {
-        let gas = call_last_frame_return(ExitCode::Panic, Gas::new(90));
+        let gas = call_last_frame_return(InstructionResult::Panic, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
         assert_eq!(gas.spend(), 10);
         assert_eq!(gas.refunded(), 0);

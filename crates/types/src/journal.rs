@@ -54,6 +54,11 @@ impl JournalEvent {
 #[derive(Debug, PartialEq)]
 pub struct JournalCheckpoint(pub u32, pub u32);
 
+impl From<(u32, u32)> for JournalCheckpoint {
+    fn from(value: (u32, u32)) -> Self {
+        Self(value.0, value.1)
+    }
+}
 impl Into<(u32, u32)> for JournalCheckpoint {
     fn into(self) -> (u32, u32) {
         (self.0, self.1)

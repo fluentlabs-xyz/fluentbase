@@ -4,6 +4,7 @@ use crate::account_types::{
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
     JZKT_COMPRESSION_FLAGS,
 };
+use crate::JZKT_ACCOUNT_FIELDS_COUNT;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
@@ -29,6 +30,29 @@ impl Into<AccountInfo> for Account {
             code_hash: self.source_code_hash,
             rwasm_code_hash: self.rwasm_code_hash,
             code: None,
+            rwasm_code: None,
+        }
+    }
+}
+
+impl From<AccountInfo> for Account {
+    fn from(value: AccountInfo) -> Self {
+        Self {
+            address: Address::ZERO,
+            balance: value.balance,
+            nonce: value.nonce,
+            source_code_size: value
+                .code
+                .as_ref()
+                .map(|v| v.len() as u64)
+                .unwrap_or_default(),
+            source_code_hash: value.code_hash,
+            rwasm_code_size: value
+                .rwasm_code
+                .as_ref()
+                .map(|v| v.len() as u64)
+                .unwrap_or_default(),
+            rwasm_code_hash: value.rwasm_code_hash,
         }
     }
 }
@@ -57,7 +81,11 @@ impl Account {
 
     pub fn new_from_fields(address: &Address, fields: &[Bytes32]) -> Self {
         let mut result = Self::new(address);
-        assert_eq!(fields.len(), 6, "account fields len mismatch");
+        assert_eq!(
+            fields.len(),
+            JZKT_ACCOUNT_FIELDS_COUNT as usize,
+            "account fields len mismatch"
+        );
         unsafe {
             result
                 .balance
@@ -258,13 +286,17 @@ impl Account {
         assert!(r, "account update_source_bytecode failed");
     }
 
-    pub fn update_rwasm_bytecode(&mut self, bytecode: &Bytes) {
+    pub fn update_rwasm_bytecode(&mut self, bytecode: &Bytes, poseidon_hash: Option<F254>) {
         let address_word = self.address.into_word();
-        LowLevelSDK::crypto_poseidon(
-            bytecode.as_ptr(),
-            bytecode.len() as u32,
-            self.rwasm_code_hash.as_mut_ptr(),
-        );
+        self.rwasm_code_hash = poseidon_hash.unwrap_or_else(|| {
+            let mut poseidon_hash = F254::ZERO;
+            LowLevelSDK::crypto_poseidon(
+                bytecode.as_ptr(),
+                bytecode.len() as u32,
+                poseidon_hash.as_mut_ptr(),
+            );
+            poseidon_hash
+        });
         self.rwasm_code_size = bytecode.len() as u64;
         self.write_to_jzkt();
         // make sure preimage of this hash is stored

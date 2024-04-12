@@ -1,15 +1,16 @@
-use crate::types::Gas;
 use crate::{
-    primitives::{EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256},
+    interpreter::Gas,
+    primitives::{
+        db::Database, EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
+    },
     Context, FrameResult,
 };
-use fluentbase_core::Account;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use revm_primitives::{HaltReason, OutOfGasError, SuccessReason};
 
 /// Mainnet end handle does not change the output.
 #[inline]
-pub fn end<EXT, DB: IJournaledTrie>(
+pub fn end<EXT, DB: Database>(
     _context: &mut Context<EXT, DB>,
     evm_output: Result<ResultAndState, EVMError<ExitCode>>,
 ) -> Result<ResultAndState, EVMError<ExitCode>> {
@@ -18,7 +19,7 @@ pub fn end<EXT, DB: IJournaledTrie>(
 
 /// Reward beneficiary with gas fee.
 #[inline]
-pub fn reward_beneficiary<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn reward_beneficiary<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
 ) -> Result<(), EVMError<ExitCode>> {
@@ -33,18 +34,23 @@ pub fn reward_beneficiary<SPEC: Spec, EXT, DB: IJournaledTrie>(
         effective_gas_price
     };
 
-    let mut coinbase_account = Account::new_from_jzkt(&beneficiary);
+    let (coinbase_account, _) = context
+        .evm
+        .inner
+        .journaled_state
+        .load_account(beneficiary, &mut context.evm.inner.db)?;
 
-    coinbase_account.add_balance_saturating(
-        coinbase_gas_price * U256::from(gas.spend() - gas.refunded() as u64),
-    );
-    coinbase_account.write_to_jzkt();
+    coinbase_account.mark_touch();
+    coinbase_account.info.balance = coinbase_account
+        .info
+        .balance
+        .saturating_add(coinbase_gas_price * U256::from(gas.spend() - gas.refunded() as u64));
 
     Ok(())
 }
 
 #[inline]
-pub fn reimburse_caller<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn reimburse_caller<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     gas: &Gas,
 ) -> Result<(), EVMError<ExitCode>> {
@@ -52,18 +58,23 @@ pub fn reimburse_caller<SPEC: Spec, EXT, DB: IJournaledTrie>(
     let effective_gas_price = context.evm.env.effective_gas_price();
 
     // return balance of not spend gas.
-    let mut caller_account = Account::new_from_jzkt(&caller);
-    caller_account.add_balance_saturating(
-        effective_gas_price * U256::from(gas.remaining() + gas.refunded() as u64),
-    );
-    caller_account.write_to_jzkt();
+    let (caller_account, _) = context
+        .evm
+        .inner
+        .journaled_state
+        .load_account(caller, &mut context.evm.inner.db)?;
+
+    caller_account.info.balance = caller_account
+        .info
+        .balance
+        .saturating_add(effective_gas_price * U256::from(gas.remaining() + gas.refunded() as u64));
 
     Ok(())
 }
 
 /// Main return handle, returns the output of the transaction.
 #[inline]
-pub fn output<EXT, DB: IJournaledTrie>(
+pub fn output<EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
     result: FrameResult,
 ) -> Result<ResultAndState, EVMError<ExitCode>> {
@@ -74,12 +85,15 @@ pub fn output<EXT, DB: IJournaledTrie>(
     let output = result.output();
     let instruction_result = result.into_interpreter_result();
 
+    // reset journal and return present state.
+    let (state, logs) = context.evm.journaled_state.finalize();
+
     let result = match instruction_result.result.into() {
         ExitCode::Ok => ExecutionResult::Success {
             reason: SuccessReason::Return,
             gas_used: final_gas_used,
             gas_refunded,
-            logs: vec![],
+            logs,
             output,
         },
         ExitCode::Panic => ExecutionResult::Revert {
@@ -92,8 +106,5 @@ pub fn output<EXT, DB: IJournaledTrie>(
         },
     };
 
-    Ok(ResultAndState {
-        result,
-        state: Default::default(),
-    })
+    Ok(ResultAndState { result, state })
 }

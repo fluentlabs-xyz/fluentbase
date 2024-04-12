@@ -1,11 +1,14 @@
 // Includes.
 use crate::{
     handler::mainnet,
-    primitives::{EVMError, EVMResultGeneric, Spec},
-    Context,
+    primitives::{db::Database, EVMError, EVMResultGeneric, Spec},
+    Context, ContextPrecompiles,
 };
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use std::sync::Arc;
+
+/// Loads precompiles into Evm
+pub type LoadPrecompilesHandle<'a, DB> = Arc<dyn Fn() -> ContextPrecompiles<DB> + 'a>;
 
 /// Load access list accounts and beneficiary.
 /// There is no need to load Caller as it is assumed that
@@ -18,24 +21,27 @@ pub type DeductCallerHandle<'a, EXT, DB> =
     Arc<dyn Fn(&mut Context<EXT, DB>) -> EVMResultGeneric<(), ExitCode> + 'a>;
 
 /// Handles related to pre execution before the stack loop is started.
-pub struct PreExecutionHandler<'a, EXT, DB: IJournaledTrie> {
+pub struct PreExecutionHandler<'a, EXT, DB: Database> {
+    /// Load precompiles
+    pub load_precompiles: LoadPrecompilesHandle<'a, DB>,
     /// Main load handle
     pub load_accounts: LoadAccountsHandle<'a, EXT, DB>,
     /// Deduct max value from the caller.
     pub deduct_caller: DeductCallerHandle<'a, EXT, DB>,
 }
 
-impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> PreExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: Database + 'a> PreExecutionHandler<'a, EXT, DB> {
     /// Creates mainnet MainHandles.
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
+            load_precompiles: Arc::new(mainnet::load_precompiles::<SPEC, DB>),
             load_accounts: Arc::new(mainnet::load_accounts::<SPEC, EXT, DB>),
             deduct_caller: Arc::new(mainnet::deduct_caller::<SPEC, EXT, DB>),
         }
     }
 }
 
-impl<'a, EXT, DB: IJournaledTrie> PreExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: Database> PreExecutionHandler<'a, EXT, DB> {
     /// Deduct caller to its limit.
     pub fn deduct_caller(&self, context: &mut Context<EXT, DB>) -> Result<(), EVMError<ExitCode>> {
         (self.deduct_caller)(context)
@@ -44,5 +50,10 @@ impl<'a, EXT, DB: IJournaledTrie> PreExecutionHandler<'a, EXT, DB> {
     /// Main load
     pub fn load_accounts(&self, context: &mut Context<EXT, DB>) -> Result<(), EVMError<ExitCode>> {
         (self.load_accounts)(context)
+    }
+
+    /// Load precompiles
+    pub fn load_precompiles(&self) -> ContextPrecompiles<DB> {
+        (self.load_precompiles)()
     }
 }

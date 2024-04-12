@@ -1,10 +1,14 @@
 use super::{DatabaseCommit, DatabaseRef, EmptyDB};
-use crate::primitives::{
-    hash_map::Entry, Account, AccountInfo, Address, Bytecode, HashMap, Log, B256, KECCAK_EMPTY,
-    U256,
+use crate::{
+    primitives::{
+        hash_map::Entry, Account, AccountInfo, Address, Bytecode, HashMap, Log, B256, KECCAK_EMPTY,
+        POSEIDON_EMPTY, U256,
+    },
+    Database,
 };
-use crate::Database;
 use core::convert::Infallible;
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_types::ExitCode;
 use std::vec::Vec;
 
 /// A [Database] implementation that stores all state changes in memory.
@@ -14,14 +18,15 @@ pub type InMemoryDB = CacheDB<EmptyDB>;
 ///
 /// This implementation wraps a [DatabaseRef] that is used to load data ([AccountInfo]).
 ///
-/// Accounts and code are stored in two separate maps, the `accounts` map maps addresses to [DbAccount],
-/// whereas contracts are identified by their code hash, and are stored in the `contracts` map.
-/// The [DbAccount] holds the code hash of the contract, which is used to look up the contract in the `contracts` map.
+/// Accounts and code are stored in two separate maps, the `accounts` map maps addresses to
+/// [DbAccount], whereas contracts are identified by their code hash, and are stored in the
+/// `contracts` map. The [DbAccount] holds the code hash of the contract, which is used to look up
+/// the contract in the `contracts` map.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CacheDB<ExtDB> {
-    /// Account info where None means it is not existing. Not existing state is needed for Pre TANGERINE forks.
-    /// `code` is always `None`, and bytecode can be found in `contracts`.
+    /// Account info where None means it is not existing. Not existing state is needed for Pre
+    /// TANGERINE forks. `code` is always `None`, and bytecode can be found in `contracts`.
     pub accounts: HashMap<Address, DbAccount>,
     /// Tracks all contracts by their code hash.
     pub contracts: HashMap<B256, Bytecode>,
@@ -57,7 +62,8 @@ impl<ExtDB> CacheDB<ExtDB> {
 
     /// Inserts the account's code into the cache.
     ///
-    /// Accounts objects and code are stored separately in the cache, this will take the code from the account and instead map it to the code hash.
+    /// Accounts objects and code are stored separately in the cache, this will take the code from
+    /// the account and instead map it to the code hash.
     ///
     /// Note: This will not insert into the underlying external database.
     pub fn insert_contract(&mut self, account: &mut AccountInfo) {
@@ -71,8 +77,25 @@ impl<ExtDB> CacheDB<ExtDB> {
                     .or_insert_with(|| code.clone());
             }
         }
+        if let Some(rwasm_code) = &account.rwasm_code {
+            if !rwasm_code.is_empty() {
+                if account.rwasm_code_hash == POSEIDON_EMPTY {
+                    LowLevelSDK::crypto_poseidon(
+                        rwasm_code.bytes().as_ptr(),
+                        rwasm_code.len() as u32,
+                        account.rwasm_code_hash.as_mut_ptr(),
+                    );
+                }
+                self.contracts
+                    .entry(account.rwasm_code_hash)
+                    .or_insert_with(|| rwasm_code.clone());
+            }
+        }
         if account.code_hash == B256::ZERO {
             account.code_hash = KECCAK_EMPTY;
+        }
+        if account.rwasm_code_hash == B256::ZERO {
+            account.rwasm_code_hash = POSEIDON_EMPTY;
         }
     }
 
@@ -87,12 +110,13 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
     /// Returns the account for the given address.
     ///
     /// If the account was not found in the cache, it will be loaded from the underlying database.
-    pub fn load_account(&mut self, address: Address) -> Result<&mut DbAccount, ExtDB::Error> {
+    pub fn load_account(&mut self, address: Address) -> Result<&mut DbAccount, ExitCode> {
         let db = &self.db;
         match self.accounts.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => Ok(entry.insert(
-                db.basic_ref(address)?
+                db.basic_ref(address)
+                    .map_err(|_| ExitCode::FatalExternalError)?
                     .map(|info| DbAccount {
                         info,
                         ..Default::default()
@@ -108,7 +132,7 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
         address: Address,
         slot: U256,
         value: U256,
-    ) -> Result<(), ExtDB::Error> {
+    ) -> Result<(), ExitCode> {
         let account = self.load_account(address)?;
         account.storage.insert(slot, value);
         Ok(())
@@ -119,7 +143,7 @@ impl<ExtDB: DatabaseRef> CacheDB<ExtDB> {
         &mut self,
         address: Address,
         storage: HashMap<U256, U256>,
-    ) -> Result<(), ExtDB::Error> {
+    ) -> Result<(), ExitCode> {
         let account = self.load_account(address)?;
         account.account_state = AccountState::StorageCleared;
         account.storage = storage.into_iter().collect();
@@ -339,10 +363,11 @@ pub enum AccountState {
     /// Before Spurious Dragon hardfork there was a difference between empty and not existing.
     /// And we are flagging it here.
     NotExisting,
-    /// EVM touched this account. For newer hardfork this means it can be cleared/removed from state.
+    /// EVM touched this account. For newer hardfork this means it can be cleared/removed from
+    /// state.
     Touched,
-    /// EVM cleared storage of this account, mostly by selfdestruct, we don't ask database for storage slots
-    /// and assume they are U256::ZERO
+    /// EVM cleared storage of this account, mostly by selfdestruct, we don't ask database for
+    /// storage slots and assume they are U256::ZERO
     StorageCleared,
     /// EVM didn't interacted with this account
     #[default]
@@ -379,7 +404,8 @@ impl Database for BenchmarkDB {
                 balance: U256::from(10000000),
                 code: Some(self.0.clone()),
                 code_hash: self.1,
-                ..Default::default()
+                rwasm_code_hash: Default::default(),
+                rwasm_code: None,
             }));
         }
         if address == Address::with_last_byte(1) {
@@ -387,8 +413,9 @@ impl Database for BenchmarkDB {
                 nonce: 0,
                 balance: U256::from(10000000),
                 code: None,
+                rwasm_code: None,
                 code_hash: KECCAK_EMPTY,
-                ..Default::default()
+                rwasm_code_hash: POSEIDON_EMPTY,
             }));
         }
         Ok(None)

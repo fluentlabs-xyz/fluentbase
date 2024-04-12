@@ -193,6 +193,7 @@ fn test_evm_call_from_wasm() {
         );
         ecl_account.update_rwasm_bytecode(
             &include_bytes!("../../../crates/contracts/assets/ecl_contract.rwasm").into(),
+            None,
         );
         ecl_account.write_to_jzkt();
         println!(
