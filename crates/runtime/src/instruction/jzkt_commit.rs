@@ -15,8 +15,7 @@ impl JzktCommit {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>) -> Result<[u8; 32], ExitCode> {
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        let (root, _logs) = jzkt.commit()?;
+        let (root, _logs) = ctx.jzkt().commit()?;
         Ok(root)
     }
 }

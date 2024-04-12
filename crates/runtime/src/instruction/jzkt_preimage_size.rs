@@ -17,8 +17,7 @@ impl JzktPreimageSize {
         ctx: &mut RuntimeContext<DB>,
         hash: &[u8],
     ) -> Result<u32, ExitCode> {
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        let preimage_size = jzkt.preimage_size(hash.try_into().unwrap());
+        let preimage_size = ctx.jzkt().preimage_size(hash.try_into().unwrap());
         Ok(preimage_size)
     }
 }

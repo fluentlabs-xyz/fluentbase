@@ -311,7 +311,7 @@ mod tests {
         journal::{IJournaledTrie, JournaledTrie},
         types::InMemoryTrieDb,
         zktrie::ZkTrieStateDb,
-        RuntimeContext, TrieStorage,
+        TrieStorage,
     };
     use fluentbase_poseidon::poseidon_hash;
     use fluentbase_types::JournalCheckpoint;

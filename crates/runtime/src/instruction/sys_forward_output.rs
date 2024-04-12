@@ -19,9 +19,10 @@ impl SysForwardOutput {
         offset: u32,
         len: u32,
     ) -> Result<(), ExitCode> {
-        if offset + len <= ctx.return_data.len() as u32 {
-            let ret_data = &ctx.return_data[(offset as usize)..(offset as usize + len as usize)];
-            ctx.output.extend_from_slice(ret_data);
+        if offset + len <= ctx.execution_result.return_data.len() as u32 {
+            let ret_data = &ctx.execution_result.return_data
+                [(offset as usize)..(offset as usize + len as usize)];
+            ctx.execution_result.output.extend_from_slice(ret_data);
             Ok(())
         } else {
             Err(ExitCode::MemoryOutOfBounds)

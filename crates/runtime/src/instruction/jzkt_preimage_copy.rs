@@ -20,8 +20,7 @@ impl JzktPreimageCopy {
         ctx: &mut RuntimeContext<DB>,
         hash: &[u8],
     ) -> Result<Vec<u8>, ExitCode> {
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        let preimage = jzkt.preimage(hash.try_into().unwrap());
+        let preimage = ctx.jzkt().preimage(hash.try_into().unwrap());
         Ok(preimage)
     }
 }

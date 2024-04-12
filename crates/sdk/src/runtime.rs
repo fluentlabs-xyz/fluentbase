@@ -10,7 +10,7 @@ use fluentbase_runtime::{
         jzkt_compute_root::JzktComputeRoot, jzkt_emit_log::JzktEmitLog, jzkt_get::JzktGet,
         jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
         jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage, sys_exec::SysExec,
+        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage,
         sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
         sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
         sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
@@ -135,47 +135,6 @@ impl LowLevelAPI for LowLevelSDK {
         with_context(|ctx| SysState::fn_impl(ctx))
     }
 
-    fn sys_exec(
-        code_offset: *const u8,
-        code_len: u32,
-        input_offset: *const u8,
-        input_len: u32,
-        return_offset: *mut u8,
-        return_len: u32,
-        fuel_offset: *const u32,
-        state: u32,
-    ) -> i32 {
-        let bytecode =
-            unsafe { &*ptr::slice_from_raw_parts(code_offset, code_len as usize) }.to_vec();
-        let input =
-            unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
-        let fuel = LittleEndian::read_u32(unsafe {
-            &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
-        });
-        match with_context_mut(move |ctx| {
-            SysExec::fn_impl(
-                ctx,
-                bytecode.clone(),
-                input.clone(),
-                return_len,
-                fuel,
-                state,
-            )
-        }) {
-            Ok((result, remaining_fuel)) => {
-                if return_len > 0 {
-                    unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
-                }
-                LittleEndian::write_u32(
-                    unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
-                    remaining_fuel,
-                );
-                0
-            }
-            Err(err) => err,
-        }
-    }
-
     fn sys_exec_hash(
         bytecode_hash32_offset: *const u8,
         input_offset: *const u8,
@@ -191,28 +150,31 @@ impl LowLevelAPI for LowLevelSDK {
         let fuel = LittleEndian::read_u32(unsafe {
             &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
         });
-        match with_context_mut(move |ctx| {
-            SysExecHash::fn_impl(
+        with_context_mut(move |ctx| {
+            match SysExecHash::fn_impl(
                 ctx,
                 bytecode_hash32.try_into().unwrap(),
                 input.clone(),
                 return_len,
-                fuel,
+                fuel as u64,
                 state,
-            )
-        }) {
-            Ok((result, remaining_fuel)) => {
-                if return_len > 0 {
-                    unsafe { ptr::copy(result.as_ptr(), return_offset, return_len as usize) }
+            ) {
+                Ok(remaining_fuel) => {
+                    if return_len > 0 {
+                        let return_data = ctx.return_data();
+                        unsafe {
+                            ptr::copy(return_data.as_ptr(), return_offset, return_len as usize)
+                        }
+                    }
+                    LittleEndian::write_u32(
+                        unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
+                        remaining_fuel as u32,
+                    );
+                    0
                 }
-                LittleEndian::write_u32(
-                    unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
-                    remaining_fuel,
-                );
-                0
+                Err(err) => err,
             }
-            Err(err) => err,
-        }
+        })
     }
 
     fn jzkt_open(root32_ptr: *const u8) {
@@ -308,6 +270,6 @@ impl LowLevelSDK {
     }
 
     pub fn with_default_jzkt() -> DefaultEmptyRuntimeDatabase {
-        with_context_mut(|ctx| ctx.jzkt().unwrap())
+        with_context_mut(|ctx| ctx.jzkt().clone())
     }
 }

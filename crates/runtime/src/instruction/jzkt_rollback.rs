@@ -17,7 +17,6 @@ impl JzktRollback {
         ctx: &mut RuntimeContext<DB>,
         checkpoint: JournalCheckpoint,
     ) {
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        jzkt.rollback(checkpoint);
+        ctx.jzkt().rollback(checkpoint);
     }
 }

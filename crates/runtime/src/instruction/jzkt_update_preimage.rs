@@ -25,8 +25,9 @@ impl JzktUpdatePreimage {
         field: u32,
         preimage: &[u8],
     ) -> Result<bool, ExitCode> {
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        let res = jzkt.update_preimage(key.try_into().unwrap(), field, preimage);
+        let res = ctx
+            .jzkt()
+            .update_preimage(key.try_into().unwrap(), field, preimage);
         Ok(res)
     }
 }

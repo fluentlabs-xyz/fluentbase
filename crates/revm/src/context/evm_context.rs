@@ -18,7 +18,7 @@ pub struct EvmContext<DB: IJournaledTrie> {
     pub inner: InnerEvmContext<DB>,
 }
 
-impl<DB: IJournaledTrie> Clone for EvmContext<DB> {
+impl<DB: IJournaledTrie + Clone> Clone for EvmContext<DB> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -185,7 +185,7 @@ pub(crate) mod test_utils {
     pub fn create_cache_db_evm_context_with_balance(
         env: Box<Env>,
         db: DefaultEmptyRuntimeDatabase,
-        balance: U256,
+        _balance: U256,
     ) -> EvmContext<DefaultEmptyRuntimeDatabase> {
         // db.insert_account_info(
         //     MOCK_CALLER,
@@ -307,7 +307,7 @@ mod tests {
         let db = LowLevelSDK::with_default_jzkt();
         let env = Env::default();
         let bal = U256::from(3_000_000_000_u128);
-        let by = Bytecode::new_raw(Bytes::from(vec![0x60, 0x00, 0x60, 0x00]));
+        let _by = Bytecode::new_raw(Bytes::from(vec![0x60, 0x00, 0x60, 0x00]));
         let contract = address!("dead10000000000000000000000000000001dead");
         // cdb.insert_account_info(
         //     contract,

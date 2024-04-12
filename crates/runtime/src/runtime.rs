@@ -6,49 +6,28 @@ use crate::{
     JournaledTrie,
 };
 use fluentbase_types::{
-    create_shared_import_linker, create_sovereign_import_linker, ExitCode, IJournaledTrie,
+    create_shared_import_linker, create_sovereign_import_linker, EmptyJournalTrie, ExitCode,
+    IJournaledTrie,
 };
 use rwasm::{
-    core::ImportLinker, engine::Tracer, rwasm::RwasmModule, AsContextMut, Engine,
-    FuelConsumptionMode, Func, Instance, IntoFunc, Linker, Module, Store,
+    core::ImportLinker, rwasm::RwasmModule, Engine, FuelConsumptionMode, Instance, Linker, Module,
+    Store,
 };
-use std::mem::take;
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
 
 pub struct RuntimeContext<DB: IJournaledTrie> {
     // context inputs
     pub(crate) bytecode: Vec<u8>,
-    pub(crate) fuel_limit: u32,
+    pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
     pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
     // context outputs
-    pub(crate) exit_code: i32,
-    pub(crate) output: Vec<u8>,
-    pub(crate) consumed_fuel: u32,
-    pub(crate) return_data: Vec<u8>,
+    pub(crate) execution_result: ExecutionResult,
     // storage
     pub(crate) jzkt: Option<DB>,
-}
-
-impl<DB: IJournaledTrie> Clone for RuntimeContext<DB> {
-    fn clone(&self) -> Self {
-        Self {
-            bytecode: self.bytecode.clone(),
-            fuel_limit: self.fuel_limit.clone(),
-            state: self.state.clone(),
-            is_shared: self.is_shared.clone(),
-            catch_trap: self.catch_trap.clone(),
-            input: self.input.clone(),
-            exit_code: self.exit_code.clone(),
-            output: self.output.clone(),
-            consumed_fuel: self.consumed_fuel.clone(),
-            return_data: self.return_data.clone(),
-            jzkt: self.jzkt.clone(),
-        }
-    }
 }
 
 impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
@@ -60,10 +39,7 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
             is_shared: false,
             catch_trap: true,
             input: vec![],
-            exit_code: 0,
-            output: vec![],
-            consumed_fuel: 0,
-            return_data: vec![],
+            execution_result: Default::default(),
             jzkt: None,
         }
     }
@@ -101,7 +77,7 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
-    pub fn with_fuel_limit(mut self, fuel_limit: u32) -> Self {
+    pub fn with_fuel_limit(mut self, fuel_limit: u64) -> Self {
         self.fuel_limit = fuel_limit;
         self
     }
@@ -111,12 +87,12 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
-    pub fn jzkt(&mut self) -> Option<DB> {
-        self.jzkt.clone()
+    pub fn jzkt(&mut self) -> &DB {
+        self.jzkt.as_ref().expect("jzkt is not initialized")
     }
 
     pub fn exit_code(&self) -> i32 {
-        self.exit_code
+        self.execution_result.exit_code
     }
 
     pub fn input(&self) -> &Vec<u8> {
@@ -136,7 +112,11 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
     }
 
     pub fn output(&self) -> &Vec<u8> {
-        &self.output
+        &self.execution_result.output
+    }
+
+    pub fn return_data(&self) -> &Vec<u8> {
+        &self.execution_result.return_data
     }
 
     pub fn state(&self) -> u32 {
@@ -144,48 +124,24 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
     }
 
     pub fn clean_output(&mut self) {
-        self.output = vec![];
+        self.execution_result.output = vec![];
     }
 }
 
-pub struct ExecutionResult<DB: IJournaledTrie> {
-    runtime_context: RuntimeContext<DB>,
-    tracer: Tracer,
-    fuel_consumed: Option<u64>,
+#[derive(Default, Clone)]
+pub struct ExecutionResult {
+    pub exit_code: i32,
+    pub output: Vec<u8>,
+    pub fuel_consumed: u64,
+    pub return_data: Vec<u8>,
 }
 
-impl<DB: IJournaledTrie> ExecutionResult<DB> {
-    pub fn cloned(store: &Store<RuntimeContext<DB>>) -> Self {
+impl ExecutionResult {
+    pub fn new_error(exit_code: i32) -> Self {
         Self {
-            runtime_context: store.data().clone(),
-            tracer: store.tracer().clone(),
-            fuel_consumed: store.fuel_consumed(),
+            exit_code,
+            ..Default::default()
         }
-    }
-
-    pub fn taken(store: &mut Store<RuntimeContext<DB>>) -> Self {
-        let fuel_consumed = store.fuel_consumed();
-        Self {
-            runtime_context: take(store.data_mut()),
-            tracer: take(store.tracer_mut()),
-            fuel_consumed,
-        }
-    }
-
-    pub fn bytecode(&self) -> &[u8] {
-        &self.runtime_context.bytecode.as_ref()
-    }
-
-    pub fn data(&self) -> &RuntimeContext<DB> {
-        &self.runtime_context
-    }
-
-    pub fn tracer(&self) -> &Tracer {
-        &self.tracer
-    }
-
-    pub fn fuel_consumed(&self) -> Option<u64> {
-        self.fuel_consumed
     }
 }
 
@@ -197,31 +153,50 @@ pub struct Runtime<DB: IJournaledTrie> {
     instance: Option<Instance>,
 }
 
-impl<DB: IJournaledTrie> Runtime<DB> {
+impl Runtime<EmptyJournalTrie> {
     pub fn new_sovereign_linker() -> ImportLinker {
         create_sovereign_import_linker()
     }
-
     pub fn new_shared_linker() -> ImportLinker {
         create_shared_import_linker()
     }
 
+    pub fn catch_trap(err: &RuntimeError) -> i32 {
+        let err = match err {
+            RuntimeError::Rwasm(err) => err,
+            _ => return ExitCode::UnknownError as i32,
+        };
+        let err = match err {
+            rwasm::Error::Trap(err) => err,
+            _ => return ExitCode::UnknownError as i32,
+        };
+        // for i32 error code (raw error) just return result
+        if let Some(exit_status) = err.i32_exit_status() {
+            return exit_status;
+        }
+        // for trap code (wasmi error) convert error to i32
+        if let Some(trap_code) = err.trap_code() {
+            return Into::<ExitCode>::into(trap_code) as i32;
+        }
+        // otherwise it's just an unknown error
+        ExitCode::UnknownError as i32
+    }
+}
+
+impl<DB: IJournaledTrie> Runtime<DB> {
     pub fn run_with_context(
-        mut runtime_context: RuntimeContext<DB>,
+        runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
-    ) -> Result<ExecutionResult<DB>, RuntimeError> {
+    ) -> Result<ExecutionResult, RuntimeError> {
         let catch_error = runtime_context.catch_trap;
-        let runtime = Self::new(runtime_context.clone(), import_linker);
+        let runtime = Self::new(runtime_context, import_linker);
         if catch_error && runtime.is_err() {
-            runtime_context.exit_code = Self::catch_trap(&runtime.err().unwrap());
-            return Ok(ExecutionResult {
-                runtime_context,
-                tracer: Default::default(),
-                fuel_consumed: None,
-            });
+            return Ok(ExecutionResult::new_error(Runtime::catch_trap(
+                runtime.err().as_ref().unwrap(),
+            )));
         }
         let mut runtime = runtime?;
-        runtime.data_mut().clean_output();
+        runtime.store.data_mut().clean_output();
         runtime.call()
     }
 
@@ -262,7 +237,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         let mut store = Store::<RuntimeContext<DB>>::new(&engine, runtime_context);
 
         if fuel_limit > 0 {
-            store.add_fuel(fuel_limit as u64).unwrap();
+            store.add_fuel(fuel_limit).unwrap();
         }
 
         let result = Self {
@@ -287,7 +262,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         Ok(())
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult<DB>, RuntimeError> {
+    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
         let func = self
             .instance
             .unwrap()
@@ -299,63 +274,24 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         match res {
             Ok(_) => {}
             Err(err) => {
-                let exit_code = Self::catch_trap(&err);
+                let exit_code = Runtime::catch_trap(&err);
                 if exit_code != 0 && !self.store.data().catch_trap {
                     return Err(err);
                 }
-                self.store.data_mut().exit_code = exit_code;
+                self.store.data_mut().execution_result.exit_code = exit_code;
             }
         }
         // we need to restore trace to recover missing opcode values
-        let execution_result = ExecutionResult::cloned(&self.store);
+        let execution_result = self.store.data().execution_result.clone();
         Ok(execution_result)
     }
 
-    pub fn add_binding<Params, Results>(
-        &mut self,
-        module: &'static str,
-        name: &'static str,
-        func: impl IntoFunc<RuntimeContext<DB>, Params, Results>,
-    ) {
-        self.linker
-            .define(
-                module,
-                name,
-                Func::wrap::<RuntimeContext<DB>, Params, Results>(
-                    self.store.as_context_mut(),
-                    func,
-                ),
-            )
-            .unwrap();
-    }
-
     pub fn register_bindings(&mut self) {
-        if !self.data().is_shared {
+        if !self.store.data().is_shared {
             runtime_register_sovereign_handlers(&mut self.linker, &mut self.store)
         } else {
             runtime_register_shared_handlers(&mut self.linker, &mut self.store)
         }
-    }
-
-    pub fn catch_trap(err: &RuntimeError) -> i32 {
-        let err = match err {
-            RuntimeError::Rwasm(err) => err,
-            _ => return ExitCode::UnknownError as i32,
-        };
-        let err = match err {
-            rwasm::Error::Trap(err) => err,
-            _ => return ExitCode::UnknownError as i32,
-        };
-        // for i32 error code (raw error) just return result
-        if let Some(exit_status) = err.i32_exit_status() {
-            return exit_status;
-        }
-        // for trap code (wasmi error) convert error to i32
-        if let Some(trap_code) = err.trap_code() {
-            return Into::<ExitCode>::into(trap_code) as i32;
-        }
-        // otherwise it's just an unknown error
-        ExitCode::UnknownError as i32
     }
 
     pub fn data(&self) -> &RuntimeContext<DB> {

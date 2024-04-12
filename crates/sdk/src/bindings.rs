@@ -28,16 +28,6 @@ extern "C" {
     pub fn _sys_read_output(target: *mut u8, offset: u32, length: u32);
     pub fn _sys_forward_output(offset: u32, len: u32);
     pub fn _sys_state() -> u32;
-    pub fn _sys_exec(
-        code_offset: *const u8,
-        code_len: u32,
-        input_offset: *const u8,
-        input_len: u32,
-        return_offset: *mut u8,
-        return_len: u32,
-        fuel_offset: *const u32,
-        state: u32,
-    ) -> i32;
     pub fn _sys_exec_hash(
         code_hash32_offset: *const u8,
         input_offset: *const u8,

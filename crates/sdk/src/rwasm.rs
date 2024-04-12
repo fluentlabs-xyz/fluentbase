@@ -1,34 +1,12 @@
 use crate::{
     bindings::{
-        _crypto_ecrecover,
-        _crypto_keccak256,
-        _crypto_poseidon,
-        _crypto_poseidon2,
-        _jzkt_checkpoint,
-        _jzkt_commit,
-        _jzkt_compute_root,
-        _jzkt_emit_log,
-        _jzkt_get,
-        _jzkt_open,
-        _jzkt_preimage_copy,
-        _jzkt_preimage_size,
-        _jzkt_remove,
-        _jzkt_rollback,
-        _jzkt_update,
-        _jzkt_update_preimage,
-        _sys_exec,
-        _sys_exec_hash,
-        _sys_forward_output,
-        _sys_halt,
-        _sys_input_size,
-        _sys_output_size,
-        _sys_read,
-        _sys_read_output,
-        _sys_state,
-        _sys_write,
+        _crypto_ecrecover, _crypto_keccak256, _crypto_poseidon, _crypto_poseidon2,
+        _jzkt_checkpoint, _jzkt_commit, _jzkt_compute_root, _jzkt_emit_log, _jzkt_get, _jzkt_open,
+        _jzkt_preimage_copy, _jzkt_preimage_size, _jzkt_remove, _jzkt_rollback, _jzkt_update,
+        _jzkt_update_preimage, _sys_exec_hash, _sys_forward_output, _sys_halt, _sys_input_size,
+        _sys_output_size, _sys_read, _sys_read_output, _sys_state, _sys_write,
     },
-    LowLevelAPI,
-    LowLevelSDK,
+    LowLevelAPI, LowLevelSDK,
 };
 
 impl LowLevelAPI for LowLevelSDK {
@@ -70,31 +48,6 @@ impl LowLevelAPI for LowLevelSDK {
     #[inline(always)]
     fn sys_state() -> u32 {
         unsafe { _sys_state() }
-    }
-
-    #[inline(always)]
-    fn sys_exec(
-        code_offset: *const u8,
-        code_len: u32,
-        input_offset: *const u8,
-        input_len: u32,
-        return_offset: *mut u8,
-        return_len: u32,
-        fuel_offset: *const u32,
-        state: u32,
-    ) -> i32 {
-        unsafe {
-            _sys_exec(
-                code_offset,
-                code_len,
-                input_offset,
-                input_len,
-                return_offset,
-                return_len,
-                fuel_offset,
-                state,
-            )
-        }
     }
 
     #[inline(always)]

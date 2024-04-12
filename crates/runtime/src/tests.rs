@@ -3,7 +3,7 @@ use hex_literal::hex;
 use rwasm::rwasm::{BinaryFormat, RwasmModule};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let rwasm_module = RwasmModule::compile(&wasm_binary, Some(import_linker)).unwrap();
     let mut result = Vec::new();
@@ -36,7 +36,7 @@ fn test_simple() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
 }
 
@@ -60,7 +60,7 @@ fn test_wrong_indirect_type() {
     ))
     "#,
     );
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
         .with_state(1000);
@@ -68,7 +68,7 @@ fn test_wrong_indirect_type() {
     runtime.call().unwrap();
     runtime.data_mut().state = 0;
     let res = runtime.call();
-    assert_eq!(-2008, res.as_ref().unwrap().data().exit_code());
+    assert_eq!(-2008, res.as_ref().unwrap().exit_code);
 }
 
 #[test]
@@ -96,16 +96,13 @@ fn test_keccak256() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(1_000_000);
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     let execution_result =
         Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
-    println!(
-        "fuel consumed: {}",
-        execution_result.fuel_consumed().unwrap_or_default()
-    );
-    assert_eq!(execution_result.data().exit_code, 0);
+    println!("fuel consumed: {}", execution_result.fuel_consumed);
+    assert_eq!(execution_result.exit_code, 0);
     assert_eq!(
         hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529"),
-        execution_result.data().output.as_slice()
+        execution_result.output.as_slice()
     );
 }

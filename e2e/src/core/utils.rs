@@ -24,11 +24,6 @@ impl<const IS_RUNTIME: bool> TestingContext<IS_RUNTIME> {
         }
     }
 
-    pub fn reset_contract_input_wrapper(&mut self) -> &mut Self {
-        self.contract_input_wrapper = Default::default();
-        self
-    }
-
     pub fn try_add_account(&mut self, account: &Account) -> &mut Self {
         self.accounts
             .try_insert(account.address, (*account).clone())
@@ -43,47 +38,51 @@ impl<const IS_RUNTIME: bool> TestingContext<IS_RUNTIME> {
         self.accounts.get_mut(&address).unwrap()
     }
 
-    pub fn apply_ctx(
-        &mut self,
-        runtime_ctx: Option<&mut RuntimeContext<DefaultEmptyRuntimeDatabase>>,
-    ) -> &mut Self {
-        let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
-        if IS_RUNTIME {
-            let runtime_ctx = runtime_ctx.unwrap();
-            let jzkt = runtime_ctx.jzkt().unwrap();
-            for (address, account) in &self.accounts {
-                jzkt.update(
-                    &address.into_word(),
-                    &account.get_fields().to_vec(),
-                    JZKT_COMPRESSION_FLAGS,
-                )
-            }
-            runtime_ctx.change_input(contract_input_vec);
-        } else {
-            for (_address, account) in &self.accounts {
-                account.write_to_jzkt();
-            }
-            LowLevelSDK::with_test_input(contract_input_vec);
-        }
-
-        self
-    }
-
     pub fn run_rwasm_with_input(
         &self,
         runtime_ctx: RuntimeContext<DefaultEmptyRuntimeDatabase>,
         import_linker: ImportLinker,
         is_deploy: bool,
         gas_limit: u32,
-    ) -> ExecutionResult<DefaultEmptyRuntimeDatabase> {
+    ) -> ExecutionResult {
         let runtime_ctx = runtime_ctx
             .with_state(if is_deploy { STATE_DEPLOY } else { STATE_MAIN })
-            .with_fuel_limit(gas_limit)
+            .with_fuel_limit(gas_limit as u64)
             .with_catch_trap(true);
         let mut runtime =
             Runtime::<DefaultEmptyRuntimeDatabase>::new(runtime_ctx, import_linker).unwrap();
         runtime.data_mut().clean_output();
         runtime.call().unwrap()
+    }
+}
+
+impl TestingContext<true> {
+    pub fn apply_ctx(
+        &mut self,
+        runtime_ctx: &mut RuntimeContext<DefaultEmptyRuntimeDatabase>,
+    ) -> &mut Self {
+        let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
+        let jzkt = runtime_ctx.jzkt();
+        for (address, account) in &self.accounts {
+            jzkt.update(
+                &address.into_word(),
+                &account.get_fields().to_vec(),
+                JZKT_COMPRESSION_FLAGS,
+            )
+        }
+        runtime_ctx.change_input(contract_input_vec);
+        self
+    }
+}
+
+impl TestingContext<false> {
+    pub fn apply_ctx(&mut self) -> &mut Self {
+        let contract_input_vec = self.contract_input_wrapper.0.encode_to_vec(0);
+        for (_address, account) in &self.accounts {
+            account.write_to_jzkt();
+        }
+        LowLevelSDK::with_test_input(contract_input_vec);
+        self
     }
 }
 

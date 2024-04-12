@@ -6,7 +6,7 @@ use crate::{
     Context, ContextWithHandlerCfg, Evm, EvmContext, Handler, InnerEvmContext,
 };
 use core::marker::PhantomData;
-use fluentbase_types::{EmptyJournalTrie, IJournaledTrie};
+use fluentbase_types::IJournaledTrie;
 use revm_primitives::ShanghaiSpec;
 use std::boxed::Box;
 

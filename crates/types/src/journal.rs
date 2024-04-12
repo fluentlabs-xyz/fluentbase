@@ -84,8 +84,8 @@ pub struct JournalLog {
     pub data: Bytes,
 }
 
-#[auto_impl(&mut, Box, Rc, Arc)]
-pub trait IJournaledTrie: Clone + Sized {
+#[auto_impl(&, Rc, Arc, Box)]
+pub trait IJournaledTrie {
     fn checkpoint(&self) -> JournalCheckpoint;
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)>;
     fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32);
@@ -103,6 +103,7 @@ pub trait IJournaledTrie: Clone + Sized {
 #[derive(Default, Clone)]
 pub struct EmptyJournalTrie;
 
+#[allow(unused_variables)]
 impl IJournaledTrie for EmptyJournalTrie {
     fn checkpoint(&self) -> JournalCheckpoint {
         todo!()
