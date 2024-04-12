@@ -209,7 +209,7 @@ pub struct InterpreterResult {
 /// Represents the result of an `sstore` operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct SStoreResult {
+pub struct SStoreResult {
     /// Value of the storage when it is first read
     pub(crate) original_value: U256,
     /// Current value of the storage
@@ -223,7 +223,7 @@ pub(crate) struct SStoreResult {
 /// Result of a call that resulted in a self destruct.
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct SelfDestructResult {
+pub struct SelfDestructResult {
     pub(crate) had_value: bool,
     pub(crate) target_exists: bool,
     pub(crate) is_cold: bool,

@@ -4,13 +4,10 @@ use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_runtime::DefaultEmptyRuntimeDatabase;
 use fluentbase_types::{Address, Bytes, KECCAK_EMPTY, POSEIDON_EMPTY};
 use revm_primitives::{
     hex, keccak256, AccountInfo, Bytecode, CreateScheme, Env, ResultAndState, TransactTo,
 };
-
-type DefaultEvmBuilder = EvmBuilder<'static, SetGenericStage, (), DefaultEmptyRuntimeDatabase>;
 
 #[allow(dead_code)]
 struct TestingContext {
@@ -24,6 +21,7 @@ impl Default for TestingContext {
     }
 }
 
+#[allow(dead_code)]
 impl TestingContext {
     fn load_from_genesis(genesis: Genesis) -> Self {
         // create jzkt and put it into testing context

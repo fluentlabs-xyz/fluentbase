@@ -7,6 +7,7 @@ pub use linker::*;
 pub use types::*;
 
 extern crate alloc;
+extern crate core;
 
 mod consts;
 mod journal;
