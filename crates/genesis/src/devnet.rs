@@ -1,7 +1,7 @@
 use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::{b256, Bytes, B256};
+use fluentbase_types::{address, b256, Address, Bytes, B256, U256};
 use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
@@ -33,8 +33,9 @@ pub fn devnet_chain_config() -> ChainConfig {
     }
 }
 
+/// Keccak256("poseidon_hash_key")
 pub const POSEIDON_HASH_KEY: B256 =
-    b256!("0000000000000000000000000000000000000000000000000000000000000001");
+    b256!("72adc1368da53d255ed52bce3690fa2b9ec0f64072bcdf3c86adcaf50b54cff1");
 
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../assets/genesis-devnet.json");
@@ -42,7 +43,13 @@ pub fn devnet_genesis_from_file() -> Genesis {
 }
 
 pub fn devnet_genesis() -> Genesis {
-    let mut alloc = BTreeMap::new();
+    let mut alloc = BTreeMap::from([(
+        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        GenesisAccount {
+            balance: U256::from(100000_000000000000000000u128),
+            ..Default::default()
+        },
+    )]);
     macro_rules! enable_rwasm_contract {
         ($addr:ident, $file_path:literal) => {{
             let bytecode = Bytes::from(include_bytes!($file_path));
@@ -96,16 +103,16 @@ pub fn devnet_genesis() -> Genesis {
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,
-        timestamp: 0,
-        extra_data: Default::default(),
-        gas_limit: 0,
-        difficulty: Default::default(),
-        mix_hash: Default::default(),
-        coinbase: Default::default(),
+        timestamp: 0x6490fdd2,
+        extra_data: Bytes::new(),
+        gas_limit: 0x1c9c380,
+        difficulty: U256::ZERO,
+        mix_hash: B256::ZERO,
+        coinbase: Address::ZERO,
         alloc,
         base_fee_per_gas: None,
         excess_blob_gas: None,
         blob_gas_used: None,
-        number: None,
+        number: Some(0),
     }
 }
