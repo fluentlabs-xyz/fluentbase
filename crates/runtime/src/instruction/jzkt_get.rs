@@ -23,12 +23,11 @@ impl JzktGet {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        context: &mut RuntimeContext<DB>,
+        ctx: &mut RuntimeContext<DB>,
         key: &[u8],
         field: u32,
     ) -> Option<([u8; 32], bool)> {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        let (field_values, _flags, is_cold) = jzkt.get(key.try_into().unwrap())?;
+        let (field_values, _flags, is_cold) = ctx.jzkt().get(key.try_into().unwrap())?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {
             return None;

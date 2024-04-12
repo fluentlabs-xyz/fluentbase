@@ -15,8 +15,7 @@ impl JzktCheckpoint {
     pub fn fn_impl<DB: IJournaledTrie>(
         context: &mut RuntimeContext<DB>,
     ) -> Result<JournalCheckpoint, ExitCode> {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        let checkpoint = jzkt.checkpoint();
+        let checkpoint = context.jzkt().checkpoint();
         Ok(checkpoint)
     }
 }

@@ -29,13 +29,12 @@ impl JzktEmitLog {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        context: &mut RuntimeContext<DB>,
+        ctx: &mut RuntimeContext<DB>,
         key: &[u8],
         topics: &Vec<B256>,
         data: &[u8],
     ) {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        jzkt.emit_log(
+        ctx.jzkt().emit_log(
             Address::from_slice(key),
             topics.clone(),
             Bytes::copy_from_slice(data),

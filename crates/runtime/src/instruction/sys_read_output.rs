@@ -21,8 +21,10 @@ impl SysReadOutput {
         offset: u32,
         length: u32,
     ) -> Result<Vec<u8>, ExitCode> {
-        if offset + length <= ctx.return_data.len() as u32 {
-            Ok(ctx.return_data[(offset as usize)..(offset as usize + length as usize)].to_vec())
+        if offset + length <= ctx.execution_result.return_data.len() as u32 {
+            Ok(ctx.execution_result.return_data
+                [(offset as usize)..(offset as usize + length as usize)]
+                .to_vec())
         } else {
             Err(ExitCode::MemoryOutOfBounds)
         }

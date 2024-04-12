@@ -12,6 +12,6 @@ impl SysOutputSize {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(ctx: &RuntimeContext<DB>) -> u32 {
-        ctx.return_data.len() as u32
+        ctx.execution_result.return_data.len() as u32
     }
 }

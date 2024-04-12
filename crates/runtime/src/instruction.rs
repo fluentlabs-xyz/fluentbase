@@ -14,7 +14,6 @@ pub mod jzkt_remove;
 pub mod jzkt_rollback;
 pub mod jzkt_update;
 pub mod jzkt_update_preimage;
-pub mod sys_exec;
 pub mod sys_exec_hash;
 pub mod sys_forward_output;
 pub mod sys_halt;
@@ -34,7 +33,7 @@ use crate::{
         jzkt_compute_root::JzktComputeRoot, jzkt_emit_log::JzktEmitLog, jzkt_get::JzktGet,
         jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
         jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage, sys_exec::SysExec,
+        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage,
         sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
         sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
         sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
@@ -67,7 +66,6 @@ impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target
 impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
-impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_offset: u32, code_len: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysExecHash, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec_hash(code_hash32_offset: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
 
@@ -99,7 +97,6 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SysRead::register_handler(linker, store);
     SysOutputSize::register_handler(linker, store);
     SysReadOutput::register_handler(linker, store);
-    SysExec::register_handler(linker, store);
     SysExecHash::register_handler(linker, store);
     SysState::register_handler(linker, store);
     if IS_SOVEREIGN {

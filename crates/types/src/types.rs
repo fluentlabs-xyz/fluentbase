@@ -136,7 +136,6 @@ pub enum SysFuncIdx {
     SYS_WRITE = 0x0005,
     SYS_OUTPUT_SIZE = 0x0006,
     SYS_READ_OUTPUT = 0x0007,
-    SYS_EXEC = 0x0008,
     SYS_EXEC_HASH = 0x0009,
     SYS_FORWARD_OUTPUT = 0x000a,
 

@@ -14,9 +14,8 @@ impl JzktComputeRoot {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(context: &mut RuntimeContext<DB>) -> [u8; 32] {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        let result = jzkt.compute_root();
+    pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>) -> [u8; 32] {
+        let result = ctx.jzkt().compute_root();
         result
     }
 }

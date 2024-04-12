@@ -21,7 +21,7 @@ use fluentbase_core_api::bindings::{
 };
 use fluentbase_sdk::evm::{Bytes, ContractInput};
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{ExitCode, IJournaledTrie, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
 use revm_primitives::{CreateScheme, State};
 
 /// EVM call stack limit.
@@ -513,14 +513,14 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             .input_from_env(checkpoint, gas, caller, callee, input, value)
             .encode_to_vec(0);
         let rwasm_bytecode = self.db().preimage(&callee.rwasm_code_hash.0);
-        let ctx = RuntimeContext::<DB>::new(rwasm_bytecode)
+        let ctx = RuntimeContext::new(rwasm_bytecode)
             .with_input(input)
-            .with_fuel_limit(gas.remaining() as u32)
-            .with_jzkt(self.context.evm.db.clone())
+            .with_fuel_limit(gas.remaining())
+            .with_jzkt(&self.context.evm.db)
             .with_catch_trap(true)
             .with_state(STATE_MAIN);
-        let import_linker = Runtime::<DB>::new_sovereign_linker();
-        let mut runtime = match Runtime::<DB>::new(ctx, import_linker) {
+        let import_linker = Runtime::new_sovereign_linker();
+        let mut runtime = match Runtime::new(ctx, import_linker) {
             Ok(runtime) => runtime,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
         };
@@ -528,11 +528,8 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             Ok(result) => result,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
         };
-        gas.record_cost(result.fuel_consumed().unwrap_or_default());
-        (
-            Bytes::from(result.data().output().clone()),
-            result.data().exit_code().into(),
-        )
+        gas.record_cost(result.fuel_consumed);
+        (Bytes::from(result.output.clone()), result.exit_code.into())
     }
 
     #[cfg(not(feature = "std"))]

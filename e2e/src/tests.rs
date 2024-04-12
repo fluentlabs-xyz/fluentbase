@@ -11,11 +11,8 @@ fn test_greeting() {
         include_bytes!("../../examples/bin/greeting.wasm").to_vec(),
         "Hello, World".as_bytes(),
     );
-    assert_eq!(output.data().exit_code(), 0);
-    assert_eq!(
-        output.data().output().clone(),
-        "Hello, World".as_bytes().to_vec()
-    );
+    assert_eq!(output.exit_code, 0);
+    assert_eq!(output.output.clone(), "Hello, World".as_bytes().to_vec());
 }
 
 #[test]
@@ -25,9 +22,9 @@ fn test_keccak256() {
         "Hello, World".as_bytes(),
         true,
     );
-    assert_eq!(output.data().exit_code(), 0);
+    assert_eq!(output.exit_code, 0);
     assert_eq!(
-        output.data().output().clone(),
+        output.output,
         hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529").to_vec()
     );
 }
@@ -40,11 +37,8 @@ fn test_poseidon() {
         include_bytes!("../../examples/bin/poseidon.wasm").to_vec(),
         input_data,
     );
-    assert_eq!(output.data().exit_code(), 0);
-    assert_eq!(
-        output.data().output().clone(),
-        poseidon_hash(input_data).to_vec()
-    );
+    assert_eq!(output.exit_code, 0);
+    assert_eq!(output.output, poseidon_hash(input_data).to_vec());
 }
 
 #[test]
@@ -56,7 +50,7 @@ fn test_rwasm() {
         input_data,
         false,
     );
-    assert_eq!(output.data().exit_code(), 0);
+    assert_eq!(output.exit_code, 0);
 }
 
 #[test]
@@ -67,8 +61,8 @@ fn test_rwasm_greeting() {
         input_data,
         false,
     );
-    println!("fuel spent: {}", output.fuel_consumed().unwrap_or_default());
-    assert_eq!(output.data().exit_code(), 0);
+    println!("fuel spent: {}", output.fuel_consumed);
+    assert_eq!(output.exit_code, 0);
 }
 
 #[ignore]
@@ -80,15 +74,9 @@ fn test_cairo() {
         input_data,
         false,
     );
-    println!(
-        "Return data: {}",
-        hex::encode(output.data().output().clone())
-    );
-    assert_eq!(output.data().exit_code(), 0);
-    assert_eq!(
-        output.data().output().clone(),
-        poseidon_hash(input_data).to_vec()
-    );
+    println!("Return data: {}", hex::encode(output.output.clone()));
+    assert_eq!(output.exit_code, 0);
+    assert_eq!(output.output, poseidon_hash(input_data).to_vec());
 }
 
 #[test]
@@ -122,10 +110,10 @@ fn test_secp256k1_verify() {
             .with_state(STATE_DEPLOY)
             .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
-        let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+        let import_linker = Runtime::new_sovereign_linker();
         let output =
             Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
-        assert_eq!(output.data().output().clone(), Vec::<u8>::new());
+        assert_eq!(output.output, Vec::<u8>::new());
     }
 }
 
@@ -135,7 +123,7 @@ fn test_panic() {
         include_bytes!("../../examples/bin/panic.wasm").to_vec(),
         &[],
     );
-    assert_eq!(output.data().exit_code(), -71);
+    assert_eq!(output.exit_code, -71);
 }
 
 // #[test]

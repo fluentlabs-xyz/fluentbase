@@ -4,7 +4,7 @@ mod inner_evm_context;
 pub use evm_context::EvmContext;
 pub use inner_evm_context::InnerEvmContext;
 
-use crate::{db::Database, primitives::HandlerCfg};
+use crate::primitives::HandlerCfg;
 use fluentbase_types::IJournaledTrie;
 use std::boxed::Box;
 
@@ -16,7 +16,7 @@ pub struct Context<EXT, DB: IJournaledTrie> {
     pub external: EXT,
 }
 
-impl<EXT: Clone, DB: IJournaledTrie> Clone for Context<EXT, DB> {
+impl<EXT: Clone, DB: IJournaledTrie + Clone> Clone for Context<EXT, DB> {
     fn clone(&self) -> Self {
         Self {
             evm: self.evm.clone(),
@@ -57,7 +57,7 @@ impl<EXT, DB: IJournaledTrie> ContextWithHandlerCfg<EXT, DB> {
     }
 }
 
-impl<EXT: Clone, DB: IJournaledTrie> Clone for ContextWithHandlerCfg<EXT, DB> {
+impl<EXT: Clone, DB: IJournaledTrie + Clone> Clone for ContextWithHandlerCfg<EXT, DB> {
     fn clone(&self) -> Self {
         Self {
             context: self.context.clone(),

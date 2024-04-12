@@ -8,10 +8,7 @@ use fluentbase_sdk::evm::ContractInput;
 use fluentbase_types::{Bytes, STATE_MAIN};
 use rwasm::{Config, Engine, Linker, Module, Store};
 
-pub(crate) fn run_rwasm_with_evm_input(
-    wasm_binary: Vec<u8>,
-    input_data: &[u8],
-) -> ExecutionResult<DefaultEmptyRuntimeDatabase> {
+pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult {
     let input_data = {
         let mut contract_input = ContractInput::default();
         contract_input.contract_input = Bytes::copy_from_slice(input_data);
@@ -23,20 +20,20 @@ pub(crate) fn run_rwasm_with_evm_input(
         .with_fuel_limit(100_000)
         .with_input(input_data)
         .with_catch_trap(true);
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
     runtime.data_mut().clean_output();
     runtime.call().unwrap()
 }
 
 #[allow(dead_code)]
-pub(crate) fn catch_panic(ctx: &ExecutionResult<DefaultEmptyRuntimeDatabase>) {
-    if ctx.data().exit_code() != -71 {
+pub(crate) fn catch_panic(ctx: &ExecutionResult) {
+    if ctx.exit_code != -71 {
         return;
     }
     println!(
         "panic with err: {}",
-        std::str::from_utf8(&ctx.data().output()).unwrap()
+        std::str::from_utf8(&ctx.output).unwrap()
     );
 }
 
@@ -44,7 +41,7 @@ pub(crate) fn run_rwasm_with_raw_input(
     wasm_binary: Vec<u8>,
     input_data: &[u8],
     verify_wasm: bool,
-) -> ExecutionResult<DefaultEmptyRuntimeDatabase> {
+) -> ExecutionResult {
     // make sure at least wasm binary works well
     let wasm_exit_code = if verify_wasm {
         let config = Config::default();
@@ -66,8 +63,7 @@ pub(crate) fn run_rwasm_with_raw_input(
         let main_func = instance.get_func(&store, "main").unwrap();
         match main_func.call(&mut store, &[], &mut []) {
             Err(err) => {
-                let exit_code =
-                    Runtime::<DefaultEmptyRuntimeDatabase>::catch_trap(&RuntimeError::Rwasm(err));
+                let exit_code = Runtime::catch_trap(&RuntimeError::Rwasm(err));
                 if exit_code != 0 {
                     panic!("err happened during wasm execution: {:?}", exit_code);
                 }
@@ -98,12 +94,12 @@ pub(crate) fn run_rwasm_with_raw_input(
         .with_fuel_limit(3_000_000)
         .with_input(input_data.to_vec())
         .with_catch_trap(true);
-    let import_linker = Runtime::<DefaultEmptyRuntimeDatabase>::new_sovereign_linker();
+    let import_linker = Runtime::new_sovereign_linker();
     let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
     runtime.data_mut().clean_output();
     let execution_result = runtime.call().unwrap();
     if let Some(wasm_exit_code) = wasm_exit_code {
-        assert_eq!(execution_result.data().exit_code(), wasm_exit_code);
+        assert_eq!(execution_result.exit_code, wasm_exit_code);
     }
     execution_result
 }

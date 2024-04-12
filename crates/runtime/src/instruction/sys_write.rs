@@ -16,6 +16,6 @@ impl SysWrite {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>, data: &[u8]) {
-        ctx.output.extend_from_slice(data);
+        ctx.execution_result.output.extend_from_slice(data);
     }
 }

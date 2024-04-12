@@ -14,6 +14,6 @@ impl SysHalt {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>, exit_code: i32) {
-        ctx.exit_code = exit_code;
+        ctx.execution_result.exit_code = exit_code;
     }
 }

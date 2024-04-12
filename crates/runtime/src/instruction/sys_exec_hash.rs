@@ -1,7 +1,8 @@
 use crate::{Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
+use std::mem::take;
 
 pub struct SysExecHash;
 
@@ -28,15 +29,16 @@ impl SysExecHash {
             &bytecode_hash32,
             input,
             return_len,
-            fuel,
+            fuel as u64,
             state,
         ) {
-            Ok((return_data, remaining_fuel)) => {
+            Ok(remaining_fuel) => {
                 if return_len > 0 {
+                    let return_data = caller.data().execution_result.return_data.clone();
                     caller.write_memory(return_offset, &return_data)?;
                 }
                 let mut fuel_buffer = [0u8; 4];
-                LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel);
+                LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
                 caller.write_memory(fuel_offset, &fuel_buffer)?;
                 ExitCode::Ok.into_i32()
             }
@@ -50,32 +52,50 @@ impl SysExecHash {
         bytecode_hash32: &[u8; 32],
         input: Vec<u8>,
         return_len: u32,
-        fuel_limit: u32,
+        fuel_limit: u64,
         state: u32,
-    ) -> Result<(Vec<u8>, u32), i32> {
-        let import_linker = Runtime::<DB>::new_sovereign_linker();
-        let jzkt = ctx.jzkt.as_mut().unwrap();
-        let bytecode = jzkt.preimage(bytecode_hash32);
-        let next_ctx = RuntimeContext::new(bytecode)
+    ) -> Result<u64, i32> {
+        let import_linker = Runtime::new_sovereign_linker();
+
+        // load bytecode based on the preimage provided
+        let bytecode = ctx.jzkt().preimage(bytecode_hash32);
+
+        // take jzkt from the existing context (we will return it back soon)
+        let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
+
+        // create new runtime instance with the context
+        let ctx2 = RuntimeContext::new(bytecode)
             .with_input(input)
-            .with_state(STATE_MAIN)
+            .with_state(state)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_catch_trap(true)
-            .with_jzkt(ctx.jzkt.clone().unwrap())
+            .with_jzkt(jzkt)
             .with_state(state);
-        let execution_result = Runtime::<DB>::run_with_context(next_ctx, import_linker)
-            .map_err(|_| ExitCode::TransactError.into_i32())?;
-        let fuel_consumed = execution_result.fuel_consumed().unwrap_or_default() as u32;
-        let output = execution_result.data().output();
-        if return_len > 0 && output.len() > return_len as usize {
+        let mut runtime = match Runtime::new(ctx2, import_linker) {
+            Err(err) => {
+                return Err(Runtime::catch_trap(&err));
+            }
+            Ok(runtime) => runtime,
+        };
+        let execution_result = match runtime.call() {
+            Err(err) => {
+                return Err(Runtime::catch_trap(&err));
+            }
+            Ok(execution_result) => execution_result,
+        };
+
+        // make sure there is no return overflow
+        if return_len > 0 && execution_result.output.len() > return_len as usize {
             return Err(ExitCode::OutputOverflow.into_i32());
         }
-        if execution_result.data().exit_code != ExitCode::Ok.into_i32() {
-            return Err(execution_result.data().exit_code);
-        }
-        ctx.consumed_fuel += fuel_consumed;
-        ctx.return_data = output.clone();
-        Ok((output.clone(), fuel_limit - fuel_consumed))
+
+        // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
+
+        // increase total fuel consumed and remember return data
+        ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
+        ctx.execution_result.return_data = execution_result.output.clone();
+
+        Ok(fuel_limit - execution_result.fuel_consumed)
     }
 }

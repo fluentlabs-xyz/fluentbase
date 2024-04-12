@@ -15,11 +15,10 @@ impl JzktRemove {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        context: &mut RuntimeContext<DB>,
+        ctx: &mut RuntimeContext<DB>,
         key: &[u8],
     ) -> Result<(), ExitCode> {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        jzkt.remove(key.try_into().unwrap());
+        ctx.jzkt().remove(key.try_into().unwrap());
         Ok(())
     }
 }

@@ -36,7 +36,7 @@ impl Default for InnerEvmContext<EmptyJournalTrie> {
     }
 }
 
-impl<DB: IJournaledTrie> Clone for InnerEvmContext<DB> {
+impl<DB: IJournaledTrie + Clone> Clone for InnerEvmContext<DB> {
     fn clone(&self) -> Self {
         Self {
             env: self.env.clone(),

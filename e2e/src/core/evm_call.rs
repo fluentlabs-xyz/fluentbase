@@ -128,7 +128,7 @@ fn evm_create_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
@@ -175,7 +175,7 @@ fn evm_call_after_create_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
@@ -251,7 +251,7 @@ fn evm_call_after_create2_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
@@ -319,7 +319,7 @@ fn evm_balance_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let mut caller_balance_bytes32_fact = Bytes32::default();
     _evm_balance(
@@ -357,7 +357,7 @@ fn evm_selfbalance_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let mut caller_balance_bytes32_fact = Bytes32::default();
     _evm_self_balance(caller_balance_bytes32_fact.as_mut_ptr());
@@ -393,7 +393,7 @@ fn evm_address_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let mut address_bytes20_fact = Bytes20::default();
     _evm_address(address_bytes20_fact.as_mut_ptr());
@@ -431,7 +431,7 @@ fn evm_selfbalance_from_contract_call_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let create_value_hex_bytes = hex!("1000");
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
@@ -505,7 +505,7 @@ fn evm_balance_from_contract_call_test() {
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address)
         .set_contract_is_static(contract_is_static);
-    test_ctx.apply_ctx(None);
+    test_ctx.apply_ctx();
 
     let create_value_hex_bytes = hex!("84326482");
     let create_value = U256::from_be_slice(&create_value_hex_bytes);

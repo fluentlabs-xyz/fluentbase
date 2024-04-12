@@ -27,13 +27,13 @@ impl JzktUpdate {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        context: &mut RuntimeContext<DB>,
+        ctx: &mut RuntimeContext<DB>,
         key: &[u8],
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
-        let jzkt = context.jzkt.as_mut().expect("jzkt is not set");
-        jzkt.update(key.try_into().unwrap(), &vals, value_flags);
+        ctx.jzkt()
+            .update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())
     }
 }
