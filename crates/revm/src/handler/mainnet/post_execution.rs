@@ -101,7 +101,7 @@ pub fn output<EXT, DB: Database>(
             output: output.into_data(),
         },
         _ => ExecutionResult::Halt {
-            reason: HaltReason::OutOfGas(OutOfGasError::InvalidOperand),
+            reason: HaltReason::OutOfGas(OutOfGasError::Basic),
             gas_used: final_gas_used,
         },
     };
