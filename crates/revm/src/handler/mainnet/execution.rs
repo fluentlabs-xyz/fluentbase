@@ -1,6 +1,6 @@
 use crate::{
     db::Database,
-    interpreter::{CallInputs, CreateInputs, CreateOutcome, Gas, InstructionResult, SharedMemory},
+    interpreter::{CallInputs, CreateInputs, CreateOutcome, Gas, SharedMemory},
     primitives::{EVMError, Env, Spec},
     return_ok, return_revert, CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
@@ -137,7 +137,7 @@ pub fn insert_create_outcome<EXT, DB: Database>(
 
 #[cfg(test)]
 mod tests {
-    use crate::interpreter::InterpreterResult;
+    use crate::interpreter::{InstructionResult, InterpreterResult};
     use revm_precompile::Bytes;
     use revm_primitives::CancunSpec;
 

@@ -1,3 +1,5 @@
+use core::fmt;
+use core::fmt::Formatter;
 use rwasm::{
     core::{Trap, TrapCode},
     engine::bytecode::FuncIdx,
@@ -56,6 +58,56 @@ pub enum ExitCode {
     GrowthOperationLimited = -2016,
     UnknownError = -2017,
     UnresolvedFunction = -2018,
+}
+
+impl fmt::Display for ExitCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ExitCode::Ok => write!(f, "ok"),
+            ExitCode::Panic => write!(f, "panic"),
+            ExitCode::ExecutionHalted => write!(f, "execution halted"),
+            ExitCode::NotSupportedCall => write!(f, "not supported call"),
+            ExitCode::TransactError => write!(f, "transact error"),
+            ExitCode::OutputOverflow => write!(f, "output overflow"),
+            ExitCode::InputDecodeFailure => write!(f, "input decode failure"),
+            ExitCode::PoseidonError => write!(f, "poseidon error"),
+            ExitCode::PersistentStorageError => write!(f, "persistent storage error"),
+            ExitCode::WriteProtection => write!(f, "write protection"),
+            ExitCode::CreateError => write!(f, "create error"),
+            ExitCode::PreimageUnavailable => write!(f, "preimage unavailable"),
+            ExitCode::InsufficientBalance => write!(f, "insufficient balance"),
+            ExitCode::CreateCollision => write!(f, "create collision"),
+            ExitCode::ContractSizeLimit => write!(f, "contract size limit"),
+            ExitCode::StorageSlotOverflow => write!(f, "storage slot overflow"),
+            ExitCode::CallDepthOverflow => write!(f, "call depth overflow"),
+            ExitCode::FatalExternalError => write!(f, "fatal external error"),
+            ExitCode::CompilationError => write!(f, "compilation error"),
+            ExitCode::OverflowPayment => write!(f, "overflow payment"),
+            ExitCode::EVMCreateError => write!(f, "evm create error"),
+            ExitCode::EVMCreateRevert => write!(f, "evm create revert"),
+            ExitCode::EVMCallError => write!(f, "evm call error"),
+            ExitCode::EVMCallRevert => write!(f, "evm call revert"),
+            ExitCode::EVMNotFound => write!(f, "evm not found"),
+            ExitCode::PrecompileError => write!(f, "precompile error"),
+            ExitCode::EcrecoverBadSignature => write!(f, "ecrecover bad signature"),
+            ExitCode::EcrecoverError => write!(f, "ecrecover error"),
+            ExitCode::NonceOverflow => write!(f, "nonce overflow"),
+            ExitCode::CreateContractStartingWithEF => write!(f, "create contract starting with ef"),
+            ExitCode::UnreachableCodeReached => write!(f, "unreachable code reached"),
+            ExitCode::MemoryOutOfBounds => write!(f, "memory out of bounds"),
+            ExitCode::TableOutOfBounds => write!(f, "table out of bounds"),
+            ExitCode::IndirectCallToNull => write!(f, "indirect call to null"),
+            ExitCode::IntegerDivisionByZero => write!(f, "integer division by zero"),
+            ExitCode::IntegerOverflow => write!(f, "integer overflow"),
+            ExitCode::BadConversionToInteger => write!(f, "bad conversion to integer"),
+            ExitCode::StackOverflow => write!(f, "stack overflow"),
+            ExitCode::BadSignature => write!(f, "bad signature"),
+            ExitCode::OutOfFuel => write!(f, "out of fuel"),
+            ExitCode::GrowthOperationLimited => write!(f, "growth operation limited"),
+            ExitCode::UnknownError => write!(f, "unknown error"),
+            ExitCode::UnresolvedFunction => write!(f, "unresolved function"),
+        }
+    }
 }
 
 impl From<i32> for ExitCode {
