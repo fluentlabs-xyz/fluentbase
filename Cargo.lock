@@ -25,9 +25,9 @@ dependencies = [
 
 [[package]]
 name = "allocator-api2"
-version = "0.2.16"
+version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0942ffc6dcaadf03badf6e6a2d0228460359d5e34b57ccdc720b7382dfbd5ec5"
+checksum = "5c6cb57a04249c6480766f7f7cef5467412af1490f8d1e243141daddada3264f"
 
 [[package]]
 name = "alloy-genesis"
@@ -454,6 +454,7 @@ dependencies = [
  "glob",
  "hex",
  "libc",
+ "serde",
 ]
 
 [[package]]
@@ -1095,6 +1096,7 @@ dependencies = [
  "bytes",
  "clap",
  "fluentbase-core",
+ "fluentbase-poseidon",
  "fluentbase-types",
  "hashbrown",
  "serde",
@@ -1118,6 +1120,7 @@ dependencies = [
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "lazy_static",
  "poseidon",
+ "revm-primitives",
 ]
 
 [[package]]
@@ -1131,9 +1134,11 @@ dependencies = [
  "fluentbase-core",
  "fluentbase-core-api",
  "fluentbase-genesis",
+ "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "fluentbase-types",
+ "revm-precompile",
  "revm-primitives",
  "rwasm",
 ]
@@ -2103,7 +2108,7 @@ checksum = "adad44e29e4c806119491a7f06f03de4d1af22c3a680dd47f1e6e179439d1f56"
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4abb387047f2e8f5e4c7e460d5577821fe2cb692"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#778154f6fc6ec5ee3f36a40085702962a38d0769"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2112,13 +2117,15 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4abb387047f2e8f5e4c7e460d5577821fe2cb692"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#778154f6fc6ec5ee3f36a40085702962a38d0769"
 dependencies = [
  "aurora-engine-modexp",
+ "c-kzg",
  "k256",
  "once_cell",
  "revm-primitives",
  "ripemd",
+ "secp256k1",
  "sha2",
  "substrate-bn",
 ]
@@ -2126,7 +2133,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4abb387047f2e8f5e4c7e460d5577821fe2cb692"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#778154f6fc6ec5ee3f36a40085702962a38d0769"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -2297,6 +2304,25 @@ dependencies = [
  "pkcs8",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.28.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
+dependencies = [
+ "rand",
+ "secp256k1-sys",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5d1746aae42c19d583c3c1a8c646bfad910498e2051c551a7f2e3c0c9fbb7eb"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

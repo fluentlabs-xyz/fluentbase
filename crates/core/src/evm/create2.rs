@@ -102,6 +102,7 @@ pub fn _evm_create2(
     callee_account.update_source_bytecode(&result.output);
     callee_account.update_rwasm_bytecode(
         &include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into(),
+        None,
     );
 
     unsafe { ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }

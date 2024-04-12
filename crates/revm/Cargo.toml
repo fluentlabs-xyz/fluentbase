@@ -16,6 +16,7 @@ proc-macro = false
 
 [dependencies]
 # revm
+revm-precompile = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
 # fluentbase
@@ -36,12 +37,14 @@ dyn-clone = "1.0.17"
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true }
+fluentbase-poseidon = { workspace = true }
 fluentbase-genesis = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
+    "revm-precompile/std",
     "revm-primitives/std",
     "dep:fluentbase-runtime",
 ]

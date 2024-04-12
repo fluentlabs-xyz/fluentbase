@@ -282,7 +282,8 @@ impl<DB: IJournaledTrie> Runtime<DB> {
             }
         }
         // we need to restore trace to recover missing opcode values
-        let execution_result = self.store.data().execution_result.clone();
+        let mut execution_result = self.store.data().execution_result.clone();
+        execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
         Ok(execution_result)
     }
 

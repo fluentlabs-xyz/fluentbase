@@ -62,7 +62,7 @@ pub fn _wasm_create2(
 
     // write contract to the trie
     contract_account.update_source_bytecode(&init_code.into());
-    contract_account.update_rwasm_bytecode(&bytecode_rwasm.into());
+    contract_account.update_rwasm_bytecode(&bytecode_rwasm.into(), None);
     rwasm_exec_hash(
         contract_account.rwasm_code_hash.as_slice(),
         &[],

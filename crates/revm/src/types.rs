@@ -1,24 +1,139 @@
+pub use crate::gas::Gas;
 use core::ops::Range;
-use fluentbase_sdk::evm::{Address, Bytes};
+use fluentbase_sdk::evm::{Address, Bytes, B256};
 use fluentbase_types::{ExitCode, U256};
-use revm_primitives::{CreateScheme, Spec, TransactTo, TxEnv, LONDON};
+use revm_primitives::{Bytecode, CreateScheme, Env, TransactTo, TxEnv};
 use std::boxed::Box;
 
 pub type InstructionResult = ExitCode;
 
+#[derive(Default, Debug)]
 pub struct Interpreter {
+    pub contract: Box<Contract>,
+    pub gas_limit: u64,
+    pub is_static: bool,
     pub gas: Gas,
     pub program_counter: usize,
     pub current_opcode: u8,
 }
 
 impl Interpreter {
+    pub fn new(contract: Box<Contract>, gas_limit: u64, is_static: bool) -> Self {
+        Self {
+            contract,
+            gas_limit,
+            is_static,
+            ..Default::default()
+        }
+    }
+
+    pub fn insert_call_outcome(
+        &mut self,
+        _shared_memory: &mut SharedMemory,
+        _call_outcome: CallOutcome,
+    ) {
+    }
+
+    pub fn insert_create_outcome(&mut self, _create_outcome: CreateOutcome) {}
+
+    pub fn program_counter(&self) -> usize {
+        self.program_counter
+    }
+
     pub fn current_opcode(&self) -> u8 {
         self.current_opcode
     }
 
     pub fn gas(&self) -> &Gas {
         &self.gas
+    }
+}
+
+#[macro_export]
+macro_rules! return_ok {
+    () => {
+        fluentbase_types::ExitCode::Ok
+    };
+}
+#[macro_export]
+macro_rules! return_revert {
+    () => {
+        fluentbase_types::ExitCode::Panic
+    };
+}
+
+/// EVM contract information.
+#[derive(Clone, Debug, Default)]
+pub struct Contract {
+    /// Contracts data
+    pub input: Bytes,
+    /// Bytecode contains contract code, size of original code, analysis with gas block and jump table.
+    /// Note that current code is extended with push padding and STOP at end.
+    pub bytecode: Bytecode,
+    /// Bytecode hash.
+    pub hash: B256,
+    /// Contract address
+    pub address: Address,
+    /// Caller of the EVM.
+    pub caller: Address,
+    /// Value send to contract.
+    pub value: U256,
+}
+
+impl Contract {
+    /// Instantiates a new contract by analyzing the given bytecode.
+    #[inline]
+    pub fn new(
+        input: Bytes,
+        bytecode: Bytecode,
+        hash: B256,
+        address: Address,
+        caller: Address,
+        value: U256,
+    ) -> Self {
+        Self {
+            input,
+            bytecode,
+            hash,
+            address,
+            caller,
+            value,
+        }
+    }
+
+    /// Creates a new contract from the given [`Env`].
+    #[inline]
+    pub fn new_env(env: &Env, bytecode: Bytecode, hash: B256) -> Self {
+        let contract_address = match env.tx.transact_to {
+            TransactTo::Call(caller) => caller,
+            TransactTo::Create(..) => Address::ZERO,
+        };
+        Self::new(
+            env.tx.data.clone(),
+            bytecode,
+            hash,
+            contract_address,
+            env.tx.caller,
+            env.tx.value,
+        )
+    }
+
+    /// Creates a new contract from the given [`CallContext`].
+    #[inline]
+    pub fn new_with_context(
+        input: Bytes,
+        bytecode: Bytecode,
+        hash: B256,
+        call_context: &CallContext,
+    ) -> Self {
+        Self::new(
+            input,
+            bytecode,
+            hash,
+            call_context.address,
+            call_context.caller,
+            call_context.apparent_value,
+        )
     }
 }
 
@@ -113,128 +228,6 @@ pub(crate) struct SelfDestructResult {
     pub(crate) target_exists: bool,
     pub(crate) is_cold: bool,
     pub(crate) previously_destroyed: bool,
-}
-
-/// Represents the state of gas during execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Gas {
-    /// The initial gas limit.
-    limit: u64,
-    /// The total used gas.
-    all_used_gas: u64,
-    /// Used gas without memory expansion.
-    used: u64,
-    /// Used gas for memory expansion.
-    memory: u64,
-    /// Refunded gas. This is used only at the end of execution.
-    refunded: i64,
-}
-
-impl Gas {
-    /// Creates a new `Gas` struct with the given gas limit.
-    #[inline]
-    pub const fn new(limit: u64) -> Self {
-        Self {
-            limit,
-            used: 0,
-            memory: 0,
-            refunded: 0,
-            all_used_gas: 0,
-        }
-    }
-
-    /// Returns the gas limit.
-    #[inline]
-    pub const fn limit(&self) -> u64 {
-        self.limit
-    }
-
-    /// Returns the amount of gas that was used.
-    #[inline]
-    pub const fn memory(&self) -> u64 {
-        self.memory
-    }
-
-    /// Returns the amount of gas that was refunded.
-    #[inline]
-    pub const fn refunded(&self) -> i64 {
-        self.refunded
-    }
-
-    /// Returns all the gas used in the execution.
-    #[inline]
-    pub const fn spend(&self) -> u64 {
-        self.all_used_gas
-    }
-
-    /// Returns the amount of gas remaining.
-    #[inline]
-    pub const fn remaining(&self) -> u64 {
-        self.limit - self.all_used_gas
-    }
-
-    /// Erases a gas cost from the totals.
-    #[inline]
-    pub fn erase_cost(&mut self, returned: u64) {
-        self.used -= returned;
-        self.all_used_gas -= returned;
-    }
-
-    /// Records a refund value.
-    ///
-    /// `refund` can be negative but `self.refunded` should always be positive
-    /// at the end of transact.
-    #[inline]
-    pub fn record_refund(&mut self, refund: i64) {
-        self.refunded += refund;
-    }
-
-    /// Set a refund value for final refund.
-    ///
-    /// Max refund value is limited to Nth part (depending of fork) of gas spend.
-    ///
-    /// Related to EIP-3529: Reduction in refunds
-    pub fn set_final_refund<SPEC: Spec>(&mut self) {
-        let max_refund_quotient = if SPEC::enabled(LONDON) { 5 } else { 2 };
-        self.refunded = (self.refunded() as u64).min(self.spend() / max_refund_quotient) as i64;
-    }
-
-    /// Set a refund value
-    pub fn set_refund(&mut self, refund: i64) {
-        self.refunded = refund;
-    }
-
-    /// Records an explicit cost.
-    ///
-    /// Returns `false` if the gas limit is exceeded.
-    ///
-    /// This function is called on every instruction in the interpreter if the feature
-    /// `no_gas_measuring` is not enabled.
-    #[inline(always)]
-    pub fn record_cost(&mut self, cost: u64) -> bool {
-        let all_used_gas = self.all_used_gas.saturating_add(cost);
-        if self.limit < all_used_gas {
-            return false;
-        }
-
-        self.used += cost;
-        self.all_used_gas = all_used_gas;
-        true
-    }
-
-    /// used in memory_resize! macro to record gas used for memory expansion.
-    #[inline]
-    pub fn record_memory(&mut self, gas_memory: u64) -> bool {
-        if gas_memory > self.memory {
-            let all_used_gas = self.used.saturating_add(gas_memory);
-            if self.limit < all_used_gas {
-                return false;
-            }
-            self.memory = gas_memory;
-            self.all_used_gas = all_used_gas;
-        }
-        true
-    }
 }
 
 /// Transfer from source to target, with given value.

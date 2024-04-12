@@ -1,9 +1,9 @@
 use crate::{
     handler::mainnet,
-    primitives::{EVMError, Env, Spec},
+    primitives::{db::Database, EVMError, Env, Spec},
     Context,
 };
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use std::sync::Arc;
 
 /// Handle that validates env.
@@ -18,7 +18,7 @@ pub type ValidateTxEnvAgainstState<'a, EXT, DB> =
 pub type ValidateInitialTxGasHandle<'a> = Arc<dyn Fn(&Env) -> Result<u64, EVMError<ExitCode>> + 'a>;
 
 /// Handles related to validation.
-pub struct ValidationHandler<'a, EXT: 'a, DB: IJournaledTrie + 'a> {
+pub struct ValidationHandler<'a, EXT: 'a, DB: Database + 'a> {
     /// Validate and calculate initial transaction gas.
     pub initial_tx_gas: ValidateInitialTxGasHandle<'a>,
     /// Validate transactions against state data.
@@ -27,7 +27,7 @@ pub struct ValidationHandler<'a, EXT: 'a, DB: IJournaledTrie + 'a> {
     pub env: ValidateEnvHandle<'a>,
 }
 
-impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> ValidationHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: Database + 'a> ValidationHandler<'a, EXT, DB> {
     /// Create new ValidationHandles
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
@@ -38,7 +38,7 @@ impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> ValidationHandler<'a, EXT, DB> {
     }
 }
 
-impl<'a, EXT, DB: IJournaledTrie> ValidationHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: Database> ValidationHandler<'a, EXT, DB> {
     /// Validate env.
     pub fn env(&self, env: &Env) -> Result<(), EVMError<ExitCode>> {
         (self.env)(env)

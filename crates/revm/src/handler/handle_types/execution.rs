@@ -1,11 +1,13 @@
-use crate::types::{CallInputs, CallOutcome, CreateOutcome, InterpreterResult, SharedMemory};
 use crate::{
     handler::mainnet,
-    primitives::{EVMError, Spec},
+    interpreter::{CallInputs, CreateInputs, SharedMemory},
+    primitives::{db::Database, EVMError, Spec},
     CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
 };
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use std::{boxed::Box, sync::Arc};
+
+use crate::interpreter::{CallOutcome, CreateOutcome, InterpreterResult};
 
 /// Handles first frame return handle.
 pub type LastFrameReturnHandle<'a, EXT, DB> =
@@ -38,6 +40,12 @@ pub type InsertCallOutcomeHandle<'a, EXT, DB> = Arc<
         + 'a,
 >;
 
+/// Handle sub create.
+pub type FrameCreateHandle<'a, EXT, DB> = Arc<
+    dyn Fn(&mut Context<EXT, DB>, Box<CreateInputs>) -> Result<FrameOrResult, EVMError<ExitCode>>
+        + 'a,
+>;
+
 /// Handle create return
 pub type FrameCreateReturnHandle<'a, EXT, DB> = Arc<
     dyn Fn(
@@ -54,7 +62,7 @@ pub type InsertCreateOutcomeHandle<'a, EXT, DB> = Arc<
 >;
 
 /// Handles related to stack frames.
-pub struct ExecutionHandler<'a, EXT, DB: IJournaledTrie> {
+pub struct ExecutionHandler<'a, EXT, DB: Database> {
     /// Handles last frame return, modified gas for refund and
     /// sets tx gas limit.
     pub last_frame_return: LastFrameReturnHandle<'a, EXT, DB>,
@@ -62,23 +70,32 @@ pub struct ExecutionHandler<'a, EXT, DB: IJournaledTrie> {
     pub call: FrameCallHandle<'a, EXT, DB>,
     /// Call return
     pub call_return: FrameCallReturnHandle<'a, EXT, DB>,
+    /// Insert call outcome
+    pub insert_call_outcome: InsertCallOutcomeHandle<'a, EXT, DB>,
+    /// Frame crate
+    pub create: FrameCreateHandle<'a, EXT, DB>,
     /// Crate return
     pub create_return: FrameCreateReturnHandle<'a, EXT, DB>,
+    /// Insert create outcome.
+    pub insert_create_outcome: InsertCreateOutcomeHandle<'a, EXT, DB>,
 }
 
-impl<'a, EXT: 'a, DB: IJournaledTrie + 'a> ExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT: 'a, DB: Database + 'a> ExecutionHandler<'a, EXT, DB> {
     /// Creates mainnet ExecutionHandler.
     pub fn new<SPEC: Spec + 'a>() -> Self {
         Self {
             last_frame_return: Arc::new(mainnet::last_frame_return::<SPEC, EXT, DB>),
             call: Arc::new(mainnet::call::<SPEC, EXT, DB>),
             call_return: Arc::new(mainnet::call_return::<EXT, DB>),
+            insert_call_outcome: Arc::new(mainnet::insert_call_outcome),
+            create: Arc::new(mainnet::create::<SPEC, EXT, DB>),
             create_return: Arc::new(mainnet::create_return::<SPEC, EXT, DB>),
+            insert_create_outcome: Arc::new(mainnet::insert_create_outcome),
         }
     }
 }
 
-impl<'a, EXT, DB: IJournaledTrie> ExecutionHandler<'a, EXT, DB> {
+impl<'a, EXT, DB: Database> ExecutionHandler<'a, EXT, DB> {
     /// Handle call return, depending on instruction result gas will be reimbursed or not.
     #[inline]
     pub fn last_frame_return(
@@ -110,6 +127,28 @@ impl<'a, EXT, DB: IJournaledTrie> ExecutionHandler<'a, EXT, DB> {
         (self.call_return)(context, frame, interpreter_result)
     }
 
+    /// Call registered handler for inserting call outcome.
+    #[inline]
+    pub fn insert_call_outcome(
+        &self,
+        context: &mut Context<EXT, DB>,
+        frame: &mut Frame,
+        shared_memory: &mut SharedMemory,
+        outcome: CallOutcome,
+    ) -> Result<(), EVMError<ExitCode>> {
+        (self.insert_call_outcome)(context, frame, shared_memory, outcome)
+    }
+
+    /// Call Create frame
+    #[inline]
+    pub fn create(
+        &self,
+        context: &mut Context<EXT, DB>,
+        inputs: Box<CreateInputs>,
+    ) -> Result<FrameOrResult, EVMError<ExitCode>> {
+        (self.create)(context, inputs)
+    }
+
     /// Call handler for create return.
     #[inline]
     pub fn create_return(
@@ -119,5 +158,16 @@ impl<'a, EXT, DB: IJournaledTrie> ExecutionHandler<'a, EXT, DB> {
         interpreter_result: InterpreterResult,
     ) -> Result<CreateOutcome, EVMError<ExitCode>> {
         (self.create_return)(context, frame, interpreter_result)
+    }
+
+    /// Call handler for inserting create outcome.
+    #[inline]
+    pub fn insert_create_outcome(
+        &self,
+        context: &mut Context<EXT, DB>,
+        frame: &mut Frame,
+        outcome: CreateOutcome,
+    ) -> Result<(), EVMError<ExitCode>> {
+        (self.insert_create_outcome)(context, frame, outcome)
     }
 }

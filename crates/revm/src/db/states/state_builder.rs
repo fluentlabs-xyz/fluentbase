@@ -1,6 +1,9 @@
-use super::{cache::CacheState, BundleState, State, TransitionState};
-use fluentbase_types::{EmptyJournalTrie, IJournaledTrie};
-use revm_primitives::B256;
+use super::{cache::CacheState, state::DBBox, BundleState, State, TransitionState};
+use crate::db::EmptyDB;
+use revm_primitives::{
+    db::{Database, DatabaseRef, WrapDatabaseRef},
+    B256,
+};
 use std::collections::BTreeMap;
 
 /// Allows building of State and initializing it with different options.
@@ -27,7 +30,7 @@ pub struct StateBuilder<DB> {
     with_block_hashes: BTreeMap<u64, B256>,
 }
 
-impl StateBuilder<EmptyJournalTrie> {
+impl StateBuilder<EmptyDB> {
     /// Create a new builder with an empty database.
     ///
     /// If you want to instantiate it with a specific database, use
@@ -37,13 +40,13 @@ impl StateBuilder<EmptyJournalTrie> {
     }
 }
 
-impl<DB: IJournaledTrie + Default> Default for StateBuilder<DB> {
+impl<DB: Database + Default> Default for StateBuilder<DB> {
     fn default() -> Self {
         Self::new_with_database(DB::default())
     }
 }
 
-impl<DB: IJournaledTrie> StateBuilder<DB> {
+impl<DB: Database> StateBuilder<DB> {
     /// Create a new builder with the given database.
     pub fn new_with_database(database: DB) -> Self {
         Self {
@@ -58,7 +61,7 @@ impl<DB: IJournaledTrie> StateBuilder<DB> {
     }
 
     /// Set the database.
-    pub fn with_database<ODB: IJournaledTrie>(self, database: ODB) -> StateBuilder<ODB> {
+    pub fn with_database<ODB: Database>(self, database: ODB) -> StateBuilder<ODB> {
         // cast to the different database,
         // Note that we return different type depending of the database NewDBError.
         StateBuilder {
@@ -70,6 +73,22 @@ impl<DB: IJournaledTrie> StateBuilder<DB> {
             with_background_transition_merge: self.with_background_transition_merge,
             with_block_hashes: self.with_block_hashes,
         }
+    }
+
+    /// Takes [DatabaseRef] and wraps it with [WrapDatabaseRef].
+    pub fn with_database_ref<ODB: DatabaseRef>(
+        self,
+        database: ODB,
+    ) -> StateBuilder<WrapDatabaseRef<ODB>> {
+        self.with_database(WrapDatabaseRef(database))
+    }
+
+    /// With boxed version of database.
+    pub fn with_database_boxed<Error>(
+        self,
+        database: DBBox<'_, Error>,
+    ) -> StateBuilder<DBBox<'_, Error>> {
+        self.with_database(database)
     }
 
     /// By default state clear flag is enabled but for initial sync on mainnet

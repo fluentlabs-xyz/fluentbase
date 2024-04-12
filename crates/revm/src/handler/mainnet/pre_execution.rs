@@ -3,28 +3,41 @@
 //! They handle initial setup of the EVM, call loop and the final return of the EVM
 
 use crate::{
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        EVMError, Env, Spec,
+        db::Database,
+        Account, EVMError, Env, Spec,
         SpecId::{CANCUN, SHANGHAI},
         TransactTo, U256,
     },
-    Context,
+    Context, ContextPrecompiles,
 };
-use fluentbase_core::Account;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
+
+/// Main precompile load
+#[inline]
+pub fn load_precompiles<SPEC: Spec, DB: Database>() -> ContextPrecompiles<DB> {
+    Precompiles::new(PrecompileSpecId::from_spec_id(SPEC::SPEC_ID))
+        .clone()
+        .into()
+}
 
 /// Main load handle
 #[inline]
-pub fn load_accounts<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn load_accounts<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
 ) -> Result<(), EVMError<ExitCode>> {
     // set journaling state flag.
-    context.evm.inner.spec_id = SPEC::SPEC_ID;
+    context.evm.journaled_state.set_spec_id(SPEC::SPEC_ID);
 
     // load coinbase
     // EIP-3651: Warm COINBASE. Starts the `COINBASE` address warm
     if SPEC::enabled(SHANGHAI) {
-        Account::new_from_jzkt(&context.evm.inner.env.block.coinbase);
+        context.evm.inner.journaled_state.initial_account_load(
+            context.evm.inner.env.block.coinbase,
+            &[],
+            &mut context.evm.inner.db,
+        )?;
     }
 
     context.evm.load_access_list()?;
@@ -45,24 +58,32 @@ pub fn deduct_caller_inner<SPEC: Spec>(caller_account: &mut Account, env: &Env) 
     }
 
     // set new caller account balance.
-    caller_account.sub_balance_saturating(gas_cost);
+    caller_account.info.balance = caller_account.info.balance.saturating_sub(gas_cost);
 
     // bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
     if matches!(env.tx.transact_to, TransactTo::Call(_)) {
-        caller_account.inc_nonce().unwrap();
+        // Nonce is already checked
+        caller_account.info.nonce = caller_account.info.nonce.saturating_add(1);
     }
+
+    // touch account so we know it is changed.
+    caller_account.mark_touch();
 }
 
 /// Deducts the caller balance to the transaction limit.
 #[inline]
-pub fn deduct_caller<SPEC: Spec, EXT, DB: IJournaledTrie>(
+pub fn deduct_caller<SPEC: Spec, EXT, DB: Database>(
     context: &mut Context<EXT, DB>,
 ) -> Result<(), EVMError<ExitCode>> {
     // load caller's account.
-    let mut caller_account = Account::new_from_jzkt(&context.evm.inner.env.tx.caller);
+    let (caller_account, _) = context
+        .evm
+        .inner
+        .journaled_state
+        .load_account(context.evm.inner.env.tx.caller, &mut context.evm.inner.db)?;
+
     // deduct gas cost from caller's account.
-    deduct_caller_inner::<SPEC>(&mut caller_account, &context.evm.inner.env);
-    // write account changes
-    caller_account.write_to_jzkt();
+    deduct_caller_inner::<SPEC>(caller_account, &context.evm.inner.env);
+
     Ok(())
 }

@@ -1,7 +1,6 @@
-use crate::Inspector;
-use fluentbase_types::IJournaledTrie;
+use crate::{Database, Inspector};
 /// Dummy [Inspector], helpful as standalone replacement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NoOpInspector;
 
-impl<DB: IJournaledTrie> Inspector<DB> for NoOpInspector {}
+impl<DB: Database> Inspector<DB> for NoOpInspector {}

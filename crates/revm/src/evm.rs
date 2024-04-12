@@ -1,35 +1,42 @@
-use crate::types::Gas;
-use crate::types::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult};
+use crate::gas::Gas;
+use crate::interpreter::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult};
 use crate::{
-    builder::{EvmBuilder, HandlerStage},
-    db::DatabaseCommit,
+    builder::{EvmBuilder, HandlerStage, SetGenericStage},
+    db::{Database, DatabaseCommit, EmptyDB},
     handler::Handler,
     primitives::{
-        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, Env,
-        EnvWithHandlerCfg, ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, U256,
+        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
+        ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, B256, U256,
     },
-    Context, ContextWithHandlerCfg, FrameResult,
+    Context, ContextWithHandlerCfg, EvmContext, FrameResult,
 };
+use core::cell::RefCell;
 use core::fmt;
 use fluentbase_codec::Encoder;
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
-use fluentbase_core::{Account, AccountCheckpoint};
+use fluentbase_core::{
+    Account, AccountCheckpoint, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_COMPRESSION_FLAGS,
+};
 use fluentbase_core_api::api::CoreInput;
 use fluentbase_core_api::bindings::{
     EvmCreate2MethodInput, EvmCreateMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput,
     EVM_CREATE2_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
-use fluentbase_sdk::evm::{Bytes, ContractInput};
+use fluentbase_sdk::evm::ContractInput;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
-use revm_primitives::{CreateScheme, State};
+use fluentbase_types::{
+    Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog, STATE_MAIN,
+};
+use revm_primitives::{Bytecode, CreateScheme, Log, LogData};
+use std::vec::Vec;
 
 /// EVM call stack limit.
 pub const CALL_STACK_LIMIT: u64 = 1024;
 
 /// EVM instance containing both internal EVM context and external context
 /// and the handler that dictates the logic of EVM (or hardfork specification).
-pub struct Evm<'a, EXT, DB: IJournaledTrie> {
+pub struct Evm<'a, EXT, DB: Database> {
     /// Context of execution, containing both EVM and external context.
     pub context: Context<EXT, DB>,
     /// Handler of EVM that contains all the logic. Handler contains specification id
@@ -40,7 +47,8 @@ pub struct Evm<'a, EXT, DB: IJournaledTrie> {
 impl<EXT, DB> fmt::Debug for Evm<'_, EXT, DB>
 where
     EXT: fmt::Debug,
-    DB: IJournaledTrie + fmt::Debug,
+    DB: Database + fmt::Debug,
+    ExitCode: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Evm")
@@ -49,19 +57,26 @@ where
     }
 }
 
-impl<EXT, DB: IJournaledTrie + DatabaseCommit> Evm<'_, EXT, DB> {
+impl<EXT, DB: Database + DatabaseCommit> Evm<'_, EXT, DB> {
     /// Commit the changes to the database.
     pub fn transact_commit(&mut self) -> Result<ExecutionResult, EVMError<ExitCode>> {
-        let ResultAndState { result, .. } = self.transact()?;
-        self.context.evm.db.commit().expect("commit failed");
+        let ResultAndState { result, state } = self.transact()?;
+        self.context.evm.db.commit(state);
         Ok(result)
     }
 }
 
-impl<'a, EXT, DB: IJournaledTrie> Evm<'a, EXT, DB> {
+impl<'a> Evm<'a, (), EmptyDB> {
+    /// Returns evm builder with empty database and empty external context.
+    pub fn builder() -> EvmBuilder<'a, SetGenericStage, (), EmptyDB> {
+        EvmBuilder::default()
+    }
+}
+
+impl<'a, EXT, DB: Database> Evm<'a, EXT, DB> {
     /// Create new EVM.
     pub fn new(mut context: Context<EXT, DB>, handler: Handler<'a, EXT, DB>) -> Evm<'a, EXT, DB> {
-        context.evm.inner.spec_id = handler.cfg.spec_id;
+        context.evm.journaled_state.set_spec_id(handler.cfg.spec_id);
         Evm { context, handler }
     }
 
@@ -72,16 +87,12 @@ impl<'a, EXT, DB: IJournaledTrie> Evm<'a, EXT, DB> {
     }
 }
 
-impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
+impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// Returns specification (hardfork) that the EVM is instanced with.
     ///
     /// SpecId depends on the handler.
     pub fn spec_id(&self) -> SpecId {
         self.handler.cfg.spec_id
-    }
-
-    pub fn env(&self) -> &Env {
-        &self.context.evm.env
     }
 
     /// Pre verify transaction by checking Environment, initial gas spend and if caller
@@ -223,7 +234,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         // deduce caller balance with its limit.
         pre_exec.deduct_caller(ctx)?;
 
-        let mut caller_account = Account::new_from_jzkt(&ctx.evm.env.tx.caller);
+        let mut caller_account = ctx.evm.load_jzkt_account(ctx.evm.env.tx.caller)?;
 
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
@@ -231,7 +242,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         let mut frame_result = match ctx.evm.env.tx.transact_to {
             TransactTo::Call(address) => {
                 caller_account.inc_nonce().unwrap();
-                let mut callee_account = Account::new_from_jzkt(&address);
+                let mut callee_account = ctx.evm.load_jzkt_account(address)?;
                 let value = ctx.evm.env.tx.value;
                 let data = ctx.evm.env.tx.data.clone();
                 let result = self.call_inner(
@@ -268,31 +279,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         // Reward beneficiary
         post_exec.reward_beneficiary(ctx, frame_result.gas())?;
         // Returns output of transaction.
-        match post_exec.output(ctx, frame_result) {
-            Ok(mut result) => {
-                let mut state: State = Default::default();
-                let jzkt = LowLevelSDK::with_default_jzkt();
-                for event in jzkt.journal() {
-                    let address = Address::from_slice(&event.key()[12..]);
-                    if !event.is_removed() {
-                        let fields = event.preimage().unwrap().0;
-                        state.insert(
-                            address,
-                            revm_primitives::Account {
-                                info: Account::new_from_fields(&address, &fields).into(),
-                                storage: Default::default(),
-                                status: Default::default(),
-                            },
-                        );
-                    } else {
-                        state.remove(&address);
-                    }
-                }
-                result.state = state;
-                Ok(result)
-            }
-            Err(err) => Err(err),
-        }
+        post_exec.output(ctx, frame_result)
     }
 
     /// EVM create opcode for both initial crate and CREATE and CREATE2 opcodes.
@@ -315,7 +302,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
 
         let mut gas = Gas::new(gas_limit);
 
-        if self.context.evm.depth > CALL_STACK_LIMIT {
+        if self.context.evm.journaled_state.depth as u64 > CALL_STACK_LIMIT {
             return return_result(ExitCode::CallDepthOverflow, gas);
         } else if caller_account.balance < value {
             return return_result(ExitCode::InsufficientBalance, gas);
@@ -349,7 +336,10 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
                     method_data,
                 };
                 (
-                    Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS),
+                    self.context
+                        .evm
+                        .load_jzkt_account(ECL_CONTRACT_ADDRESS)
+                        .expect("failed to load ECL"),
                     input.encode_to_vec(0),
                 )
             }
@@ -378,7 +368,10 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
                     method_data,
                 };
                 (
-                    Account::new_from_jzkt(&WCL_CONTRACT_ADDRESS),
+                    self.context
+                        .evm
+                        .load_jzkt_account(WCL_CONTRACT_ADDRESS)
+                        .expect("failed to load WCL"),
                     input.encode_to_vec(0),
                 )
             }
@@ -436,7 +429,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         let mut gas = Gas::new(gas_limit);
 
         // check call stack limit
-        if self.context.evm.depth > CALL_STACK_LIMIT {
+        if self.context.evm.journaled_state.depth as u64 > CALL_STACK_LIMIT {
             return return_result(ExitCode::CallDepthOverflow, gas);
         }
 
@@ -512,17 +505,20 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         let input = self
             .input_from_env(checkpoint, gas, caller, callee, input, value)
             .encode_to_vec(0);
-        let rwasm_bytecode = self.db().preimage(&callee.rwasm_code_hash.0);
+        let jzkt = JournalDbWrapper {
+            ctx: RefCell::new(&mut self.context.evm),
+        };
+        let rwasm_bytecode = jzkt.preimage(&callee.rwasm_code_hash.0);
         let ctx = RuntimeContext::new(rwasm_bytecode)
             .with_input(input)
             .with_fuel_limit(gas.remaining())
-            .with_jzkt(&self.context.evm.db)
+            .with_jzkt(jzkt)
             .with_catch_trap(true)
             .with_state(STATE_MAIN);
         let import_linker = Runtime::new_sovereign_linker();
         let mut runtime = match Runtime::new(ctx, import_linker) {
             Ok(runtime) => runtime,
-            Err(_) => return (Bytes::default(), ExitCode::TransactError),
+            Err(_) => return (Bytes::default(), ExitCode::CompilationError),
         };
         let result = match runtime.call() {
             Ok(result) => result,
@@ -555,7 +551,7 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
             core::ptr::null_mut(),
             0,
             gas_limit_ref,
-            STATE_MAIN,
+            state,
         );
         let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
         gas.record_cost(gas_used);
@@ -570,5 +566,107 @@ impl<EXT, DB: IJournaledTrie> Evm<'_, EXT, DB> {
         };
 
         (output_buffer.into(), exit_code)
+    }
+}
+
+struct JournalDbWrapper<'a, DB: Database> {
+    ctx: RefCell<&'a mut EvmContext<DB>>,
+}
+
+impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
+    fn checkpoint(&self) -> JournalCheckpoint {
+        let mut ctx = self.ctx.borrow_mut();
+        let (a, b) = ctx.journaled_state.checkpoint().into();
+        JournalCheckpoint::from((a, b))
+    }
+
+    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+        let mut ctx = self.ctx.borrow_mut();
+        let address = Address::from_slice(&key[12..]);
+        let (account, _) = ctx.load_account(address).expect("can't load account");
+        let account = Account::from(account.info.clone());
+        Some((account.get_fields().to_vec(), JZKT_COMPRESSION_FLAGS, false))
+    }
+
+    fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, _flags: u32) {
+        let mut ctx = self.ctx.borrow_mut();
+        let address = Address::from_slice(&key[12..]);
+        let (account, _) = ctx.load_account(address).expect("database error");
+        let jzkt_account = Account::new_from_fields(&address, value.as_slice());
+        account.info.balance = jzkt_account.balance;
+        account.info.nonce = jzkt_account.nonce;
+        account.info.code_hash = jzkt_account.source_code_hash;
+        account.info.rwasm_code_hash = jzkt_account.rwasm_code_hash;
+    }
+
+    fn remove(&self, _key: &[u8; 32]) {
+        // TODO: "account removal is not supported"
+    }
+
+    fn compute_root(&self) -> [u8; 32] {
+        // TODO: "root is not supported"
+        [0u8; 32]
+    }
+
+    fn emit_log(&self, address: Address, topics: Vec<B256>, data: Bytes) {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state.log(Log {
+            address,
+            data: LogData::new_unchecked(topics, data),
+        });
+    }
+
+    fn commit(&self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
+        // TODO: "commit is not supported"
+        Err(ExitCode::NotSupportedCall)
+    }
+
+    fn rollback(&self, checkpoint: JournalCheckpoint) {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state
+            .checkpoint_revert((checkpoint.0, checkpoint.1).into());
+    }
+
+    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
+        let mut ctx = self.ctx.borrow_mut();
+        let address = Address::from_slice(&key[12..]);
+        if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD {
+            ctx.journaled_state.set_code(
+                address,
+                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
+                None,
+            );
+        } else if field == JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD {
+            ctx.journaled_state.set_rwasm_code(
+                address,
+                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
+                None,
+            );
+        }
+        true
+    }
+
+    fn preimage(&self, hash: &[u8; 32]) -> Vec<u8> {
+        self.ctx
+            .borrow_mut()
+            .db
+            .code_by_hash(B256::from(hash))
+            .map(|b| b.original_bytes())
+            .unwrap_or_default()
+            .to_vec()
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> u32 {
+        self.ctx
+            .borrow_mut()
+            .db
+            .code_by_hash(B256::from(hash))
+            .map(|b| b.bytecode.len() as u32)
+            .unwrap_or_default()
+    }
+
+    fn journal(&self) -> Vec<JournalEvent> {
+        // TODO: "journal is not supported here"
+        vec![]
     }
 }
