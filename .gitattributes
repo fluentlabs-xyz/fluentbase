@@ -1,0 +1,4 @@
+*.wasm filter=lfs diff=lfs merge=lfs -text
+*.rwasm filter=lfs diff=lfs merge=lfs -text
+*.wat filter=lfs diff=lfs merge=lfs -text
+crates/genesis/assets/genesis-devnet.json filter=lfs diff=lfs merge=lfs -text
