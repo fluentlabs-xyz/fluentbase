@@ -119,10 +119,13 @@ impl Account {
             result.balance.as_le_slice_mut().as_mut_ptr()
         });
 
-        Account::jzkt_get_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
+        Account::jzkt_get_rwasm_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.rwasm_code_size = LittleEndian::read_u64(&buffer32);
 
-        Account::jzkt_get_bytecode_hash(address_word.as_ptr(), result.rwasm_code_hash.as_mut_ptr());
+        Account::jzkt_get_rwasm_bytecode_hash(
+            address_word.as_ptr(),
+            result.rwasm_code_hash.as_mut_ptr(),
+        );
 
         Account::jzkt_get_source_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
         result.source_code_size = LittleEndian::read_u64(&buffer32);
@@ -154,7 +157,7 @@ impl Account {
     }
 
     #[inline]
-    pub fn jzkt_get_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
+    pub fn jzkt_get_rwasm_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
@@ -163,7 +166,7 @@ impl Account {
     }
 
     #[inline]
-    pub fn jzkt_get_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
+    pub fn jzkt_get_rwasm_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
         LowLevelSDK::jzkt_get(
             address32_offset,
             JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
