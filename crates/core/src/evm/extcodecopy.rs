@@ -4,7 +4,6 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
-#[no_mangle]
 pub fn _evm_extcodecopy(
     address20_offset: *const u8,
     output_offset: *mut u8,

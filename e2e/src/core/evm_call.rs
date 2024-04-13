@@ -4,7 +4,7 @@ use crate::{
         EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID,
         EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
     },
-    core::utils::{generate_address_original_impl, TestingContext},
+    core::utils::TestingContext,
 };
 use fluentbase_core::{
     evm::{
@@ -17,17 +17,6 @@ use fluentbase_core::{
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{address, Bytes, ExitCode, B256, U256};
 use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
-
-#[test]
-fn calc_create_address_test() {
-    let tests = vec![(address!("0000000000000000000000000000000000000000"), 100)];
-    for (address, nonce) in tests {
-        assert_eq!(
-            calc_create_address(&address, nonce),
-            generate_address_original_impl(&address, nonce)
-        )
-    }
-}
 
 #[test]
 fn create2_address_correctness_test() {

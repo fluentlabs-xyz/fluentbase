@@ -2,7 +2,6 @@ use core::slice;
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
 
-#[no_mangle]
 pub fn _evm_revert(output_offset: *mut u8, size: u32) {
     if size <= 0 {
         return;

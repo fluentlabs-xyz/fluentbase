@@ -6,7 +6,6 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN};
 
-#[no_mangle]
 pub fn _wasm_call(
     gas_limit: u32,
     callee_address20_offset: *const u8,

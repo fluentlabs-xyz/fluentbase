@@ -6,7 +6,6 @@ use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_types::{Address, ExitCode, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-#[no_mangle]
 pub fn _wasm_create(
     value32_offset: *const u8,
     code_offset: *const u8,

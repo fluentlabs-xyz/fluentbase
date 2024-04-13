@@ -8,7 +8,6 @@ use revm_interpreter::{
     Contract, Interpreter, SharedMemory,
 };
 
-#[no_mangle]
 pub fn _evm_delegatecall(
     gas_limit: u32,
     callee20_offset: *const u8,

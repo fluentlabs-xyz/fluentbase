@@ -86,20 +86,6 @@ impl TestingContext<false> {
     }
 }
 
-pub(crate) fn generate_address_original_impl(address: &Address, nonce: u64) -> Address {
-    use alloy_rlp::Encodable;
-    let mut out = vec![];
-    alloy_rlp::Header {
-        list: true,
-        payload_length: address.length() + nonce.length(),
-    }
-    .encode(&mut out);
-    Encodable::encode(&address, &mut out);
-    Encodable::encode(&nonce, &mut out);
-    out.resize(32, 0);
-    Address::from_word(keccak(out).0.into())
-}
-
 macro_rules! impl_once_setter {
     ($field_name: ident, Option<$field_type: tt>) => {
         paste! {

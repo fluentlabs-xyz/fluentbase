@@ -2,7 +2,6 @@ use crate::helpers::calc_storage_key;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
 
-#[no_mangle]
 pub fn _evm_sload(slot32_offset: *const u8, value32_offset: *mut u8) -> Result<bool, ExitCode> {
     let storage_key = calc_storage_key(slot32_offset);
     let is_cold = LowLevelSDK::jzkt_get(storage_key.as_ptr(), 0, value32_offset);
