@@ -245,7 +245,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         // call inner handling of call/create
         let mut frame_result = match ctx.evm.env.tx.transact_to {
             TransactTo::Call(address) => {
-                caller_account.inc_nonce().unwrap();
                 let mut callee_account = ctx.evm.load_jzkt_account(address)?;
                 let value = ctx.evm.env.tx.value;
                 let data = ctx.evm.env.tx.data.clone();
