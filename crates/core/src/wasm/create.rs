@@ -2,8 +2,8 @@ use crate::{
     account::Account,
     helpers::{calc_create_address, rwasm_exec_hash, wasm2rwasm},
 };
-use fluentbase_sdk::evm::{ExecutionContext, U256};
-use fluentbase_types::ExitCode;
+use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_types::{Address, ExitCode, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 #[no_mangle]
@@ -12,17 +12,16 @@ pub fn _wasm_create(
     code_offset: *const u8,
     code_length: u32,
     gas_limit: u32,
-    address20_offset: *mut u8,
-) -> ExitCode {
+) -> Result<Address, ExitCode> {
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
     // check write protection
     if ExecutionContext::contract_is_static() {
-        return ExitCode::WriteProtection;
+        return Err(ExitCode::WriteProtection);
     }
     // code length can't exceed max limit
     if code_length > RWASM_MAX_CODE_SIZE as u32 {
-        return ExitCode::ContractSizeLimit;
+        return Err(ExitCode::ContractSizeLimit);
     }
 
     // read value input and contract address
@@ -36,35 +35,35 @@ pub fn _wasm_create(
 
     // if nonce or code is not empty then its collision
     if contract_account.is_not_empty() {
-        return ExitCode::CreateCollision;
+        return Err(ExitCode::CreateCollision);
     }
     deployer_account.inc_nonce().expect("nonce inc failed");
     contract_account.nonce = 1;
 
     if !deployer_account.transfer_value(&mut contract_account, &value) {
-        return ExitCode::InsufficientBalance;
+        return Err(ExitCode::InsufficientBalance);
     }
 
     // translate WASM to rWASM
-    let bytecode_wasm =
+    let wasm_bytecode =
         unsafe { &*core::ptr::slice_from_raw_parts(code_offset, code_length as usize) };
-    let bytecode_rwasm = wasm2rwasm(bytecode_wasm).unwrap();
+    let rwasm_bytecode = wasm2rwasm(wasm_bytecode).unwrap();
 
     // write deployer to the trie
     deployer_account.write_to_jzkt();
 
     // write contract to the trie
-    contract_account.update_source_bytecode(&bytecode_wasm.into());
-    contract_account.update_rwasm_bytecode(&bytecode_rwasm.into(), None);
-    rwasm_exec_hash(
+    contract_account.update_bytecode(&wasm_bytecode.into(), None, &rwasm_bytecode.into(), None);
+    let exit_code = rwasm_exec_hash(
         &contract_account.rwasm_code_hash.as_slice(),
         &[],
         gas_limit,
         true,
     );
+    // if call is not success set deployed address to zero
+    if exit_code != ExitCode::Ok.into_i32() {
+        return Err(ExitCode::TransactError);
+    }
 
-    // copy output address
-    unsafe { core::ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }
-
-    ExitCode::Ok
+    Ok(deployed_contract_address)
 }

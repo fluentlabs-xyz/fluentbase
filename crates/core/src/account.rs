@@ -267,6 +267,54 @@ impl Account {
         bytecode.into()
     }
 
+    pub fn update_bytecode(
+        &mut self,
+        source_bytecode: &Bytes,
+        source_hash: Option<B256>,
+        rwasm_bytecode: &Bytes,
+        rwasm_hash: Option<F254>,
+    ) {
+        let address_word = self.address.into_word();
+        // calc source code hash (we use keccak256 for backward compatibility)
+        self.source_code_hash = source_hash.unwrap_or_else(|| {
+            LowLevelSDK::crypto_keccak256(
+                source_bytecode.as_ptr(),
+                source_bytecode.len() as u32,
+                self.source_code_hash.as_mut_ptr(),
+            );
+            self.source_code_hash
+        });
+        self.source_code_size = source_bytecode.len() as u64;
+        // calc rwasm code hash (we use poseidon function for rWASM bytecode)
+        self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| {
+            LowLevelSDK::crypto_poseidon(
+                rwasm_bytecode.as_ptr(),
+                rwasm_bytecode.len() as u32,
+                self.rwasm_code_hash.as_mut_ptr(),
+            );
+            self.rwasm_code_hash
+        });
+        self.rwasm_code_size = rwasm_bytecode.len() as u64;
+        // write all changes to database
+        self.write_to_jzkt();
+        // make sure preimage of this hash is stored
+        let r = LowLevelSDK::jzkt_update_preimage(
+            address_word.as_ptr(),
+            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+            source_bytecode.as_ptr(),
+            source_bytecode.len() as u32,
+        );
+        assert!(r, "bytecode update failed");
+        let r = LowLevelSDK::jzkt_update_preimage(
+            address_word.as_ptr(),
+            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+            rwasm_bytecode.as_ptr(),
+            rwasm_bytecode.len() as u32,
+        );
+        assert!(r, "bytecode update failed");
+    }
+
+    #[deprecated(note = "use `update_bytecode` function to update both bytecodes")]
     pub fn update_source_bytecode(&mut self, bytecode: &Bytes) {
         let address_word = self.address.into_word();
         LowLevelSDK::crypto_keccak256(
@@ -286,6 +334,7 @@ impl Account {
         assert!(r, "account update_source_bytecode failed");
     }
 
+    #[deprecated(note = "use `update_bytecode` function to update both bytecodes")]
     pub fn update_rwasm_bytecode(&mut self, bytecode: &Bytes, poseidon_hash: Option<F254>) {
         let address_word = self.address.into_word();
         self.rwasm_code_hash = poseidon_hash.unwrap_or_else(|| {

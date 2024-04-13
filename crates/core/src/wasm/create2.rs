@@ -61,8 +61,7 @@ pub fn _wasm_create2(
     deployer_account.write_to_jzkt();
 
     // write contract to the trie
-    contract_account.update_source_bytecode(&init_code.into());
-    contract_account.update_rwasm_bytecode(&bytecode_rwasm.into(), None);
+    contract_account.update_bytecode(&init_code.into(), None, &bytecode_rwasm.into(), None);
     rwasm_exec_hash(
         contract_account.rwasm_code_hash.as_slice(),
         &[],

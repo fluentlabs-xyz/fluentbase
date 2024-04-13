@@ -99,8 +99,9 @@ pub fn _evm_create2(
 
     caller_account.write_to_jzkt();
 
-    callee_account.update_source_bytecode(&result.output);
-    callee_account.update_rwasm_bytecode(
+    callee_account.update_bytecode(
+        &result.output,
+        None,
         &include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into(),
         None,
     );

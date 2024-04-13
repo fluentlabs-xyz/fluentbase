@@ -1,7 +1,6 @@
-use crate::builder::SetGenericStage;
-use crate::{Evm, EvmBuilder, InMemoryDB};
+use crate::{Evm, InMemoryDB};
 use fluentbase_core::{helpers::calc_create_address, Account};
-use fluentbase_genesis::devnet::{devnet_genesis_from_file, POSEIDON_HASH_KEY};
+use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{Address, Bytes, KECCAK_EMPTY, POSEIDON_EMPTY};
@@ -38,16 +37,22 @@ impl TestingContext {
                         .map(|v| poseidon_hash(&v).into())
                         .unwrap_or(POSEIDON_EMPTY)
                 });
+            let keccak_hash = v
+                .storage
+                .as_ref()
+                .and_then(|v| v.get(&KECCAK_HASH_KEY).cloned())
+                .unwrap_or_else(|| {
+                    v.code
+                        .as_ref()
+                        .map(|v| keccak256(&v))
+                        .unwrap_or(KECCAK_EMPTY)
+                });
             let account = Account {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
                 source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                source_code_hash: v
-                    .code
-                    .as_ref()
-                    .map(|v| keccak256(&v))
-                    .unwrap_or(KECCAK_EMPTY),
+                source_code_hash: keccak_hash,
                 rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
                 rwasm_code_hash: poseidon_hash,
             };

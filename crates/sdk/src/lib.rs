@@ -27,9 +27,8 @@ pub use fluentbase_types::{Bytes20, Bytes32};
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    if let Some(panic_message) = info.payload().downcast_ref::<&str>() {
-        LowLevelSDK::sys_write(panic_message.as_bytes());
-    }
+    let panic_message = alloc::format!("{}", info);
+    LowLevelSDK::sys_write(panic_message.as_bytes());
     LowLevelSDK::sys_halt(-71);
     loop {}
 }

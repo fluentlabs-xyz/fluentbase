@@ -28,7 +28,7 @@ use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{
     Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog, STATE_MAIN,
 };
-use revm_primitives::{Bytecode, CreateScheme, Log, LogData};
+use revm_primitives::{hex, Bytecode, CreateScheme, Log, LogData};
 use std::vec::Vec;
 
 /// EVM call stack limit.
@@ -227,6 +227,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     fn transact_preverified_inner(&mut self, initial_gas_spend: u64) -> EVMResult<ExitCode> {
         let ctx = &mut self.context;
         let pre_exec = self.handler.pre_execution();
+
+        // load precompiles
+        let precompiles = pre_exec.load_precompiles();
+        ctx.evm.set_precompiles(precompiles);
 
         // load access list and beneficiary if needed.
         pre_exec.load_accounts(ctx)?;
@@ -435,6 +439,18 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         let checkpoint = Account::checkpoint();
 
+        // Touch address. For "EIP-158 State Clear", this will erase empty accounts.
+        if value == U256::ZERO {
+            self.context
+                .evm
+                .load_account(callee_account.address)
+                .expect("failed to load");
+            self.context
+                .evm
+                .journaled_state
+                .touch(&callee_account.address);
+        }
+
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
             checkpoint,
             &mut gas,
@@ -524,6 +540,22 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             Ok(result) => result,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
         };
+        {
+            println!("executed rWASM binary:");
+            println!(" - caller: 0x{}", hex::encode(caller.address));
+            println!(" - callee: 0x{}", hex::encode(callee.address));
+            println!(" - source hash: 0x{}", hex::encode(callee.source_code_hash));
+            println!(" - source size: {}", callee.source_code_size);
+            println!(" - rwasm hash: 0x{}", hex::encode(callee.rwasm_code_hash));
+            println!(" - rwasm size: {}", callee.rwasm_code_size);
+            println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
+            println!(" - fuel consumed: {}", result.fuel_consumed);
+            println!(" - exit code: {}", result.exit_code);
+            println!(
+                " - panic message: {}",
+                core::str::from_utf8(&result.output).unwrap_or("can't decode utf8 message")
+            );
+        }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())
     }

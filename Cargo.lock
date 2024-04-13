@@ -1099,6 +1099,8 @@ dependencies = [
  "fluentbase-poseidon",
  "fluentbase-types",
  "hashbrown",
+ "hex",
+ "revm-primitives",
  "serde",
  "serde_json",
 ]
