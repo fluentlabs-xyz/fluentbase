@@ -160,6 +160,11 @@ impl<DB: Database> InnerEvmContext<DB> {
             .map(|(a, is_cold)| (a.info.code.clone().unwrap(), is_cold))
     }
 
+    #[inline]
+    pub fn code_by_hash(&mut self, hash: B256) -> Result<Bytes, EVMError<ExitCode>> {
+        self.journaled_state.load_code_by_hash(hash, &mut self.db)
+    }
+
     /// Get code hash of address.
     #[inline]
     pub fn code_hash(&mut self, address: Address) -> Result<(B256, bool), EVMError<ExitCode>> {

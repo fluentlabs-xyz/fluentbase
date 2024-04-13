@@ -233,6 +233,47 @@ impl SysFuncIdx {
     }
 }
 
+impl From<u32> for SysFuncIdx {
+    fn from(value: u32) -> Self {
+        match value {
+            0x0000 => Self::UNKNOWN,
+
+            // crypto
+            0x0101 => Self::CRYPTO_KECCAK256,
+            0x0102 => Self::CRYPTO_POSEIDON,
+            0x0103 => Self::CRYPTO_POSEIDON2,
+            0x0104 => Self::CRYPTO_ECRECOVER,
+
+            // SYS host
+            0x0001 => Self::SYS_HALT,
+            0x0002 => Self::SYS_STATE,
+            0x0003 => Self::SYS_READ,
+            0x0004 => Self::SYS_INPUT_SIZE,
+            0x0005 => Self::SYS_WRITE,
+            0x0006 => Self::SYS_OUTPUT_SIZE,
+            0x0007 => Self::SYS_READ_OUTPUT,
+            0x0009 => Self::SYS_EXEC_HASH,
+            0x000a => Self::SYS_FORWARD_OUTPUT,
+
+            // jzkt
+            0x0701 => Self::JZKT_OPEN,
+            0x0702 => Self::JZKT_CHECKPOINT,
+            0x0703 => Self::JZKT_GET,
+            0x0704 => Self::JZKT_UPDATE,
+            0x0705 => Self::JZKT_UPDATE_PREIMAGE,
+            0x0706 => Self::JZKT_REMOVE,
+            0x0707 => Self::JZKT_COMPUTE_ROOT,
+            0x0708 => Self::JZKT_EMIT_LOG,
+            0x0709 => Self::JZKT_COMMIT,
+            0x070A => Self::JZKT_ROLLBACK,
+            0x070D => Self::JZKT_PREIMAGE_SIZE,
+            0x070E => Self::JZKT_PREIMAGE_COPY,
+
+            _ => Self::UNKNOWN,
+        }
+    }
+}
+
 impl Into<u32> for SysFuncIdx {
     fn into(self) -> u32 {
         self as u32

@@ -5,7 +5,7 @@ use crate::primitives::{
     SpecId::*, State, StorageSlot, TransientStorage, KECCAK_EMPTY, PRECOMPILE3, U256,
 };
 use core::mem;
-use fluentbase_types::{ExitCode, B256, F254};
+use fluentbase_types::{Bytes, ExitCode, B256, F254, POSEIDON_EMPTY};
 use revm_primitives::SpecId;
 use std::vec::Vec;
 
@@ -35,6 +35,8 @@ pub struct JournaledState {
     /// Note that this not include newly loaded accounts, account and storage
     /// is considered warm if it is found in the `State`.
     pub warm_preloaded_addresses: HashSet<Address>,
+    /// Recently updated bytecode state
+    pub code_state: HashMap<B256, Bytecode>,
 }
 
 impl JournaledState {
@@ -58,6 +60,7 @@ impl JournaledState {
             depth: 0,
             spec,
             warm_preloaded_addresses,
+            code_state: HashMap::new(),
         }
     }
 
@@ -106,6 +109,7 @@ impl JournaledState {
             // kept, see [Self::new]
             spec: _,
             warm_preloaded_addresses: _,
+            code_state: _,
         } = self;
 
         *transient_storage = TransientStorage::default();
@@ -143,16 +147,14 @@ impl JournaledState {
     pub fn set_code(&mut self, address: Address, code: Bytecode, code_hash: Option<B256>) {
         let account = self.state.get_mut(&address).unwrap();
         Self::touch_account(self.journal.last_mut().unwrap(), &address, account);
-
         self.journal
             .last_mut()
             .unwrap()
             .push(JournalEntry::CodeChange { address });
-
-        debug_assert_eq!(account.info.code_hash, code.hash_slow());
         if let Some(code_hash) = code_hash {
             account.info.code_hash = code_hash;
         }
+        self.code_state.insert(account.info.code_hash, code.clone());
         account.info.code = Some(code);
     }
 
@@ -169,6 +171,8 @@ impl JournaledState {
         if let Some(code_hash) = code_hash {
             account.info.rwasm_code_hash = code_hash;
         }
+        self.code_state
+            .insert(account.info.rwasm_code_hash, code.clone());
         account.info.rwasm_code = Some(code);
     }
 
@@ -642,7 +646,37 @@ impl JournaledState {
                 acc.info.code = Some(code);
             }
         }
+        if acc.info.rwasm_code.is_none() {
+            if acc.info.rwasm_code_hash == POSEIDON_EMPTY {
+                let empty = Bytecode::new();
+                acc.info.rwasm_code = Some(empty);
+            } else {
+                let code = db
+                    .code_by_hash(acc.info.rwasm_code_hash)
+                    .map_err(|_| EVMError::Database(ExitCode::FatalExternalError))?;
+                acc.info.rwasm_code = Some(code);
+            }
+        }
         Ok((acc, is_cold))
+    }
+
+    /// Loads code.
+    #[inline]
+    pub fn load_code_by_hash<DB: Database>(
+        &mut self,
+        hash: B256,
+        db: &mut DB,
+    ) -> Result<Bytes, EVMError<ExitCode>> {
+        match self.code_state.entry(hash) {
+            Entry::Occupied(v) => Ok(v.get().original_bytes()),
+            Entry::Vacant(v) => Ok(v
+                .insert(
+                    db.code_by_hash(hash).map_err(|_| {
+                        EVMError::<ExitCode>::Database(ExitCode::FatalExternalError)
+                    })?,
+                )
+                .original_bytes()),
+        }
     }
 
     /// Load storage slot

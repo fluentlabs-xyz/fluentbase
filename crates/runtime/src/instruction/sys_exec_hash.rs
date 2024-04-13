@@ -90,6 +90,9 @@ impl SysExecHash {
             return Err(ExitCode::OutputOverflow.into_i32());
         }
 
+        // return jzkt context back
+        ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
+
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
         // increase total fuel consumed and remember return data

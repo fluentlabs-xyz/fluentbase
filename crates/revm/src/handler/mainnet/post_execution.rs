@@ -6,7 +6,7 @@ use crate::{
     Context, FrameResult,
 };
 use fluentbase_types::ExitCode;
-use revm_primitives::{HaltReason, OutOfGasError, SuccessReason};
+use revm_primitives::SuccessReason;
 
 /// Mainnet end handle does not change the output.
 #[inline]

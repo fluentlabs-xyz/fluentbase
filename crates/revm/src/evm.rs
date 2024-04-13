@@ -550,10 +550,23 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(" - fuel consumed: {}", result.fuel_consumed);
             println!(" - exit code: {}", result.exit_code);
+            println!(" - opcode used: {}", runtime.store().tracer().logs.len());
             println!(
-                " - panic message: {}",
-                core::str::from_utf8(&result.output).unwrap_or("can't decode utf8 message")
+                " - last opcode: {:?}",
+                runtime.store().tracer().logs.last().unwrap().opcode
             );
+            println!(
+                " - output message: {}",
+                core::str::from_utf8(&result.output)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|_| format!("0x{}", hex::encode(&result.output)))
+            );
+            // for log in runtime.store().tracer().logs.iter() {
+            //     match log.opcode {
+            //         Instruction::Call(index) => println!("{:?}", SysFuncIdx::from(index.to_u32())),
+            //         _ => {}
+            //     }
+            // }
         }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())
@@ -678,13 +691,11 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     }
 
     fn preimage(&self, hash: &[u8; 32]) -> Vec<u8> {
-        self.ctx
-            .borrow_mut()
-            .db
+        let mut ctx = self.ctx.borrow_mut();
+        let bytecode = ctx
             .code_by_hash(B256::from(hash))
-            .map(|b| b.original_bytes())
-            .unwrap_or_default()
-            .to_vec()
+            .expect("failed to get bytecode by hash");
+        bytecode.to_vec()
     }
 
     fn preimage_size(&self, hash: &[u8; 32]) -> u32 {

@@ -3,10 +3,8 @@ use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::{Address, Bytes, KECCAK_EMPTY, POSEIDON_EMPTY};
-use revm_primitives::{
-    hex, keccak256, AccountInfo, Bytecode, CreateScheme, Env, ResultAndState, TransactTo,
-};
+use fluentbase_types::{Address, Bytes, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use revm_primitives::{hex, keccak256, AccountInfo, Bytecode, CreateScheme, Env, TransactTo};
 
 #[allow(dead_code)]
 struct TestingContext {
@@ -64,15 +62,9 @@ impl TestingContext {
         Self { genesis, db }
     }
 
-    pub(crate) fn apply_result(&mut self, result: ResultAndState) {
-        for (k, v) in result.state {
-            for (slot, value) in v.storage {
-                self.db
-                    .insert_account_storage(k, slot, value.present_value)
-                    .unwrap();
-            }
-            self.db.insert_account_info(k, v.info);
-        }
+    pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
+        let account = self.db.load_account(address).unwrap();
+        account.info.balance += value;
     }
 }
 
@@ -136,11 +128,47 @@ fn test_deploy_greeting() {
         .build();
     let result = evm.transact_commit().unwrap();
     assert!(result.is_success());
-    println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
         "Hello, World",
         core::str::from_utf8(bytes.as_ref()).unwrap()
+    );
+}
+
+#[test]
+fn test_deploy_keccak256() {
+    // deploy greeting WASM contract
+    let mut ctx = TestingContext::default();
+    let mut env = Env::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(1_000000000000000000u128));
+    env.tx.caller = DEPLOYER_ADDRESS;
+    env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
+    env.tx.data = include_bytes!("../../../examples/bin/keccak256.wasm").into();
+    env.tx.gas_limit = 300_000_000;
+    let mut evm = Evm::builder()
+        .with_env(Box::new(env))
+        .with_db(&mut ctx.db)
+        .build();
+    let result = evm.transact_commit().unwrap();
+    assert!(result.is_success());
+    drop(evm);
+    let contract_address = calc_create_address(&DEPLOYER_ADDRESS, 0);
+    // call greeting WASM contract
+    let mut env = Env::default();
+    env.tx.transact_to = TransactTo::Call(contract_address);
+    env.tx.data = "Hello, World".into();
+    env.tx.gas_limit = 10_000_000;
+    let mut evm = Evm::builder()
+        .with_env(Box::new(env))
+        .with_db(&mut ctx.db)
+        .build();
+    let result = evm.transact_commit().unwrap();
+    assert!(result.is_success());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!(
+        "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
+        hex::encode(bytes.as_ref()),
     );
 }
 
@@ -160,7 +188,6 @@ fn test_evm_greeting() {
         .build();
     let result = evm.transact_commit().unwrap();
     assert!(result.is_success());
-    println!("gas used (deploy): {}", result.gas_used());
     drop(evm);
     let contract_address = calc_create_address(&DEPLOYER_ADDRESS, 0);
     let contract_account = ctx.db.accounts.get(&contract_address).unwrap();
@@ -193,7 +220,6 @@ fn test_evm_greeting() {
         .build();
     let result = evm.transact_commit().unwrap();
     assert!(result.is_success());
-    println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", core::str::from_utf8(bytes.as_ref()).unwrap());
