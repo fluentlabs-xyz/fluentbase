@@ -9,7 +9,6 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{ExitCode, B256};
 
-#[no_mangle]
 pub fn _wasm_create2(
     value32_offset: *const u8,
     code_offset: *const u8,

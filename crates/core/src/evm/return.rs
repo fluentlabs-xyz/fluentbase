@@ -1,7 +1,6 @@
 use core::slice;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
-#[no_mangle]
 pub fn _evm_return(output_offset: *mut u8, size: u32) {
     if size <= 0 {
         return;

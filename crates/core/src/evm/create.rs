@@ -14,7 +14,6 @@ use revm_interpreter::{
     BytecodeLocked, Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
 
-#[no_mangle]
 pub fn _evm_create(
     value32_offset: *const u8,
     code_offset: *const u8,

@@ -6,7 +6,7 @@ use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_core::helpers::rwasm_module;
 use log::debug;
-use rwasm::rwasm::{instruction::INSTRUCTION_SIZE_BYTES, BinaryFormat};
+use rwasm::rwasm::BinaryFormat;
 use std::{fs, path::Path};
 
 mod types;
@@ -201,11 +201,11 @@ fn main() {
             format!("{}{}", file_in_name, types::RWASM_OUT_FILE_EXT)
         );
     }
-    debug!(
-        "rwasm_binary (byte len {}, instruction len {})",
-        rwasm_binary.len(),
-        rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
-    );
+    // debug!(
+    //     "rwasm_binary (byte len {}, instruction len {})",
+    //     rwasm_binary.len(),
+    //     rwasm_binary.len() / INSTRUCTION_SIZE_BYTES,
+    // );
     if args.print_rwasm_bytes {
         debug!("rwasm bytes: {:?}", rwasm_binary);
     }

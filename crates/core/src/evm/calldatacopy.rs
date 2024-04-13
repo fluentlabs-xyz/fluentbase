@@ -1,7 +1,6 @@
 use crate::helpers::get_contract_input_offset_and_len;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
-#[no_mangle]
 pub fn _evm_calldatacopy(calldata_idx: u32, len: u32, output32_offset: *mut u8) {
     if len <= 0 {
         return;

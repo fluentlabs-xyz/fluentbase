@@ -3,7 +3,6 @@ use core::ptr;
 use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
-#[no_mangle]
 pub fn _evm_log3(
     data_offset: *const u8,
     data_size: u32,

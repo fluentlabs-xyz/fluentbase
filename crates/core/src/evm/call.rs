@@ -11,7 +11,6 @@ use revm_interpreter::{
     Contract, Interpreter, SharedMemory,
 };
 
-#[no_mangle]
 pub fn _evm_call(
     gas_limit: u32,
     callee_address20_offset: *const u8,

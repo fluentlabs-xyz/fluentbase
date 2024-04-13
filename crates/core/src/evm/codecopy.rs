@@ -5,7 +5,6 @@ use core::ptr;
 use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
 
-#[no_mangle]
 pub fn _evm_codecopy(output_offset: *mut u8, code_index: u32, len: u32) {
     let mut address_bytes32 = Bytes32::default();
     let address = ExecutionContext::contract_address();

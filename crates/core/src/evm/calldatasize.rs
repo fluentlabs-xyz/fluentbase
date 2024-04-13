@@ -2,11 +2,9 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
 use fluentbase_sdk::{
     evm::{ContractInput, IContractInput},
-    LowLevelAPI,
-    LowLevelSDK,
+    LowLevelAPI, LowLevelSDK,
 };
 
-#[no_mangle]
 pub fn _evm_calldatasize(output32_offset: *mut u8) {
     let calldata_len = {
         let mut header = [0u8; 8];
