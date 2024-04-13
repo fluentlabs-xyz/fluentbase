@@ -51,9 +51,6 @@ pub fn _wasm_call(
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
 
-    if value != U256::ZERO {
-        return ExitCode::UnknownError;
-    };
     let bytecode_hash = callee_account.rwasm_code_hash;
     let exit_code = LowLevelSDK::sys_exec_hash(
         bytecode_hash.as_ptr(),

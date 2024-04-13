@@ -1,4 +1,5 @@
 use crate::helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
+use core::str::from_utf8;
 use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
@@ -122,6 +123,10 @@ fn test_panic() {
     let output = run_rwasm_with_evm_input(
         include_bytes!("../../examples/bin/panic.wasm").to_vec(),
         &[],
+    );
+    assert_eq!(
+        from_utf8(&output.output).unwrap(),
+        "panicked at examples/src/panic.rs:4:5:\nit is panic time"
     );
     assert_eq!(output.exit_code, -71);
 }

@@ -2,6 +2,7 @@ use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{address, b256, Address, Bytes, B256, U256};
+use revm_primitives::keccak256;
 use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
@@ -36,6 +37,9 @@ pub fn devnet_chain_config() -> ChainConfig {
 /// Keccak256("poseidon_hash_key")
 pub const POSEIDON_HASH_KEY: B256 =
     b256!("72adc1368da53d255ed52bce3690fa2b9ec0f64072bcdf3c86adcaf50b54cff1");
+/// Keccak256("keccak256_hash_key")
+pub const KECCAK_HASH_KEY: B256 =
+    b256!("0215c908b95b16bf09cad5a8f36d2f80c367055b890489abfba6a5f6540b391f");
 
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../assets/genesis-devnet.json");
@@ -52,13 +56,21 @@ pub fn devnet_genesis() -> Genesis {
     )]);
     macro_rules! enable_rwasm_contract {
         ($addr:ident, $file_path:literal) => {{
+            use std::io::Write;
             let bytecode = Bytes::from(include_bytes!($file_path));
-            let bytecode_hash = poseidon_hash(&bytecode);
+            print!("creating genesis account (0x{})... ", hex::encode($addr));
+            std::io::stdout().flush().unwrap();
+            let poseidon_hash = poseidon_hash(&bytecode);
+            let keccak_hash = keccak256(&bytecode);
+            println!("{}", hex::encode(poseidon_hash));
             alloc.insert(
                 $addr,
                 GenesisAccount {
                     code: Some(bytecode),
-                    storage: Some(BTreeMap::from([(POSEIDON_HASH_KEY, bytecode_hash.into())])),
+                    storage: Some(BTreeMap::from([
+                        (POSEIDON_HASH_KEY, poseidon_hash.into()),
+                        (KECCAK_HASH_KEY, keccak_hash.into()),
+                    ])),
                     ..Default::default()
                 },
             );

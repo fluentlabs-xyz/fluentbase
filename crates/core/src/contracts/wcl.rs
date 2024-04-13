@@ -30,18 +30,21 @@ pub fn main() {
         match method_name {
             WasmMethodName::WasmCreate => {
                 let method_input = decode_input!(core_input, WasmCreateMethodInput);
-                let mut output20 = [0u8; 20];
-                let exit_code = _wasm_create(
+                match _wasm_create(
                     method_input.value32.as_ptr(),
                     method_input.code.as_ptr(),
                     method_input.code.len() as u32,
                     method_input.gas_limit,
-                    output20.as_mut_ptr(),
-                );
-                if !exit_code.is_ok() {
-                    panic!("create method failed, exit code: {}", exit_code.into_i32())
+                ) {
+                    Ok(address) => LowLevelSDK::sys_write(address.as_slice()),
+                    Err(exit_code) => {
+                        // let's forward output with error messages
+                        let output_size = LowLevelSDK::sys_output_size();
+                        LowLevelSDK::sys_forward_output(0, output_size);
+                        // exit from app
+                        LowLevelSDK::sys_halt(exit_code.into_i32());
+                    }
                 }
-                LowLevelSDK::sys_write(&output20);
             }
             WasmMethodName::WasmCreate2 => {
                 let method_input = decode_input!(core_input, WasmCreate2MethodInput);

@@ -188,10 +188,9 @@ fn test_evm_call_from_wasm() {
     let jzkt = {
         let jzkt = LowLevelSDK::with_default_jzkt();
         let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
-        ecl_account.update_source_bytecode(
+        ecl_account.update_bytecode(
             &include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm").into(),
-        );
-        ecl_account.update_rwasm_bytecode(
+            None,
             &include_bytes!("../../../crates/contracts/assets/ecl_contract.rwasm").into(),
             None,
         );

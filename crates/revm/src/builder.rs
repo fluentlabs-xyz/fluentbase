@@ -437,6 +437,7 @@ impl<'a, BuilderStage, EXT, DB: Database> EvmBuilder<'a, BuilderStage, EXT, DB> 
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod test {
     use super::SpecId;
     use crate::{
