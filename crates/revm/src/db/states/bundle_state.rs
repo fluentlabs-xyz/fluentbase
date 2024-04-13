@@ -409,7 +409,10 @@ impl BundleState {
 
         for (address, transition) in transitions.transitions.into_iter() {
             // add new contract if it was created/changed.
-            if let Some((hash, new_bytecode)) = transition.has_new_contract() {
+            if let Some((hash, new_bytecode)) = transition.has_new_source_contract() {
+                self.contracts.insert(hash, new_bytecode.clone());
+            }
+            if let Some((hash, new_bytecode)) = transition.has_new_rwasm_contract() {
                 self.contracts.insert(hash, new_bytecode.clone());
             }
             // update state and create revert.
