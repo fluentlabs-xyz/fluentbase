@@ -146,11 +146,11 @@ impl ExecutionResult {
 }
 
 pub struct Runtime<DB: IJournaledTrie> {
-    engine: Engine,
-    module: Module,
-    linker: Linker<RuntimeContext<DB>>,
-    store: Store<RuntimeContext<DB>>,
-    instance: Option<Instance>,
+    pub(crate) engine: Engine,
+    pub(crate) module: Module,
+    pub(crate) linker: Linker<RuntimeContext<DB>>,
+    pub(crate) store: Store<RuntimeContext<DB>>,
+    pub(crate) instance: Option<Instance>,
 }
 
 impl Runtime<EmptyJournalTrie> {
@@ -293,6 +293,14 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         } else {
             runtime_register_shared_handlers(&mut self.linker, &mut self.store)
         }
+    }
+
+    pub fn store(&self) -> &Store<RuntimeContext<DB>> {
+        &self.store
+    }
+
+    pub fn store_mut(&mut self) -> &mut Store<RuntimeContext<DB>> {
+        &mut self.store
     }
 
     pub fn data(&self) -> &RuntimeContext<DB> {

@@ -2279,6 +2279,8 @@ dependencies = [
  "paste",
  "smallvec",
  "spin 0.9.8",
+ "strum",
+ "strum_macros",
  "wasmparser-nostd",
 ]
 

@@ -1,19 +1,11 @@
-use core::{alloc::Layout, ptr};
+use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 pub fn deploy() {}
 
 pub fn main() {
-    let input_size = LowLevelSDK::sys_input_size();
-    let buffer = unsafe {
-        let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(
-            input_size as usize,
-            8usize,
-        ));
-        &mut *ptr::slice_from_raw_parts_mut(ptr, input_size as usize)
-    };
-    LowLevelSDK::sys_read(buffer, 0);
+    let input = ExecutionContext::contract_input();
     let mut output = [0u8; 32];
-    LowLevelSDK::crypto_keccak256(buffer.as_ptr(), input_size, output.as_mut_ptr());
+    LowLevelSDK::crypto_keccak256(input.as_ptr(), input.len() as u32, output.as_mut_ptr());
     LowLevelSDK::sys_write(&output);
 }

@@ -47,6 +47,8 @@ std = [
     "revm-precompile/std",
     "revm-primitives/std",
     "dep:fluentbase-runtime",
+    "dep:rwasm",
+    "rwasm/std",
 ]
 serde = []
 arbitrary = []

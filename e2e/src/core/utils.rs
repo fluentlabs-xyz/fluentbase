@@ -1,11 +1,9 @@
-use alloc::vec;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{Account, JZKT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, IJournaledTrie, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
-use keccak_hash::keccak;
 use paste::paste;
 use rwasm::core::ImportLinker;
 
