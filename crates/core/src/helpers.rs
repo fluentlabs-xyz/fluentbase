@@ -46,13 +46,15 @@ pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
     const MAX_LEN: usize = 1 + (1 + 20) + 9;
     let len = 22 + nonce.length();
     debug_assert!(len <= MAX_LEN);
-    let mut out = [0u8; MAX_LEN + 1];
+    let mut out = [0u8; MAX_LEN];
     out[0] = EMPTY_LIST_CODE + len as u8 - 1;
     out[1] = EMPTY_STRING_CODE + 20;
     out[2..22].copy_from_slice(deployer.as_slice());
     nonce.encode(&mut &mut out[22..]);
-    LowLevelSDK::crypto_keccak256(out.as_ptr(), out.len() as u32, out.as_mut_ptr());
-    Address::from_word(B256::from(out))
+    let mut hash = B256::ZERO;
+    let out = &out[..len];
+    LowLevelSDK::crypto_keccak256(out.as_ptr(), out.len() as u32, hash.as_mut_ptr());
+    Address::from_word(hash)
 }
 
 #[inline(always)]
@@ -144,4 +146,40 @@ pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
         storage_key.as_mut_ptr(),
     );
     storage_key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_types::address;
+
+    #[test]
+    fn test_create_address() {
+        let address = Address::ZERO;
+        for (address, nonce) in [
+            (address!("0000000000000000000000000000000000000000"), 0),
+            (
+                address!("0000000000000000000000000000000000000000"),
+                u32::MIN,
+            ),
+            (
+                address!("0000000000000000000000000000000000000000"),
+                u32::MAX,
+            ),
+            (address!("2340820934820934820934809238402983400000"), 0),
+            (
+                address!("2340820934820934820934809238402983400000"),
+                u32::MIN,
+            ),
+            (
+                address!("2340820934820934820934809238402983400000"),
+                u32::MAX,
+            ),
+        ] {
+            assert_eq!(
+                calc_create_address(&address, nonce as u64),
+                address.create(nonce as u64)
+            );
+        }
+    }
 }
