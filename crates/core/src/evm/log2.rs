@@ -22,7 +22,7 @@ pub fn _evm_log2(
     LowLevelSDK::jzkt_emit_log(
         address_bytes32.as_ptr(),
         topics.as_ptr(),
-        topics.len() as u32,
+        topics.len() as u32 * 32,
         data_offset,
         data_size,
     );
