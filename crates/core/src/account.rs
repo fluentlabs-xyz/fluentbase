@@ -4,6 +4,7 @@ use crate::account_types::{
     JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
 };
+use crate::helpers::{calc_create2_address, calc_create_address};
 use crate::JZKT_ACCOUNT_FIELDS_COUNT;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
@@ -377,20 +378,33 @@ impl Account {
 
     pub fn create_account(
         caller: &mut Account,
-        callee: &mut Account,
         amount: U256,
-    ) -> Result<(), ExitCode> {
+        salt_hash: Option<(B256, B256)>,
+    ) -> Result<Account, ExitCode> {
+        // check if caller have enough balance
+        if caller.balance < amount {
+            return Err(ExitCode::InsufficientBalance);
+        }
+        // try to increment nonce
+        let old_nonce = caller.inc_nonce()?;
+        // calc address
+        let callee_address = if let Some((salt, hash)) = salt_hash {
+            calc_create2_address(&caller.address, &salt, &hash)
+        } else {
+            calc_create_address(&caller.address, old_nonce)
+        };
+        let mut callee = Account::new_from_jzkt(&callee_address);
         // make sure there is no creation collision
-        if callee.rwasm_code_hash != POSEIDON_EMPTY || callee.nonce != 0 {
+        if callee.is_not_empty() {
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
-        if let Err(exit_code) = Self::transfer(caller, callee, amount) {
+        if let Err(exit_code) = Self::transfer(caller, &mut callee, amount) {
             return Err(exit_code);
         }
         // change nonce (we are always on spurious dragon)
-        caller.nonce = 1;
-        Ok(())
+        callee.nonce = 1;
+        Ok(callee)
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

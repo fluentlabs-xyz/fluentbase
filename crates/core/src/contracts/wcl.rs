@@ -1,3 +1,4 @@
+use crate::helpers::unwrap_exit_code;
 use crate::wasm::{call::_wasm_call, create::_wasm_create, create2::_wasm_create2};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core_api::{
@@ -30,37 +31,13 @@ pub fn main() {
         match method_name {
             WasmMethodName::WasmCreate => {
                 let method_input = decode_input!(core_input, WasmCreateMethodInput);
-                match _wasm_create(
-                    method_input.value32.as_ptr(),
-                    method_input.code.as_ptr(),
-                    method_input.code.len() as u32,
-                    method_input.gas_limit,
-                ) {
-                    Ok(address) => LowLevelSDK::sys_write(address.as_slice()),
-                    Err(exit_code) => {
-                        // let's forward output with error messages
-                        let output_size = LowLevelSDK::sys_output_size();
-                        LowLevelSDK::sys_forward_output(0, output_size);
-                        // exit from app
-                        LowLevelSDK::sys_halt(exit_code.into_i32());
-                    }
-                }
+                let address = unwrap_exit_code(_wasm_create(method_input));
+                LowLevelSDK::sys_write(address.as_slice());
             }
             WasmMethodName::WasmCreate2 => {
                 let method_input = decode_input!(core_input, WasmCreate2MethodInput);
-                let mut out_address = [0u8; 20];
-                let exit_code = _wasm_create2(
-                    method_input.value32.as_ptr(),
-                    method_input.code.as_ptr(),
-                    method_input.code.len() as u32,
-                    method_input.salt32.as_ptr(),
-                    method_input.gas_limit,
-                    out_address.as_mut_ptr(),
-                );
-                if !exit_code.is_ok() {
-                    panic!("create2 method failed, exit code: {}", exit_code.into_i32())
-                }
-                LowLevelSDK::sys_write(&out_address);
+                let address = unwrap_exit_code(_wasm_create2(method_input));
+                LowLevelSDK::sys_write(address.as_slice());
             }
             WasmMethodName::WasmCall => {
                 let method_input = decode_input!(core_input, WasmCallMethodInput);

@@ -1,61 +1,36 @@
-use crate::{
-    account::Account,
-    fluent_host::FluentHost,
-    helpers::{calc_create_address, DefaultEvmSpec},
-};
+use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
-use core::ptr;
-use fluentbase_sdk::evm::{ExecutionContext, U256};
-use fluentbase_types::ExitCode;
+use fluentbase_core_api::bindings::EvmCreateMethodInput;
+use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_types::{Address, ExitCode};
 use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
     primitives::{Bytecode, Bytes},
     BytecodeLocked, Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
+use revm_primitives::U256;
 
-pub fn _evm_create(
-    value32_offset: *const u8,
-    code_offset: *const u8,
-    code_length: u32,
-    address20_offset: *mut u8,
-    gas_limit: u32,
-) -> ExitCode {
+pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     // TODO: "gas calculations"
     // TODO: "load account so it needs to be marked as warm for access list"
     // TODO: "call depth stack check >= 1024"
+    let value = U256::from_be_bytes(input.value32);
 
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
     if is_static {
-        return ExitCode::WriteProtection;
+        return Err(ExitCode::WriteProtection);
     }
-
-    // read value input
-    let value = U256::from_be_slice(unsafe { &*ptr::slice_from_raw_parts(value32_offset, 32) });
 
     // load deployer and contract accounts
     let caller_address = ExecutionContext::contract_caller();
     let mut caller_account = Account::new_from_jzkt(&caller_address);
-    if caller_account.balance < value {
-        return ExitCode::InsufficientBalance;
-    }
-    let old_nonce = match caller_account.inc_nonce() {
-        Ok(old_nonce) => old_nonce,
-        Err(err) => return err,
-    };
-    let deployed_contract_address = calc_create_address(&caller_address, old_nonce);
-    let mut callee_account = Account::new_from_jzkt(&deployed_contract_address);
 
     // create an account
-    match Account::create_account(&mut caller_account, &mut callee_account, value) {
-        Ok(_) => {}
-        Err(exit_code) => return exit_code,
-    }
+    let mut callee_account = Account::create_account(&mut caller_account, value, None)?;
 
-    let analyzed_bytecode = to_analysed(Bytecode::new_raw(Bytes::from_static(unsafe {
-        &*ptr::slice_from_raw_parts(code_offset, code_length as usize)
-    })));
+    let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.code.into()));
     let deployer_bytecode_locked = BytecodeLocked::try_from(analyzed_bytecode).unwrap();
     let hash = deployer_bytecode_locked.hash_slow();
 
@@ -63,11 +38,11 @@ pub fn _evm_create(
         input: Bytes::new(),
         bytecode: deployer_bytecode_locked,
         hash,
-        address: deployed_contract_address,
+        address: callee_account.address,
         caller: caller_address,
         value,
     };
-    let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, false);
+    let mut interpreter = Interpreter::new(Box::new(contract), input.gas_limit as u64, false);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
@@ -77,21 +52,23 @@ pub fn _evm_create(
     {
         v
     } else {
-        return ExitCode::EVMCreateError;
+        return Err(ExitCode::EVMCreateError);
     };
 
     if result.is_error() {
-        return ExitCode::EVMCreateError;
+        return Err(ExitCode::EVMCreateError);
     } else if result.is_revert() {
-        return ExitCode::EVMCreateRevert;
+        return Err(ExitCode::EVMCreateRevert);
     }
 
     if result.output.len() > MAX_CODE_SIZE {
-        return ExitCode::ContractSizeLimit;
+        return Err(ExitCode::ContractSizeLimit);
     }
 
+    // write caller changes to database
     caller_account.write_to_jzkt();
 
+    // write callee changes to database
     callee_account.update_bytecode(
         &result.output,
         None,
@@ -99,7 +76,5 @@ pub fn _evm_create(
         None,
     );
 
-    unsafe { ptr::copy(deployed_contract_address.as_ptr(), address20_offset, 20) }
-
-    ExitCode::Ok
+    Ok(callee_account.address)
 }

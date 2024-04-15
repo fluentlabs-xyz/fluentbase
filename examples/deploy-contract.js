@@ -43,7 +43,7 @@ const main = async () => {
     const signedTransaction = await web3.eth.accounts.signTransaction({
         data: '0x' + wasmBinary,
         gasPrice,
-        gas: 100_000_000,
+        gas: 300_000_000,
         from: account.address,
     }, privateKey)
 
