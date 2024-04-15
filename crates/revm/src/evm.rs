@@ -564,7 +564,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(
                 " - output message: {}",
                 core::str::from_utf8(&result.output)
-                    .map(|value| value.to_string())
+                    .map(|value| value.to_string().replace("\n", " "))
                     .unwrap_or_else(|_| format!("0x{}", hex::encode(&result.output)))
             );
             // for log in runtime.store().tracer().logs.iter() {

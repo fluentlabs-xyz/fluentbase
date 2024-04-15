@@ -125,7 +125,7 @@ fn test_panic() {
     );
     assert_eq!(
         from_utf8(&output.output).unwrap(),
-        "panicked at examples/src/panic.rs:4:5:\nit is panic time"
+        "panicked at examples/src/panic.rs:4:5: it is panic time"
     );
     assert_eq!(output.exit_code, -71);
 }
