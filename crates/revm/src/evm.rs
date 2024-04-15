@@ -556,17 +556,17 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(" - fuel consumed: {}", result.fuel_consumed);
             println!(" - exit code: {}", result.exit_code);
-            println!(" - opcode used: {}", runtime.store().tracer().logs.len());
-            println!(
-                " - last opcode: {:?}",
-                runtime.store().tracer().logs.last().unwrap().opcode
-            );
             println!(
                 " - output message: {}",
                 core::str::from_utf8(&result.output)
                     .map(|value| value.to_string().replace("\n", " "))
                     .unwrap_or_else(|_| format!("0x{}", hex::encode(&result.output)))
             );
+            println!(
+                " - last opcode: {:?}",
+                runtime.store().tracer().logs.last().unwrap().opcode
+            );
+            println!(" - opcode used: {}", runtime.store().tracer().logs.len());
             // for log in runtime.store().tracer().logs.iter() {
             //     match log.opcode {
             //         Instruction::Call(index) => println!("{:?}", SysFuncIdx::from(index.to_u32())),

@@ -14,8 +14,9 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
+use fluentbase_core_api::bindings::{EvmCreate2MethodInput, EvmCreateMethodInput};
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{address, Bytes, ExitCode, B256, U256};
+use fluentbase_types::{address, Bytes, B256, U256};
 use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
 
 #[test]
@@ -121,15 +122,12 @@ fn evm_create_test() {
 
     let value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
-    let mut created_contract_address = Address::default();
-    let exit_code = _evm_create(
-        value.0.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.len() as u32,
-        created_contract_address.0.as_mut_ptr(),
+    let created_contract_address = _evm_create(EvmCreateMethodInput {
+        value32: value.0,
+        code: EVM_CONTRACT_BYTECODE1.to_vec(),
         gas_limit,
-    );
-    assert!(exit_code.is_ok());
+    })
+    .unwrap();
     assert_eq!(expected_contract_address, created_contract_address);
 }
 
@@ -168,15 +166,12 @@ fn evm_call_after_create_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
-    let mut created_address = Address::default();
-    let exit_code = _evm_create(
-        create_value.to_be_bytes::<32>().as_ptr(),
-        EVM_CONTRACT_BYTECODE1.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.len() as u32,
-        created_address.0.as_mut_ptr(),
+    let created_address = _evm_create(EvmCreateMethodInput {
+        value32: create_value.to_be_bytes(),
+        code: EVM_CONTRACT_BYTECODE1.to_vec(),
         gas_limit,
-    );
-    assert!(exit_code.is_ok());
+    })
+    .unwrap();
     assert_eq!(computed_contract_address, created_address);
 
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
@@ -244,16 +239,13 @@ fn evm_call_after_create2_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u32 = 10_000_000;
-    let mut created_address = Address::default();
-    let exit_code = _evm_create2(
-        create_value.to_be_bytes::<32>().as_ptr(),
-        EVM_CONTRACT_BYTECODE1.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.len() as u32,
-        salt.as_ptr(),
-        created_address.0.as_mut_ptr(),
+    let created_address = _evm_create2(EvmCreate2MethodInput {
+        value32: create_value.to_be_bytes(),
+        salt32: salt.0,
+        code: EVM_CONTRACT_BYTECODE1.to_vec(),
         gas_limit,
-    );
-    assert!(exit_code.is_ok());
+    })
+    .unwrap();
     assert_eq!(computed_contract_address, created_address);
 
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
@@ -425,15 +417,12 @@ fn evm_selfbalance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("1000");
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
     let gas_limit: u32 = 10_000_000;
-    let mut created_address = Address::default();
-    assert!(_evm_create(
-        create_value.to_be_bytes::<32>().as_ptr(),
-        EVM_CONTRACT_BYTECODE1.as_ptr(),
-        EVM_CONTRACT_BYTECODE1.len() as u32,
-        created_address.0.as_mut_ptr(),
+    let created_address = _evm_create(EvmCreateMethodInput {
+        value32: create_value.to_be_bytes(),
+        code: EVM_CONTRACT_BYTECODE1.to_vec(),
         gas_limit,
-    )
-    .is_ok());
+    })
+    .unwrap();
     assert_eq!(computed_contract_address, created_address);
     let mut created_address_balance = U256::default();
     Account::jzkt_get_balance(created_address.into_word().as_ptr(), unsafe {
@@ -499,17 +488,12 @@ fn evm_balance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("84326482");
     let create_value = U256::from_be_slice(&create_value_hex_bytes);
     let gas_limit: u32 = 10_000_000;
-    let mut created_address = Address::default();
-    assert_eq!(
-        _evm_create(
-            create_value.to_be_bytes::<32>().as_ptr(),
-            EVM_CONTRACT_BYTECODE1.as_ptr(),
-            EVM_CONTRACT_BYTECODE1.len() as u32,
-            created_address.0.as_mut_ptr(),
-            gas_limit,
-        ),
-        ExitCode::Ok
-    );
+    let created_address = _evm_create(EvmCreateMethodInput {
+        value32: create_value.to_be_bytes(),
+        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+        gas_limit,
+    })
+    .unwrap();
     assert_eq!(
         hex::encode(computed_contract_address),
         hex::encode(created_address)

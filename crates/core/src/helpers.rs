@@ -148,14 +148,22 @@ pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
     storage_key
 }
 
+#[inline(always)]
+pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
+    result.unwrap_or_else(|exit_code| {
+        LowLevelSDK::sys_halt(exit_code.into_i32());
+        panic!("execution halted")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use fluentbase_types::address;
+    use revm_primitives::b256;
 
     #[test]
     fn test_create_address() {
-        let address = Address::ZERO;
         for (address, nonce) in [
             (address!("0000000000000000000000000000000000000000"), 0),
             (
@@ -179,6 +187,20 @@ mod tests {
             assert_eq!(
                 calc_create_address(&address, nonce as u64),
                 address.create(nonce as u64)
+            );
+        }
+    }
+
+    #[test]
+    fn test_create2_address() {
+        let address = Address::ZERO;
+        for (salt, hash) in [(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        )] {
+            assert_eq!(
+                calc_create2_address(&address, &salt, &hash),
+                address.create2(salt, hash)
             );
         }
     }
