@@ -245,7 +245,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
         // Load EVM storage account
-        ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
+        let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
+        evm_storage.info.nonce = 1;
         ctx.evm.touch(&EVM_STORAGE_ADDRESS);
 
         // call inner handling of call/create
