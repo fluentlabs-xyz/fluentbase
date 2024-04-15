@@ -16,7 +16,7 @@ pub fn _evm_log1(data_offset: *const u8, data_size: u32, topic32_1_offset: *cons
     LowLevelSDK::jzkt_emit_log(
         address_bytes32.as_ptr(),
         topics.as_ptr(),
-        TOPICS_COUNT as u32,
+        topics.len() as u32,
         data_offset,
         data_size,
     );
