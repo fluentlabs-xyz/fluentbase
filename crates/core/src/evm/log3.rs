@@ -1,7 +1,7 @@
 use crate::account_types::Topics;
 use core::ptr;
 use fluentbase_sdk::evm::ExecutionContext;
-use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 pub fn _evm_log3(
     data_offset: *const u8,
@@ -12,9 +12,7 @@ pub fn _evm_log3(
 ) {
     const TOPICS_COUNT: usize = 3;
 
-    let mut address_bytes32 = Bytes32::default();
     let address = ExecutionContext::contract_address();
-    unsafe { ptr::copy(address.as_ptr(), address_bytes32[12..].as_mut_ptr(), 20) };
 
     let mut topics = Topics::<TOPICS_COUNT>::default();
     unsafe { ptr::copy(topic32_1_offset, topics[0].as_mut_ptr(), 1) }
@@ -22,7 +20,7 @@ pub fn _evm_log3(
     unsafe { ptr::copy(topic32_3_offset, topics[2].as_mut_ptr(), 1) }
 
     LowLevelSDK::jzkt_emit_log(
-        address_bytes32.as_ptr(),
+        address.as_ptr(),
         topics.as_ptr(),
         topics.len() as u32 * 32,
         data_offset,

@@ -17,7 +17,7 @@ use fluentbase_runtime::{
     },
     DefaultEmptyRuntimeDatabase, RuntimeContext,
 };
-use fluentbase_types::JournalCheckpoint;
+use fluentbase_types::{Address, Bytes, JournalCheckpoint};
 use std::ptr;
 
 type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;
@@ -220,19 +220,27 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { ptr::copy(root.as_ptr(), output32_offset, 32) }
     }
     fn jzkt_emit_log(
-        key32_ptr: *const u8,
+        address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
         data_ptr: *const u8,
         data_len: u32,
     ) {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        let topics = unsafe { &*ptr::slice_from_raw_parts(topics32s_ptr, topics32s_len as usize) }
-            .iter()
-            .map(|v| B256::new(*v))
-            .collect::<Vec<_>>();
-        let data = unsafe { &*ptr::slice_from_raw_parts(data_ptr, data_len as usize) };
-        with_context_mut(|ctx| JzktEmitLog::fn_impl(ctx, key, &topics, data));
+        with_context_mut(|ctx| {
+            let key = unsafe { &*ptr::slice_from_raw_parts(address20_ptr, 20) };
+            let topics =
+                unsafe { &*ptr::slice_from_raw_parts(topics32s_ptr, topics32s_len as usize) }
+                    .iter()
+                    .map(|v| B256::new(*v))
+                    .collect::<Vec<_>>();
+            let data = unsafe { &*ptr::slice_from_raw_parts(data_ptr, data_len as usize) };
+            JzktEmitLog::fn_impl(
+                ctx,
+                Address::from_slice(key),
+                topics,
+                Bytes::copy_from_slice(data),
+            )
+        });
     }
     fn jzkt_commit(root32_offset: *mut u8) {
         let root = with_context_mut(|ctx| JzktCommit::fn_impl(ctx).unwrap());
