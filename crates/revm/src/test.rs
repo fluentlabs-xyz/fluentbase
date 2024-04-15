@@ -262,7 +262,7 @@ fn test_evm_storage() {
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
-        "6400000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000064",
         hex::encode(bytes)
     );
     // call greeting EVM contract
@@ -273,9 +273,9 @@ fn test_evm_storage() {
         &hex!("20965255"),
     );
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().unwrap_or_default().iter().as_slice();
     assert_eq!(
-        "6400000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000064",
         hex::encode(bytes)
     );
 }

@@ -114,7 +114,7 @@ impl Host for FluentHost {
 
     #[inline]
     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(&Address::new(address.into_array()));
 
         Some((account.balance, false))
     }
@@ -122,7 +122,7 @@ impl Host for FluentHost {
     #[inline]
     fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
         // TODO optimize using separate methods
-        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(&Address::new(address.into_array()));
         let bytecode_bytes = Bytes::copy_from_slice(account.load_source_bytecode().as_ref());
 
         Some((Bytecode::new_raw(bytecode_bytes), false))
@@ -131,7 +131,7 @@ impl Host for FluentHost {
     #[inline]
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
         // TODO optimize using separate methods
-        let account = Account::new_from_jzkt(&fluentbase_types::Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(&Address::new(address.into_array()));
         let code_hash = B256::from_slice(account.source_code_hash.as_slice());
 
         Some((code_hash, false))
@@ -141,7 +141,7 @@ impl Host for FluentHost {
     fn sload(&mut self, _address: Address, index: U256) -> Option<(U256, bool)> {
         let mut slot_value32 = Bytes32::default();
         let is_cold = _evm_sload(index.as_le_slice().as_ptr(), slot_value32.as_mut_ptr()).ok()?;
-        Some((U256::from_be_bytes(slot_value32), is_cold))
+        Some((U256::from_le_bytes(slot_value32), is_cold))
     }
 
     #[inline]
