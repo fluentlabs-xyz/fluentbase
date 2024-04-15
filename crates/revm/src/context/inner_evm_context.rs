@@ -132,6 +132,15 @@ impl<DB: Database> InnerEvmContext<DB> {
         self.journaled_state.load_account(address, &mut self.db)
     }
 
+    /// Loads an account into memory. Returns `true` if it is cold accessed.
+    #[inline]
+    pub fn load_account_with_code(
+        &mut self,
+        address: Address,
+    ) -> Result<(&mut Account, bool), EVMError<ExitCode>> {
+        self.journaled_state.load_code(address, &mut self.db)
+    }
+
     /// Load account from database to JournaledState.
     ///
     /// Return boolean pair where first is `is_cold` second bool `exists`.
