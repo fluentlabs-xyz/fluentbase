@@ -179,7 +179,7 @@ impl Host for FluentHost {
         LowLevelSDK::jzkt_emit_log(
             address_word.as_ptr(),
             topics.as_ptr(),
-            topics.len() as u32,
+            topics.len() as u32 * 32,
             data.as_ptr(),
             data.len() as u32,
         );
