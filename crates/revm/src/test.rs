@@ -224,3 +224,75 @@ fn test_evm_greeting() {
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", core::str::from_utf8(bytes.as_ref()).unwrap());
 }
+
+///
+/// Test storage though constructor
+///
+/// ```solidity
+/// // SPDX-License-Identifier: MIT
+/// pragma solidity 0.8.24;
+/// contract Storage {
+///   uint256 private value;
+///   constructor() payable {
+///     value = 100;
+///   }
+///   function getValue() public view returns (uint256) {
+///     return value;
+///   }
+/// }
+/// ```
+///
+#[test]
+fn test_evm_storage() {
+    // deploy greeting EVM contract
+    let mut ctx = TestingContext::default();
+    let mut env = Env::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    env.tx.caller = DEPLOYER_ADDRESS;
+    env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
+    env.tx.data = Bytes::from_static(&hex!("608060405260645f8190555060af806100175f395ff3fe6080604052348015600e575f80fd5b50600436106026575f3560e01c80632096525514602a575b5f80fd5b60306044565b604051603b91906062565b60405180910390f35b5f8054905090565b5f819050919050565b605c81604c565b82525050565b5f60208201905060735f8301846055565b9291505056fea26469706673582212206a2e6da07d41af2063301a33093a60613dd63420518670788aa99d7d8f47625564736f6c63430008180033"));
+    env.tx.gas_limit = 3_000_000;
+    let mut evm = Evm::builder()
+        .with_env(Box::new(env))
+        .with_db(&mut ctx.db)
+        .build();
+    let result = evm.transact_commit().unwrap();
+    assert!(result.is_success());
+    drop(evm);
+    let contract_address = calc_create_address(&DEPLOYER_ADDRESS, 0);
+    let contract_account = ctx.db.accounts.get(&contract_address).unwrap();
+    let evm_bytecode = ctx
+        .db
+        .contracts
+        .get(&contract_account.info.code_hash)
+        .unwrap()
+        .bytes()
+        .to_vec();
+    assert_eq!(contract_account.info.code_hash, keccak256(&evm_bytecode));
+    assert!(evm_bytecode.len() > 0);
+    let rwasm_bytecode = ctx
+        .db
+        .contracts
+        .get(&contract_account.info.rwasm_code_hash)
+        .unwrap()
+        .bytes()
+        .to_vec();
+    let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
+    assert!(is_rwasm);
+    // call greeting EVM contract
+    let mut env = Env::default();
+    env.tx.transact_to = TransactTo::Call(contract_address);
+    env.tx.data = Bytes::from_static(&hex!("20965255"));
+    env.tx.gas_limit = 10_000_000;
+    let mut evm = Evm::builder()
+        .with_env(Box::new(env))
+        .with_db(&mut ctx.db)
+        .build();
+    let result = evm.transact_commit().unwrap();
+    assert!(result.is_success());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!(
+        "6400000000000000000000000000000000000000000000000000000000000000",
+        hex::encode(bytes)
+    );
+}

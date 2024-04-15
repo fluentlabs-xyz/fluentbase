@@ -15,8 +15,9 @@ use core::fmt;
 use fluentbase_codec::Encoder;
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_core::{
-    Account, AccountCheckpoint, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_COMPRESSION_FLAGS,
+    Account, AccountCheckpoint, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+    JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_core_api::api::CoreInput;
 use fluentbase_core_api::bindings::{
@@ -26,7 +27,8 @@ use fluentbase_core_api::bindings::{
 use fluentbase_sdk::evm::ContractInput;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{
-    Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog, STATE_MAIN,
+    address, Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog,
+    STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Log, LogData};
 use std::vec::Vec;
@@ -241,6 +243,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let mut caller_account = ctx.evm.load_jzkt_account(ctx.evm.env.tx.caller)?;
 
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
+
+        // Load EVM storage account
+        ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
+        ctx.evm.touch(&EVM_STORAGE_ADDRESS);
 
         // call inner handling of call/create
         let mut frame_result = match ctx.evm.env.tx.transact_to {
@@ -617,6 +623,9 @@ struct JournalDbWrapper<'a, DB: Database> {
     ctx: RefCell<&'a mut EvmContext<DB>>,
 }
 
+/// A special account for storing EVM storage trie `keccak256("evm_storage_trie")[12..32]`
+const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd33305bb6bfb");
+
 impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     fn checkpoint(&self) -> JournalCheckpoint {
         let mut ctx = self.ctx.borrow_mut();
@@ -626,21 +635,49 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
 
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
         let mut ctx = self.ctx.borrow_mut();
-        let address = Address::from_slice(&key[12..]);
-        let (account, _) = ctx.load_account(address).expect("can't load account");
-        let account = Account::from(account.info.clone());
-        Some((account.get_fields().to_vec(), JZKT_COMPRESSION_FLAGS, false))
+        // if first 12 bytes are empty then its account load otherwise storage
+        if key[..12] == [0u8; 12] {
+            let address = Address::from_slice(&key[12..]);
+            let (account, _) = ctx.load_account(address).expect("can't load account");
+            let account = Account::from(account.info.clone());
+            Some((
+                account.get_fields().to_vec(),
+                JZKT_ACCOUNT_COMPRESSION_FLAGS,
+                false,
+            ))
+        } else {
+            ctx.sload(EVM_STORAGE_ADDRESS, U256::from_be_bytes(*key))
+                .ok()
+                .map(|(value, is_cold)| {
+                    (
+                        vec![value.to_be_bytes::<32>()],
+                        JZKT_STORAGE_COMPRESSION_FLAGS,
+                        is_cold,
+                    )
+                })
+        }
     }
 
     fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, _flags: u32) {
         let mut ctx = self.ctx.borrow_mut();
-        let address = Address::from_slice(&key[12..]);
-        let (account, _) = ctx.load_account(address).expect("database error");
-        let jzkt_account = Account::new_from_fields(&address, value.as_slice());
-        account.info.balance = jzkt_account.balance;
-        account.info.nonce = jzkt_account.nonce;
-        account.info.code_hash = jzkt_account.source_code_hash;
-        account.info.rwasm_code_hash = jzkt_account.rwasm_code_hash;
+        if value.len() == JZKT_ACCOUNT_FIELDS_COUNT as usize {
+            let address = Address::from_slice(&key[12..]);
+            let (account, _) = ctx.load_account(address).expect("database error");
+            let jzkt_account = Account::new_from_fields(&address, value.as_slice());
+            account.info.balance = jzkt_account.balance;
+            account.info.nonce = jzkt_account.nonce;
+            account.info.code_hash = jzkt_account.source_code_hash;
+            account.info.rwasm_code_hash = jzkt_account.rwasm_code_hash;
+        } else if value.len() == JZKT_STORAGE_FIELDS_COUNT as usize {
+            ctx.sstore(
+                EVM_STORAGE_ADDRESS,
+                U256::from_be_bytes(*key),
+                U256::from_be_bytes(*value.get(0).unwrap()),
+            )
+            .expect("failed to update storage slot");
+        } else {
+            panic!("not supported field count: {}", value.len())
+        }
     }
 
     fn remove(&self, _key: &[u8; 32]) {
