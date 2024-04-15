@@ -3,7 +3,7 @@ use crate::{
     account_types::MAX_BYTECODE_SIZE,
     evm::{sload::_evm_sload, sstore::_evm_sstore},
 };
-use alloc::{vec, vec::Vec};
+use alloc::vec;
 use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
 use revm_interpreter::{
     primitives::{
@@ -173,15 +173,13 @@ impl Host for FluentHost {
 
     #[inline]
     fn log(&mut self, log: Log) {
-        let address_word = log.address.into_word();
-        let data = log.data.data.0.clone();
-        let topics: Vec<Bytes32> = log.topics().iter().copied().map(|v| v.0).collect();
         LowLevelSDK::jzkt_emit_log(
-            address_word.as_ptr(),
-            topics.as_ptr(),
-            topics.len() as u32 * 32,
-            data.as_ptr(),
-            data.len() as u32,
+            log.address.as_ptr(),
+            // we can do such cast because B256 has transparent repr
+            log.topics().as_ptr() as *const [u8; 32],
+            log.topics().len() as u32 * 32,
+            log.data.data.0.as_ptr(),
+            log.data.data.0.len() as u32,
         );
     }
 

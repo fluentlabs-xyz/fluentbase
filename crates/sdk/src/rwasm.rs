@@ -140,13 +140,21 @@ impl LowLevelAPI for LowLevelSDK {
     }
     #[inline(always)]
     fn jzkt_emit_log(
-        key32_ptr: *const u8,
+        address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
         data_ptr: *const u8,
         data_len: u32,
     ) {
-        unsafe { _jzkt_emit_log(key32_ptr, topics32s_ptr, topics32s_len, data_ptr, data_len) }
+        unsafe {
+            _jzkt_emit_log(
+                address20_ptr,
+                topics32s_ptr,
+                topics32s_len,
+                data_ptr,
+                data_len,
+            )
+        }
     }
     #[inline(always)]
     fn jzkt_commit(root32_offset: *mut u8) {

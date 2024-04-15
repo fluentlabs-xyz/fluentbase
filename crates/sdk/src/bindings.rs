@@ -57,7 +57,7 @@ extern "C" {
     pub fn _jzkt_remove(key32_ptr: *const u8);
     pub fn _jzkt_compute_root(output32_ptr: *mut u8);
     pub fn _jzkt_emit_log(
-        key32_ptr: *const u8,
+        address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
         data_ptr: *const u8,

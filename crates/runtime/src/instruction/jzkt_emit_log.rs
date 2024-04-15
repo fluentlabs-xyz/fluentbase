@@ -7,13 +7,13 @@ pub struct JzktEmitLog;
 impl JzktEmitLog {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
-        key32_ptr: u32,
+        address20_ptr: u32,
         topics32s_ptr: u32,
         topics32s_len: u32,
         data_ptr: u32,
         data_len: u32,
     ) -> Result<(), Trap> {
-        let key = caller.read_memory(key32_ptr, 32)?.to_vec();
+        let address = Address::from_slice(caller.read_memory(address20_ptr, 20)?);
         let topics = caller
             .read_memory(topics32s_ptr, topics32s_len)?
             .chunks(32)
@@ -23,21 +23,17 @@ impl JzktEmitLog {
                 res
             })
             .collect::<Vec<_>>();
-        let data = caller.read_memory(data_ptr, data_len)?.to_vec();
-        Self::fn_impl(caller.data_mut(), &key, &topics, &data);
+        let data = Bytes::copy_from_slice(caller.read_memory(data_ptr, data_len)?);
+        Self::fn_impl(caller.data_mut(), address, topics, data);
         Ok(())
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
         ctx: &mut RuntimeContext<DB>,
-        key: &[u8],
-        topics: &Vec<B256>,
-        data: &[u8],
+        address: Address,
+        topics: Vec<B256>,
+        data: Bytes,
     ) {
-        ctx.jzkt().emit_log(
-            Address::from_slice(key),
-            topics.clone(),
-            Bytes::copy_from_slice(data),
-        );
+        ctx.jzkt().emit_log(address, topics.clone(), data);
     }
 }
