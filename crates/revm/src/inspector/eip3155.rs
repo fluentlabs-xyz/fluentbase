@@ -1,6 +1,6 @@
 use crate::{
     inspectors::GasInspector,
-    interpreter::{opcode, CallInputs, CallOutcome, Interpreter},
+    interpreter::{CallInputs, CallOutcome, Interpreter},
     primitives::{db::Database, hex, HashMap, B256, U256},
     EvmContext, Inspector,
 };

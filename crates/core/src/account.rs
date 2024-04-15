@@ -1,8 +1,8 @@
 use crate::account_types::{
-    AccountCheckpoint, AccountFields, JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-    JZKT_COMPRESSION_FLAGS,
+    AccountCheckpoint, AccountFields, JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_COMPRESSION_FLAGS,
+    JZKT_ACCOUNT_NONCE_FIELD, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
 };
 use crate::JZKT_ACCOUNT_FIELDS_COUNT;
 use alloc::vec;
@@ -243,7 +243,7 @@ impl Account {
 
         LowLevelSDK::jzkt_update(
             self.address.into_word().as_ptr(),
-            JZKT_COMPRESSION_FLAGS,
+            JZKT_ACCOUNT_COMPRESSION_FLAGS,
             account_fields.as_ptr(),
             32 * account_fields.len() as u32,
         );

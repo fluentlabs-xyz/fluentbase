@@ -2,6 +2,7 @@ use fluentbase_sdk::Bytes32;
 
 /// Number of fields
 pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
+pub const JZKT_STORAGE_FIELDS_COUNT: u32 = 1;
 
 pub const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
 pub const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
@@ -17,8 +18,9 @@ pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
 /// - source code hash (3) because its keccak256
 ///
 /// Mask is: 0b00001001
-pub const JZKT_COMPRESSION_FLAGS: u32 =
+pub const JZKT_ACCOUNT_COMPRESSION_FLAGS: u32 =
     (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD);
+pub const JZKT_STORAGE_COMPRESSION_FLAGS: u32 = 0;
 
 /// EIP-170: Contract code size limit
 ///

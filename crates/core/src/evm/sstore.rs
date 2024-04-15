@@ -1,4 +1,5 @@
 use crate::helpers::calc_storage_key;
+use crate::JZKT_STORAGE_COMPRESSION_FLAGS;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
 
@@ -6,7 +7,7 @@ pub fn _evm_sstore(slot32_offset: *const u8, value32_offset: *const u8) -> Resul
     let storage_key = calc_storage_key(slot32_offset);
     LowLevelSDK::jzkt_update(
         storage_key.as_ptr(),
-        0,
+        JZKT_STORAGE_COMPRESSION_FLAGS,
         value32_offset as *const [u8; 32],
         32,
     );

@@ -18,10 +18,9 @@ fn test_greeting() {
 
 #[test]
 fn test_keccak256() {
-    let output = run_rwasm_with_raw_input(
+    let output = run_rwasm_with_evm_input(
         include_bytes!("../../examples/bin/keccak256.wasm").to_vec(),
         "Hello, World".as_bytes(),
-        true,
     );
     assert_eq!(output.exit_code, 0);
     assert_eq!(

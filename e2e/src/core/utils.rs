@@ -1,5 +1,5 @@
 use fluentbase_codec::Encoder;
-use fluentbase_core::{Account, JZKT_COMPRESSION_FLAGS};
+use fluentbase_core::{Account, JZKT_ACCOUNT_COMPRESSION_FLAGS};
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, IJournaledTrie, STATE_DEPLOY, STATE_MAIN, U256};
@@ -65,7 +65,7 @@ impl TestingContext<true> {
             jzkt.update(
                 &address.into_word(),
                 &account.get_fields().to_vec(),
-                JZKT_COMPRESSION_FLAGS,
+                JZKT_ACCOUNT_COMPRESSION_FLAGS,
             )
         }
         runtime_ctx.change_input(contract_input_vec);
