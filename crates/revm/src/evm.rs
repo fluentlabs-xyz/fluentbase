@@ -638,7 +638,9 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
         // if first 12 bytes are empty then its account load otherwise storage
         if key[..12] == [0u8; 12] {
             let address = Address::from_slice(&key[12..]);
-            let (account, _) = ctx.load_account(address).expect("can't load account");
+            let (account, _) = ctx
+                .load_account_with_code(address)
+                .expect("can't load account");
             let account = Account::from(account.info.clone());
             Some((
                 account.get_fields().to_vec(),
@@ -662,7 +664,7 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
         let mut ctx = self.ctx.borrow_mut();
         if value.len() == JZKT_ACCOUNT_FIELDS_COUNT as usize {
             let address = Address::from_slice(&key[12..]);
-            let (account, _) = ctx.load_account(address).expect("database error");
+            let (account, _) = ctx.load_account_with_code(address).expect("database error");
             let jzkt_account = Account::new_from_fields(&address, value.as_slice());
             account.info.balance = jzkt_account.balance;
             account.info.nonce = jzkt_account.nonce;
