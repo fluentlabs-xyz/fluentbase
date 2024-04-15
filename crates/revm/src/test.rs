@@ -190,6 +190,26 @@ fn test_deploy_keccak256() {
 }
 
 #[test]
+fn test_deploy_panic() {
+    // deploy greeting WASM contract
+    let mut ctx = TestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = deploy_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        include_bytes!("../../../examples/bin/panic.wasm"),
+    );
+    // call greeting WASM contract
+    let result = call_evm_tx(&mut ctx, DEPLOYER_ADDRESS, contract_address, &[]);
+    assert!(!result.is_success());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!(
+        "panicked at examples/src/panic.rs:4:5: it is panic time",
+        core::str::from_utf8(bytes.as_ref()).unwrap()
+    );
+}
+
+#[test]
 fn test_evm_greeting() {
     // deploy greeting EVM contract
     let mut ctx = TestingContext::default();
