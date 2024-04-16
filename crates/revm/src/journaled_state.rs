@@ -915,3 +915,16 @@ impl From<(u32, u32)> for JournalCheckpoint {
         }
     }
 }
+
+impl JournalCheckpoint {
+    pub fn from_u64(value: u64) -> Self {
+        Self {
+            log_i: (value >> 32) as usize,
+            journal_i: value as usize,
+        }
+    }
+
+    pub fn to_u64(&self) -> u64 {
+        (self.log_i as u64) << 32 | self.journal_i as u64
+    }
+}

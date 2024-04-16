@@ -9,7 +9,10 @@ use crate::JZKT_ACCOUNT_FIELDS_COUNT;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::{Address, Bytes, ExitCode, B256, F254, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use fluentbase_types::{
+    Address, Bytes, ExitCode, B256, F254, KECCAK_EMPTY, NATIVE_TRANSFER_ADDRESS,
+    NATIVE_TRANSFER_KECCAK, POSEIDON_EMPTY, U256,
+};
 use revm_primitives::AccountInfo;
 
 #[derive(Debug, Clone)]
@@ -402,9 +405,27 @@ impl Account {
         if let Err(exit_code) = Self::transfer(caller, &mut callee, amount) {
             return Err(exit_code);
         }
+        // emit transfer log
+        // Self::emit_transfer_log(&caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)
         callee.nonce = 1;
         Ok(callee)
+    }
+
+    pub fn emit_transfer_log(from: &Address, to: &Address, amount: &U256) {
+        let topics: [B256; 4] = [
+            NATIVE_TRANSFER_KECCAK,
+            from.into_word(),
+            to.into_word(),
+            B256::from(amount.to_be_bytes::<32>()),
+        ];
+        LowLevelSDK::jzkt_emit_log(
+            NATIVE_TRANSFER_ADDRESS.as_ptr(),
+            topics.as_ptr() as *const [u8; 32],
+            4 * 32,
+            core::ptr::null(),
+            0,
+        );
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

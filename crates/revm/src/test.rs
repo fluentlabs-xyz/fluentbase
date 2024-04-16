@@ -376,3 +376,20 @@ fn test_create_send() {
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
+
+#[test]
+fn test_evm_revert() {
+    // deploy greeting EVM contract
+    let mut ctx = TestingContext::default();
+    const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
+    let gas_price = U256::from(0);
+    let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, hex!("5f5ffd").into())
+        .gas_price(gas_price)
+        .value(U256::from(1e18))
+        .exec();
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
+    assert!(!result.is_success());
+    assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
+    assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
+}
