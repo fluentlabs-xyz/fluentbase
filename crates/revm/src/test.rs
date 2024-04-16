@@ -392,4 +392,17 @@ fn test_evm_revert() {
     assert!(!result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
+    // now send success tx
+    let result = TxBuilder::create(
+        &mut ctx,
+        SENDER_ADDRESS,
+        include_bytes!("../../../examples/bin/greeting.wasm").into(),
+    )
+    .gas_price(gas_price)
+    .value(U256::from(1e18))
+    .exec();
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
+    assert!(result.is_success());
+    assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
+    assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
 }
