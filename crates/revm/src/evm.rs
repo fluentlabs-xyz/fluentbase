@@ -8,14 +8,14 @@ use crate::{
         specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
         ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, B256, U256,
     },
-    Context, ContextWithHandlerCfg, EvmContext, FrameResult,
+    Context, ContextWithHandlerCfg, EvmContext, FrameResult, JournalCheckpoint, JournalEntry,
 };
 use core::cell::RefCell;
 use core::fmt;
 use fluentbase_codec::Encoder;
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_core::{
-    Account, AccountCheckpoint, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT,
+    Account, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT,
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
@@ -25,10 +25,9 @@ use fluentbase_core_api::bindings::{
     EVM_CREATE2_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_sdk::evm::ContractInput;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{
-    address, Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog,
-    STATE_MAIN,
+    address, Bytes, ExitCode, IJournaledTrie, JournalEvent, JournalLog, NATIVE_TRANSFER_ADDRESS,
+    NATIVE_TRANSFER_KECCAK, STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Log, LogData};
 use std::vec::Vec;
@@ -318,7 +317,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             return return_result(ExitCode::InsufficientBalance, gas);
         }
 
-        let checkpoint = LowLevelSDK::jzkt_checkpoint();
+        let checkpoint = self.context.evm.journaled_state.checkpoint();
 
         let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
             BytecodeType::EVM => {
@@ -404,7 +403,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             );
             Some(Address::from_slice(output_buffer.as_ref()))
         } else {
-            LowLevelSDK::jzkt_rollback(checkpoint);
+            self.context
+                .evm
+                .journaled_state
+                .checkpoint_revert(checkpoint);
             None
         };
 
@@ -443,7 +445,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             return return_result(ExitCode::CallDepthOverflow, gas);
         }
 
-        let checkpoint = Account::checkpoint();
+        let checkpoint = self.context.evm.journaled_state.checkpoint();
 
         // Touch address. For "EIP-158 State Clear", this will erase empty accounts.
         if value == U256::ZERO {
@@ -472,13 +474,13 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 }
             }
             Err(_) => {
+                self.context
+                    .evm
+                    .journaled_state
+                    .checkpoint_revert(checkpoint);
                 return return_result(ExitCode::FatalExternalError, gas);
             }
         }
-        // match Account::transfer(caller_account, callee_account, value) {
-        //     Ok(_) => {}
-        //     Err(exit_code) => return return_result(exit_code, gas),
-        // }
 
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
             checkpoint,
@@ -500,7 +502,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         // revert changes or not
         if exit_code != ExitCode::Ok {
-            Account::rollback(checkpoint);
+            self.context
+                .evm
+                .journaled_state
+                .checkpoint_revert(checkpoint);
         }
 
         ret
@@ -508,7 +513,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
     fn input_from_env(
         &self,
-        checkpoint: AccountCheckpoint,
+        checkpoint: JournalCheckpoint,
         gas: &Gas,
         caller: &mut Account,
         callee: &mut Account,
@@ -516,7 +521,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         value: U256,
     ) -> ContractInput {
         ContractInput {
-            journal_checkpoint: checkpoint,
+            journal_checkpoint: checkpoint.to_u64(),
             env_chain_id: self.context.evm.env.cfg.chain_id,
             contract_gas_limit: gas.remaining(),
             contract_address: callee.address,
@@ -539,7 +544,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     #[cfg(feature = "std")]
     fn exec_rwasm_binary(
         &mut self,
-        checkpoint: AccountCheckpoint,
+        checkpoint: JournalCheckpoint,
         gas: &mut Gas,
         caller: &mut Account,
         callee: &mut Account,
@@ -648,10 +653,10 @@ struct JournalDbWrapper<'a, DB: Database> {
 const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd33305bb6bfb");
 
 impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
-    fn checkpoint(&self) -> JournalCheckpoint {
+    fn checkpoint(&self) -> fluentbase_types::JournalCheckpoint {
         let mut ctx = self.ctx.borrow_mut();
         let (a, b) = ctx.journaled_state.checkpoint().into();
-        JournalCheckpoint::from((a, b))
+        fluentbase_types::JournalCheckpoint::from((a, b))
     }
 
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
@@ -715,6 +720,17 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
 
     fn emit_log(&self, address: Address, topics: Vec<B256>, data: Bytes) {
         let mut ctx = self.ctx.borrow_mut();
+        if address == NATIVE_TRANSFER_ADDRESS && topics[0] == NATIVE_TRANSFER_KECCAK {
+            assert_eq!(topics.len(), 4, "topics count mismatched");
+            let from = Address::from_slice(&topics[1][12..]);
+            let to = Address::from_slice(&topics[2][12..]);
+            let balance = U256::from_be_slice(&topics[3][..]);
+            ctx.journaled_state
+                .journal
+                .last_mut()
+                .unwrap()
+                .push(JournalEntry::BalanceTransfer { from, to, balance });
+        }
         ctx.journaled_state.log(Log {
             address,
             data: LogData::new_unchecked(topics, data),
@@ -726,7 +742,7 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
         Err(ExitCode::NotSupportedCall)
     }
 
-    fn rollback(&self, checkpoint: JournalCheckpoint) {
+    fn rollback(&self, checkpoint: fluentbase_types::JournalCheckpoint) {
         let mut ctx = self.ctx.borrow_mut();
         ctx.journaled_state
             .checkpoint_revert((checkpoint.0, checkpoint.1).into());
