@@ -457,6 +457,29 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 .touch(&callee_account.address);
         }
 
+        self.context.evm.touch(&caller_account.address);
+        self.context.evm.touch(&callee_account.address);
+
+        // if value is not zero then transfer funds from one account to another
+        match self
+            .context
+            .evm
+            .transfer(&caller_account.address, &callee_account.address, value)
+        {
+            Ok(result) => {
+                if let Some(exit_code) = result {
+                    return return_result(exit_code, gas);
+                }
+            }
+            Err(_) => {
+                return return_result(ExitCode::FatalExternalError, gas);
+            }
+        }
+        // match Account::transfer(caller_account, callee_account, value) {
+        //     Ok(_) => {}
+        //     Err(exit_code) => return return_result(exit_code, gas),
+        // }
+
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
             checkpoint,
             &mut gas,
@@ -531,6 +554,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             ctx: RefCell::new(&mut self.context.evm),
         };
         let rwasm_bytecode = jzkt.preimage(&callee.rwasm_code_hash.0);
+        if rwasm_bytecode.is_empty() {
+            return (Bytes::default(), ExitCode::Ok);
+        }
         let ctx = RuntimeContext::new(rwasm_bytecode)
             .with_input(input)
             .with_fuel_limit(gas.remaining())
@@ -568,12 +594,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 runtime.store().tracer().logs.last().unwrap().opcode
             );
             println!(" - opcode used: {}", runtime.store().tracer().logs.len());
-            // for log in runtime.store().tracer().logs.iter() {
-            //     match log.opcode {
-            //         Instruction::Call(index) => println!("{:?}", SysFuncIdx::from(index.to_u32())),
-            //         _ => {}
-            //     }
-            // }
         }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())
@@ -666,6 +686,7 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
         if value.len() == JZKT_ACCOUNT_FIELDS_COUNT as usize {
             let address = Address::from_slice(&key[12..]);
             let (account, _) = ctx.load_account_with_code(address).expect("database error");
+            account.mark_touch();
             let jzkt_account = Account::new_from_fields(&address, value.as_slice());
             account.info.balance = jzkt_account.balance;
             account.info.nonce = jzkt_account.nonce;

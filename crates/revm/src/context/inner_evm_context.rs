@@ -230,6 +230,18 @@ impl<DB: Database> InnerEvmContext<DB> {
             .selfdestruct(address, target, &mut self.db)
     }
 
+    /// Transfer the account.
+    #[inline]
+    pub fn transfer(
+        &mut self,
+        from: &Address,
+        to: &Address,
+        balance: U256,
+    ) -> Result<Option<InstructionResult>, EVMError<ExitCode>> {
+        self.journaled_state
+            .transfer(from, to, balance, &mut self.db)
+    }
+
     /// Make create frame.
     #[inline]
     pub fn make_create_frame(
