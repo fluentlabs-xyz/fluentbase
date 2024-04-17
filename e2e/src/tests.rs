@@ -1,9 +1,8 @@
 use crate::helpers::{run_rwasm_with_evm_input, run_rwasm_with_raw_input};
 use core::str::from_utf8;
-use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
-use fluentbase_types::STATE_DEPLOY;
+use fluentbase_types::{wasm2rwasm, STATE_DEPLOY};
 use hex_literal::hex;
 
 #[test]

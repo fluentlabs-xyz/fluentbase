@@ -1,5 +1,7 @@
 use crate::{evm::B256, LowLevelAPI, LowLevelSDK};
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_runtime::instruction::wasm_to_rwasm::WasmToRwasm;
+use fluentbase_runtime::instruction::wasm_to_rwasm_size::WasmToRwasmSize;
 use fluentbase_runtime::types::InMemoryTrieDb;
 use fluentbase_runtime::zktrie::ZkTrieStateDb;
 use fluentbase_runtime::{
@@ -17,7 +19,7 @@ use fluentbase_runtime::{
     },
     DefaultEmptyRuntimeDatabase, RuntimeContext,
 };
-use fluentbase_types::{Address, Bytes, JournalCheckpoint};
+use fluentbase_types::{Address, Bytes, ExitCode, JournalCheckpoint};
 use std::ptr;
 
 type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;
@@ -259,6 +261,27 @@ impl LowLevelAPI for LowLevelSDK {
         let dest =
             unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
         dest.copy_from_slice(&preimage_copy);
+    }
+    fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
+        let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
+        with_context_mut(|ctx| WasmToRwasmSize::fn_impl(wasm_binary).map_err(|v| v.into_i32()))
+            .unwrap()
+    }
+    fn wasm_to_rwasm(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+        output_len: u32,
+    ) -> i32 {
+        let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
+        let rwasm_binary_res = WasmToRwasm::fn_impl(wasm_binary).map_err(|v| v.into_i32());
+        if let Err(e) = rwasm_binary_res {
+            return e;
+        }
+        let rwasm_binary = rwasm_binary_res.unwrap();
+        let dest = unsafe { &mut *ptr::slice_from_raw_parts_mut(output_ptr, output_len as usize) };
+        dest.copy_from_slice(&rwasm_binary);
+        ExitCode::Ok.into_i32()
     }
 }
 

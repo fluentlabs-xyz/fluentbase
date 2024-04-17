@@ -67,4 +67,11 @@ extern "C" {
     pub fn _jzkt_rollback(checkpoint: u64);
     pub fn _jzkt_preimage_size(hash32_ptr: *const u8) -> u32;
     pub fn _jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
+    pub fn _wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32;
+    pub fn _wasm_to_rwasm(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+        output_len: u32,
+    ) -> i32;
 }

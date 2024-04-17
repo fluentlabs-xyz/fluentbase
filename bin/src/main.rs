@@ -4,7 +4,7 @@ extern crate core;
 
 use crate::types::FileFormat;
 use clap::Parser;
-use fluentbase_core::helpers::rwasm_module;
+use fluentbase_types::rwasm_module;
 use log::debug;
 use rwasm::rwasm::BinaryFormat;
 use std::{fs, path::Path};

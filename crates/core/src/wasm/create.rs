@@ -1,11 +1,14 @@
-use crate::{
-    account::Account,
-    helpers::{rwasm_exec_hash, wasm2rwasm},
-};
+use alloc::vec;
+
+use revm_primitives::RWASM_MAX_CODE_SIZE;
+
 use fluentbase_core_api::bindings::WasmCreateMethodInput;
 use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_sdk::LowLevelAPI;
+use fluentbase_sdk::LowLevelSDK;
 use fluentbase_types::{Address, ExitCode, U256};
-use revm_primitives::RWASM_MAX_CODE_SIZE;
+
+use crate::{account::Account, helpers::rwasm_exec_hash};
 
 pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     let value = U256::from_be_bytes(input.value32);
@@ -32,7 +35,18 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     let mut contract_account = Account::create_account(&mut deployer_account, value, None)?;
 
     // translate WASM to rWASM
-    let rwasm_bytecode = wasm2rwasm(&input.code).unwrap();
+    let exit_code = LowLevelSDK::wasm_to_rwasm(
+        input.code.as_ptr(),
+        input.code.len() as u32,
+        core::ptr::null_mut(),
+        0,
+    );
+    if exit_code != ExitCode::Ok.into_i32() {
+        panic!("wasm create failed, exit code: {}", exit_code);
+    }
+    let rwasm_bytecode_len = LowLevelSDK::sys_output_size();
+    let mut rwasm_bytecode = vec![0u8; rwasm_bytecode_len as usize];
+    LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
 
     // write deployer to the trie
     deployer_account.write_to_jzkt();
