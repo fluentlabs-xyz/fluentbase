@@ -279,8 +279,11 @@ impl LowLevelAPI for LowLevelSDK {
             return e;
         }
         let rwasm_binary = rwasm_binary_res.unwrap();
-        let dest = unsafe { &mut *ptr::slice_from_raw_parts_mut(output_ptr, output_len as usize) };
-        dest.copy_from_slice(&rwasm_binary);
+        if output_len > 0 {
+            let dest =
+                unsafe { &mut *ptr::slice_from_raw_parts_mut(output_ptr, output_len as usize) };
+            dest[..output_len as usize].copy_from_slice(&rwasm_binary);
+        }
         ExitCode::Ok.into_i32()
     }
 }
