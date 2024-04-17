@@ -41,27 +41,17 @@ impl FluentHost {
         Env {
             cfg: cfg_env,
             block: BlockEnv {
-                number: U256::from_be_slice(
-                    ExecutionContext::block_number().to_be_bytes().as_slice(),
-                ),
-                coinbase: Address::from_slice(ExecutionContext::block_coinbase().as_ref()),
-                timestamp: U256::from_be_slice(
-                    ExecutionContext::block_timestamp().to_be_bytes().as_slice(),
-                ),
-                gas_limit: U256::from_be_slice(
-                    ExecutionContext::block_gas_limit().to_be_bytes().as_slice(),
-                ),
+                number: U256::from(ExecutionContext::block_number()),
+                coinbase: ExecutionContext::block_coinbase(),
+                timestamp: U256::from(ExecutionContext::block_timestamp()),
+                gas_limit: U256::from(ExecutionContext::block_gas_limit()),
                 basefee: ExecutionContext::block_base_fee(),
-                difficulty: U256::from_be_slice(
-                    ExecutionContext::block_difficulty()
-                        .to_be_bytes()
-                        .as_slice(),
-                ),
+                difficulty: U256::from(ExecutionContext::block_difficulty()),
                 prevrandao: None,
                 blob_excess_gas_and_price: None,
             },
             tx: TxEnv {
-                caller: Address::from_slice(ExecutionContext::tx_caller().as_ref()),
+                caller: ExecutionContext::tx_caller(),
                 gas_limit: Default::default(),
                 gas_price: ExecutionContext::tx_gas_price(),
                 transact_to: TransactTo::Call(Address::ZERO), // will do nothing
