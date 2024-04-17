@@ -2,6 +2,7 @@ use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use fluentbase_core_api::bindings::EvmCreateMethodInput;
 use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode};
 use revm_interpreter::{
     analysis::to_analysed,
@@ -56,8 +57,14 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     };
 
     if result.is_error() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateError);
     } else if result.is_revert() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateRevert);
     }
 

@@ -1,12 +1,10 @@
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
-use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput},
     Bytes32, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
-use rwasm::rwasm::BinaryFormat;
 
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
