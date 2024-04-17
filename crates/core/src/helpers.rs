@@ -118,7 +118,7 @@ pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
 pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
     result.unwrap_or_else(|exit_code| {
         LowLevelSDK::sys_halt(exit_code.into_i32());
-        panic!("execution halted")
+        panic!("execution halted: {exit_code}")
     })
 }
 
