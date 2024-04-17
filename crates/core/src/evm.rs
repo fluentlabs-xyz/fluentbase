@@ -1,16 +1,16 @@
 pub mod address;
 pub mod balance;
 pub mod call;
+pub mod callcode;
 pub mod calldatacopy;
 pub mod calldataload;
 pub mod calldatasize;
 pub mod codecopy;
 pub mod codehash;
 pub mod codesize;
-// #[cfg(not(any(feature = "evm_loader", feature = "wcl")))]
+#[cfg(feature = "ecl")]
 pub mod create;
-// #[cfg(not(any(feature = "evm_loader", feature = "wcl")))]
-pub mod callcode;
+#[cfg(feature = "ecl")]
 pub mod create2;
 pub mod delegatecall;
 pub mod extcodecopy;
