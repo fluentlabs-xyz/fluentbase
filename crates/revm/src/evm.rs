@@ -594,10 +594,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     .map(|value| value.to_string().replace("\n", " "))
                     .unwrap_or_else(|_| format!("0x{}", hex::encode(&result.output)))
             );
-            println!(
-                " - last opcode: {:?}",
-                runtime.store().tracer().logs.last().unwrap().opcode
-            );
             println!(" - opcode used: {}", runtime.store().tracer().logs.len());
         }
         gas.record_cost(result.fuel_consumed);
