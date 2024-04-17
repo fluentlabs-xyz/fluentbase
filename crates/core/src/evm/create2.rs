@@ -66,8 +66,14 @@ pub fn _evm_create2(input: EvmCreate2MethodInput) -> Result<Address, ExitCode> {
     };
 
     if result.is_error() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateError);
     } else if result.is_revert() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateRevert);
     }
 

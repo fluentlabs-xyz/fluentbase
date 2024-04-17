@@ -178,7 +178,7 @@ impl<DB: Database> Inspector<DB> for TracerEip3155 {
                 state_root: B256::ZERO.to_string(),
                 output: outcome.result.output.to_string(),
                 gas_used: hex_number(self.gas_inspector.gas_remaining()),
-                pass: outcome.result.is_ok(),
+                pass: outcome.result.result.is_ok(),
 
                 time: None,
                 fork: None,
