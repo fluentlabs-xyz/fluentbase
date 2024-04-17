@@ -63,6 +63,8 @@ impl FluentHost {
                 gas_priority_fee: None,
                 blob_hashes: vec![],
                 max_fee_per_blob_gas: None,
+                #[cfg(feature = "not_in_use")]
+                optimism: Default::default(),
             },
         }
     }
