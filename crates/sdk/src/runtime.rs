@@ -264,7 +264,7 @@ impl LowLevelAPI for LowLevelSDK {
     }
     fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
         let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
-        with_context_mut(|ctx| WasmToRwasmSize::fn_impl(wasm_binary).map_err(|v| v.into_i32()))
+        with_context_mut(|ctx| WasmToRwasmSize::fn_impl(ctx, wasm_binary).map_err(|v| v.into_i32()))
             .unwrap()
     }
     fn wasm_to_rwasm(
@@ -274,7 +274,9 @@ impl LowLevelAPI for LowLevelSDK {
         output_len: u32,
     ) -> i32 {
         let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
-        let rwasm_binary_res = WasmToRwasm::fn_impl(wasm_binary).map_err(|v| v.into_i32());
+        let rwasm_binary_res = with_context_mut(|v| {
+            WasmToRwasm::fn_impl(v, wasm_binary, output_len).map_err(|v| v.into_i32())
+        });
         if let Err(e) = rwasm_binary_res {
             return e;
         }
