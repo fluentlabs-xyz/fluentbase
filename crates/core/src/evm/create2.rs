@@ -81,8 +81,10 @@ pub fn _evm_create2(input: EvmCreate2MethodInput) -> Result<Address, ExitCode> {
         return Err(ExitCode::ContractSizeLimit);
     }
 
+    // write caller changes to database
     caller_account.write_to_jzkt();
 
+    // write callee changes to database
     callee_account.update_bytecode(
         &result.output,
         None,
