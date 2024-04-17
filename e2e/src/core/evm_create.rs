@@ -5,11 +5,7 @@ use crate::{
     core::utils::TestingContext,
 };
 use fluentbase_codec::Encoder;
-use fluentbase_core::{
-    consts::ECL_CONTRACT_ADDRESS,
-    helpers::{calc_create_address, wasm2rwasm},
-    Account,
-};
+use fluentbase_core::{consts::ECL_CONTRACT_ADDRESS, helpers::calc_create_address, Account};
 use fluentbase_core_api::{
     api::CoreInput,
     bindings::{
@@ -19,7 +15,8 @@ use fluentbase_core_api::{
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_types::{
-    address, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN, U256,
+    address, wasm2rwasm, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN,
+    U256,
 };
 use hex_literal::hex;
 

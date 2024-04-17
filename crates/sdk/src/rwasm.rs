@@ -4,7 +4,8 @@ use crate::{
         _jzkt_checkpoint, _jzkt_commit, _jzkt_compute_root, _jzkt_emit_log, _jzkt_get, _jzkt_open,
         _jzkt_preimage_copy, _jzkt_preimage_size, _jzkt_remove, _jzkt_rollback, _jzkt_update,
         _jzkt_update_preimage, _sys_exec_hash, _sys_forward_output, _sys_halt, _sys_input_size,
-        _sys_output_size, _sys_read, _sys_read_output, _sys_state, _sys_write,
+        _sys_output_size, _sys_read, _sys_read_output, _sys_state, _sys_write, _wasm_to_rwasm,
+        _wasm_to_rwasm_size,
     },
     LowLevelAPI, LowLevelSDK,
 };
@@ -171,5 +172,18 @@ impl LowLevelAPI for LowLevelSDK {
     #[inline(always)]
     fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
         unsafe { _jzkt_preimage_copy(hash32_ptr, preimage_ptr) }
+    }
+    #[inline(always)]
+    fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
+        unsafe { _wasm_to_rwasm_size(input_ptr, input_len) }
+    }
+    #[inline(always)]
+    fn wasm_to_rwasm(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+        output_len: u32,
+    ) -> i32 {
+        unsafe { _wasm_to_rwasm(input_ptr, input_len, output_ptr, output_len) }
     }
 }

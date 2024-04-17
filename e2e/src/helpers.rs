@@ -1,11 +1,10 @@
 use fluentbase_codec::Encoder;
-use fluentbase_core::helpers::wasm2rwasm;
 use fluentbase_runtime::{
     instruction::runtime_register_sovereign_handlers, types::RuntimeError,
     DefaultEmptyRuntimeDatabase, ExecutionResult, Runtime, RuntimeContext,
 };
 use fluentbase_sdk::evm::ContractInput;
-use fluentbase_types::{Bytes, STATE_MAIN};
+use fluentbase_types::{wasm2rwasm, Bytes, STATE_MAIN};
 use rwasm::{Config, Engine, Linker, Module, Store};
 
 pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult {

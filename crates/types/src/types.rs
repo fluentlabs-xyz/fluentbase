@@ -208,6 +208,10 @@ pub enum SysFuncIdx {
     JZKT_ROLLBACK = 0x070A,
     JZKT_PREIMAGE_SIZE = 0x070D,
     JZKT_PREIMAGE_COPY = 0x070E,
+
+    // rwasm
+    WASM_TO_RWASM_SIZE = 0x0801,
+    WASM_TO_RWASM = 0x0802,
 }
 
 impl SysFuncIdx {
@@ -268,6 +272,9 @@ impl From<u32> for SysFuncIdx {
             0x070A => Self::JZKT_ROLLBACK,
             0x070D => Self::JZKT_PREIMAGE_SIZE,
             0x070E => Self::JZKT_PREIMAGE_COPY,
+
+            0x0801 => Self::WASM_TO_RWASM_SIZE,
+            0x0802 => Self::WASM_TO_RWASM,
 
             _ => Self::UNKNOWN,
         }
