@@ -5,15 +5,8 @@ use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, IContractInput},
     Bytes32, LowLevelAPI, LowLevelSDK,
 };
-use fluentbase_types::{
-    create_sovereign_import_linker, Address, ExitCode, SysFuncIdx::SYS_STATE, B256, STATE_DEPLOY,
-    STATE_MAIN, U256,
-};
-use rwasm::{
-    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
-    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
-    Error,
-};
+use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use rwasm::rwasm::BinaryFormat;
 
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
