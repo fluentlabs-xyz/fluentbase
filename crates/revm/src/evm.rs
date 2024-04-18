@@ -12,6 +12,7 @@ use crate::{
 };
 use core::cell::RefCell;
 use core::fmt;
+use core::str::from_utf8;
 use fluentbase_codec::Encoder;
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_core::{
@@ -588,12 +589,14 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(" - fuel consumed: {}", result.fuel_consumed);
             println!(" - exit code: {}", result.exit_code);
-            println!(
-                " - output message: {}",
-                core::str::from_utf8(&result.output)
-                    .map(|value| value.to_string().replace("\n", " "))
-                    .unwrap_or_else(|_| format!("0x{}", hex::encode(&result.output)))
-            );
+            if result.output.iter().all(|c| c.is_ascii()) {
+                println!(" - output message: {}", from_utf8(&result.output).unwrap());
+            } else {
+                println!(
+                    " - output message: {}",
+                    format!("0x{}", hex::encode(&result.output))
+                );
+            }
             println!(" - opcode used: {}", runtime.store().tracer().logs.len());
         }
         gas.record_cost(result.fuel_consumed);
