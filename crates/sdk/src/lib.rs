@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(unused_crate_dependencies)]
-
+#![allow(unused_imports)]
 extern crate alloc;
 extern crate core;
 extern crate lol_alloc;

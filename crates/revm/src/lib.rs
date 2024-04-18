@@ -1,6 +1,6 @@
 #![doc = "Revm is a Rust EVM implementation."]
 #![warn(rustdoc::all, unreachable_pub)]
-#![allow(rustdoc::bare_urls)]
+#![allow(rustdoc::bare_urls, unused_imports)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(not(feature = "std"), no_std)]
