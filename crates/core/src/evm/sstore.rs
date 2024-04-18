@@ -1,10 +1,15 @@
 use crate::helpers::calc_storage_key;
 use crate::JZKT_STORAGE_COMPRESSION_FLAGS;
+use fluentbase_sdk::evm::Address;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
 
-pub fn _evm_sstore(slot32_offset: *const u8, value32_offset: *const u8) -> Result<bool, ExitCode> {
-    let storage_key = calc_storage_key(slot32_offset);
+pub fn _evm_sstore(
+    address: &Address,
+    slot32_offset: *const u8,
+    value32_offset: *const u8,
+) -> Result<bool, ExitCode> {
+    let storage_key = calc_storage_key(address, slot32_offset);
     LowLevelSDK::jzkt_update(
         storage_key.as_ptr(),
         JZKT_STORAGE_COMPRESSION_FLAGS,
@@ -31,17 +36,17 @@ mod tests {
         let mut contract_input = ContractInput::default();
         contract_input.contract_address = ADDRESS;
         LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
-        _evm_sstore(SLOT.as_ptr(), VALUE.as_ptr()).unwrap();
+        _evm_sstore(&ADDRESS, SLOT.as_ptr(), VALUE.as_ptr()).unwrap();
         // read value from trie using SLOAD
         let mut value = [0u8; 32];
-        _evm_sload(SLOT.as_ptr(), value.as_mut_ptr()).unwrap();
+        _evm_sload(&ADDRESS, SLOT.as_ptr(), value.as_mut_ptr()).unwrap();
         assert_eq!(value, VALUE);
         // write new value using SSTORE opcode
         const NEW_VALUE: [u8; 32] = [0xffu8; 32];
-        _evm_sstore(SLOT.as_ptr(), NEW_VALUE.as_ptr()).unwrap();
+        _evm_sstore(&ADDRESS, SLOT.as_ptr(), NEW_VALUE.as_ptr()).unwrap();
         // read value from trie using SLOAD
         let mut value = [0u8; 32];
-        _evm_sload(SLOT.as_ptr(), value.as_mut_ptr()).unwrap();
+        _evm_sload(&ADDRESS, SLOT.as_ptr(), value.as_mut_ptr()).unwrap();
         assert_eq!(value, NEW_VALUE);
     }
 }

@@ -1,10 +1,10 @@
-use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+use alloc::string::ToString;
 
 use byteorder::{ByteOrder, LittleEndian};
 use rwasm::rwasm::BinaryFormat;
 
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput},
+    evm::{ContractInput, IContractInput},
     Bytes32, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
@@ -81,7 +81,7 @@ pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_depl
 const DOMAIN: [u8; 32] = [0u8; 32];
 
 #[inline(always)]
-pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
+pub(crate) fn calc_storage_key(address: &Address, slot32_offset: *const u8) -> [u8; 32] {
     let mut slot0: [u8; 32] = [0u8; 32];
     let mut slot1: [u8; 32] = [0u8; 32];
     // split slot32 into two 16 byte values (slot is always 32 bytes)
@@ -89,10 +89,9 @@ pub(crate) fn calc_storage_key(slot32_offset: *const u8) -> [u8; 32] {
         core::ptr::copy(slot32_offset.offset(0), slot0.as_mut_ptr(), 16);
         core::ptr::copy(slot32_offset.offset(16), slot1.as_mut_ptr(), 16);
     }
-    // pad address to 32 bytes value
+    // pad address to 32 bytes value (11 bytes to avoid 254 overflow)
     let mut address32: [u8; 32] = [0u8; 32];
-    let address = ExecutionContext::contract_address();
-    address32[12..].copy_from_slice(address.as_slice());
+    address32[11..31].copy_from_slice(address.as_slice());
     // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
     let mut storage_key: [u8; 32] = [0u8; 32];
     LowLevelSDK::crypto_poseidon2(

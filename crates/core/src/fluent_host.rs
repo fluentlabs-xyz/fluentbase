@@ -130,21 +130,30 @@ impl Host for FluentHost {
     }
 
     #[inline]
-    fn sload(&mut self, _address: Address, index: U256) -> Option<(U256, bool)> {
+    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
         let mut slot_value32 = Bytes32::default();
-        let is_cold = _evm_sload(index.as_le_slice().as_ptr(), slot_value32.as_mut_ptr()).ok()?;
+        let is_cold = _evm_sload(
+            &address,
+            index.as_le_slice().as_ptr(),
+            slot_value32.as_mut_ptr(),
+        )
+        .ok()?;
         Some((U256::from_le_bytes(slot_value32), is_cold))
     }
 
     #[inline]
-    fn sstore(&mut self, _address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
         let mut previous = U256::default();
-        _evm_sload(index.as_le_slice().as_ptr(), unsafe {
+        _evm_sload(&address, index.as_le_slice().as_ptr(), unsafe {
             previous.as_le_slice_mut().as_mut_ptr()
         })
         .ok()?;
-        let is_cold =
-            _evm_sstore(index.as_le_slice().as_ptr(), value.as_le_slice().as_ptr()).ok()?;
+        let is_cold = _evm_sstore(
+            &address,
+            index.as_le_slice().as_ptr(),
+            value.as_le_slice().as_ptr(),
+        )
+        .ok()?;
         return Some(SStoreResult {
             original_value: previous,
             present_value: previous,

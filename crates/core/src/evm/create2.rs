@@ -66,8 +66,14 @@ pub fn _evm_create2(input: EvmCreate2MethodInput) -> Result<Address, ExitCode> {
     };
 
     if result.is_error() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateError);
     } else if result.is_revert() {
+        if !result.output.is_empty() {
+            LowLevelSDK::sys_write(result.output.as_ref());
+        }
         return Err(ExitCode::EVMCreateRevert);
     }
 
@@ -75,8 +81,10 @@ pub fn _evm_create2(input: EvmCreate2MethodInput) -> Result<Address, ExitCode> {
         return Err(ExitCode::ContractSizeLimit);
     }
 
+    // write caller changes to database
     caller_account.write_to_jzkt();
 
+    // write callee changes to database
     callee_account.update_bytecode(
         &result.output,
         None,
