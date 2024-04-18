@@ -2,7 +2,11 @@ pub use crate::gas::Gas;
 use core::ops::Range;
 use fluentbase_sdk::evm::{Address, Bytes, B256};
 use fluentbase_types::{ExitCode, U256};
-use revm_primitives::{Bytecode, CreateScheme, Env, TransactTo, TxEnv};
+use revm_primitives::Bytecode;
+pub use revm_primitives::CreateScheme;
+use revm_primitives::Env;
+use revm_primitives::TransactTo;
+use revm_primitives::TxEnv;
 use std::boxed::Box;
 
 pub type InstructionResult = ExitCode;

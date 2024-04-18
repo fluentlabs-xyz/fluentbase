@@ -127,10 +127,10 @@ impl<DB: Database> Inspector<DB> for TracerEip3155 {
 
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         self.gas_inspector.step(interp, context);
-        self.stack = interp.stack.data().clone();
+        // self.stack = interp.stack.data().clone();
         self.pc = interp.program_counter();
         self.opcode = interp.current_opcode();
-        self.mem_size = interp.shared_memory.len();
+        // self.mem_size = interp.shared_memory.len();
         self.gas = interp.gas.remaining();
         self.refunded = interp.gas.refunded();
     }
@@ -153,12 +153,13 @@ impl<DB: Database> Inspector<DB> for TracerEip3155 {
             refund: hex_number(self.refunded as u64),
             mem_size: self.mem_size.to_string(),
 
-            op_name: opcode::OPCODE_JUMPMAP[self.opcode as usize],
-            error: if !interp.instruction_result.is_ok() {
-                Some(format!("{:?}", interp.instruction_result))
-            } else {
-                None
-            },
+            // TODO temporarily commented
+            op_name: None, // opcode::OPCODE_JUMPMAP[self.opcode as usize],
+            error: None,   // if !interp.instruction_result.is_ok() {
+            // Some(format!("{:?}", interp.instruction_result))
+            // } else {
+            //     None
+            // },
             memory: None,
             storage: None,
             return_stack: None,
@@ -178,7 +179,7 @@ impl<DB: Database> Inspector<DB> for TracerEip3155 {
                 state_root: B256::ZERO.to_string(),
                 output: outcome.result.output.to_string(),
                 gas_used: hex_number(self.gas_inspector.gas_remaining()),
-                pass: outcome.result.is_ok(),
+                pass: outcome.result.result.is_ok(),
 
                 time: None,
                 fork: None,
