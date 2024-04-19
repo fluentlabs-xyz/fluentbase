@@ -9,17 +9,15 @@ use crate::{
 use fluentbase_core::{
     evm::{
         address::_evm_address, balance::_evm_balance, call::_evm_call, create::_evm_create,
-        create2::_evm_create2, selfbalance::_evm_self_balance,
+        selfbalance::_evm_self_balance,
     },
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_core_api::bindings::{
-    EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput,
-};
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{EvmCallMethodInput, EvmCreateMethodInput};
 use fluentbase_types::{address, Bytes, B256, U256};
-use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
+use revm_interpreter::primitives::{hex, Bytecode};
 
 #[test]
 fn create2_address_correctness_test() {
@@ -123,11 +121,12 @@ fn evm_create_test() {
     test_ctx.apply_ctx();
 
     let value = B256::left_padding_from(&hex!("1000"));
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     let created_contract_address = _evm_create(EvmCreateMethodInput {
-        value32: value.0,
-        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+        init_code: EVM_CONTRACT_BYTECODE1.into(),
+        value: value.into(),
         gas_limit,
+        salt: None,
     })
     .unwrap();
     assert_eq!(expected_contract_address, created_contract_address);
@@ -167,11 +166,12 @@ fn evm_call_after_create_test() {
     test_ctx.apply_ctx();
 
     let create_value = U256::from_be_slice(&hex!("1000"));
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     let created_address = _evm_create(EvmCreateMethodInput {
-        value32: create_value.to_be_bytes(),
-        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+        init_code: EVM_CONTRACT_BYTECODE1.into(),
+        value: create_value,
         gas_limit,
+        salt: None,
     })
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
@@ -179,9 +179,9 @@ fn evm_call_after_create_test() {
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
     let return_data = match _evm_call(EvmCallMethodInput {
-        callee_address20: created_address.into_array(),
-        value32: call_value.to_be_bytes(),
-        args,
+        callee: created_address,
+        value: call_value,
+        input: args.into(),
         gas_limit,
     }) {
         Ok(result) => result,
@@ -209,13 +209,11 @@ fn evm_call_after_create2_test() {
         ..Default::default()
     };
 
-    let contract_bytecode_ = Bytecode::new_raw(alloy_primitives::Bytes::copy_from_slice(
-        EVM_CONTRACT_BYTECODE1,
-    ));
+    let contract_bytecode_ = Bytecode::new_raw(Bytes::copy_from_slice(EVM_CONTRACT_BYTECODE1));
     let contract_bytecode_hash = B256::from_slice(contract_bytecode_.hash_slow().as_slice());
     let salt = B256::left_padding_from(hex!("bc162382638a").as_slice());
     let computed_contract_address =
-        calc_create2_address(&caller_address, &salt, &contract_bytecode_hash);
+        calc_create2_address(&caller_address, &salt.into(), &contract_bytecode_hash);
     let contract_value = U256::from_be_slice(&hex!("0123456789abcdef"));
     let contract_is_static = false;
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
@@ -238,12 +236,12 @@ fn evm_call_after_create2_test() {
     test_ctx.apply_ctx();
 
     let create_value = U256::from_be_slice(&hex!("1000"));
-    let gas_limit: u32 = 10_000_000;
-    let created_address = _evm_create2(EvmCreate2MethodInput {
-        value32: create_value.to_be_bytes(),
-        salt32: salt.0,
-        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+    let gas_limit: u64 = 10_000_000;
+    let created_address = _evm_create(EvmCreateMethodInput {
+        value: create_value,
+        init_code: EVM_CONTRACT_BYTECODE1.into(),
         gas_limit,
+        salt: Some(salt.into()),
     })
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
@@ -251,9 +249,9 @@ fn evm_call_after_create2_test() {
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
     let return_data = match _evm_call(EvmCallMethodInput {
-        callee_address20: created_address.into_array(),
-        value32: call_value.to_be_bytes(),
-        args: args_data,
+        callee: created_address,
+        value: call_value,
+        input: args_data.into(),
         gas_limit,
     }) {
         Ok(return_data) => return_data,
@@ -414,11 +412,12 @@ fn evm_selfbalance_from_contract_call_test() {
 
     let create_value_hex_bytes = hex!("1000");
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     let created_address = _evm_create(EvmCreateMethodInput {
-        value32: create_value.to_be_bytes(),
-        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+        init_code: EVM_CONTRACT_BYTECODE1.into(),
+        value: create_value,
         gas_limit,
+        salt: None,
     })
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
@@ -431,9 +430,9 @@ fn evm_selfbalance_from_contract_call_test() {
     let args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
     let call_value = U256::from_be_slice(&hex!("00"));
     let return_data = _evm_call(EvmCallMethodInput {
-        callee_address20: created_address.into_array(),
-        value32: call_value.to_be_bytes(),
-        args: args_data,
+        callee: created_address,
+        value: call_value,
+        input: args_data.into(),
         gas_limit,
     })
     .unwrap();
@@ -481,11 +480,12 @@ fn evm_balance_from_contract_call_test() {
 
     let create_value_hex_bytes = hex!("84326482");
     let create_value = U256::from_be_slice(&create_value_hex_bytes);
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     let created_address = _evm_create(EvmCreateMethodInput {
-        value32: create_value.to_be_bytes(),
-        code: EVM_CONTRACT_BYTECODE1.to_vec(),
+        init_code: EVM_CONTRACT_BYTECODE1.into(),
+        value: create_value,
         gas_limit,
+        salt: None,
     })
     .unwrap();
     assert_eq!(
@@ -502,9 +502,9 @@ fn evm_balance_from_contract_call_test() {
     args_data.extend_from_slice(caller_address.into_word().as_slice());
     let call_value = U256::from_be_slice(&hex!("00"));
     let return_data = _evm_call(EvmCallMethodInput {
-        callee_address20: created_address.into_array(),
-        value32: call_value.to_be_bytes(),
-        args: args_data,
+        callee: created_address,
+        value: call_value,
+        input: args_data.into(),
         gas_limit,
     })
     .unwrap();

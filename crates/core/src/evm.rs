@@ -11,8 +11,6 @@ pub mod codehash;
 pub mod codesize;
 // #[cfg(feature = "ecl")]
 pub mod create;
-// #[cfg(feature = "ecl")]
-pub mod create2;
 pub mod delegatecall;
 pub mod extcodecopy;
 pub mod extcodehash;

@@ -10,6 +10,7 @@ use alloc::{
 };
 use crypto_hashes::md2::{Digest, Md2};
 use proc_macro::TokenStream;
+use syn::__private::quote::quote;
 use syn::{FnArg, ForeignItem, ItemForeignMod, Pat, Type};
 
 #[proc_macro]
@@ -164,10 +165,9 @@ pub fn derive_helpers_and_structs(tokens: TokenStream) -> TokenStream {
                     }
                     struct_decls.push_str(
                         r#"
-                        define_codec_struct! {
-                            pub struct #STRUCT_IDENT# {
-                                #FIELD_NAMES_TO_TYPES#
-                            }
+                        #[derive(Clone, Debug, fluentbase_codec::Codec)]
+                        pub struct #STRUCT_IDENT# {
+                            #FIELD_NAMES_TO_TYPES#
                         }
                         impl #STRUCT_IDENT# {
                             pub fn new(#FIELD_NAMES_TO_TYPES#) -> Self {

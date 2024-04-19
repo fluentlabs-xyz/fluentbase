@@ -745,6 +745,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
+name = "convert_case"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -944,7 +953,7 @@ version = "0.99.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
 dependencies = [
- "convert_case",
+ "convert_case 0.4.0",
  "proc-macro2",
  "quote",
  "rustc_version 0.4.0",
@@ -1310,6 +1319,7 @@ dependencies = [
  "alloy-primitives",
  "byteorder",
  "casey",
+ "fluentbase-codec-derive",
  "hashbrown",
  "hex",
  "hex-literal",
@@ -1317,6 +1327,17 @@ dependencies = [
  "serde",
  "strum 0.25.0",
  "strum_macros 0.25.3",
+]
+
+[[package]]
+name = "fluentbase-codec-derive"
+version = "0.1.0"
+dependencies = [
+ "convert_case 0.6.0",
+ "crypto-hashes",
+ "quote",
+ "serde",
+ "syn 2.0.60",
 ]
 
 [[package]]
@@ -1334,7 +1355,6 @@ dependencies = [
  "alloy-rlp",
  "byteorder",
  "fluentbase-codec",
- "fluentbase-core-api",
  "fluentbase-runtime",
  "fluentbase-sdk",
  "fluentbase-types",
@@ -1346,24 +1366,6 @@ dependencies = [
  "revm-precompile",
  "revm-primitives",
  "rwasm",
-]
-
-[[package]]
-name = "fluentbase-core-api"
-version = "0.1.0"
-dependencies = [
- "alloy-rlp",
- "byteorder",
- "fluentbase-codec",
- "fluentbase-core-macros",
- "fluentbase-runtime",
- "fluentbase-sdk",
- "fluentbase-types",
- "hashbrown",
- "hex",
- "keccak-hash",
- "paste",
- "revm-interpreter",
 ]
 
 [[package]]
@@ -1383,7 +1385,6 @@ dependencies = [
  "byteorder",
  "fluentbase-codec",
  "fluentbase-core",
- "fluentbase-core-api",
  "fluentbase-poseidon",
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -1470,7 +1471,6 @@ dependencies = [
  "ethers-providers",
  "fluentbase-codec",
  "fluentbase-core",
- "fluentbase-core-api",
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
@@ -1511,6 +1511,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "fluentbase-codec",
+ "fluentbase-codec-derive",
  "fluentbase-runtime",
  "fluentbase-types",
  "lol_alloc",
@@ -2925,6 +2926,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#0386a1d9113465248d35e0f27e52d096d35a15f8"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2933,6 +2935,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#0386a1d9113465248d35e0f27e52d096d35a15f8"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -2948,6 +2951,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#0386a1d9113465248d35e0f27e52d096d35a15f8"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -4077,6 +4081,12 @@ checksum = "a56d1686db2308d901306f92a263857ef59ea39678a5458e7cb17f01415101f5"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4c87d22b6e3f4a18d4d40ef354e97c90fcb14dd91d7dc0aa9d8a1172ebf7202"
 
 [[package]]
 name = "unicode-width"

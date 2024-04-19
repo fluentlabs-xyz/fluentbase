@@ -27,9 +27,9 @@ categories = ["wasm", "no-std", "virtualization"]
 [workspace.dependencies]
 fluentbase-types = { path = "./crates/types", default-features = false }
 fluentbase-codec = { path = "./crates/codec", default-features = false }
+fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = false }
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
-fluentbase-core-api = { path = "./crates/core-api", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }

@@ -147,7 +147,7 @@ impl<'a> TxBuilder<'a> {
 
 fn deploy_evm_tx(ctx: &mut TestingContext, deployer: Address, init_bytecode: Bytes) -> Address {
     // deploy greeting EVM contract
-    let result = TxBuilder::create(ctx, deployer, init_bytecode.into(), None).exec();
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into(), None).exec();
     assert!(result.is_success());
     let contract_address = calc_create_address(&deployer, 0);
     let contract_account = ctx.db.accounts.get(&contract_address).unwrap();

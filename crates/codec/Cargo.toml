@@ -18,15 +18,17 @@ strum_macros = { version = "0.25.2", optional = true }
 serde = { workspace = true }
 casey = { workspace = true }
 paste = { workspace = true }
+fluentbase-codec-derive = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4.3"
 hex-literal = "0.4.1"
 
 [features]
-default = ["std"]
+default = ["std", "derive"]
 std = [
     "byteorder/std",
     "alloy-primitives/std",
     "serde/std",
 ]
+derive = []

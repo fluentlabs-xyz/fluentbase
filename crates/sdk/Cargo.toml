@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-codec = { workspace = true, default-features = false }
+fluentbase-codec-derive = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 byteorder = { workspace = true, optional = true }

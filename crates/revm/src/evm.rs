@@ -20,12 +20,11 @@ use fluentbase_core::{
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
-use fluentbase_core_api::api::CoreInput;
-use fluentbase_core_api::bindings::{
-    EvmCreate2MethodInput, EvmCreateMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput,
-    EVM_CREATE2_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
-};
 use fluentbase_sdk::evm::ContractInput;
+use fluentbase_sdk::CoreInput;
+use fluentbase_sdk::{
+    EvmCreateMethodInput, WasmCreateMethodInput, EVM_CREATE_METHOD_ID, WASM_CREATE_METHOD_ID,
+};
 use fluentbase_types::{
     address, Bytes, ExitCode, IJournaledTrie, JournalEvent, JournalLog, NATIVE_TRANSFER_ADDRESS,
     NATIVE_TRANSFER_KECCAK, STATE_MAIN,
@@ -322,28 +321,15 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
             BytecodeType::EVM => {
-                let method_id = match salt {
-                    Some(_) => EVM_CREATE2_METHOD_ID,
-                    None => EVM_CREATE_METHOD_ID,
-                };
-                let method_data = match salt {
-                    Some(salt) => EvmCreate2MethodInput {
-                        value32: value.to_be_bytes(),
-                        salt32: salt.to_be_bytes(),
-                        code: input.to_vec(),
-                        gas_limit: gas.remaining() as u32,
-                    }
-                    .encode_to_vec(0),
-                    None => EvmCreateMethodInput {
-                        value32: value.to_be_bytes(),
-                        code: input.to_vec(),
-                        gas_limit: gas.remaining() as u32,
-                    }
-                    .encode_to_vec(0),
-                };
                 let input = CoreInput {
-                    method_id,
-                    method_data,
+                    method_id: EVM_CREATE_METHOD_ID,
+                    method_data: EvmCreateMethodInput {
+                        init_code: input,
+                        value,
+                        gas_limit: gas.remaining(),
+                        salt,
+                    }
+                    .encode_to_vec(0),
                 };
                 (
                     self.context
@@ -354,28 +340,15 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 )
             }
             BytecodeType::WASM => {
-                let method_id = match salt {
-                    Some(_) => WASM_CREATE2_METHOD_ID,
-                    None => WASM_CREATE_METHOD_ID,
-                };
-                let method_data = match salt {
-                    Some(salt) => WasmCreate2MethodInput {
-                        value32: value.to_be_bytes(),
-                        salt32: salt.to_be_bytes(),
-                        code: input.to_vec(),
-                        gas_limit: gas.remaining() as u32,
-                    }
-                    .encode_to_vec(0),
-                    None => WasmCreateMethodInput {
-                        value32: value.to_be_bytes(),
-                        code: input.to_vec(),
-                        gas_limit: gas.remaining() as u32,
-                    }
-                    .encode_to_vec(0),
-                };
                 let input = CoreInput {
-                    method_id,
-                    method_data,
+                    method_id: WASM_CREATE_METHOD_ID,
+                    method_data: WasmCreateMethodInput {
+                        bytecode: input,
+                        value,
+                        gas_limit: gas.remaining(),
+                        salt,
+                    }
+                    .encode_to_vec(0),
                 };
                 (
                     self.context

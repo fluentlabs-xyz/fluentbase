@@ -4,15 +4,12 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_core_api::{
-    api::CoreInput,
-    bindings::{
-        WasmCallMethodInput, WasmCreate2MethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
-        WASM_CREATE2_METHOD_ID, WASM_CREATE_METHOD_ID,
-    },
-};
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
 use fluentbase_sdk::LowLevelSDK;
+use fluentbase_sdk::{
+    CoreInput, WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
+    WASM_CREATE_METHOD_ID,
+};
 use fluentbase_types::{
     address, wasm2rwasm, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_MAIN, U256,
 };
@@ -44,9 +41,13 @@ fn test_wasm_create() {
     let wasm_bytecode = include_bytes!("../../../examples/bin/greeting.wasm");
 
     let create_value = B256::left_padding_from(&hex!("1000"));
-    let gas_limit: u32 = 10_000_000;
-    let method_input =
-        WasmCreateMethodInput::new(create_value.0, wasm_bytecode.to_vec(), gas_limit);
+    let gas_limit: u64 = 10_000_000;
+    let method_input = WasmCreateMethodInput {
+        bytecode: wasm_bytecode.into(),
+        value: create_value.into(),
+        gas_limit,
+        salt: None,
+    };
     let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
     let core_input_vec = core_input.encode_to_vec(0);
 
@@ -100,14 +101,18 @@ fn test_wasm_create2() {
 
     let create_value = B256::left_padding_from(&hex!("1000"));
     let salt = B256::left_padding_from(&hex!("3749269486238462"));
-    let gas_limit: u32 = 10_000_000;
-    let method_input =
-        WasmCreate2MethodInput::new(create_value.0, salt.0, wasm_bytecode.to_vec(), gas_limit);
-    let core_input = CoreInput::new(WASM_CREATE2_METHOD_ID, method_input.encode_to_vec(0));
+    let gas_limit: u64 = 10_000_000;
+    let method_input = WasmCreateMethodInput {
+        bytecode: wasm_bytecode.into(),
+        value: create_value.into(),
+        gas_limit,
+        salt: Some(salt.into()),
+    };
+    let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
     let core_input_vec = core_input.encode_to_vec(0);
 
     let expected_contract_address =
-        calc_create2_address(&caller_address, &salt, &wasm_bytecode_hash);
+        calc_create2_address(&caller_address, &salt.into(), &wasm_bytecode_hash);
 
     const IS_RUNTIME: bool = true;
     let contract_wasm_binary = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
@@ -154,7 +159,7 @@ fn test_wasm_call_after_create() {
     let wcl_contract_wasm = include_bytes!("../../../crates/contracts/assets/wcl_contract.wasm");
     let wcl_contract_rwasm = wasm2rwasm(wcl_contract_wasm.as_slice()).unwrap();
     let block_coinbase: Address = address!("0000000000000000000000000000000000000012");
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     let create_value = B256::left_padding_from(&hex!("1000"));
     let call_value = B256::left_padding_from(&hex!("00"));
     let deploy_wasm = include_bytes!("../../../examples/bin/greeting.wasm");
@@ -162,8 +167,12 @@ fn test_wasm_call_after_create() {
 
     let (jzkt, deployed_contract_address) = {
         let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
-        let method_input =
-            WasmCreateMethodInput::new(create_value.0, deploy_wasm.to_vec(), gas_limit);
+        let method_input = WasmCreateMethodInput {
+            bytecode: deploy_wasm.into(),
+            value: create_value.into(),
+            gas_limit,
+            salt: None,
+        };
         let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
         let core_input_vec = core_input.encode_to_vec(0);
 
@@ -201,12 +210,12 @@ fn test_wasm_call_after_create() {
     };
 
     let _jzkt = {
-        let ecl_method_input = WasmCallMethodInput::new(
-            deployed_contract_address.into_array(),
-            call_value.0,
-            vec![],
+        let ecl_method_input = WasmCallMethodInput {
+            callee: deployed_contract_address,
+            value: call_value.into(),
+            input: Default::default(),
             gas_limit,
-        );
+        };
         let ecl_core_input = CoreInput::new(WASM_CALL_METHOD_ID, ecl_method_input.encode_to_vec(0));
         let ecl_core_input_vec = ecl_core_input.encode_to_vec(0);
 

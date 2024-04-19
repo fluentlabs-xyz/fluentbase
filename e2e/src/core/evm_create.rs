@@ -6,14 +6,11 @@ use crate::{
 };
 use fluentbase_codec::Encoder;
 use fluentbase_core::{consts::ECL_CONTRACT_ADDRESS, helpers::calc_create_address, Account};
-use fluentbase_core_api::{
-    api::CoreInput,
-    bindings::{
-        EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
-    },
-};
 use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
 use fluentbase_sdk::LowLevelSDK;
+use fluentbase_sdk::{
+    CoreInput, EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
+};
 use fluentbase_types::{
     address, wasm2rwasm, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN,
     U256,
@@ -36,9 +33,13 @@ fn test_evm_create() {
     let contract_input_code = EVM_CONTRACT_BYTECODE1;
 
     let value = B256::left_padding_from(&hex!("1000"));
-    let gas_limit: u32 = 10_000_000;
-    let evm_create_method_input =
-        EvmCreateMethodInput::new(value.0, contract_input_code.to_vec(), gas_limit);
+    let gas_limit: u64 = 10_000_000;
+    let evm_create_method_input = EvmCreateMethodInput {
+        init_code: contract_input_code.into(),
+        value: value.into(),
+        gas_limit,
+        salt: None,
+    };
     let evm_create_core_input = CoreInput::new(
         EVM_CREATE_METHOD_ID,
         evm_create_method_input.encode_to_vec(0),
@@ -90,7 +91,7 @@ fn test_evm_call_after_create() {
     let env_chain_id = 1;
 
     let contract_input_code = EVM_CONTRACT_BYTECODE1;
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
     const IS_RUNTIME: bool = true;
     let import_linker = Runtime::new_sovereign_linker();
     let ecl_wasm = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
@@ -99,8 +100,12 @@ fn test_evm_call_after_create() {
     let call_value = B256::left_padding_from(&hex!("00"));
 
     let (jzkt, deployed_contract_address) = {
-        let evm_create_method_input =
-            EvmCreateMethodInput::new(create_value.0, contract_input_code.to_vec(), gas_limit);
+        let evm_create_method_input = EvmCreateMethodInput {
+            init_code: contract_input_code.into(),
+            value: create_value.into(),
+            gas_limit,
+            salt: None,
+        };
         let evm_create_core_input = CoreInput::new(
             EVM_CREATE_METHOD_ID,
             evm_create_method_input.encode_to_vec(0),
@@ -133,12 +138,12 @@ fn test_evm_call_after_create() {
     };
 
     {
-        let evm_call_method_input = EvmCallMethodInput::new(
-            deployed_contract_address.into_array(),
-            call_value.0,
-            EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.to_vec(),
+        let evm_call_method_input = EvmCallMethodInput {
+            callee: deployed_contract_address,
+            value: call_value.into(),
+            input: EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into(),
             gas_limit,
-        );
+        };
         let evm_call_core_input =
             CoreInput::new(EVM_CALL_METHOD_ID, evm_call_method_input.encode_to_vec(0));
         let evm_call_core_input_vec = evm_call_core_input.encode_to_vec(0);
@@ -177,7 +182,7 @@ fn test_evm_call_from_wasm() {
         balance: U256::from_be_slice(1000000000u128.to_be_bytes().as_slice()),
         ..Default::default()
     };
-    let gas_limit: u32 = 10_000_000;
+    let gas_limit: u64 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
     let import_linker = Runtime::new_sovereign_linker();
@@ -204,8 +209,12 @@ fn test_evm_call_from_wasm() {
         let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
         let contract_input_code = EVM_CONTRACT_BYTECODE1;
         let create_value = B256::left_padding_from(&hex!("1000"));
-        let evm_create_method_input =
-            EvmCreateMethodInput::new(create_value.0, contract_input_code.to_vec(), gas_limit);
+        let evm_create_method_input = EvmCreateMethodInput {
+            init_code: contract_input_code.into(),
+            value: create_value.into(),
+            gas_limit,
+            salt: None,
+        };
         let evm_create_core_input = CoreInput::new(
             EVM_CREATE_METHOD_ID,
             evm_create_method_input.encode_to_vec(0),
