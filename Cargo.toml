@@ -45,12 +45,12 @@ serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }
-#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-#revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
-revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
-revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
-revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false }
+#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
+#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
+#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4.0" }
 hex-literal = { version = "0.4.1" }
