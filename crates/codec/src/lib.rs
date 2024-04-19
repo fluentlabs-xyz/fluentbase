@@ -20,3 +20,5 @@ mod serde;
 #[cfg(test)]
 mod tests;
 mod vec;
+
+pub use fluentbase_codec_derive::Codec;

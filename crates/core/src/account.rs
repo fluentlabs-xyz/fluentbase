@@ -382,7 +382,7 @@ impl Account {
     pub fn create_account(
         caller: &mut Account,
         amount: U256,
-        salt_hash: Option<(B256, B256)>,
+        salt_hash: Option<(U256, B256)>,
     ) -> Result<Account, ExitCode> {
         // check if caller have enough balance
         if caller.balance < amount {

@@ -13,12 +13,12 @@ pub fn main() {
     let mut contract_input_data = ExecutionContext::contract_input_full();
 
     let gas_limit = contract_input_data.contract_gas_limit as u32;
-    let method_data = EvmCallMethodInput::new(
-        contract_input_data.contract_address.into_array(),
-        contract_input_data.contract_value.to_be_bytes(),
-        contract_input_data.contract_input.to_vec(),
-        gas_limit,
-    );
+    let method_data = EvmCallMethodInput {
+        callee: contract_input_data.contract_address,
+        value: contract_input_data.contract_value,
+        input: contract_input_data.contract_input,
+        gas_limit: gas_limit as u64,
+    };
     let core_input = CoreInput::new(EVM_CALL_METHOD_ID, method_data.encode_to_vec(0));
     contract_input_data.contract_input = core_input.encode_to_vec(0).into();
     contract_input_data.contract_address = ECL_CONTRACT_ADDRESS;

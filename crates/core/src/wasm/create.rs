@@ -1,18 +1,12 @@
+use crate::{account::Account, helpers::rwasm_exec_hash};
 use alloc::vec;
-
+use fluentbase_sdk::evm::{ExecutionContext, B256};
+use fluentbase_sdk::LowLevelSDK;
+use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
+use fluentbase_types::{Address, ExitCode, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-use fluentbase_core_api::bindings::WasmCreateMethodInput;
-use fluentbase_sdk::evm::ExecutionContext;
-use fluentbase_sdk::LowLevelAPI;
-use fluentbase_sdk::LowLevelSDK;
-use fluentbase_types::{Address, ExitCode, U256};
-
-use crate::{account::Account, helpers::rwasm_exec_hash};
-
 pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
-    let value = U256::from_be_bytes(input.value32);
-
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
 
@@ -22,9 +16,16 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     }
 
     // code length can't exceed max constructor limit
-    if input.code.len() > RWASM_MAX_CODE_SIZE {
+    if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
         return Err(ExitCode::ContractSizeLimit);
     }
+
+    let mut source_code_hash: B256 = B256::ZERO;
+    LowLevelSDK::crypto_keccak256(
+        input.bytecode.as_ptr(),
+        input.bytecode.len() as u32,
+        source_code_hash.as_mut_ptr(),
+    );
 
     // read value input and contract address
     let caller_address = ExecutionContext::contract_caller();
@@ -32,12 +33,16 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     let mut deployer_account = Account::new_from_jzkt(&caller_address);
 
     // create an account
-    let mut contract_account = Account::create_account(&mut deployer_account, value, None)?;
+    let mut contract_account = Account::create_account(
+        &mut deployer_account,
+        input.value,
+        input.salt.map(|salt| (salt, source_code_hash)),
+    )?;
 
     // translate WASM to rWASM
     let exit_code = LowLevelSDK::wasm_to_rwasm(
-        input.code.as_ptr(),
-        input.code.len() as u32,
+        input.bytecode.as_ptr(),
+        input.bytecode.len() as u32,
         core::ptr::null_mut(),
         0,
     );
@@ -52,11 +57,11 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     deployer_account.write_to_jzkt();
 
     // write contract to the trie
-    contract_account.update_bytecode(&input.code.into(), None, &rwasm_bytecode.into(), None);
+    contract_account.update_bytecode(&input.bytecode, None, &rwasm_bytecode.into(), None);
     let exit_code = rwasm_exec_hash(
         &contract_account.rwasm_code_hash.as_slice(),
         &[],
-        input.gas_limit,
+        input.gas_limit as u32,
         true,
     );
     // if call is not success set deployed address to zero

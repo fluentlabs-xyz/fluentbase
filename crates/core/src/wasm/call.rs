@@ -1,32 +1,28 @@
 use crate::account::Account;
 use fluentbase_codec::Encoder;
-use fluentbase_core_api::bindings::WasmCallMethodInput;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
-    LowLevelAPI, LowLevelSDK,
+    LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
 };
 use fluentbase_types::{Address, ExitCode, STATE_MAIN};
 
 pub fn _wasm_call(input: WasmCallMethodInput) -> ExitCode {
-    // parse input value
-    let value = U256::from_be_bytes(input.value32);
     // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
-    if is_static && value != U256::ZERO {
+    if is_static && input.value != U256::ZERO {
         return ExitCode::WriteProtection;
     }
     // parse callee address
-    let callee_address = Address::from(input.callee_address20);
-    let callee_account = Account::new_from_jzkt(&callee_address);
+    let callee_account = Account::new_from_jzkt(&input.callee);
 
-    let gas_limit = input.gas_limit;
+    let gas_limit = input.gas_limit as u32;
 
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
-        contract_address: callee_address,
+        contract_address: input.callee,
         contract_caller: ExecutionContext::contract_caller(),
-        contract_input: input.args.into(),
+        contract_input: input.input,
         tx_caller: ExecutionContext::tx_caller(),
         ..Default::default()
     };

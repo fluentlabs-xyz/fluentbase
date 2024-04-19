@@ -1,102 +1,35 @@
-#[macro_export]
-macro_rules! derive_header_size {
-    () => (0);
-    ($val:ident: $typ:ty) => {
-        <$typ as $crate::Encoder<$typ>>::HEADER_SIZE
-    };
-    ($val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        $crate::derive_header_size!($val_x:$typ_x) + $crate::derive_header_size!($($val_y:$typ_y),+)
-    };
-}
-#[macro_export]
-macro_rules! derive_encode {
-    () => ();
-    ($self:expr, $encoder:expr, $field_offset:expr, $val:ident: $typ:ty) => {
-        $self.$val.encode($encoder, $field_offset)
-    };
-    ($self:expr, $encoder:expr, $field_offset:expr, $val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        $crate::derive_encode!($self, $encoder, $field_offset, $val_x:$typ_x);
-        $field_offset += $crate::derive_header_size!($val_x:$typ_x);
-        $crate::derive_encode!($self, $encoder, $field_offset, $($val_y:$typ_y),+)
-    };
-}
-#[macro_export]
-macro_rules! derive_decode {
-    () => ();
-    ($self:expr, $decoder:expr, $field_offset:expr, $val:ident: $typ:ty) => {
-        <$typ as $crate::Encoder<$typ>>::decode_body($decoder, $field_offset, &mut $self.$val)
-    };
-    ($self:expr, $decoder:expr, $field_offset:expr, $val_x:ident:$typ_x:ty, $($val_y:ident:$typ_y:ty),+ $(,)?) => {
-        $crate::derive_decode!($self, $decoder, $field_offset, $val_x:$typ_x);
-        $field_offset += $crate::derive_header_size!($val_x:$typ_x);
-        $crate::derive_decode!($self, $decoder, $field_offset, $($val_y:$typ_y),+)
-    };
-}
-#[macro_export]
-macro_rules! derive_types {
-    (@typ $field_offset:expr,) => {};
-    (@def $field_offset:expr,) => {};
-    (@typ $field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
-        paste::paste! {
-            type [<$val_head:camel>];
-        }
-        $crate::derive_types!(@typ $field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
-    };
-    (@def $field_offset:expr, $val_head:ident: $typ_head:ty, $($val_next:ident:$typ_next:ty,)* $(,)?) => {
-        paste::paste! {
-            type [<$val_head:camel>] = $crate::FieldEncoder<$typ_head, { $field_offset }>;
-        }
-        $crate::derive_types!(@def $field_offset + <$typ_head as $crate::Encoder<$typ_head>>::HEADER_SIZE, $($val_next:$typ_next,)*);
-    };
-}
-
-#[macro_export]
-macro_rules! define_codec_struct {
-    (pub struct $struct_type:ident { $($element:ident: $ty:ty),* $(,)? }) => {
-        #[derive(Debug, Default, PartialEq, Clone)]
-        pub struct $struct_type {
-            $(pub $element: $ty),*
-        }
-        impl $crate::Encoder<$struct_type> for $struct_type {
-            const HEADER_SIZE: usize = $crate::derive_header_size!($($element:$ty),*);
-            fn encode<W: $crate::WritableBuffer>(&self, encoder: &mut W, mut field_offset: usize) {
-                $crate::derive_encode!(self, encoder, field_offset, $($element:$ty),*);
-            }
-            fn decode_header(decoder: &mut $crate::BufferDecoder, mut field_offset: usize, result: &mut $struct_type) -> (usize, usize) {
-                $crate::derive_decode!(result, decoder, field_offset, $($element:$ty),*);
-                (0, 0)
-            }
-        }
-        impl From<Vec<u8>> for $struct_type {
-            fn from(value: Vec<u8>) -> Self {
-                let mut result = Self::default();
-                let mut buffer_decoder = $crate::BufferDecoder::new(value.as_slice());
-                <$struct_type as $crate::Encoder<$struct_type>>::decode_body(&mut buffer_decoder, 0, &mut result);
-                result
-            }
-        }
-        paste::paste! {
-            pub trait [<I $struct_type>] {
-                $crate::derive_types!(@typ 0, $($element:$ty,)*);
-            }
-            impl [<I $struct_type>] for $struct_type {
-                $crate::derive_types!(@def 0, $($element:$ty,)*);
-            }
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{BufferDecoder, BufferEncoder, Encoder};
+    use fluentbase_codec_derive::Codec;
     use hashbrown::HashMap;
 
-    define_codec_struct! {
-        pub struct SimpleType {
-            a: u64,
-            b: u32,
-            c: u16,
-        }
+    #[derive(Debug, Default, PartialEq, Codec)]
+    struct Test {
+        a: u16,
+        b: u32,
+        c: Option<u64>,
+    }
+
+    #[test]
+    fn test_option_encoding() {
+        let test = Test {
+            a: 100,
+            b: 20,
+            c: Some(3),
+        };
+        let buffer = test.encode_to_vec(0);
+        let mut buffer_decoder = BufferDecoder::new(&buffer);
+        let mut test2 = Test::default();
+        Test::decode_body(&mut buffer_decoder, 0, &mut test2);
+        assert_eq!(test, test2);
+    }
+
+    #[derive(Default, Debug, Codec, PartialEq)]
+    pub struct SimpleType {
+        a: u64,
+        b: u32,
+        c: u16,
     }
 
     #[test]
@@ -119,11 +52,10 @@ mod tests {
         assert_eq!(value0, value1);
     }
 
-    define_codec_struct! {
-        pub struct ComplicatedType {
-            values: Vec<SimpleType>,
-            maps: HashMap<u32, ComplicatedType>,
-        }
+    #[derive(Default, Debug, Codec, PartialEq)]
+    pub struct ComplicatedType {
+        values: Vec<SimpleType>,
+        maps: HashMap<u32, ComplicatedType>,
     }
 
     #[test]

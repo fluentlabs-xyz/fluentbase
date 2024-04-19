@@ -1,35 +1,36 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::{vec, vec::Vec};
-use fluentbase_codec::{define_codec_struct, BufferDecoder, Encoder};
+use fluentbase_codec::BufferDecoder;
+use fluentbase_codec::Encoder;
+use fluentbase_codec_derive::Codec;
 pub use fluentbase_types::{Address, Bytes, B256, U256};
 
-define_codec_struct! {
-    pub struct ContractInput {
-        // journal
-        journal_checkpoint: u64,
-        // env info
-        env_chain_id: u64,
-        // contract info
-        contract_gas_limit: u64,
-        contract_address: Address,
-        contract_caller: Address,
-        contract_input: Bytes,
-        contract_value: U256,
-        contract_is_static: bool,
-        // block info
-        block_coinbase: Address,
-        block_timestamp: u64,
-        block_number: u64,
-        block_difficulty: u64,
-        block_gas_limit: u64,
-        block_base_fee: U256,
-        // tx info
-        tx_gas_price: U256,
-        tx_gas_priority_fee: Option<U256>,
-        tx_caller: Address,
-        // tx_blob_hashes: Vec<B256>,
-        // tx_blob_gas_price: u64,
-    }
+#[derive(Clone, Debug, Default, Codec)]
+pub struct ContractInput {
+    // journal
+    pub journal_checkpoint: u64,
+    // env info
+    pub env_chain_id: u64,
+    // contract info
+    pub contract_gas_limit: u64,
+    pub contract_address: Address,
+    pub contract_caller: Address,
+    pub contract_input: Bytes,
+    pub contract_value: U256,
+    pub contract_is_static: bool,
+    // block info
+    pub block_coinbase: Address,
+    pub block_timestamp: u64,
+    pub block_number: u64,
+    pub block_difficulty: u64,
+    pub block_gas_limit: u64,
+    pub block_base_fee: U256,
+    // tx info
+    pub tx_gas_price: U256,
+    pub tx_gas_priority_fee: Option<U256>,
+    pub tx_caller: Address,
+    // pub tx_blob_hashes: Vec<B256>,
+    // pub tx_blob_gas_price: u64,
 }
 
 macro_rules! impl_reader_helper {
@@ -164,7 +165,8 @@ mod test {
         evm::{ContractInput, ExecutionContext},
         LowLevelSDK,
     };
-    use fluentbase_codec::Encoder;
+    use fluentbase_codec::{BufferDecoder, Encoder};
+    use fluentbase_codec_derive::Codec;
     use fluentbase_types::Bytes;
 
     #[test]

@@ -41,11 +41,11 @@ impl<const IS_RUNTIME: bool> TestingContext<IS_RUNTIME> {
         runtime_ctx: RuntimeContext<DefaultEmptyRuntimeDatabase>,
         import_linker: ImportLinker,
         is_deploy: bool,
-        gas_limit: u32,
+        gas_limit: u64,
     ) -> ExecutionResult {
         let runtime_ctx = runtime_ctx
             .with_state(if is_deploy { STATE_DEPLOY } else { STATE_MAIN })
-            .with_fuel_limit(gas_limit as u64)
+            .with_fuel_limit(gas_limit)
             .with_catch_trap(true);
         let mut runtime =
             Runtime::<DefaultEmptyRuntimeDatabase>::new(runtime_ctx, import_linker).unwrap();

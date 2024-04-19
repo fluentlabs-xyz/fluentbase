@@ -1,4 +1,5 @@
 use crate::{BufferDecoder, Encoder, WritableBuffer};
+use fluentbase_codec_derive::Codec;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EmptyVec;
@@ -26,20 +27,20 @@ impl Encoder<EmptyVec> for EmptyVec {
 
 #[cfg(test)]
 mod tests {
-    use crate::{define_codec_struct, BufferDecoder, EmptyVec, Encoder};
+    use crate::{BufferDecoder, EmptyVec, Encoder};
     use alloy_primitives::Bytes;
+    use fluentbase_codec_derive::Codec;
 
-    define_codec_struct! {
-        pub struct ContractOutput {
-            return_data: Bytes,
-            logs: Vec<ContractOutput>,
-        }
+    #[derive(Default, Debug, Codec, PartialEq)]
+    pub struct ContractOutput {
+        return_data: Bytes,
+        logs: Vec<ContractOutput>,
     }
-    define_codec_struct! {
-        pub struct ContractOutputNoLogs {
-            return_data: Bytes,
-            logs: EmptyVec,
-        }
+
+    #[derive(Default, Debug, Codec, PartialEq)]
+    pub struct ContractOutputNoLogs {
+        return_data: Bytes,
+        logs: EmptyVec,
     }
 
     #[test]

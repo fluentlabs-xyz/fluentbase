@@ -1,27 +1,20 @@
+use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
+use crate::evm::call::_evm_call;
+use crate::evm::create::_evm_create;
+use crate::fluent_host::FluentHost;
 use alloc::boxed::Box;
 use alloc::string::ToString;
-
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_core_api::bindings::{
-    EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput,
+use fluentbase_sdk::evm::Bytes;
+use fluentbase_sdk::{
+    evm::{ContractInput, IContractInput},
+    Bytes32, EvmCallMethodInput, EvmCreateMethodInput, LowLevelAPI, LowLevelSDK,
 };
+use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use revm_interpreter::opcode::make_instruction_table;
 use revm_interpreter::{Contract, Interpreter, InterpreterAction, SharedMemory};
 use revm_primitives::CreateScheme;
 use rwasm::rwasm::BinaryFormat;
-
-use fluentbase_sdk::evm::Bytes;
-use fluentbase_sdk::{
-    evm::{ContractInput, IContractInput},
-    Bytes32, LowLevelAPI, LowLevelSDK,
-};
-use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
-
-use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
-use crate::evm::call::_evm_call;
-use crate::evm::create::_evm_create;
-use crate::evm::create2::_evm_create2;
-use crate::fluent_host::FluentHost;
 
 #[macro_export]
 macro_rules! decode_method_input {
@@ -76,11 +69,11 @@ pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
 }
 
 #[inline(always)]
-pub fn calc_create2_address(deployer: &Address, salt: &B256, init_code_hash: &B256) -> Address {
+pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B256) -> Address {
     let mut bytes = [0; 85];
     bytes[0] = 0xff;
     bytes[1..21].copy_from_slice(deployer.as_slice());
-    bytes[21..53].copy_from_slice(salt.as_slice());
+    bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
     LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
     let bytes32: Bytes32 = bytes[0..32].try_into().unwrap();
@@ -143,10 +136,10 @@ pub(crate) fn exec_evm_bytecode(
     match interpreter.run(shared_memory, &instruction_table, &mut host) {
         InterpreterAction::Call { inputs } => {
             match _evm_call(EvmCallMethodInput {
-                callee_address20: inputs.contract.into_array(),
-                value32: inputs.transfer.value.to_be_bytes(),
-                args: inputs.input.into(),
-                gas_limit: inputs.gas_limit as u32,
+                callee: inputs.contract,
+                value: inputs.transfer.value,
+                input: inputs.input,
+                gas_limit: inputs.gas_limit,
             }) {
                 Ok(result) => {
                     return Ok(result);
@@ -162,15 +155,16 @@ pub(crate) fn exec_evm_bytecode(
         InterpreterAction::Create { inputs } => {
             let result = match inputs.scheme {
                 CreateScheme::Create => _evm_create(EvmCreateMethodInput {
-                    value32: inputs.value.to_be_bytes(),
-                    code: inputs.init_code.into(),
-                    gas_limit: inputs.gas_limit as u32,
+                    value: inputs.value,
+                    init_code: inputs.init_code,
+                    gas_limit: inputs.gas_limit,
+                    salt: None,
                 }),
-                CreateScheme::Create2 { salt } => _evm_create2(EvmCreate2MethodInput {
-                    value32: inputs.value.to_be_bytes(),
-                    salt32: salt.to_be_bytes(),
-                    code: inputs.init_code.into(),
-                    gas_limit: inputs.gas_limit as u32,
+                CreateScheme::Create2 { salt } => _evm_create(EvmCreateMethodInput {
+                    value: inputs.value,
+                    init_code: inputs.init_code,
+                    gas_limit: inputs.gas_limit,
+                    salt: Some(salt),
                 }),
             };
             match result {
@@ -252,7 +246,7 @@ mod tests {
             b256!("0000000000000000000000000000000000000000000000000000000000000002"),
         )] {
             assert_eq!(
-                calc_create2_address(&address, &salt, &hash),
+                calc_create2_address(&address, &salt.into(), &hash),
                 address.create2(salt, hash)
             );
         }
