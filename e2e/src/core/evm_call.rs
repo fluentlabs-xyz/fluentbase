@@ -14,7 +14,9 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_core_api::bindings::{EvmCreate2MethodInput, EvmCreateMethodInput};
+use fluentbase_core_api::bindings::{
+    EvmCallMethodInput, EvmCreate2MethodInput, EvmCreateMethodInput,
+};
 use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{address, Bytes, B256, U256};
 use revm_interpreter::primitives::{alloy_primitives, hex, Bytecode};
@@ -175,20 +177,18 @@ fn evm_call_after_create_test() {
     assert_eq!(computed_contract_address, created_address);
 
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
-    let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
-    let exit_code = _evm_call(
+    let return_data = match _evm_call(EvmCallMethodInput {
+        callee_address20: created_address.into_array(),
+        value32: call_value.to_be_bytes(),
+        args,
         gas_limit,
-        created_address.as_ptr(),
-        call_value.to_be_bytes::<32>().as_ptr(),
-        args.as_ptr(),
-        args.len() as u32,
-        return_data.as_mut_ptr(),
-        return_data.len() as u32,
-    );
-    assert!(exit_code.is_ok());
+    }) {
+        Ok(result) => result,
+        Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
+    };
     assert_eq!(
-        return_data.as_slice(),
+        return_data.as_ref(),
         &[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -249,20 +249,18 @@ fn evm_call_after_create2_test() {
     assert_eq!(computed_contract_address, created_address);
 
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
-    let mut return_data: Vec<u8> = vec![0; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
-    let exit_code = _evm_call(
+    let return_data = match _evm_call(EvmCallMethodInput {
+        callee_address20: created_address.into_array(),
+        value32: call_value.to_be_bytes(),
+        args: args_data,
         gas_limit,
-        created_address.as_ptr(),
-        call_value.to_be_bytes::<32>().as_ptr(),
-        args_data.as_ptr(),
-        args_data.len() as u32,
-        return_data.as_mut_ptr(),
-        return_data.len() as u32,
-    );
-    assert!(exit_code.is_ok());
+    }) {
+        Ok(return_data) => return_data,
+        Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
+    };
     assert_eq!(
-        return_data.as_slice(),
+        return_data.as_ref(),
         &[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -431,18 +429,14 @@ fn evm_selfbalance_from_contract_call_test() {
     assert_eq!(create_value, created_address_balance);
 
     let args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
-    let mut return_data = [0u8; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
-    let exit_code = _evm_call(
+    let return_data = _evm_call(EvmCallMethodInput {
+        callee_address20: created_address.into_array(),
+        value32: call_value.to_be_bytes(),
+        args: args_data,
         gas_limit,
-        created_address.as_ptr(),
-        call_value.to_be_bytes::<32>().as_ptr(),
-        args_data.as_ptr(),
-        args_data.len() as u32,
-        return_data.as_mut_ptr(),
-        return_data.len() as u32,
-    );
-    assert!(exit_code.is_ok());
+    })
+    .unwrap();
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -506,18 +500,14 @@ fn evm_balance_from_contract_call_test() {
 
     let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID.to_vec();
     args_data.extend_from_slice(caller_address.into_word().as_slice());
-    let mut return_data = [0u8; 96];
     let call_value = U256::from_be_slice(&hex!("00"));
-    let exit_code = _evm_call(
+    let return_data = _evm_call(EvmCallMethodInput {
+        callee_address20: created_address.into_array(),
+        value32: call_value.to_be_bytes(),
+        args: args_data,
         gas_limit,
-        created_address.as_ptr(),
-        call_value.to_be_bytes::<32>().as_ptr(),
-        args_data.as_ptr(),
-        args_data.len() as u32,
-        return_data.as_mut_ptr(),
-        return_data.len() as u32,
-    );
-    assert!(exit_code.is_ok());
+    })
+    .unwrap();
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

@@ -1,3 +1,4 @@
+use crate::helpers::exec_evm_bytecode;
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use fluentbase_core_api::bindings::EvmCreateMethodInput;
@@ -43,32 +44,9 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
         caller: caller_address,
         value,
     };
-    let mut interpreter = Interpreter::new(Box::new(contract), input.gas_limit as u64, false);
-    let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
-    let mut host = FluentHost::default();
-    let shared_memory = SharedMemory::new();
-    let result = if let Some(v) = interpreter
-        .run(shared_memory, &instruction_table, &mut host)
-        .into_result_return()
-    {
-        v
-    } else {
-        return Err(ExitCode::EVMCreateError);
-    };
 
-    if result.is_error() {
-        if !result.output.is_empty() {
-            LowLevelSDK::sys_write(result.output.as_ref());
-        }
-        return Err(ExitCode::EVMCreateError);
-    } else if result.is_revert() {
-        if !result.output.is_empty() {
-            LowLevelSDK::sys_write(result.output.as_ref());
-        }
-        return Err(ExitCode::EVMCreateRevert);
-    }
-
-    if result.output.len() > MAX_CODE_SIZE {
+    let new_bytecode = exec_evm_bytecode(contract, input.gas_limit as u64, is_static)?;
+    if new_bytecode.len() > MAX_CODE_SIZE {
         return Err(ExitCode::ContractSizeLimit);
     }
 
@@ -77,7 +55,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
 
     // write callee changes to database
     callee_account.update_bytecode(
-        &result.output,
+        &new_bytecode,
         None,
         &include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into(),
         None,

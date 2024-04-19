@@ -4,7 +4,7 @@ all: build
 build:
 	clear
 	cd crates/contracts && $(MAKE)
-	#cd examples && $(MAKE)
+	cd examples && $(MAKE)
 	cd crates/genesis && $(MAKE)
 
 .PHONY: test
