@@ -1,6 +1,5 @@
-use crate::evm::{call::_evm_call, create::_evm_create, create2::_evm_create2};
-use crate::helpers::unwrap_exit_code;
 use core::ptr::null_mut;
+
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core_api::{
     api::CoreInput,
@@ -8,14 +7,9 @@ use fluentbase_core_api::{
 };
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 
-macro_rules! decode_input {
-    ($core_input: ident, $method_input: ident) => {{
-        let mut buffer = BufferDecoder::new(&mut $core_input.method_data);
-        let mut method_input = $method_input::default();
-        $method_input::decode_body(&mut buffer, 0, &mut method_input);
-        method_input
-    }};
-}
+use crate::decode_method_input;
+use crate::evm::{call::_evm_call, create::_evm_create, create2::_evm_create2};
+use crate::helpers::unwrap_exit_code;
 
 pub fn deploy() {}
 
@@ -29,17 +23,17 @@ pub fn main() {
 
     match method_name {
         EvmMethodName::EvmCreate => {
-            let method_input = decode_input!(core_input, EvmCreateMethodInput);
+            let method_input = decode_method_input!(core_input, EvmCreateMethodInput);
             let address = unwrap_exit_code(_evm_create(method_input));
             LowLevelSDK::sys_write(address.as_slice())
         }
         EvmMethodName::EvmCreate2 => {
-            let method_input = decode_input!(core_input, EvmCreate2MethodInput);
+            let method_input = decode_method_input!(core_input, EvmCreate2MethodInput);
             let address = unwrap_exit_code(_evm_create2(method_input));
             LowLevelSDK::sys_write(address.as_slice())
         }
         EvmMethodName::EvmCall => {
-            let method_input = decode_input!(core_input, EvmCallMethodInput);
+            let method_input = decode_method_input!(core_input, EvmCallMethodInput);
             let exit_code = _evm_call(
                 method_input.gas_limit,
                 method_input.callee_address20.as_ptr(),

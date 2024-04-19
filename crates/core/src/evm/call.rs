@@ -1,15 +1,18 @@
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use core::ptr;
+
+use revm_interpreter::{
+    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
+    Contract, InstructionResult, Interpreter, SharedMemory,
+};
+
 use fluentbase_sdk::{
     evm::{ExecutionContext, U256},
     LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode};
-use revm_interpreter::{
-    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
-    Contract, Interpreter, SharedMemory,
-};
+
+use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 
 pub fn _evm_call(
     gas_limit: u32,
@@ -46,14 +49,12 @@ pub fn _evm_call(
         caller: caller_address,
         value,
     };
-    let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
+    let mut interpreter = Interpreter::new(Box::new(contract.clone()), gas_limit as u64, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
-    let result = match interpreter
-        .run(shared_memory, &instruction_table, &mut host)
-        .into_result_return()
-    {
+    let interpreter_action = interpreter.run(shared_memory, &instruction_table, &mut host);
+    let result = match interpreter_action.clone().into_result_return() {
         Some(v) => v,
         None => return ExitCode::EVMCallError,
     };
