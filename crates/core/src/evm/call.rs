@@ -49,7 +49,7 @@ pub fn _evm_call(
         caller: caller_address,
         value,
     };
-    let mut interpreter = Interpreter::new(Box::new(contract.clone()), gas_limit as u64, is_static);
+    let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
