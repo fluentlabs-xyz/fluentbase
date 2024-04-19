@@ -463,6 +463,15 @@ fn test_bridge_contract2() {
 
 #[test]
 fn test_bridge_contract_with_call() {
+    // {
+    //     "cd596583": "bridgeContract()",
+    //     "aab858dd": "computePeggedTokenAddress(address)",
+    //     "8da5cb5b": "owner()",
+    //     "715018a6": "renounceOwnership()",
+    //     "e77772fe": "tokenFactory()",
+    //     "f2fde38b": "transferOwnership(address)"
+    // }
+
     let mut ctx = TestingContext::default();
     let signer_l1__wallet__owner = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
@@ -484,10 +493,10 @@ fn test_bridge_contract_with_call() {
     );
     let result = pegged_token_factory_tx_builder.exec();
     assert!(result.is_success());
-    // assert_eq!(
-    //     pegged_token_contract_address.to_string(),
-    //     hex::encode(result.output().)
-    // );
+    assert_eq!(
+        pegged_token_contract_address.to_string(),
+        hex::encode(result.into_output().unwrap().0)
+    );
 
     println!("\n\nerc20token_contract:");
     let mut erc20token_factory_tx_builder = TxBuilder::create(
@@ -520,6 +529,25 @@ fn test_bridge_contract_with_call() {
     let result = erc20gateway_factory_tx_builder.exec();
     assert!(result.is_success());
 
+    println!("\n\ntransferOwnership call:");
+    let mut transfer_ownership_tx_builder = TxBuilder::call(
+        &mut ctx,
+        signer_l1__wallet__owner,
+        erc20gateway_contract_address,
+    )
+    .input(bytes!(
+        "\
+        f2fde38b\
+        9fe46736679d2d9a65f0992f2272de9f3c7fa6e0\
+        "
+    ));
+    assert_eq!(
+        signer_l1__wallet__owner,
+        transfer_ownership_tx_builder.env.tx.caller,
+    );
+    let result = transfer_ownership_tx_builder.exec();
+    assert!(result.is_success());
+
     println!("\n\nl1token_contract:");
     let mut l1token_factory_tx_builder = TxBuilder::create(
         &mut ctx,
@@ -545,15 +573,7 @@ fn test_bridge_contract_with_call() {
     let result = l1token_factory_tx_builder.exec();
     assert!(result.is_success());
 
-    // {
-    //     "cd596583": "bridgeContract()",
-    //     "aab858dd": "computePeggedTokenAddress(address)",
-    //     "8da5cb5b": "owner()",
-    //     "715018a6": "renounceOwnership()",
-    //     "e77772fe": "tokenFactory()",
-    //     "f2fde38b": "transferOwnership(address)"
-    // }
-    println!("\n\nerc20gateway_factory call:");
+    println!("\n\ncomputePeggedTokenAddress call:");
     let mut erc20gateway_factory_tx_builder = TxBuilder::call(
         &mut ctx,
         signer_l1__wallet__owner,
