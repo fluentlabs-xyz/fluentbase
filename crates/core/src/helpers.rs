@@ -11,6 +11,16 @@ use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 
+#[macro_export]
+macro_rules! decode_method_input {
+    ($core_input: ident, $method_input: ident) => {{
+        let mut buffer = BufferDecoder::new(&mut $core_input.method_data);
+        let mut method_input = $method_input::default();
+        $method_input::decode_body(&mut buffer, 0, &mut method_input);
+        method_input
+    }};
+}
+
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
 #[inline]

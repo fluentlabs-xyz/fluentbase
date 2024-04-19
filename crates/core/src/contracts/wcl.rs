@@ -1,3 +1,4 @@
+use crate::decode_method_input;
 use crate::helpers::unwrap_exit_code;
 use crate::wasm::{call::_wasm_call, create::_wasm_create, create2::_wasm_create2};
 use fluentbase_codec::{BufferDecoder, Encoder};
@@ -8,15 +9,6 @@ use fluentbase_core_api::{
     },
 };
 use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
-
-macro_rules! decode_input {
-    ($core_input: ident, $method_input: ident) => {{
-        let mut buffer = BufferDecoder::new(&mut $core_input.method_data);
-        let mut method_input = $method_input::default();
-        $method_input::decode_body(&mut buffer, 0, &mut method_input);
-        method_input
-    }};
-}
 
 pub fn deploy() {}
 
@@ -30,20 +22,23 @@ pub fn main() {
     if let Ok(method_name) = method_name {
         match method_name {
             WasmMethodName::WasmCreate => {
-                let method_input = decode_input!(core_input, WasmCreateMethodInput);
+                let method_input = decode_method_input!(core_input, WasmCreateMethodInput);
                 let address = unwrap_exit_code(_wasm_create(method_input));
                 LowLevelSDK::sys_write(address.as_slice());
             }
             WasmMethodName::WasmCreate2 => {
-                let method_input = decode_input!(core_input, WasmCreate2MethodInput);
+                let method_input = decode_method_input!(core_input, WasmCreate2MethodInput);
                 let address = unwrap_exit_code(_wasm_create2(method_input));
                 LowLevelSDK::sys_write(address.as_slice());
             }
             WasmMethodName::WasmCall => {
-                let method_input = decode_input!(core_input, WasmCallMethodInput);
+                let method_input = decode_method_input!(core_input, WasmCallMethodInput);
                 let exit_code = _wasm_call(method_input);
                 if !exit_code.is_ok() {
-                    panic!("call method failed, exit code: {}", exit_code.into_i32())
+                    panic!(
+                        "wcl: call method failed, exit code: {}",
+                        exit_code.into_i32()
+                    )
                 }
             }
         }
