@@ -34,18 +34,8 @@ pub fn main() {
         }
         EvmMethodName::EvmCall => {
             let method_input = decode_method_input!(core_input, EvmCallMethodInput);
-            let exit_code = _evm_call(
-                method_input.gas_limit,
-                method_input.callee_address20.as_ptr(),
-                method_input.value32.as_ptr(),
-                method_input.args.as_ptr(),
-                method_input.args.len() as u32,
-                null_mut(),
-                0,
-            );
-            if !exit_code.is_ok() {
-                panic!("call method failed, exit code: {}", exit_code.into_i32())
-            }
+            let output = unwrap_exit_code(_evm_call(method_input));
+            LowLevelSDK::sys_write(&output)
         }
     }
 }
