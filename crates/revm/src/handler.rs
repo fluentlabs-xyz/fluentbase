@@ -34,7 +34,7 @@ pub struct Handler<'a, EXT, DB: Database> {
 impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
     /// Created new Handler with given configuration.
     ///
-    /// Internaly it calls `mainnet_with_spec` with the given spec id.
+    /// Internally it calls `mainnet_with_spec` with the given spec id.
     /// Or `optimism_with_spec` if the optimism feature is enabled and `cfg.is_optimism` is set.
     pub fn new(cfg: HandlerCfg) -> Self {
         cfg_if::cfg_if! {
