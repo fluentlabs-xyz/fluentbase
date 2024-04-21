@@ -10,7 +10,6 @@ use alloc::{
 };
 use crypto_hashes::md2::{Digest, Md2};
 use proc_macro::TokenStream;
-use syn::__private::quote::quote;
 use syn::{FnArg, ForeignItem, ItemForeignMod, Pat, Type};
 
 #[proc_macro]
