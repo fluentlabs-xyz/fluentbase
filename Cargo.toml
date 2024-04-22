@@ -48,9 +48,9 @@ alloy-rlp = { version = "0.3.4", default-features = false }
 revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
 revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false }
-#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false }
-#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false }
+#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false, features = ["rwasm"] }
+#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
+#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4.0" }
 hex-literal = { version = "0.4.1" }
