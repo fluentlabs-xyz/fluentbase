@@ -1,4 +1,5 @@
 use crate::evm::{Address, Bytes, U256};
+use alloc::vec::Vec;
 use fluentbase_codec_derive::{derive_keccak256_id, Codec};
 
 #[derive(Default, Clone, Codec)]
