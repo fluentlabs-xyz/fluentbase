@@ -417,6 +417,8 @@ impl JournaledState {
                     let acc = state.get_mut(&address).unwrap();
                     acc.info.code_hash = KECCAK_EMPTY;
                     acc.info.code = None;
+                    acc.info.rwasm_code_hash = POSEIDON_EMPTY;
+                    acc.info.rwasm_code = None;
                 }
             }
         }
