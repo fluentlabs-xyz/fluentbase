@@ -1,10 +1,9 @@
 use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS};
 use fluentbase_codec::Encoder;
-use fluentbase_core_api::{
-    api::CoreInput,
-    bindings::{EvmCallMethodInput, EVM_CALL_METHOD_ID},
+use fluentbase_sdk::{
+    evm::ExecutionContext, CoreInput, EvmCallMethodInput, LowLevelAPI, LowLevelSDK,
+    EVM_CALL_METHOD_ID,
 };
-use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::STATE_MAIN;
 
 pub fn deploy() {}
