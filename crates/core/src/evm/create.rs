@@ -63,12 +63,13 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     caller_account.write_to_jzkt();
 
     // write callee changes to database
-    callee_account.update_bytecode(
-        &new_bytecode,
-        None,
-        &include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into(),
-        None,
-    );
+    let evm_loader = if new_bytecode.len() > 0 {
+        include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into()
+    } else {
+        Bytes::default()
+    };
+
+    callee_account.update_bytecode(&new_bytecode, None, &evm_loader, None);
 
     Ok(callee_account.address)
 }

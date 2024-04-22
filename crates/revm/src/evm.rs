@@ -370,6 +370,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         );
 
         let created_address = if exit_code == ExitCode::Ok {
+            if output_buffer.len() != 20 {
+                return return_result(ExitCode::CreateError, gas);
+            }
             assert_eq!(
                 output_buffer.len(),
                 20,
