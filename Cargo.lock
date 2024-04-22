@@ -2913,7 +2913,6 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#d1405dbe3f563ab0f7ac438c5e13adfa67127194"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2922,7 +2921,6 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#d1405dbe3f563ab0f7ac438c5e13adfa67127194"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -2938,7 +2936,6 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#d1405dbe3f563ab0f7ac438c5e13adfa67127194"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
