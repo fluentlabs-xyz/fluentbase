@@ -16,8 +16,8 @@ proc-macro = false
 
 [dependencies]
 # revm
-revm-precompile = { workspace = true, default-features = false }
-revm-primitives = { workspace = true, default-features = false }
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
 
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
