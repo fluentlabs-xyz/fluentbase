@@ -5,11 +5,14 @@ use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::{address, bytes, Address, Bytes, KECCAK_EMPTY, POSEIDON_EMPTY, U256};
+use fluentbase_types::{
+    address, bytes, wasm2rwasm, Address, Bytes, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
+};
+use lazy_static::lazy_static;
 use revm_primitives::db::DatabaseCommit;
 use revm_primitives::{
     hex, keccak256, AccountInfo, Bytecode, CreateScheme, Env, ExecutionResult, HashMap, Output,
-    TransactTo,
+    SpecId, TransactTo,
 };
 
 #[allow(dead_code)]
@@ -55,10 +58,11 @@ impl TestingContext {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                source_code_hash: keccak_hash,
-                rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                rwasm_code_hash: poseidon_hash,
+                // source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                // source_code_hash: keccak_hash,
+                // rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                // rwasm_code_hash: poseidon_hash,
+                ..Default::default()
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
@@ -655,4 +659,52 @@ fn test_bridge_contract_with_call() {
     let result = erc20gateway_factory_tx_builder.exec();
     assert!(!result.output().unwrap().is_empty());
     assert!(result.is_success());
+}
+
+lazy_static! {
+    static ref EVM_LOADER: (Bytes, B256) = {
+        let rwasm_bytecode: Bytes =
+            include_bytes!("../../contracts/assets/evm_loader_contract.rwasm").into();
+        let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
+        (rwasm_bytecode, rwasm_hash)
+    };
+}
+
+#[test]
+fn test_log_2_non_const() {
+    let mut ctx = TestingContext::default();
+
+    let caller_address = address!("a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
+    let account_address = address!("095e7baea6a6c7c4c2dfeb977efac326af552d87");
+    let account_source_code = &hex!("73095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d8731a200");
+    let (evm_loader_rwasm_code, evm_loader_rwasm_code_hash) = EVM_LOADER.clone();
+    let account_info = AccountInfo {
+        balance: U256::from(0),
+        nonce: 0,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account_source_code,
+        ))),
+        code_hash: keccak256(account_source_code),
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account_address, account_info);
+
+    let result = call_evm_tx(&mut ctx, caller_address, account_address, Bytes::default());
+    assert!(result.is_success());
+    println!("gas used (call): {}", result.gas_used());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!("", hex::encode(bytes.as_ref()));
+    assert!(result.logs().len() > 0);
+    for (i, log) in result.logs().iter().enumerate() {
+        println!(
+            "log {} address {} topics {}",
+            i,
+            hex::encode(log.address),
+            log.topics().len()
+        );
+        for (i, topic) in log.topics().iter().enumerate() {
+            println!("  topic {}: {}", i, topic);
+        }
+    }
 }

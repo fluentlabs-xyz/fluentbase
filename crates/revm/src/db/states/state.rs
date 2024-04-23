@@ -140,7 +140,7 @@ impl<DB: Database> State<DB> {
     }
 
     pub fn insert_account(&mut self, address: Address, info: AccountInfo) {
-        self.cache.insert_account(address, info)
+        self.cache.insert_account(address, info, None)
     }
 
     pub fn insert_account_with_storage(
@@ -149,8 +149,7 @@ impl<DB: Database> State<DB> {
         info: AccountInfo,
         storage: PlainStorage,
     ) {
-        self.cache
-            .insert_account_with_storage(address, info, storage)
+        self.cache.insert_account(address, info, Some(storage))
     }
 
     /// Apply evm transitions to transition state.
