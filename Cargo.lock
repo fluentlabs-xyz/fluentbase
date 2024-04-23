@@ -1464,6 +1464,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-types",
  "indicatif",
+ "lazy_static",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
