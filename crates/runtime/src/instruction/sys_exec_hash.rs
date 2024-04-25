@@ -85,6 +85,11 @@ impl SysExecHash {
             Ok(execution_result) => execution_result,
         };
 
+        // println!(
+        //     "sys_exec_hash: exit_code={} fuel_limit={}",
+        //     execution_result.exit_code, fuel_limit
+        // );
+
         // make sure there is no return overflow
         if return_len > 0 && execution_result.output.len() > return_len as usize {
             return Err(ExitCode::OutputOverflow.into_i32());
@@ -98,6 +103,10 @@ impl SysExecHash {
         // increase total fuel consumed and remember return data
         ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
+
+        if execution_result.exit_code != ExitCode::Ok.into_i32() {
+            return Err(execution_result.exit_code);
+        }
 
         Ok(fuel_limit - execution_result.fuel_consumed)
     }
