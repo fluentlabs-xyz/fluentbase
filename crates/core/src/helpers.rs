@@ -180,6 +180,7 @@ pub(crate) fn exec_evm_bytecode(
             }
         }
         InterpreterAction::Return { result } => {
+            // TODO(stas): "charge `result.gas` using new `_sys_charge_fuel` or `_sys_consume_fuel` function"
             if result.is_revert() {
                 LowLevelSDK::sys_write(&result.output);
                 return Err(ExitCode::EVMCallRevert);
