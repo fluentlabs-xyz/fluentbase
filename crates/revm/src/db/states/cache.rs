@@ -65,17 +65,26 @@ impl CacheState {
     }
 
     /// Insert Loaded (Or LoadedEmptyEip161 if account is empty) account.
-    pub fn insert_account(
+    pub fn insert_account(&mut self, address: Address, mut info: AccountInfo) {
+        self.insert_contract(&mut info);
+        let account = if !info.is_empty() {
+            CacheAccount::new_loaded(info, PlainStorage::default())
+        } else {
+            CacheAccount::new_loaded_empty_eip161(PlainStorage::default())
+        };
+        self.accounts.insert(address, account);
+    }
+    pub fn insert_account_with_storage(
         &mut self,
         address: Address,
         mut info: AccountInfo,
-        storage: Option<PlainStorage>,
+        storage: PlainStorage,
     ) {
         self.insert_contract(&mut info);
         let account = if !info.is_empty() {
-            CacheAccount::new_loaded(info, storage.unwrap_or_default())
+            CacheAccount::new_loaded(info, storage)
         } else {
-            CacheAccount::new_loaded_empty_eip161(storage.unwrap_or_default())
+            CacheAccount::new_loaded_empty_eip161(storage)
         };
         self.accounts.insert(address, account);
     }

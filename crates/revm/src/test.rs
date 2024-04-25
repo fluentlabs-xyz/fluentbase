@@ -1,19 +1,21 @@
-use crate::db::OriginalValuesKnown::No;
-use crate::{Evm, InMemoryDB};
 use core::mem::take;
+
+use lazy_static::lazy_static;
+use revm_primitives::db::DatabaseCommit;
+use revm_primitives::{
+    hex, keccak256, AccountInfo, Bytecode, CreateScheme, EVMError, Env, ExecutionResult, HashMap,
+    Output, TransactTo,
+};
+
 use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
-    address, bytes, wasm2rwasm, Address, Bytes, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
+    address, bytes, Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
 };
-use lazy_static::lazy_static;
-use revm_primitives::db::DatabaseCommit;
-use revm_primitives::{
-    hex, keccak256, AccountInfo, Bytecode, CreateScheme, Env, ExecutionResult, HashMap, Output,
-    SpecId, TransactTo,
-};
+
+use crate::{Evm, InMemoryDB};
 
 #[allow(dead_code)]
 struct TestingContext {
@@ -140,18 +142,23 @@ impl<'a> TxBuilder<'a> {
         self
     }
 
-    fn exec(&mut self) -> ExecutionResult {
+    fn exec(&mut self, gas_limit: Option<u64>) -> Result<ExecutionResult, EVMError<ExitCode>> {
+        if let Some(v) = gas_limit {
+            self.env.tx.gas_limit = v;
+        }
         let mut evm = Evm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_db(&mut self.ctx.db)
             .build();
-        evm.transact_commit().unwrap()
+        evm.transact_commit()
     }
 }
 
 fn deploy_evm_tx(ctx: &mut TestingContext, deployer: Address, init_bytecode: Bytes) -> Address {
     // deploy greeting EVM contract
-    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into(), None).exec();
+    let result = TxBuilder::create(ctx, deployer, init_bytecode.clone().into(), None)
+        .exec(None)
+        .unwrap();
     assert!(result.is_success());
     let contract_address = calc_create_address(&deployer, 0);
     let contract_account = ctx.db.accounts.get(&contract_address).unwrap();
@@ -181,10 +188,13 @@ fn call_evm_tx(
     caller: Address,
     callee: Address,
     input: Bytes,
-) -> ExecutionResult {
+    gas_limit: Option<u64>,
+) -> Result<ExecutionResult, EVMError<ExitCode>> {
     ctx.add_balance(caller, U256::from(1e18));
     // call greeting EVM contract
-    TxBuilder::call(ctx, caller, callee).input(input).exec()
+    TxBuilder::call(ctx, caller, callee)
+        .input(input)
+        .exec(gas_limit)
 }
 
 #[test]
@@ -196,7 +206,9 @@ fn test_genesis_greeting() {
         DEPLOYER_ADDRESS,
         EXAMPLE_GREETING_ADDRESS,
         Bytes::default(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();
@@ -222,7 +234,9 @@ fn test_deploy_greeting() {
         DEPLOYER_ADDRESS,
         contract_address,
         Bytes::default(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
@@ -247,7 +261,9 @@ fn test_deploy_keccak256() {
         DEPLOYER_ADDRESS,
         contract_address,
         "Hello, World".into(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
@@ -272,7 +288,9 @@ fn test_deploy_panic() {
         DEPLOYER_ADDRESS,
         contract_address,
         Bytes::default(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
@@ -293,7 +311,9 @@ fn test_evm_greeting() {
         DEPLOYER_ADDRESS,
         contract_address,
         hex!("45773e4e").into(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
@@ -330,7 +350,9 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_1,
         hex!("20965255").into(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
@@ -343,7 +365,9 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
-    );
+        None,
+    )
+    .unwrap();
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default().iter().as_slice();
     assert_eq!(
@@ -363,7 +387,8 @@ fn test_simple_send() {
     let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS)
         .gas_price(gas_price)
         .value(U256::from(1e18))
-        .exec();
+        .exec(None)
+        .unwrap();
     assert!(result.is_success());
     let tx_cost = gas_price * U256::from(result.gas_used());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18) - tx_cost);
@@ -385,7 +410,8 @@ fn test_create_send() {
     )
     .gas_price(gas_price)
     .value(U256::from(1e18))
-    .exec();
+    .exec(None)
+    .unwrap();
     let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     let tx_cost = gas_price * U256::from(result.gas_used());
@@ -403,7 +429,8 @@ fn test_evm_revert() {
     let result = TxBuilder::create(&mut ctx, SENDER_ADDRESS, hex!("5f5ffd").into(), None)
         .gas_price(gas_price)
         .value(U256::from(1e18))
-        .exec();
+        .exec(None)
+        .unwrap();
     let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(!result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(2e18));
@@ -417,7 +444,8 @@ fn test_evm_revert() {
     )
     .gas_price(gas_price)
     .value(U256::from(1e18))
-    .exec();
+    .exec(None)
+    .unwrap();
     let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
@@ -441,7 +469,7 @@ fn test_bridge_contract() {
         .gas_price(gas_price);
     let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
     assert!(!tx_builder.ctx.db.accounts.contains_key(&contract_address));
-    let exec_result = tx_builder.exec();
+    let exec_result = tx_builder.exec(None).unwrap();
     assert!(tx_builder.ctx.db.accounts.contains_key(&contract_address));
     let contract_account = tx_builder.ctx.db.accounts.get(&contract_address).unwrap();
     assert!(contract_account.info.rwasm_code.is_some());
@@ -462,7 +490,7 @@ fn test_bridge_contract2() {
         hex!("60806040523480156200001157600080fd5b5060405180602001604052806000815250604051806020016040528060008152508160039081620000439190620002d8565b508060049081620000559190620002d8565b505050620003bf565b600081519050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052604160045260246000fd5b7f4e487b7100000000000000000000000000000000000000000000000000000000600052602260045260246000fd5b60006002820490506001821680620000e057607f821691505b602082108103620000f657620000f562000098565b5b50919050565b60008190508160005260206000209050919050565b60006020601f8301049050919050565b600082821b905092915050565b600060088302620001607fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8262000121565b6200016c868362000121565b95508019841693508086168417925050509392505050565b6000819050919050565b6000819050919050565b6000620001b9620001b3620001ad8462000184565b6200018e565b62000184565b9050919050565b6000819050919050565b620001d58362000198565b620001ed620001e482620001c0565b8484546200012e565b825550505050565b600090565b62000204620001f5565b62000211818484620001ca565b505050565b5b8181101562000239576200022d600082620001fa565b60018101905062000217565b5050565b601f82111562000288576200025281620000fc565b6200025d8462000111565b810160208510156200026d578190505b620002856200027c8562000111565b83018262000216565b50505b505050565b600082821c905092915050565b6000620002ad600019846008026200028d565b1980831691505092915050565b6000620002c883836200029a565b9150826002028217905092915050565b620002e3826200005e565b67ffffffffffffffff811115620002ff57620002fe62000069565b5b6200030b8254620000c7565b620003188282856200023d565b600060209050601f8311600181146200035057600084156200033b578287015190505b620003478582620002ba565b865550620003b7565b601f1984166200036086620000fc565b60005b828110156200038a5784890151825560018201915060208501945060208101905062000363565b86831015620003aa5784890151620003a6601f8916826200029a565b8355505b6001600288020188555050505b505050505050565b610e5580620003cf6000396000f3fe608060405234801561001057600080fd5b50600436106100935760003560e01c8063313ce56711610066578063313ce5671461013457806370a082311461015257806395d89b4114610182578063a9059cbb146101a0578063dd62ed3e146101d057610093565b806306fdde0314610098578063095ea7b3146100b657806318160ddd146100e657806323b872dd14610104575b600080fd5b6100a0610200565b6040516100ad9190610aa9565b60405180910390f35b6100d060048036038101906100cb9190610b64565b610292565b6040516100dd9190610bbf565b60405180910390f35b6100ee6102b5565b6040516100fb9190610be9565b60405180910390f35b61011e60048036038101906101199190610c04565b6102bf565b60405161012b9190610bbf565b60405180910390f35b61013c6102ee565b6040516101499190610c73565b60405180910390f35b61016c60048036038101906101679190610c8e565b6102f7565b6040516101799190610be9565b60405180910390f35b61018a61033f565b6040516101979190610aa9565b60405180910390f35b6101ba60048036038101906101b59190610b64565b6103d1565b6040516101c79190610bbf565b60405180910390f35b6101ea60048036038101906101e59190610cbb565b6103f4565b6040516101f79190610be9565b60405180910390f35b60606003805461020f90610d2a565b80601f016020809104026020016040519081016040528092919081815260200182805461023b90610d2a565b80156102885780601f1061025d57610100808354040283529160200191610288565b820191906000526020600020905b81548152906001019060200180831161026b57829003601f168201915b5050505050905090565b60008061029d61047b565b90506102aa818585610483565b600191505092915050565b6000600254905090565b6000806102ca61047b565b90506102d7858285610495565b6102e2858585610529565b60019150509392505050565b60006012905090565b60008060008373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020549050919050565b60606004805461034e90610d2a565b80601f016020809104026020016040519081016040528092919081815260200182805461037a90610d2a565b80156103c75780601f1061039c576101008083540402835291602001916103c7565b820191906000526020600020905b8154815290600101906020018083116103aa57829003601f168201915b5050505050905090565b6000806103dc61047b565b90506103e9818585610529565b600191505092915050565b6000600160008473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054905092915050565b600033905090565b610490838383600161061d565b505050565b60006104a184846103f4565b90507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff81146105235781811015610513578281836040517ffb8f41b200000000000000000000000000000000000000000000000000000000815260040161050a93929190610d6a565b60405180910390fd5b6105228484848403600061061d565b5b50505050565b600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff160361059b5760006040517f96c6fd1e0000000000000000000000000000000000000000000000000000000081526004016105929190610da1565b60405180910390fd5b600073ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff160361060d5760006040517fec442f050000000000000000000000000000000000000000000000000000000081526004016106049190610da1565b60405180910390fd5b6106188383836107f4565b505050565b600073ffffffffffffffffffffffffffffffffffffffff168473ffffffffffffffffffffffffffffffffffffffff160361068f5760006040517fe602df050000000000000000000000000000000000000000000000000000000081526004016106869190610da1565b60405180910390fd5b600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff16036107015760006040517f94280d620000000000000000000000000000000000000000000000000000000081526004016106f89190610da1565b60405180910390fd5b81600160008673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff1681526020019081526020016000208190555080156107ee578273ffffffffffffffffffffffffffffffffffffffff168473ffffffffffffffffffffffffffffffffffffffff167f8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925846040516107e59190610be9565b60405180910390a35b50505050565b600073ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff160361084657806002600082825461083a9190610deb565b92505081905550610919565b60008060008573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020549050818110156108d2578381836040517fe450d38c0000000000000000000000000000000000000000000000000000000081526004016108c993929190610d6a565b60405180910390fd5b8181036000808673ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002081905550505b600073ffffffffffffffffffffffffffffffffffffffff168273ffffffffffffffffffffffffffffffffffffffff160361096257806002600082825403925050819055506109af565b806000808473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020600082825401925050819055505b8173ffffffffffffffffffffffffffffffffffffffff168373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef83604051610a0c9190610be9565b60405180910390a3505050565b600081519050919050565b600082825260208201905092915050565b60005b83811015610a53578082015181840152602081019050610a38565b60008484015250505050565b6000601f19601f8301169050919050565b6000610a7b82610a19565b610a858185610a24565b9350610a95818560208601610a35565b610a9e81610a5f565b840191505092915050565b60006020820190508181036000830152610ac38184610a70565b905092915050565b600080fd5b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000610afb82610ad0565b9050919050565b610b0b81610af0565b8114610b1657600080fd5b50565b600081359050610b2881610b02565b92915050565b6000819050919050565b610b4181610b2e565b8114610b4c57600080fd5b50565b600081359050610b5e81610b38565b92915050565b60008060408385031215610b7b57610b7a610acb565b5b6000610b8985828601610b19565b9250506020610b9a85828601610b4f565b9150509250929050565b60008115159050919050565b610bb981610ba4565b82525050565b6000602082019050610bd46000830184610bb0565b92915050565b610be381610b2e565b82525050565b6000602082019050610bfe6000830184610bda565b92915050565b600080600060608486031215610c1d57610c1c610acb565b5b6000610c2b86828701610b19565b9350506020610c3c86828701610b19565b9250506040610c4d86828701610b4f565b9150509250925092565b600060ff82169050919050565b610c6d81610c57565b82525050565b6000602082019050610c886000830184610c64565b92915050565b600060208284031215610ca457610ca3610acb565b5b6000610cb284828501610b19565b91505092915050565b60008060408385031215610cd257610cd1610acb565b5b6000610ce085828601610b19565b9250506020610cf185828601610b19565b9150509250929050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052602260045260246000fd5b60006002820490506001821680610d4257607f821691505b602082108103610d5557610d54610cfb565b5b50919050565b610d6481610af0565b82525050565b6000606082019050610d7f6000830186610d5b565b610d8c6020830185610bda565b610d996040830184610bda565b949350505050565b6000602082019050610db66000830184610d5b565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b6000610df682610b2e565b9150610e0183610b2e565b9250828201905080821115610e1957610e18610dbc565b5b9291505056fea26469706673582212203f94478400ca0031ba543400a90ffc7349bed715f562669d8edd4af9ff89dcd664736f6c63430008140033").into(),
         None
     ).gas_limit(0x989680)
-        .exec();
+        .exec(None).unwrap();
     assert!(result.is_success());
 }
 
@@ -498,7 +526,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         pegged_token_factory_tx_builder.env.tx.caller,
     );
-    let result = pegged_token_factory_tx_builder.exec();
+    let result = pegged_token_factory_tx_builder.exec(None).unwrap();
     match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, address) => {
@@ -520,7 +548,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         erc20token_factory_tx_builder.env.tx.caller,
     );
-    let result = erc20token_factory_tx_builder.exec();
+    let result = erc20token_factory_tx_builder.exec(None).unwrap();
     match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, address) => {
@@ -543,7 +571,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         erc20gateway_factory_tx_builder.env.tx.caller,
     );
-    let result = erc20gateway_factory_tx_builder.exec();
+    let result = erc20gateway_factory_tx_builder.exec(None).unwrap();
     match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, address) => {
@@ -570,7 +598,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         transfer_ownership_tx_builder.env.tx.caller,
     );
-    let result = transfer_ownership_tx_builder.exec();
+    let result = transfer_ownership_tx_builder.exec(None).unwrap();
     match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Call(bytes) => {
@@ -602,7 +630,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         l1token_factory_tx_builder.env.tx.caller,
     );
-    let result = l1token_factory_tx_builder.exec();
+    let result = l1token_factory_tx_builder.exec(None).unwrap();
     match result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, address) => {
@@ -656,7 +684,7 @@ fn test_bridge_contract_with_call() {
         signer_l1_wallet_owner,
         erc20gateway_factory_tx_builder.env.tx.caller,
     );
-    let result = erc20gateway_factory_tx_builder.exec();
+    let result = erc20gateway_factory_tx_builder.exec(None).unwrap();
     assert!(!result.output().unwrap().is_empty());
     assert!(result.is_success());
 }
@@ -672,25 +700,33 @@ lazy_static! {
 
 #[test]
 fn test_log_2_non_const() {
+    // tests/GeneralStateTests/stRandom2/randomStatetest639.json
     let mut ctx = TestingContext::default();
 
     let caller_address = address!("a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-    let account_address = address!("095e7baea6a6c7c4c2dfeb977efac326af552d87");
-    let account_source_code = &hex!("73095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d8731a200");
+
+    let account1_address = address!("095e7baea6a6c7c4c2dfeb977efac326af552d87");
+    let account1_source_code = &hex!("73095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d873173095e7baea6a6c7c4c2dfeb977efac326af552d8731a200");
+    let account1_balance = &hex!("00");
+    let account1_nonce = 0;
     let (evm_loader_rwasm_code, evm_loader_rwasm_code_hash) = EVM_LOADER.clone();
     let account_info = AccountInfo {
-        balance: U256::from(0),
-        nonce: 0,
+        balance: U256::from_be_slice(account1_balance),
+        nonce: account1_nonce,
         code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
-            account_source_code,
+            account1_source_code,
         ))),
-        code_hash: keccak256(account_source_code),
+        code_hash: keccak256(account1_source_code),
         rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
         rwasm_code_hash: evm_loader_rwasm_code_hash,
     };
-    ctx.db.insert_account_info(account_address, account_info);
+    ctx.db.insert_account_info(account1_address, account_info);
 
-    let result = call_evm_tx(&mut ctx, caller_address, account_address, Bytes::default());
+    let gas_limit = 0x6015cf8f;
+
+    let result = TxBuilder::call(&mut ctx, caller_address, account1_address)
+        .exec(Some(gas_limit))
+        .unwrap();
     assert!(result.is_success());
     println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();
@@ -707,4 +743,195 @@ fn test_log_2_non_const() {
             println!("  topic {}: {}", i, topic);
         }
     }
+}
+
+#[test]
+fn test_random_statetest639() {
+    // tests/GeneralStateTests/stRandom2/randomStatetest639.json
+    let mut ctx = TestingContext::default();
+
+    let (evm_loader_rwasm_code, evm_loader_rwasm_code_hash) = EVM_LOADER.clone();
+    let caller_address =
+        Address::from_slice(&hex::decode("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
+    let callee_address =
+        Address::from_slice(&hex::decode("0x095e7baea6a6c7c4c2dfeb977efac326af552d87").unwrap());
+
+    let account1_address =
+        Address::from_slice(&hex::decode("0x095e7baea6a6c7c4c2dfeb977efac326af552d87").unwrap());
+    let account1_balance = U256::from_be_slice(&hex::decode("0x00").unwrap());
+    let account1_source_code = &hex::decode("0x6e993d78e80807a0d34bdbfa4e0afa9d7eab95e6f8772a548229700e2dcc612ac9ceeb898af8436680a2e1074df8ced0137964d71c8fe8a10fb58f8706ea3ee1b54a0848e742ca357e3d023460c161b1f5a17c48da2ae1e6987c52223414746fab0e39130693d15a48d39b5130096a7c1570c4fb89343ef5d10e912decba682bf205de79e84c573c9e2b0ffbd4d6117e40046b4c2d77156ada28960d9bb97f56d243429aa245c32e1f800a686ebe298dd08349d864486d7a1569b5aae495776bb5e71206cd09f54d1cd713966557567542184c74b95cc0d8ac3d0e05d0264b8d42a3563826123fc0d964521b61b86374591a821818672ef0dea05d259bc4f98c34418d9e7a677173b211649c07df7670aca688053842de6157c4fb5e678adc0611fcc20a1d836ec69b9370d09b83f1b0293a1b102d6d73978584b14fb2ab517001867e6545dd2dc3438f9c7828f6d3c6e4da98113ce2486c1ad028dc9947b28590071b977e651d352b078cb96b27f9ff7252c9f3ce9e5151ae7af1064ab8a5d92ed543b9d59c341f85bb22aa2fa7d7ee7310ac8f519e66da165b9efe3663657b1e28f4eb3e7338391339af5346d12c14bbc0863c26d7e999776c7939cefac542ed69f518bbef5461c0df385004f5411c3faaa65c7b6abf900ca1ef1f40bb938f727695a1ca14012ba07cc01548f3df75544b11bb52b7693bed7e2fc1537b2f8d63c4db4c3d8fc72b6f5f7e7b4d1ec8c1ac89230936975d19626788f03504a8c9acf66437d6d885607778bee6fe54742ddc9a7d8373dbfe2e21aacf8816944c02ef983260156009600960186329ec801e73095e7baea6a6c7c4c2dfeb977efac326af552d876356837182f175259fc2ea2df7d720fb0914ed44bcb12b8ff15e712ef67d868fe7fba6b46fac671a45bcace82fa83b87b8744835ac63d2b6cf3d157d7526909f9c4d1efbf68d780af1c0f2dabbfc53d2c71dc461bf7f788e3a9c48cd1df8d146a7df97125985162ecd37b059204323d066cb4709a3a1715f7c4a9fb905c26ba87933ef2499d3447d5cd4df27a6205c8a1ce06719c3e065e66ab80222ff7ed1f72f533a1160330dbd8dcd0489ec2dac84d7522a4d8732c5ae9e08d9a251682fb33fa08ecc05197d897a1d5f28328caa78ca6cd6b86fd08a1748fa959665861d18c25a3cae79732fe4fb3ad8b48c17c8efeeb5ec22be8b20ec4eae2955d65b9a6c1415c23047aa8f2c29aeddd78765c1bc3eda63416d84cdb9b8d7942020db3b1ed861a966475eb6ef9f9920692a879ee6bf9d0a1dd9d386").unwrap();
+    let account1_source_code_hash = keccak256(account1_source_code);
+    let account1_nonce = 0x00;
+    let account1_info = AccountInfo {
+        balance: account1_balance,
+        nonce: account1_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account1_source_code,
+        ))),
+        code_hash: account1_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account1_address, account1_info);
+
+    let account2_address =
+        Address::from_slice(&hex::decode("0x945304eb96065b2a98b57a48a06ae28d285a71b5").unwrap());
+    let account2_balance = U256::from_be_slice(&hex::decode("0x2e").unwrap());
+    let account2_source_code = &hex::decode("0x6000355415600957005b60203560003555").unwrap();
+    let account2_source_code_hash = keccak256(account2_source_code);
+    let account2_nonce = 0x00;
+    let account2_info = AccountInfo {
+        balance: account2_balance,
+        nonce: account2_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account2_source_code,
+        ))),
+        code_hash: account2_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account2_address, account2_info);
+
+    let account3_address =
+        Address::from_slice(&hex::decode("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
+    let account3_balance = U256::from_be_slice(&hex::decode("0x0de0b6b3a7640000").unwrap());
+    let account3_source_code = &hex::decode("0x").unwrap();
+    let account3_source_code_hash = keccak256(account3_source_code);
+    let account3_nonce = 0x00;
+    let account3_info = AccountInfo {
+        balance: account3_balance,
+        nonce: account3_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account3_source_code,
+        ))),
+        code_hash: account3_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account3_address, account3_info);
+
+    let gas_limit: u64 = 0x6015cf8f;
+    let gas_price: u64 = 0x0a;
+    let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
+        .value(U256::from_be_slice(&hex::decode("0x49c00898").unwrap()))
+        .gas_price(U256::from_be_slice(&gas_price.to_be_bytes()))
+        .gas_limit(gas_limit)
+        .exec(None)
+        .unwrap();
+    assert!(result.is_success());
+    println!("gas used (call): {}", result.gas_used());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!("", hex::encode(bytes.as_ref()));
+    assert!(result.logs().len() > 0);
+    for (i, log) in result.logs().iter().enumerate() {
+        println!(
+            "log {} address {} topics {}",
+            i,
+            hex::encode_prefixed(log.address),
+            log.topics().len()
+        );
+        for (i, topic) in log.topics().iter().enumerate() {
+            println!("  topic {}: {}", i, topic);
+        }
+    }
+}
+
+#[test]
+fn test_call_recursive_bomb_log2() {
+    // tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json
+    let mut ctx = TestingContext::default();
+
+    let (evm_loader_rwasm_code, evm_loader_rwasm_code_hash) = EVM_LOADER.clone();
+    let caller_address =
+        Address::from_slice(&hex::decode("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
+    let callee_address =
+        Address::from_slice(&hex::decode("0x095e7baea6a6c7c4c2dfeb977efac326af552d87").unwrap());
+
+    let account1_address =
+        Address::from_slice(&hex::decode("0x095e7baea6a6c7c4c2dfeb977efac326af552d87").unwrap());
+    let account1_balance = U256::from_be_slice(&hex::decode("0x01312d00").unwrap());
+    let account1_source_code = &hex::decode(
+        "0x6000600060006000601773945304eb96065b2a98b57a48a06ae28d285a71b56305f5e100f100",
+    )
+    .unwrap();
+    let account1_nonce = 0x00;
+    let account1_source_code_hash = keccak256(account1_source_code);
+    let account1_info = AccountInfo {
+        balance: account1_balance,
+        nonce: account1_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account1_source_code,
+        ))),
+        code_hash: account1_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account1_address, account1_info);
+
+    let account2_address =
+        Address::from_slice(&hex::decode("0x945304eb96065b2a98b57a48a06ae28d285a71b5").unwrap());
+    let account2_balance = U256::from_be_slice(&hex::decode("0x0de0b6b3a7640000").unwrap());
+    let account2_source_code = &hex::decode(
+        "0x5a60005260206000a060016000540160005560006000600060006000306100a85a03f160015500",
+    )
+    .unwrap();
+    let account2_nonce = 0x00;
+    let account2_source_code_hash = keccak256(account2_source_code);
+    let account2_info = AccountInfo {
+        balance: account2_balance,
+        nonce: account2_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account2_source_code,
+        ))),
+        code_hash: account2_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account2_address, account2_info);
+
+    let account3_address =
+        Address::from_slice(&hex::decode("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap());
+    let account3_balance = U256::from_be_slice(&hex::decode("0x0de0b6b3a7640000").unwrap());
+    let account3_source_code = &hex::decode("0x").unwrap();
+    let account3_source_code_hash = keccak256(account3_source_code);
+    let account3_nonce = 0x00;
+    let account3_info = AccountInfo {
+        balance: account3_balance,
+        nonce: account3_nonce,
+        code: Some(Bytecode::new_raw(Bytes::copy_from_slice(
+            account3_source_code,
+        ))),
+        code_hash: account3_source_code_hash,
+        rwasm_code: Some(Bytecode::new_raw(evm_loader_rwasm_code.clone())),
+        rwasm_code_hash: evm_loader_rwasm_code_hash,
+    };
+    ctx.db.insert_account_info(account3_address, account3_info);
+
+    let gas_limit: u64 = 0x02540be400;
+    let gas_price: u64 = 0x0a;
+    let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
+        .value(U256::from_be_slice(&hex::decode("0x0186a0").unwrap()))
+        .gas_price(U256::from_be_slice(&gas_price.to_be_bytes()))
+        .gas_limit(gas_limit)
+        .exec(None)
+        .unwrap();
+    assert!(result.is_success());
+    println!("gas used (call): {}", result.gas_used());
+    let bytes = result.output().unwrap_or_default();
+    assert_eq!("", hex::encode(bytes.as_ref()));
+    let logs_count = result.logs().len();
+    assert!(logs_count > 0);
+    println!("logs_count {logs_count}");
+    for (i, log) in result.logs().iter().enumerate() {
+        println!(
+            "log {} address {} topics {}",
+            i,
+            hex::encode_prefixed(log.address),
+            log.topics().len()
+        );
+        for (i, topic) in log.topics().iter().enumerate() {
+            println!("  topic {}: {}", i, topic);
+        }
+    }
+    assert_eq!(322, logs_count);
 }

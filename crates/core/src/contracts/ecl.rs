@@ -9,6 +9,7 @@ use fluentbase_sdk::{
     evm::ExecutionContext, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, LowLevelAPI,
     LowLevelSDK, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
 };
+use revm_interpreter::SharedMemory;
 
 pub fn deploy() {}
 
@@ -21,12 +22,12 @@ pub fn main() {
     match core_input.method_id {
         EVM_CREATE_METHOD_ID => {
             let method_input = decode_method_input!(core_input, EvmCreateMethodInput);
-            let address = unwrap_exit_code(_evm_create(method_input));
+            let address = unwrap_exit_code(_evm_create(method_input, None));
             LowLevelSDK::sys_write(address.as_slice())
         }
         EVM_CALL_METHOD_ID => {
             let method_input = decode_method_input!(core_input, EvmCallMethodInput);
-            let output = unwrap_exit_code(_evm_call(method_input));
+            let output = unwrap_exit_code(_evm_call(method_input, None));
             LowLevelSDK::sys_write(&output)
         }
         _ => panic!("unknown method id: {}", core_input.method_id),

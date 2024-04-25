@@ -18,7 +18,7 @@ OUT_DIR="${CUR_DIR}/${OUT_FOLDER}"
 all: build
 
 .PHONY: build
-build: build_all_contracts
+build: build_all_contracts_wats
 
 .PHONY: build_wasm_main
 build_wasm_main:

@@ -16,6 +16,8 @@ use revm_interpreter::{Contract, Interpreter, InterpreterAction, SharedMemory};
 use revm_primitives::CreateScheme;
 use rwasm::rwasm::BinaryFormat;
 
+pub const CALL_STACK_DEPTH: u32 = 1024;
+
 #[macro_export]
 macro_rules! decode_method_input {
     ($core_input: ident, $method_input: ident) => {{
@@ -128,6 +130,7 @@ pub(crate) fn exec_evm_bytecode(
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
+    call_depth: u32,
 ) -> Result<Bytes, ExitCode> {
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
@@ -135,12 +138,15 @@ pub(crate) fn exec_evm_bytecode(
     let shared_memory = SharedMemory::new();
     match interpreter.run(shared_memory, &instruction_table, &mut host) {
         InterpreterAction::Call { inputs } => {
-            match _evm_call(EvmCallMethodInput {
-                callee: inputs.contract,
-                value: inputs.transfer.value,
-                input: inputs.input,
-                gas_limit: inputs.gas_limit,
-            }) {
+            match _evm_call(
+                EvmCallMethodInput {
+                    callee: inputs.contract,
+                    value: inputs.transfer.value,
+                    input: inputs.input,
+                    gas_limit: inputs.gas_limit,
+                },
+                None,
+            ) {
                 Ok(result) => {
                     return Ok(result);
                 }
@@ -154,18 +160,24 @@ pub(crate) fn exec_evm_bytecode(
         }
         InterpreterAction::Create { inputs } => {
             let result = match inputs.scheme {
-                CreateScheme::Create => _evm_create(EvmCreateMethodInput {
-                    value: inputs.value,
-                    init_code: inputs.init_code,
-                    gas_limit: inputs.gas_limit,
-                    salt: None,
-                }),
-                CreateScheme::Create2 { salt } => _evm_create(EvmCreateMethodInput {
-                    value: inputs.value,
-                    init_code: inputs.init_code,
-                    gas_limit: inputs.gas_limit,
-                    salt: Some(salt),
-                }),
+                CreateScheme::Create => _evm_create(
+                    EvmCreateMethodInput {
+                        value: inputs.value,
+                        init_code: inputs.init_code,
+                        gas_limit: inputs.gas_limit,
+                        salt: None,
+                    },
+                    Some(call_depth),
+                ),
+                CreateScheme::Create2 { salt } => _evm_create(
+                    EvmCreateMethodInput {
+                        value: inputs.value,
+                        init_code: inputs.init_code,
+                        gas_limit: inputs.gas_limit,
+                        salt: Some(salt),
+                    },
+                    Some(call_depth),
+                ),
             };
             match result {
                 Ok(result) => {
