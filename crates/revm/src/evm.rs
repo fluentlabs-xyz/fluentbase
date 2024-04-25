@@ -554,7 +554,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             Ok(result) => result,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
         };
+        #[cfg(feature = "output_debug")]
         {
+            // if ExitCode::from(result.exit_code).is_error() {
             println!("executed rWASM binary:");
             println!(" - caller: 0x{}", hex::encode(caller.address));
             println!(" - callee: 0x{}", hex::encode(callee.address));
@@ -574,6 +576,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 );
             }
             println!(" - opcode used: {}", runtime.store().tracer().logs.len());
+            // }
         }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())

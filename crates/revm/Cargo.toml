@@ -62,6 +62,7 @@ fluentbase-poseidon = { workspace = true }
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable"]
+output_debug = []
 std = [
     "serde?/std",
     "serde_json?/std",
