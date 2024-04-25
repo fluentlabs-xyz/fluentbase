@@ -1465,6 +1465,7 @@ dependencies = [
  "fluentbase-types",
  "indicatif",
  "lazy_static",
+ "regex",
  "revm-precompile",
  "revm-primitives",
  "rwasm",

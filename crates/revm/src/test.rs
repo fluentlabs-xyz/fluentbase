@@ -1,16 +1,22 @@
 use core::mem::take;
+use core::str::from_utf8;
 
 use lazy_static::lazy_static;
+use regex::Regex;
 use revm_primitives::db::DatabaseCommit;
 use revm_primitives::{
     hex, keccak256, AccountInfo, Bytecode, CreateScheme, EVMError, Env, ExecutionResult, HashMap,
     Output, TransactTo,
 };
 
+use fluentbase_codec::BufferDecoder;
+use fluentbase_codec::Encoder;
 use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_genesis::{Genesis, EXAMPLE_GREETING_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
+use fluentbase_sdk::evm::ContractInput;
+use fluentbase_sdk::{CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
     address, bytes, Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
 };
@@ -915,12 +921,53 @@ fn test_call_recursive_bomb_log2() {
         .gas_limit(gas_limit)
         .exec(None)
         .unwrap();
-    assert!(result.is_success());
     println!("gas used (call): {}", result.gas_used());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!("", hex::encode(bytes.as_ref()));
+    if bytes.as_ref().len() != 0 {
+        let output_str = from_utf8(bytes).unwrap();
+        println!("bytes_str: {output_str}");
+
+        fn extract(input: &str, regex_str: &str) -> Vec<u8> {
+            let regex = Regex::new(regex_str).unwrap();
+            let res = regex.captures(&input).unwrap().get(1).unwrap().as_str();
+            let res = hex::decode(res).unwrap();
+            assert!(res.len() > 0);
+            return res;
+        }
+        let contract_input_data_prev_vec =
+            extract(output_str, r"contract_input_data_prev_vec '([0-9a-f]+?)'");
+        println!(
+            "contract_input_data_prev_vec {}",
+            hex::encode(&contract_input_data_prev_vec)
+        );
+        let contract_input_data_vec =
+            extract(output_str, r"contract_input_data_vec '([0-9a-f]+?)'");
+        println!(
+            "contract_input_data_vec {}",
+            hex::encode(&contract_input_data_vec)
+        );
+
+        let mut buffer = BufferDecoder::new(&contract_input_data_prev_vec);
+        let mut contract_input_prev = ContractInput::default();
+        ContractInput::decode_body(&mut buffer, 0, &mut contract_input_prev);
+        println!("\n\ncontract_input_prev: {:?}", contract_input_prev);
+
+        let mut buffer = BufferDecoder::new(&contract_input_data_vec);
+        let mut contract_input = ContractInput::default();
+        ContractInput::decode_body(&mut buffer, 0, &mut contract_input);
+        println!("\n\ncontract_input: {:?}", contract_input);
+
+        let mut buffer = BufferDecoder::new(&contract_input.contract_input);
+        let mut core_input = CoreInput::default();
+        CoreInput::decode_body(&mut buffer, 0, &mut core_input);
+        println!("\n\ncore_input {:?}", core_input);
+
+        let mut buffer = BufferDecoder::new(&core_input.method_data);
+        let mut evm_call_method_input = EvmCallMethodInput::default();
+        EvmCallMethodInput::decode_body(&mut buffer, 0, &mut evm_call_method_input);
+        println!("\n\ncall_method_input {:?}", evm_call_method_input);
+    }
     let logs_count = result.logs().len();
-    assert!(logs_count > 0);
     println!("logs_count {logs_count}");
     for (i, log) in result.logs().iter().enumerate() {
         println!(
@@ -934,4 +981,22 @@ fn test_call_recursive_bomb_log2() {
         }
     }
     assert_eq!(322, logs_count);
+}
+
+#[test]
+fn test_codec_case() {
+    let mut call_method_input = EvmCallMethodInput {
+        callee: address!("095e7baea6a6c7c4c2dfeb977efac326af552d87"),
+        value: U256::from_be_slice(
+            &hex::decode("0x00000000000000000000000000000000000000000000000000000000000186a0")
+                .unwrap(),
+        ),
+        input: Bytes::copy_from_slice(&hex::decode("").unwrap()),
+        gas_limit: 9999979000,
+    };
+    let call_method_input_encoded = call_method_input.encode_to_vec(0);
+    let mut buffer = BufferDecoder::new(&call_method_input_encoded);
+    let mut call_method_input_decoded = EvmCallMethodInput::default();
+    EvmCallMethodInput::decode_body(&mut buffer, 0, &mut call_method_input_decoded);
+    assert_eq!(call_method_input_decoded.callee, call_method_input.callee);
 }

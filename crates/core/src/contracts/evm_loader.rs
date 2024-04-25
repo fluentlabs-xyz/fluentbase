@@ -5,11 +5,13 @@ use fluentbase_sdk::{
     EVM_CALL_METHOD_ID,
 };
 use fluentbase_types::STATE_MAIN;
+use revm_primitives::hex;
 
 pub fn deploy() {}
 
 pub fn main() {
     let mut contract_input_data = ExecutionContext::contract_input_full();
+    let contract_input_data_prev_vec = ExecutionContext::raw_input();
 
     let gas_limit = contract_input_data.contract_gas_limit as u32;
     let method_data = EvmCallMethodInput {
@@ -34,7 +36,13 @@ pub fn main() {
         STATE_MAIN,
     );
     if exit_code != 0 {
-        panic!("ecl: call failed, exit code: {}", exit_code)
+        panic!(
+            "evm_loader: call failed, exit code: {}. contract_input_data_prev_vec '{}' contract_input_data_vec '{}' rwasm_bytecode_hash '{}'",
+            exit_code,
+            hex::encode(contract_input_data_prev_vec),
+            hex::encode(contract_input_data_vec),
+            hex::encode(rwasm_bytecode_hash.0),
+        )
     }
     let out_size = LowLevelSDK::sys_output_size();
     LowLevelSDK::sys_forward_output(0, out_size);
