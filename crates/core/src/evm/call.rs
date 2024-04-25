@@ -13,7 +13,10 @@ use revm_interpreter::{
 };
 use revm_primitives::CreateScheme;
 
-pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
+pub fn _evm_call(
+    input: EvmCallMethodInput,
+    shared_memory: Option<SharedMemory>,
+) -> Result<Bytes, ExitCode> {
     // TODO(dmitry123): "implement nested call depth checks"
 
     // for static calls passing value is not allowed according to standards
@@ -30,7 +33,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
         callee_account.load_source_bytecode(),
     )))
     .unwrap();
-    let gas_limit = input.gas_limit as u64;
+    let gas_limit = input.gas_limit;
     // initiate contract instance and pass it to interpreter for and EVM transition
     let contract = Contract {
         input: input.input,
@@ -40,5 +43,5 @@ pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
         caller: caller_address,
         value: input.value,
     };
-    exec_evm_bytecode(contract, gas_limit, is_static)
+    exec_evm_bytecode(contract, gas_limit, is_static, shared_memory)
 }

@@ -122,12 +122,15 @@ fn evm_create_test() {
 
     let value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_contract_address = _evm_create(EvmCreateMethodInput {
-        init_code: EVM_CONTRACT_BYTECODE1.into(),
-        value: value.into(),
-        gas_limit,
-        salt: None,
-    })
+    let created_contract_address = _evm_create(
+        EvmCreateMethodInput {
+            init_code: EVM_CONTRACT_BYTECODE1.into(),
+            value: value.into(),
+            gas_limit,
+            salt: None,
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(expected_contract_address, created_contract_address);
 }
@@ -167,23 +170,29 @@ fn evm_call_after_create_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
-        init_code: EVM_CONTRACT_BYTECODE1.into(),
-        value: create_value,
-        gas_limit,
-        salt: None,
-    })
+    let created_address = _evm_create(
+        EvmCreateMethodInput {
+            init_code: EVM_CONTRACT_BYTECODE1.into(),
+            value: create_value,
+            gas_limit,
+            salt: None,
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
 
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = match _evm_call(EvmCallMethodInput {
-        callee: created_address,
-        value: call_value,
-        input: args.into(),
-        gas_limit,
-    }) {
+    let return_data = match _evm_call(
+        EvmCallMethodInput {
+            callee: created_address,
+            value: call_value,
+            input: args.into(),
+            gas_limit,
+        },
+        None,
+    ) {
         Ok(result) => result,
         Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
     };
@@ -237,23 +246,29 @@ fn evm_call_after_create2_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
-        value: create_value,
-        init_code: EVM_CONTRACT_BYTECODE1.into(),
-        gas_limit,
-        salt: Some(salt.into()),
-    })
+    let created_address = _evm_create(
+        EvmCreateMethodInput {
+            value: create_value,
+            init_code: EVM_CONTRACT_BYTECODE1.into(),
+            gas_limit,
+            salt: Some(salt.into()),
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
 
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = match _evm_call(EvmCallMethodInput {
-        callee: created_address,
-        value: call_value,
-        input: args_data.into(),
-        gas_limit,
-    }) {
+    let return_data = match _evm_call(
+        EvmCallMethodInput {
+            callee: created_address,
+            value: call_value,
+            input: args_data.into(),
+            gas_limit,
+        },
+        None,
+    ) {
         Ok(return_data) => return_data,
         Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
     };
@@ -413,12 +428,15 @@ fn evm_selfbalance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("1000");
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
-        init_code: EVM_CONTRACT_BYTECODE1.into(),
-        value: create_value,
-        gas_limit,
-        salt: None,
-    })
+    let created_address = _evm_create(
+        EvmCreateMethodInput {
+            init_code: EVM_CONTRACT_BYTECODE1.into(),
+            value: create_value,
+            gas_limit,
+            salt: None,
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(computed_contract_address, created_address);
     let mut created_address_balance = U256::default();
@@ -429,12 +447,15 @@ fn evm_selfbalance_from_contract_call_test() {
 
     let args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = _evm_call(EvmCallMethodInput {
-        callee: created_address,
-        value: call_value,
-        input: args_data.into(),
-        gas_limit,
-    })
+    let return_data = _evm_call(
+        EvmCallMethodInput {
+            callee: created_address,
+            value: call_value,
+            input: args_data.into(),
+            gas_limit,
+        },
+        None,
+    )
     .unwrap();
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -481,12 +502,15 @@ fn evm_balance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("84326482");
     let create_value = U256::from_be_slice(&create_value_hex_bytes);
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
-        init_code: EVM_CONTRACT_BYTECODE1.into(),
-        value: create_value,
-        gas_limit,
-        salt: None,
-    })
+    let created_address = _evm_create(
+        EvmCreateMethodInput {
+            init_code: EVM_CONTRACT_BYTECODE1.into(),
+            value: create_value,
+            gas_limit,
+            salt: None,
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(
         hex::encode(computed_contract_address),
@@ -501,12 +525,15 @@ fn evm_balance_from_contract_call_test() {
     let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID.to_vec();
     args_data.extend_from_slice(caller_address.into_word().as_slice());
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = _evm_call(EvmCallMethodInput {
-        callee: created_address,
-        value: call_value,
-        input: args_data.into(),
-        gas_limit,
-    })
+    let return_data = _evm_call(
+        EvmCallMethodInput {
+            callee: created_address,
+            value: call_value,
+            input: args_data.into(),
+            gas_limit,
+        },
+        None,
+    )
     .unwrap();
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

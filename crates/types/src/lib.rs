@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code, unreachable_patterns, unused_macros)]
+#![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
 pub use consts::*;
 pub use helpers::*;
