@@ -16,6 +16,8 @@ use revm_interpreter::{Contract, Interpreter, InterpreterAction, SharedMemory};
 use revm_primitives::CreateScheme;
 use rwasm::rwasm::BinaryFormat;
 
+pub const CALL_STACK_DEPTH: u32 = 1024;
+
 #[macro_export]
 macro_rules! decode_method_input {
     ($core_input: ident, $method_input: ident) => {{
@@ -128,12 +130,12 @@ pub(crate) fn exec_evm_bytecode(
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
-    shared_memory: Option<SharedMemory>,
+    call_depth: u32,
 ) -> Result<Bytes, ExitCode> {
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
-    let shared_memory = shared_memory.unwrap_or_else(|| SharedMemory::new());
+    let shared_memory = SharedMemory::new();
     match interpreter.run(shared_memory, &instruction_table, &mut host) {
         InterpreterAction::Call { inputs } => {
             match _evm_call(
@@ -143,7 +145,7 @@ pub(crate) fn exec_evm_bytecode(
                     input: inputs.input,
                     gas_limit: inputs.gas_limit,
                 },
-                Some(interpreter.take_memory()),
+                None,
             ) {
                 Ok(result) => {
                     return Ok(result);
@@ -165,7 +167,7 @@ pub(crate) fn exec_evm_bytecode(
                         gas_limit: inputs.gas_limit,
                         salt: None,
                     },
-                    Some(interpreter.take_memory()),
+                    Some(call_depth),
                 ),
                 CreateScheme::Create2 { salt } => _evm_create(
                     EvmCreateMethodInput {
@@ -174,7 +176,7 @@ pub(crate) fn exec_evm_bytecode(
                         gas_limit: inputs.gas_limit,
                         salt: Some(salt),
                     },
-                    Some(interpreter.take_memory()),
+                    Some(call_depth),
                 ),
             };
             match result {
