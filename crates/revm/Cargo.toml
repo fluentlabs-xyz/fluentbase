@@ -51,6 +51,7 @@ tokio = { version = "1.36", features = [
 ethers-providers = { version = "2.0", optional = true }
 ethers-core = { version = "2.0", optional = true }
 lazy_static = "1.4.0"
+regex = "1.10.4"
 
 [dev-dependencies]
 ethers-contract = { version = "2.0.14", default-features = false }
@@ -61,7 +62,7 @@ fluentbase-genesis = { workspace = true }
 fluentbase-poseidon = { workspace = true }
 
 [features]
-default = ["std", "c-kzg", "secp256k1", "portable"]
+default = ["std", "c-kzg", "secp256k1", "portable", "output_debug"]
 output_debug = []
 std = [
     "serde?/std",

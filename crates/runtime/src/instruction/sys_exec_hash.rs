@@ -55,7 +55,6 @@ impl SysExecHash {
         fuel_limit: u64,
         state: u32,
     ) -> Result<u64, i32> {
-        // println!("evm fluent: bytecode_hash32: {:x?}", bytecode_hash32);
         let import_linker = Runtime::new_sovereign_linker();
 
         // load bytecode based on the preimage provided

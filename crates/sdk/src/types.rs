@@ -2,7 +2,7 @@ use crate::evm::{Address, Bytes, U256};
 use alloc::vec::Vec;
 use fluentbase_codec_derive::{derive_keccak256_id, Codec};
 
-#[derive(Default, Clone, Codec)]
+#[derive(Default, Debug, Clone, Codec)]
 pub struct CoreInput {
     pub method_id: u32,
     pub method_data: Vec<u8>,
