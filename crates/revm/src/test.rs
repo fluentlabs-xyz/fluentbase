@@ -872,7 +872,7 @@ fn test_call_recursive_bomb_log2() {
         Address::from_slice(&hex::decode("0x945304eb96065b2a98b57a48a06ae28d285a71b5").unwrap());
     let account2_balance = U256::from_be_slice(&hex::decode("0x0de0b6b3a7640000").unwrap());
     let account2_source_code = &hex::decode(
-        "0x5a60005260206000a060016000540160005560006000600060006000306161a85a03f160015500",
+        "0x5a60005260206000a060016000540160005560006000600060006000306100a85a03f160015500",
     )
     .unwrap();
     let account2_nonce = 0x00;
@@ -910,7 +910,7 @@ fn test_call_recursive_bomb_log2() {
     let gas_limit: u64 = 0x02540be400;
     let gas_price: u64 = 0x0a;
     let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
-        .value(U256::from_be_slice(&hex::decode("0x49c00898").unwrap()))
+        .value(U256::from_be_slice(&hex::decode("0x0186a0").unwrap()))
         .gas_price(U256::from_be_slice(&gas_price.to_be_bytes()))
         .gas_limit(gas_limit)
         .exec(None)
@@ -933,4 +933,5 @@ fn test_call_recursive_bomb_log2() {
             println!("  topic {}: {}", i, topic);
         }
     }
+    assert_eq!(322, logs_count);
 }
