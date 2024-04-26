@@ -1,33 +1,64 @@
-use crate::gas::Gas;
-use crate::interpreter::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
+    gas::Gas,
     handler::Handler,
+    interpreter::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult},
     primitives::{
-        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
-        ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, B256, U256,
+        specification::SpecId,
+        Address,
+        BlockEnv,
+        CfgEnv,
+        EVMError,
+        EVMResult,
+        EnvWithHandlerCfg,
+        ExecutionResult,
+        HandlerCfg,
+        ResultAndState,
+        TransactTo,
+        TxEnv,
+        B256,
+        U256,
     },
-    Context, ContextWithHandlerCfg, EvmContext, FrameResult, JournalCheckpoint, JournalEntry,
+    Context,
+    ContextWithHandlerCfg,
+    EvmContext,
+    FrameResult,
+    JournalCheckpoint,
+    JournalEntry,
 };
-use core::cell::RefCell;
-use core::fmt;
-use core::str::from_utf8;
+use core::{cell::RefCell, fmt, str::from_utf8};
 use fluentbase_codec::Encoder;
-use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_core::{
-    Account, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
+    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
+    evm::create::_evm_create,
+    wasm::create::_wasm_create,
+    Account,
+    JZKT_ACCOUNT_COMPRESSION_FLAGS,
+    JZKT_ACCOUNT_FIELDS_COUNT,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+    JZKT_STORAGE_COMPRESSION_FLAGS,
+    JZKT_STORAGE_FIELDS_COUNT,
 };
-use fluentbase_sdk::evm::ContractInput;
-use fluentbase_sdk::CoreInput;
 use fluentbase_sdk::{
-    EvmCreateMethodInput, WasmCreateMethodInput, EVM_CREATE_METHOD_ID, WASM_CREATE_METHOD_ID,
+    evm::ContractInput,
+    CoreInput,
+    EvmCreateMethodInput,
+    WasmCreateMethodInput,
+    EVM_CREATE_METHOD_ID,
+    WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
-    address, Bytes, ExitCode, IJournaledTrie, JournalEvent, JournalLog, NATIVE_TRANSFER_ADDRESS,
-    NATIVE_TRANSFER_KECCAK, STATE_MAIN,
+    address,
+    Bytes,
+    ExitCode,
+    IJournaledTrie,
+    JournalEvent,
+    JournalLog,
+    NATIVE_TRANSFER_ADDRESS,
+    NATIVE_TRANSFER_KECCAK,
+    STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Log, LogData};
 use std::vec::Vec;
@@ -554,9 +585,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             Ok(result) => result,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),
         };
-        #[cfg(feature = "output_debug")]
         {
-            // if ExitCode::from(result.exit_code).is_error() {
             println!("executed rWASM binary:");
             println!(" - caller: 0x{}", hex::encode(caller.address));
             println!(" - callee: 0x{}", hex::encode(callee.address));
@@ -576,7 +605,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 );
             }
             println!(" - opcode used: {}", runtime.store().tracer().logs.len());
-            // }
         }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())

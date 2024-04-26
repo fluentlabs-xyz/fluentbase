@@ -1,18 +1,33 @@
-use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
-use crate::evm::call::_evm_call;
-use crate::evm::create::_evm_create;
-use crate::fluent_host::FluentHost;
-use alloc::boxed::Box;
-use alloc::string::ToString;
+use crate::{
+    account_types::JZKT_ACCOUNT_BALANCE_FIELD,
+    evm::{call::_evm_call, create::_evm_create},
+    fluent_host::FluentHost,
+    Account,
+};
+use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_sdk::evm::Bytes;
+use core::str::from_utf8;
 use fluentbase_sdk::{
-    evm::{ContractInput, IContractInput},
-    Bytes32, EvmCallMethodInput, EvmCreateMethodInput, LowLevelAPI, LowLevelSDK,
+    evm::{Bytes, ContractInput, ExecutionContext, IContractInput},
+    Bytes32,
+    EvmCallMethodInput,
+    EvmCreateMethodInput,
+    LowLevelAPI,
+    LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
-use revm_interpreter::opcode::make_instruction_table;
-use revm_interpreter::{Contract, Interpreter, InterpreterAction, SharedMemory};
+use revm_interpreter::{
+    opcode::make_instruction_table,
+    CallOutcome,
+    Contract,
+    CreateOutcome,
+    Gas,
+    InstructionResult,
+    Interpreter,
+    InterpreterAction,
+    InterpreterResult,
+    SharedMemory,
+};
 use revm_primitives::CreateScheme;
 use rwasm::rwasm::BinaryFormat;
 
@@ -135,75 +150,131 @@ pub(crate) fn exec_evm_bytecode(
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
-    let shared_memory = SharedMemory::new();
-    match interpreter.run(shared_memory, &instruction_table, &mut host) {
-        InterpreterAction::Call { inputs } => {
-            match _evm_call(
-                EvmCallMethodInput {
-                    callee: inputs.contract,
-                    value: inputs.transfer.value,
-                    input: inputs.input,
-                    gas_limit: inputs.gas_limit,
-                },
-                None,
-            ) {
-                Ok(result) => {
-                    return Ok(result);
+    let mut shared_memory = SharedMemory::new();
+    loop {
+        match interpreter.run(shared_memory, &instruction_table, &mut host) {
+            InterpreterAction::Call { inputs } => {
+                shared_memory = interpreter.take_memory();
+                // make EVM call
+                let callee = Account::new_from_jzkt(&inputs.contract);
+                let mut gas_limit = inputs.gas_limit as u32;
+                use fluentbase_codec::Encoder;
+                let contract_input = ContractInput {
+                    journal_checkpoint: ExecutionContext::journal_checkpoint(),
+                    env_chain_id: ExecutionContext::journal_checkpoint(),
+                    contract_gas_limit: inputs.gas_limit,
+                    contract_address: inputs.contract,
+                    contract_caller: ExecutionContext::contract_address(),
+                    contract_input: inputs.input,
+                    contract_value: inputs.transfer.value,
+                    contract_is_static: inputs.is_static,
+                    block_coinbase: ExecutionContext::block_coinbase(),
+                    block_timestamp: ExecutionContext::block_timestamp(),
+                    block_number: ExecutionContext::block_number(),
+                    block_difficulty: ExecutionContext::block_difficulty(),
+                    block_gas_limit: ExecutionContext::block_gas_limit(),
+                    block_base_fee: ExecutionContext::block_base_fee(),
+                    tx_gas_price: ExecutionContext::tx_gas_price(),
+                    tx_gas_priority_fee: ExecutionContext::tx_gas_priority_fee(),
+                    tx_caller: ExecutionContext::tx_caller(),
                 }
-                Err(exit_code) => {
-                    panic!(
-                        "EVM nested call failed with error: {} ({})",
-                        exit_code as i32, exit_code
-                    );
-                }
-            }
-        }
-        InterpreterAction::Create { inputs } => {
-            let result = match inputs.scheme {
-                CreateScheme::Create => _evm_create(
-                    EvmCreateMethodInput {
-                        value: inputs.value,
-                        init_code: inputs.init_code,
-                        gas_limit: inputs.gas_limit,
-                        salt: None,
+                .encode_to_vec(0);
+                let exit_code = LowLevelSDK::sys_exec_hash(
+                    callee.rwasm_code_hash.as_ptr(),
+                    contract_input.as_ptr(),
+                    contract_input.len() as u32,
+                    core::ptr::null_mut(),
+                    0,
+                    &mut gas_limit as *mut u32,
+                    STATE_MAIN,
+                );
+                // read EVM call output
+                let output_size = LowLevelSDK::sys_output_size();
+                let mut output_buffer = vec![0u8; output_size as usize];
+                LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
+                // convert exit code
+                let exit_code = ExitCode::from(exit_code);
+                // fill call output for interpreter
+                interpreter.insert_call_outcome(
+                    &mut shared_memory,
+                    CallOutcome {
+                        result: InterpreterResult {
+                            result: match exit_code {
+                                ExitCode::Ok => InstructionResult::Continue,
+                                ExitCode::Panic => InstructionResult::Revert,
+                                _ => InstructionResult::FatalExternalError,
+                            },
+                            output: output_buffer.into(),
+                            gas: Gas::new(gas_limit as u64),
+                        },
+                        memory_offset: Default::default(),
                     },
-                    Some(call_depth),
-                ),
-                CreateScheme::Create2 { salt } => _evm_create(
-                    EvmCreateMethodInput {
-                        value: inputs.value,
-                        init_code: inputs.init_code,
-                        gas_limit: inputs.gas_limit,
-                        salt: Some(salt),
-                    },
-                    Some(call_depth),
-                ),
-            };
-            match result {
-                Ok(result) => {
-                    return Ok(result.into_array().into());
-                }
-                Err(exit_code) => {
-                    panic!(
-                        "EVM nested created failed with error: {} ({})",
-                        exit_code as i32, exit_code
-                    );
+                );
+            }
+            InterpreterAction::Create { inputs } => {
+                shared_memory = interpreter.take_memory();
+                let result = match inputs.scheme {
+                    CreateScheme::Create => _evm_create(
+                        EvmCreateMethodInput {
+                            value: inputs.value,
+                            init_code: inputs.init_code,
+                            gas_limit: inputs.gas_limit,
+                            salt: None,
+                        },
+                        Some(call_depth + 1),
+                    ),
+                    CreateScheme::Create2 { salt } => _evm_create(
+                        EvmCreateMethodInput {
+                            value: inputs.value,
+                            init_code: inputs.init_code,
+                            gas_limit: inputs.gas_limit,
+                            salt: Some(salt),
+                        },
+                        Some(call_depth),
+                    ),
+                };
+                match result {
+                    Ok(result) => {
+                        interpreter.insert_create_outcome(CreateOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Continue,
+                                output: Default::default(),
+                                gas: Gas::new(gas_limit),
+                            },
+                            address: Some(result),
+                        });
+                    }
+                    Err(exit_code) => {
+                        interpreter.insert_create_outcome(CreateOutcome {
+                            result: InterpreterResult {
+                                result: match exit_code {
+                                    ExitCode::Ok => InstructionResult::Continue,
+                                    ExitCode::Panic => InstructionResult::Revert,
+                                    _ => InstructionResult::FatalExternalError,
+                                },
+                                output: Default::default(),
+                                gas: Gas::new(gas_limit),
+                            },
+                            address: None,
+                        });
+                    }
                 }
             }
-        }
-        InterpreterAction::Return { result } => {
-            // TODO(stas): "charge `result.gas` using new `_sys_charge_fuel` or `_sys_consume_fuel` function"
-            if result.is_revert() {
-                LowLevelSDK::sys_write(&result.output);
-                return Err(ExitCode::EVMCallRevert);
-            } else if result.is_error() {
-                LowLevelSDK::sys_write(&result.output);
-                return Err(ExitCode::EVMCallError);
+            InterpreterAction::Return { result } => {
+                // TODO(stas): "charge `result.gas` using new `_sys_charge_fuel` or
+                // `_sys_consume_fuel` function"
+                if result.is_revert() {
+                    LowLevelSDK::sys_write(&result.output);
+                    return Err(ExitCode::EVMCallRevert);
+                } else if result.is_error() {
+                    LowLevelSDK::sys_write(&result.output);
+                    return Err(ExitCode::EVMCallError);
+                }
+                return Ok(result.output);
             }
-            return Ok(result.output);
-        }
-        InterpreterAction::None => return Ok(Bytes::default()),
-    };
+            InterpreterAction::None => return Ok(Bytes::default()),
+        };
+    }
 }
 
 #[inline(always)]
@@ -216,11 +287,9 @@ pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::b256;
-
-    use fluentbase_types::address;
-
     use super::*;
+    use fluentbase_types::address;
+    use revm_primitives::b256;
 
     #[test]
     fn test_create_address() {

@@ -1,15 +1,19 @@
-use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS};
+use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS, evm::call::_evm_call};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::ExecutionContext, CoreInput, EvmCallMethodInput, LowLevelAPI, LowLevelSDK,
+    evm::{Bytes, ExecutionContext},
+    CoreInput,
+    EvmCallMethodInput,
+    LowLevelAPI,
+    LowLevelSDK,
     EVM_CALL_METHOD_ID,
 };
-use fluentbase_types::STATE_MAIN;
+use fluentbase_types::{ExitCode, STATE_MAIN};
 use revm_primitives::hex;
 
 pub fn deploy() {}
 
-pub fn main() {
+pub fn main_but_better() {
     let mut contract_input_data = ExecutionContext::contract_input_full();
     let contract_input_data_prev_vec = ExecutionContext::raw_input();
 
@@ -46,4 +50,22 @@ pub fn main() {
     }
     let out_size = LowLevelSDK::sys_output_size();
     LowLevelSDK::sys_forward_output(0, out_size);
+}
+
+pub fn main() {
+    let contract_input_data = ExecutionContext::contract_input_full();
+    match _evm_call(
+        EvmCallMethodInput {
+            callee: contract_input_data.contract_address,
+            value: contract_input_data.contract_value,
+            input: contract_input_data.contract_input,
+            gas_limit: contract_input_data.contract_gas_limit,
+        },
+        None,
+    ) {
+        Ok(result) => LowLevelSDK::sys_write(&result),
+        Err(exit_code) => {
+            panic!("evm_loader: call failed, exit code: {}", exit_code)
+        }
+    }
 }

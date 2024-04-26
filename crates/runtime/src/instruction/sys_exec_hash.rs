@@ -63,6 +63,10 @@ impl SysExecHash {
         // take jzkt from the existing context (we will return it back soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
 
+        if ctx.depth + 1 >= 1024 {
+            return Err(ExitCode::StackOverflow.into_i32());
+        }
+
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new(bytecode)
             .with_input(input)
@@ -71,7 +75,8 @@ impl SysExecHash {
             .with_fuel_limit(fuel_limit)
             .with_catch_trap(true)
             .with_jzkt(jzkt)
-            .with_state(state);
+            .with_state(state)
+            .with_depth(ctx.depth + 1);
         let mut runtime = match Runtime::new(ctx2, import_linker) {
             Err(err) => {
                 return Err(Runtime::catch_trap(&err));
@@ -86,8 +91,8 @@ impl SysExecHash {
         };
 
         // println!(
-        //     "sys_exec_hash: exit_code={} fuel_limit={}",
-        //     execution_result.exit_code, fuel_limit
+        //     "sys_exec_hash: exit_code={} fuel_limit={} depth={}",
+        //     execution_result.exit_code, fuel_limit, ctx.depth,
         // );
 
         // make sure there is no return overflow

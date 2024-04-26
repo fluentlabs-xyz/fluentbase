@@ -1,16 +1,24 @@
-use crate::types::InMemoryTrieDb;
-use crate::zktrie::ZkTrieStateDb;
 use crate::{
     instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
-    types::RuntimeError,
+    types::{InMemoryTrieDb, RuntimeError},
+    zktrie::ZkTrieStateDb,
     JournaledTrie,
 };
 use fluentbase_types::{
-    create_shared_import_linker, create_sovereign_import_linker, EmptyJournalTrie, ExitCode,
+    create_shared_import_linker,
+    create_sovereign_import_linker,
+    EmptyJournalTrie,
+    ExitCode,
     IJournaledTrie,
 };
 use rwasm::{
-    core::ImportLinker, rwasm::RwasmModule, Engine, FuelConsumptionMode, Instance, Linker, Module,
+    core::ImportLinker,
+    rwasm::RwasmModule,
+    Engine,
+    FuelConsumptionMode,
+    Instance,
+    Linker,
+    Module,
     Store,
 };
 
@@ -24,6 +32,7 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) is_shared: bool,
     pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) depth: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     // storage
@@ -39,6 +48,7 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
             is_shared: false,
             catch_trap: true,
             input: vec![],
+            depth: 0,
             execution_result: Default::default(),
             jzkt: None,
         }
@@ -87,8 +97,17 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
+    pub fn with_depth(mut self, depth: u32) -> Self {
+        self.depth = depth;
+        self
+    }
+
     pub fn jzkt(&mut self) -> &DB {
         self.jzkt.as_ref().expect("jzkt is not initialized")
+    }
+
+    pub fn depth(&self) -> u32 {
+        self.depth
     }
 
     pub fn exit_code(&self) -> i32 {
