@@ -24,7 +24,7 @@ build: build_all_contracts_wats
 build_wasm_main:
 	mkdir -p $(OUT_DIR)
 	touch "$(FILE_IN)"
-	RUSTFLAGS='-C link-arg=-zstack-size=65536 -C target-feature=+bulk-memory' cargo b --release --target=${TARGET} --features="$(FEATURES)" --no-default-features
+	RUSTFLAGS='-C link-arg=-zstack-size=262144 -C target-feature=+bulk-memory' cargo b --release --target=${TARGET} --features="$(FEATURES)" --no-default-features
 	cp ../../target/${TARGET}/${PROFILE}/${SOURCE_NAME}.wasm "$(FILE_IN)"
 	#clang stack.s -c --target=${TARGET}
 	# --strip-all
