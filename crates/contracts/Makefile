@@ -6,7 +6,7 @@ OUT_DIR="${CUR_DIR}/${OUT_FOLDER}"
 all: build
 
 .PHONY: build
-build: build_core_contracts build_precompiles
+build: build_core_contracts build_precompiles build_all_contracts_wats
 
 .PHONY: build_core_contracts
 build_core_contracts:

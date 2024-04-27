@@ -13,13 +13,7 @@ use revm_interpreter::{
 };
 use revm_primitives::CreateScheme;
 
-pub fn _evm_call(input: EvmCallMethodInput, call_depth: Option<u32>) -> Result<Bytes, ExitCode> {
-    // TODO(dmitry123): "implement nested call depth checks"
-    let call_depth = call_depth.unwrap_or(0);
-    if call_depth >= CALL_STACK_DEPTH {
-        return Err(ExitCode::CallDepthOverflow);
-    }
-
+pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
     // for static calls passing value is not allowed according to standards
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -44,5 +38,5 @@ pub fn _evm_call(input: EvmCallMethodInput, call_depth: Option<u32>) -> Result<B
         caller: caller_address,
         value: input.value,
     };
-    exec_evm_bytecode(contract, gas_limit, is_static, call_depth)
+    exec_evm_bytecode(contract, gas_limit, is_static)
 }

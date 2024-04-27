@@ -16,6 +16,7 @@ pub mod jzkt_update;
 pub mod jzkt_update_preimage;
 pub mod sys_exec_hash;
 pub mod sys_forward_output;
+pub mod sys_fuel;
 pub mod sys_halt;
 pub mod sys_input_size;
 pub mod sys_output_size;
@@ -26,6 +27,7 @@ pub mod sys_write;
 pub mod wasm_to_rwasm;
 pub mod wasm_to_rwasm_size;
 
+use crate::instruction::sys_fuel::SysFuel;
 use crate::instruction::wasm_to_rwasm::WasmToRwasm;
 use crate::instruction::wasm_to_rwasm_size::WasmToRwasmSize;
 use crate::{
@@ -72,6 +74,7 @@ impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sy
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
 impl_runtime_handler!(SysExecHash, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec_hash(code_hash32_offset: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
 impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
+impl_runtime_handler!(SysFuel, SYS_FUEL, fn fluentbase_v1alpha::_sys_fuel(delta: u64) -> u64);
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
@@ -106,6 +109,7 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SysReadOutput::register_handler(linker, store);
     SysExecHash::register_handler(linker, store);
     SysState::register_handler(linker, store);
+    SysFuel::register_handler(linker, store);
     if IS_SOVEREIGN {
         JzktOpen::register_handler(linker, store);
         JzktCheckpoint::register_handler(linker, store);

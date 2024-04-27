@@ -64,8 +64,15 @@ impl SysExecHash {
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
 
         if ctx.depth + 1 >= 1024 {
-            return Err(ExitCode::StackOverflow.into_i32());
+            return Err(ExitCode::CallDepthOverflow.into_i32());
         }
+
+        // println!(
+        //     "{}sys_exec_hash: fuel_limit={} depth={}",
+        //     " ".repeat(ctx.depth as usize),
+        //     fuel_limit,
+        //     ctx.depth,
+        // );
 
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new(bytecode)
@@ -91,8 +98,13 @@ impl SysExecHash {
         };
 
         // println!(
-        //     "sys_exec_hash: exit_code={} fuel_limit={} depth={}",
-        //     execution_result.exit_code, fuel_limit, ctx.depth,
+        //     "{}exit_code={} ({}) fuel_consumed={} depth={} message={}",
+        //     " ".repeat(ctx.depth as usize),
+        //     ExitCode::from(execution_result.exit_code),
+        //     execution_result.exit_code,
+        //     execution_result.fuel_consumed,
+        //     ctx.depth,
+        //     from_utf8(&execution_result.output).unwrap_or("can't decode utf8 message")
         // );
 
         // make sure there is no return overflow

@@ -37,6 +37,7 @@ extern "C" {
         fuel_offset: *const u32,
         state: u32,
     ) -> i32;
+    pub fn _sys_fuel(delta: u64) -> u64;
 
     /// Journaled ZK Trie methods to work with blockchain state
     pub fn _jzkt_open(root32_ptr: *const u8);

@@ -22,6 +22,7 @@ pub trait LowLevelAPI {
     fn sys_output_size() -> u32;
     fn sys_read_output(target: *mut u8, offset: u32, length: u32);
     fn sys_state() -> u32;
+    fn sys_fuel(delta: u64) -> u64;
 
     fn sys_exec_hash(
         code_hash32_offset: *const u8,

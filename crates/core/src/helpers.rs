@@ -1,32 +1,15 @@
-use crate::{
-    account_types::JZKT_ACCOUNT_BALANCE_FIELD,
-    evm::{call::_evm_call, create::_evm_create},
-    fluent_host::FluentHost,
-    Account,
-};
+use crate::{account_types::JZKT_ACCOUNT_BALANCE_FIELD, fluent_host::FluentHost, Account};
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::from_utf8;
 use fluentbase_sdk::{
     evm::{Bytes, ContractInput, ExecutionContext, IContractInput},
-    Bytes32,
-    EvmCallMethodInput,
-    EvmCreateMethodInput,
-    LowLevelAPI,
-    LowLevelSDK,
+    Bytes32, EvmCallMethodInput, EvmCreateMethodInput, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use revm_interpreter::{
-    opcode::make_instruction_table,
-    CallOutcome,
-    Contract,
-    CreateOutcome,
-    Gas,
-    InstructionResult,
-    Interpreter,
-    InterpreterAction,
-    InterpreterResult,
-    SharedMemory,
+    opcode::make_instruction_table, CallOutcome, Contract, CreateOutcome, Gas, InstructionResult,
+    Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
 };
 use revm_primitives::CreateScheme;
 use rwasm::rwasm::BinaryFormat;
@@ -141,12 +124,13 @@ pub(crate) fn calc_storage_key(address: &Address, slot32_offset: *const u8) -> [
     storage_key
 }
 
+#[cfg(feature = "ecl")]
 pub(crate) fn exec_evm_bytecode(
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
-    call_depth: u32,
 ) -> Result<Bytes, ExitCode> {
+    use crate::evm::{call::_evm_call, create::_evm_create};
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
     let mut host = FluentHost::default();
@@ -202,36 +186,30 @@ pub(crate) fn exec_evm_bytecode(
                             result: match exit_code {
                                 ExitCode::Ok => InstructionResult::Continue,
                                 ExitCode::Panic => InstructionResult::Revert,
-                                _ => InstructionResult::FatalExternalError,
+                                _ => InstructionResult::Revert,
                             },
                             output: output_buffer.into(),
                             gas: Gas::new(gas_limit as u64),
                         },
-                        memory_offset: Default::default(),
+                        memory_offset: inputs.return_memory_offset,
                     },
                 );
             }
             InterpreterAction::Create { inputs } => {
                 shared_memory = interpreter.take_memory();
                 let result = match inputs.scheme {
-                    CreateScheme::Create => _evm_create(
-                        EvmCreateMethodInput {
-                            value: inputs.value,
-                            init_code: inputs.init_code,
-                            gas_limit: inputs.gas_limit,
-                            salt: None,
-                        },
-                        Some(call_depth + 1),
-                    ),
-                    CreateScheme::Create2 { salt } => _evm_create(
-                        EvmCreateMethodInput {
-                            value: inputs.value,
-                            init_code: inputs.init_code,
-                            gas_limit: inputs.gas_limit,
-                            salt: Some(salt),
-                        },
-                        Some(call_depth),
-                    ),
+                    CreateScheme::Create => _evm_create(EvmCreateMethodInput {
+                        value: inputs.value,
+                        init_code: inputs.init_code,
+                        gas_limit: inputs.gas_limit,
+                        salt: None,
+                    }),
+                    CreateScheme::Create2 { salt } => _evm_create(EvmCreateMethodInput {
+                        value: inputs.value,
+                        init_code: inputs.init_code,
+                        gas_limit: inputs.gas_limit,
+                        salt: Some(salt),
+                    }),
                 };
                 match result {
                     Ok(result) => {
@@ -261,19 +239,52 @@ pub(crate) fn exec_evm_bytecode(
                 }
             }
             InterpreterAction::Return { result } => {
-                // TODO(stas): "charge `result.gas` using new `_sys_charge_fuel` or
-                // `_sys_consume_fuel` function"
-                if result.is_revert() {
+                // since we compile ECL w/o fuel calc then we must charge fuel manually
+                // LowLevelSDK::sys_fuel(result.gas.spend());
+                if !result.is_ok() {
                     LowLevelSDK::sys_write(&result.output);
-                    return Err(ExitCode::EVMCallRevert);
-                } else if result.is_error() {
-                    LowLevelSDK::sys_write(&result.output);
-                    return Err(ExitCode::EVMCallError);
+                    return Err(exit_code_from_evm_error(result.result));
                 }
                 return Ok(result.output);
             }
             InterpreterAction::None => return Ok(Bytes::default()),
         };
+    }
+}
+
+pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
+    match evm_error {
+        InstructionResult::Continue
+        | InstructionResult::Stop
+        | InstructionResult::Return
+        | InstructionResult::SelfDestruct
+        | InstructionResult::CallOrCreate => ExitCode::Ok,
+        InstructionResult::Revert => ExitCode::Panic,
+        InstructionResult::CallTooDeep => ExitCode::CallDepthOverflow,
+        InstructionResult::OutOfFunds => ExitCode::InsufficientBalance,
+        InstructionResult::OutOfGas
+        | InstructionResult::MemoryOOG
+        | InstructionResult::MemoryLimitOOG
+        | InstructionResult::PrecompileOOG
+        | InstructionResult::InvalidOperandOOG => ExitCode::OutOfFuel,
+        InstructionResult::OpcodeNotFound => ExitCode::OpcodeNotFound,
+        InstructionResult::CallNotAllowedInsideStatic
+        | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
+        InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
+        InstructionResult::InvalidJump => ExitCode::InvalidJump,
+        InstructionResult::NotActivated => ExitCode::NotActivatedEIP,
+        InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
+        InstructionResult::StackOverflow => ExitCode::StackOverflow,
+        InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
+        InstructionResult::CreateCollision => ExitCode::CreateCollision,
+        InstructionResult::OverflowPayment => ExitCode::OverflowPayment,
+        InstructionResult::PrecompileError => ExitCode::PrecompileError,
+        InstructionResult::NonceOverflow => ExitCode::NonceOverflow,
+        InstructionResult::CreateContractSizeLimit | InstructionResult::CreateInitCodeSizeLimit => {
+            ExitCode::ContractSizeLimit
+        }
+        InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
+        InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
     }
 }
 
