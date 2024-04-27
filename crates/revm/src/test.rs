@@ -4,37 +4,18 @@ use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::{helpers::calc_create_address, Account};
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY},
-    Genesis,
-    EXAMPLE_GREETING_ADDRESS,
+    Genesis, EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_sdk::{evm::ContractInput, CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
-    address,
-    bytes,
-    Address,
-    Bytes,
-    ExitCode,
-    B256,
-    KECCAK_EMPTY,
-    POSEIDON_EMPTY,
-    U256,
+    address, bytes, Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
 };
 use lazy_static::lazy_static;
 use regex::Regex;
 use revm_primitives::{
-    db::DatabaseCommit,
-    hex,
-    keccak256,
-    AccountInfo,
-    Bytecode,
-    CreateScheme,
-    EVMError,
-    Env,
-    ExecutionResult,
-    HashMap,
-    Output,
-    TransactTo,
+    db::DatabaseCommit, hex, keccak256, AccountInfo, Bytecode, CreateScheme, EVMError, Env,
+    ExecutionResult, HashMap, Output, TransactTo,
 };
 
 #[allow(dead_code)]
@@ -80,11 +61,11 @@ impl TestingContext {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                // source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                // source_code_hash: keccak_hash,
-                // rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                // rwasm_code_hash: poseidon_hash,
-                ..Default::default()
+                // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
+                source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                source_code_hash: keccak_hash,
+                rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                rwasm_code_hash: poseidon_hash,
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
@@ -737,6 +718,7 @@ fn test_log_2_non_const() {
     let gas_limit = 0x6015cf8f;
 
     let result = TxBuilder::call(&mut ctx, caller_address, account1_address)
+        .gas_limit(gas_limit)
         .exec()
         .unwrap();
     assert!(result.is_success());
@@ -744,17 +726,17 @@ fn test_log_2_non_const() {
     let bytes = result.output().unwrap_or_default();
     assert_eq!("", hex::encode(bytes.as_ref()));
     assert!(result.logs().len() > 0);
-    for (i, log) in result.logs().iter().enumerate() {
-        println!(
-            "log {} address {} topics {}",
-            i,
-            hex::encode(log.address),
-            log.topics().len()
-        );
-        for (i, topic) in log.topics().iter().enumerate() {
-            println!("  topic {}: {}", i, topic);
-        }
-    }
+    // for (i, log) in result.logs().iter().enumerate() {
+    //     println!(
+    //         "log {} address {} topics {}",
+    //         i,
+    //         hex::encode(log.address),
+    //         log.topics().len()
+    //     );
+    //     for (i, topic) in log.topics().iter().enumerate() {
+    //         println!("  topic {}: {}", i, topic);
+    //     }
+    // }
 }
 
 #[test]
@@ -835,22 +817,23 @@ fn test_random_statetest639() {
     let bytes = result.output().unwrap_or_default();
     assert_eq!("", hex::encode(bytes.as_ref()));
     assert!(result.logs().len() > 0);
-    for (i, log) in result.logs().iter().enumerate() {
-        println!(
-            "log {} address {} topics {}",
-            i,
-            hex::encode_prefixed(log.address),
-            log.topics().len()
-        );
-        for (i, topic) in log.topics().iter().enumerate() {
-            println!("  topic {}: {}", i, topic);
-        }
-    }
+    // for (i, log) in result.logs().iter().enumerate() {
+    //     println!(
+    //         "log {} address {} topics {}",
+    //         i,
+    //         hex::encode_prefixed(log.address),
+    //         log.topics().len()
+    //     );
+    //     for (i, topic) in log.topics().iter().enumerate() {
+    //         println!("  topic {}: {}", i, topic);
+    //     }
+    // }
 }
 
 #[test]
 fn test_call_recursive_bomb_log2() {
     // tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json
+    // include_str!("../../../bin");
     let mut ctx = TestingContext::default();
 
     let (evm_loader_rwasm_code, evm_loader_rwasm_code_hash) = EVM_LOADER.clone();
@@ -975,17 +958,17 @@ fn test_call_recursive_bomb_log2() {
     // }
     let logs_count = result.logs().len();
     println!("logs_count {logs_count}");
-    for (i, log) in result.logs().iter().enumerate() {
-        println!(
-            "log {} address {} topics {}",
-            i,
-            hex::encode_prefixed(log.address),
-            log.topics().len()
-        );
-        for (i, topic) in log.topics().iter().enumerate() {
-            println!("  topic {}: {}", i, topic);
-        }
-    }
+    // for (i, log) in result.logs().iter().enumerate() {
+    //     println!(
+    //         "log {} address {} topics {}",
+    //         i,
+    //         hex::encode_prefixed(log.address),
+    //         log.topics().len()
+    //     );
+    //     for (i, topic) in log.topics().iter().enumerate() {
+    //         println!("  topic {}: {}", i, topic);
+    //     }
+    // }
     assert_eq!(322, logs_count);
 }
 

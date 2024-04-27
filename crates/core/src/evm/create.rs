@@ -12,17 +12,10 @@ use revm_interpreter::{
 };
 use revm_primitives::U256;
 
-pub fn _evm_create(
-    input: EvmCreateMethodInput,
-    call_depth: Option<u32>,
-) -> Result<Address, ExitCode> {
+pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     // TODO: "gas calculations"
     // TODO: "load account so it needs to be marked as warm for access list"
     // TODO: "call depth stack check >= 1024"
-    let call_depth = call_depth.unwrap_or(0);
-    if call_depth >= CALL_STACK_DEPTH {
-        return Err(ExitCode::CallDepthOverflow);
-    }
 
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
@@ -61,7 +54,7 @@ pub fn _evm_create(
         value: input.value,
     };
 
-    let new_bytecode = exec_evm_bytecode(contract, input.gas_limit, is_static, call_depth)?;
+    let new_bytecode = exec_evm_bytecode(contract, input.gas_limit, is_static)?;
     if new_bytecode.len() > MAX_CODE_SIZE {
         return Err(ExitCode::ContractSizeLimit);
     }

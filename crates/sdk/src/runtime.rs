@@ -1,7 +1,5 @@
 use crate::{evm::B256, LowLevelAPI, LowLevelSDK};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_runtime::instruction::wasm_to_rwasm::WasmToRwasm;
-use fluentbase_runtime::instruction::wasm_to_rwasm_size::WasmToRwasmSize;
 use fluentbase_runtime::types::InMemoryTrieDb;
 use fluentbase_runtime::zktrie::ZkTrieStateDb;
 use fluentbase_runtime::{
@@ -13,9 +11,10 @@ use fluentbase_runtime::{
         jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
         jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
         jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
-        sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
-        sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
+        sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_fuel::SysFuel,
+        sys_halt::SysHalt, sys_input_size::SysInputSize, sys_output_size::SysOutputSize,
+        sys_read::SysRead, sys_read_output::SysReadOutput, sys_state::SysState,
+        sys_write::SysWrite, wasm_to_rwasm::WasmToRwasm, wasm_to_rwasm_size::WasmToRwasmSize,
     },
     DefaultEmptyRuntimeDatabase, RuntimeContext,
 };
@@ -177,6 +176,10 @@ impl LowLevelAPI for LowLevelSDK {
                 Err(err) => err,
             }
         })
+    }
+
+    fn sys_fuel(delta: u64) -> u64 {
+        with_context_mut(|ctx| SysFuel::fn_impl(ctx, delta))
     }
 
     fn jzkt_open(root32_ptr: *const u8) {

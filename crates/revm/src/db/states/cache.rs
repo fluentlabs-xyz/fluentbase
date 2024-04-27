@@ -74,6 +74,7 @@ impl CacheState {
         };
         self.accounts.insert(address, account);
     }
+
     pub fn insert_account_with_storage(
         &mut self,
         address: Address,

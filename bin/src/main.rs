@@ -4,9 +4,14 @@ extern crate core;
 
 use crate::types::FileFormat;
 use clap::Parser;
-use fluentbase_types::rwasm_module;
+use fluentbase_types::SysFuncIdx::SYS_STATE;
+use fluentbase_types::{
+    create_sovereign_import_linker, rwasm_module, ExitCode, STATE_DEPLOY, STATE_MAIN,
+};
 use log::debug;
-use rwasm::rwasm::BinaryFormat;
+use rwasm::engine::bytecode::Instruction;
+use rwasm::engine::{RwasmConfig, StateRouterConfig};
+use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 use std::{fs, path::Path};
 
 mod types;
@@ -89,7 +94,29 @@ fn main() {
         }
     }
 
-    let rwasm_module = rwasm_module(&wasm_binary).unwrap();
+    let mut config = RwasmModule::default_config(None);
+    config
+        .rwasm_config(RwasmConfig {
+            state_router: Some(StateRouterConfig {
+                states: Box::new([
+                    ("deploy".to_string(), STATE_DEPLOY),
+                    ("main".to_string(), STATE_MAIN),
+                ]),
+                opcode: Instruction::Call(SYS_STATE.into()),
+            }),
+            entrypoint_name: None,
+            import_linker: Some(create_sovereign_import_linker()),
+            wrap_import_functions: true,
+        })
+        .consume_fuel(true);
+    let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &config).unwrap();
+
+    let rwasm_bytecode_length = rwasm_module.encoded_length();
+    let mut rwasm_bytecode = vec![0u8; rwasm_bytecode_length];
+    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
+    rwasm_module
+        .write_binary(&mut binary_format_writer)
+        .expect("failed to encode rwasm bytecode");
 
     let file_in_path = Path::new(&args.file_in_path);
     let file_in_name = file_in_path.file_stem().unwrap().to_str().unwrap();

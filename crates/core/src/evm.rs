@@ -1,6 +1,6 @@
 pub mod address;
 pub mod balance;
-// #[cfg(feature = "ecl")]
+#[cfg(feature = "ecl")]
 pub mod call;
 pub mod callcode;
 pub mod calldatacopy;
@@ -9,7 +9,7 @@ pub mod calldatasize;
 pub mod codecopy;
 pub mod codehash;
 pub mod codesize;
-// #[cfg(feature = "ecl")]
+#[cfg(feature = "ecl")]
 pub mod create;
 pub mod delegatecall;
 pub mod extcodecopy;

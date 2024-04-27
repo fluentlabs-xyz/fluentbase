@@ -22,12 +22,12 @@ pub fn main() {
     match core_input.method_id {
         EVM_CREATE_METHOD_ID => {
             let method_input = decode_method_input!(core_input, EvmCreateMethodInput);
-            let address = unwrap_exit_code(_evm_create(method_input, None));
+            let address = unwrap_exit_code(_evm_create(method_input));
             LowLevelSDK::sys_write(address.as_slice())
         }
         EVM_CALL_METHOD_ID => {
             let method_input = decode_method_input!(core_input, EvmCallMethodInput);
-            let output = unwrap_exit_code(_evm_call(method_input, None));
+            let output = unwrap_exit_code(_evm_call(method_input));
             LowLevelSDK::sys_write(&output)
         }
         _ => panic!("unknown method id: {}", core_input.method_id),

@@ -21,5 +21,5 @@ hashbrown = { workspace = true }
 default = ["std"]
 std = [
     "dep:strum",
-    "dep:strum_macros"
+    "dep:strum_macros",
 ]

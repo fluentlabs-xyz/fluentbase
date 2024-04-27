@@ -1,3 +1,5 @@
+use crate::U256;
+use alloy_primitives::hex;
 use core::fmt;
 use core::fmt::Formatter;
 use rwasm::{
@@ -43,7 +45,11 @@ pub enum ExitCode {
     EcrecoverBadSignature = -1026,
     EcrecoverError = -1027,
     NonceOverflow = -1028,
-    CreateContractStartingWithEF = 1029,
+    CreateContractStartingWithEF = -1029,
+    OpcodeNotFound = -1030,
+    InvalidEfOpcode = -1031,
+    InvalidJump = -1032,
+    NotActivatedEIP = -1033,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -58,58 +64,78 @@ pub enum ExitCode {
     GrowthOperationLimited = -2016,
     UnknownError = -2017,
     UnresolvedFunction = -2018,
+    StackUnderflow = -2019,
 }
 
 impl fmt::Display for ExitCode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            ExitCode::Ok => write!(f, "ok"),
-            ExitCode::Panic => write!(f, "panic"),
-            ExitCode::ExecutionHalted => write!(f, "execution halted"),
-            ExitCode::NotSupportedCall => write!(f, "not supported call"),
-            ExitCode::TransactError => write!(f, "transact error"),
-            ExitCode::OutputOverflow => write!(f, "output overflow"),
-            ExitCode::InputDecodeFailure => write!(f, "input decode failure"),
-            ExitCode::PoseidonError => write!(f, "poseidon error"),
-            ExitCode::PersistentStorageError => write!(f, "persistent storage error"),
-            ExitCode::WriteProtection => write!(f, "write protection"),
-            ExitCode::CreateError => write!(f, "create error"),
-            ExitCode::PreimageUnavailable => write!(f, "preimage unavailable"),
-            ExitCode::InsufficientBalance => write!(f, "insufficient balance"),
-            ExitCode::CreateCollision => write!(f, "create collision"),
-            ExitCode::ContractSizeLimit => write!(f, "contract size limit"),
-            ExitCode::StorageSlotOverflow => write!(f, "storage slot overflow"),
-            ExitCode::CallDepthOverflow => write!(f, "call depth overflow"),
-            ExitCode::FatalExternalError => write!(f, "fatal external error"),
-            ExitCode::CompilationError => write!(f, "compilation error"),
-            ExitCode::OverflowPayment => write!(f, "overflow payment"),
-            ExitCode::EVMCreateError => write!(f, "evm create error"),
-            ExitCode::EVMCreateRevert => write!(f, "evm create revert"),
-            ExitCode::EVMCallError => write!(f, "evm call error"),
-            ExitCode::EVMCallRevert => write!(f, "evm call revert"),
-            ExitCode::EVMNotFound => write!(f, "evm not found"),
-            ExitCode::PrecompileError => write!(f, "precompile error"),
-            ExitCode::EcrecoverBadSignature => write!(f, "ecrecover bad signature"),
-            ExitCode::EcrecoverError => write!(f, "ecrecover error"),
-            ExitCode::NonceOverflow => write!(f, "nonce overflow"),
-            ExitCode::CreateContractStartingWithEF => write!(f, "create contract starting with ef"),
-            ExitCode::UnreachableCodeReached => write!(f, "unreachable code reached"),
-            ExitCode::MemoryOutOfBounds => write!(f, "memory out of bounds"),
-            ExitCode::TableOutOfBounds => write!(f, "table out of bounds"),
-            ExitCode::IndirectCallToNull => write!(f, "indirect call to null"),
-            ExitCode::IntegerDivisionByZero => write!(f, "integer division by zero"),
-            ExitCode::IntegerOverflow => write!(f, "integer overflow"),
-            ExitCode::BadConversionToInteger => write!(f, "bad conversion to integer"),
-            ExitCode::StackOverflow => write!(f, "stack overflow"),
-            ExitCode::BadSignature => write!(f, "bad signature"),
-            ExitCode::OutOfFuel => write!(f, "out of fuel"),
-            ExitCode::GrowthOperationLimited => write!(f, "growth operation limited"),
-            ExitCode::UnknownError => write!(f, "unknown error"),
-            ExitCode::UnresolvedFunction => write!(f, "unresolved function"),
+            ExitCode::Ok => write!(f, "Ok"),
+            ExitCode::Panic => write!(f, "Panic"),
+            ExitCode::ExecutionHalted => write!(f, "ExecutionHalted"),
+            ExitCode::NotSupportedCall => write!(f, "NotSupportedCall"),
+            ExitCode::TransactError => write!(f, "TransactError"),
+            ExitCode::OutputOverflow => write!(f, "OutputOverflow"),
+            ExitCode::InputDecodeFailure => write!(f, "InputDecodeFailure"),
+            ExitCode::PoseidonError => write!(f, "PoseidonError"),
+            ExitCode::PersistentStorageError => write!(f, "PersistentStorageError"),
+            ExitCode::WriteProtection => write!(f, "WriteProtection"),
+            ExitCode::CreateError => write!(f, "CreateError"),
+            ExitCode::PreimageUnavailable => write!(f, "PreimageUnavailable"),
+            ExitCode::InsufficientBalance => write!(f, "InsufficientBalance"),
+            ExitCode::CreateCollision => write!(f, "CreateCollision"),
+            ExitCode::ContractSizeLimit => write!(f, "ContractSizeLimit"),
+            ExitCode::StorageSlotOverflow => write!(f, "StorageSlotOverflow"),
+            ExitCode::CallDepthOverflow => write!(f, "CallDepthOverflow"),
+            ExitCode::FatalExternalError => write!(f, "FatalExternalError"),
+            ExitCode::CompilationError => write!(f, "CompilationError"),
+            ExitCode::OverflowPayment => write!(f, "OverflowPayment"),
+            ExitCode::EVMCreateError => write!(f, "EVMCreateError"),
+            ExitCode::EVMCreateRevert => write!(f, "EVMCreateRevert"),
+            ExitCode::EVMCallError => write!(f, "EVMCallError"),
+            ExitCode::EVMCallRevert => write!(f, "EVMCallRevert"),
+            ExitCode::EVMNotFound => write!(f, "EVMNotFound"),
+            ExitCode::PrecompileError => write!(f, "PrecompileError"),
+            ExitCode::EcrecoverBadSignature => write!(f, "EcrecoverBadSignature"),
+            ExitCode::EcrecoverError => write!(f, "EcrecoverError"),
+            ExitCode::NonceOverflow => write!(f, "NonceOverflow"),
+            ExitCode::CreateContractStartingWithEF => write!(f, "CreateContractStartingWithEF"),
+            ExitCode::UnreachableCodeReached => write!(f, "UnreachableCodeReached"),
+            ExitCode::MemoryOutOfBounds => write!(f, "MemoryOutOfBounds"),
+            ExitCode::TableOutOfBounds => write!(f, "TableOutOfBounds"),
+            ExitCode::IndirectCallToNull => write!(f, "IndirectCallToNull"),
+            ExitCode::IntegerDivisionByZero => write!(f, "IntegerDivisionByZero"),
+            ExitCode::IntegerOverflow => write!(f, "IntegerOverflow"),
+            ExitCode::BadConversionToInteger => write!(f, "BadConversionToInteger"),
+            ExitCode::StackOverflow => write!(f, "StackOverflow"),
+            ExitCode::BadSignature => write!(f, "BadSignature"),
+            ExitCode::OutOfFuel => write!(f, "OutOfFuel"),
+            ExitCode::GrowthOperationLimited => write!(f, "GrowthOperationLimited"),
+            ExitCode::UnknownError => write!(f, "UnknownError"),
+            ExitCode::UnresolvedFunction => write!(f, "UnresolvedFunction"),
+            ExitCode::OpcodeNotFound => write!(f, "OpcodeNotFound"),
+            ExitCode::InvalidEfOpcode => write!(f, "InvalidEfOpcode"),
+            ExitCode::InvalidJump => write!(f, "InvalidJump"),
+            ExitCode::NotActivatedEIP => write!(f, "NotActivatedEIP"),
+            ExitCode::StackUnderflow => write!(f, "StackUnderflow"),
         }
     }
 }
 
+#[cfg(feature = "std")]
+impl From<i32> for ExitCode {
+    fn from(value: i32) -> Self {
+        use strum::IntoEnumIterator;
+        for x in Self::iter() {
+            if x.into_i32() == value {
+                return x;
+            }
+        }
+        ExitCode::UnknownError
+    }
+}
+
+#[cfg(not(feature = "std"))]
 impl From<i32> for ExitCode {
     fn from(value: i32) -> Self {
         if value == Self::Ok.into_i32() {
@@ -137,6 +163,14 @@ impl ExitCode {
 
     pub fn into_trap(self) -> Trap {
         Trap::i32_exit(self as i32)
+    }
+
+    /// Encodes Solidity panic message using signature sig4("Panic(uint256)")
+    pub fn encode_solidity_panic(&self, panic_buffer: &mut [u8]) {
+        assert!(panic_buffer.len() >= 32 + 4);
+        panic_buffer[..4].copy_from_slice(&hex!("4e487b71"));
+        let exit_code = U256::from(self.into_i32() as u32);
+        panic_buffer[4..].copy_from_slice(&exit_code.to_be_bytes::<{ U256::BYTES }>());
     }
 }
 
@@ -194,6 +228,7 @@ pub enum SysFuncIdx {
     SYS_READ_OUTPUT = 0x0007,
     SYS_EXEC_HASH = 0x0009,
     SYS_FORWARD_OUTPUT = 0x000a,
+    SYS_FUEL = 0x000b,
 
     // jzkt
     JZKT_OPEN = 0x0701,
