@@ -179,44 +179,48 @@ impl ExecutionResult {
 }
 
 pub struct CachingRuntime {
-    engine: Engine,
+    // engine: Engine,
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
-    modules: HashMap<F254, Box<Module>>,
+    modules: HashMap<F254, (Box<Engine>, Box<Module>)>,
 }
 
 impl CachingRuntime {
     pub fn new() -> Self {
         // we can safely use sovereign import linker because all protected are filtered out during translation process
+        Self {
+            modules: HashMap::new(),
+        }
+    }
+
+    fn new_engine() -> Engine {
         let import_linker = Runtime::new_sovereign_linker();
         let mut config = RwasmModule::default_config(Some(import_linker));
         config
             .floats(false)
             .fuel_consumption_mode(FuelConsumptionMode::Eager)
             .consume_fuel(true);
-        let engine = Engine::new(&config);
-        Self {
-            engine,
-            modules: HashMap::new(),
-        }
+        Engine::new(&config)
     }
 
-    pub fn init_module(
+    pub fn init_engine_module(
         &mut self,
         rwasm_hash: F254,
         rwasm_bytecode: &[u8],
-    ) -> Result<&Box<Module>, RuntimeError> {
+    ) -> Result<&(Box<Engine>, Box<Module>), RuntimeError> {
         let entry = match self.modules.entry(rwasm_hash) {
             Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
             Entry::Vacant(entry) => entry,
         };
         let reduced_module =
             RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?;
-        let module_builder = reduced_module.to_module_builder(&self.engine);
+        let engine = Self::new_engine();
+        let module_builder = reduced_module.to_module_builder(&engine);
         let module = module_builder.finish();
-        Ok(entry.insert(Box::new(module)))
+        let v = (Box::new(engine), Box::new(module));
+        Ok(entry.insert(v))
     }
 
-    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<&Box<Module>> {
+    pub fn resolve_engine_module(&self, rwasm_hash: &F254) -> Option<&(Box<Engine>, Box<Module>)> {
         self.modules.get(rwasm_hash)
     }
 }
@@ -282,39 +286,38 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
         let (store, instance) = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            let bytecode = take(&mut runtime_context.bytecode);
+            let bytecode_repr = take(&mut runtime_context.bytecode);
             let jzkt = take(&mut runtime_context.jzkt);
 
-            // create new linker and store (it shares same engine resources)
-            let mut linker = Linker::<RuntimeContext<DB>>::new(&caching_runtime.engine);
-            let mut store =
-                Store::<RuntimeContext<DB>>::new(&caching_runtime.engine, runtime_context);
-
             // resolve cached module or init it
-            let module = match &bytecode {
+            let engine_module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
                     // if we have cached module then use it, otherwise create new one and cache
-                    if let Some(module) = caching_runtime.resolve_module(&hash) {
-                        Ok(module)
+                    if let Some(engine_module) = caching_runtime.resolve_engine_module(&hash) {
+                        Ok(engine_module)
                     } else {
-                        caching_runtime.init_module(hash, &bytecode)
+                        caching_runtime.init_engine_module(hash, &bytecode)
                     }
                 }
                 BytecodeOrHash::Hash(hash) => {
                     // if we have only hash then try to load module or fail fast
-                    match caching_runtime.resolve_module(hash) {
-                        Some(module) => Ok(module),
+                    match caching_runtime.resolve_engine_module(hash) {
+                        Some(engine_module) => Ok(engine_module),
                         None => {
                             let rwasm_bytecode = jzkt
                                 .as_ref()
                                 .ok_or(RuntimeError::UnloadedModule(*hash))?
                                 .preimage(hash);
-                            caching_runtime.init_module(*hash, &rwasm_bytecode)
+                            caching_runtime.init_engine_module(*hash, &rwasm_bytecode)
                         }
                     }
                 }
             }?;
+
+            // create new linker and store (it shares same engine resources)
+            let mut linker = Linker::<RuntimeContext<DB>>::new(&engine_module.0);
+            let mut store = Store::<RuntimeContext<DB>>::new(&engine_module.0, runtime_context);
 
             // move jzkt back to the execution context
             store.data_mut().jzkt = jzkt;
@@ -333,7 +336,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
 
             // init instance
             let instance = linker
-                .instantiate(&mut store, &module)
+                .instantiate(&mut store, &engine_module.1)
                 .map_err(Into::<RuntimeError>::into)?
                 .start(&mut store)
                 .map_err(Into::<RuntimeError>::into)?;
