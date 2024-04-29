@@ -2,7 +2,7 @@ use eth_trie::DB;
 use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
 
-use fluentbase_types::Bytes;
+use fluentbase_types::{Bytes, F254};
 
 pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;
@@ -62,6 +62,7 @@ pub enum RuntimeError {
     Rwasm(RwasmError),
     StorageError(String),
     MissingEntrypoint,
+    UnloadedModule(F254),
 }
 
 impl From<BinaryFormatError> for RuntimeError {

@@ -36,7 +36,7 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "feat/thread-unsafe", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.6.4", default-features = false, features = ["rlp"] }
