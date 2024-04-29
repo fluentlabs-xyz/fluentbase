@@ -3153,7 +3153,6 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=feat/thread-unsafe#8535f5a8034cac586b6ddef85a3960a80f79f3a4"
 dependencies = [
  "byteorder",
  "downcast-rs",
