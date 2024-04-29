@@ -4,29 +4,36 @@ use crate::{
     zktrie::ZkTrieStateDb,
     JournaledTrie,
 };
+use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
-    create_shared_import_linker,
-    create_sovereign_import_linker,
-    EmptyJournalTrie,
-    ExitCode,
-    IJournaledTrie,
+    create_shared_import_linker, create_sovereign_import_linker, Bytes, EmptyJournalTrie, ExitCode,
+    IJournaledTrie, F254, POSEIDON_EMPTY,
 };
+use hashbrown::hash_map::Entry;
+use hashbrown::HashMap;
 use rwasm::{
-    core::ImportLinker,
-    rwasm::RwasmModule,
-    Engine,
-    FuelConsumptionMode,
-    Instance,
-    Linker,
-    Module,
+    core::ImportLinker, rwasm::RwasmModule, Engine, FuelConsumptionMode, Instance, Linker, Module,
     Store,
 };
+use std::cell::RefCell;
+use std::mem::take;
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
 
+pub enum BytecodeOrHash {
+    Bytecode(Bytes, Option<F254>),
+    Hash(F254),
+}
+
+impl Default for BytecodeOrHash {
+    fn default() -> Self {
+        Self::Bytecode(Bytes::new(), Some(POSEIDON_EMPTY))
+    }
+}
+
 pub struct RuntimeContext<DB: IJournaledTrie> {
     // context inputs
-    pub(crate) bytecode: Vec<u8>,
+    pub(crate) bytecode: BytecodeOrHash,
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
@@ -56,9 +63,16 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
 }
 
 impl<DB: IJournaledTrie> RuntimeContext<DB> {
-    pub fn new<I: Into<Vec<u8>>>(bytecode: I) -> Self {
+    pub fn new<I: Into<Bytes>>(bytecode: I) -> Self {
         Self {
-            bytecode: bytecode.into(),
+            bytecode: BytecodeOrHash::Bytecode(bytecode.into(), None),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_with_hash(bytecode_hash: F254) -> Self {
+        Self {
+            bytecode: BytecodeOrHash::Hash(bytecode_hash),
             ..Default::default()
         }
     }
@@ -164,12 +178,56 @@ impl ExecutionResult {
     }
 }
 
+pub struct CachingRuntime {
+    engine: Engine,
+    // TODO(dmitry123): "add expiration to this map to avoid memory leak"
+    modules: HashMap<F254, Box<Module>>,
+}
+
+impl CachingRuntime {
+    pub fn new() -> Self {
+        // we can safely use sovereign import linker because all protected are filtered out during translation process
+        let import_linker = Runtime::new_sovereign_linker();
+        let mut config = RwasmModule::default_config(Some(import_linker));
+        config
+            .floats(false)
+            .fuel_consumption_mode(FuelConsumptionMode::Eager)
+            .consume_fuel(true);
+        let engine = Engine::new(&config);
+        Self {
+            engine,
+            modules: HashMap::new(),
+        }
+    }
+
+    pub fn init_module(
+        &mut self,
+        rwasm_hash: F254,
+        rwasm_bytecode: &[u8],
+    ) -> Result<&Box<Module>, RuntimeError> {
+        let entry = match self.modules.entry(rwasm_hash) {
+            Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
+            Entry::Vacant(entry) => entry,
+        };
+        let reduced_module =
+            RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?;
+        let module_builder = reduced_module.to_module_builder(&self.engine);
+        let module = module_builder.finish();
+        Ok(entry.insert(Box::new(module)))
+    }
+
+    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<&Box<Module>> {
+        self.modules.get(rwasm_hash)
+    }
+}
+
+thread_local! {
+    static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
+}
+
 pub struct Runtime<DB: IJournaledTrie> {
-    pub(crate) engine: Engine,
-    pub(crate) module: Module,
-    pub(crate) linker: Linker<RuntimeContext<DB>>,
     pub(crate) store: Store<RuntimeContext<DB>>,
-    pub(crate) instance: Option<Instance>,
+    pub(crate) instance: Instance,
 }
 
 impl Runtime<EmptyJournalTrie> {
@@ -220,71 +278,75 @@ impl<DB: IJournaledTrie> Runtime<DB> {
     }
 
     pub fn new(
-        runtime_context: RuntimeContext<DB>,
+        mut runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
     ) -> Result<Self, RuntimeError> {
-        let mut result = Self::new_uninit(runtime_context, import_linker)?;
-        result.register_bindings();
-        result.instantiate()?;
-        Ok(result)
-    }
+        let (store, instance) = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            let bytecode = take(&mut runtime_context.bytecode);
+            let jzkt = take(&mut runtime_context.jzkt);
 
-    pub fn new_uninit(
-        runtime_context: RuntimeContext<DB>,
-        import_linker: ImportLinker,
-    ) -> Result<Self, RuntimeError> {
-        let fuel_limit = runtime_context.fuel_limit;
+            // create new linker and store (it shares same engine resources)
+            let mut linker = Linker::<RuntimeContext<DB>>::new(&caching_runtime.engine);
+            let mut store =
+                Store::<RuntimeContext<DB>>::new(&caching_runtime.engine, runtime_context);
 
-        let engine = {
-            let mut config = RwasmModule::default_config(Some(import_linker));
-            config.floats(false);
-            if fuel_limit > 0 {
-                config.fuel_consumption_mode(FuelConsumptionMode::Eager);
-                config.consume_fuel(true);
+            // resolve cached module or init it
+            let module = match &bytecode {
+                BytecodeOrHash::Bytecode(bytecode, hash) => {
+                    let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
+                    // if we have cached module then use it, otherwise create new one and cache
+                    if let Some(module) = caching_runtime.resolve_module(&hash) {
+                        Ok(module)
+                    } else {
+                        caching_runtime.init_module(hash, &bytecode)
+                    }
+                }
+                BytecodeOrHash::Hash(hash) => {
+                    // if we have only hash then try to load module or fail fast
+                    match caching_runtime.resolve_module(hash) {
+                        Some(module) => Ok(module),
+                        None => {
+                            let rwasm_bytecode = jzkt
+                                .as_ref()
+                                .ok_or(RuntimeError::UnloadedModule(*hash))?
+                                .preimage(hash);
+                            caching_runtime.init_module(*hash, &rwasm_bytecode)
+                        }
+                    }
+                }
+            }?;
+
+            // move jzkt back to the execution context
+            store.data_mut().jzkt = jzkt;
+
+            // add fuel if limit is specified
+            if store.data().fuel_limit > 0 {
+                store.add_fuel(store.data().fuel_limit).unwrap();
             }
-            Engine::new(&config)
-        };
 
-        let module = {
-            let reduced_module = RwasmModule::new(runtime_context.bytecode.as_ref())
+            // register linker trampolines for external calls
+            if !store.data().is_shared {
+                runtime_register_sovereign_handlers(&mut linker, &mut store)
+            } else {
+                runtime_register_shared_handlers(&mut linker, &mut store)
+            }
+
+            // init instance
+            let instance = linker
+                .instantiate(&mut store, &module)
+                .map_err(Into::<RuntimeError>::into)?
+                .start(&mut store)
                 .map_err(Into::<RuntimeError>::into)?;
-            let module_builder = reduced_module.to_module_builder(&engine);
-            module_builder.finish()
-        };
 
-        let linker = Linker::<RuntimeContext<DB>>::new(&engine);
-        let mut store = Store::<RuntimeContext<DB>>::new(&engine, runtime_context);
+            Ok::<(Store<RuntimeContext<DB>>, Instance), RuntimeError>((store, instance))
+        })?;
 
-        if fuel_limit > 0 {
-            store.add_fuel(fuel_limit).unwrap();
-        }
-
-        let result = Self {
-            engine,
-            module,
-            linker,
-            store,
-            instance: None,
-        };
-
-        Ok(result)
-    }
-
-    pub fn instantiate(&mut self) -> Result<(), RuntimeError> {
-        let instance = self
-            .linker
-            .instantiate(&mut self.store, &self.module)
-            .map_err(Into::<RuntimeError>::into)?
-            .start(&mut self.store)
-            .map_err(Into::<RuntimeError>::into)?;
-        self.instance = Some(instance);
-        Ok(())
+        Ok(Self { store, instance })
     }
 
     pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
         let func = self
             .instance
-            .unwrap()
             .get_func(&mut self.store, "main")
             .ok_or(RuntimeError::MissingEntrypoint)?;
         let res = func
@@ -304,14 +366,6 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         let mut execution_result = self.store.data().execution_result.clone();
         execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
         Ok(execution_result)
-    }
-
-    pub fn register_bindings(&mut self) {
-        if !self.store.data().is_shared {
-            runtime_register_sovereign_handlers(&mut self.linker, &mut self.store)
-        } else {
-            runtime_register_shared_handlers(&mut self.linker, &mut self.store)
-        }
     }
 
     pub fn store(&self) -> &Store<RuntimeContext<DB>> {

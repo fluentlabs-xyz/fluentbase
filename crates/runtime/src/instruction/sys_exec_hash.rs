@@ -57,9 +57,6 @@ impl SysExecHash {
     ) -> Result<u64, i32> {
         let import_linker = Runtime::new_sovereign_linker();
 
-        // load bytecode based on the preimage provided
-        let bytecode = ctx.jzkt().preimage(bytecode_hash32);
-
         // take jzkt from the existing context (we will return it back soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
 
@@ -75,7 +72,7 @@ impl SysExecHash {
         // );
 
         // create new runtime instance with the context
-        let ctx2 = RuntimeContext::new(bytecode)
+        let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input)
             .with_state(state)
             .with_is_shared(false)
