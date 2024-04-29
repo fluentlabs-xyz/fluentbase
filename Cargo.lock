@@ -2915,6 +2915,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2923,6 +2924,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -2938,6 +2940,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -3100,9 +3103,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.11"
+version = "0.21.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fecbfb7b1444f477b345853b1fce097a2c6fb637b2bfb87e6bc5db0f043fae4"
+checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
  "ring 0.17.8",
@@ -3150,7 +3153,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#88073fe78a877bd18defda769ec5425bd1f53721"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#a7cd3980c90bf1ed04d89cfa62f499b3616b19ea"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -3304,9 +3307,9 @@ checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
 name = "serde"
-version = "1.0.198"
+version = "1.0.199"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9846a40c979031340571da2545a4e5b7c4163bdae79b301d5f86d03979451fcc"
+checksum = "0c9f6e76df036c77cd94996771fb40db98187f096dd0b9af39c6c6e452ba966a"
 dependencies = [
  "serde_derive",
 ]
@@ -3334,9 +3337,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.198"
+version = "1.0.199"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e88edab869b01783ba905e7d0153f9fc1a6505a96e4ad3018011eedb838566d9"
+checksum = "11bd257a6541e141e42ca6d24ae26f7714887b47e89aa739099104c7e4d3b7fc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3369,9 +3372,9 @@ dependencies = [
 
 [[package]]
 name = "serial_test"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb86f9315df5df6a70eae0cc22395a44e544a0d8897586820770a35ede74449"
+checksum = "4b4b487fe2acf240a021cf57c6b2b4903b1e78ca0ecd862a71b71d2a51fed77d"
 dependencies = [
  "futures",
  "log",
@@ -3383,9 +3386,9 @@ dependencies = [
 
 [[package]]
 name = "serial_test_derive"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9bb72430492e9549b0c4596725c0f82729bff861c45aa8099c0a8e67fc3b721"
+checksum = "82fe9db325bcef1fbcde82e078a5cc4efdf787e96b3b9cf45b50b529f2083d67"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4091,9 +4094,9 @@ checksum = "d4c87d22b6e3f4a18d4d40ef354e97c90fcb14dd91d7dc0aa9d8a1172ebf7202"
 
 [[package]]
 name = "unicode-width"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51733f11c9c4f72aa0c160008246859e340b00807569a0da0e7a1079b27ba85"
+checksum = "68f5e5f3158ecfd4b8ff6fe086db7c8467a2dfdac97fe420f2b7c4aa97af66d6"
 
 [[package]]
 name = "unicode-xid"
