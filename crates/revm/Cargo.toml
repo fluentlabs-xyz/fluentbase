@@ -73,6 +73,8 @@ std = [
     "dep:fluentbase-runtime",
     "fluentbase-runtime?/std",
     "fluentbase-sdk/std",
+    "dep:rwasm",
+    "rwasm?/std",
 ]
 serde = ["dep:serde", "revm-precompile/serde", "revm-primitives/serde"]
 serde-json = ["serde", "dep:serde_json"]

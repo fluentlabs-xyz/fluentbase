@@ -9,7 +9,7 @@ use fluentbase_genesis::{
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_sdk::{evm::ContractInput, CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
-    address, bytes, Address, Bytes, ExitCode, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
+    address, bytes, Address, Bytes, ExitCode, SysFuncIdx, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
 };
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -17,6 +17,9 @@ use revm_primitives::{
     db::DatabaseCommit, hex, keccak256, AccountInfo, Bytecode, CreateScheme, EVMError, Env,
     ExecutionResult, HashMap, Output, TransactTo,
 };
+use rwasm::engine::DropKeep;
+use rwasm::instruction_set;
+use rwasm::rwasm::{BinaryFormat, InstructionSet, RwasmModule};
 
 #[allow(dead_code)]
 struct TestingContext {
@@ -73,6 +76,34 @@ impl TestingContext {
             db.insert_account_info(*k, info);
         }
         Self { genesis, db }
+    }
+
+    pub(crate) fn add_contract<I: Into<RwasmModule>>(
+        &mut self,
+        address: Address,
+        rwasm_module: I,
+    ) -> AccountInfo {
+        let rwasm_binary = {
+            let rwasm_module: RwasmModule = rwasm_module.into();
+            let mut result = Vec::new();
+            rwasm_module.write_binary_to_vec(&mut result).unwrap();
+            result
+        };
+        let account = Account {
+            address,
+            balance: U256::ZERO,
+            nonce: 0,
+            // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
+            source_code_size: 0,
+            source_code_hash: KECCAK_EMPTY,
+            rwasm_code_size: rwasm_binary.len() as u64,
+            rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+        };
+        let mut info: AccountInfo = account.into();
+        info.code = None;
+        info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+        self.db.insert_account_info(address, info.clone());
+        info
     }
 
     pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
@@ -902,7 +933,7 @@ fn test_call_recursive_bomb_log2() {
     };
     ctx.db.insert_account_info(account3_address, account3_info);
 
-    let gas_limit: u64 = 0x02540be400 / 100_000;
+    let gas_limit: u64 = 0x02540be400 / 150_000;
     let gas_price: u64 = 0x0a;
     let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
         .value(U256::from_be_slice(&hex::decode("0x0186a0").unwrap()))
@@ -988,4 +1019,66 @@ fn test_codec_case() {
     let mut call_method_input_decoded = EvmCallMethodInput::default();
     EvmCallMethodInput::decode_body(&mut buffer, 0, &mut call_method_input_decoded);
     assert_eq!(call_method_input_decoded.callee, call_method_input.callee);
+}
+
+#[test]
+fn test_simple_nested_call() {
+    let mut ctx = TestingContext::default();
+    let account1 = ctx.add_contract(
+        address!("0000000000000000000000000000000000000001"),
+        instruction_set! {
+            I32Const(100)
+            I32Const(20)
+            I32Add
+            I32Const(3)
+            I32Add
+            Call(SysFuncIdx::SYS_HALT)
+        },
+    );
+    let mut memory_section = vec![0u8; 32 + 8];
+    memory_section[0..32].copy_from_slice(&account1.rwasm_code_hash.0);
+    let code_section = instruction_set! {
+        // alloc and init memory
+        I32Const(1)
+        MemoryGrow
+        Drop
+        I32Const(0)
+        I32Const(0)
+        I32Const(40)
+        MemoryInit(0)
+        DataDrop(0)
+        // sys exec hash
+        I32Const(0) // bytecode_hash32_offset
+        I32Const(0) // input_offset
+        I32Const(0) // input_len
+        I32Const(0) // return_offset
+        I32Const(0) // return_len
+        I32Const(32) // fuel_offset
+        I32Const(0) // state
+        Call(SysFuncIdx::SYS_EXEC_HASH)
+        Drop
+        Return(DropKeep::none())
+        // I32Const(ExitCode::OutOfFuel.into_i32())
+        // Call(SysFuncIdx::SYS_HALT)
+    };
+    let code_section_len = code_section.len() as u32;
+    ctx.add_contract(
+        address!("0000000000000000000000000000000000000002"),
+        RwasmModule {
+            code_section,
+            memory_section,
+            func_section: vec![code_section_len],
+            ..Default::default()
+        },
+    );
+    let result = TxBuilder::call(
+        &mut ctx,
+        Address::ZERO,
+        address!("0000000000000000000000000000000000000002"),
+    )
+    .gas_price(U256::ZERO)
+    .exec()
+    .unwrap();
+    println!("{:?}", result);
+    assert!(result.is_success());
 }
