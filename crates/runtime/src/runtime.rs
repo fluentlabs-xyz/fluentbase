@@ -1,3 +1,4 @@
+use crate::instruction::sys_exec_hash::SysExecHash;
 use crate::{
     instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
     types::{InMemoryTrieDb, RuntimeError},
@@ -11,11 +12,13 @@ use fluentbase_types::{
 };
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
+use rwasm::core::HostError;
 use rwasm::{
-    core::ImportLinker, rwasm::RwasmModule, Engine, FuelConsumptionMode, Instance, Linker, Module,
-    Store,
+    core::ImportLinker, rwasm::RwasmModule, AsContext, AsContextMut, Engine, FuelConsumptionMode,
+    Instance, Linker, Module, ResumableCall, Store, Value,
 };
 use std::cell::RefCell;
+use std::fmt::{Debug, Display, Formatter};
 use std::mem::take;
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
@@ -44,6 +47,12 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) execution_result: ExecutionResult,
     // storage
     pub(crate) jzkt: Option<DB>,
+}
+
+impl<DB: IJournaledTrie> Debug for RuntimeContext<DB> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime context")
+    }
 }
 
 impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
@@ -179,20 +188,19 @@ impl ExecutionResult {
 }
 
 pub struct CachingRuntime {
-    // engine: Engine,
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
-    modules: HashMap<F254, (Box<Engine>, Box<Module>)>,
+    modules: HashMap<F254, Module>,
 }
 
 impl CachingRuntime {
     pub fn new() -> Self {
-        // we can safely use sovereign import linker because all protected are filtered out during translation process
         Self {
             modules: HashMap::new(),
         }
     }
 
     fn new_engine() -> Engine {
+        // we can safely use sovereign import linker because all protected are filtered out during translation process
         let import_linker = Runtime::new_sovereign_linker();
         let mut config = RwasmModule::default_config(Some(import_linker));
         config
@@ -202,11 +210,11 @@ impl CachingRuntime {
         Engine::new(&config)
     }
 
-    pub fn init_engine_module(
+    pub fn init_module(
         &mut self,
         rwasm_hash: F254,
         rwasm_bytecode: &[u8],
-    ) -> Result<&(Box<Engine>, Box<Module>), RuntimeError> {
+    ) -> Result<&Module, RuntimeError> {
         let entry = match self.modules.entry(rwasm_hash) {
             Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
             Entry::Vacant(entry) => entry,
@@ -216,11 +224,10 @@ impl CachingRuntime {
         let engine = Self::new_engine();
         let module_builder = reduced_module.to_module_builder(&engine);
         let module = module_builder.finish();
-        let v = (Box::new(engine), Box::new(module));
-        Ok(entry.insert(v))
+        Ok(entry.insert(module))
     }
 
-    pub fn resolve_engine_module(&self, rwasm_hash: &F254) -> Option<&(Box<Engine>, Box<Module>)> {
+    pub fn resolve_module(&self, rwasm_hash: &F254) -> Option<&Module> {
         self.modules.get(rwasm_hash)
     }
 }
@@ -264,6 +271,23 @@ impl Runtime<EmptyJournalTrie> {
     }
 }
 
+#[derive(Debug)]
+pub struct DelayedExecutionContext {
+    pub bytecode_hash32: [u8; 32],
+    pub input: Vec<u8>,
+    pub return_len: u32,
+    pub fuel_limit: u32,
+    pub state: u32,
+}
+
+impl Display for DelayedExecutionContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime resume error")
+    }
+}
+
+impl HostError for DelayedExecutionContext {}
+
 impl<DB: IJournaledTrie> Runtime<DB> {
     pub fn run_with_context(
         runtime_context: RuntimeContext<DB>,
@@ -290,34 +314,34 @@ impl<DB: IJournaledTrie> Runtime<DB> {
             let jzkt = take(&mut runtime_context.jzkt);
 
             // resolve cached module or init it
-            let engine_module = match &bytecode_repr {
+            let module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
                     // if we have cached module then use it, otherwise create new one and cache
-                    if let Some(engine_module) = caching_runtime.resolve_engine_module(&hash) {
+                    if let Some(engine_module) = caching_runtime.resolve_module(&hash) {
                         Ok(engine_module)
                     } else {
-                        caching_runtime.init_engine_module(hash, &bytecode)
+                        caching_runtime.init_module(hash, &bytecode)
                     }
                 }
                 BytecodeOrHash::Hash(hash) => {
                     // if we have only hash then try to load module or fail fast
-                    match caching_runtime.resolve_engine_module(hash) {
+                    match caching_runtime.resolve_module(hash) {
                         Some(engine_module) => Ok(engine_module),
                         None => {
                             let rwasm_bytecode = jzkt
                                 .as_ref()
                                 .ok_or(RuntimeError::UnloadedModule(*hash))?
                                 .preimage(hash);
-                            caching_runtime.init_engine_module(*hash, &rwasm_bytecode)
+                            caching_runtime.init_module(*hash, &rwasm_bytecode)
                         }
                     }
                 }
             }?;
 
             // create new linker and store (it shares same engine resources)
-            let mut linker = Linker::<RuntimeContext<DB>>::new(&engine_module.0);
-            let mut store = Store::<RuntimeContext<DB>>::new(&engine_module.0, runtime_context);
+            let mut linker = Linker::<RuntimeContext<DB>>::new(&module.engine);
+            let mut store = Store::<RuntimeContext<DB>>::new(&module.engine, runtime_context);
 
             // move jzkt back to the execution context
             store.data_mut().jzkt = jzkt;
@@ -336,7 +360,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
 
             // init instance
             let instance = linker
-                .instantiate(&mut store, &engine_module.1)
+                .instantiate(&mut store, &module)
                 .map_err(Into::<RuntimeError>::into)?
                 .start(&mut store)
                 .map_err(Into::<RuntimeError>::into)?;
@@ -348,27 +372,82 @@ impl<DB: IJournaledTrie> Runtime<DB> {
     }
 
     pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
-        let func = self
+        let mut next_result = self
             .instance
             .get_func(&mut self.store, "main")
-            .ok_or(RuntimeError::MissingEntrypoint)?;
-        let res = func
-            .call(&mut self.store, &[], &mut [])
+            .ok_or(RuntimeError::MissingEntrypoint)?
+            .call_resumable(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        match res {
-            Ok(_) => {}
-            Err(err) => {
-                let exit_code = Runtime::catch_trap(&err);
-                if exit_code != 0 && !self.store.data().catch_trap {
-                    return Err(err);
+        loop {
+            match next_result {
+                Ok(resumable) => match resumable {
+                    ResumableCall::Finished => {
+                        let mut execution_result = self.store.data().execution_result.clone();
+                        execution_result.fuel_consumed =
+                            self.store.fuel_consumed().unwrap_or_default();
+                        return Ok(execution_result);
+                    }
+                    ResumableCall::Resumable(state) => {
+                        // check i32 exit code
+                        let exit_code = if let Some(exit_code) =
+                            state.host_error().i32_exit_status()
+                        {
+                            println!(
+                                "exit func: exit_code={} {:?} (self={})",
+                                exit_code,
+                                state.host_func(),
+                                self.store.get_index()
+                            );
+                            // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
+                            let mut execution_result = self.store.data().execution_result.clone();
+                            execution_result.exit_code = exit_code;
+                            return Ok(execution_result);
+                        } else {
+                            println!(
+                                "resume func: {:?} (self={})",
+                                state.host_func(),
+                                self.store.get_index()
+                            );
+                            // get delayed `_sys_exec_hash` state
+                            let delayed_state = state
+                                .host_error()
+                                .downcast_ref::<DelayedExecutionContext>()
+                                .expect("not supported host error type");
+                            // execute `_sys_exec_hash` function
+                            match SysExecHash::fn_impl(
+                                self.store.data_mut(),
+                                &delayed_state.bytecode_hash32,
+                                delayed_state.input.clone(),
+                                delayed_state.return_len,
+                                delayed_state.fuel_limit as u64,
+                                delayed_state.state,
+                            ) {
+                                Ok(_consumed_fuel) => {
+                                    // TODO(dmitry123): "write fuel consumed and return data into memory?"
+                                    ExitCode::Ok.into_i32()
+                                }
+                                Err(exit_code) => exit_code,
+                            }
+                        };
+                        // resume call with exit code
+                        let exit_code = Value::I32(exit_code);
+                        next_result = state
+                            .resume(self.store.as_context_mut(), &[exit_code; 1], &mut [])
+                            .map_err(Into::<RuntimeError>::into);
+                    }
+                },
+                Err(err) => {
+                    let exit_code = Runtime::catch_trap(&err);
+                    if exit_code != 0 && !self.store.data().catch_trap {
+                        return Err(RuntimeError::ExecutionFailed(exit_code));
+                    }
+                    let mut execution_result = self.store.data().execution_result.clone();
+                    execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
+                    execution_result.exit_code = exit_code;
+                    return Ok(execution_result);
                 }
-                self.store.data_mut().execution_result.exit_code = exit_code;
             }
         }
-        // we need to restore trace to recover missing opcode values
-        let mut execution_result = self.store.data().execution_result.clone();
-        execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
-        Ok(execution_result)
     }
 
     pub fn store(&self) -> &Store<RuntimeContext<DB>> {

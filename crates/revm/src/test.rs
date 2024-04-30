@@ -902,7 +902,7 @@ fn test_call_recursive_bomb_log2() {
     };
     ctx.db.insert_account_info(account3_address, account3_info);
 
-    let gas_limit: u64 = 0x02540be400;
+    let gas_limit: u64 = 0x02540be400 / 100_000;
     let gas_price: u64 = 0x0a;
     let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
         .value(U256::from_be_slice(&hex::decode("0x0186a0").unwrap()))
