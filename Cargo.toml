@@ -3,6 +3,7 @@ members = [
     "bin",
     "crates/*",
     "crates/genesis/bin",
+    "crates/revm/e2e",
     "e2e",
     "examples",
 ]
