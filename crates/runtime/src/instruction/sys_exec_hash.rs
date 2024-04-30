@@ -36,12 +36,12 @@ impl SysExecHash {
         let fuel_data = caller.read_memory(fuel_offset, 4)?;
         let fuel_limit = LittleEndian::read_u32(fuel_data);
 
-        println!(
-            "delegate sys_exec_hash(0x{}): fuel_limit={}, depth={}",
-            hex::encode(bytecode_hash32),
-            fuel_limit,
-            caller.data().depth,
-        );
+        // println!(
+        //     "delegate sys_exec_hash(0x{}): fuel_limit={}, depth={}",
+        //     hex::encode(bytecode_hash32),
+        //     fuel_limit,
+        //     caller.data().depth,
+        // );
 
         let runtime_error = DelayedExecutionContext {
             bytecode_hash32,
@@ -99,12 +99,12 @@ impl SysExecHash {
             return Err(ExitCode::CallDepthOverflow.into_i32());
         }
 
-        println!(
-            "sys_exec_hash(0x{}): fuel_limit={} depth={}",
-            hex::encode(bytecode_hash32),
-            fuel_limit,
-            ctx.depth,
-        );
+        // println!(
+        //     "sys_exec_hash(0x{}): fuel_limit={} depth={}",
+        //     hex::encode(bytecode_hash32),
+        //     fuel_limit,
+        //     ctx.depth,
+        // );
 
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
@@ -116,9 +116,11 @@ impl SysExecHash {
             .with_state(state)
             .with_depth(ctx.depth + 1);
         let execution_result = match Runtime::new(ctx2, import_linker) {
-            Ok(mut runtime) => runtime
-                .call()
-                .unwrap_or_else(|err| ExecutionResult::new_error(Runtime::catch_trap(&err))),
+            Ok(mut runtime) => runtime.call().unwrap_or_else(|err| {
+                // return jzkt context back
+                ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
+                ExecutionResult::new_error(Runtime::catch_trap(&err))
+            }),
             Err(err) => ExecutionResult::new_error(Runtime::catch_trap(&err)),
         };
 
@@ -136,9 +138,6 @@ impl SysExecHash {
         if return_len > 0 && execution_result.output.len() > return_len as usize {
             return Err(ExitCode::OutputOverflow.into_i32());
         }
-
-        // return jzkt context back
-        // ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 

@@ -386,60 +386,36 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                     }
                     ResumableCall::Resumable(state) => {
                         // check i32 exit code
-                        let exit_code =
-                            if let Some(exit_code) = state.host_error().i32_exit_status() {
-                                println!(
-                                    "exit func: exit_code={} {:?} (self_store={}) depth={}",
-                                    exit_code,
-                                    state.host_func(),
-                                    self.store.get_index(),
-                                    self.store.data().depth,
-                                );
-                                if self.store.data().depth == 0 {
-                                    // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
-                                    let mut execution_result =
-                                        self.store.data().execution_result.clone();
-                                    execution_result.exit_code = exit_code;
-                                    return Ok(execution_result);
+                        let exit_code = if let Some(exit_code) =
+                            state.host_error().i32_exit_status()
+                        {
+                            // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
+                            let mut execution_result = self.store.data().execution_result.clone();
+                            execution_result.exit_code = exit_code;
+                            return Ok(execution_result);
+                        } else if let Some(delayed_state) =
+                            state.host_error().downcast_ref::<DelayedExecutionContext>()
+                        {
+                            // execute `_sys_exec_hash` function
+                            match SysExecHash::fn_impl(
+                                self.store.data_mut(),
+                                &delayed_state.bytecode_hash32,
+                                delayed_state.input.clone(),
+                                delayed_state.return_len,
+                                delayed_state.fuel_limit as u64,
+                                delayed_state.state,
+                            ) {
+                                Ok(_consumed_fuel) => {
+                                    // TODO(dmitry123): "write fuel consumed and return data into memory?"
+                                    ExitCode::Ok.into_i32()
                                 }
-                                exit_code
-                            } else if let Some(delayed_state) =
-                                state.host_error().downcast_ref::<DelayedExecutionContext>()
-                            {
-                                println!(
-                                    "resume func: {:?} (self_store={}) depth={}, error={}",
-                                    state.host_func(),
-                                    self.store.get_index(),
-                                    self.store.data().depth,
-                                    state.host_error(),
-                                );
-                                // execute `_sys_exec_hash` function
-                                match SysExecHash::fn_impl(
-                                    self.store.data_mut(),
-                                    &delayed_state.bytecode_hash32,
-                                    delayed_state.input.clone(),
-                                    delayed_state.return_len,
-                                    delayed_state.fuel_limit as u64,
-                                    delayed_state.state,
-                                ) {
-                                    Ok(_consumed_fuel) => {
-                                        // TODO(dmitry123): "write fuel consumed and return data into memory?"
-                                        ExitCode::Ok.into_i32()
-                                    }
-                                    Err(exit_code) => exit_code,
-                                }
-                            } else {
-                                println!(
-                                    "error func: {:?} (self_store={}) depth={}, error={}",
-                                    state.host_func(),
-                                    self.store.get_index(),
-                                    self.store.data().depth,
-                                    state.host_error(),
-                                );
-                                return Err(RuntimeError::Rwasm(
-                                    Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),
-                                ));
-                            };
+                                Err(exit_code) => exit_code,
+                            }
+                        } else {
+                            return Err(RuntimeError::Rwasm(
+                                Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),
+                            ));
+                        };
                         // resume call with exit code
                         let exit_code = Value::I32(exit_code);
                         next_result = state

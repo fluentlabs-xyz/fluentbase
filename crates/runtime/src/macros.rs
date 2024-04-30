@@ -113,7 +113,8 @@ macro_rules! impl_runtime_handler {
                     |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
                         return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
                     });
-                linker.engine().register_trampoline(Self::FUNC_INDEX as u32, func);
+                let wrapped_index = store.inner.wrap_stored(rwasm::engine::bytecode::FuncIdx::from(Self::FUNC_INDEX as u32));
+                linker.engine().register_trampoline(wrapped_index, func);
                 linker.define(
                     stringify!($module),
                     stringify!($name),

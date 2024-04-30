@@ -342,7 +342,7 @@ fn test_evm_greeting() {
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
-    assert_eq!("Hello World", core::str::from_utf8(bytes.as_ref()).unwrap());
+    assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
 }
 
 ///
@@ -933,7 +933,7 @@ fn test_call_recursive_bomb_log2() {
     };
     ctx.db.insert_account_info(account3_address, account3_info);
 
-    let gas_limit: u64 = 0x02540be400 / 150_000;
+    let gas_limit: u64 = 0x02540be400;
     let gas_price: u64 = 0x0a;
     let result = TxBuilder::call(&mut ctx, caller_address, callee_address)
         .value(U256::from_be_slice(&hex::decode("0x0186a0").unwrap()))
@@ -1057,9 +1057,10 @@ fn test_simple_nested_call() {
         I32Const(0) // state
         Call(SysFuncIdx::SYS_EXEC_HASH)
         Drop
-        Return(DropKeep::none())
-        // I32Const(ExitCode::OutOfFuel.into_i32())
-        // Call(SysFuncIdx::SYS_HALT)
+        // check error
+        // Return(DropKeep::none())
+        I32Const(ExitCode::Ok.into_i32())
+        Call(SysFuncIdx::SYS_HALT)
     };
     let code_section_len = code_section.len() as u32;
     ctx.add_contract(
