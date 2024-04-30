@@ -12,10 +12,10 @@ use fluentbase_types::{
 };
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
-use rwasm::core::HostError;
+use rwasm::core::{HostError, Trap};
 use rwasm::{
-    core::ImportLinker, rwasm::RwasmModule, AsContext, AsContextMut, Engine, FuelConsumptionMode,
-    Instance, Linker, Module, ResumableCall, Store, Value,
+    core::ImportLinker, rwasm::RwasmModule, AsContextMut, Engine, FuelConsumptionMode, Instance,
+    Linker, Module, ResumableCall, Store, Value,
 };
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
@@ -40,7 +40,6 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
-    pub(crate) catch_trap: bool,
     pub(crate) input: Vec<u8>,
     pub(crate) depth: u32,
     // context outputs
@@ -62,7 +61,6 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
             fuel_limit: 0,
             state: 0,
             is_shared: false,
-            catch_trap: true,
             input: vec![],
             depth: 0,
             execution_result: Default::default(),
@@ -102,11 +100,6 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
 
     pub fn with_is_shared(mut self, is_shared: bool) -> Self {
         self.is_shared = is_shared;
-        self
-    }
-
-    pub fn with_catch_trap(mut self, catch_trap: bool) -> Self {
-        self.catch_trap = catch_trap;
         self
     }
 
@@ -219,6 +212,10 @@ impl CachingRuntime {
             Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
             Entry::Vacant(entry) => entry,
         };
+        // empty bytecode we can't execute so just return Ok exit code
+        if rwasm_bytecode.is_empty() {
+            return Err(RuntimeError::Rwasm(ExitCode::Ok.into_trap().into()));
+        }
         let reduced_module =
             RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?;
         let engine = Self::new_engine();
@@ -256,7 +253,10 @@ impl Runtime<EmptyJournalTrie> {
         };
         let err = match err {
             rwasm::Error::Trap(err) => err,
-            _ => return ExitCode::UnknownError as i32,
+            _ => {
+                println!("{:?}", err);
+                return ExitCode::UnknownError as i32;
+            }
         };
         // for i32 error code (raw error) just return result
         if let Some(exit_status) = err.i32_exit_status() {
@@ -293,16 +293,16 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         runtime_context: RuntimeContext<DB>,
         import_linker: ImportLinker,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let catch_error = runtime_context.catch_trap;
-        let runtime = Self::new(runtime_context, import_linker);
-        if catch_error && runtime.is_err() {
-            return Ok(ExecutionResult::new_error(Runtime::catch_trap(
-                runtime.err().as_ref().unwrap(),
-            )));
-        }
-        let mut runtime = runtime?;
-        runtime.store.data_mut().clean_output();
-        runtime.call()
+        todo!("not implemented")
+        // let runtime = Self::new(runtime_context, import_linker);
+        // if runtime.is_err() {
+        //     return Ok(ExecutionResult::new_error(Runtime::catch_trap(
+        //         &runtime.err().as_ref().unwrap().1,
+        //     )));
+        // }
+        // let mut runtime = runtime?;
+        // runtime.store.data_mut().clean_output();
+        // runtime.call()
     }
 
     pub fn new(
@@ -311,7 +311,6 @@ impl<DB: IJournaledTrie> Runtime<DB> {
     ) -> Result<Self, RuntimeError> {
         let (store, instance) = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut runtime_context.bytecode);
-            let jzkt = take(&mut runtime_context.jzkt);
 
             // resolve cached module or init it
             let module = match &bytecode_repr {
@@ -329,7 +328,8 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                     match caching_runtime.resolve_module(hash) {
                         Some(engine_module) => Ok(engine_module),
                         None => {
-                            let rwasm_bytecode = jzkt
+                            let rwasm_bytecode = runtime_context
+                                .jzkt
                                 .as_ref()
                                 .ok_or(RuntimeError::UnloadedModule(*hash))?
                                 .preimage(hash);
@@ -342,9 +342,6 @@ impl<DB: IJournaledTrie> Runtime<DB> {
             // create new linker and store (it shares same engine resources)
             let mut linker = Linker::<RuntimeContext<DB>>::new(&module.engine);
             let mut store = Store::<RuntimeContext<DB>>::new(&module.engine, runtime_context);
-
-            // move jzkt back to the execution context
-            store.data_mut().jzkt = jzkt;
 
             // add fuel if limit is specified
             if store.data().fuel_limit > 0 {
@@ -389,61 +386,71 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                     }
                     ResumableCall::Resumable(state) => {
                         // check i32 exit code
-                        let exit_code = if let Some(exit_code) =
-                            state.host_error().i32_exit_status()
-                        {
-                            println!(
-                                "exit func: exit_code={} {:?} (self={})",
-                                exit_code,
-                                state.host_func(),
-                                self.store.get_index()
-                            );
-                            // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
-                            let mut execution_result = self.store.data().execution_result.clone();
-                            execution_result.exit_code = exit_code;
-                            return Ok(execution_result);
-                        } else {
-                            println!(
-                                "resume func: {:?} (self={})",
-                                state.host_func(),
-                                self.store.get_index()
-                            );
-                            // get delayed `_sys_exec_hash` state
-                            let delayed_state = state
-                                .host_error()
-                                .downcast_ref::<DelayedExecutionContext>()
-                                .expect("not supported host error type");
-                            // execute `_sys_exec_hash` function
-                            match SysExecHash::fn_impl(
-                                self.store.data_mut(),
-                                &delayed_state.bytecode_hash32,
-                                delayed_state.input.clone(),
-                                delayed_state.return_len,
-                                delayed_state.fuel_limit as u64,
-                                delayed_state.state,
-                            ) {
-                                Ok(_consumed_fuel) => {
-                                    // TODO(dmitry123): "write fuel consumed and return data into memory?"
-                                    ExitCode::Ok.into_i32()
+                        let exit_code =
+                            if let Some(exit_code) = state.host_error().i32_exit_status() {
+                                println!(
+                                    "exit func: exit_code={} {:?} (self_store={}) depth={}",
+                                    exit_code,
+                                    state.host_func(),
+                                    self.store.get_index(),
+                                    self.store.data().depth,
+                                );
+                                if self.store.data().depth == 0 {
+                                    // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
+                                    let mut execution_result =
+                                        self.store.data().execution_result.clone();
+                                    execution_result.exit_code = exit_code;
+                                    return Ok(execution_result);
                                 }
-                                Err(exit_code) => exit_code,
-                            }
-                        };
+                                exit_code
+                            } else if let Some(delayed_state) =
+                                state.host_error().downcast_ref::<DelayedExecutionContext>()
+                            {
+                                println!(
+                                    "resume func: {:?} (self_store={}) depth={}, error={}",
+                                    state.host_func(),
+                                    self.store.get_index(),
+                                    self.store.data().depth,
+                                    state.host_error(),
+                                );
+                                // execute `_sys_exec_hash` function
+                                match SysExecHash::fn_impl(
+                                    self.store.data_mut(),
+                                    &delayed_state.bytecode_hash32,
+                                    delayed_state.input.clone(),
+                                    delayed_state.return_len,
+                                    delayed_state.fuel_limit as u64,
+                                    delayed_state.state,
+                                ) {
+                                    Ok(_consumed_fuel) => {
+                                        // TODO(dmitry123): "write fuel consumed and return data into memory?"
+                                        ExitCode::Ok.into_i32()
+                                    }
+                                    Err(exit_code) => exit_code,
+                                }
+                            } else {
+                                println!(
+                                    "error func: {:?} (self_store={}) depth={}, error={}",
+                                    state.host_func(),
+                                    self.store.get_index(),
+                                    self.store.data().depth,
+                                    state.host_error(),
+                                );
+                                return Err(RuntimeError::Rwasm(
+                                    Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),
+                                ));
+                            };
                         // resume call with exit code
                         let exit_code = Value::I32(exit_code);
                         next_result = state
-                            .resume(self.store.as_context_mut(), &[exit_code; 1], &mut [])
+                            .resume(self.store.as_context_mut(), &[exit_code], &mut [])
                             .map_err(Into::<RuntimeError>::into);
                     }
                 },
                 Err(err) => {
-                    let exit_code = Runtime::catch_trap(&err);
-                    if exit_code != 0 && !self.store.data().catch_trap {
-                        return Err(RuntimeError::ExecutionFailed(exit_code));
-                    }
                     let mut execution_result = self.store.data().execution_result.clone();
                     execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
-                    execution_result.exit_code = exit_code;
+                    execution_result.exit_code = Runtime::catch_trap(&err);
                     return Ok(execution_result);
                 }
             }

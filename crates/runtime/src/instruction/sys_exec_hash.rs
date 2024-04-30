@@ -1,10 +1,21 @@
-use crate::{DelayedExecutionContext, Runtime, RuntimeContext};
+use crate::{DelayedExecutionContext, ExecutionResult, Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 use std::mem::take;
 
 pub struct SysExecHash;
+
+#[derive(Debug)]
+pub struct SysExecHashResumable {
+    pub bytecode_hash32_offset: u32,
+    pub input_offset: u32,
+    pub input_len: u32,
+    pub return_offset: u32,
+    pub return_len: u32,
+    pub fuel_offset: u32,
+    pub state: u32,
+}
 
 impl SysExecHash {
     pub fn fn_handler<DB: IJournaledTrie>(
@@ -23,13 +34,20 @@ impl SysExecHash {
             .unwrap();
         let input = caller.read_memory(input_offset, input_len)?.to_vec();
         let fuel_data = caller.read_memory(fuel_offset, 4)?;
-        let fuel = LittleEndian::read_u32(fuel_data);
+        let fuel_limit = LittleEndian::read_u32(fuel_data);
+
+        println!(
+            "delegate sys_exec_hash(0x{}): fuel_limit={}, depth={}",
+            hex::encode(bytecode_hash32),
+            fuel_limit,
+            caller.data().depth,
+        );
 
         let runtime_error = DelayedExecutionContext {
             bytecode_hash32,
             input,
             return_len,
-            fuel_limit: fuel,
+            fuel_limit,
             state,
         };
         return Err(runtime_error.into());
@@ -57,6 +75,13 @@ impl SysExecHash {
         // Ok(exit_code)
     }
 
+    pub fn fn_resume<DB: IJournaledTrie>(
+        caller: Caller<'_, RuntimeContext<DB>>,
+        context: SysExecHashResumable,
+    ) -> Result<i32, Trap> {
+        todo!("finish him")
+    }
+
     pub fn fn_impl<DB: IJournaledTrie>(
         ctx: &mut RuntimeContext<DB>,
         bytecode_hash32: &[u8; 32],
@@ -74,12 +99,12 @@ impl SysExecHash {
             return Err(ExitCode::CallDepthOverflow.into_i32());
         }
 
-        // println!(
-        //     "{}sys_exec_hash: fuel_limit={} depth={}",
-        //     " ".repeat(ctx.depth as usize),
-        //     fuel_limit,
-        //     ctx.depth,
-        // );
+        println!(
+            "sys_exec_hash(0x{}): fuel_limit={} depth={}",
+            hex::encode(bytecode_hash32),
+            fuel_limit,
+            ctx.depth,
+        );
 
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
@@ -87,21 +112,14 @@ impl SysExecHash {
             .with_state(state)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
-            .with_catch_trap(true)
             .with_jzkt(jzkt)
             .with_state(state)
             .with_depth(ctx.depth + 1);
-        let mut runtime = match Runtime::new(ctx2, import_linker) {
-            Err(err) => {
-                return Err(Runtime::catch_trap(&err));
-            }
-            Ok(runtime) => runtime,
-        };
-        let execution_result = match runtime.call() {
-            Err(err) => {
-                return Err(Runtime::catch_trap(&err));
-            }
-            Ok(execution_result) => execution_result,
+        let execution_result = match Runtime::new(ctx2, import_linker) {
+            Ok(mut runtime) => runtime
+                .call()
+                .unwrap_or_else(|err| ExecutionResult::new_error(Runtime::catch_trap(&err))),
+            Err(err) => ExecutionResult::new_error(Runtime::catch_trap(&err)),
         };
 
         // println!(
@@ -120,7 +138,7 @@ impl SysExecHash {
         }
 
         // return jzkt context back
-        ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
+        // ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
