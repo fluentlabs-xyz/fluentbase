@@ -1,4 +1,4 @@
-use crate::instruction::sys_exec_hash::SysExecHash;
+use crate::instruction::sys_exec_hash::{SysExecHash, SysExecHashResumable};
 use crate::{
     instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
     types::{InMemoryTrieDb, RuntimeError},
@@ -12,13 +12,13 @@ use fluentbase_types::{
 };
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
-use rwasm::core::{HostError, Trap};
+use rwasm::core::Trap;
 use rwasm::{
-    core::ImportLinker, rwasm::RwasmModule, AsContextMut, Engine, FuelConsumptionMode, Instance,
-    Linker, Module, ResumableCall, Store, Value,
+    core::ImportLinker, rwasm::RwasmModule, AsContextMut, Caller, Engine, FuelConsumptionMode,
+    Instance, Linker, Module, ResumableCall, Store, Value,
 };
 use std::cell::RefCell;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::mem::take;
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
@@ -254,23 +254,6 @@ thread_local! {
     static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
 }
 
-#[derive(Debug)]
-pub struct DelayedExecutionContext {
-    pub bytecode_hash32: [u8; 32],
-    pub input: Vec<u8>,
-    pub return_len: u32,
-    pub fuel_limit: u32,
-    pub state: u32,
-}
-
-impl Display for DelayedExecutionContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "runtime resume error")
-    }
-}
-
-impl HostError for DelayedExecutionContext {}
-
 pub struct Runtime<DB: IJournaledTrie> {
     pub(crate) store: Store<RuntimeContext<DB>>,
     pub(crate) linker: Linker<RuntimeContext<DB>>,
@@ -416,22 +399,17 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             execution_result.exit_code = exit_code;
                             return Ok(execution_result);
                         } else if let Some(delayed_state) =
-                            state.host_error().downcast_ref::<DelayedExecutionContext>()
+                            state.host_error().downcast_ref::<SysExecHashResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            match SysExecHash::fn_impl(
-                                self.store.data_mut(),
-                                &delayed_state.bytecode_hash32,
-                                delayed_state.input.clone(),
-                                delayed_state.return_len,
-                                delayed_state.fuel_limit as u64,
-                                delayed_state.state,
+                            match SysExecHash::fn_continue(
+                                Caller::new(&mut self.store, Some(&instance)),
+                                delayed_state,
                             ) {
-                                Ok(_consumed_fuel) => {
-                                    // TODO(dmitry123): "write fuel consumed and return data into memory?"
-                                    ExitCode::Ok.into_i32()
-                                }
-                                Err(exit_code) => exit_code,
+                                Ok(_) => ExitCode::Ok.into_i32(),
+                                Err(exit_code) => exit_code
+                                    .i32_exit_status()
+                                    .unwrap_or(ExitCode::UnknownError.into_i32()),
                             }
                         } else {
                             return Err(RuntimeError::Rwasm(
