@@ -33,4 +33,8 @@ sha2 = { version = "0.10.8" }
 wat = { version = "1.0.69" }
 
 [features]
+default = ["std"]
+std = [
+    "rwasm/std",
+]
 rwasm = []

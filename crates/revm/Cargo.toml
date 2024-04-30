@@ -71,6 +71,7 @@ std = [
     "revm-precompile/std",
     "revm-primitives/std",
     "dep:fluentbase-runtime",
+    "fluentbase-runtime?/std",
     "fluentbase-sdk/std",
 ]
 serde = ["dep:serde", "revm-precompile/serde", "revm-primitives/serde"]

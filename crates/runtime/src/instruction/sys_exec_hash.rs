@@ -1,4 +1,4 @@
-use crate::{Runtime, RuntimeContext};
+use crate::{DelayedExecutionContext, Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
@@ -8,7 +8,7 @@ pub struct SysExecHash;
 
 impl SysExecHash {
     pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+        caller: Caller<'_, RuntimeContext<DB>>,
         bytecode_hash32_offset: u32,
         input_offset: u32,
         input_len: u32,
@@ -24,27 +24,37 @@ impl SysExecHash {
         let input = caller.read_memory(input_offset, input_len)?.to_vec();
         let fuel_data = caller.read_memory(fuel_offset, 4)?;
         let fuel = LittleEndian::read_u32(fuel_data);
-        let exit_code = match Self::fn_impl(
-            caller.data_mut(),
-            &bytecode_hash32,
+
+        let runtime_error = DelayedExecutionContext {
+            bytecode_hash32,
             input,
             return_len,
-            fuel as u64,
+            fuel_limit: fuel,
             state,
-        ) {
-            Ok(remaining_fuel) => {
-                if return_len > 0 {
-                    let return_data = caller.data().execution_result.return_data.clone();
-                    caller.write_memory(return_offset, &return_data)?;
-                }
-                let mut fuel_buffer = [0u8; 4];
-                LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
-                caller.write_memory(fuel_offset, &fuel_buffer)?;
-                ExitCode::Ok.into_i32()
-            }
-            Err(err) => err,
         };
-        Ok(exit_code)
+        return Err(runtime_error.into());
+
+        // let exit_code = match Self::fn_impl(
+        //     caller.data_mut(),
+        //     &bytecode_hash32,
+        //     input,
+        //     return_len,
+        //     fuel as u64,
+        //     state,
+        // ) {
+        //     Ok(remaining_fuel) => {
+        //         if return_len > 0 {
+        //             let return_data = caller.data().execution_result.return_data.clone();
+        //             caller.write_memory(return_offset, &return_data)?;
+        //         }
+        //         let mut fuel_buffer = [0u8; 4];
+        //         LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
+        //         caller.write_memory(fuel_offset, &fuel_buffer)?;
+        //         ExitCode::Ok.into_i32()
+        //     }
+        //     Err(err) => err,
+        // };
+        // Ok(exit_code)
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
