@@ -543,11 +543,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             .with_fuel_limit(gas.remaining())
             .with_jzkt(jzkt)
             .with_state(STATE_MAIN);
-        let import_linker = Runtime::new_sovereign_linker();
-        let mut runtime = match Runtime::new(ctx, import_linker) {
-            Ok(runtime) => runtime,
-            Err(_) => return (Bytes::default(), ExitCode::CompilationError),
-        };
+        let mut runtime = Runtime::new(ctx);
         let result = match runtime.call() {
             Ok(result) => result,
             Err(_) => return (Bytes::default(), ExitCode::TransactError),

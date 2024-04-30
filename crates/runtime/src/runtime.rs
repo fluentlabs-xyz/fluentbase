@@ -34,6 +34,26 @@ impl Default for BytecodeOrHash {
     }
 }
 
+impl BytecodeOrHash {
+    pub fn with_resolved_hash(self) -> Self {
+        match self {
+            BytecodeOrHash::Bytecode(_, Some(_)) => self,
+            BytecodeOrHash::Bytecode(bytecode, None) => {
+                let hash = F254::from(poseidon_hash(&bytecode));
+                BytecodeOrHash::Bytecode(bytecode, Some(hash))
+            }
+            BytecodeOrHash::Hash(_) => self,
+        }
+    }
+
+    pub fn resolve_hash(&self) -> F254 {
+        match self {
+            BytecodeOrHash::Bytecode(_, hash) => hash.expect("poseidon hash must be resolved"),
+            BytecodeOrHash::Hash(hash) => *hash,
+        }
+    }
+}
+
 pub struct RuntimeContext<DB: IJournaledTrie> {
     // context inputs
     pub(crate) bytecode: BytecodeOrHash,
@@ -205,6 +225,7 @@ impl CachingRuntime {
 
     pub fn init_module(
         &mut self,
+        engine: &Engine,
         rwasm_hash: F254,
         rwasm_bytecode: &[u8],
     ) -> Result<&Module, RuntimeError> {
@@ -218,8 +239,8 @@ impl CachingRuntime {
         }
         let reduced_module =
             RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?;
-        let engine = Self::new_engine();
-        let module_builder = reduced_module.to_module_builder(&engine);
+        // let engine = Self::new_engine();
+        let module_builder = reduced_module.to_module_builder(engine);
         let module = module_builder.finish();
         Ok(entry.insert(module))
     }
@@ -233,9 +254,26 @@ thread_local! {
     static CACHING_RUNTIME: RefCell<CachingRuntime> = RefCell::new(CachingRuntime::new());
 }
 
+#[derive(Debug)]
+pub struct DelayedExecutionContext {
+    pub bytecode_hash32: [u8; 32],
+    pub input: Vec<u8>,
+    pub return_len: u32,
+    pub fuel_limit: u32,
+    pub state: u32,
+}
+
+impl Display for DelayedExecutionContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime resume error")
+    }
+}
+
+impl HostError for DelayedExecutionContext {}
+
 pub struct Runtime<DB: IJournaledTrie> {
     pub(crate) store: Store<RuntimeContext<DB>>,
-    pub(crate) instance: Instance,
+    pub(crate) linker: Linker<RuntimeContext<DB>>,
 }
 
 impl Runtime<EmptyJournalTrie> {
@@ -271,106 +309,90 @@ impl Runtime<EmptyJournalTrie> {
     }
 }
 
-#[derive(Debug)]
-pub struct DelayedExecutionContext {
-    pub bytecode_hash32: [u8; 32],
-    pub input: Vec<u8>,
-    pub return_len: u32,
-    pub fuel_limit: u32,
-    pub state: u32,
-}
-
-impl Display for DelayedExecutionContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "runtime resume error")
-    }
-}
-
-impl HostError for DelayedExecutionContext {}
-
 impl<DB: IJournaledTrie> Runtime<DB> {
     pub fn run_with_context(
         runtime_context: RuntimeContext<DB>,
-        import_linker: ImportLinker,
     ) -> Result<ExecutionResult, RuntimeError> {
-        todo!("not implemented")
-        // let runtime = Self::new(runtime_context, import_linker);
-        // if runtime.is_err() {
-        //     return Ok(ExecutionResult::new_error(Runtime::catch_trap(
-        //         &runtime.err().as_ref().unwrap().1,
-        //     )));
-        // }
-        // let mut runtime = runtime?;
-        // runtime.store.data_mut().clean_output();
-        // runtime.call()
+        Self::new(runtime_context).call()
     }
 
-    pub fn new(
-        mut runtime_context: RuntimeContext<DB>,
-        import_linker: ImportLinker,
-    ) -> Result<Self, RuntimeError> {
-        let (store, instance) = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
-            let bytecode_repr = take(&mut runtime_context.bytecode);
+    pub fn new(mut runtime_context: RuntimeContext<DB>) -> Self {
+        // make sure bytecode hash is resolved
+        runtime_context.bytecode = runtime_context.bytecode.with_resolved_hash();
+
+        // use existing engine or create a new one
+        let engine = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            let rwasm_hash = runtime_context.bytecode.resolve_hash();
+            caching_runtime
+                .resolve_module(&rwasm_hash)
+                .map(|module| module.engine.clone())
+                .unwrap_or_else(|| CachingRuntime::new_engine())
+        });
+
+        // create new linker and store (it shares same engine resources)
+        let mut store = Store::<RuntimeContext<DB>>::new(&engine, runtime_context);
+        let mut linker = Linker::<RuntimeContext<DB>>::new(&engine);
+
+        // add fuel if limit is specified
+        if store.data().fuel_limit > 0 {
+            store.add_fuel(store.data().fuel_limit).unwrap();
+        }
+
+        // register linker trampolines for external calls
+        if !store.data().is_shared {
+            runtime_register_sovereign_handlers(&mut linker, &mut store)
+        } else {
+            runtime_register_shared_handlers(&mut linker, &mut store)
+        }
+
+        Self { store, linker }
+    }
+
+    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
+        let instance = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            let bytecode_repr = take(&mut self.store.data_mut().bytecode);
 
             // resolve cached module or init it
             let module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
                     // if we have cached module then use it, otherwise create new one and cache
-                    if let Some(engine_module) = caching_runtime.resolve_module(&hash) {
-                        Ok(engine_module)
+                    if let Some(module) = caching_runtime.resolve_module(&hash) {
+                        Ok(module)
                     } else {
-                        caching_runtime.init_module(hash, &bytecode)
+                        caching_runtime.init_module(self.store.engine(), hash, &bytecode)
                     }
                 }
                 BytecodeOrHash::Hash(hash) => {
                     // if we have only hash then try to load module or fail fast
                     match caching_runtime.resolve_module(hash) {
-                        Some(engine_module) => Ok(engine_module),
+                        Some(module) => Ok(module),
                         None => {
-                            let rwasm_bytecode = runtime_context
+                            let rwasm_bytecode = self
+                                .store
+                                .data_mut()
                                 .jzkt
                                 .as_ref()
                                 .ok_or(RuntimeError::UnloadedModule(*hash))?
                                 .preimage(hash);
-                            caching_runtime.init_module(*hash, &rwasm_bytecode)
+                            caching_runtime.init_module(self.store.engine(), *hash, &rwasm_bytecode)
                         }
                     }
                 }
             }?;
 
-            // create new linker and store (it shares same engine resources)
-            let mut linker = Linker::<RuntimeContext<DB>>::new(&module.engine);
-            let mut store = Store::<RuntimeContext<DB>>::new(&module.engine, runtime_context);
-
-            // add fuel if limit is specified
-            if store.data().fuel_limit > 0 {
-                store.add_fuel(store.data().fuel_limit).unwrap();
-            }
-
-            // register linker trampolines for external calls
-            if !store.data().is_shared {
-                runtime_register_sovereign_handlers(&mut linker, &mut store)
-            } else {
-                runtime_register_shared_handlers(&mut linker, &mut store)
-            }
-
             // init instance
-            let instance = linker
-                .instantiate(&mut store, &module)
+            let instance = self
+                .linker
+                .instantiate(&mut self.store, &module)
                 .map_err(Into::<RuntimeError>::into)?
-                .start(&mut store)
+                .start(&mut self.store)
                 .map_err(Into::<RuntimeError>::into)?;
 
-            Ok::<(Store<RuntimeContext<DB>>, Instance), RuntimeError>((store, instance))
+            Ok::<Instance, RuntimeError>(instance)
         })?;
 
-        Ok(Self { store, instance })
-    }
-
-    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
-        let mut next_result = self
-            .instance
+        let mut next_result = instance
             .get_func(&mut self.store, "main")
             .ok_or(RuntimeError::MissingEntrypoint)?
             .call_resumable(&mut self.store, &[], &mut [])

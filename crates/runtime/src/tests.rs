@@ -36,8 +36,7 @@ fn test_simple() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
-    let import_linker = Runtime::new_sovereign_linker();
-    Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
+    Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx).unwrap();
 }
 
 #[test]
@@ -60,11 +59,10 @@ fn test_wrong_indirect_type() {
     ))
     "#,
     );
-    let import_linker = Runtime::new_sovereign_linker();
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
         .with_state(1000);
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
+    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
     runtime.call().unwrap();
     runtime.data_mut().state = 0;
     let res = runtime.call();
@@ -96,9 +94,7 @@ fn test_keccak256() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(1_000_000);
-    let import_linker = Runtime::new_sovereign_linker();
-    let execution_result =
-        Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
+    let execution_result = Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx).unwrap();
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(
