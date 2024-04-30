@@ -90,21 +90,13 @@ impl SysExecHash {
         fuel_limit: u64,
         state: u32,
     ) -> Result<u64, i32> {
-        let import_linker = Runtime::new_sovereign_linker();
-
         // take jzkt from the existing context (we will return it back soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
 
+        // check call depth overflow
         if ctx.depth + 1 >= 1024 {
             return Err(ExitCode::CallDepthOverflow.into_i32());
         }
-
-        // println!(
-        //     "sys_exec_hash(0x{}): fuel_limit={} depth={}",
-        //     hex::encode(bytecode_hash32),
-        //     fuel_limit,
-        //     ctx.depth,
-        // );
 
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
@@ -115,24 +107,13 @@ impl SysExecHash {
             .with_jzkt(jzkt)
             .with_state(state)
             .with_depth(ctx.depth + 1);
-        let execution_result = match Runtime::new(ctx2, import_linker) {
-            Ok(mut runtime) => runtime.call().unwrap_or_else(|err| {
-                // return jzkt context back
-                ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
-                ExecutionResult::new_error(Runtime::catch_trap(&err))
-            }),
-            Err(err) => ExecutionResult::new_error(Runtime::catch_trap(&err)),
-        };
+        let mut runtime = Runtime::new(ctx2);
+        let execution_result = runtime
+            .call()
+            .unwrap_or_else(|err| ExecutionResult::new_error(Runtime::catch_trap(&err)));
 
-        // println!(
-        //     "{}exit_code={} ({}) fuel_consumed={} depth={} message={}",
-        //     " ".repeat(ctx.depth as usize),
-        //     ExitCode::from(execution_result.exit_code),
-        //     execution_result.exit_code,
-        //     execution_result.fuel_consumed,
-        //     ctx.depth,
-        //     from_utf8(&execution_result.output).unwrap_or("can't decode utf8 message")
-        // );
+        // return jzkt context back
+        ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
 
         // make sure there is no return overflow
         if return_len > 0 && execution_result.output.len() > return_len as usize {

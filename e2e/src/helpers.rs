@@ -17,10 +17,8 @@ pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) 
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000)
-        .with_input(input_data)
-        .with_catch_trap(true);
-    let import_linker = Runtime::new_sovereign_linker();
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
+        .with_input(input_data);
+    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
     runtime.data_mut().clean_output();
     runtime.call().unwrap()
 }
@@ -49,8 +47,7 @@ pub(crate) fn run_rwasm_with_raw_input(
         let ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(vec![])
             .with_state(STATE_MAIN)
             .with_fuel_limit(10_000_000)
-            .with_input(input_data.to_vec())
-            .with_catch_trap(true);
+            .with_input(input_data.to_vec());
         let mut store = Store::new(&engine, ctx);
         let mut linker = Linker::new(&engine);
         runtime_register_sovereign_handlers(&mut linker, &mut store);
@@ -91,10 +88,8 @@ pub(crate) fn run_rwasm_with_raw_input(
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(3_000_000)
-        .with_input(input_data.to_vec())
-        .with_catch_trap(true);
-    let import_linker = Runtime::new_sovereign_linker();
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx, import_linker).unwrap();
+        .with_input(input_data.to_vec());
+    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
     runtime.data_mut().clean_output();
     let execution_result = runtime.call().unwrap();
     if let Some(wasm_exit_code) = wasm_exit_code {

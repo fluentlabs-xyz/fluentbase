@@ -70,8 +70,7 @@ fn test_wasm_create() {
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(&mut runtime_ctx);
 
-    let import_linker = Runtime::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
     assert!(output.output.len() > 0);
     let contract_address = Address::from_slice(&output.output);
@@ -130,8 +129,7 @@ fn test_wasm_create2() {
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(&mut runtime_ctx);
 
-    let import_linker = Runtime::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
     assert!(output.output.len() > 0);
     let contract_address = Address::from_slice(&output.output);
@@ -163,7 +161,6 @@ fn test_wasm_call_after_create() {
     let create_value = B256::left_padding_from(&hex!("1000"));
     let call_value = B256::left_padding_from(&hex!("00"));
     let deploy_wasm = include_bytes!("../../../examples/bin/greeting.wasm");
-    let import_linker = Runtime::new_sovereign_linker();
 
     let (jzkt, deployed_contract_address) = {
         let expected_contract_address = calc_create_address(&caller_address, caller_account.nonce);
@@ -191,8 +188,7 @@ fn test_wasm_call_after_create() {
             .set_block_coinbase(block_coinbase);
         test_ctx.apply_ctx(&mut runtime_ctx);
 
-        let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
+        let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
         assert!(output.output.len() > 0);
         let contract_address = Address::from_slice(&output.output);
@@ -232,7 +228,7 @@ fn test_wasm_call_after_create() {
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(&mut runtime_ctx);
 
-        let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+        let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
 
         // println!("total opcodes spent: {}", output_res.tracer().logs.len());
         assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);

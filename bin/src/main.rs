@@ -5,9 +5,7 @@ extern crate core;
 use crate::types::FileFormat;
 use clap::Parser;
 use fluentbase_types::SysFuncIdx::SYS_STATE;
-use fluentbase_types::{
-    create_sovereign_import_linker, rwasm_module, ExitCode, STATE_DEPLOY, STATE_MAIN,
-};
+use fluentbase_types::{create_sovereign_import_linker, STATE_DEPLOY, STATE_MAIN};
 use log::debug;
 use rwasm::engine::bytecode::Instruction;
 use rwasm::engine::{RwasmConfig, StateRouterConfig};

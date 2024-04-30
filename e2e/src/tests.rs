@@ -108,9 +108,7 @@ fn test_secp256k1_verify() {
             .with_state(STATE_DEPLOY)
             .with_input(input_data.to_vec())
             .with_fuel_limit(10_000_000);
-        let import_linker = Runtime::new_sovereign_linker();
-        let output =
-            Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx, import_linker).unwrap();
+        let output = Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx).unwrap();
         assert_eq!(output.output, Vec::<u8>::new());
     }
 }

@@ -5,7 +5,6 @@ use fluentbase_sdk::{evm::ContractInput, LowLevelSDK};
 use fluentbase_types::{Address, Bytes, IJournaledTrie, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::HashMap;
 use paste::paste;
-use rwasm::core::ImportLinker;
 
 #[derive(Default)]
 pub(crate) struct TestingContext<const IS_RUNTIME: bool> {
@@ -39,16 +38,13 @@ impl<const IS_RUNTIME: bool> TestingContext<IS_RUNTIME> {
     pub fn run_rwasm_with_input(
         &self,
         runtime_ctx: RuntimeContext<DefaultEmptyRuntimeDatabase>,
-        import_linker: ImportLinker,
         is_deploy: bool,
         gas_limit: u64,
     ) -> ExecutionResult {
         let runtime_ctx = runtime_ctx
             .with_state(if is_deploy { STATE_DEPLOY } else { STATE_MAIN })
-            .with_fuel_limit(gas_limit)
-            .with_catch_trap(true);
-        let mut runtime =
-            Runtime::<DefaultEmptyRuntimeDatabase>::new(runtime_ctx, import_linker).unwrap();
+            .with_fuel_limit(gas_limit);
+        let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(runtime_ctx);
         runtime.data_mut().clean_output();
         runtime.call().unwrap()
     }

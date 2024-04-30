@@ -66,8 +66,7 @@ fn test_evm_create() {
         .set_tx_caller(caller_address);
     test_ctx.apply_ctx(&mut runtime_ctx);
 
-    let import_linker = Runtime::new_sovereign_linker();
-    let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+    let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
     assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
     let contract_address_vec = output.output;
     let contract_address = Address::from_slice(&contract_address_vec);
@@ -93,7 +92,6 @@ fn test_evm_call_after_create() {
     let contract_input_code = EVM_CONTRACT_BYTECODE1;
     let gas_limit: u64 = 10_000_000;
     const IS_RUNTIME: bool = true;
-    let import_linker = Runtime::new_sovereign_linker();
     let ecl_wasm = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
     let ecl_rwasm = wasm2rwasm(ecl_wasm.as_slice()).unwrap();
     let create_value = B256::left_padding_from(&hex!("1000"));
@@ -127,8 +125,7 @@ fn test_evm_call_after_create() {
             .set_tx_caller(caller_address);
         test_ctx.apply_ctx(&mut runtime_ctx);
         let jzkt = runtime_ctx.jzkt().clone();
-        let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
+        let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
         assert!(output.output.len() > 0);
         let contract_address = Address::from_slice(&output.output);
@@ -158,8 +155,7 @@ fn test_evm_call_after_create() {
             .set_contract_input(Bytes::copy_from_slice(&evm_call_core_input_vec))
             .set_contract_address(deployed_contract_address);
         test_ctx.apply_ctx(&mut runtime_ctx);
-        let output_res =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+        let output_res = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output_res.exit_code);
         let output = output_res.output;
         assert_eq!(
@@ -185,7 +181,6 @@ fn test_evm_call_from_wasm() {
     let gas_limit: u64 = 10_000_000;
 
     const IS_RUNTIME: bool = true;
-    let import_linker = Runtime::new_sovereign_linker();
 
     let jzkt = {
         let jzkt = LowLevelSDK::with_default_jzkt();
@@ -235,8 +230,7 @@ fn test_evm_call_from_wasm() {
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(&mut runtime_ctx);
         let jzkt = runtime_ctx.jzkt().clone();
-        let output =
-            test_ctx.run_rwasm_with_input(runtime_ctx, import_linker.clone(), false, gas_limit);
+        let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
         assert_eq!(ExitCode::Ok.into_i32(), output.exit_code);
         assert!(output.output.len() > 0);
         let evm_contract_address = Address::from_slice(&output.output);
@@ -263,7 +257,7 @@ fn test_evm_call_from_wasm() {
             .set_contract_address(deployed_contract_address)
             .set_contract_caller(caller_address);
         test_ctx.apply_ctx(&mut runtime_ctx);
-        let output = test_ctx.run_rwasm_with_input(runtime_ctx, import_linker, false, gas_limit);
+        let output = test_ctx.run_rwasm_with_input(runtime_ctx, false, gas_limit);
         assert_eq!(output.exit_code, ExitCode::Ok.into_i32());
         let call_output = output.output;
         assert_eq!(
