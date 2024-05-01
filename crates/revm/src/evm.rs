@@ -515,9 +515,12 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             block_difficulty: self.context.evm.env.block.difficulty.as_limbs()[0],
             block_gas_limit: self.context.evm.env.block.gas_limit.as_limbs()[0],
             block_base_fee: self.context.evm.env.block.basefee,
+            tx_gas_limit: self.context.evm.env.tx.gas_limit,
+            tx_nonce: self.context.evm.env.tx.nonce.unwrap_or_default(),
             tx_gas_price: self.context.evm.env.tx.gas_price,
             tx_gas_priority_fee: self.context.evm.env.tx.gas_priority_fee,
             tx_caller: self.context.evm.env.tx.caller,
+            tx_access_list: self.context.evm.env.tx.access_list.clone(),
         }
     }
 
