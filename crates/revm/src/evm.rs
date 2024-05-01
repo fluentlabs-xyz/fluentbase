@@ -763,94 +763,94 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     }
 }
 
-impl<EXT, DB: Database> Host for Evm<'_, EXT, DB> {
-    fn env_mut(&mut self) -> &mut Env {
-        &mut self.context.evm.env
-    }
-    fn env(&self) -> &Env {
-        &self.context.evm.env
-    }
-
-    #[inline]
-    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
-        self.context
-            .evm
-            .load_account_exist(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    #[inline]
-    fn block_hash(&mut self, number: U256) -> Option<B256> {
-        self.context
-            .evm
-            .block_hash(number)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    #[inline]
-    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        self.context
-            .evm
-            .balance(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    #[inline]
-    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
-        self.context
-            .evm
-            .code(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    #[inline]
-    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        self.context
-            .evm
-            .code_hash(address)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        self.context
-            .evm
-            .sload(address, index)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-        self.context
-            .evm
-            .sstore(address, index, value)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-
-    fn tload(&mut self, address: Address, index: U256) -> U256 {
-        self.context.evm.tload(address, index)
-    }
-
-    fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        self.context.evm.tstore(address, index, value)
-    }
-
-    fn log(&mut self, log: Log) {
-        self.context.evm.journaled_state.log(log);
-    }
-
-    fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-        self.context
-            .evm
-            .inner
-            .journaled_state
-            .selfdestruct(address, target, &mut self.context.evm.inner.db)
-            .map_err(|e| self.context.evm.error = Err(e))
-            .ok()
-    }
-}
+// impl<EXT, DB: Database> Host for Evm<'_, EXT, DB> {
+//     fn env_mut(&mut self) -> &mut Env {
+//         &mut self.context.evm.env
+//     }
+//     fn env(&self) -> &Env {
+//         &self.context.evm.env
+//     }
+//
+//     #[inline]
+//     fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
+//         self.context
+//             .evm
+//             .load_account_exist(address)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     #[inline]
+//     fn block_hash(&mut self, number: U256) -> Option<B256> {
+//         self.context
+//             .evm
+//             .block_hash(number)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     #[inline]
+//     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+//         self.context
+//             .evm
+//             .balance(address)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     #[inline]
+//     fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
+//         self.context
+//             .evm
+//             .code(address)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     #[inline]
+//     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+//         self.context
+//             .evm
+//             .code_hash(address)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
+//         self.context
+//             .evm
+//             .sload(address, index)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+//         self.context
+//             .evm
+//             .sstore(address, index, value)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+//
+//     fn tload(&mut self, address: Address, index: U256) -> U256 {
+//         self.context.evm.tload(address, index)
+//     }
+//
+//     fn tstore(&mut self, address: Address, index: U256, value: U256) {
+//         self.context.evm.tstore(address, index, value)
+//     }
+//
+//     fn log(&mut self, log: Log) {
+//         self.context.evm.journaled_state.log(log);
+//     }
+//
+//     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
+//         self.context
+//             .evm
+//             .inner
+//             .journaled_state
+//             .selfdestruct(address, target, &mut self.context.evm.inner.db)
+//             .map_err(|e| self.context.evm.error = Err(e))
+//             .ok()
+//     }
+// }
