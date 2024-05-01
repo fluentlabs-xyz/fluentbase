@@ -60,29 +60,27 @@ pub fn devnet_genesis() -> Genesis {
     }
 
     let mut alloc = BTreeMap::from([
-        // default testing account
+        // default testing accounts
         initial_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        // open-zeppelin testing accounts
-        initial_balance!("F5F6BC97509fB7F6d5E39d507ACCeECae2abb6f7"),
-        initial_balance!("ab6BD638aaB7357cEC168A9d77C51a260A8B6503"),
-        initial_balance!("A15125A5a31e6911e31f0C1426BB13eDa676d3a4"),
-        initial_balance!("C4dd8B42789b315157C01E2409E086e595Beb489"),
-        initial_balance!("Ea3a648B2E00D966797f1f8c117afE9b872Ad058"),
-        initial_balance!("C32C445e93679dA7C61e471b2e9dEF2653929D26"),
-        initial_balance!("b2CB29E6FcB6F4f398488172CAe9a308A8E68C14"),
-        initial_balance!("b34675DC0c51d4b5a1B6e82aaf75D8FdC6fE68C5"),
-        initial_balance!("2F5CDAC2ACde59De3E2FDd0F111e91621e0E22a2"),
-        initial_balance!("A02dF09Edb72a09f4441328668010fE0f77dA981"),
-        initial_balance!("47729Dd7c44d12c74C77425Ff500d8274D9ce227"),
-        initial_balance!("D45F610aB00ad979e105cAc69866cFBD3Ac64Cea"),
-        initial_balance!("4477F4644C9F72Fd76A5EdB159c9aa2AF9f8885e"),
-        initial_balance!("CEf21af3c11501e7Ad6D8386cE1CDe30Bd791de3"),
-        initial_balance!("3E3941F848B23e2b24eE5FDaAB11d5D498463Fc8"),
-        initial_balance!("d1ce4aB957D293d3eD07aA931df6b1184847F5BC"),
-        initial_balance!("41b3F033C659646a87eD1581387f4980AcbFb217"),
-        initial_balance!("22aC22A397bCf60E7B6F10c9D6606741A27b4AC0"),
-        initial_balance!("F905f7C2B38Af406a55a67979aCFF715c1448FF9"),
-        initial_balance!("218aBbc6a1b0F655e9D5c4b7b940cB986B473CE7"),
+        initial_balance!("70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        initial_balance!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        initial_balance!("90F79bf6EB2c4f870365E785982E1f101E93b906"),
+        initial_balance!("15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
+        initial_balance!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc"),
+        initial_balance!("976EA74026E726554dB657fA54763abd0C3a0aa9"),
+        initial_balance!("14dC79964da2C08b23698B3D3cc7Ca32193d9955"),
+        initial_balance!("23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"),
+        initial_balance!("a0Ee7A142d267C1f36714E4a8F75612F20a79720"),
+        initial_balance!("Bcd4042DE499D14e55001CcbB24a551F3b954096"),
+        initial_balance!("71bE63f3384f5fb98995898A86B02Fb2426c5788"),
+        initial_balance!("FABB0ac9d68B0B445fB7357272Ff202C5651694a"),
+        initial_balance!("1CBd3b2770909D4e10f157cABC84C7264073C9Ec"),
+        initial_balance!("dF3e18d64BC6A983f673Ab319CCaE4f1a57C7097"),
+        initial_balance!("cd3B766CCDd6AE721141F452C550Ca635964ce71"),
+        initial_balance!("2546BcD3c84621e976D8185a91A922aE77ECEc30"),
+        initial_balance!("bDA5747bFD65F08deb54cb465eB87D40e51B197E"),
+        initial_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
+        initial_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
     ]);
 
     macro_rules! enable_rwasm_contract {
