@@ -47,13 +47,44 @@ pub fn devnet_genesis_from_file() -> Genesis {
 }
 
 pub fn devnet_genesis() -> Genesis {
-    let mut alloc = BTreeMap::from([(
-        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-        GenesisAccount {
-            balance: U256::from(100000_000000000000000000u128),
-            ..Default::default()
-        },
-    )]);
+    macro_rules! initial_balance {
+        ($address:literal) => {
+            (
+                address!($address),
+                GenesisAccount {
+                    balance: U256::from(100000_000000000000000000u128),
+                    ..Default::default()
+                },
+            )
+        };
+    }
+
+    let mut alloc = BTreeMap::from([
+        // default testing account
+        initial_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+        // open-zeppelin testing accounts
+        initial_balance!("5486aD47fEC44692159173358c78e1Ce0ccc2A6f"),
+        initial_balance!("CA9c8FdA293e245F3E5325B6Ef67819A074a604D"),
+        initial_balance!("6459beb38129C1c0e270a6e1E9312058611bc8eb"),
+        initial_balance!("ba6a3D9c390582045B8d19630a068Df354B4C3E4"),
+        initial_balance!("55BB3d5c3F09D93660e67f193ADfA0a4A026FCA7"),
+        initial_balance!("1a7c29f5d91fdD2158707679fB0A2cFB8DDC5774"),
+        initial_balance!("5aA5947Fd4623b525E1d237675dD7678BaAC3941"),
+        initial_balance!("1eBC6B6B1a3231C704B71E02195f5115F5141C3D"),
+        initial_balance!("6E6d85C93e584bd8f5449CaB7a7BC5c4c9986541"),
+        initial_balance!("419036aabEFBe8d5509EcfbAE3E71C1A61F7DbB4"),
+        initial_balance!("9CAe2b78D37595e8716BD3De82D3129D237Ce1Be"),
+        initial_balance!("521A0e4932D2CB6a27A26B7E28e7B4679Fec79E2"),
+        initial_balance!("56bFC36A3A9B423f33B9aA23890DcA8C9BabF497"),
+        initial_balance!("28535269fb136a49dd0b1Fe9d7EAd3E46C9c95CA"),
+        initial_balance!("6c068761872871CddaE7abF4eEd1944de86Fc876"),
+        initial_balance!("56a886eb7Fb5FE1f2b8C0029c4316E5F2E951849"),
+        initial_balance!("2a245DE3f86b5437AA5e7c9DEb8d5Aa6C5388617"),
+        initial_balance!("5D8E99a91293B41c7bc19704A303623844028Cee"),
+        initial_balance!("98F8aB2754E202C9C022A381E68d512C9E5114eD"),
+        initial_balance!("591C2DbCd38Aa30db84CAdB6a1DEB55D7caFC967"),
+    ]);
+
     macro_rules! enable_rwasm_contract {
         ($addr:ident, $file_path:literal) => {{
             use std::io::Write;
