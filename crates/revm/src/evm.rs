@@ -1,3 +1,4 @@
+use crate::types::{SStoreResult, SelfDestructResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
@@ -12,6 +13,9 @@ use crate::{
 };
 use core::{cell::RefCell, fmt, str::from_utf8};
 use fluentbase_codec::Encoder;
+use fluentbase_core::evm::sload::_evm_sload;
+use fluentbase_core::evm::sstore::_evm_sstore;
+use fluentbase_core::fluent_host::FluentHost;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     evm::create::_evm_create,
@@ -21,14 +25,14 @@ use fluentbase_core::{
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_sdk::{
-    evm::ContractInput, CoreInput, EvmCreateMethodInput, WasmCreateMethodInput,
+    evm::ContractInput, CoreInput, EvmCreateMethodInput, LowLevelSDK, WasmCreateMethodInput,
     EVM_CREATE_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
-    address, Bytes, ExitCode, IJournaledTrie, JournalEvent, JournalLog, NATIVE_TRANSFER_ADDRESS,
-    NATIVE_TRANSFER_KECCAK, STATE_MAIN,
+    address, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
+    NATIVE_TRANSFER_ADDRESS, NATIVE_TRANSFER_KECCAK, STATE_MAIN,
 };
-use revm_primitives::{hex, Bytecode, CreateScheme, Log, LogData};
+use revm_primitives::{hex, Bytecode, CreateScheme, Env, Log, LogData};
 use std::vec::Vec;
 
 /// EVM call stack limit.
@@ -756,5 +760,97 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     fn journal(&self) -> Vec<JournalEvent> {
         // TODO: "journal is not supported here"
         vec![]
+    }
+}
+
+impl<EXT, DB: Database> Host for Evm<'_, EXT, DB> {
+    fn env_mut(&mut self) -> &mut Env {
+        &mut self.context.evm.env
+    }
+    fn env(&self) -> &Env {
+        &self.context.evm.env
+    }
+
+    #[inline]
+    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
+        self.context
+            .evm
+            .load_account_exist(address)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    #[inline]
+    fn block_hash(&mut self, number: U256) -> Option<B256> {
+        self.context
+            .evm
+            .block_hash(number)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    #[inline]
+    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+        self.context
+            .evm
+            .balance(address)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    #[inline]
+    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
+        self.context
+            .evm
+            .code(address)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    #[inline]
+    fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
+        self.context
+            .evm
+            .code_hash(address)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
+        self.context
+            .evm
+            .sload(address, index)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+        self.context
+            .evm
+            .sstore(address, index, value)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
+    }
+
+    fn tload(&mut self, address: Address, index: U256) -> U256 {
+        self.context.evm.tload(address, index)
+    }
+
+    fn tstore(&mut self, address: Address, index: U256, value: U256) {
+        self.context.evm.tstore(address, index, value)
+    }
+
+    fn log(&mut self, log: Log) {
+        self.context.evm.journaled_state.log(log);
+    }
+
+    fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
+        self.context
+            .evm
+            .inner
+            .journaled_state
+            .selfdestruct(address, target, &mut self.context.evm.inner.db)
+            .map_err(|e| self.context.evm.error = Err(e))
+            .ok()
     }
 }

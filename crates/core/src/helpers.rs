@@ -158,9 +158,12 @@ pub(crate) fn exec_evm_bytecode(
                     block_difficulty: ExecutionContext::block_difficulty(),
                     block_gas_limit: ExecutionContext::block_gas_limit(),
                     block_base_fee: ExecutionContext::block_base_fee(),
+                    tx_gas_limit: ExecutionContext::tx_gas_limit(),
+                    tx_nonce: ExecutionContext::tx_nonce(),
                     tx_gas_price: ExecutionContext::tx_gas_price(),
                     tx_gas_priority_fee: ExecutionContext::tx_gas_priority_fee(),
                     tx_caller: ExecutionContext::tx_caller(),
+                    tx_access_list: ExecutionContext::tx_access_list(),
                 }
                 .encode_to_vec(0);
                 let exit_code = LowLevelSDK::sys_exec_hash(

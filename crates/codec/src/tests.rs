@@ -247,3 +247,31 @@ fn test_option_non_primitive() {
     Option::<Vec<u32>>::decode_body(&mut buffer_decoder, 0, &mut decoded_value);
     assert_eq!(value, decoded_value);
 }
+
+#[test]
+fn test_simple_tuple() {
+    type Tuple = (u32, u32);
+    let encoded_buffer = (100u32, 20u32).encode_to_vec(0);
+    let mut decoder = BufferDecoder::new(&encoded_buffer);
+    let mut result: Tuple = Default::default();
+    Tuple::decode_header(&mut decoder, 0, &mut result);
+    assert_eq!(result, (100, 20))
+}
+
+#[test]
+fn test_complex_tuple() {
+    type Tuple = (Vec<u8>, Vec<Vec<u8>>);
+    let original_data = (
+        vec![1u8, 2u8, 3u8],
+        vec![
+            vec![0u8, 1u8, 2u8],
+            vec![3u8, 4u8, 5u8],
+            vec![6u8, 7u8, 8u8],
+        ],
+    );
+    let encoded_buffer = original_data.encode_to_vec(0);
+    let mut decoder = BufferDecoder::new(&encoded_buffer);
+    let mut result: Tuple = Default::default();
+    Tuple::decode_body(&mut decoder, 0, &mut result);
+    assert_eq!(result, original_data)
+}
