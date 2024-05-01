@@ -19,6 +19,7 @@ mod primitive;
 mod serde;
 #[cfg(test)]
 mod tests;
+mod tuple;
 mod vec;
 
 pub use fluentbase_codec_derive::Codec;

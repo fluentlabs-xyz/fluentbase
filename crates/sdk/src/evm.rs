@@ -26,9 +26,12 @@ pub struct ContractInput {
     pub block_gas_limit: u64,
     pub block_base_fee: U256,
     // tx info
+    pub tx_gas_limit: u64,
+    pub tx_nonce: u64,
     pub tx_gas_price: U256,
     pub tx_gas_priority_fee: Option<U256>,
     pub tx_caller: Address,
+    pub tx_access_list: Vec<(Address, Vec<U256>)>,
     // pub tx_blob_hashes: Vec<B256>,
     // pub tx_blob_gas_price: u64,
 }
@@ -121,9 +124,12 @@ impl ExecutionContext {
     impl_reader_func!(fn block_gas_limit() -> u64, <ContractInput as IContractInput>::BlockGasLimit);
     impl_reader_func!(fn block_base_fee() -> U256, <ContractInput as IContractInput>::BlockBaseFee);
     // tx info
+    impl_reader_func!(fn tx_gas_limit() -> u64, <ContractInput as IContractInput>::TxGasLimit);
+    impl_reader_func!(fn tx_nonce() -> u64, <ContractInput as IContractInput>::TxNonce);
     impl_reader_func!(fn tx_gas_price() -> U256, <ContractInput as IContractInput>::TxGasPrice);
     impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, <ContractInput as IContractInput>::TxGasPriorityFee);
     impl_reader_func!(fn tx_caller() -> Address, <ContractInput as IContractInput>::TxCaller);
+    impl_reader_func!(fn tx_access_list() -> Vec<(Address, Vec<U256>)>, <ContractInput as IContractInput>::TxAccessList);
 
     pub fn static_return_and_exit<const N: usize>(
         &self,

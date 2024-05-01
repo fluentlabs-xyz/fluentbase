@@ -95,7 +95,7 @@ impl<T: Sized + Encoder<T> + Default> Encoder<Option<T>> for Option<T> {
         result: &mut Option<T>,
     ) -> (usize, usize) {
         let mut option_flag: u8 = 0;
-        u8::decode_header(decoder, field_offset, &mut option_flag);
+        let header = u8::decode_header(decoder, field_offset, &mut option_flag);
         *result = if option_flag != 0 {
             let mut result_inner: T = Default::default();
             T::decode_header(decoder, field_offset + 1, &mut result_inner);
@@ -103,7 +103,7 @@ impl<T: Sized + Encoder<T> + Default> Encoder<Option<T>> for Option<T> {
         } else {
             None
         };
-        (0, 0)
+        header
     }
 
     fn decode_body(decoder: &mut BufferDecoder, field_offset: usize, result: &mut Option<T>) {
