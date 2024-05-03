@@ -41,11 +41,10 @@ pub fn main() {
             let res = _evm_call(method_input);
             debug_log(&format!(
                 "ecl: EVM_CALL_METHOD_ID: {}",
-                result_value!(
-                res.as_ref()
+                result_value!(res
+                    .as_ref()
                     .map(|v| format!("bytes: {}", v))
-                    .map_err(|v| format!("exit_code: {}", v))
-                )
+                    .map_err(|v| format!("exit_code: {}", v)))
             ));
             let output = unwrap_exit_code(res);
             LowLevelSDK::sys_write(&output)
