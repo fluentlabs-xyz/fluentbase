@@ -4,7 +4,7 @@ use crate::evm::{call::_evm_call, create::_evm_create};
 use crate::{
     account_types::JZKT_ACCOUNT_BALANCE_FIELD, fluent_host::FluentHost, Account, AccountCheckpoint,
 };
-use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::from_utf8;
 use fluentbase_codec::{BufferDecoder, Encoder};
@@ -100,6 +100,22 @@ pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_depl
         &gas_limit as *const u32,
         if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
     )
+}
+
+#[macro_export]
+macro_rules! result_value {
+    ($result:expr) => {
+        match $result {
+            Ok(v) => v,
+            Err(v) => v,
+        }
+    };
+}
+
+#[inline(always)]
+pub fn debug_log(msg: &str) {
+    let msg_bytes = msg.as_bytes();
+    LowLevelSDK::debug_log(msg_bytes.as_ptr(), msg_bytes.len() as u32)
 }
 
 const DOMAIN: [u8; 32] = [0u8; 32];
@@ -336,9 +352,10 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
 
 #[inline(always)]
 pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
-    result.unwrap_or_else(|exit_code| {
-        LowLevelSDK::sys_halt(exit_code.into_i32());
-        panic!("execution halted: {exit_code}")
+    result.unwrap_or_else(|v| {
+        debug_log(&format!("unwrap_exit_code: {}", v));
+        LowLevelSDK::sys_halt(v.into_i32());
+        panic!("execution halted: {v}")
     })
 }
 

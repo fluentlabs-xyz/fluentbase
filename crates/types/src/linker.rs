@@ -9,7 +9,7 @@ macro_rules! import_func {
     };
 }
 
-const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 21] = [
+const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 22] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -38,13 +38,14 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 21] = [
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
     import_func!("_wasm_to_rwasm_size", WASM_TO_RWASM_SIZE),
     import_func!("_wasm_to_rwasm", WASM_TO_RWASM),
+    import_func!("_debug_log", DEBUG_LOG),
 ];
 
-pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 21]>>() -> F {
+pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 22]>>() -> F {
     F::from(SHARED_IMPORT_LINKER)
 }
 
-const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 28] = [
+const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 29] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
@@ -73,9 +74,10 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 28] = [
     import_func!("_jzkt_preimage_copy", JZKT_PREIMAGE_COPY),
     import_func!("_wasm_to_rwasm_size", WASM_TO_RWASM_SIZE),
     import_func!("_wasm_to_rwasm", WASM_TO_RWASM),
+    import_func!("_debug_log", DEBUG_LOG),
 ];
 
-pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 28]>>() -> F
+pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 29]>>() -> F
 {
     F::from(SOVEREIGN_IMPORT_LINKER)
 }

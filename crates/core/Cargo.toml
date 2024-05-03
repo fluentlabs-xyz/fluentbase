@@ -32,7 +32,8 @@ hex = { version = "0.4.3" }
 crate-type = ["cdylib", "rlib", "staticlib"]
 
 [features]
-default = ["std"]
+default = ["std", "debug_log"]
+debug_log = []
 std = [
     "fluentbase-sdk/std",
     "fluentbase-types/std",

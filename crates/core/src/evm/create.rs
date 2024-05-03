@@ -1,6 +1,7 @@
-use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
+use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
+use alloc::format;
 use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{EvmCreateMethodInput, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode, B256};
@@ -14,6 +15,8 @@ use revm_interpreter::{
 use revm_primitives::U256;
 
 pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
+    debug_log("_evm_create start");
+
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
     if is_static {
@@ -77,6 +80,11 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     let evm_loader = Bytes::default();
 
     callee_account.update_bytecode(&result.output, None, &evm_loader, None);
+
+    debug_log(&format!(
+        "_evm_create: return: Ok: callee_account.address: {}",
+        callee_account.address
+    ));
 
     Account::commit();
 

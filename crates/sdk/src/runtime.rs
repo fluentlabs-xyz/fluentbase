@@ -1,5 +1,6 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_runtime::instruction::debug_log::DebugLog;
 use fluentbase_runtime::types::InMemoryTrieDb;
 use fluentbase_runtime::zktrie::ZkTrieStateDb;
 use fluentbase_runtime::{
@@ -290,6 +291,10 @@ impl LowLevelAPI for LowLevelSDK {
             dest[..output_len as usize].copy_from_slice(&rwasm_binary);
         }
         ExitCode::Ok.into_i32()
+    }
+    fn debug_log(msg_ptr: *const u8, msg_len: u32) {
+        let msg = unsafe { &*ptr::slice_from_raw_parts(msg_ptr, msg_len as usize) };
+        DebugLog::fn_impl(msg)
     }
 }
 

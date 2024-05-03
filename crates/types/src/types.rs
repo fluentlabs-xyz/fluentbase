@@ -247,6 +247,8 @@ pub enum SysFuncIdx {
     // rwasm
     WASM_TO_RWASM_SIZE = 0x0801,
     WASM_TO_RWASM = 0x0802,
+
+    DEBUG_LOG = 0x0901,
 }
 
 impl SysFuncIdx {
@@ -310,6 +312,8 @@ impl From<u32> for SysFuncIdx {
 
             0x0801 => Self::WASM_TO_RWASM_SIZE,
             0x0802 => Self::WASM_TO_RWASM,
+
+            0x0901 => Self::DEBUG_LOG,
 
             _ => Self::UNKNOWN,
         }
