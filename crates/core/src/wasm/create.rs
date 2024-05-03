@@ -1,22 +1,29 @@
-use crate::{account::Account, helpers::rwasm_exec_hash};
-use alloc::vec;
+use alloc::{format, vec};
+
+use revm_primitives::RWASM_MAX_CODE_SIZE;
+
 use fluentbase_sdk::evm::{ExecutionContext, B256};
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
-use fluentbase_types::{Address, ExitCode, U256};
-use revm_primitives::RWASM_MAX_CODE_SIZE;
+use fluentbase_types::{Address, ExitCode};
+
+use crate::helpers::debug_log;
+use crate::{account::Account, helpers::rwasm_exec_hash};
 
 pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
+    debug_log("_wasm_create start");
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
 
     // check write protection
     if ExecutionContext::contract_is_static() {
+        debug_log("_wasm_create return: Err: ExitCode::WriteProtection");
         return Err(ExitCode::WriteProtection);
     }
 
     // code length can't exceed max constructor limit
     if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
+        debug_log("_wasm_create return: Err: ExitCode::ContractSizeLimit");
         return Err(ExitCode::ContractSizeLimit);
     }
 
@@ -66,8 +73,13 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     );
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {
+        debug_log("_wasm_create return: Err: ExitCode::TransactError");
         return Err(ExitCode::TransactError);
     }
 
+    debug_log(&format!(
+        "_wasm_create return: Ok: contract_account.address {}",
+        contract_account.address
+    ));
     Ok(contract_account.address)
 }

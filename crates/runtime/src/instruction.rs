@@ -2,6 +2,7 @@ pub mod crypto_ecrecover;
 pub mod crypto_keccak256;
 pub mod crypto_poseidon;
 pub mod crypto_poseidon2;
+pub mod debug_log;
 pub mod jzkt_checkpoint;
 pub mod jzkt_commit;
 pub mod jzkt_compute_root;
@@ -27,6 +28,7 @@ pub mod sys_write;
 pub mod wasm_to_rwasm;
 pub mod wasm_to_rwasm_size;
 
+use crate::instruction::debug_log::DebugLog;
 use crate::instruction::sys_fuel::SysFuel;
 use crate::instruction::wasm_to_rwasm::WasmToRwasm;
 use crate::instruction::wasm_to_rwasm_size::WasmToRwasmSize;
@@ -92,6 +94,8 @@ impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1
 impl_runtime_handler!(WasmToRwasmSize, WASM_TO_RWASM_SIZE, fn fluentbase_v1alpha::_wasm_to_rwasm_size(input_offset: u32, input_len: u32) -> i32);
 impl_runtime_handler!(WasmToRwasm, WASM_TO_RWASM, fn fluentbase_v1alpha::_wasm_to_rwasm(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
 
+impl_runtime_handler!(DebugLog, DEBUG_LOG, fn fluentbase_v1alpha::_debug_log(msg_offset: u32, msg_len: u32) -> ());
+
 fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     linker: &mut Linker<RuntimeContext<DB>>,
     store: &mut Store<RuntimeContext<DB>>,
@@ -130,6 +134,7 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     JzktPreimageCopy::register_handler(linker, store);
     WasmToRwasmSize::register_handler(linker, store);
     WasmToRwasm::register_handler(linker, store);
+    DebugLog::register_handler(linker, store);
 }
 
 pub fn runtime_register_sovereign_handlers<DB: IJournaledTrie>(

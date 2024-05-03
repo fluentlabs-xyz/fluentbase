@@ -64,4 +64,5 @@ pub trait LowLevelAPI {
         output_ptr: *mut u8,
         output_len: u32,
     ) -> i32;
+    fn debug_log(msg_ptr: *const u8, msg_len: u32);
 }

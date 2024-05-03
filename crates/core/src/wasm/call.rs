@@ -1,12 +1,15 @@
-use crate::account::Account;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext, U256},
     LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
 };
-use fluentbase_types::{Address, ExitCode, STATE_MAIN};
+use fluentbase_types::{ExitCode, STATE_MAIN};
+
+use crate::account::Account;
+use crate::helpers::debug_log;
 
 pub fn _wasm_call(input: WasmCallMethodInput) -> ExitCode {
+    debug_log("_wasm_call start");
     // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -45,5 +48,6 @@ pub fn _wasm_call(input: WasmCallMethodInput) -> ExitCode {
 
     LowLevelSDK::sys_forward_output(0, out_size);
 
+    debug_log("_wasm_call return: OK");
     ExitCode::Ok
 }
