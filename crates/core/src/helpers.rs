@@ -1,5 +1,5 @@
 use crate::{account_types::JZKT_ACCOUNT_BALANCE_FIELD, fluent_host::FluentHost, Account};
-use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::str::from_utf8;
 use fluentbase_sdk::{
@@ -93,6 +93,22 @@ pub fn rwasm_exec_hash(code_hash32: &[u8], input: &[u8], gas_limit: u32, is_depl
     )
 }
 
+#[macro_export]
+macro_rules! result_value {
+    ($result:expr) => {
+        match $result {
+            Ok(v) => v,
+            Err(v) => v,
+        }
+    };
+}
+
+#[inline(always)]
+pub fn debug_log(msg: &str) {
+    let msg_bytes = msg.as_bytes();
+    LowLevelSDK::debug_log(msg_bytes.as_ptr(), msg_bytes.len() as u32)
+}
+
 const DOMAIN: [u8; 32] = [0u8; 32];
 
 #[inline(always)]
@@ -130,6 +146,10 @@ pub(crate) fn exec_evm_bytecode(
     gas_limit: u64,
     is_static: bool,
 ) -> Result<Bytes, ExitCode> {
+    debug_log(&format!(
+        "exec_evm_bytecode: start: contract.caller {} contract.address {}",
+        contract.caller, contract.address
+    ));
     use crate::evm::{call::_evm_call, create::_evm_create};
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
@@ -246,11 +266,19 @@ pub(crate) fn exec_evm_bytecode(
                 // LowLevelSDK::sys_fuel(result.gas.spend());
                 if !result.is_ok() {
                     LowLevelSDK::sys_write(&result.output);
+                    debug_log(&format!(
+                        "exec_evm_bytecode: return: interpreter error: {:?}",
+                        result.result
+                    ));
                     return Err(exit_code_from_evm_error(result.result));
                 }
+                debug_log("exec_evm_bytecode: return: OK+output");
                 return Ok(result.output);
             }
-            InterpreterAction::None => return Ok(Bytes::default()),
+            InterpreterAction::None => {
+                debug_log("exec_evm_bytecode: return: OK+empty");
+                return Ok(Bytes::default());
+            }
         };
     }
 }
@@ -293,9 +321,10 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
 
 #[inline(always)]
 pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
-    result.unwrap_or_else(|exit_code| {
-        LowLevelSDK::sys_halt(exit_code.into_i32());
-        panic!("execution halted: {exit_code}")
+    result.unwrap_or_else(|v| {
+        debug_log(&format!("unwrap_exit_code: {}", v));
+        LowLevelSDK::sys_halt(v.into_i32());
+        panic!("execution halted: {v}")
     })
 }
 

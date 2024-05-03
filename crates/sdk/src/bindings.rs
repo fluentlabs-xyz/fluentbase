@@ -76,4 +76,5 @@ extern "C" {
         output_ptr: *mut u8,
         output_len: u32,
     ) -> i32;
+    pub fn _debug_log(msg_ptr: *const u8, msg_len: u32);
 }

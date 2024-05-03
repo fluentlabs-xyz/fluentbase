@@ -1,19 +1,20 @@
-use crate::helpers::{exec_evm_bytecode, CALL_STACK_DEPTH};
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
-use alloc::boxed::Box;
-use core::ptr;
+use alloc::format;
+use alloc::string::ToString;
+
+use revm_interpreter::{analysis::to_analysed, primitives::Bytecode, BytecodeLocked, Contract};
+
 use fluentbase_sdk::{
     evm::{ExecutionContext, U256},
-    EvmCallMethodInput, LowLevelAPI, LowLevelSDK,
+    EvmCallMethodInput, LowLevelAPI,
 };
-use fluentbase_types::{Address, Bytes, ExitCode};
-use revm_interpreter::{
-    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
-    Contract, InstructionResult, Interpreter, InterpreterAction, SharedMemory,
-};
-use revm_primitives::CreateScheme;
+use fluentbase_types::{Bytes, ExitCode};
+
+use crate::account::Account;
+use crate::helpers::{debug_log, exec_evm_bytecode};
+use crate::result_value;
 
 pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
+    debug_log("_evm_call start");
     // for static calls passing value is not allowed according to standards
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -38,5 +39,13 @@ pub fn _evm_call(input: EvmCallMethodInput) -> Result<Bytes, ExitCode> {
         caller: caller_address,
         value: input.value,
     };
-    exec_evm_bytecode(contract, gas_limit, is_static)
+    let res = exec_evm_bytecode(contract, gas_limit, is_static);
+    debug_log(&format!(
+        "_evm_call return: {}",
+        result_value!(res
+            .as_ref()
+            .map(|v| { format!("Ok: len {}", v.len()) })
+            .map_err(|v| { format!("Err: ExitCode: {}", v) }))
+    ));
+    res
 }

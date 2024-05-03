@@ -1,6 +1,6 @@
 use crate::{
     bindings::{
-        _crypto_ecrecover, _crypto_keccak256, _crypto_poseidon, _crypto_poseidon2,
+        _crypto_ecrecover, _crypto_keccak256, _crypto_poseidon, _crypto_poseidon2, _debug_log,
         _jzkt_checkpoint, _jzkt_commit, _jzkt_compute_root, _jzkt_emit_log, _jzkt_get, _jzkt_open,
         _jzkt_preimage_copy, _jzkt_preimage_size, _jzkt_remove, _jzkt_rollback, _jzkt_update,
         _jzkt_update_preimage, _sys_exec_hash, _sys_forward_output, _sys_fuel, _sys_halt,
@@ -190,5 +190,9 @@ impl LowLevelAPI for LowLevelSDK {
         output_len: u32,
     ) -> i32 {
         unsafe { _wasm_to_rwasm(input_ptr, input_len, output_ptr, output_len) }
+    }
+    #[inline(always)]
+    fn debug_log(msg_ptr: *const u8, msg_len: u32) {
+        unsafe { _debug_log(msg_ptr, msg_len) }
     }
 }

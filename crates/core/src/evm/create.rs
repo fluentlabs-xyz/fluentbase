@@ -1,18 +1,20 @@
-use crate::helpers::{exec_evm_bytecode, CALL_STACK_DEPTH};
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
-use alloc::boxed::Box;
+use alloc::format;
+
+use revm_interpreter::{
+    analysis::to_analysed,
+    primitives::{Bytecode, Bytes},
+    BytecodeLocked, Contract, MAX_CODE_SIZE,
+};
+
 use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::{EvmCreateMethodInput, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode, B256};
-use revm_interpreter::{
-    analysis::to_analysed,
-    opcode::make_instruction_table,
-    primitives::{Bytecode, Bytes},
-    BytecodeLocked, Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
-};
-use revm_primitives::U256;
+
+use crate::account::Account;
+use crate::helpers::{debug_log, exec_evm_bytecode};
 
 pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
+    debug_log("_evm_create start");
     // TODO: "gas calculations"
     // TODO: "load account so it needs to be marked as warm for access list"
     // TODO: "call depth stack check >= 1024"
@@ -20,6 +22,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
     if is_static {
+        debug_log("_evm_create: return: Err: ExitCode::WriteProtection");
         return Err(ExitCode::WriteProtection);
     }
 
@@ -56,6 +59,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
 
     let new_bytecode = exec_evm_bytecode(contract, input.gas_limit, is_static)?;
     if new_bytecode.len() > MAX_CODE_SIZE {
+        debug_log("_evm_create: return: Err: ExitCode::ContractSizeLimit");
         return Err(ExitCode::ContractSizeLimit);
     }
 
@@ -71,5 +75,9 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
 
     callee_account.update_bytecode(&new_bytecode, None, &evm_loader, None);
 
+    debug_log(&format!(
+        "_evm_create: return: Ok: callee_account.address: {}",
+        callee_account.address
+    ));
     Ok(callee_account.address)
 }
