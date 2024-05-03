@@ -6,8 +6,11 @@ use fluentbase_sdk::{
     LowLevelAPI, LowLevelSDK, WasmCallMethodInput, WasmCallMethodOutput,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
+use crate::helpers::debug_log;
 
 pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
+    debug_log("_wasm_call start");
+
     // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -42,6 +45,8 @@ pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
     let out_size = LowLevelSDK::sys_output_size();
     let mut output_buffer = vec![0u8; out_size as usize];
     LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, out_size);
+
+    debug_log("_wasm_call return: OK");
 
     WasmCallMethodOutput {
         output: output_buffer.into(),

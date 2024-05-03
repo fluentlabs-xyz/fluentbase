@@ -1,6 +1,7 @@
-use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
+use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
+use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec, result_value};
 use alloc::boxed::Box;
+use alloc::format;
 use core::ascii::escape_default;
 use core::ptr;
 use fluentbase_sdk::{
@@ -15,6 +16,7 @@ use revm_interpreter::{
 use revm_primitives::CreateScheme;
 
 pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
+    debug_log("_evm_call start");
     // for static calls passing value is not allowed according to standards
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -60,6 +62,14 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
         value: input.value,
     };
     let result = exec_evm_bytecode(contract, gas_limit, is_static);
+
+    // debug_log(&format!(
+    //     "_evm_call return: {}",
+    //     result_value!(result
+    //         .as_ref()
+    //         .map(|v| { format!("Ok: len {}", v.len()) })
+    //         .map_err(|v| { format!("Err: ExitCode: {}", v) }))
+    // ));
 
     caller_account.write_to_jzkt();
     callee_account.write_to_jzkt();
