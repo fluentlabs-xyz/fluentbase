@@ -263,13 +263,15 @@ impl Account {
     }
 
     pub fn load_source_bytecode(&self) -> Bytes {
-        let mut bytecode = vec![0u8; self.source_code_size as usize];
+        let bytecode_length = LowLevelSDK::jzkt_preimage_size(self.source_code_hash.as_ptr());
+        let mut bytecode = vec![0u8; bytecode_length as usize];
         LowLevelSDK::jzkt_preimage_copy(self.source_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
 
     pub fn load_rwasm_bytecode(&self) -> Bytes {
-        let mut bytecode = vec![0u8; self.rwasm_code_size as usize];
+        let bytecode_length = LowLevelSDK::jzkt_preimage_size(self.rwasm_code_hash.as_ptr());
+        let mut bytecode = vec![0u8; bytecode_length as usize];
         LowLevelSDK::jzkt_preimage_copy(self.rwasm_code_hash.as_ptr(), bytecode.as_mut_ptr());
         bytecode.into()
     }
