@@ -24,7 +24,7 @@ pub fn main() {
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
-    let account = Account::new_from_jzkt(&evm_contract_address);
+    let account = Account::new_from_jzkt(evm_contract_address);
     let rwasm_bytecode_hash = account.rwasm_code_hash;
 
     let exit_code = LowLevelSDK::sys_exec_hash(

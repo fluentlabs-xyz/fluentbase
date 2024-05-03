@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
+pub use bytecode::*;
 pub use consts::*;
 pub use helpers::*;
 pub use journal::*;
@@ -10,6 +11,7 @@ pub use types::*;
 extern crate alloc;
 extern crate core;
 
+mod bytecode;
 mod consts;
 mod helpers;
 mod journal;

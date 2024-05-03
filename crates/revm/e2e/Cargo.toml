@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
 fluentbase-revm = { package = "fluentbase-revm", path = "..", default-features = false, features = [
     "ethersdb",
     "std",

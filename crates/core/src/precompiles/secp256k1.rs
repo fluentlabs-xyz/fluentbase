@@ -1,9 +1,5 @@
-use fluentbase_sdk::{
-    evm::{Bytes, ExecutionContext},
-    LowLevelAPI,
-    LowLevelSDK,
-};
-use fluentbase_types::ExitCode;
+use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::{Bytes, ExitCode};
 use revm_interpreter::primitives::PrecompileError;
 
 pub fn deploy() {}

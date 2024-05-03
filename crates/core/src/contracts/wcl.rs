@@ -1,37 +1,35 @@
 use crate::decode_method_input;
-use crate::helpers::unwrap_exit_code;
+use crate::helpers::{unwrap_exit_code, InputHelper};
 use crate::wasm::{call::_wasm_call, create::_wasm_create};
+use alloc::vec;
+use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
-    evm::ExecutionContext, CoreInput, LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
-    WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    evm::ExecutionContext, CoreInput, EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
+    WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
+use fluentbase_types::Bytes;
 
 pub fn deploy() {}
 
 pub fn main() {
-    let contract_input = ExecutionContext::contract_input();
-    let mut buffer = BufferDecoder::new(contract_input.as_ref());
-    let mut core_input = CoreInput::default();
-    CoreInput::decode_body(&mut buffer, 0, &mut core_input);
-
-    match core_input.method_id {
+    let input_helper = InputHelper::new();
+    let method_id = input_helper.decode_method_id();
+    match method_id {
         WASM_CREATE_METHOD_ID => {
-            let method_input = decode_method_input!(core_input, WasmCreateMethodInput);
+            let method_input = input_helper.decode_method_input::<WasmCreateMethodInput>();
             let address = unwrap_exit_code(_wasm_create(method_input));
             LowLevelSDK::sys_write(address.as_slice());
         }
         WASM_CALL_METHOD_ID => {
-            let method_input = decode_method_input!(core_input, WasmCallMethodInput);
-            let exit_code = _wasm_call(method_input);
-            if !exit_code.is_ok() {
-                panic!(
-                    "wcl: call method failed, exit code: {}",
-                    exit_code.into_i32()
-                )
+            let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
+            let method_output = _wasm_call(method_input);
+            if !method_output.output.is_empty() {
+                LowLevelSDK::sys_write(method_output.output.as_ref());
             }
+            LowLevelSDK::sys_halt(method_output.exit_code);
         }
-        _ => panic!("unknown method id: {}", core_input.method_id),
+        _ => panic!("unknown method id: {}", method_id),
     }
 }
 
@@ -47,23 +45,21 @@ mod tests {
     #[test]
     fn test_greeting_deploy() {
         let wasm_bytecode = include_bytes!("../../../../examples/bin/greeting.wasm");
-        let wasm_call_input = WasmCreateMethodInput {
-            value: U256::ZERO,
-            bytecode: wasm_bytecode.into(),
-            gas_limit: 3_000_000,
-            salt: None,
-        };
         let core_input = CoreInput {
             method_id: WASM_CREATE_METHOD_ID,
-            method_data: wasm_call_input.encode_to_vec(0),
+            method_data: WasmCreateMethodInput {
+                value: U256::ZERO,
+                bytecode: wasm_bytecode.into(),
+                gas_limit: 3_000_000,
+                salt: None,
+            },
         };
         let contract_input = ContractInput {
-            contract_address: Address::new([0u8; 20]),
-            contract_caller: Address::new([3u8; 20]),
-            contract_input: Bytes::from(core_input.encode_to_vec(0)),
+            contract_input: core_input.encode_to_vec(0).into(),
             ..Default::default()
-        };
-        LowLevelSDK::with_test_input(contract_input.encode_to_vec(0));
+        }
+        .encode_to_vec(0);
+        LowLevelSDK::with_test_input(contract_input);
         super::main();
         assert!(LowLevelSDK::get_test_output().len() > 0);
     }

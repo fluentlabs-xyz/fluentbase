@@ -3,8 +3,11 @@ use super::{
     models::{SpecName, Test, TestSuite},
     utils::recover_address,
 };
+use crate::merkle_trie::state_merkle_trie_root2;
+use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_poseidon::poseidon_hash;
+use fluentbase_revm::EVM_STORAGE_ADDRESS;
 use fluentbase_types::{Address, ExitCode};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use lazy_static::lazy_static;
@@ -138,13 +141,13 @@ fn check_evm_execution<EXT1, EXT2>(
     >,
     print_json_outcome: bool,
 ) -> Result<(), TestError> {
-    let logs_root = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
+    let logs_root = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
     let logs_root2 = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
 
     if logs_root != logs_root2 {
         let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
         let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
-        println!("logs from EVM ({}):", logs1.len());
+        // println!("logs from EVM ({}):", logs1.len());
         // for log in logs1 {
         //     println!(
         //         " - {}: {}",
@@ -155,7 +158,7 @@ fn check_evm_execution<EXT1, EXT2>(
         //             .unwrap_or_default()
         //     )
         // }
-        println!("logs from FLUENT ({}):", logs2.len());
+        // println!("logs from FLUENT ({}):", logs2.len());
         // for log in logs2 {
         //     println!(
         //         " - {}: {}",
@@ -166,12 +169,86 @@ fn check_evm_execution<EXT1, EXT2>(
         //             .unwrap_or_default()
         //     )
         // }
-        // assert_eq!(logs_root, logs_root2, "LOGS ARE CORRUPTED!!!");
+        assert_eq!(logs_root, logs_root2, "LOGS ARE CORRUPTED!!!");
     }
 
     let state_root = state_merkle_trie_root(evm.context.evm.db.cache.trie_account().into_iter());
-    // let state_root2 =
-    // state_merkle_trie_root2(evm2.context.evm.db.cache.trie_account().into_iter());
+    let state_root2 = state_merkle_trie_root2(evm2.context.evm.db.cache.trie_account().into_iter());
+
+    // compare contracts
+    for (k, v) in evm.context.evm.db.cache.contracts.iter() {
+        let v2 = evm2
+            .context
+            .evm
+            .db
+            .cache
+            .contracts
+            .get(k)
+            .expect("missing fluent contract");
+        // we compare only evm bytecode
+        assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
+    }
+    for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
+        let v2 = evm2
+            .context
+            .evm
+            .db
+            .cache
+            .accounts
+            .get(address)
+            .expect("missing fluent account");
+        // assert_eq!(
+        //     format!("{:?}", v1.status),
+        //     format!("{:?}", v2.status),
+        //     "EVM account status mismatch",
+        // );
+        if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
+            println!("comparing account (0x{})...", hex::encode(address));
+            let a2 = v2
+                .account
+                .as_ref()
+                .map(|v| &v.info)
+                .expect("missing fluent account");
+            // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
+            println!(" - nonce: {}", a1.nonce);
+            assert_eq!(a1.nonce, a2.nonce, "EVM account nonce mismatch",);
+            println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            assert_eq!(a1.code_hash, a2.code_hash, "EVM account code_hash mismatch",);
+            assert_eq!(
+                a1.code.as_ref().map(|b| b.original_bytes()),
+                a2.code.as_ref().map(|b| b.original_bytes()),
+                "EVM account code mismatch",
+            );
+        }
+        println!(" - storage:");
+        if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
+            for (slot, value) in s1.iter() {
+                println!(
+                    " - + slot ({}) => ({})",
+                    hex::encode(&slot.to_be_bytes::<32>()),
+                    hex::encode(&value.to_be_bytes::<32>())
+                );
+                let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
+                let fluent_evm_storage = evm2
+                    .context
+                    .evm
+                    .db
+                    .cache
+                    .accounts
+                    .get(&EVM_STORAGE_ADDRESS)
+                    .expect("missing special EVM storage account");
+                let value2 = fluent_evm_storage
+                    .storage_slot(U256::from_be_bytes(storage_key))
+                    .expect("missing value storage key");
+                assert_eq!(
+                    *value,
+                    value2,
+                    "EVM storage key ({}) mismatch",
+                    hex::encode(&slot.to_be_bytes::<32>())
+                );
+            }
+        }
+    }
 
     let print_json_output = |error: Option<String>| {
         if print_json_outcome {
@@ -274,7 +351,7 @@ fn check_evm_execution<EXT1, EXT2>(
 lazy_static! {
     static ref EVM_LOADER: (Bytes, B256) = {
         let rwasm_bytecode: Bytes =
-            include_bytes!("../../../contracts/assets/evm_loader_contract.rwasm").into();
+            include_bytes!("../../../contracts/assets/loader_contract.rwasm").into();
         let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
         (rwasm_bytecode, rwasm_hash)
     };
@@ -289,6 +366,8 @@ pub fn execute_test_suite(
     if skip_test(path) {
         return Ok(());
     }
+
+    println!("Running test: {:?}", path);
 
     let s = std::fs::read_to_string(path).unwrap();
     let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {

@@ -5,6 +5,7 @@ use rwasm::core::HostError;
 use rwasm::{core::Trap, Caller};
 use std::fmt::{Display, Formatter};
 use std::mem::take;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct SysExecHash;
 
@@ -94,6 +95,11 @@ impl SysExecHash {
         fuel_limit: u64,
         state: u32,
     ) -> Result<u64, i32> {
+        let time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
         // take jzkt from the existing context (we will return it back soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
 
@@ -129,6 +135,16 @@ impl SysExecHash {
         // increase total fuel consumed and remember return data
         ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
+
+        println!(
+            "sys_exec_hash ({}), elapsed time: {}ms",
+            hex::encode(&bytecode_hash32),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                - time
+        );
 
         if execution_result.exit_code != ExitCode::Ok.into_i32() {
             return Err(execution_result.exit_code);

@@ -1,4 +1,4 @@
-use fluentbase_sdk::evm::ExecutionContext;
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 pub fn deploy() {}
 
@@ -8,6 +8,5 @@ const HELLO_WORLD: [u8; 12] = [
 ];
 
 pub fn main() {
-    let ctx = ExecutionContext::default();
-    ctx.static_return_and_exit(&HELLO_WORLD, 0);
+    LowLevelSDK::sys_write(HELLO_WORLD.as_slice());
 }

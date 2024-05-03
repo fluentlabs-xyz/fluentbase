@@ -1,15 +1,16 @@
-use crate::evm::{Address, Bytes, U256};
 use alloc::vec::Vec;
+use fluentbase_codec::Encoder;
 use fluentbase_codec_derive::{derive_keccak256_id, Codec};
+use fluentbase_types::{Address, Bytes, ExitCode, U256};
 
 #[derive(Default, Debug, Clone, Codec)]
-pub struct CoreInput {
+pub struct CoreInput<T: Encoder<T> + Default> {
     pub method_id: u32,
-    pub method_data: Vec<u8>,
+    pub method_data: T,
 }
 
-impl CoreInput {
-    pub fn new(method_id: u32, method_data: Vec<u8>) -> Self {
+impl<T: Encoder<T> + Default> CoreInput<T> {
+    pub fn new(method_id: u32, method_data: T) -> Self {
         CoreInput {
             method_id,
             method_data,
@@ -46,7 +47,29 @@ pub struct EvmCallMethodInput {
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCallMethodOutput {
-    output: Bytes,
+    pub output: Bytes,
+    pub exit_code: i32,
+    pub gas: u64,
+}
+
+impl EvmCallMethodOutput {
+    pub fn from_exit_code(exit_code: ExitCode) -> Self {
+        Self {
+            output: Default::default(),
+            exit_code: exit_code.into_i32(),
+            gas: 0,
+        }
+    }
+
+    pub fn with_output(mut self, output: Bytes) -> Self {
+        self.output = output;
+        self
+    }
+
+    pub fn with_gas(mut self, gas: u64) -> Self {
+        self.gas = gas;
+        self
+    }
 }
 
 pub const WASM_CREATE_METHOD_ID: u32 =
@@ -79,4 +102,26 @@ pub struct WasmCallMethodInput {
 #[derive(Default, Debug, Clone, Codec)]
 pub struct WasmCallMethodOutput {
     pub output: Bytes,
+    pub exit_code: i32,
+    pub gas: u64,
+}
+
+impl WasmCallMethodOutput {
+    pub fn from_exit_code<I: Into<i32>>(exit_code: I) -> Self {
+        Self {
+            output: Default::default(),
+            exit_code: exit_code.into(),
+            gas: 0,
+        }
+    }
+
+    pub fn with_output(mut self, output: Bytes) -> Self {
+        self.output = output;
+        self
+    }
+
+    pub fn with_gas(mut self, gas: u64) -> Self {
+        self.gas = gas;
+        self
+    }
 }

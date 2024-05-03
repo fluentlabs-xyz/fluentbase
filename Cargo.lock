@@ -1526,6 +1526,7 @@ name = "fluentbase-revm-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-rlp",
+ "fluentbase-core",
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-revm",

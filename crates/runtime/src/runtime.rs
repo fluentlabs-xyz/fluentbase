@@ -6,16 +6,19 @@ use crate::{
     JournaledTrie,
 };
 use fluentbase_poseidon::poseidon_hash;
+use fluentbase_types::SysFuncIdx::SYS_STATE;
 use fluentbase_types::{
     create_shared_import_linker, create_sovereign_import_linker, Bytes, EmptyJournalTrie, ExitCode,
-    IJournaledTrie, F254, POSEIDON_EMPTY,
+    IJournaledTrie, F254, POSEIDON_EMPTY, STATE_DEPLOY, STATE_MAIN,
 };
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use rwasm::core::Trap;
+use rwasm::engine::bytecode::Instruction;
+use rwasm::engine::{DropKeep, RwasmConfig, StateRouterConfig};
 use rwasm::{
-    core::ImportLinker, rwasm::RwasmModule, AsContextMut, Caller, Engine, FuelConsumptionMode,
-    Instance, Linker, Module, ResumableCall, Store, Value,
+    core::ImportLinker, instruction_set, rwasm::RwasmModule, AsContextMut, Caller, Engine,
+    FuelConsumptionMode, Instance, Linker, Module, ResumableCall, Store, Value,
 };
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -215,7 +218,19 @@ impl CachingRuntime {
     fn new_engine() -> Engine {
         // we can safely use sovereign import linker because all protected are filtered out during translation process
         let import_linker = Runtime::new_sovereign_linker();
-        let mut config = RwasmModule::default_config(Some(import_linker));
+        let mut config = RwasmModule::default_config(None);
+        config.rwasm_config(RwasmConfig {
+            state_router: Some(StateRouterConfig {
+                states: Box::new([
+                    ("deploy".to_string(), STATE_DEPLOY),
+                    ("main".to_string(), STATE_MAIN),
+                ]),
+                opcode: Instruction::Call(SYS_STATE.into()),
+            }),
+            entrypoint_name: None,
+            import_linker: Some(import_linker),
+            wrap_import_functions: true,
+        });
         config
             .floats(false)
             .fuel_consumption_mode(FuelConsumptionMode::Eager)
@@ -234,11 +249,13 @@ impl CachingRuntime {
             Entry::Vacant(entry) => entry,
         };
         // empty bytecode we can't execute so just return Ok exit code
-        if rwasm_bytecode.is_empty() {
-            return Err(RuntimeError::Rwasm(ExitCode::Ok.into_trap().into()));
-        }
-        let reduced_module =
-            RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?;
+        let reduced_module = if !rwasm_bytecode.is_empty() {
+            RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?
+        } else {
+            RwasmModule::from(instruction_set! {
+                Return(DropKeep::none())
+            })
+        };
         // let engine = Self::new_engine();
         let module_builder = reduced_module.to_module_builder(engine);
         let module = module_builder.finish();
@@ -364,6 +381,9 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                 }
             }?;
 
+            // return bytecode back
+            self.store.data_mut().bytecode = bytecode_repr;
+
             // init instance
             let instance = self
                 .linker
@@ -406,7 +426,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
                             ) {
-                                Ok(_) => ExitCode::Ok.into_i32(),
+                                Ok(exit_code) => exit_code,
                                 Err(exit_code) => exit_code
                                     .i32_exit_status()
                                     .unwrap_or(ExitCode::UnknownError.into_i32()),

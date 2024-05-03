@@ -41,7 +41,7 @@ std = [
     "alloy-rlp/std",
 ]
 ecl = []
-evm_loader = []
+loader = []
 wcl = []
 precompile_blake2 = ["dep:revm-precompile"]
 precompile_bn128 = ["dep:revm-precompile"]

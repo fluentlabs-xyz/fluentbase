@@ -14,9 +14,9 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_sdk::{evm::Address, Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
 use fluentbase_sdk::{EvmCallMethodInput, EvmCreateMethodInput};
-use fluentbase_types::{address, Bytes, B256, U256};
+use fluentbase_types::{address, Address, Bytes, B256, U256};
 use revm_interpreter::primitives::{hex, Bytecode};
 
 #[test]
@@ -111,7 +111,7 @@ fn evm_create_test() {
         .contract_input_wrapper
         .set_journal_checkpoint(LowLevelSDK::jzkt_checkpoint().into())
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -156,7 +156,7 @@ fn evm_call_after_create_test() {
     test_ctx
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -178,17 +178,17 @@ fn evm_call_after_create_test() {
 
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = match _evm_call(EvmCallMethodInput {
+    let call_result = _evm_call(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args.into(),
         gas_limit,
-    }) {
-        Ok(result) => result,
-        Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
-    };
+    });
+    if call_result.exit_code != 0 {
+        panic!("call failed with exit code: {}", call_result.exit_code)
+    }
     assert_eq!(
-        return_data.as_ref(),
+        call_result.output.as_ref(),
         &[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -226,7 +226,7 @@ fn evm_call_after_create2_test() {
         .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -248,17 +248,17 @@ fn evm_call_after_create2_test() {
 
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = match _evm_call(EvmCallMethodInput {
+    let return_data = _evm_call(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args_data.into(),
         gas_limit,
-    }) {
-        Ok(return_data) => return_data,
-        Err(exit_code) => panic!("call failed with exit code: {}", exit_code),
-    };
+    });
+    if return_data.exit_code != 0 {
+        panic!("call failed with exit code: {}", return_data.exit_code)
+    }
     assert_eq!(
-        return_data.as_ref(),
+        return_data.output.as_ref(),
         &[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -289,7 +289,7 @@ fn evm_balance_test() {
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(expected_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -327,7 +327,7 @@ fn evm_selfbalance_test() {
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(caller_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -363,7 +363,7 @@ fn evm_address_test() {
     test_ctx
         .try_add_account(&caller_account)
         .contract_input_wrapper
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -401,7 +401,7 @@ fn evm_selfbalance_from_contract_call_test() {
         .try_add_account(&caller_account)
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -434,15 +434,17 @@ fn evm_selfbalance_from_contract_call_test() {
         value: call_value,
         input: args_data.into(),
         gas_limit,
-    })
-    .unwrap();
+    });
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 4, 52, 48, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_eq!(hex::encode(expected_return_data), hex::encode(return_data));
+    assert_eq!(
+        hex::encode(expected_return_data),
+        hex::encode(return_data.output.as_ref())
+    );
 }
 
 #[test]
@@ -469,7 +471,7 @@ fn evm_balance_from_contract_call_test() {
     test_ctx
         .contract_input_wrapper
         .set_contract_input(Bytes::copy_from_slice(contract_input_data_bytes))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_address(computed_contract_address)
         .set_contract_caller(caller_address)
         .set_contract_value(contract_value)
@@ -506,13 +508,15 @@ fn evm_balance_from_contract_call_test() {
         value: call_value,
         input: args_data.into(),
         gas_limit,
-    })
-    .unwrap();
+    });
     let expected_return_data = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 12, 52, 51, 48, 50, 48, 55, 52, 50, 54, 51, 56, 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_eq!(hex::encode(expected_return_data), hex::encode(return_data));
+    assert_eq!(
+        hex::encode(expected_return_data),
+        hex::encode(return_data.output.as_ref())
+    );
 }

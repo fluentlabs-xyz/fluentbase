@@ -4,7 +4,7 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
+use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, RuntimeContext};
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_sdk::{
     CoreInput, WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
@@ -79,7 +79,7 @@ fn test_wasm_create() {
     {
         let mut test_ctx = TestingContext::<{ !IS_RUNTIME }>::new();
         test_ctx.apply_ctx();
-        let _account = Account::new_from_jzkt(&contract_address);
+        let _account = Account::new_from_jzkt(contract_address);
         // assert_eq!(236, account.load_source_bytecode().len());
         // assert_eq!(479, account.load_rwasm_bytecode().len());
     }
@@ -107,7 +107,7 @@ fn test_wasm_create2() {
         gas_limit,
         salt: Some(salt.into()),
     };
-    let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
+    let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input);
     let core_input_vec = core_input.encode_to_vec(0);
 
     let expected_contract_address =
@@ -138,7 +138,7 @@ fn test_wasm_create2() {
     {
         let mut test_ctx = TestingContext::<{ !IS_RUNTIME }>::new();
         test_ctx.apply_ctx();
-        let _account = Account::new_from_jzkt(&contract_address);
+        let _account = Account::new_from_jzkt(contract_address);
         // assert_eq!(236, account.load_source_bytecode().len());
         // assert_eq!(479, account.load_rwasm_bytecode().len());
     }
@@ -170,7 +170,7 @@ fn test_wasm_call_after_create() {
             gas_limit,
             salt: None,
         };
-        let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
+        let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input);
         let core_input_vec = core_input.encode_to_vec(0);
 
         let mut runtime_ctx =
@@ -197,7 +197,7 @@ fn test_wasm_call_after_create() {
         {
             let mut test_ctx = TestingContext::<{ !IS_RUNTIME }>::new();
             test_ctx.apply_ctx();
-            let _account = Account::new_from_jzkt(&contract_address);
+            let _account = Account::new_from_jzkt(contract_address);
             // assert_eq!(236, account.load_source_bytecode().len());
             // assert_eq!(479, account.load_rwasm_bytecode().len());
         }
@@ -212,7 +212,7 @@ fn test_wasm_call_after_create() {
             input: Default::default(),
             gas_limit,
         };
-        let ecl_core_input = CoreInput::new(WASM_CALL_METHOD_ID, ecl_method_input.encode_to_vec(0));
+        let ecl_core_input = CoreInput::new(WASM_CALL_METHOD_ID, ecl_method_input);
         let ecl_core_input_vec = ecl_core_input.encode_to_vec(0);
 
         let mut runtime_ctx =

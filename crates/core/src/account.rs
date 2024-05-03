@@ -76,14 +76,14 @@ impl Default for Account {
 }
 
 impl Account {
-    pub fn new(address: &Address) -> Self {
+    pub fn new(address: Address) -> Self {
         Self {
-            address: address.clone(),
+            address,
             ..Default::default()
         }
     }
 
-    pub fn new_from_fields(address: &Address, fields: &[Bytes32]) -> Self {
+    pub fn new_from_fields(address: Address, fields: &[Bytes32]) -> Self {
         let mut result = Self::new(address);
         assert_eq!(
             fields.len(),
@@ -110,7 +110,7 @@ impl Account {
         result
     }
 
-    pub fn new_from_jzkt(address: &Address) -> Self {
+    pub fn new_from_jzkt(address: Address) -> Self {
         let mut result = Self::new(address);
         let address_word = address.into_word();
         // code size and nonce
@@ -398,7 +398,7 @@ impl Account {
         } else {
             calc_create_address(&caller.address, old_nonce)
         };
-        let mut callee = Account::new_from_jzkt(&callee_address);
+        let mut callee = Account::new_from_jzkt(callee_address);
         // make sure there is no creation collision
         if callee.is_not_empty() {
             return Err(ExitCode::CreateCollision);
