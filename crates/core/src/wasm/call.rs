@@ -1,19 +1,20 @@
 use crate::account::Account;
+use alloc::vec;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, U256},
-    LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
+    evm::{ContractInput, ExecutionContext},
+    LowLevelAPI, LowLevelSDK, WasmCallMethodInput, WasmCallMethodOutput,
 };
-use fluentbase_types::{Address, ExitCode, STATE_MAIN};
+use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
 
-pub fn _wasm_call(input: WasmCallMethodInput) -> ExitCode {
+pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
     // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
-        return ExitCode::WriteProtection;
+        return WasmCallMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
     // parse callee address
-    let callee_account = Account::new_from_jzkt(&input.callee);
+    let callee_account = Account::new_from_jzkt(input.callee);
 
     let gas_limit = input.gas_limit as u32;
 
@@ -38,12 +39,13 @@ pub fn _wasm_call(input: WasmCallMethodInput) -> ExitCode {
         &gas_limit as *const u32,
         STATE_MAIN,
     );
-    if exit_code != ExitCode::Ok.into_i32() {
-        panic!("wasm call failed, exit code: {}", exit_code);
-    }
     let out_size = LowLevelSDK::sys_output_size();
+    let mut output_buffer = vec![0u8; out_size as usize];
+    LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, out_size);
 
-    LowLevelSDK::sys_forward_output(0, out_size);
-
-    ExitCode::Ok
+    WasmCallMethodOutput {
+        output: output_buffer.into(),
+        exit_code,
+        gas: gas_limit as u64,
+    }
 }

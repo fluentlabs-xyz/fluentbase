@@ -3,22 +3,14 @@ use alloc::{vec, vec::Vec};
 use fluentbase_codec::BufferDecoder;
 use fluentbase_codec::Encoder;
 use fluentbase_codec_derive::Codec;
-pub use fluentbase_types::{Address, Bytes, B256, U256};
+use fluentbase_types::{Address, Bytes, B256, U256};
 
 #[derive(Clone, Debug, Default, Codec)]
 pub struct ContractInput {
     // journal
     pub journal_checkpoint: u64,
-    // env info
-    pub env_chain_id: u64,
-    // contract info
-    pub contract_gas_limit: u64,
-    pub contract_address: Address,
-    pub contract_caller: Address,
-    pub contract_input: Bytes,
-    pub contract_value: U256,
-    pub contract_is_static: bool,
     // block info
+    pub block_chain_id: u64,
     pub block_coinbase: Address,
     pub block_timestamp: u64,
     pub block_number: u64,
@@ -32,8 +24,13 @@ pub struct ContractInput {
     pub tx_gas_priority_fee: Option<U256>,
     pub tx_caller: Address,
     pub tx_access_list: Vec<(Address, Vec<U256>)>,
-    // pub tx_blob_hashes: Vec<B256>,
-    // pub tx_blob_gas_price: u64,
+    // contract info
+    pub contract_gas_limit: u64,
+    pub contract_address: Address,
+    pub contract_caller: Address,
+    pub contract_value: U256,
+    pub contract_is_static: bool,
+    pub contract_input: Bytes,
 }
 
 macro_rules! impl_reader_helper {
@@ -73,7 +70,7 @@ macro_rules! impl_reader_func {
         paste::paste! {
             #[inline(always)]
             pub fn $fn_name() -> $return_typ {
-                impl_reader_helper!{@header $input_type, $return_typ}
+                impl_reader_helper!{@header <ContractInput as IContractInput>::$input_type, $return_typ}
             }
         }
     };
@@ -81,9 +78,9 @@ macro_rules! impl_reader_func {
         paste::paste! {
             #[inline(always)]
             pub fn $fn_name(result: &mut $return_typ) {
-                let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
-                LowLevelSDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
-                _ = <$input_type>::decode_field_header_at(&buffer, 0, result);
+                let mut buffer: [u8; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE] = [0; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE];
+                LowLevelSDK::sys_read(&mut buffer, <<ContractInput as IContractInput>::$input_type>::FIELD_OFFSET as u32);
+                _ = <<ContractInput as IContractInput>::$input_type>::decode_field_header_at(&buffer, 0, result);
             }
         }
     };
@@ -91,11 +88,11 @@ macro_rules! impl_reader_func {
         paste::paste! {
             #[inline(always)]
             pub fn $fn_name() -> $return_typ {
-                impl_reader_helper!{@dynamic $input_type, $return_typ}
+                impl_reader_helper!{@dynamic <ContractInput as IContractInput>::$input_type, $return_typ}
             }
             #[inline(always)]
             pub fn [<$fn_name _size>]() -> u32 {
-                impl_reader_helper!{@size $input_type, $return_typ}
+                impl_reader_helper!{@size <ContractInput as IContractInput>::$input_type, $return_typ}
             }
         }
     };
@@ -106,39 +103,29 @@ pub struct ExecutionContext;
 
 impl ExecutionContext {
     // journal
-    impl_reader_func!(fn journal_checkpoint() -> u64, <ContractInput as IContractInput>::JournalCheckpoint);
-    // env info
-    impl_reader_func!(fn env_chain_id() -> u64, <ContractInput as IContractInput>::EnvChainId);
-    // contract info
-    impl_reader_func!(fn contract_gas_limit() -> u64, <ContractInput as IContractInput>::ContractGasLimit);
-    impl_reader_func!(fn contract_address() -> Address, <ContractInput as IContractInput>::ContractAddress);
-    impl_reader_func!(fn contract_caller() -> Address, <ContractInput as IContractInput>::ContractCaller);
-    impl_reader_func!(@dynamic fn contract_input() -> Bytes, <ContractInput as IContractInput>::ContractInput);
-    impl_reader_func!(fn contract_value() -> U256, <ContractInput as IContractInput>::ContractValue);
-    impl_reader_func!(fn contract_is_static() -> bool, <ContractInput as IContractInput>::ContractIsStatic);
+    impl_reader_func!(fn journal_checkpoint() -> u64, JournalCheckpoint);
     // block info
-    impl_reader_func!(fn block_coinbase() -> Address, <ContractInput as IContractInput>::BlockCoinbase);
-    impl_reader_func!(fn block_timestamp() -> u64, <ContractInput as IContractInput>::BlockTimestamp);
-    impl_reader_func!(fn block_number() -> u64, <ContractInput as IContractInput>::BlockNumber);
-    impl_reader_func!(fn block_difficulty() -> u64, <ContractInput as IContractInput>::BlockDifficulty);
-    impl_reader_func!(fn block_gas_limit() -> u64, <ContractInput as IContractInput>::BlockGasLimit);
-    impl_reader_func!(fn block_base_fee() -> U256, <ContractInput as IContractInput>::BlockBaseFee);
+    impl_reader_func!(fn block_chain_id() -> u64, BlockChainId);
+    impl_reader_func!(fn block_coinbase() -> Address, BlockCoinbase);
+    impl_reader_func!(fn block_timestamp() -> u64, BlockTimestamp);
+    impl_reader_func!(fn block_number() -> u64, BlockNumber);
+    impl_reader_func!(fn block_difficulty() -> u64, BlockDifficulty);
+    impl_reader_func!(fn block_gas_limit() -> u64, BlockGasLimit);
+    impl_reader_func!(fn block_base_fee() -> U256, BlockBaseFee);
     // tx info
-    impl_reader_func!(fn tx_gas_limit() -> u64, <ContractInput as IContractInput>::TxGasLimit);
-    impl_reader_func!(fn tx_nonce() -> u64, <ContractInput as IContractInput>::TxNonce);
-    impl_reader_func!(fn tx_gas_price() -> U256, <ContractInput as IContractInput>::TxGasPrice);
-    impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, <ContractInput as IContractInput>::TxGasPriorityFee);
-    impl_reader_func!(fn tx_caller() -> Address, <ContractInput as IContractInput>::TxCaller);
-    impl_reader_func!(fn tx_access_list() -> Vec<(Address, Vec<U256>)>, <ContractInput as IContractInput>::TxAccessList);
-
-    pub fn static_return_and_exit<const N: usize>(
-        &self,
-        return_data: &'static [u8; N],
-        exit_code: i32,
-    ) {
-        LowLevelSDK::sys_write(return_data);
-        LowLevelSDK::sys_halt(exit_code);
-    }
+    impl_reader_func!(fn tx_gas_limit() -> u64, TxGasLimit);
+    impl_reader_func!(fn tx_nonce() -> u64, TxNonce);
+    impl_reader_func!(fn tx_gas_price() -> U256, TxGasPrice);
+    impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, TxGasPriorityFee);
+    impl_reader_func!(fn tx_caller() -> Address, TxCaller);
+    impl_reader_func!(fn tx_access_list() -> Vec<(Address, Vec<U256>)>, TxAccessList);
+    // contract info
+    impl_reader_func!(fn contract_gas_limit() -> u64, ContractGasLimit);
+    impl_reader_func!(fn contract_address() -> Address, ContractAddress);
+    impl_reader_func!(fn contract_caller() -> Address, ContractCaller);
+    impl_reader_func!(fn contract_value() -> U256, ContractValue);
+    impl_reader_func!(fn contract_is_static() -> bool, ContractIsStatic);
+    impl_reader_func!(@dynamic fn contract_input() -> Bytes, ContractInput);
 
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
         LowLevelSDK::sys_write(return_data.into().as_ref());

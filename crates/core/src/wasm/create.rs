@@ -1,9 +1,9 @@
 use crate::{account::Account, helpers::rwasm_exec_hash};
 use alloc::vec;
-use fluentbase_sdk::evm::{ExecutionContext, B256};
+use fluentbase_sdk::evm::ExecutionContext;
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
-use fluentbase_types::{Address, ExitCode, U256};
+use fluentbase_types::{Address, ExitCode, B256, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
@@ -30,7 +30,7 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     // read value input and contract address
     let caller_address = ExecutionContext::contract_caller();
     // load deployer and contract accounts
-    let mut deployer_account = Account::new_from_jzkt(&caller_address);
+    let mut deployer_account = Account::new_from_jzkt(caller_address);
 
     // create an account
     let mut contract_account = Account::create_account(
@@ -66,7 +66,7 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     );
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {
-        return Err(ExitCode::TransactError);
+        return Err(ExitCode::from(exit_code));
     }
 
     Ok(contract_account.address)

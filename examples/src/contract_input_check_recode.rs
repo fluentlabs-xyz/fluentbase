@@ -8,7 +8,7 @@ pub fn main() {
     let ctx = ExecutionContext::default();
 
     let contract_input = ExecutionContext::contract_input();
-    let env_chain_id = ExecutionContext::env_chain_id();
+    let block_chain_id = ExecutionContext::block_chain_id();
     let contract_gas_limit = ExecutionContext::contract_gas_limit();
     let contract_address = ExecutionContext::contract_address();
     let contract_caller = ExecutionContext::contract_caller();
@@ -29,7 +29,7 @@ pub fn main() {
     let contract_input_struct = ContractInput {
         journal_checkpoint,
         contract_input,
-        env_chain_id,
+        block_chain_id,
         contract_gas_limit,
         contract_address,
         contract_caller,
@@ -41,9 +41,12 @@ pub fn main() {
         block_difficulty,
         block_gas_limit,
         block_base_fee,
+        tx_gas_limit: ExecutionContext::tx_gas_limit(),
+        tx_nonce: ExecutionContext::tx_nonce(),
         tx_gas_price,
         tx_gas_priority_fee,
         tx_caller,
+        tx_access_list: ExecutionContext::tx_access_list(),
     };
     ctx.fast_return_and_exit(
         contract_input_struct.encode_to_vec(0),

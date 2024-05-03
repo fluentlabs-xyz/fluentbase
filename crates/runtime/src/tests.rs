@@ -1,11 +1,28 @@
 use crate::{runtime::Runtime, DefaultEmptyRuntimeDatabase, RuntimeContext};
+use fluentbase_types::SysFuncIdx::SYS_STATE;
+use fluentbase_types::{create_sovereign_import_linker, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
+use rwasm::engine::bytecode::Instruction;
+use rwasm::engine::{RwasmConfig, StateRouterConfig};
 use rwasm::rwasm::{BinaryFormat, RwasmModule};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let import_linker = Runtime::new_sovereign_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
-    let rwasm_module = RwasmModule::compile(&wasm_binary, Some(import_linker)).unwrap();
+    let mut rwasm_config = RwasmModule::default_config(Some(import_linker));
+    rwasm_config.rwasm_config(RwasmConfig {
+        state_router: Some(StateRouterConfig {
+            states: Box::new([
+                ("deploy".to_string(), STATE_DEPLOY),
+                ("main".to_string(), STATE_MAIN),
+            ]),
+            opcode: Instruction::Call(SYS_STATE.into()),
+        }),
+        entrypoint_name: None,
+        import_linker: Some(create_sovereign_import_linker()),
+        wrap_import_functions: true,
+    });
+    let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &rwasm_config).unwrap();
     let mut result = Vec::new();
     rwasm_module.write_binary_to_vec(&mut result).unwrap();
     result
@@ -53,20 +70,23 @@ fn test_wrong_indirect_type() {
           $const-i32 $id-i64
         )
     )
+    (func (export "deploy"))
     (func (export "main")
-        (call_indirect (type $wrong) (i64.const 0xffffffffff) (i32.const 0))
+        (i64.const 0)
+        (call_indirect (type $wrong) (i32.const 0xffffffff))
         (drop)
     ))
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
-        .with_state(1000);
+        .with_state(STATE_DEPLOY);
     let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
-    runtime.call().unwrap();
-    runtime.data_mut().state = 0;
-    let res = runtime.call();
-    assert_eq!(-2008, res.as_ref().unwrap().exit_code);
+    let res = runtime.call().unwrap();
+    assert_eq!(res.exit_code, 0);
+    runtime.data_mut().state = STATE_MAIN;
+    let res = runtime.call().unwrap();
+    assert_eq!(res.exit_code, -2008);
 }
 
 #[test]

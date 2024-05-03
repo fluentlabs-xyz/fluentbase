@@ -1,10 +1,10 @@
-use crate::types::{SStoreResult, SelfDestructResult};
+use crate::types::{bytecode_type_from_account, SStoreResult, SelfDestructResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
     gas::Gas,
     handler::Handler,
-    interpreter::{BytecodeType, CallOutcome, CreateOutcome, InterpreterResult},
+    interpreter::{CallOutcome, CreateOutcome, InterpreterResult},
     primitives::{
         specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
         ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, B256, U256,
@@ -25,12 +25,13 @@ use fluentbase_core::{
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_sdk::{
-    evm::ContractInput, CoreInput, EvmCreateMethodInput, LowLevelSDK, WasmCreateMethodInput,
-    EVM_CREATE_METHOD_ID, WASM_CREATE_METHOD_ID,
+    evm::ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, LowLevelSDK,
+    WasmCallMethodInput, WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
+    WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
-    address, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
-    NATIVE_TRANSFER_ADDRESS, NATIVE_TRANSFER_KECCAK, STATE_MAIN,
+    address, BytecodeType, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
+    NATIVE_TRANSFER_ADDRESS, NATIVE_TRANSFER_KECCAK, POSEIDON_EMPTY, STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Env, Log, LogData};
 use std::vec::Vec;
@@ -232,19 +233,19 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let ctx = &mut self.context;
         let pre_exec = self.handler.pre_execution();
 
+        // load access list and beneficiary if needed.
+        pre_exec.load_accounts(ctx)?;
+
         // load precompiles
         let precompiles = pre_exec.load_precompiles();
         ctx.evm.set_precompiles(precompiles);
 
-        // load access list and beneficiary if needed.
-        pre_exec.load_accounts(ctx)?;
-
         // deduce caller balance with its limit.
         pre_exec.deduct_caller(ctx)?;
 
-        let mut caller_account = ctx.evm.load_jzkt_account(ctx.evm.env.tx.caller)?;
-
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
+
+        let mut caller_account = ctx.evm.load_jzkt_account(ctx.evm.env.tx.caller)?;
 
         // Load EVM storage account
         let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
@@ -320,8 +321,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             return return_result(ExitCode::InsufficientBalance, gas);
         }
 
-        let checkpoint = self.context.evm.journaled_state.checkpoint();
-
         let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
             BytecodeType::EVM => {
                 let input = CoreInput {
@@ -331,8 +330,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                         value,
                         gas_limit: gas.remaining(),
                         salt,
-                    }
-                    .encode_to_vec(0),
+                    },
                 };
                 (
                     self.context
@@ -350,8 +348,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                         value,
                         gas_limit: gas.remaining(),
                         salt,
-                    }
-                    .encode_to_vec(0),
+                    },
                 };
                 (
                     self.context
@@ -364,10 +361,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         };
 
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
-            checkpoint,
             &mut gas,
             caller_account,
             &mut middleware_account,
+            None,
             core_input.into(),
             value,
         );
@@ -383,10 +380,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             );
             Some(Address::from_slice(output_buffer.as_ref()))
         } else {
-            self.context
-                .evm
-                .journaled_state
-                .checkpoint_revert(checkpoint);
             None
         };
 
@@ -409,23 +402,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         input: Bytes,
         gas_limit: u64,
     ) -> CallOutcome {
-        let return_result = |instruction_result: ExitCode, gas: Gas| CallOutcome {
-            result: InterpreterResult {
-                result: instruction_result,
-                output: Default::default(),
-                gas,
-            },
-            memory_offset: Default::default(),
-        };
-
         let mut gas = Gas::new(gas_limit);
-
-        // check call stack limit
-        if self.context.evm.journaled_state.depth as u64 > CALL_STACK_LIMIT {
-            return return_result(ExitCode::CallDepthOverflow, gas);
-        }
-
-        let checkpoint = self.context.evm.journaled_state.checkpoint();
 
         // Touch address. For "EIP-158 State Clear", this will erase empty accounts.
         if value == U256::ZERO {
@@ -442,73 +419,88 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         self.context.evm.touch(&caller_account.address);
         self.context.evm.touch(&callee_account.address);
 
-        // if value is not zero then transfer funds from one account to another
-        match self
+        let (callee_bytecode, _) = self
             .context
             .evm
-            .transfer(&caller_account.address, &callee_account.address, value)
-        {
-            Ok(result) => {
-                if let Some(exit_code) = result {
-                    return return_result(exit_code, gas);
+            .load_account(callee_account.address)
+            .unwrap();
+
+        let (mut middleware_account, core_input) =
+            match bytecode_type_from_account(&callee_bytecode.info) {
+                BytecodeType::EVM => {
+                    let input = CoreInput {
+                        method_id: EVM_CALL_METHOD_ID,
+                        method_data: EvmCallMethodInput {
+                            callee: callee_account.address,
+                            value,
+                            input,
+                            gas_limit: gas.remaining(),
+                        },
+                    };
+                    (
+                        self.context
+                            .evm
+                            .load_jzkt_account(ECL_CONTRACT_ADDRESS)
+                            .expect("failed to load ECL"),
+                        input.encode_to_vec(0),
+                    )
                 }
-            }
-            Err(_) => {
-                self.context
-                    .evm
-                    .journaled_state
-                    .checkpoint_revert(checkpoint);
-                return return_result(ExitCode::FatalExternalError, gas);
-            }
-        }
+                BytecodeType::WASM => {
+                    let input = CoreInput {
+                        method_id: WASM_CALL_METHOD_ID,
+                        method_data: WasmCallMethodInput {
+                            callee: callee_account.address,
+                            value,
+                            input,
+                            gas_limit: gas.remaining(),
+                        },
+                    };
+                    (
+                        self.context
+                            .evm
+                            .load_jzkt_account(WCL_CONTRACT_ADDRESS)
+                            .expect("failed to load WCL"),
+                        input.encode_to_vec(0),
+                    )
+                }
+            };
 
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
-            checkpoint,
             &mut gas,
             caller_account,
-            callee_account,
-            input,
+            &mut middleware_account,
+            Some(callee_account.address),
+            core_input.into(),
             value,
         );
 
-        let ret = CallOutcome {
+        CallOutcome {
             result: InterpreterResult {
                 result: exit_code,
                 output: output_buffer.into(),
                 gas,
             },
             memory_offset: Default::default(),
-        };
-
-        // revert changes or not
-        if exit_code != ExitCode::Ok {
-            self.context
-                .evm
-                .journaled_state
-                .checkpoint_revert(checkpoint);
         }
-
-        ret
     }
 
     fn input_from_env(
         &self,
-        checkpoint: JournalCheckpoint,
         gas: &Gas,
         caller: &mut Account,
-        callee: &mut Account,
+        callee_address: Address,
         input: Bytes,
         value: U256,
     ) -> ContractInput {
         ContractInput {
-            journal_checkpoint: checkpoint.to_u64(),
-            env_chain_id: self.context.evm.env.cfg.chain_id,
+            journal_checkpoint: 0,
             contract_gas_limit: gas.remaining(),
-            contract_address: callee.address,
+            contract_address: callee_address,
             contract_caller: caller.address,
             contract_input: input,
             contract_value: value,
             contract_is_static: false,
+            block_chain_id: self.context.evm.env.cfg.chain_id,
             block_coinbase: self.context.evm.env.block.coinbase,
             block_timestamp: self.context.evm.env.block.timestamp.as_limbs()[0],
             block_number: self.context.evm.env.block.number.as_limbs()[0],
@@ -527,16 +519,22 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     #[cfg(feature = "std")]
     fn exec_rwasm_binary(
         &mut self,
-        checkpoint: JournalCheckpoint,
         gas: &mut Gas,
         caller: &mut Account,
         callee: &mut Account,
+        callee_address: Option<Address>,
         input: Bytes,
         value: U256,
     ) -> (Bytes, ExitCode) {
         use fluentbase_runtime::{Runtime, RuntimeContext};
         let input = self
-            .input_from_env(checkpoint, gas, caller, callee, input, value)
+            .input_from_env(
+                gas,
+                caller,
+                callee_address.unwrap_or(callee.address),
+                input,
+                value,
+            )
             .encode_to_vec(0);
         let jzkt = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
@@ -553,7 +551,11 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let mut runtime = Runtime::new(ctx);
         let result = match runtime.call() {
             Ok(result) => result,
-            Err(_) => return (Bytes::default(), ExitCode::TransactError),
+            Err(err) => {
+                let exit_code = Runtime::catch_trap(&err);
+                println!("execution failed with err: {:?}", err);
+                return (Bytes::default(), ExitCode::from(exit_code));
+            }
         };
         {
             println!("executed rWASM binary:");
@@ -626,7 +628,7 @@ struct JournalDbWrapper<'a, DB: Database> {
 }
 
 /// A special account for storing EVM storage trie `keccak256("evm_storage_trie")[12..32]`
-const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd33305bb6bfb");
+pub const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd33305bb6bfb");
 
 impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     fn checkpoint(&self) -> fluentbase_types::JournalCheckpoint {
@@ -668,7 +670,7 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
             let address = Address::from_slice(&key[12..]);
             let (account, _) = ctx.load_account_with_code(address).expect("database error");
             account.mark_touch();
-            let jzkt_account = Account::new_from_fields(&address, value.as_slice());
+            let jzkt_account = Account::new_from_fields(address, value.as_slice());
             account.info.balance = jzkt_account.balance;
             account.info.nonce = jzkt_account.nonce;
             account.info.code_hash = jzkt_account.source_code_hash;
@@ -714,8 +716,9 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     }
 
     fn commit(&self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
-        // TODO: "commit is not supported"
-        Err(ExitCode::NotSupportedCall)
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state.checkpoint_commit();
+        Ok(([0u8; 32], vec![]))
     }
 
     fn rollback(&self, checkpoint: fluentbase_types::JournalCheckpoint) {

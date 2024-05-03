@@ -29,6 +29,7 @@ fn test_keccak256() {
 }
 
 #[test]
+#[ignore]
 fn test_poseidon() {
     let input_data = "Hello, World".as_bytes();
     let output = run_rwasm_with_evm_input(

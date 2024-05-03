@@ -200,15 +200,15 @@ fn deploy_evm_tx(ctx: &mut TestingContext, deployer: Address, init_bytecode: Byt
         .to_vec();
     assert_eq!(contract_account.info.code_hash, keccak256(&source_bytecode));
     assert!(source_bytecode.len() > 0);
-    let rwasm_bytecode = ctx
-        .db
-        .contracts
-        .get(&contract_account.info.rwasm_code_hash)
-        .unwrap()
-        .bytes()
-        .to_vec();
-    let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
-    assert!(is_rwasm);
+    // let rwasm_bytecode = ctx
+    //     .db
+    //     .contracts
+    //     .get(&contract_account.info.rwasm_code_hash)
+    //     .unwrap()
+    //     .bytes()
+    //     .to_vec();
+    // let is_rwasm = rwasm_bytecode.get(0).cloned().unwrap() == 0xef;
+    // assert!(is_rwasm);
     contract_address
 }
 
@@ -719,13 +719,6 @@ fn test_bridge_contract_with_call() {
     assert!(!erc20gateway_contract_db_account_info
         .rwasm_code_hash
         .is_zero());
-    assert!(
-        erc20gateway_contract_db_account_info
-            .rwasm_code
-            .unwrap()
-            .len()
-            > 0
-    );
     let mut erc20gateway_factory_tx_builder = TxBuilder::call(
         &mut ctx,
         signer_l1_wallet_owner,

@@ -123,7 +123,7 @@ pub(crate) struct ContractInputWrapper(ContractInput);
 #[allow(dead_code)]
 impl ContractInputWrapper {
     impl_once_setter!(journal_checkpoint, u64);
-    impl_once_setter!(env_chain_id, u64);
+    impl_once_setter!(block_chain_id, u64);
     impl_once_setter!(contract_gas_limit, u64);
     impl_once_setter!(contract_input, Bytes);
     impl_once_setter!(contract_address, Address);

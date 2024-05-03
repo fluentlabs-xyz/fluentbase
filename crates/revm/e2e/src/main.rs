@@ -1,9 +1,9 @@
 pub mod merkle_trie;
 pub mod models;
 mod runner;
+mod tests;
 pub mod utils;
 
-pub use runner::TestError as Error;
 use runner::{find_all_json_tests, run, TestError};
 use std::path::PathBuf;
 use structopt::StructOpt;

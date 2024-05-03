@@ -1,11 +1,8 @@
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use core::ptr;
-use fluentbase_sdk::{
-    evm::{ExecutionContext, U256},
-    LowLevelAPI, LowLevelSDK,
-};
-use fluentbase_types::{Address, ExitCode};
+use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::{Address, ExitCode, U256};
 use revm_interpreter::{
     analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
     Contract, Interpreter, SharedMemory,
@@ -22,7 +19,7 @@ pub fn _evm_staticcall(
     let value = U256::ZERO;
     let callee_address =
         Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
-    let callee_account = Account::new_from_jzkt(&callee_address);
+    let callee_account = Account::new_from_jzkt(callee_address);
     let caller_address = ExecutionContext::contract_caller();
     let bytecode = BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(
         callee_account.load_source_bytecode(),

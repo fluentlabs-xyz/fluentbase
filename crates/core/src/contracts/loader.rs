@@ -2,10 +2,10 @@ use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS};
 use byteorder::{BigEndian, ByteOrder};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::{Bytes, ExecutionContext},
-    CoreInput, EvmCallMethodInput, LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
+    evm::ExecutionContext, CoreInput, EvmCallMethodInput, LowLevelAPI, LowLevelSDK,
+    EVM_CALL_METHOD_ID,
 };
-use fluentbase_types::{ExitCode, STATE_MAIN};
+use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
 use revm_primitives::{hex, U256};
 
 pub fn deploy() {}
@@ -20,10 +20,10 @@ pub fn main() {
         input: contract_input_data.contract_input,
         gas_limit: gas_limit as u64,
     };
-    let core_input = CoreInput::new(EVM_CALL_METHOD_ID, method_data.encode_to_vec(0));
+    let core_input = CoreInput::new(EVM_CALL_METHOD_ID, method_data);
     contract_input_data.contract_input = core_input.encode_to_vec(0).into();
     contract_input_data.contract_address = ECL_CONTRACT_ADDRESS;
-    let ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
+    let ecl_account = Account::new_from_jzkt(ECL_CONTRACT_ADDRESS);
     let contract_input_data_vec = contract_input_data.encode_to_vec(0);
     let rwasm_bytecode_hash = ecl_account.rwasm_code_hash;
     let exit_code = LowLevelSDK::sys_exec_hash(

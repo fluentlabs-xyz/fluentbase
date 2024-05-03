@@ -1,12 +1,11 @@
 pub use crate::gas::Gas;
 use core::ops::Range;
-use fluentbase_sdk::evm::{Address, Bytes, B256};
-use fluentbase_types::{ExitCode, U256};
-use revm_primitives::Bytecode;
+use fluentbase_types::{Address, BytecodeType, Bytes, ExitCode, B256, U256};
 pub use revm_primitives::CreateScheme;
 use revm_primitives::Env;
 use revm_primitives::TransactTo;
 use revm_primitives::TxEnv;
+use revm_primitives::{AccountInfo, Bytecode};
 use std::boxed::Box;
 
 pub type InstructionResult = ExitCode;
@@ -184,19 +183,20 @@ impl Stack {
     }
 }
 
-#[allow(non_camel_case_types)]
-pub(crate) enum BytecodeType {
-    EVM,
-    WASM,
-}
-
-impl BytecodeType {
-    pub(crate) fn from_slice(input: &[u8]) -> Self {
-        if input.len() >= 4 && input[0..4] == [0x00, 0x61, 0x73, 0x6d] {
-            Self::WASM
-        } else {
-            Self::EVM
-        }
+pub(crate) fn bytecode_type_from_account(info: &AccountInfo) -> BytecodeType {
+    // special case for rWASM genesis precompiles (there is no source code)
+    if info
+        .rwasm_code
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or_default()
+        && info.code.as_ref().map(|v| v.is_empty()).unwrap_or_default()
+    {
+        BytecodeType::WASM
+    } else if let Some(code) = &info.code {
+        BytecodeType::from_slice(code.bytes().as_ref())
+    } else {
+        BytecodeType::EVM
     }
 }
 

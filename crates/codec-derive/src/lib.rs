@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{self, Data, Fields, Ident};
 
 #[proc_macro]
@@ -83,14 +83,15 @@ fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
         }
     });
     let struct_name = &ast.ident;
+    let (impl_generics, type_generics, where_clause) = ast.generics.split_for_impl();
     let i_struct_name = format_ident!("I{}", ast.ident);
     let output = quote! {
-        impl #crate_name::Encoder<#struct_name> for #struct_name {
+        impl #impl_generics #crate_name::Encoder<#struct_name #type_generics> for #struct_name #type_generics #where_clause {
             const HEADER_SIZE: usize = 0 #( + #header_sizes)*;
             fn encode<W: #crate_name::WritableBuffer>(&self, encoder: &mut W, mut field_offset: usize) {
                 #( #encode_types; )*
             }
-            fn decode_header(decoder: &mut #crate_name::BufferDecoder, mut field_offset: usize, result: &mut #struct_name) -> (usize, usize) {
+            fn decode_header(decoder: &mut #crate_name::BufferDecoder, mut field_offset: usize, result: &mut #struct_name #type_generics) -> (usize, usize) {
                 #( #decode_types; )*
                 (0, 0)
             }
@@ -98,7 +99,7 @@ fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
         pub trait #i_struct_name {
             #( #impl_types )*
         }
-        impl #i_struct_name for #struct_name {
+        impl #impl_generics #i_struct_name for #struct_name #type_generics {
             #( #impl_defs )*
         }
     };

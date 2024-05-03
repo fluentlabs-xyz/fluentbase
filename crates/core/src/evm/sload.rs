@@ -1,7 +1,6 @@
 use crate::helpers::calc_storage_key;
-use fluentbase_sdk::evm::Address;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{Address, ExitCode};
 
 pub fn _evm_sload(
     address: &Address,
@@ -19,7 +18,7 @@ mod tests {
     use crate::evm::sstore::_evm_sstore;
     use fluentbase_codec::Encoder;
     use fluentbase_sdk::evm::ContractInput;
-    use fluentbase_types::{address, Address};
+    use fluentbase_types::{address, Address, Bytes};
 
     #[test]
     fn test_sload() {

@@ -6,7 +6,7 @@ use crate::{
 };
 use fluentbase_codec::Encoder;
 use fluentbase_core::{consts::ECL_CONTRACT_ADDRESS, helpers::calc_create_address, Account};
-use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, Runtime, RuntimeContext};
+use fluentbase_runtime::{DefaultEmptyRuntimeDatabase, RuntimeContext};
 use fluentbase_sdk::LowLevelSDK;
 use fluentbase_sdk::{
     CoreInput, EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
@@ -40,10 +40,7 @@ fn test_evm_create() {
         gas_limit,
         salt: None,
     };
-    let evm_create_core_input = CoreInput::new(
-        EVM_CREATE_METHOD_ID,
-        evm_create_method_input.encode_to_vec(0),
-    );
+    let evm_create_core_input = CoreInput::new(EVM_CREATE_METHOD_ID, evm_create_method_input);
     let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;
@@ -60,7 +57,7 @@ fn test_evm_create() {
         .contract_input_wrapper
         .set_journal_checkpoint(runtime_ctx.jzkt().checkpoint().to_u64())
         .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-        .set_env_chain_id(env_chain_id)
+        .set_block_chain_id(env_chain_id)
         .set_contract_caller(caller_address)
         .set_block_coinbase(block_coinbase)
         .set_tx_caller(caller_address);
@@ -104,10 +101,7 @@ fn test_evm_call_after_create() {
             gas_limit,
             salt: None,
         };
-        let evm_create_core_input = CoreInput::new(
-            EVM_CREATE_METHOD_ID,
-            evm_create_method_input.encode_to_vec(0),
-        );
+        let evm_create_core_input = CoreInput::new(EVM_CREATE_METHOD_ID, evm_create_method_input);
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
 
         let mut runtime_ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(ecl_rwasm.clone())
@@ -119,7 +113,7 @@ fn test_evm_call_after_create() {
             .contract_input_wrapper
             .set_journal_checkpoint(runtime_ctx.jzkt().checkpoint().to_u64())
             .set_contract_input(Bytes::copy_from_slice(&evm_create_core_input_vec))
-            .set_env_chain_id(env_chain_id)
+            .set_block_chain_id(env_chain_id)
             .set_contract_caller(caller_address)
             .set_block_coinbase(block_coinbase)
             .set_tx_caller(caller_address);
@@ -141,8 +135,7 @@ fn test_evm_call_after_create() {
             input: EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID.into(),
             gas_limit,
         };
-        let evm_call_core_input =
-            CoreInput::new(EVM_CALL_METHOD_ID, evm_call_method_input.encode_to_vec(0));
+        let evm_call_core_input = CoreInput::new(EVM_CALL_METHOD_ID, evm_call_method_input);
         let evm_call_core_input_vec = evm_call_core_input.encode_to_vec(0);
 
         let mut runtime_ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(ecl_rwasm.clone())
@@ -184,7 +177,7 @@ fn test_evm_call_from_wasm() {
 
     let jzkt = {
         let jzkt = LowLevelSDK::with_default_jzkt();
-        let mut ecl_account = Account::new_from_jzkt(&ECL_CONTRACT_ADDRESS);
+        let mut ecl_account = Account::new_from_jzkt(ECL_CONTRACT_ADDRESS);
         ecl_account.update_bytecode(
             &include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm").into(),
             None,
@@ -210,10 +203,7 @@ fn test_evm_call_from_wasm() {
             gas_limit,
             salt: None,
         };
-        let evm_create_core_input = CoreInput::new(
-            EVM_CREATE_METHOD_ID,
-            evm_create_method_input.encode_to_vec(0),
-        );
+        let evm_create_core_input = CoreInput::new(EVM_CREATE_METHOD_ID, evm_create_method_input);
         let evm_create_core_input_vec = evm_create_core_input.encode_to_vec(0);
         let wasm_binary = include_bytes!("../../../crates/contracts/assets/ecl_contract.wasm");
         let rwasm_binary = wasm2rwasm(wasm_binary).unwrap();

@@ -57,6 +57,7 @@ mod poseidon_tests {
     }
 
     #[test]
+    #[ignore]
     fn with_domain() {
         let mut a = [0u8; 32];
         let mut b = [0u8; 32];

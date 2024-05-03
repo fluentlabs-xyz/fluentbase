@@ -25,7 +25,7 @@ impl Default for FluentHost {
             env: Env {
                 cfg: {
                     let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = ExecutionContext::env_chain_id();
+                    cfg_env.chain_id = ExecutionContext::block_chain_id();
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
                     cfg_env.limit_contract_code_size = Some(RWASM_MAX_CODE_SIZE);
                     cfg_env
@@ -84,14 +84,14 @@ impl Host for FluentHost {
 
     #[inline]
     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        let account = Account::new_from_jzkt(&Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(address);
         Some((account.balance, true))
     }
 
     #[inline]
     fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
         // TODO optimize using separate methods
-        let account = Account::new_from_jzkt(&Address::new(address.into_array()));
+        let account = Account::new_from_jzkt(address);
         let bytecode_bytes = Bytes::copy_from_slice(account.load_source_bytecode().as_ref());
 
         Some((Bytecode::new_raw(bytecode_bytes), false))
@@ -99,7 +99,7 @@ impl Host for FluentHost {
 
     #[inline]
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        let account = Account::new_from_jzkt(&address);
+        let account = Account::new_from_jzkt(address);
         Some((account.source_code_hash, false))
     }
 

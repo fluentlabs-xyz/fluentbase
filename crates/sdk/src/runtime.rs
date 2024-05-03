@@ -1,4 +1,4 @@
-use crate::{evm::B256, LowLevelAPI, LowLevelSDK};
+use crate::{LowLevelAPI, LowLevelSDK};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::types::InMemoryTrieDb;
 use fluentbase_runtime::zktrie::ZkTrieStateDb;
@@ -18,7 +18,7 @@ use fluentbase_runtime::{
     },
     DefaultEmptyRuntimeDatabase, RuntimeContext,
 };
-use fluentbase_types::{Address, Bytes, ExitCode, JournalCheckpoint};
+use fluentbase_types::{Address, Bytes, ExitCode, JournalCheckpoint, B256};
 use std::ptr;
 
 type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;

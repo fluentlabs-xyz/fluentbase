@@ -42,7 +42,7 @@ pub use db::{
     CacheState, DBBox, State, StateBuilder, StateDBBox, TransitionAccount, TransitionState,
 };
 pub use db::{Database, DatabaseCommit, DatabaseRef, InMemoryDB};
-pub use evm::{Evm, CALL_STACK_LIMIT};
+pub use evm::{Evm, CALL_STACK_LIMIT, EVM_STORAGE_ADDRESS};
 pub use frame::{CallFrame, CreateFrame, Frame, FrameData, FrameOrResult, FrameResult};
 pub use handler::Handler;
 pub use inspector::{inspector_handle_register, inspectors, GetInspector, Inspector};
