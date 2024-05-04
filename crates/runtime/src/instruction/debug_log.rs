@@ -22,10 +22,10 @@ impl DebugLog {
         let now_str = now.format("%Y%m%d_%H%M%S%.3f");
         match std::str::from_utf8(msg) {
             Ok(v) => {
-                println!("{} debug: {}", now_str, v);
+                println!("{} debug_log: {}", now_str, v);
             }
             Err(v) => {
-                println!("{} debug: failed to convert msg into utf8: {}", now_str, v);
+                println!("{} debug_log: failed to convert msg into utf8: {}", now_str, v);
             }
         };
     }

@@ -24,5 +24,6 @@ build_contracts_and_reth_node:
 	$(MAKE)
 	cd ../fluent/; $(MAKE) fluent_clean_datadir; $(MAKE) fluent_build
 	(sleep 1; notify-send "fluent" "ready to process requests" || true)&
+	mkdir -p tmp
 	clear
-	cd ../fluent/; $(MAKE) fluent_run
+	cd ../fluent/; $(MAKE) fluent_run | tee -i ../fluentbase/tmp/log.txt
