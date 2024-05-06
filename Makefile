@@ -18,12 +18,16 @@ CONTRACT_NAME:=greeting
 deploy_example_contract:
 	node ./examples/deploy-contract.js --local ./examples/bin/$(CONTRACT_NAME).wasm
 
-.PHONY: build_contracts_and_reth_node
-build_contracts_and_reth_node:
+.PHONY: run_fluent_node
+run_fluent_node:
+	clear
+	cd ../fluent/; $(MAKE) fluent_clean_datadir; $(MAKE) fluent_run | tee -i ../fluentbase/tmp/log.txt
+
+.PHONY: build_contracts_and_run_fluent_node
+build_contracts_and_run_fluent_node:
 	clear
 	$(MAKE)
 	cd ../fluent/; $(MAKE) fluent_clean_datadir; $(MAKE) fluent_build
 	(sleep 1; notify-send "fluent" "ready to process requests" || true)&
 	mkdir -p tmp
-	clear
-	cd ../fluent/; $(MAKE) fluent_run | tee -i ../fluentbase/tmp/log.txt
+	$(MAKE) run_fluent_node
