@@ -15,10 +15,10 @@ use revm_interpreter::{
 };
 use revm_primitives::CreateScheme;
 
-pub fn _evm_call<CR: ContextReader>(input: EvmCallMethodInput) -> EvmCallMethodOutput {
+pub fn _evm_call<CR: ContextReader>(cr: &CR, input: EvmCallMethodInput) -> EvmCallMethodOutput {
     debug_log("_evm_call start");
     // for static calls passing value is not allowed according to standards
-    let is_static = CR::contract_is_static();
+    let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
         debug_log(&format!(
             "_evm_call return: exit_code: {}",
@@ -32,7 +32,7 @@ pub fn _evm_call<CR: ContextReader>(input: EvmCallMethodInput) -> EvmCallMethodO
     let checkpoint = Account::checkpoint();
 
     // read caller and callee
-    let mut caller_account = Account::new_from_jzkt(CR::contract_caller());
+    let mut caller_account = Account::new_from_jzkt(cr.contract_caller());
     let mut callee_account = Account::new_from_jzkt(input.callee);
 
     // transfer funds from caller to callee
@@ -62,11 +62,11 @@ pub fn _evm_call<CR: ContextReader>(input: EvmCallMethodInput) -> EvmCallMethodO
         input: input.input,
         hash: callee_account.source_code_hash,
         bytecode,
-        address: CR::contract_address(),
+        address: cr.contract_address(),
         caller: caller_account.address,
         value: input.value,
     };
-    let result = exec_evm_bytecode::<CR>(contract, u64::MAX, is_static);
+    let result = exec_evm_bytecode::<CR>(cr, contract, u64::MAX, is_static);
 
     // debug_log(&format!(
     //     "_evm_call return: {}",

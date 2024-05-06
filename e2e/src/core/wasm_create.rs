@@ -1,4 +1,5 @@
 use crate::core::utils::TestingContext;
+use crate::helpers::wasm2rwasm;
 use fluentbase_codec::Encoder;
 use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
@@ -10,9 +11,7 @@ use fluentbase_sdk::{
     CoreInput, WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
     WASM_CREATE_METHOD_ID,
 };
-use fluentbase_types::{
-    address, wasm2rwasm, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_MAIN, U256,
-};
+use fluentbase_types::{address, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_MAIN, U256};
 use hex_literal::hex;
 
 #[test]

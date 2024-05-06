@@ -13,9 +13,11 @@ use crate::{
 };
 use core::{cell::RefCell, fmt, str::from_utf8};
 use fluentbase_codec::Encoder;
+use fluentbase_core::evm::call::_evm_call;
 use fluentbase_core::evm::sload::_evm_sload;
 use fluentbase_core::evm::sstore::_evm_sstore;
 use fluentbase_core::fluent_host::FluentHost;
+use fluentbase_core::wasm::call::_wasm_call;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     evm::create::_evm_create,
@@ -425,45 +427,55 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             .load_account(callee_account.address)
             .unwrap();
 
-        let (mut middleware_account, core_input) =
+        let (mut middleware_account, method_id, method_data) =
             match bytecode_type_from_account(&callee_bytecode.info) {
-                BytecodeType::EVM => {
-                    let input = CoreInput {
-                        method_id: EVM_CALL_METHOD_ID,
-                        method_data: EvmCallMethodInput {
-                            callee: callee_account.address,
-                            value,
-                            input,
-                            gas_limit: gas.remaining(),
-                        },
-                    };
-                    (
-                        self.context
-                            .evm
-                            .load_jzkt_account(ECL_CONTRACT_ADDRESS)
-                            .expect("failed to load ECL"),
-                        input.encode_to_vec(0),
-                    )
-                }
-                BytecodeType::WASM => {
-                    let input = CoreInput {
-                        method_id: WASM_CALL_METHOD_ID,
-                        method_data: WasmCallMethodInput {
-                            callee: callee_account.address,
-                            value,
-                            input,
-                            gas_limit: gas.remaining(),
-                        },
-                    };
-                    (
-                        self.context
-                            .evm
-                            .load_jzkt_account(WCL_CONTRACT_ADDRESS)
-                            .expect("failed to load WCL"),
-                        input.encode_to_vec(0),
-                    )
-                }
+                BytecodeType::EVM => (
+                    self.context
+                        .evm
+                        .load_jzkt_account(ECL_CONTRACT_ADDRESS)
+                        .expect("failed to load ECL"),
+                    EVM_CALL_METHOD_ID,
+                    EvmCallMethodInput {
+                        callee: callee_account.address,
+                        value,
+                        input,
+                        gas_limit: gas.remaining(),
+                    },
+                ),
+                BytecodeType::WASM => (
+                    self.context
+                        .evm
+                        .load_jzkt_account(WCL_CONTRACT_ADDRESS)
+                        .expect("failed to load WCL"),
+                    WASM_CALL_METHOD_ID,
+                    WasmCallMethodInput {
+                        callee: callee_account.address,
+                        value,
+                        input,
+                        gas_limit: gas.remaining(),
+                    },
+                ),
             };
+
+        // let contract_input = self.input_from_env(
+        //     &mut gas,
+        //     caller_account,
+        //     callee_account.address,
+        //     Default::default(),
+        //     value,
+        // );
+        // let output = match method_id {
+        //     EVM_CALL_METHOD_ID => _evm_call(&contract_input, method_data),
+        //     WASM_CALL_METHOD_ID => _wasm_call(&contract_input, method_data),
+        //     _ => unreachable!(),
+        // };
+        // let (output_buffer, exit_code) = (output.output, ExitCode::from(output.exit_code));
+
+        let core_input = CoreInput {
+            method_id,
+            method_data,
+        }
+        .encode_to_vec(0);
 
         let (output_buffer, exit_code) = self.exec_rwasm_binary(
             &mut gas,

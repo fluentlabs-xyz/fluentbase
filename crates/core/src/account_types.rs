@@ -1,4 +1,4 @@
-use fluentbase_sdk::Bytes32;
+use fluentbase_types::Bytes32;
 
 /// Number of fields
 pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;

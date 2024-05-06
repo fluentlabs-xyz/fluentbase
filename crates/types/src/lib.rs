@@ -1,22 +1,19 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
 
-pub use bytecode::*;
-pub use consts::*;
-pub use helpers::*;
-pub use journal::*;
-pub use linker::*;
-pub use types::*;
-
 extern crate alloc;
 extern crate core;
 
 mod bytecode;
-mod consts;
+pub use bytecode::*;
 mod helpers;
+pub use helpers::*;
 mod journal;
+pub use journal::*;
 mod linker;
+pub use linker::*;
 mod types;
+pub use types::*;
 
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
 
@@ -32,3 +29,6 @@ pub type F254 = B256;
 pub const NATIVE_TRANSFER_KECCAK: B256 =
     b256!("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
 pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000000000000000000");
+
+pub const STATE_MAIN: u32 = 0;
+pub const STATE_DEPLOY: u32 = 1;

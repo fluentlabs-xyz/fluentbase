@@ -13,17 +13,18 @@ use fluentbase_types::Bytes;
 pub fn deploy() {}
 
 pub fn main() {
-    let input_helper = InputHelper::<ExecutionContext>::new();
+    let cr = ExecutionContext::default();
+    let input_helper = InputHelper::new(cr);
     let method_id = input_helper.decode_method_id();
     match method_id {
         WASM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCreateMethodInput>();
-            let address = unwrap_exit_code(_wasm_create::<ExecutionContext>(method_input));
+            let address = unwrap_exit_code(_wasm_create(&cr, method_input));
             LowLevelSDK::sys_write(address.as_slice());
         }
         WASM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
-            let method_output = _wasm_call::<ExecutionContext>(method_input);
+            let method_output = _wasm_call(&cr, method_input);
             if !method_output.output.is_empty() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }

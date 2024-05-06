@@ -1,6 +1,7 @@
 use crate::account_types::JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD;
 use core::ptr;
-use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::Bytes32;
 
 pub fn _evm_extcodesize<CR: ContextReader>(address20_offset: *const u8, output32_offset: *mut u8) {
     let mut address_bytes32 = Bytes32::default();

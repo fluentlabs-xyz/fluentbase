@@ -9,6 +9,7 @@ use revm_interpreter::{
 };
 
 pub fn _evm_delegatecall<CR: ContextReader>(
+    cr: &CR,
     gas_limit: u32,
     callee20_offset: *const u8,
     args_offset: *const u8,
@@ -17,7 +18,7 @@ pub fn _evm_delegatecall<CR: ContextReader>(
     ret_size: u32,
 ) -> ExitCode {
     // for static calls passing value is not allowed according to standards
-    let is_static = CR::contract_is_static();
+    let is_static = cr.contract_is_static();
     if is_static {
         return ExitCode::WriteProtection;
     }
@@ -36,12 +37,12 @@ pub fn _evm_delegatecall<CR: ContextReader>(
         hash: callee_account.source_code_hash,
         bytecode,
         address: callee_address,
-        caller: CR::contract_caller(),
-        value: CR::contract_value(),
+        caller: cr.contract_caller(),
+        value: cr.contract_value(),
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, is_static);
     let instruction_table = make_instruction_table::<FluentHost<CR>, DefaultEvmSpec>();
-    let mut host = FluentHost::default();
+    let mut host = FluentHost::new(cr);
     let shared_memory = SharedMemory::new();
     let result = match interpreter
         .run(shared_memory, &instruction_table, &mut host)

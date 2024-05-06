@@ -8,9 +8,9 @@ use crate::helpers::{calc_create2_address, calc_create_address};
 use crate::JZKT_ACCOUNT_FIELDS_COUNT;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{
-    Address, Bytes, ExitCode, B256, F254, KECCAK_EMPTY, NATIVE_TRANSFER_ADDRESS,
+    Address, Bytes, Bytes32, ExitCode, B256, F254, KECCAK_EMPTY, NATIVE_TRANSFER_ADDRESS,
     NATIVE_TRANSFER_KECCAK, POSEIDON_EMPTY, U256,
 };
 use revm_primitives::AccountInfo;

@@ -9,6 +9,7 @@ use revm_interpreter::{
 };
 
 pub fn _evm_callcode<CR: ContextReader>(
+    cr: &CR,
     gas_limit: u32,
     callee_address20_offset: *const u8,
     value32_offset: *const u8,
@@ -21,7 +22,7 @@ pub fn _evm_callcode<CR: ContextReader>(
     let callee_address =
         Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
     let callee_account = Account::new_from_jzkt(callee_address);
-    let caller_address = CR::contract_caller();
+    let caller_address = cr.contract_caller();
     let caller_account = Account::new_from_jzkt(caller_address);
     if caller_account.balance < value {
         return ExitCode::InsufficientBalance;
@@ -47,10 +48,10 @@ pub fn _evm_callcode<CR: ContextReader>(
     let mut interpreter = Interpreter::new(
         Box::new(contract),
         gas_limit as u64,
-        CR::contract_is_static(),
+        cr.contract_is_static(),
     );
     let instruction_table = make_instruction_table::<FluentHost<CR>, DefaultEvmSpec>();
-    let mut host = FluentHost::default();
+    let mut host = FluentHost::new(cr);
     let shared_memory = SharedMemory::new();
     let result = match interpreter
         .run(shared_memory, &instruction_table, &mut host)

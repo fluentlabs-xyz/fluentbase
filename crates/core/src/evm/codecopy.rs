@@ -2,11 +2,17 @@ use crate::account::Account;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
-use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::Bytes32;
 
-pub fn _evm_codecopy<CR: ContextReader>(output_offset: *mut u8, code_index: u32, len: u32) {
+pub fn _evm_codecopy<CR: ContextReader>(
+    cr: &CR,
+    output_offset: *mut u8,
+    code_index: u32,
+    len: u32,
+) {
     let mut address_bytes32 = Bytes32::default();
-    let address = CR::contract_address();
+    let address = cr.contract_address();
     unsafe { ptr::copy(address.as_ptr(), address_bytes32[12..].as_mut_ptr(), 20) }
 
     let mut source_code_hash32 = Bytes32::default();

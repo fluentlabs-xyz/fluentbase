@@ -11,15 +11,21 @@ categories.workspace = true
 
 [dependencies]
 rwasm = { workspace = true, default-features = false }
-strum = { version = "0.25.0", optional = true }
-strum_macros = { version = "0.25.2", optional = true }
 alloy-primitives = { workspace = true }
-auto_impl = "1.2.0"
 hashbrown = { workspace = true }
+revm-primitives = { workspace = true, default-features = false }
+strum = { version = "=0.25.0", optional = true }
+strum_macros = { version = "=0.25.2", optional = true }
+byteorder = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
     "dep:strum",
     "dep:strum_macros",
+    "rwasm/std",
+    "alloy-primitives/std",
+    "revm-primitives/std",
+    "strum/std",
+    "byteorder/std",
 ]

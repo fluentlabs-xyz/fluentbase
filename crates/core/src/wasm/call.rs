@@ -8,11 +8,11 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
 
-pub fn _wasm_call<CR: ContextReader>(input: WasmCallMethodInput) -> WasmCallMethodOutput {
+pub fn _wasm_call<CR: ContextReader>(cr: &CR, input: WasmCallMethodInput) -> WasmCallMethodOutput {
     debug_log("_wasm_call start");
 
     // don't allow to do static calls with non zero value
-    let is_static = CR::contract_is_static();
+    let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
         debug_log(&format!(
             "_wasm_call return: Err: exit_code: {}",
@@ -26,12 +26,12 @@ pub fn _wasm_call<CR: ContextReader>(input: WasmCallMethodInput) -> WasmCallMeth
     let gas_limit = input.gas_limit as u32;
 
     let contract_input = ContractInput {
-        journal_checkpoint: CR::journal_checkpoint().into(),
+        journal_checkpoint: cr.journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
         contract_address: input.callee,
-        contract_caller: CR::contract_caller(),
+        contract_caller: cr.contract_caller(),
         contract_input: input.input,
-        tx_caller: CR::tx_caller(),
+        tx_caller: cr.tx_caller(),
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);

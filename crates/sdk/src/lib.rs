@@ -20,9 +20,8 @@ mod runtime;
 #[cfg(not(feature = "std"))]
 mod rwasm;
 mod types;
-pub use types::*;
 
-pub use fluentbase_types::{Bytes20, Bytes32};
+pub use types::*;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]

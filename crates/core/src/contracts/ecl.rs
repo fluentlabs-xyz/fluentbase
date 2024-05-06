@@ -18,18 +18,19 @@ use revm_interpreter::SharedMemory;
 pub fn deploy() {}
 
 pub fn main() {
+    let cr = ExecutionContext::default();
     debug_log("ecl(main): started method");
-    let input_helper = InputHelper::<ExecutionContext>::new();
+    let input_helper = InputHelper::new(cr);
     let method_id = input_helper.decode_method_id();
     match method_id {
         EVM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<EvmCreateMethodInput>();
-            let address = unwrap_exit_code(_evm_create::<ExecutionContext>(method_input));
+            let address = unwrap_exit_code(_evm_create(&cr, method_input));
             LowLevelSDK::sys_write(address.as_slice())
         }
         EVM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<EvmCallMethodInput>();
-            let method_output = _evm_call::<ExecutionContext>(method_input);
+            let method_output = _evm_call(&cr, method_input);
             if !method_output.output.is_empty() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }

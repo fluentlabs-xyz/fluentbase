@@ -1,8 +1,13 @@
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 use core::ptr;
-use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::Bytes32;
 
-pub fn _evm_balance<CR: ContextReader>(address20_offset: *const u8, output32_offset: *mut u8) {
+pub fn _evm_balance<CR: ContextReader>(
+    _cr: &CR,
+    address20_offset: *const u8,
+    output32_offset: *mut u8,
+) {
     let mut bytes32 = Bytes32::default();
     unsafe { ptr::copy(address20_offset, bytes32[12..].as_mut_ptr(), 20) }
     let _is_cold = LowLevelSDK::jzkt_get(

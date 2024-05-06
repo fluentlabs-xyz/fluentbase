@@ -5,8 +5,9 @@ use revm_interpreter::primitives::PrecompileError;
 pub fn deploy() {}
 
 pub fn main() {
-    let input = ExecutionContext::contract_input();
-    let gas_limit = ExecutionContext::contract_gas_limit();
+    let cr = ExecutionContext::DEFAULT;
+    let input = cr.contract_input();
+    let gas_limit = cr.contract_gas_limit();
 
     let result = revm_precompile::modexp::berlin_run(&input, gas_limit);
     let result = match result {

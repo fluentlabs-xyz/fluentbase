@@ -1,3 +1,4 @@
+use crate::helpers::wasm2rwasm;
 use crate::{
     assets::evm_test_contract::{
         EVM_CONTRACT_BYTECODE1, EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID,
@@ -12,8 +13,7 @@ use fluentbase_sdk::{
     CoreInput, EvmCallMethodInput, EvmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
-    address, wasm2rwasm, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN,
-    U256,
+    address, Address, Bytes, ExitCode, IJournaledTrie, B256, STATE_DEPLOY, STATE_MAIN, U256,
 };
 use hex_literal::hex;
 

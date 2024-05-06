@@ -3,6 +3,7 @@ use core::ptr;
 use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
 
 pub fn _evm_log2<CR: ContextReader>(
+    cr: &CR,
     data_offset: *const u8,
     data_size: u32,
     topic32_1_offset: *const u8,
@@ -10,7 +11,7 @@ pub fn _evm_log2<CR: ContextReader>(
 ) {
     const TOPICS_COUNT: usize = 2;
 
-    let address = CR::contract_address();
+    let address = cr.contract_address();
 
     let mut topics = Topics::<TOPICS_COUNT>::default();
     unsafe { ptr::copy(topic32_1_offset, topics[0].as_mut_ptr(), 1) }
