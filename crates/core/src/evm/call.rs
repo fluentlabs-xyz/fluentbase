@@ -20,6 +20,10 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
     // for static calls passing value is not allowed according to standards
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
+        debug_log(&format!(
+            "_evm_call return: exit_code: {}",
+            ExitCode::WriteProtection
+        ));
         return EvmCallMethodOutput::from_exit_code(ExitCode::WriteProtection)
             .with_gas(input.gas_limit);
     }
@@ -35,6 +39,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
     match Account::transfer(&mut caller_account, &mut callee_account, input.value) {
         Ok(_) => {}
         Err(exit_code) => {
+            debug_log(&format!("_evm_call return: Err: exit_code: {}", exit_code));
             return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit);
         }
     }
@@ -49,6 +54,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
         Account::commit();
+        debug_log(&format!("_evm_call return: exit_code: {}", ExitCode::Ok));
         return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit);
     }
 
@@ -82,6 +88,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
 
     let exit_code = exit_code_from_evm_error(result.result);
 
+    debug_log(&format!("_evm_call return: exit_code: {}", exit_code));
     EvmCallMethodOutput {
         output: result.output,
         exit_code: exit_code.into_i32(),

@@ -20,6 +20,10 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
     if is_static {
+        debug_log(&format!(
+            "_evm_create: return: Err: exit_code: {}",
+            ExitCode::WriteProtection
+        ));
         return Err(ExitCode::WriteProtection);
     }
 
@@ -62,14 +66,17 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
 
     if !matches!(result.result, return_ok!()) {
         Account::rollback(checkpoint);
+        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
         return Err(exit_code_from_evm_error(result.result));
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         Account::rollback(checkpoint);
+        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
         return Err(exit_code_from_evm_error(result.result));
     }
     if result.output.len() > MAX_CODE_SIZE {
         Account::rollback(checkpoint);
+        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
         return Err(exit_code_from_evm_error(result.result));
     }
 

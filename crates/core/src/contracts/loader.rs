@@ -1,4 +1,6 @@
+use crate::helpers::debug_log;
 use crate::{account::Account, consts::ECL_CONTRACT_ADDRESS};
+use alloc::format;
 use byteorder::{BigEndian, ByteOrder};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
@@ -11,6 +13,7 @@ use revm_primitives::{hex, U256};
 pub fn deploy() {}
 
 pub fn main() {
+    debug_log("evm loader: started");
     let mut contract_input_data = ExecutionContext::contract_input_full();
 
     let gas_limit = contract_input_data.contract_gas_limit as u32;
@@ -39,6 +42,10 @@ pub fn main() {
     let out_size = LowLevelSDK::sys_output_size();
     LowLevelSDK::sys_forward_output(0, out_size);
     // forward exit code as well
+    debug_log(&format!(
+        "evm loader: return: sys_halt: exit_code: {}",
+        exit_code
+    ));
     LowLevelSDK::sys_halt(exit_code);
 }
 

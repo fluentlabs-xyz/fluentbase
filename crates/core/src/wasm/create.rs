@@ -1,3 +1,4 @@
+use crate::helpers::debug_log;
 use crate::{account::Account, helpers::rwasm_exec_hash};
 use alloc::{format, vec};
 use fluentbase_sdk::evm::ExecutionContext;
@@ -5,7 +6,6 @@ use fluentbase_sdk::LowLevelSDK;
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
 use fluentbase_types::{Address, ExitCode, B256, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
-use crate::helpers::debug_log;
 
 pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     debug_log("_wasm_create start");
@@ -15,13 +15,19 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
 
     // check write protection
     if ExecutionContext::contract_is_static() {
-        debug_log("_wasm_create return: Err: ExitCode::WriteProtection");
+        debug_log(&format!(
+            "_wasm_create return: Err: exit_code: {}",
+            ExitCode::WriteProtection
+        ));
         return Err(ExitCode::WriteProtection);
     }
 
     // code length can't exceed max constructor limit
     if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
-        debug_log("_wasm_create return: Err: ExitCode::ContractSizeLimit");
+        debug_log(&format!(
+            "_wasm_create return: Err: exit_code: {}",
+            ExitCode::ContractSizeLimit
+        ));
         return Err(ExitCode::ContractSizeLimit);
     }
 
@@ -52,6 +58,10 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
         0,
     );
     if exit_code != ExitCode::Ok.into_i32() {
+        debug_log(&format!(
+            "_wasm_create return: panic: exit_code: {}",
+            exit_code
+        ));
         panic!("wasm create failed, exit code: {}", exit_code);
     }
     let rwasm_bytecode_len = LowLevelSDK::sys_output_size();

@@ -1,9 +1,10 @@
-use crate::helpers::InputHelper;
+use crate::helpers::{debug_log, InputHelper};
 use crate::{
     decode_method_input,
     evm::{call::_evm_call, create::_evm_create},
     helpers::unwrap_exit_code,
 };
+use alloc::format;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr::null_mut;
 use fluentbase_codec::{BufferDecoder, Encoder};
@@ -18,6 +19,7 @@ use revm_interpreter::SharedMemory;
 pub fn deploy() {}
 
 pub fn main() {
+    debug_log("ecl: started");
     let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
@@ -32,10 +34,15 @@ pub fn main() {
             if !method_output.output.is_empty() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }
+            debug_log(&format!(
+                "ecl: EVM_CALL_METHOD_ID: sys_halt: exit_code: {}",
+                method_output.exit_code
+            ));
             LowLevelSDK::sys_halt(method_output.exit_code);
         }
         _ => panic!("unknown method id: {}", method_id),
     }
 
+    debug_log("ecl: return: sys_halt: OK");
     LowLevelSDK::sys_halt(ExitCode::Ok.into_i32());
 }

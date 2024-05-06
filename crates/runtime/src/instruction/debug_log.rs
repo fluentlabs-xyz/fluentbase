@@ -25,7 +25,7 @@ impl DebugLog {
                 println!("{} debug_log: {}", now_str, v);
             }
             Err(v) => {
-                println!("{} debug_log: failed to convert msg into utf8: {}", now_str, v);
+                println!("{} debug_log: failed to convert into utf8: {}", now_str, v);
             }
         };
     }

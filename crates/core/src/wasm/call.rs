@@ -1,12 +1,12 @@
 use crate::account::Account;
-use alloc::vec;
+use crate::helpers::debug_log;
+use alloc::{format, vec};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     evm::{ContractInput, ExecutionContext},
     LowLevelAPI, LowLevelSDK, WasmCallMethodInput, WasmCallMethodOutput,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
-use crate::helpers::debug_log;
 
 pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
     debug_log("_wasm_call start");
@@ -14,6 +14,10 @@ pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
     // don't allow to do static calls with non zero value
     let is_static = ExecutionContext::contract_is_static();
     if is_static && input.value != U256::ZERO {
+        debug_log(&format!(
+            "_wasm_call return: Err: exit_code: {}",
+            ExitCode::WriteProtection
+        ));
         return WasmCallMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
     // parse callee address
@@ -46,8 +50,7 @@ pub fn _wasm_call(input: WasmCallMethodInput) -> WasmCallMethodOutput {
     let mut output_buffer = vec![0u8; out_size as usize];
     LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, out_size);
 
-    debug_log("_wasm_call return: OK");
-
+    debug_log(&format!("_wasm_call return: OK: exit_code: {}", exit_code));
     WasmCallMethodOutput {
         output: output_buffer.into(),
         exit_code,
