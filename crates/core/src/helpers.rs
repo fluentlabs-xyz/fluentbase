@@ -284,6 +284,7 @@ pub(crate) fn exec_evm_bytecode(
     is_static: bool,
 ) -> InterpreterResult {
     use crate::evm::create::_evm_create;
+    debug_log("exec_evm_bytecode start");
 
     static INSTRUCTION_TABLE: InstructionTable<FluentHost> =
         make_instruction_table::<FluentHost, DefaultEvmSpec>();
@@ -307,6 +308,7 @@ pub(crate) fn exec_evm_bytecode(
                 interpreter.insert_create_outcome(exec_evm_create(inputs))
             }
             InterpreterAction::Return { result } => {
+                debug_log(&format!("exec_evm_bytecode return: {:?}", result.result));
                 return result;
             }
             InterpreterAction::None => unreachable!("not supported EVM interpreter state"),

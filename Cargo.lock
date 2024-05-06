@@ -3103,7 +3103,6 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "7.2.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -3120,7 +3119,6 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -3129,7 +3127,6 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -3145,7 +3142,6 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#bb377e7906676bb409a41c4a3a8d574c6b422ad7"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -3358,7 +3354,6 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#571f2261441135b33e09c96dfd42becd79e40751"
 dependencies = [
  "byteorder",
  "downcast-rs",

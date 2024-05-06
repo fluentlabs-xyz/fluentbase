@@ -1,7 +1,7 @@
 use crate::decode_method_input;
-use crate::helpers::{unwrap_exit_code, InputHelper};
+use crate::helpers::{debug_log, unwrap_exit_code, InputHelper};
 use crate::wasm::{call::_wasm_call, create::_wasm_create};
-use alloc::vec;
+use alloc::{format, vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
@@ -27,6 +27,10 @@ pub fn main() {
             if !method_output.output.is_empty() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }
+            debug_log(&format!(
+                "wcl: WASM_CALL_METHOD_ID: sys_halt: exit_code: {}",
+                method_output.exit_code
+            ));
             LowLevelSDK::sys_halt(method_output.exit_code);
         }
         _ => panic!("unknown method id: {}", method_id),

@@ -11,19 +11,13 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
-fluentbase-revm = { package = "fluentbase-revm", path = "..", default-features = false, features = [
+fluentbase-revm = { workspace = true, default-features = false, features = [
     "ethersdb",
     "std",
     "serde-json",
     "c-kzg",
 ] }
-revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = [
-    "ethersdb",
-    "std",
-    "serde-json",
-    "c-kzg",
-    "rwasm",
-] }
+revm = { workspace = true }
 hash-db = "=0.15"
 hex = "0.4"
 hashbrown = "0.14"
