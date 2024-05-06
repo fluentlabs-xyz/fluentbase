@@ -15,13 +15,13 @@ use revm_interpreter::{
 use revm_primitives::U256;
 
 pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
-    debug_log("_evm_create start");
+    debug_log("ecl(_evm_create): start");
 
     // check write protection
     let is_static = ExecutionContext::contract_is_static();
     if is_static {
         debug_log(&format!(
-            "_evm_create: return: Err: exit_code: {}",
+            "ecl(_evm_create): return: Err: exit_code: {}",
             ExitCode::WriteProtection
         ));
         return Err(ExitCode::WriteProtection);
@@ -66,17 +66,26 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
 
     if !matches!(result.result, return_ok!()) {
         Account::rollback(checkpoint);
-        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
+        debug_log(&format!(
+            "ecl(_evm_create): return: Err: {:?}",
+            result.result
+        ));
         return Err(exit_code_from_evm_error(result.result));
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         Account::rollback(checkpoint);
-        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
+        debug_log(&format!(
+            "ecl(_evm_create): return: Err: {:?}",
+            result.result
+        ));
         return Err(exit_code_from_evm_error(result.result));
     }
     if result.output.len() > MAX_CODE_SIZE {
         Account::rollback(checkpoint);
-        debug_log(&format!("_evm_create: return: Err: {:?}", result.result));
+        debug_log(&format!(
+            "ecl(_evm_create): return: Err: {:?}",
+            result.result
+        ));
         return Err(exit_code_from_evm_error(result.result));
     }
 
@@ -89,7 +98,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     callee_account.update_bytecode(&result.output, None, &evm_loader, None);
 
     debug_log(&format!(
-        "_evm_create: return: Ok: callee_account.address: {}",
+        "ecl(_evm_create): return: Ok: callee_account.address: {}",
         callee_account.address
     ));
 

@@ -21,6 +21,7 @@ revm-interpreter = { workspace = true }
 paste = { workspace = true }
 revm-precompile = { workspace = true, default-features = false, optional = true }
 revm-primitives = { workspace = true, default-features = false }
+hex.workspace = true
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }

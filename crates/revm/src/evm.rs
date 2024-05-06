@@ -576,7 +576,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     format!("0x{}", hex::encode(&result.output))
                 );
             }
-            println!(" - opcode used: {}", runtime.store().tracer().logs.len());
+            println!(
+                " - opcode used: {:?}",
+                runtime.store().tracer().map(|t| t.logs.len())
+            );
         }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())
@@ -652,9 +655,14 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
                 false,
             ))
         } else {
-            ctx.sload(EVM_STORAGE_ADDRESS, U256::from_be_bytes(*key))
+            ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(*key))
                 .ok()
                 .map(|(value, is_cold)| {
+                    // println!(
+                    //     "reading storage value: slot={}, value={}",
+                    //     hex::encode(U256::from_le_bytes(*key).to_be_bytes::<32>()),
+                    //     hex::encode(value.to_be_bytes::<32>())
+                    // );
                     (
                         vec![value.to_be_bytes::<32>()],
                         JZKT_STORAGE_COMPRESSION_FLAGS,
@@ -676,10 +684,15 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
             account.info.code_hash = jzkt_account.source_code_hash;
             account.info.rwasm_code_hash = jzkt_account.rwasm_code_hash;
         } else if value.len() == JZKT_STORAGE_FIELDS_COUNT as usize {
+            // println!(
+            //     "writing storage value: slot={}, value={}",
+            //     hex::encode(U256::from_le_bytes(*key).to_be_bytes::<32>()),
+            //     hex::encode(U256::from_le_bytes(*value.get(0).unwrap()).to_be_bytes::<32>())
+            // );
             ctx.sstore(
                 EVM_STORAGE_ADDRESS,
-                U256::from_be_bytes(*key),
-                U256::from_be_bytes(*value.get(0).unwrap()),
+                U256::from_le_bytes(*key),
+                U256::from_le_bytes(*value.get(0).unwrap()),
             )
             .expect("failed to update storage slot");
         } else {

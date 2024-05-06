@@ -1,9 +1,10 @@
+use crate::helpers::debug_log;
 use crate::{
     account::Account,
     account_types::MAX_BYTECODE_SIZE,
     evm::{sload::_evm_sload, sstore::_evm_sstore},
 };
-use alloc::vec;
+use alloc::{format, vec};
 use core::cell::Cell;
 use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
 use revm_interpreter::{
@@ -112,11 +113,27 @@ impl Host for FluentHost {
             slot_value32.as_mut_ptr(),
         )
         .ok()?;
+        debug_log(&format!(
+            "ecl(sload): address={}, index={}, value={}",
+            address,
+            hex::encode(index.to_be_bytes::<32>().as_slice()),
+            hex::encode(
+                U256::from_le_bytes(slot_value32)
+                    .to_be_bytes::<32>()
+                    .as_slice()
+            ),
+        ));
         Some((U256::from_le_bytes(slot_value32), is_cold))
     }
 
     #[inline]
     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+        debug_log(&format!(
+            "ecl(sstore): address={}, index={}, value={}",
+            address,
+            hex::encode(index.to_be_bytes::<32>().as_slice()),
+            hex::encode(value.to_be_bytes::<32>().as_slice()),
+        ));
         let mut previous = U256::default();
         _evm_sload(&address, index.as_le_slice().as_ptr(), unsafe {
             previous.as_le_slice_mut().as_mut_ptr()

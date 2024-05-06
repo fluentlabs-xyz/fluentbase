@@ -238,8 +238,8 @@ fn check_evm_execution<EXT1, EXT2>(
                     .get(&EVM_STORAGE_ADDRESS)
                     .expect("missing special EVM storage account");
                 let value2 = fluent_evm_storage
-                    .storage_slot(U256::from_be_bytes(storage_key))
-                    .expect("missing value storage key");
+                    .storage_slot(U256::from_le_bytes(storage_key))
+                    .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
                 assert_eq!(
                     *value,
                     value2,
@@ -384,6 +384,7 @@ pub fn execute_test_suite(
         let mut cache_state = revm::CacheState::new(false);
         let mut cache_state2 = fluentbase_revm::CacheState::new(false);
 
+        let mut evm_storage: PlainStorage = PlainStorage::default();
         for (address, info) in &devnet_genesis.alloc {
             let code_hash = info
                 .storage
@@ -405,18 +406,13 @@ pub fn execute_test_suite(
                 code: None,
                 rwasm_code: Some(Bytecode::new_raw(info.code.clone().unwrap_or_default())),
             };
-            let storage = info
-                .storage
-                .as_ref()
-                .map(|storage| {
-                    let mut result = PlainStorage::default();
-                    for (k, v) in storage.iter() {
-                        result.insert((*k).into(), (*v).into());
-                    }
-                    result
-                })
-                .unwrap_or_default();
-            cache_state2.insert_account_with_storage(*address, acc_info, storage.clone());
+            if let Some(storage) = info.storage.as_ref() {
+                for (k, v) in storage.iter() {
+                    let storage_key = calc_storage_key(address, k.as_ptr());
+                    evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+                }
+            }
+            cache_state2.insert_account_with_storage(*address, acc_info, PlainStorage::default());
         }
 
         for (address, info) in unit.pre {
@@ -434,8 +430,28 @@ pub fn execute_test_suite(
             );
             acc_info.rwasm_code_hash = rwasm_hash;
             acc_info.rwasm_code = Some(Bytecode::new_raw(rwasm_bytecode.clone()));
-            cache_state2.insert_account_with_storage(address, acc_info, info.storage.clone());
+            for (k, v) in info.storage.iter() {
+                let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
+                // println!(
+                //     "mapping EVM storage address=0x{}, slot={}, storage_key={}, value={}",
+                //     hex::encode(&address),
+                //     hex::encode(k.to_be_bytes::<32>().as_slice()),
+                //     hex::encode(&storage_key),
+                //     hex::encode(v.to_be_bytes::<32>().as_slice()),
+                // );
+                evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+            }
+            cache_state2.insert_account_with_storage(address, acc_info, info.storage);
         }
+
+        cache_state2.insert_account_with_storage(
+            EVM_STORAGE_ADDRESS,
+            AccountInfo {
+                nonce: 1,
+                ..AccountInfo::default()
+            },
+            evm_storage,
+        );
 
         let mut env = Box::<Env>::default();
         // for mainnet
@@ -512,6 +528,10 @@ pub fn execute_test_suite(
             let spec_id = spec_name.to_spec_id();
 
             for (index, test) in tests.into_iter().enumerate() {
+                println!(
+                    "running test with txdata: {}",
+                    hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
+                );
                 env.tx.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();
 
                 let data = unit

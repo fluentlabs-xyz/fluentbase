@@ -19,7 +19,7 @@ use revm_interpreter::SharedMemory;
 pub fn deploy() {}
 
 pub fn main() {
-    debug_log("ecl: started");
+    debug_log("ecl(main): started method");
     let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
@@ -35,7 +35,7 @@ pub fn main() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }
             debug_log(&format!(
-                "ecl: EVM_CALL_METHOD_ID: sys_halt: exit_code: {}",
+                "ecl(main): return exit_code={}",
                 method_output.exit_code
             ));
             LowLevelSDK::sys_halt(method_output.exit_code);
@@ -43,6 +43,6 @@ pub fn main() {
         _ => panic!("unknown method id: {}", method_id),
     }
 
-    debug_log("ecl: return: sys_halt: OK");
+    debug_log("ecl(main): return exit_code=0");
     LowLevelSDK::sys_halt(ExitCode::Ok.into_i32());
 }
