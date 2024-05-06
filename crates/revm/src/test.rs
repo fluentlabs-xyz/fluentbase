@@ -7,7 +7,7 @@ use fluentbase_genesis::{
     Genesis, EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_sdk::{evm::ContractInput, CoreInput, EvmCallMethodInput};
+use fluentbase_sdk::{ContractInput, CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
     address, bytes, Address, Bytes, ExitCode, SysFuncIdx, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
 };

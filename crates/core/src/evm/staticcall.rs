@@ -1,14 +1,14 @@
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use core::ptr;
-use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode, U256};
 use revm_interpreter::{
     analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, BytecodeLocked,
     Contract, Interpreter, SharedMemory,
 };
 
-pub fn _evm_staticcall(
+pub fn _evm_staticcall<CR: ContextReader>(
     gas_limit: u32,
     callee_address20_offset: *const u8,
     args_offset: *const u8,
@@ -20,7 +20,7 @@ pub fn _evm_staticcall(
     let callee_address =
         Address::from_slice(unsafe { &*ptr::slice_from_raw_parts(callee_address20_offset, 20) });
     let callee_account = Account::new_from_jzkt(callee_address);
-    let caller_address = ExecutionContext::contract_caller();
+    let caller_address = CR::contract_caller();
     let bytecode = BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(
         callee_account.load_source_bytecode(),
     )))
@@ -34,7 +34,7 @@ pub fn _evm_staticcall(
         value,
     };
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit as u64, true);
-    let instruction_table = make_instruction_table::<FluentHost, DefaultEvmSpec>();
+    let instruction_table = make_instruction_table::<FluentHost<CR>, DefaultEvmSpec>();
     let mut host = FluentHost::default();
     let shared_memory = SharedMemory::new();
     let result = match interpreter

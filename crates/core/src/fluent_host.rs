@@ -6,7 +6,8 @@ use crate::{
 };
 use alloc::{format, vec};
 use core::cell::Cell;
-use fluentbase_sdk::{evm::ExecutionContext, Bytes32, LowLevelAPI, LowLevelSDK};
+use core::marker::PhantomData;
+use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
 use revm_interpreter::{
     primitives::{
         Address, AnalysisKind, BlockEnv, Bytecode, Bytes, CfgEnv, Env, Log, TransactTo, TxEnv,
@@ -16,53 +17,55 @@ use revm_interpreter::{
 };
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-pub struct FluentHost {
+pub struct FluentHost<CR: ContextReader> {
     env: Env,
+    _phantom: PhantomData<CR>,
 }
 
-impl Default for FluentHost {
+impl<CR: ContextReader> Default for FluentHost<CR> {
     fn default() -> Self {
         Self {
             env: Env {
                 cfg: {
                     let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = ExecutionContext::block_chain_id();
+                    cfg_env.chain_id = CR::block_chain_id();
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
                     cfg_env.limit_contract_code_size = Some(RWASM_MAX_CODE_SIZE);
                     cfg_env
                 },
                 block: BlockEnv {
-                    number: U256::from(ExecutionContext::block_number()),
-                    coinbase: ExecutionContext::block_coinbase(),
-                    timestamp: U256::from(ExecutionContext::block_timestamp()),
-                    gas_limit: U256::from(ExecutionContext::block_gas_limit()),
-                    basefee: ExecutionContext::block_base_fee(),
-                    difficulty: U256::from(ExecutionContext::block_difficulty()),
+                    number: U256::from(CR::block_number()),
+                    coinbase: CR::block_coinbase(),
+                    timestamp: U256::from(CR::block_timestamp()),
+                    gas_limit: U256::from(CR::block_gas_limit()),
+                    basefee: CR::block_base_fee(),
+                    difficulty: U256::from(CR::block_difficulty()),
                     prevrandao: None,
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
-                    caller: ExecutionContext::tx_caller(),
-                    gas_limit: ExecutionContext::tx_gas_limit(),
-                    gas_price: ExecutionContext::tx_gas_price(),
+                    caller: CR::tx_caller(),
+                    gas_limit: CR::tx_gas_limit(),
+                    gas_price: CR::tx_gas_price(),
                     transact_to: TransactTo::Call(Address::ZERO), // will do nothing
-                    value: ExecutionContext::contract_value(),
-                    data: ExecutionContext::contract_input(),
-                    nonce: Some(ExecutionContext::tx_nonce()),
+                    value: CR::contract_value(),
+                    data: CR::contract_input(),
+                    nonce: Some(CR::tx_nonce()),
                     chain_id: None, // no checks
-                    access_list: ExecutionContext::tx_access_list(),
-                    gas_priority_fee: ExecutionContext::tx_gas_priority_fee(),
+                    access_list: CR::tx_access_list(),
+                    gas_priority_fee: CR::tx_gas_priority_fee(),
                     blob_hashes: vec![],
                     max_fee_per_blob_gas: None,
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
             },
+            _phantom: Default::default(),
         }
     }
 }
 
-impl Host for FluentHost {
+impl<CR: ContextReader> Host for FluentHost<CR> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -107,7 +110,7 @@ impl Host for FluentHost {
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
         let mut slot_value32 = Bytes32::default();
-        let is_cold = _evm_sload(
+        let is_cold = _evm_sload::<CR>(
             &address,
             index.as_le_slice().as_ptr(),
             slot_value32.as_mut_ptr(),
@@ -135,11 +138,11 @@ impl Host for FluentHost {
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         ));
         let mut previous = U256::default();
-        _evm_sload(&address, index.as_le_slice().as_ptr(), unsafe {
+        _evm_sload::<CR>(&address, index.as_le_slice().as_ptr(), unsafe {
             previous.as_le_slice_mut().as_mut_ptr()
         })
         .ok()?;
-        let is_cold = _evm_sstore(
+        let is_cold = _evm_sstore::<CR>(
             &address,
             index.as_le_slice().as_ptr(),
             value.as_le_slice().as_ptr(),

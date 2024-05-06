@@ -4,8 +4,7 @@ use alloc::format;
 use byteorder::{BigEndian, ByteOrder};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    evm::ExecutionContext, CoreInput, EvmCallMethodInput, LowLevelAPI, LowLevelSDK,
-    EVM_CALL_METHOD_ID,
+    CoreInput, EvmCallMethodInput, ExecutionContext, LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
 };
 use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
 use revm_primitives::{hex, U256};

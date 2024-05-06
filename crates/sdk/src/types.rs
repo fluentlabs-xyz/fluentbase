@@ -19,7 +19,7 @@ impl<T: Encoder<T> + Default> CoreInput<T> {
 }
 
 pub const EVM_CREATE_METHOD_ID: u32 =
-    derive_keccak256_id!("_evm_create(bytes,uint256,u32,bool,uint256)");
+    derive_keccak256_id!("_evm_create(bytes,uint256,u64,bool,uint256)");
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCreateMethodInput {

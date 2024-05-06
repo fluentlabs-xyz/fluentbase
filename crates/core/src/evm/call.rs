@@ -5,7 +5,7 @@ use alloc::format;
 use core::ascii::escape_default;
 use core::ptr;
 use fluentbase_sdk::{
-    evm::ExecutionContext, EvmCallMethodInput, EvmCallMethodOutput, LowLevelAPI, LowLevelSDK,
+    ContextReader, EvmCallMethodInput, EvmCallMethodOutput, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, U256};
 use revm_interpreter::instructions::host::call;
@@ -15,10 +15,10 @@ use revm_interpreter::{
 };
 use revm_primitives::CreateScheme;
 
-pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
+pub fn _evm_call<CR: ContextReader>(input: EvmCallMethodInput) -> EvmCallMethodOutput {
     debug_log("_evm_call start");
     // for static calls passing value is not allowed according to standards
-    let is_static = ExecutionContext::contract_is_static();
+    let is_static = CR::contract_is_static();
     if is_static && input.value != U256::ZERO {
         debug_log(&format!(
             "_evm_call return: exit_code: {}",
@@ -32,7 +32,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
     let checkpoint = Account::checkpoint();
 
     // read caller and callee
-    let mut caller_account = Account::new_from_jzkt(ExecutionContext::contract_caller());
+    let mut caller_account = Account::new_from_jzkt(CR::contract_caller());
     let mut callee_account = Account::new_from_jzkt(input.callee);
 
     // transfer funds from caller to callee
@@ -49,7 +49,6 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
         callee_account.load_source_bytecode(),
     )))
     .unwrap();
-    let gas_limit = input.gas_limit;
 
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
@@ -63,11 +62,11 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
         input: input.input,
         hash: callee_account.source_code_hash,
         bytecode,
-        address: ExecutionContext::contract_address(),
+        address: CR::contract_address(),
         caller: caller_account.address,
         value: input.value,
     };
-    let result = exec_evm_bytecode(contract, gas_limit, is_static);
+    let result = exec_evm_bytecode::<CR>(contract, u64::MAX, is_static);
 
     // debug_log(&format!(
     //     "_evm_call return: {}",

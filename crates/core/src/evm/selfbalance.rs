@@ -1,11 +1,10 @@
 use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 use core::ptr;
-use fluentbase_sdk::evm::ExecutionContext;
-use fluentbase_sdk::{Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
 
-pub fn _evm_self_balance(output32_offset: *mut u8) {
+pub fn _evm_self_balance<CR: ContextReader>(output32_offset: *mut u8) {
     let mut bytes32 = Bytes32::default();
-    let address = ExecutionContext::contract_address();
+    let address = CR::contract_address();
     unsafe { ptr::copy(address.as_ptr(), bytes32[12..].as_mut_ptr(), 20) }
 
     let _is_cold = LowLevelSDK::jzkt_get(

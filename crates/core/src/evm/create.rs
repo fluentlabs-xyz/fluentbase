@@ -2,8 +2,7 @@ use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use alloc::format;
-use fluentbase_sdk::evm::ExecutionContext;
-use fluentbase_sdk::{EvmCreateMethodInput, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, EvmCreateMethodInput, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Address, ExitCode, B256};
 use revm_interpreter::InstructionResult;
 use revm_interpreter::{
@@ -14,11 +13,11 @@ use revm_interpreter::{
 };
 use revm_primitives::U256;
 
-pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
+pub fn _evm_create<CR: ContextReader>(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     debug_log("ecl(_evm_create): start");
 
     // check write protection
-    let is_static = ExecutionContext::contract_is_static();
+    let is_static = CR::contract_is_static();
     if is_static {
         debug_log(&format!(
             "ecl(_evm_create): return: Err: exit_code: {}",
@@ -28,7 +27,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
     }
 
     // load deployer and contract accounts
-    let caller_address = ExecutionContext::contract_caller();
+    let caller_address = CR::contract_caller();
     let mut caller_account = Account::new_from_jzkt(caller_address);
 
     // calc source code hash
@@ -62,7 +61,7 @@ pub fn _evm_create(input: EvmCreateMethodInput) -> Result<Address, ExitCode> {
         value: input.value,
     };
 
-    let result = exec_evm_bytecode(contract, input.gas_limit, is_static);
+    let result = exec_evm_bytecode::<CR>(contract, u64::MAX, is_static);
 
     if !matches!(result.result, return_ok!()) {
         Account::rollback(checkpoint);

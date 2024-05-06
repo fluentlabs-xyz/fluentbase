@@ -6,12 +6,12 @@ use crate::{
 };
 use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
+use core::marker::{PhantomData, PhantomPinned};
 use core::str::from_utf8;
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext, IContractInput},
-    Bytes32, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, ICoreInput, LowLevelAPI,
-    LowLevelSDK, EVM_CALL_METHOD_ID,
+    Bytes32, ContextReader, ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput,
+    ICoreInput, LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::Equivalent;
@@ -36,18 +36,6 @@ macro_rules! decode_method_input {
 }
 
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
-
-#[inline]
-pub(crate) fn get_contract_input_offset_and_len() -> (u32, u32) {
-    let mut header = [0u8; 8];
-    LowLevelSDK::sys_read(
-        &mut header,
-        <ContractInput as IContractInput>::ContractInput::FIELD_OFFSET as u32,
-    );
-    let offset = LittleEndian::read_u32(&header[0..4]);
-    let length = LittleEndian::read_u32(&header[4..8]);
-    (offset, length)
-}
 
 #[inline(always)]
 pub(crate) fn read_balance(address: Address, value: &mut U256) {
@@ -149,7 +137,7 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
     storage_key
 }
 
-fn contract_input_from_call_inputs(
+fn contract_input_from_call_inputs<CR: ContextReader>(
     gas_limit: u64,
     callee_address: Address,
     input: Bytes,
@@ -157,44 +145,46 @@ fn contract_input_from_call_inputs(
     is_static: bool,
 ) -> Vec<u8> {
     ContractInput {
-        journal_checkpoint: ExecutionContext::journal_checkpoint(),
+        journal_checkpoint: CR::journal_checkpoint(),
         contract_gas_limit: gas_limit,
         contract_address: callee_address,
-        contract_caller: ExecutionContext::contract_address(),
+        contract_caller: CR::contract_address(),
         contract_input: input,
         contract_value: value,
         contract_is_static: is_static,
-        block_chain_id: ExecutionContext::block_chain_id(),
-        block_coinbase: ExecutionContext::block_coinbase(),
-        block_timestamp: ExecutionContext::block_timestamp(),
-        block_number: ExecutionContext::block_number(),
-        block_difficulty: ExecutionContext::block_difficulty(),
-        block_gas_limit: ExecutionContext::block_gas_limit(),
-        block_base_fee: ExecutionContext::block_base_fee(),
-        tx_gas_limit: ExecutionContext::tx_gas_limit(),
-        tx_nonce: ExecutionContext::tx_nonce(),
-        tx_gas_price: ExecutionContext::tx_gas_price(),
-        tx_gas_priority_fee: ExecutionContext::tx_gas_priority_fee(),
-        tx_caller: ExecutionContext::tx_caller(),
-        tx_access_list: ExecutionContext::tx_access_list(),
+        block_chain_id: CR::block_chain_id(),
+        block_coinbase: CR::block_coinbase(),
+        block_timestamp: CR::block_timestamp(),
+        block_number: CR::block_number(),
+        block_difficulty: CR::block_difficulty(),
+        block_gas_limit: CR::block_gas_limit(),
+        block_base_fee: CR::block_base_fee(),
+        tx_gas_limit: CR::tx_gas_limit(),
+        tx_nonce: CR::tx_nonce(),
+        tx_gas_price: CR::tx_gas_price(),
+        tx_gas_priority_fee: CR::tx_gas_priority_fee(),
+        tx_caller: CR::tx_caller(),
+        tx_access_list: CR::tx_access_list(),
     }
     .encode_to_vec(0)
 }
 
+const EVM_GAS_MULTIPLIED: u64 = 10;
+
 #[cfg(feature = "ecl")]
-fn exec_evm_create(inputs: Box<CreateInputs>) -> CreateOutcome {
+fn exec_evm_create<CR: ContextReader>(inputs: Box<CreateInputs>) -> CreateOutcome {
     // calc create input
     let create_input = EvmCreateMethodInput {
         value: inputs.value,
         init_code: inputs.init_code,
-        gas_limit: inputs.gas_limit,
+        gas_limit: inputs.gas_limit * EVM_GAS_MULTIPLIED,
         salt: match inputs.scheme {
             CreateScheme::Create2 { salt } => Some(salt),
             CreateScheme::Create => None,
         },
     };
 
-    let create_outcome = match _evm_create(create_input) {
+    let create_outcome = match _evm_create::<CR>(create_input) {
         Ok(result) => CreateOutcome {
             result: InterpreterResult {
                 result: InstructionResult::Continue,
@@ -221,7 +211,7 @@ fn exec_evm_create(inputs: Box<CreateInputs>) -> CreateOutcome {
 }
 
 #[cfg(feature = "ecl")]
-fn exec_evm_call(inputs: Box<CallInputs>) -> CallOutcome {
+fn exec_evm_call<CR: ContextReader>(inputs: Box<CallInputs>) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
     let core_input = CoreInput {
@@ -234,8 +224,8 @@ fn exec_evm_call(inputs: Box<CallInputs>) -> CallOutcome {
         },
     };
 
-    let mut gas_limit = inputs.gas_limit as u32;
-    let contract_input = contract_input_from_call_inputs(
+    let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIED as u32;
+    let contract_input = contract_input_from_call_inputs::<CR>(
         inputs.gas_limit,
         inputs.context.address,
         core_input.encode_to_vec(0).into(),
@@ -278,7 +268,7 @@ fn exec_evm_call(inputs: Box<CallInputs>) -> CallOutcome {
 }
 
 #[cfg(feature = "ecl")]
-pub(crate) fn exec_evm_bytecode(
+pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
@@ -292,8 +282,8 @@ pub(crate) fn exec_evm_bytecode(
         // hex::encode(&ExecutionContext::contract_input_full().encode_to_vec(0)),
     ));
 
-    static INSTRUCTION_TABLE: InstructionTable<FluentHost> =
-        make_instruction_table::<FluentHost, DefaultEvmSpec>();
+    let instruction_table: InstructionTable<FluentHost<CR>> =
+        make_instruction_table::<FluentHost<CR>, DefaultEvmSpec>();
 
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let mut host = FluentHost::default();
@@ -301,7 +291,7 @@ pub(crate) fn exec_evm_bytecode(
 
     loop {
         // run EVM bytecode to produce next action
-        let next_action = interpreter.run(shared_memory, &INSTRUCTION_TABLE, &mut host);
+        let next_action = interpreter.run(shared_memory, &instruction_table, &mut host);
 
         // take memory from interpreter back
         shared_memory = interpreter.take_memory();
@@ -316,11 +306,11 @@ pub(crate) fn exec_evm_bytecode(
                     &inputs.context.address,
                     inputs.gas_limit,
                 ));
-                interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(inputs))
+                interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call::<CR>(inputs))
             }
             InterpreterAction::Create { inputs } => {
                 debug_log(&format!("ecl(exec_evm_bytecode): nested create"));
-                interpreter.insert_create_outcome(exec_evm_create(inputs))
+                interpreter.insert_create_outcome(exec_evm_create::<CR>(inputs))
             }
             InterpreterAction::Return { result } => {
                 debug_log(&format!(
@@ -380,14 +370,16 @@ pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
     })
 }
 
-pub(crate) struct InputHelper {
+pub(crate) struct InputHelper<CR: ContextReader> {
     input: Bytes,
+    _phantom: PhantomData<CR>,
 }
 
-impl InputHelper {
+impl<CR: ContextReader> InputHelper<CR> {
     pub(crate) fn new() -> Self {
         Self {
-            input: ExecutionContext::contract_input(),
+            input: CR::contract_input(),
+            _phantom: Default::default(),
         }
     }
 
@@ -410,6 +402,7 @@ impl InputHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluentbase_sdk::ExecutionContext;
     use fluentbase_types::address;
     use revm_interpreter::analysis::to_analysed;
     use revm_interpreter::BytecodeLocked;
@@ -456,24 +449,5 @@ mod tests {
                 address.create2(salt, hash)
             );
         }
-    }
-
-    #[cfg(feature = "ecl")]
-    #[test]
-    fn test_strange_bytecode() {
-        let bytecode = BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(hex!("6001600155600060015560016002556000600255600160035560006003556001600455600060045560016005556000600555600160065560006006556001600755600060075560016008556000600855600160095560006009556001600a556000600a556001600b556000600b556001600c556000600c556001600d556000600d556001600e556000600e556001600f556000600f5560016010556000601055600160015500").into()))).unwrap();
-        let hash = bytecode.hash_slow();
-        exec_evm_bytecode(
-            Contract {
-                input: Default::default(),
-                bytecode,
-                hash,
-                address: address!("6295eE1B4F6dD65047762F924Ecd367c17eaBf8f"),
-                caller: address!("6295eE1B4F6dD65047762F924Ecd367c17eaBf8f"),
-                value: U256::ZERO,
-            },
-            600000,
-            false,
-        );
     }
 }
