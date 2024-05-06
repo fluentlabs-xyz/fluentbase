@@ -10,8 +10,8 @@ clone_state_tests:
 
 .PHONY: run_state_tests
 run_state_tests:
-	cargo run -p revme@$(PACKAGE_VERSION) statetest tests/GeneralStateTests #-s
+	cargo run --color=always --bin fluentbase-revm-e2e statetest tests/GeneralStateTests -s
 
 .PHONY: command_help
 command_help:
-	cargo run -p revme@$(PACKAGE_VERSION) -h
+	cargo run --color=always --bin fluentbase-revm-e2e -h
