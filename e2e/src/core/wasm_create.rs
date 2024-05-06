@@ -48,7 +48,7 @@ fn test_wasm_create() {
         gas_limit,
         salt: None,
     };
-    let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input.encode_to_vec(0));
+    let core_input = CoreInput::new(WASM_CREATE_METHOD_ID, method_input);
     let core_input_vec = core_input.encode_to_vec(0);
 
     const IS_RUNTIME: bool = true;

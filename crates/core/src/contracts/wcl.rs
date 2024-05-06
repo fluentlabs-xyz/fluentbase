@@ -5,7 +5,7 @@ use alloc::{format, vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
-    evm::ExecutionContext, CoreInput, EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
+    CoreInput, EvmCreateMethodInput, ExecutionContext, ICoreInput, LowLevelAPI, LowLevelSDK,
     WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::Bytes;
@@ -13,17 +13,17 @@ use fluentbase_types::Bytes;
 pub fn deploy() {}
 
 pub fn main() {
-    let input_helper = InputHelper::new();
+    let input_helper = InputHelper::<ExecutionContext>::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
         WASM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCreateMethodInput>();
-            let address = unwrap_exit_code(_wasm_create(method_input));
+            let address = unwrap_exit_code(_wasm_create::<ExecutionContext>(method_input));
             LowLevelSDK::sys_write(address.as_slice());
         }
         WASM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
-            let method_output = _wasm_call(method_input);
+            let method_output = _wasm_call::<ExecutionContext>(method_input);
             if !method_output.output.is_empty() {
                 LowLevelSDK::sys_write(method_output.output.as_ref());
             }
@@ -41,7 +41,7 @@ pub fn main() {
 mod tests {
     use fluentbase_codec::Encoder;
     use fluentbase_sdk::{
-        evm::ContractInput, CoreInput, LowLevelSDK, WasmCreateMethodInput, WASM_CREATE_METHOD_ID,
+        ContractInput, CoreInput, LowLevelSDK, WasmCreateMethodInput, WASM_CREATE_METHOD_ID,
     };
     use fluentbase_types::{Address, Bytes};
     use revm_primitives::U256;

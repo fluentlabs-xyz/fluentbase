@@ -1,7 +1,7 @@
 use core::slice;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
 
-pub fn _evm_return(output_offset: *mut u8, size: u32) {
+pub fn _evm_return<CR: ContextReader>(output_offset: *mut u8, size: u32) {
     if size <= 0 {
         return;
     }

@@ -25,7 +25,7 @@ use fluentbase_core::{
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_sdk::{
-    evm::ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, LowLevelSDK,
+    ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, LowLevelSDK,
     WasmCallMethodInput, WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
     WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
@@ -664,7 +664,7 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
                     //     hex::encode(value.to_be_bytes::<32>())
                     // );
                     (
-                        vec![value.to_be_bytes::<32>()],
+                        vec![value.to_le_bytes::<32>()],
                         JZKT_STORAGE_COMPRESSION_FLAGS,
                         is_cold,
                     )

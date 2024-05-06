@@ -137,13 +137,16 @@ impl SysExecHash {
         ctx.execution_result.return_data = execution_result.output.clone();
 
         println!(
-            "sys_exec_hash ({}), elapsed time: {}ms",
+            "sys_exec_hash ({}), exit_code={}, fuel_consumed={}, elapsed time: {}ms, output={}",
             hex::encode(&bytecode_hash32),
+            execution_result.exit_code,
+            execution_result.fuel_consumed,
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis()
-                - time
+                - time,
+            hex::encode(&execution_result.output),
         );
 
         if execution_result.exit_code != ExitCode::Ok.into_i32() {

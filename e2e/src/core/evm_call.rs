@@ -14,7 +14,7 @@ use fluentbase_core::{
     helpers::{calc_create2_address, calc_create_address},
     Account,
 };
-use fluentbase_sdk::{Bytes20, Bytes32, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{Bytes20, Bytes32, ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_sdk::{EvmCallMethodInput, EvmCreateMethodInput};
 use fluentbase_types::{address, Address, Bytes, B256, U256};
 use revm_interpreter::primitives::{hex, Bytecode};
@@ -122,7 +122,7 @@ fn evm_create_test() {
 
     let value = B256::left_padding_from(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_contract_address = _evm_create(EvmCreateMethodInput {
+    let created_contract_address = _evm_create::<ExecutionContext>(EvmCreateMethodInput {
         init_code: EVM_CONTRACT_BYTECODE1.into(),
         value: value.into(),
         gas_limit,
@@ -167,7 +167,7 @@ fn evm_call_after_create_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
+    let created_address = _evm_create::<ExecutionContext>(EvmCreateMethodInput {
         init_code: EVM_CONTRACT_BYTECODE1.into(),
         value: create_value,
         gas_limit,
@@ -178,7 +178,7 @@ fn evm_call_after_create_test() {
 
     let args = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let call_result = _evm_call(EvmCallMethodInput {
+    let call_result = _evm_call::<ExecutionContext>(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args.into(),
@@ -237,7 +237,7 @@ fn evm_call_after_create2_test() {
 
     let create_value = U256::from_be_slice(&hex!("1000"));
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
+    let created_address = _evm_create::<ExecutionContext>(EvmCreateMethodInput {
         value: create_value,
         init_code: EVM_CONTRACT_BYTECODE1.into(),
         gas_limit,
@@ -248,7 +248,7 @@ fn evm_call_after_create2_test() {
 
     let args_data = Vec::from(EVM_CONTRACT_BYTECODE1_METHOD_SAY_HELLO_WORLD_STR_ID);
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = _evm_call(EvmCallMethodInput {
+    let return_data = _evm_call::<ExecutionContext>(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args_data.into(),
@@ -299,7 +299,7 @@ fn evm_balance_test() {
     test_ctx.apply_ctx();
 
     let mut caller_balance_bytes32_fact = Bytes32::default();
-    _evm_balance(
+    _evm_balance::<ExecutionContext>(
         caller_address.as_ptr(),
         caller_balance_bytes32_fact.as_mut_ptr(),
     );
@@ -337,7 +337,7 @@ fn evm_selfbalance_test() {
     test_ctx.apply_ctx();
 
     let mut caller_balance_bytes32_fact = Bytes32::default();
-    _evm_self_balance(caller_balance_bytes32_fact.as_mut_ptr());
+    _evm_self_balance::<ExecutionContext>(caller_balance_bytes32_fact.as_mut_ptr());
     let caller_balance_fact = U256::from_le_slice(caller_balance_bytes32_fact.as_slice());
     assert_eq!(caller_account.balance, caller_balance_fact);
 }
@@ -373,7 +373,7 @@ fn evm_address_test() {
     test_ctx.apply_ctx();
 
     let mut address_bytes20_fact = Bytes20::default();
-    _evm_address(address_bytes20_fact.as_mut_ptr());
+    _evm_address::<ExecutionContext>(address_bytes20_fact.as_mut_ptr());
     assert_eq!(contract_address.as_slice(), address_bytes20_fact.as_slice());
 }
 
@@ -413,7 +413,7 @@ fn evm_selfbalance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("1000");
     let create_value = U256::from_be_slice(create_value_hex_bytes.as_slice());
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
+    let created_address = _evm_create::<ExecutionContext>(EvmCreateMethodInput {
         init_code: EVM_CONTRACT_BYTECODE1.into(),
         value: create_value,
         gas_limit,
@@ -429,7 +429,7 @@ fn evm_selfbalance_from_contract_call_test() {
 
     let args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_SELF_BALANCE_STR_ID.to_vec();
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = _evm_call(EvmCallMethodInput {
+    let return_data = _evm_call::<ExecutionContext>(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args_data.into(),
@@ -483,7 +483,7 @@ fn evm_balance_from_contract_call_test() {
     let create_value_hex_bytes = hex!("84326482");
     let create_value = U256::from_be_slice(&create_value_hex_bytes);
     let gas_limit: u64 = 10_000_000;
-    let created_address = _evm_create(EvmCreateMethodInput {
+    let created_address = _evm_create::<ExecutionContext>(EvmCreateMethodInput {
         init_code: EVM_CONTRACT_BYTECODE1.into(),
         value: create_value,
         gas_limit,
@@ -503,7 +503,7 @@ fn evm_balance_from_contract_call_test() {
     let mut args_data = EVM_CONTRACT_BYTECODE1_METHOD_GET_BALANCE_STR_ID.to_vec();
     args_data.extend_from_slice(caller_address.into_word().as_slice());
     let call_value = U256::from_be_slice(&hex!("00"));
-    let return_data = _evm_call(EvmCallMethodInput {
+    let return_data = _evm_call::<ExecutionContext>(EvmCallMethodInput {
         callee: created_address,
         value: call_value,
         input: args_data.into(),

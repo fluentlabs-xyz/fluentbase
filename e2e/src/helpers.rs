@@ -3,7 +3,7 @@ use fluentbase_runtime::{
     instruction::runtime_register_sovereign_handlers, types::RuntimeError,
     DefaultEmptyRuntimeDatabase, ExecutionResult, Runtime, RuntimeContext,
 };
-use fluentbase_sdk::evm::ContractInput;
+use fluentbase_sdk::ContractInput;
 use fluentbase_types::{wasm2rwasm, Bytes, STATE_MAIN};
 use rwasm::{Config, Engine, Linker, Module, Store};
 

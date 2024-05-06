@@ -1,20 +1,19 @@
 use crate::helpers::debug_log;
 use crate::{account::Account, helpers::rwasm_exec_hash};
 use alloc::{format, vec};
-use fluentbase_sdk::evm::ExecutionContext;
-use fluentbase_sdk::LowLevelSDK;
+use fluentbase_sdk::{ContextReader, LowLevelSDK};
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
 use fluentbase_types::{Address, ExitCode, B256, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
+pub fn _wasm_create<CR: ContextReader>(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     debug_log("_wasm_create start");
 
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
 
     // check write protection
-    if ExecutionContext::contract_is_static() {
+    if CR::contract_is_static() {
         debug_log(&format!(
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::WriteProtection
@@ -39,7 +38,7 @@ pub fn _wasm_create(input: WasmCreateMethodInput) -> Result<Address, ExitCode> {
     );
 
     // read value input and contract address
-    let caller_address = ExecutionContext::contract_caller();
+    let caller_address = CR::contract_caller();
     // load deployer and contract accounts
     let mut deployer_account = Account::new_from_jzkt(caller_address);
 

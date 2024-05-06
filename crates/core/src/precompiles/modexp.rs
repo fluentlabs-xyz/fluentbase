@@ -1,4 +1,4 @@
-use fluentbase_sdk::{evm::ExecutionContext, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{Bytes, ExitCode};
 use revm_interpreter::primitives::PrecompileError;
 

@@ -7,7 +7,8 @@ extern crate lol_alloc;
 
 pub struct LowLevelSDK;
 
-pub mod evm;
+mod evm;
+pub use evm::*;
 mod sdk;
 
 pub use sdk::LowLevelAPI;

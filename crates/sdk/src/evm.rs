@@ -61,15 +61,15 @@ macro_rules! impl_reader_helper {
         let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
         LowLevelSDK::sys_read(&mut buffer, <$input_type>::FIELD_OFFSET as u32);
         let mut result: $return_typ = Default::default();
-        let (_, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
-        length as u32
+        let (offset, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+        (offset as u32, length as u32)
     };
 }
 macro_rules! impl_reader_func {
     (fn $fn_name:ident() -> $return_typ:ty, $input_type:ty) => {
         paste::paste! {
             #[inline(always)]
-            pub fn $fn_name() -> $return_typ {
+            fn $fn_name() -> $return_typ {
                 impl_reader_helper!{@header <ContractInput as IContractInput>::$input_type, $return_typ}
             }
         }
@@ -77,7 +77,7 @@ macro_rules! impl_reader_func {
     (fn $fn_name:ident(result: &mut $return_typ:ty), $input_type:ty) => {
         paste::paste! {
             #[inline(always)]
-            pub fn $fn_name(result: &mut $return_typ) {
+            fn $fn_name(result: &mut $return_typ) {
                 let mut buffer: [u8; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE] = [0; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE];
                 LowLevelSDK::sys_read(&mut buffer, <<ContractInput as IContractInput>::$input_type>::FIELD_OFFSET as u32);
                 _ = <<ContractInput as IContractInput>::$input_type>::decode_field_header_at(&buffer, 0, result);
@@ -87,21 +87,45 @@ macro_rules! impl_reader_func {
     (@dynamic fn $fn_name:ident() -> $return_typ:ty, $input_type:ty) => {
         paste::paste! {
             #[inline(always)]
-            pub fn $fn_name() -> $return_typ {
+            fn $fn_name() -> $return_typ {
                 impl_reader_helper!{@dynamic <ContractInput as IContractInput>::$input_type, $return_typ}
             }
             #[inline(always)]
-            pub fn [<$fn_name _size>]() -> u32 {
+            fn [<$fn_name _size>]() -> (u32, u32) {
                 impl_reader_helper!{@size <ContractInput as IContractInput>::$input_type, $return_typ}
             }
         }
     };
 }
 
+pub trait ContextReader {
+    fn journal_checkpoint() -> u64;
+    fn block_chain_id() -> u64;
+    fn block_coinbase() -> Address;
+    fn block_timestamp() -> u64;
+    fn block_number() -> u64;
+    fn block_difficulty() -> u64;
+    fn block_gas_limit() -> u64;
+    fn block_base_fee() -> U256;
+    fn tx_gas_limit() -> u64;
+    fn tx_nonce() -> u64;
+    fn tx_gas_price() -> U256;
+    fn tx_gas_priority_fee() -> Option<U256>;
+    fn tx_caller() -> Address;
+    fn tx_access_list() -> Vec<(Address, Vec<U256>)>;
+    fn contract_gas_limit() -> u64;
+    fn contract_address() -> Address;
+    fn contract_caller() -> Address;
+    fn contract_value() -> U256;
+    fn contract_is_static() -> bool;
+    fn contract_input() -> Bytes;
+    fn contract_input_size() -> (u32, u32);
+}
+
 #[derive(Default)]
 pub struct ExecutionContext;
 
-impl ExecutionContext {
+impl ContextReader for ExecutionContext {
     // journal
     impl_reader_func!(fn journal_checkpoint() -> u64, JournalCheckpoint);
     // block info
@@ -126,13 +150,11 @@ impl ExecutionContext {
     impl_reader_func!(fn contract_value() -> U256, ContractValue);
     impl_reader_func!(fn contract_is_static() -> bool, ContractIsStatic);
     impl_reader_func!(@dynamic fn contract_input() -> Bytes, ContractInput);
+}
 
+impl ExecutionContext {
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
         LowLevelSDK::sys_write(return_data.into().as_ref());
-        LowLevelSDK::sys_halt(exit_code);
-    }
-
-    pub fn exit(&self, exit_code: i32) {
         LowLevelSDK::sys_halt(exit_code);
     }
 
@@ -154,6 +176,7 @@ impl ExecutionContext {
 
 #[cfg(test)]
 mod test {
+    use crate::evm::ContextReader;
     use crate::{
         evm::{ContractInput, ExecutionContext},
         LowLevelSDK,
