@@ -1,7 +1,6 @@
 use crate::ExitCode;
 use alloc::vec::Vec;
 use alloy_primitives::{Address, Bytes, B256};
-use auto_impl::auto_impl;
 
 #[derive(Debug, Clone)]
 pub enum JournalEvent {
@@ -89,7 +88,6 @@ pub struct JournalLog {
     pub data: Bytes,
 }
 
-#[auto_impl(&, Rc, Arc, Box)]
 pub trait IJournaledTrie {
     fn checkpoint(&self) -> JournalCheckpoint;
     fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)>;

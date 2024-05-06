@@ -91,37 +91,5 @@ pub struct WasmCreateMethodOutput {
 pub const WASM_CALL_METHOD_ID: u32 =
     derive_keccak256_id!(b"_wasm_call(bytes,uint256,bytes,uint64)");
 
-#[derive(Default, Debug, Clone, Codec)]
-pub struct WasmCallMethodInput {
-    pub callee: Address,
-    pub value: U256,
-    pub input: Bytes,
-    pub gas_limit: u64,
-}
-
-#[derive(Default, Debug, Clone, Codec)]
-pub struct WasmCallMethodOutput {
-    pub output: Bytes,
-    pub exit_code: i32,
-    pub gas: u64,
-}
-
-impl WasmCallMethodOutput {
-    pub fn from_exit_code<I: Into<i32>>(exit_code: I) -> Self {
-        Self {
-            output: Default::default(),
-            exit_code: exit_code.into(),
-            gas: 0,
-        }
-    }
-
-    pub fn with_output(mut self, output: Bytes) -> Self {
-        self.output = output;
-        self
-    }
-
-    pub fn with_gas(mut self, gas: u64) -> Self {
-        self.gas = gas;
-        self
-    }
-}
+pub type WasmCallMethodInput = EvmCallMethodInput;
+pub type WasmCallMethodOutput = EvmCallMethodOutput;

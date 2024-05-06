@@ -2,7 +2,8 @@ use crate::account::Account;
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use core::ptr;
-use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::Bytes32;
 
 pub fn _evm_extcodecopy<CR: ContextReader>(
     address20_offset: *const u8,

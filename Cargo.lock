@@ -1381,7 +1381,7 @@ dependencies = [
  "paste",
  "serde",
  "strum 0.25.0",
- "strum_macros 0.25.3",
+ "strum_macros 0.25.2",
 ]
 
 [[package]]
@@ -1608,11 +1608,12 @@ name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "auto_impl",
+ "byteorder",
  "hashbrown",
+ "revm-primitives",
  "rwasm",
  "strum 0.25.0",
- "strum_macros 0.25.3",
+ "strum_macros 0.25.2",
 ]
 
 [[package]]
@@ -3364,7 +3365,7 @@ dependencies = [
  "smallvec",
  "spin 0.9.8",
  "strum 0.25.0",
- "strum_macros 0.25.3",
+ "strum_macros 0.25.2",
  "wasmparser-nostd",
 ]
 
@@ -3864,9 +3865,9 @@ dependencies = [
 
 [[package]]
 name = "strum_macros"
-version = "0.25.3"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
+checksum = "ad8d03b598d3d0fff69bf533ee3ef19b8eeb342729596df84bcc7e1f96ec4059"
 dependencies = [
  "heck 0.4.1",
  "proc-macro2",

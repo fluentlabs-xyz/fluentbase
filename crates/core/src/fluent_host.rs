@@ -7,7 +7,8 @@ use crate::{
 use alloc::{format, vec};
 use core::cell::Cell;
 use core::marker::PhantomData;
-use fluentbase_sdk::{Bytes32, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_types::Bytes32;
 use revm_interpreter::{
     primitives::{
         Address, AnalysisKind, BlockEnv, Bytecode, Bytes, CfgEnv, Env, Log, TransactTo, TxEnv,
@@ -17,55 +18,55 @@ use revm_interpreter::{
 };
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-pub struct FluentHost<CR: ContextReader> {
-    env: Env,
-    _phantom: PhantomData<CR>,
+pub struct FluentHost<'cr, CR: ContextReader> {
+    pub(crate) env: Env,
+    pub(crate) cr: Option<&'cr CR>,
 }
 
-impl<CR: ContextReader> Default for FluentHost<CR> {
-    fn default() -> Self {
+impl<'cr, CR: ContextReader> FluentHost<'cr, CR> {
+    pub fn new(cr: &'cr CR) -> Self {
         Self {
             env: Env {
                 cfg: {
                     let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = CR::block_chain_id();
+                    cfg_env.chain_id = cr.block_chain_id();
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
                     cfg_env.limit_contract_code_size = Some(RWASM_MAX_CODE_SIZE);
                     cfg_env
                 },
                 block: BlockEnv {
-                    number: U256::from(CR::block_number()),
-                    coinbase: CR::block_coinbase(),
-                    timestamp: U256::from(CR::block_timestamp()),
-                    gas_limit: U256::from(CR::block_gas_limit()),
-                    basefee: CR::block_base_fee(),
-                    difficulty: U256::from(CR::block_difficulty()),
+                    number: U256::from(cr.block_number()),
+                    coinbase: cr.block_coinbase(),
+                    timestamp: U256::from(cr.block_timestamp()),
+                    gas_limit: U256::from(cr.block_gas_limit()),
+                    basefee: cr.block_base_fee(),
+                    difficulty: U256::from(cr.block_difficulty()),
                     prevrandao: None,
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
-                    caller: CR::tx_caller(),
-                    gas_limit: CR::tx_gas_limit(),
-                    gas_price: CR::tx_gas_price(),
+                    caller: cr.tx_caller(),
+                    gas_limit: cr.tx_gas_limit(),
+                    gas_price: cr.tx_gas_price(),
                     transact_to: TransactTo::Call(Address::ZERO), // will do nothing
-                    value: CR::contract_value(),
-                    data: CR::contract_input(),
-                    nonce: Some(CR::tx_nonce()),
+                    value: cr.contract_value(),
+                    data: cr.contract_input(),
+                    nonce: Some(cr.tx_nonce()),
                     chain_id: None, // no checks
-                    access_list: CR::tx_access_list(),
-                    gas_priority_fee: CR::tx_gas_priority_fee(),
+                    access_list: cr.tx_access_list(),
+                    gas_priority_fee: cr.tx_gas_priority_fee(),
                     blob_hashes: vec![],
                     max_fee_per_blob_gas: None,
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
             },
-            _phantom: Default::default(),
+            cr: Some(cr),
         }
     }
 }
 
-impl<CR: ContextReader> Host for FluentHost<CR> {
+impl<'cr, CR: ContextReader> Host for FluentHost<'cr, CR> {
     fn env(&self) -> &Env {
         &self.env
     }

@@ -1,10 +1,15 @@
 use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
 
-pub fn _evm_calldatacopy<CR: ContextReader>(calldata_idx: u32, len: u32, output32_offset: *mut u8) {
+pub fn _evm_calldatacopy<CR: ContextReader>(
+    cr: &CR,
+    calldata_idx: u32,
+    len: u32,
+    output32_offset: *mut u8,
+) {
     if len <= 0 {
         return;
     }
-    let (calldata_offset, calldata_len) = CR::contract_input_size();
+    let (calldata_offset, calldata_len) = cr.contract_input_size();
     let output = unsafe { core::slice::from_raw_parts_mut(output32_offset, len as usize) };
     if calldata_idx < calldata_len {
         let copy_len = core::cmp::min(calldata_len - calldata_idx, len) as usize;
