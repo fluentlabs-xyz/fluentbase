@@ -237,7 +237,7 @@ fn exec_evm_call(inputs: Box<CallInputs>) -> CallOutcome {
     let mut gas_limit = inputs.gas_limit as u32;
     let contract_input = contract_input_from_call_inputs(
         inputs.gas_limit,
-        inputs.contract,
+        inputs.context.address,
         core_input.encode_to_vec(0).into(),
         inputs.transfer.value,
         inputs.is_static,
@@ -284,7 +284,13 @@ pub(crate) fn exec_evm_bytecode(
     is_static: bool,
 ) -> InterpreterResult {
     use crate::evm::create::_evm_create;
-    debug_log("exec_evm_bytecode start");
+    debug_log(&format!(
+        "ecl(exec_evm_bytecode): executing EVM contract={}, gas_limit={} bytecode={}",
+        &contract.address,
+        gas_limit,
+        hex::encode(contract.bytecode.original_bytecode_slice()),
+        // hex::encode(&ExecutionContext::contract_input_full().encode_to_vec(0)),
+    ));
 
     static INSTRUCTION_TABLE: InstructionTable<FluentHost> =
         make_instruction_table::<FluentHost, DefaultEvmSpec>();
@@ -302,13 +308,26 @@ pub(crate) fn exec_evm_bytecode(
 
         match next_action {
             InterpreterAction::Call { inputs } => {
+                debug_log(&format!(
+                    "ecl(exec_evm_bytecode): nested call={:?} bytecode={} caller={} callee={} gas={}",
+                    inputs.context.scheme,
+                    &inputs.contract,
+                    &inputs.context.caller,
+                    &inputs.context.address,
+                    inputs.gas_limit,
+                ));
                 interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(inputs))
             }
             InterpreterAction::Create { inputs } => {
+                debug_log(&format!("ecl(exec_evm_bytecode): nested create"));
                 interpreter.insert_create_outcome(exec_evm_create(inputs))
             }
             InterpreterAction::Return { result } => {
-                debug_log(&format!("exec_evm_bytecode return: {:?}", result.result));
+                debug_log(&format!(
+                    "ecl(exec_evm_bytecode): return result={:?}, message={}",
+                    result.result,
+                    hex::encode(result.output.as_ref()),
+                ));
                 return result;
             }
             InterpreterAction::None => unreachable!("not supported EVM interpreter state"),
@@ -392,7 +411,9 @@ impl InputHelper {
 mod tests {
     use super::*;
     use fluentbase_types::address;
-    use revm_primitives::b256;
+    use revm_interpreter::analysis::to_analysed;
+    use revm_interpreter::BytecodeLocked;
+    use revm_primitives::{b256, hex, Bytecode};
 
     #[test]
     fn test_create_address() {
@@ -435,5 +456,24 @@ mod tests {
                 address.create2(salt, hash)
             );
         }
+    }
+
+    #[cfg(feature = "ecl")]
+    #[test]
+    fn test_strange_bytecode() {
+        let bytecode = BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(hex!("6001600155600060015560016002556000600255600160035560006003556001600455600060045560016005556000600555600160065560006006556001600755600060075560016008556000600855600160095560006009556001600a556000600a556001600b556000600b556001600c556000600c556001600d556000600d556001600e556000600e556001600f556000600f5560016010556000601055600160015500").into()))).unwrap();
+        let hash = bytecode.hash_slow();
+        exec_evm_bytecode(
+            Contract {
+                input: Default::default(),
+                bytecode,
+                hash,
+                address: address!("6295eE1B4F6dD65047762F924Ecd367c17eaBf8f"),
+                caller: address!("6295eE1B4F6dD65047762F924Ecd367c17eaBf8f"),
+                value: U256::ZERO,
+            },
+            600000,
+            false,
+        );
     }
 }

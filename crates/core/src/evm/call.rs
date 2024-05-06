@@ -63,7 +63,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
         input: input.input,
         hash: callee_account.source_code_hash,
         bytecode,
-        address: input.callee,
+        address: ExecutionContext::contract_address(),
         caller: caller_account.address,
         value: input.value,
     };
@@ -88,7 +88,7 @@ pub fn _evm_call(input: EvmCallMethodInput) -> EvmCallMethodOutput {
 
     let exit_code = exit_code_from_evm_error(result.result);
 
-    debug_log(&format!("_evm_call return: exit_code: {}", exit_code));
+    debug_log(&format!("ecl(_evm_call) return exit_code={}", exit_code));
     EvmCallMethodOutput {
         output: result.output,
         exit_code: exit_code.into_i32(),
