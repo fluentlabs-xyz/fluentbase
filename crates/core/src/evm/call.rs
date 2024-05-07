@@ -20,10 +20,6 @@ pub fn _evm_call<CR: ContextReader>(cr: &CR, input: EvmCallMethodInput) -> EvmCa
     // for static calls passing value is not allowed according to standards
     let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
-        debug_log(&format!(
-            "_evm_call return: exit_code: {}",
-            ExitCode::WriteProtection
-        ));
         return EvmCallMethodOutput::from_exit_code(ExitCode::WriteProtection)
             .with_gas(input.gas_limit);
     }
@@ -67,14 +63,6 @@ pub fn _evm_call<CR: ContextReader>(cr: &CR, input: EvmCallMethodInput) -> EvmCa
         value: input.value,
     };
     let result = exec_evm_bytecode::<CR>(cr, contract, u64::MAX, is_static);
-
-    // debug_log(&format!(
-    //     "_evm_call return: {}",
-    //     result_value!(result
-    //         .as_ref()
-    //         .map(|v| { format!("Ok: len {}", v.len()) })
-    //         .map_err(|v| { format!("Err: ExitCode: {}", v) }))
-    // ));
 
     caller_account.write_to_jzkt();
     callee_account.write_to_jzkt();

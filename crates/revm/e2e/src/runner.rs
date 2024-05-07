@@ -243,7 +243,7 @@ fn check_evm_execution<EXT1, EXT2>(
                 assert_eq!(
                     *value,
                     value2,
-                    "EVM storage key ({}) mismatch",
+                    "EVM storage value ({}) mismatch",
                     hex::encode(&slot.to_be_bytes::<32>())
                 );
             }
@@ -377,7 +377,7 @@ pub fn execute_test_suite(
 
     let devnet_genesis = devnet_genesis_from_file();
 
-    let (rwasm_bytecode, rwasm_hash) = (*EVM_LOADER).clone();
+    // let (rwasm_bytecode, rwasm_hash) = (*EVM_LOADER).clone();
 
     for (name, unit) in suite.0 {
         // Create database and insert cache
@@ -416,7 +416,7 @@ pub fn execute_test_suite(
         }
 
         for (address, info) in unit.pre {
-            let mut acc_info = AccountInfo {
+            let acc_info = AccountInfo {
                 balance: info.balance,
                 code_hash: keccak256(&info.code),
                 nonce: info.nonce,
@@ -428,8 +428,8 @@ pub fn execute_test_suite(
                 acc_info.clone(),
                 info.storage.clone(),
             );
-            acc_info.rwasm_code_hash = rwasm_hash;
-            acc_info.rwasm_code = Some(Bytecode::new_raw(rwasm_bytecode.clone()));
+            // acc_info.rwasm_code_hash = rwasm_hash;
+            // acc_info.rwasm_code = Some(Bytecode::new_raw(rwasm_bytecode.clone()));
             for (k, v) in info.storage.iter() {
                 let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
                 // println!(
@@ -529,7 +529,7 @@ pub fn execute_test_suite(
 
             for (index, test) in tests.into_iter().enumerate() {
                 println!(
-                    "running test with txdata: {}",
+                    "\n\n\n\n\nRunning test with txdata: {}",
                     hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
                 );
                 env.tx.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();

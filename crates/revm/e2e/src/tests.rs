@@ -6,6 +6,11 @@ use std::time::Duration;
 #[test]
 #[ignore]
 fn test_sstore_combinations_initial01_2_paris() {
+    #[cfg(target_os = "macos")]
+    let path = Path::new(
+        "../tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json",
+    );
+    #[cfg(not(target_os = "macos"))]
     let path = Path::new(
         "tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json",
     );

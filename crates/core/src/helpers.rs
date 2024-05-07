@@ -171,7 +171,7 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
     .encode_to_vec(0)
 }
 
-const EVM_GAS_MULTIPLIED: u64 = 10;
+const EVM_GAS_MULTIPLIER: u64 = 2;
 
 #[cfg(feature = "ecl")]
 fn exec_evm_create<CR: ContextReader>(cr: &CR, inputs: Box<CreateInputs>) -> CreateOutcome {
@@ -179,7 +179,7 @@ fn exec_evm_create<CR: ContextReader>(cr: &CR, inputs: Box<CreateInputs>) -> Cre
     let create_input = EvmCreateMethodInput {
         value: inputs.value,
         init_code: inputs.init_code,
-        gas_limit: inputs.gas_limit * EVM_GAS_MULTIPLIED,
+        gas_limit: inputs.gas_limit * EVM_GAS_MULTIPLIER,
         salt: match inputs.scheme {
             CreateScheme::Create2 { salt } => Some(salt),
             CreateScheme::Create => None,
@@ -226,7 +226,7 @@ fn exec_evm_call<CR: ContextReader>(cr: &CR, inputs: Box<CallInputs>) -> CallOut
         },
     };
 
-    let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIED as u32;
+    let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIER as u32;
     let contract_input = contract_input_from_call_inputs(
         cr,
         inputs.gas_limit,
