@@ -504,6 +504,26 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
         };
 
+        {
+            println!("executed ECL call:");
+            println!(" - caller: 0x{}", hex::encode(caller_account.address));
+            println!(" - callee: 0x{}", hex::encode(callee_account.address));
+            println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
+            println!(" - fuel consumed: {}", call_output.gas);
+            println!(" - exit code: {}", call_output.exit_code);
+            if call_output.output.iter().all(|c| c.is_ascii()) {
+                println!(
+                    " - output message: {}",
+                    from_utf8(&call_output.output).unwrap()
+                );
+            } else {
+                println!(
+                    " - output message: {}",
+                    format!("0x{}", hex::encode(&call_output.output))
+                );
+            }
+        }
+
         CallOutcome {
             result: InterpreterResult {
                 result: ExitCode::from(call_output.exit_code),
@@ -587,36 +607,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 return (Bytes::default(), ExitCode::from(exit_code));
             }
         };
-        {
-            println!("executed rWASM binary:");
-            println!(" - caller: 0x{}", hex::encode(caller.address));
-            println!(" - callee: 0x{}", hex::encode(middleware.address));
-            println!(
-                " - source hash: 0x{}",
-                hex::encode(middleware.source_code_hash)
-            );
-            println!(" - source size: {}", middleware.source_code_size);
-            println!(
-                " - rwasm hash: 0x{}",
-                hex::encode(middleware.rwasm_code_hash)
-            );
-            println!(" - rwasm size: {}", middleware.rwasm_code_size);
-            println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
-            println!(" - fuel consumed: {}", result.fuel_consumed);
-            println!(" - exit code: {}", result.exit_code);
-            if result.output.iter().all(|c| c.is_ascii()) {
-                println!(" - output message: {}", from_utf8(&result.output).unwrap());
-            } else {
-                println!(
-                    " - output message: {}",
-                    format!("0x{}", hex::encode(&result.output))
-                );
-            }
-            println!(
-                " - opcode used: {:?}",
-                runtime.store().tracer().map(|t| t.logs.len())
-            );
-        }
         gas.record_cost(result.fuel_consumed);
         (Bytes::from(result.output.clone()), result.exit_code.into())
     }
