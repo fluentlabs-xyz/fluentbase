@@ -39,7 +39,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_limit: U256::from(cr.block_gas_limit()),
                     basefee: cr.block_base_fee(),
                     difficulty: U256::from(cr.block_difficulty()),
-                    prevrandao: None,
+                    prevrandao: Some(B256::ZERO),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {

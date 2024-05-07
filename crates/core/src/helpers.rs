@@ -13,7 +13,11 @@ use fluentbase_sdk::{
     EvmCallMethodOutput, EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
     EVM_CALL_METHOD_ID, JZKT_ACCOUNT_BALANCE_FIELD,
 };
-use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
+use fluentbase_types::SysFuncIdx::SYS_STATE;
+use fluentbase_types::{
+    create_sovereign_import_linker, Address, Bytes, Bytes32, ExitCode, B256, STATE_DEPLOY,
+    STATE_MAIN, U256,
+};
 use hashbrown::Equivalent;
 use revm_interpreter::instructions::host::create;
 use revm_interpreter::opcode::InstructionTable;
@@ -23,7 +27,9 @@ use revm_interpreter::{
     InterpreterResult, SharedMemory,
 };
 use revm_primitives::{CreateScheme, MAX_CODE_SIZE};
-use rwasm::rwasm::BinaryFormat;
+use rwasm::engine::bytecode::Instruction;
+use rwasm::engine::{RwasmConfig, StateRouterConfig};
+use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 
 #[macro_export]
 macro_rules! decode_method_input {
@@ -67,21 +73,29 @@ pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B2
 }
 
 #[inline(always)]
-pub fn rwasm_exec_hash(
-    code_hash32: &[u8],
-    input: &[u8],
-    gas_limit: &mut u32,
-    is_deploy: bool,
-) -> i32 {
-    LowLevelSDK::sys_exec_hash(
-        code_hash32.as_ptr(),
-        input.as_ptr(),
-        input.len() as u32,
-        core::ptr::null_mut(),
-        0,
-        gas_limit as *mut u32,
-        if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
-    )
+pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
+    let mut config = RwasmModule::default_config(None);
+    config.rwasm_config(RwasmConfig {
+        state_router: Some(StateRouterConfig {
+            states: Box::new([
+                ("deploy".to_string(), STATE_DEPLOY),
+                ("main".to_string(), STATE_MAIN),
+            ]),
+            opcode: Instruction::Call(SYS_STATE.into()),
+        }),
+        entrypoint_name: None,
+        import_linker: Some(create_sovereign_import_linker()),
+        wrap_import_functions: true,
+    });
+    let rwasm_module = RwasmModule::compile_with_config(wasm_binary, &config)
+        .map_err(|_| ExitCode::CompilationError)?;
+    let length = rwasm_module.encoded_length();
+    let mut rwasm_bytecode = vec![0u8; length];
+    let mut binary_format_writer = BinaryFormatWriter::new(&mut rwasm_bytecode);
+    rwasm_module
+        .write_binary(&mut binary_format_writer)
+        .expect("failed to encode rwasm bytecode");
+    Ok(rwasm_bytecode)
 }
 
 #[macro_export]
@@ -133,9 +147,9 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
 
 fn contract_input_from_call_inputs<CR: ContextReader>(
     cr: &CR,
-    call_inputs: Box<CallInputs>,
+    call_inputs: &Box<CallInputs>,
     input: Bytes,
-) -> Vec<u8> {
+) -> ContractInput {
     ContractInput {
         journal_checkpoint: cr.journal_checkpoint(),
         contract_gas_limit: call_inputs.gas_limit,
@@ -158,7 +172,6 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
         tx_caller: cr.tx_caller(),
         tx_access_list: cr.tx_access_list(),
     }
-    .encode_to_vec(0)
 }
 
 const EVM_GAS_MULTIPLIER: u64 = 1;
@@ -172,7 +185,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
     // calc create input
     let create_input = EvmCreateMethodInput {
         value: inputs.value,
-        init_code: inputs.init_code,
+        bytecode: inputs.init_code,
         gas_limit: inputs.gas_limit * EVM_GAS_MULTIPLIER,
         salt: match inputs.scheme {
             CreateScheme::Create2 { salt } => Some(salt),
@@ -204,55 +217,54 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
 ) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
-    // let call_output = _evm_call(
-    //     cr,
-    //     EvmCallMethodInput {
-    //         callee: inputs.contract,
-    //         value: inputs.context.apparent_value,
-    //         input: take(&mut inputs.input),
-    //         gas_limit: inputs.gas_limit,
-    //     },
-    // );
-    // let (gas_limit, output_buffer, exit_code) =
-    //     (call_output.gas, call_output.output, call_output.exit_code);
-
-    let core_input = CoreInput {
-        method_id: EVM_CALL_METHOD_ID,
-        method_data: EvmCallMethodInput {
+    let contract_input = contract_input_from_call_inputs(cr, &inputs, Bytes::new());
+    let call_output = _evm_call(
+        &contract_input,
+        am,
+        EvmCallMethodInput {
             callee: inputs.contract,
             value: inputs.context.apparent_value,
             input: take(&mut inputs.input),
             gas_limit: inputs.gas_limit,
         },
-    };
-    let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIER as u32;
-    let contract_input =
-        contract_input_from_call_inputs(cr, inputs, core_input.encode_to_vec(0).into());
-    let (callee, _) = am.account(ECL_CONTRACT_ADDRESS);
-    let (output_buffer, exit_code) = am.exec_hash(
-        callee.rwasm_code_hash.as_ptr(),
-        &contract_input,
-        &mut gas_limit as *mut u32,
-        STATE_MAIN,
     );
 
-    let method_output = if exit_code == 0 {
-        let mut buffer_decoder = BufferDecoder::new(&output_buffer);
-        let mut method_output = EvmCallMethodOutput::default();
-        EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut method_output);
-        method_output
-    } else {
-        EvmCallMethodOutput::from_exit_code(exit_code.into()).with_gas(0)
-    };
+    // let core_input = CoreInput {
+    //     method_id: EVM_CALL_METHOD_ID,
+    //     method_data: EvmCallMethodInput {
+    //         callee: inputs.contract,
+    //         value: inputs.context.apparent_value,
+    //         input: take(&mut inputs.input),
+    //         gas_limit: inputs.gas_limit,
+    //     },
+    // };
+    // let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIER as u32;
+    // let contract_input =
+    //     contract_input_from_call_inputs(cr, inputs, core_input.encode_to_vec(0).into()).encode_to_vec(0);
+    // let (callee, _) = am.account(ECL_CONTRACT_ADDRESS);
+    // let (output_buffer, exit_code) = am.exec_hash(
+    //     callee.rwasm_code_hash.as_ptr(),
+    //     &contract_input,
+    //     &mut gas_limit as *mut u32,
+    //     STATE_MAIN,
+    // );
+    // let call_output = if exit_code == 0 {
+    //     let mut buffer_decoder = BufferDecoder::new(&output_buffer);
+    //     let mut method_output = EvmCallMethodOutput::default();
+    //     EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut method_output);
+    //     method_output
+    // } else {
+    //     EvmCallMethodOutput::from_exit_code(exit_code.into()).with_gas(0)
+    // };
 
     let interpreter_result = InterpreterResult {
-        result: match ExitCode::from(method_output.exit_code) {
+        result: match ExitCode::from(call_output.exit_code) {
             ExitCode::Ok => InstructionResult::Continue,
             ExitCode::Panic => InstructionResult::Revert,
             _ => InstructionResult::Revert,
         },
-        output: output_buffer.into(),
-        gas: Gas::new(gas_limit as u64),
+        output: call_output.output.into(),
+        gas: Gas::new(call_output.gas),
     };
 
     CallOutcome {

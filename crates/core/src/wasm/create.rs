@@ -1,9 +1,10 @@
-use crate::helpers::rwasm_exec_hash;
+use crate::helpers::wasm2rwasm;
 use crate::helpers::{debug_log, exit_code_from_evm_error};
+use alloc::vec::Vec;
 use alloc::{format, vec};
 use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
-use fluentbase_types::{Address, ExitCode, B256, U256};
+use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
@@ -60,34 +61,45 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     };
 
     // translate WASM to rWASM
-    let exit_code = LowLevelSDK::wasm_to_rwasm(
-        input.bytecode.as_ptr(),
-        input.bytecode.len() as u32,
-        core::ptr::null_mut(),
-        0,
-    );
-    if exit_code != ExitCode::Ok.into_i32() {
-        debug_log(&format!(
-            "_wasm_create return: panic: exit_code: {}",
-            exit_code
-        ));
-        panic!("wasm create failed, exit code: {}", exit_code);
-    }
-    let rwasm_bytecode_len = LowLevelSDK::sys_output_size();
-    let mut rwasm_bytecode = vec![0u8; rwasm_bytecode_len as usize];
-    LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
+    let rwasm_bytecode = match wasm2rwasm(&input.bytecode) {
+        Ok(result) => result,
+        Err(exit_code) => {
+            debug_log(&format!(
+                "_wasm_create return: panic: exit_code: {}",
+                exit_code
+            ));
+            return WasmCreateMethodOutput::from_exit_code(exit_code);
+        }
+    };
+    // let exit_code = LowLevelSDK::wasm_to_rwasm(
+    //     input.bytecode.as_ptr(),
+    //     input.bytecode.len() as u32,
+    //     core::ptr::null_mut(),
+    //     0,
+    // );
+    // if exit_code != ExitCode::Ok.into_i32() {
+    //     debug_log(&format!(
+    //         "_wasm_create return: panic: exit_code: {}",
+    //         exit_code
+    //     ));
+    //     panic!("wasm create failed, exit code: {}", exit_code);
+    // }
+    // let rwasm_bytecode_len = LowLevelSDK::sys_output_size();
+    // let mut rwasm_bytecode = vec![0u8; rwasm_bytecode_len as usize];
+    // LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
 
     // write deployer to the trie
     am.write_account(&deployer_account);
 
     // write contract to the trie
     contract_account.update_bytecode(am, &input.bytecode, None, &rwasm_bytecode.into(), None);
+
     let mut gas_limit = input.gas_limit as u32;
-    let exit_code = rwasm_exec_hash(
-        &contract_account.rwasm_code_hash.as_slice(),
+    let (_, exit_code) = am.exec_hash(
+        contract_account.rwasm_code_hash.as_ptr(),
         &[],
-        &mut gas_limit,
-        true,
+        &mut gas_limit as *mut u32,
+        STATE_DEPLOY,
     );
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {

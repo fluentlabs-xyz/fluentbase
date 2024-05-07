@@ -149,27 +149,6 @@ impl Account {
         result
     }
 
-    #[inline(always)]
-    pub(crate) fn transfer_value(&mut self, to: &mut Self, value: &U256) -> bool {
-        let from_balance = {
-            let new_value = self.balance.checked_sub(*value);
-            if new_value.is_none() {
-                return false;
-            }
-            new_value.unwrap()
-        };
-        let to_balance = {
-            let new_value = to.balance.checked_add(*value);
-            if new_value.is_none() {
-                return false;
-            }
-            new_value.unwrap()
-        };
-        self.balance = from_balance;
-        to.balance = to_balance;
-        true
-    }
-
     pub fn get_fields(&self) -> AccountFields {
         let mut account_fields: AccountFields = Default::default();
         LittleEndian::write_u64(
