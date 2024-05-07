@@ -34,7 +34,7 @@ extern "C" {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel_offset: *const u32,
+        fuel_offset: *mut u32,
         state: u32,
     ) -> i32;
     pub fn _sys_fuel(delta: u64) -> u64;

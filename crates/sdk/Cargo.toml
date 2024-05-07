@@ -9,7 +9,9 @@ fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-codec-derive = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
-byteorder = { workspace = true, optional = true }
+byteorder = { workspace = true }
+revm-primitives = { workspace = true, default-features = false }
+alloy-rlp = { workspace = true }
 paste = { workspace = true }
 lol_alloc = { version = "0.4.0" }
 
@@ -23,5 +25,5 @@ default = ["std"]
 std = [
     "fluentbase-codec/std",
     "dep:fluentbase-runtime",
-    "dep:byteorder",
+    "byteorder/std",
 ]

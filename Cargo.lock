@@ -1596,6 +1596,7 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
+ "alloy-rlp",
  "byteorder",
  "fluentbase-codec",
  "fluentbase-codec-derive",
@@ -1603,6 +1604,7 @@ dependencies = [
  "fluentbase-types",
  "lol_alloc",
  "paste",
+ "revm-primitives",
 ]
 
 [[package]]

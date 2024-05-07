@@ -5,8 +5,9 @@ use alloc::{format, vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
-    CoreInput, EvmCreateMethodInput, ExecutionContext, ICoreInput, LowLevelAPI, LowLevelSDK,
-    WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    CoreInput, EvmCreateMethodInput, ExecutionContext, ICoreInput, JzktAccountManager, LowLevelAPI,
+    LowLevelSDK, WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
+    WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::Bytes;
 
@@ -14,17 +15,18 @@ pub fn deploy() {}
 
 pub fn main() {
     let cr = ExecutionContext::default();
+    let am = JzktAccountManager::default();
     let input_helper = InputHelper::new(cr);
     let method_id = input_helper.decode_method_id();
     match method_id {
         WASM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCreateMethodInput>();
-            let method_output = _wasm_create(&cr, method_input);
+            let method_output = _wasm_create(&cr, &am, method_input);
             LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
         }
         WASM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
-            let method_output = _wasm_call(&cr, method_input);
+            let method_output = _wasm_call(&cr, &am, method_input);
             LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
             debug_log(&format!(
                 "wcl: WASM_CALL_METHOD_ID: sys_halt: exit_code: {}",

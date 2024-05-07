@@ -1,13 +1,14 @@
+use crate::helpers::rwasm_exec_hash;
 use crate::helpers::{debug_log, exit_code_from_evm_error};
-use crate::{account::Account, helpers::rwasm_exec_hash};
 use alloc::{format, vec};
-use fluentbase_sdk::{ContextReader, LowLevelSDK, WasmCreateMethodOutput};
+use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
 use fluentbase_types::{Address, ExitCode, B256, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
-pub fn _wasm_create<CR: ContextReader>(
+pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
+    am: &AM,
     input: WasmCreateMethodInput,
 ) -> WasmCreateMethodOutput {
     debug_log("_wasm_create start");
@@ -43,10 +44,11 @@ pub fn _wasm_create<CR: ContextReader>(
     // read value input and contract address
     let caller_address = cr.contract_caller();
     // load deployer and contract accounts
-    let mut deployer_account = Account::new_from_jzkt(caller_address);
+    let (mut deployer_account, _) = am.account(caller_address);
 
     // create an account
     let mut contract_account = match Account::create_account(
+        am,
         &mut deployer_account,
         input.value,
         input.salt.map(|salt| (salt, source_code_hash)),
@@ -76,10 +78,10 @@ pub fn _wasm_create<CR: ContextReader>(
     LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
 
     // write deployer to the trie
-    deployer_account.write_to_jzkt();
+    am.write_account(&deployer_account);
 
     // write contract to the trie
-    contract_account.update_bytecode(&input.bytecode, None, &rwasm_bytecode.into(), None);
+    contract_account.update_bytecode(am, &input.bytecode, None, &rwasm_bytecode.into(), None);
     let mut gas_limit = input.gas_limit as u32;
     let exit_code = rwasm_exec_hash(
         &contract_account.rwasm_code_hash.as_slice(),
