@@ -1,6 +1,5 @@
-use crate::account_types::JZKT_ACCOUNT_BALANCE_FIELD;
 use core::ptr;
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK, JZKT_ACCOUNT_BALANCE_FIELD};
 use fluentbase_types::Bytes32;
 
 pub fn _evm_balance<CR: ContextReader>(

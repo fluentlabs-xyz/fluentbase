@@ -8,10 +8,6 @@ extern crate paste;
 
 pub use fluentbase_types::ExitCode;
 
-mod account;
-pub use account::*;
-mod account_types;
-pub use account_types::*;
 pub mod evm;
 
 pub mod consts;

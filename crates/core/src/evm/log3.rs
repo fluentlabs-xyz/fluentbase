@@ -1,29 +1,26 @@
-use crate::account_types::Topics;
 use core::ptr;
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI, LowLevelSDK};
 
-pub fn _evm_log3<CR: ContextReader>(
-    cr: &CR,
-    data_offset: *const u8,
-    data_size: u32,
-    topic32_1_offset: *const u8,
-    topic32_2_offset: *const u8,
-    topic32_3_offset: *const u8,
+pub fn _evm_log3<CR: ContextReader, AM: AccountManager>(
+    _cr: &CR,
+    _am: &AM,
+    _data_offset: *const u8,
+    _data_size: u32,
+    _topic32_1_offset: *const u8,
+    _topic32_2_offset: *const u8,
+    _topic32_3_offset: *const u8,
 ) {
-    const TOPICS_COUNT: usize = 3;
-
-    let address = cr.contract_address();
-
-    let mut topics = Topics::<TOPICS_COUNT>::default();
-    unsafe { ptr::copy(topic32_1_offset, topics[0].as_mut_ptr(), 1) }
-    unsafe { ptr::copy(topic32_2_offset, topics[1].as_mut_ptr(), 1) }
-    unsafe { ptr::copy(topic32_3_offset, topics[2].as_mut_ptr(), 1) }
-
-    LowLevelSDK::jzkt_emit_log(
-        address.as_ptr(),
-        topics.as_ptr(),
-        topics.len() as u32 * 32,
-        data_offset,
-        data_size,
-    );
+    // const TOPICS_COUNT: usize = 3;
+    // let address = cr.contract_address();
+    // let mut topics = Topics::<TOPICS_COUNT>::default();
+    // unsafe { ptr::copy(topic32_1_offset, topics[0].as_mut_ptr(), 1) }
+    // unsafe { ptr::copy(topic32_2_offset, topics[1].as_mut_ptr(), 1) }
+    // unsafe { ptr::copy(topic32_3_offset, topics[2].as_mut_ptr(), 1) }
+    // LowLevelSDK::jzkt_emit_log(
+    //     address.as_ptr(),
+    //     topics.as_ptr(),
+    //     topics.len() as u32 * 32,
+    //     data_offset,
+    //     data_size,
+    // );
 }

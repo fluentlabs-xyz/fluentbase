@@ -1,6 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{Address, Bytes, ExitCode, IJournaledTrie, B256};
-use rwasm::errors::FuelError;
+use fluentbase_types::{Address, Bytes, IJournaledTrie, B256};
 use rwasm::{core::Trap, Caller};
 
 pub struct JzktEmitLog;
@@ -21,15 +20,15 @@ impl JzktEmitLog {
         data_ptr: u32,
         data_len: u32,
     ) -> Result<(), Trap> {
-        let fuel_cost = Self::fn_fuel_cost((topics32s_len / 32) as u8, data_len as u64)
-            .ok_or(ExitCode::OutOfFuel.into_trap())?;
-        match caller.consume_fuel(fuel_cost) {
-            Ok(_) => {}
-            Err(err) => match err {
-                FuelError::OutOfFuel => return Err(ExitCode::OutOfFuel.into_trap()),
-                _ => {}
-            },
-        }
+        // let fuel_cost = Self::fn_fuel_cost((topics32s_len / 32) as u8, data_len as u64)
+        //     .ok_or(ExitCode::OutOfFuel.into_trap())?;
+        // match caller.consume_fuel(fuel_cost) {
+        //     Ok(_) => {}
+        //     Err(err) => match err {
+        //         FuelError::OutOfFuel => return Err(ExitCode::OutOfFuel.into_trap()),
+        //         _ => {}
+        //     },
+        // }
         let address = Address::from_slice(caller.read_memory(address20_ptr, 20)?);
         let topics = caller
             .read_memory(topics32s_ptr, topics32s_len)?

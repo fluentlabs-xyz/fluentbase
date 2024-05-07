@@ -9,7 +9,7 @@ use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
-use fluentbase_core::Account;
+use fluentbase_sdk::Account;
 use fluentbase_types::ExitCode;
 use std::boxed::Box;
 

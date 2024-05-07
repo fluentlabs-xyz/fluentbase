@@ -1,9 +1,10 @@
 use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
+use crate::{fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use alloc::format;
 use fluentbase_sdk::{
-    ContextReader, EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelAPI, LowLevelSDK,
+    Account, AccountManager, ContextReader, EvmCreateMethodInput, EvmCreateMethodOutput,
+    LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256};
 use revm_interpreter::InstructionResult;
@@ -15,8 +16,9 @@ use revm_interpreter::{
 };
 use revm_primitives::U256;
 
-pub fn _evm_create<CR: ContextReader>(
+pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
+    am: &AM,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     debug_log("ecl(_evm_create): start");
@@ -33,7 +35,7 @@ pub fn _evm_create<CR: ContextReader>(
 
     // load deployer and contract accounts
     let caller_address = cr.contract_caller();
-    let mut caller_account = Account::new_from_jzkt(caller_address);
+    let (mut caller_account, _) = am.account(caller_address);
 
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
@@ -44,15 +46,14 @@ pub fn _evm_create<CR: ContextReader>(
     );
 
     // create journal checkpoint
-    let checkpoint = Account::checkpoint();
+    let checkpoint = am.checkpoint();
 
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
     let mut callee_account =
-        match Account::create_account(&mut caller_account, input.value, salt_hash) {
+        match Account::create_account(am, &mut caller_account, input.value, salt_hash) {
             Ok(result) => result,
             Err(err) => {
-                Account::rollback(checkpoint);
                 return EvmCreateMethodOutput::from_exit_code(err);
             }
         };
@@ -69,10 +70,10 @@ pub fn _evm_create<CR: ContextReader>(
         value: input.value,
     };
 
-    let result = exec_evm_bytecode::<CR>(cr, contract, input.gas_limit, is_static);
+    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static);
 
     if !matches!(result.result, return_ok!()) {
-        Account::rollback(checkpoint);
+        am.rollback(checkpoint);
         debug_log(&format!(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
@@ -81,7 +82,7 @@ pub fn _evm_create<CR: ContextReader>(
             .with_gas(result.gas.remaining());
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
-        Account::rollback(checkpoint);
+        am.rollback(checkpoint);
         debug_log(&format!(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
@@ -90,7 +91,7 @@ pub fn _evm_create<CR: ContextReader>(
             .with_gas(result.gas.remaining());
     }
     if result.output.len() > MAX_CODE_SIZE {
-        Account::rollback(checkpoint);
+        am.rollback(checkpoint);
         debug_log(&format!(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
@@ -100,19 +101,19 @@ pub fn _evm_create<CR: ContextReader>(
     }
 
     // write caller changes to database
-    caller_account.write_to_jzkt();
+    am.write_account(&caller_account);
 
     // write callee changes to database
     let evm_loader = Bytes::default();
 
-    callee_account.update_bytecode(&result.output, None, &evm_loader, None);
+    callee_account.update_bytecode(am, &result.output, None, &evm_loader, None);
 
     debug_log(&format!(
         "ecl(_evm_create): return: Ok: callee_account.address: {}",
         callee_account.address
     ));
 
-    Account::commit();
+    am.commit();
 
     return EvmCreateMethodOutput::from_exit_code(ExitCode::Ok)
         .with_gas(result.gas.remaining())

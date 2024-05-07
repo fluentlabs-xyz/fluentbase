@@ -1,19 +1,58 @@
-use crate::account_types::{
-    AccountCheckpoint, AccountFields, JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_COMPRESSION_FLAGS,
-    JZKT_ACCOUNT_NONCE_FIELD, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-};
-use crate::helpers::{calc_create2_address, calc_create_address};
-use crate::JZKT_ACCOUNT_FIELDS_COUNT;
+use crate::utils::{calc_create2_address, calc_create_address};
+use crate::{LowLevelAPI, LowLevelSDK};
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{
     Address, Bytes, Bytes32, ExitCode, B256, F254, KECCAK_EMPTY, NATIVE_TRANSFER_ADDRESS,
     NATIVE_TRANSFER_KECCAK, POSEIDON_EMPTY, U256,
 };
 use revm_primitives::AccountInfo;
+
+/// Number of fields
+pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
+pub const JZKT_STORAGE_FIELDS_COUNT: u32 = 1;
+
+pub const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
+pub const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
+pub const JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD: u32 = 2;
+pub const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
+pub const JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD: u32 = 4;
+pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
+
+/// Compression flags for upper fields.
+///
+/// We compress following fields:
+/// - balance (0) because of balance overflow
+/// - source code hash (3) because its keccak256
+///
+/// Mask is: 0b00001001
+pub const JZKT_ACCOUNT_COMPRESSION_FLAGS: u32 =
+    (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD);
+pub const JZKT_STORAGE_COMPRESSION_FLAGS: u32 = 0;
+
+pub type AccountCheckpoint = u64;
+pub type AccountFields = [Bytes32; JZKT_ACCOUNT_FIELDS_COUNT as usize];
+
+pub trait AccountManager {
+    fn checkpoint(&self) -> AccountCheckpoint;
+    fn commit(&self);
+    fn rollback(&self, checkpoint: AccountCheckpoint);
+    fn account(&self, address: Address) -> (Account, bool);
+    fn write_account(&self, account: &Account);
+    fn preimage_size(&self, hash: &[u8; 32]) -> u32;
+    fn preimage(&self, hash: &[u8; 32]) -> Bytes;
+    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]);
+    fn storage(&self, address: Address, slot: U256) -> (U256, bool);
+    fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool;
+    fn log(&self, address: Address, data: Bytes, topics: &[B256]);
+    fn exec_hash(
+        &self,
+        hash32_offset: *const u8,
+        input: &[u8],
+        fuel_offset: *mut u32,
+        state: u32,
+    ) -> (Bytes, i32);
+}
 
 #[derive(Debug, Clone)]
 pub struct Account {
@@ -110,92 +149,6 @@ impl Account {
         result
     }
 
-    pub fn new_from_jzkt(address: Address) -> Self {
-        let mut result = Self::new(address);
-        let address_word = address.into_word();
-        // code size and nonce
-        let mut buffer32 = Bytes32::default();
-
-        Account::jzkt_get_nonce(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.nonce = LittleEndian::read_u64(&buffer32);
-
-        Account::jzkt_get_balance(address_word.as_ptr(), unsafe {
-            result.balance.as_le_slice_mut().as_mut_ptr()
-        });
-
-        Account::jzkt_get_rwasm_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.rwasm_code_size = LittleEndian::read_u64(&buffer32);
-
-        Account::jzkt_get_rwasm_bytecode_hash(
-            address_word.as_ptr(),
-            result.rwasm_code_hash.as_mut_ptr(),
-        );
-
-        Account::jzkt_get_source_bytecode_size(address_word.as_ptr(), buffer32.as_mut_ptr());
-        result.source_code_size = LittleEndian::read_u64(&buffer32);
-
-        Account::jzkt_get_source_bytecode_hash(
-            address_word.as_ptr(),
-            result.source_code_hash.as_mut_ptr(),
-        );
-
-        result
-    }
-
-    #[inline]
-    pub fn jzkt_get_nonce(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_NONCE_FIELD,
-            buffer32_le_offset,
-        );
-    }
-
-    #[inline]
-    pub fn jzkt_get_balance(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_BALANCE_FIELD,
-            buffer32_le_offset,
-        );
-    }
-
-    #[inline]
-    pub fn jzkt_get_rwasm_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-            buffer32_le_offset,
-        );
-    }
-
-    #[inline]
-    pub fn jzkt_get_rwasm_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-            buffer32_offset,
-        );
-    }
-
-    #[inline]
-    pub fn jzkt_get_source_bytecode_size(address32_offset: *const u8, buffer32_le_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-            buffer32_le_offset,
-        );
-    }
-
-    #[inline]
-    pub fn jzkt_get_source_bytecode_hash(address32_offset: *const u8, buffer32_offset: *mut u8) {
-        LowLevelSDK::jzkt_get(
-            address32_offset,
-            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-            buffer32_offset,
-        );
-    }
-
     #[inline(always)]
     pub(crate) fn transfer_value(&mut self, to: &mut Self, value: &U256) -> bool {
         let from_balance = {
@@ -238,19 +191,7 @@ impl Account {
             &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
             self.source_code_size,
         );
-
         account_fields
-    }
-
-    pub fn write_to_jzkt(&self) {
-        let account_fields = self.get_fields();
-
-        LowLevelSDK::jzkt_update(
-            self.address.into_word().as_ptr(),
-            JZKT_ACCOUNT_COMPRESSION_FLAGS,
-            account_fields.as_ptr(),
-            32 * account_fields.len() as u32,
-        );
     }
 
     pub fn inc_nonce(&mut self) -> Result<u64, ExitCode> {
@@ -262,22 +203,24 @@ impl Account {
         Ok(prev_nonce)
     }
 
-    pub fn load_source_bytecode(&self) -> Bytes {
-        let bytecode_length = LowLevelSDK::jzkt_preimage_size(self.source_code_hash.as_ptr());
-        let mut bytecode = vec![0u8; bytecode_length as usize];
-        LowLevelSDK::jzkt_preimage_copy(self.source_code_hash.as_ptr(), bytecode.as_mut_ptr());
-        bytecode.into()
+    #[deprecated(note = "use [write_account] method instead")]
+    pub fn write_to_jzkt<AM: AccountManager>(&self, am: &AM) {
+        am.write_account(self);
     }
 
-    pub fn load_rwasm_bytecode(&self) -> Bytes {
-        let bytecode_length = LowLevelSDK::jzkt_preimage_size(self.rwasm_code_hash.as_ptr());
-        let mut bytecode = vec![0u8; bytecode_length as usize];
-        LowLevelSDK::jzkt_preimage_copy(self.rwasm_code_hash.as_ptr(), bytecode.as_mut_ptr());
-        bytecode.into()
+    #[deprecated(note = "use [preimage] method instead")]
+    pub fn load_source_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
+        return am.preimage(&self.source_code_hash);
     }
 
-    pub fn update_bytecode(
+    #[deprecated(note = "use [preimage] method instead")]
+    pub fn load_rwasm_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
+        return am.preimage(&self.rwasm_code_hash);
+    }
+
+    pub fn update_bytecode<AM: AccountManager>(
         &mut self,
+        am: &AM,
         source_bytecode: &Bytes,
         source_hash: Option<B256>,
         rwasm_bytecode: &Bytes,
@@ -305,83 +248,22 @@ impl Account {
         });
         self.rwasm_code_size = rwasm_bytecode.len() as u64;
         // write all changes to database
-        self.write_to_jzkt();
+        am.write_account(self);
         // make sure preimage of this hash is stored
-        let r = LowLevelSDK::jzkt_update_preimage(
-            address_word.as_ptr(),
+        am.update_preimage(
+            &address_word,
             JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-            source_bytecode.as_ptr(),
-            source_bytecode.len() as u32,
+            source_bytecode.as_ref(),
         );
-        assert!(r, "bytecode update failed");
-        let r = LowLevelSDK::jzkt_update_preimage(
-            address_word.as_ptr(),
+        am.update_preimage(
+            &address_word,
             JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-            rwasm_bytecode.as_ptr(),
-            rwasm_bytecode.len() as u32,
+            rwasm_bytecode.as_ref(),
         );
-        assert!(r, "bytecode update failed");
     }
 
-    #[deprecated(note = "use `update_bytecode` function to update both bytecodes")]
-    pub fn update_source_bytecode(&mut self, bytecode: &Bytes) {
-        let address_word = self.address.into_word();
-        LowLevelSDK::crypto_keccak256(
-            bytecode.as_ptr(),
-            bytecode.len() as u32,
-            self.source_code_hash.as_mut_ptr(),
-        );
-        self.source_code_size = bytecode.len() as u64;
-        self.write_to_jzkt();
-        // make sure preimage of this hash is stored
-        let r = LowLevelSDK::jzkt_update_preimage(
-            address_word.as_ptr(),
-            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-            bytecode.as_ptr(),
-            bytecode.len() as u32,
-        );
-        assert!(r, "account update_source_bytecode failed");
-    }
-
-    #[deprecated(note = "use `update_bytecode` function to update both bytecodes")]
-    pub fn update_rwasm_bytecode(&mut self, bytecode: &Bytes, poseidon_hash: Option<F254>) {
-        let address_word = self.address.into_word();
-        self.rwasm_code_hash = poseidon_hash.unwrap_or_else(|| {
-            let mut poseidon_hash = F254::ZERO;
-            LowLevelSDK::crypto_poseidon(
-                bytecode.as_ptr(),
-                bytecode.len() as u32,
-                poseidon_hash.as_mut_ptr(),
-            );
-            poseidon_hash
-        });
-        self.rwasm_code_size = bytecode.len() as u64;
-        self.write_to_jzkt();
-        // make sure preimage of this hash is stored
-        let r = LowLevelSDK::jzkt_update_preimage(
-            address_word.as_ptr(),
-            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-            bytecode.as_ptr(),
-            bytecode.len() as u32,
-        );
-        assert!(r, "account update_bytecode failed");
-    }
-
-    pub fn checkpoint() -> AccountCheckpoint {
-        LowLevelSDK::jzkt_checkpoint()
-    }
-
-    pub fn commit() -> B256 {
-        let mut root = B256::ZERO;
-        LowLevelSDK::jzkt_commit(root.as_mut_ptr());
-        root
-    }
-
-    pub fn rollback(checkpoint: AccountCheckpoint) {
-        LowLevelSDK::jzkt_rollback(checkpoint);
-    }
-
-    pub fn create_account(
+    pub fn create_account<AM: AccountManager>(
+        am: &AM,
         caller: &mut Account,
         amount: U256,
         salt_hash: Option<(U256, B256)>,
@@ -398,7 +280,7 @@ impl Account {
         } else {
             calc_create_address(&caller.address, old_nonce)
         };
-        let mut callee = Account::new_from_jzkt(callee_address);
+        let (mut callee, _) = am.account(callee_address);
         // make sure there is no creation collision
         if callee.is_not_empty() {
             return Err(ExitCode::CreateCollision);
@@ -414,20 +296,20 @@ impl Account {
         Ok(callee)
     }
 
-    pub fn emit_transfer_log(from: &Address, to: &Address, amount: &U256) {
-        let topics: [B256; 4] = [
-            NATIVE_TRANSFER_KECCAK,
-            from.into_word(),
-            to.into_word(),
-            B256::from(amount.to_be_bytes::<32>()),
-        ];
-        LowLevelSDK::jzkt_emit_log(
-            NATIVE_TRANSFER_ADDRESS.as_ptr(),
-            topics.as_ptr() as *const [u8; 32],
-            4 * 32,
-            core::ptr::null(),
-            0,
-        );
+    pub fn emit_transfer_log(_from: &Address, _to: &Address, _amount: &U256) {
+        // let topics: [B256; 4] = [
+        //     NATIVE_TRANSFER_KECCAK,
+        //     from.into_word(),
+        //     to.into_word(),
+        //     B256::from(amount.to_be_bytes::<32>()),
+        // ];
+        // LowLevelSDK::jzkt_emit_log(
+        //     NATIVE_TRANSFER_ADDRESS.as_ptr(),
+        //     topics.as_ptr() as *const [u8; 32],
+        //     4 * 32,
+        //     core::ptr::null(),
+        //     0,
+        // );
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

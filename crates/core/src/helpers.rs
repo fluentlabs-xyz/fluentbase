@@ -1,9 +1,7 @@
 use crate::consts::ECL_CONTRACT_ADDRESS;
 #[cfg(feature = "ecl")]
 use crate::evm::{call::_evm_call, create::_evm_create};
-use crate::{
-    account_types::JZKT_ACCOUNT_BALANCE_FIELD, fluent_host::FluentHost, Account, AccountCheckpoint,
-};
+use crate::fluent_host::FluentHost;
 use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use core::marker::{PhantomData, PhantomPinned};
@@ -11,8 +9,9 @@ use core::mem::take;
 use core::str::from_utf8;
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
-    ContextReader, ContractInput, CoreInput, EvmCallMethodInput, EvmCallMethodOutput,
-    EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
+    Account, AccountManager, ContextReader, ContractInput, CoreInput, EvmCallMethodInput,
+    EvmCallMethodOutput, EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
+    EVM_CALL_METHOD_ID, JZKT_ACCOUNT_BALANCE_FIELD,
 };
 use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, B256, STATE_DEPLOY, STATE_MAIN, U256};
 use hashbrown::Equivalent;
@@ -37,17 +36,6 @@ macro_rules! decode_method_input {
 }
 
 pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
-
-#[inline(always)]
-pub(crate) fn read_balance(address: Address, value: &mut U256) {
-    let mut bytes32 = Bytes32::default();
-    unsafe {
-        core::ptr::copy(address.as_ptr(), bytes32.as_mut_ptr(), 20);
-    }
-    LowLevelSDK::jzkt_get(bytes32.as_ptr(), JZKT_ACCOUNT_BALANCE_FIELD, unsafe {
-        value.as_le_slice_mut().as_mut_ptr()
-    });
-}
 
 #[inline(always)]
 pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
@@ -91,7 +79,7 @@ pub fn rwasm_exec_hash(
         input.len() as u32,
         core::ptr::null_mut(),
         0,
-        gas_limit as *const u32,
+        gas_limit as *mut u32,
         if is_deploy { STATE_DEPLOY } else { STATE_MAIN },
     )
 }
@@ -176,7 +164,11 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
 const EVM_GAS_MULTIPLIER: u64 = 1;
 
 #[cfg(feature = "ecl")]
-fn exec_evm_create<CR: ContextReader>(cr: &CR, inputs: Box<CreateInputs>) -> CreateOutcome {
+fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
+    cr: &CR,
+    am: &AM,
+    inputs: Box<CreateInputs>,
+) -> CreateOutcome {
     // calc create input
     let create_input = EvmCreateMethodInput {
         value: inputs.value,
@@ -188,7 +180,7 @@ fn exec_evm_create<CR: ContextReader>(cr: &CR, inputs: Box<CreateInputs>) -> Cre
         },
     };
 
-    let create_output = _evm_create(cr, create_input);
+    let create_output = _evm_create(cr, am, create_input);
 
     CreateOutcome {
         result: InterpreterResult {
@@ -205,7 +197,11 @@ fn exec_evm_create<CR: ContextReader>(cr: &CR, inputs: Box<CreateInputs>) -> Cre
 }
 
 #[cfg(feature = "ecl")]
-fn exec_evm_call<CR: ContextReader>(cr: &CR, mut inputs: Box<CallInputs>) -> CallOutcome {
+fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
+    cr: &CR,
+    am: &AM,
+    mut inputs: Box<CallInputs>,
+) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
     // let call_output = _evm_call(
@@ -232,21 +228,13 @@ fn exec_evm_call<CR: ContextReader>(cr: &CR, mut inputs: Box<CallInputs>) -> Cal
     let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIER as u32;
     let contract_input =
         contract_input_from_call_inputs(cr, inputs, core_input.encode_to_vec(0).into());
-    let callee = Account::new_from_jzkt(ECL_CONTRACT_ADDRESS);
-    let exit_code = LowLevelSDK::sys_exec_hash(
+    let (callee, _) = am.account(ECL_CONTRACT_ADDRESS);
+    let (output_buffer, exit_code) = am.exec_hash(
         callee.rwasm_code_hash.as_ptr(),
-        contract_input.as_ptr(),
-        contract_input.len() as u32,
-        core::ptr::null_mut(),
-        0,
+        &contract_input,
         &mut gas_limit as *mut u32,
         STATE_MAIN,
     );
-
-    // read EVM call output
-    let output_size = LowLevelSDK::sys_output_size();
-    let mut output_buffer = vec![0u8; output_size as usize];
-    LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
 
     let method_output = if exit_code == 0 {
         let mut buffer_decoder = BufferDecoder::new(&output_buffer);
@@ -274,8 +262,9 @@ fn exec_evm_call<CR: ContextReader>(cr: &CR, mut inputs: Box<CallInputs>) -> Cal
 }
 
 #[cfg(feature = "ecl")]
-pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
+pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     mut cr: &CR,
+    mut am: &AM,
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
@@ -287,15 +276,13 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
         &contract.caller,
         gas_limit,
         hex::encode(contract.bytecode.original_bytecode_slice()),
-        // hex::encode(&ExecutionContext::contract_input_full().encode_to_vec(0)),
     ));
     let contract_address = contract.address;
 
-    let instruction_table: InstructionTable<FluentHost<CR>> =
-        make_instruction_table::<FluentHost<CR>, DefaultEvmSpec>();
+    let instruction_table = make_instruction_table::<FluentHost<CR, AM>, DefaultEvmSpec>();
 
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
-    let mut host = FluentHost::new(cr);
+    let mut host = FluentHost::new(cr, am);
     let mut shared_memory = SharedMemory::new();
 
     loop {
@@ -304,7 +291,9 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
 
         // take memory and cr from interpreter and host back (return later)
         shared_memory = interpreter.take_memory();
+
         cr = host.cr.take().unwrap();
+        am = host.am.take().unwrap();
 
         match next_action {
             InterpreterAction::Call { inputs } => {
@@ -318,11 +307,11 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
                     inputs.gas_limit,
                     contract_address,
                 ));
-                interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(cr, inputs))
+                interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs))
             }
             InterpreterAction::Create { inputs } => {
                 debug_log(&format!("ecl(exec_evm_bytecode): nested create"));
-                interpreter.insert_create_outcome(exec_evm_create(cr, inputs))
+                interpreter.insert_create_outcome(exec_evm_create(cr, am, inputs))
             }
             InterpreterAction::Return { result } => {
                 debug_log(&format!(
@@ -338,6 +327,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader>(
 
         // move cr back
         host.cr = Some(cr);
+        host.am = Some(am);
     }
 }
 

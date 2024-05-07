@@ -12,7 +12,6 @@ use fluentbase_core::{
         selfbalance::_evm_self_balance,
     },
     helpers::{calc_create2_address, calc_create_address},
-    Account,
 };
 use fluentbase_sdk::{
     EvmCallMethodInput, EvmCreateMethodInput, ExecutionContext, LowLevelAPI, LowLevelSDK,

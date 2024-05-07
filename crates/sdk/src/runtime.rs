@@ -143,15 +143,13 @@ impl LowLevelAPI for LowLevelSDK {
         input_len: u32,
         return_offset: *mut u8,
         return_len: u32,
-        fuel_offset: *const u32,
+        fuel_offset: *mut u32,
         state: u32,
     ) -> i32 {
         let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_offset, 32) };
         let input =
             unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
-        let fuel = LittleEndian::read_u32(unsafe {
-            &*ptr::slice_from_raw_parts(fuel_offset as *const u8, 4)
-        });
+        let fuel = unsafe { *fuel_offset };
         with_context_mut(move |ctx| {
             match SysExecHash::fn_impl(
                 ctx,
@@ -168,10 +166,9 @@ impl LowLevelAPI for LowLevelSDK {
                             ptr::copy(return_data.as_ptr(), return_offset, return_len as usize)
                         }
                     }
-                    LittleEndian::write_u32(
-                        unsafe { &mut *ptr::slice_from_raw_parts_mut(fuel_offset as *mut u8, 4) },
-                        remaining_fuel as u32,
-                    );
+                    unsafe {
+                        *fuel_offset = remaining_fuel as u32;
+                    }
                     0
                 }
                 Err(err) => err,

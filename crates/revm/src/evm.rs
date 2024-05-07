@@ -22,14 +22,14 @@ use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     evm::create::_evm_create,
     wasm::create::_wasm_create,
-    Account, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_sdk::{
-    ContractInput, CoreInput, EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput,
-    EvmCreateMethodOutput, LowLevelSDK, WasmCallMethodInput, WasmCreateMethodInput,
-    EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    Account, ContractInput, CoreInput, EvmCallMethodInput, EvmCallMethodOutput,
+    EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelSDK, WasmCallMethodInput,
+    WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
+    JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
+    WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
     address, BytecodeType, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
@@ -509,7 +509,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(" - caller: 0x{}", hex::encode(caller_account.address));
             println!(" - callee: 0x{}", hex::encode(callee_account.address));
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
-            println!(" - fuel consumed: {}", call_output.gas);
+            println!(
+                " - fuel consumed: {}",
+                gas.remaining() as i64 - call_output.gas as i64
+            );
             println!(" - exit code: {}", call_output.exit_code);
             if call_output.output.iter().all(|c| c.is_ascii()) {
                 println!(
