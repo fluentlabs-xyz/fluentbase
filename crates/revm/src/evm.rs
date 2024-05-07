@@ -17,6 +17,7 @@ use fluentbase_core::evm::call::_evm_call;
 use fluentbase_core::evm::sload::_evm_sload;
 use fluentbase_core::evm::sstore::_evm_sstore;
 use fluentbase_core::fluent_host::FluentHost;
+use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_core::wasm::call::_wasm_call;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
@@ -24,9 +25,9 @@ use fluentbase_core::{
     wasm::create::_wasm_create,
 };
 use fluentbase_sdk::{
-    Account, ContractInput, CoreInput, EvmCallMethodInput, EvmCallMethodOutput,
-    EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelSDK, WasmCallMethodInput,
-    WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
+    Account, AccountCheckpoint, AccountManager, ContractInput, CoreInput, EvmCallMethodInput,
+    EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelSDK,
+    WasmCallMethodInput, WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
     JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
     WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
@@ -323,62 +324,63 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             return return_result(ExitCode::InsufficientBalance, gas);
         }
 
-        let (mut middleware_account, core_input) = match BytecodeType::from_slice(input.as_ref()) {
-            BytecodeType::EVM => {
-                let input = CoreInput {
-                    method_id: EVM_CREATE_METHOD_ID,
-                    method_data: EvmCreateMethodInput {
-                        init_code: input,
-                        value,
-                        gas_limit: gas.remaining(),
-                        salt,
-                    },
-                };
-                (
-                    self.context
-                        .evm
-                        .load_jzkt_account(ECL_CONTRACT_ADDRESS)
-                        .expect("failed to load ECL"),
-                    input.encode_to_vec(0),
-                )
-            }
-            BytecodeType::WASM => {
-                let input = CoreInput {
-                    method_id: WASM_CREATE_METHOD_ID,
-                    method_data: WasmCreateMethodInput {
+        let (_middleware_account, method_id, method_data) =
+            match BytecodeType::from_slice(input.as_ref()) {
+                BytecodeType::EVM => (
+                    ECL_CONTRACT_ADDRESS,
+                    EVM_CREATE_METHOD_ID,
+                    EvmCreateMethodInput {
                         bytecode: input,
                         value,
                         gas_limit: gas.remaining(),
                         salt,
                     },
-                };
-                (
-                    self.context
-                        .evm
-                        .load_jzkt_account(WCL_CONTRACT_ADDRESS)
-                        .expect("failed to load WCL"),
-                    input.encode_to_vec(0),
-                )
-            }
-        };
+                ),
+                BytecodeType::WASM => (
+                    WCL_CONTRACT_ADDRESS,
+                    WASM_CREATE_METHOD_ID,
+                    WasmCreateMethodInput {
+                        bytecode: input,
+                        value,
+                        gas_limit: gas.remaining(),
+                        salt,
+                    },
+                ),
+            };
 
-        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+        let contract_input = self.input_from_env(
             &mut gas,
             caller_account,
-            &mut middleware_account,
-            None,
-            core_input.into(),
+            Address::ZERO,
+            Default::default(),
             value,
         );
-
-        let create_output = if exit_code == ExitCode::Ok {
-            let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
-            let mut create_output = EvmCreateMethodOutput::default();
-            EvmCreateMethodOutput::decode_body(&mut buffer_decoder, 0, &mut create_output);
-            create_output
-        } else {
-            EvmCreateMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
+        let am = JournalDbWrapper {
+            ctx: RefCell::new(&mut self.context.evm),
         };
+        let create_output = match method_id {
+            EVM_CREATE_METHOD_ID => _evm_create(&contract_input, &am, method_data),
+            WASM_CREATE_METHOD_ID => _wasm_create(&contract_input, &am, method_data),
+            _ => unreachable!(),
+        };
+
+        // let (output_buffer, exit_code) = self.exec_rwasm_binary(
+        //     &mut gas,
+        //     caller_account,
+        //     &mut middleware_account,
+        //     None,
+        //     core_input.into(),
+        //     value,
+        // );
+
+        // let create_output = if exit_code == ExitCode::Ok {
+        //     let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
+        //     let mut create_output = EvmCreateMethodOutput::default();
+        //     EvmCreateMethodOutput::decode_body(&mut buffer_decoder, 0, &mut create_output);
+        //     create_output
+        // } else {
+        //     EvmCreateMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
+        // };
 
         // let created_address = if exit_code == ExitCode::Ok {
         //     if output_buffer.len() != 20 {
@@ -436,13 +438,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             .load_account(callee_account.address)
             .unwrap();
 
-        let (mut middleware_account, method_id, method_data) =
+        let (_middleware_account, method_id, method_data) =
             match bytecode_type_from_account(&callee_bytecode.info) {
                 BytecodeType::EVM => (
-                    self.context
-                        .evm
-                        .load_jzkt_account(ECL_CONTRACT_ADDRESS)
-                        .expect("failed to load ECL"),
+                    ECL_CONTRACT_ADDRESS,
                     EVM_CALL_METHOD_ID,
                     EvmCallMethodInput {
                         callee: callee_account.address,
@@ -452,10 +451,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     },
                 ),
                 BytecodeType::WASM => (
-                    self.context
-                        .evm
-                        .load_jzkt_account(WCL_CONTRACT_ADDRESS)
-                        .expect("failed to load WCL"),
+                    WCL_CONTRACT_ADDRESS,
                     WASM_CALL_METHOD_ID,
                     WasmCallMethodInput {
                         callee: callee_account.address,
@@ -466,43 +462,45 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 ),
             };
 
-        // let contract_input = self.input_from_env(
-        //     &mut gas,
-        //     caller_account,
-        //     callee_account.address,
-        //     Default::default(),
-        //     value,
-        // );
-        // let output = match method_id {
-        //     EVM_CALL_METHOD_ID => _evm_call(&contract_input, method_data),
-        //     WASM_CALL_METHOD_ID => _wasm_call(&contract_input, method_data),
-        //     _ => unreachable!(),
-        // };
-        // let (output_buffer, exit_code) = (output.output, ExitCode::from(output.exit_code));
-
-        let core_input = CoreInput {
-            method_id,
-            method_data,
-        }
-        .encode_to_vec(0);
-
-        let (output_buffer, exit_code) = self.exec_rwasm_binary(
+        let contract_input = self.input_from_env(
             &mut gas,
             caller_account,
-            &mut middleware_account,
-            Some(callee_account.address),
-            core_input.into(),
+            callee_account.address,
+            Default::default(),
             value,
         );
-
-        let call_output = if exit_code == ExitCode::Ok {
-            let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
-            let mut call_output = EvmCallMethodOutput::default();
-            EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut call_output);
-            call_output
-        } else {
-            EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
+        let am = JournalDbWrapper {
+            ctx: RefCell::new(&mut self.context.evm),
         };
+        let call_output = match method_id {
+            EVM_CALL_METHOD_ID => _evm_call(&contract_input, &am, method_data),
+            WASM_CALL_METHOD_ID => _wasm_call(&contract_input, &am, method_data),
+            _ => unreachable!(),
+        };
+
+        // let core_input = CoreInput {
+        //     method_id,
+        //     method_data,
+        // }
+        // .encode_to_vec(0);
+        //
+        // let (output_buffer, exit_code) = self.exec_rwasm_binary(
+        //     &mut gas,
+        //     caller_account,
+        //     &mut middleware_account,
+        //     Some(callee_account.address),
+        //     core_input.into(),
+        //     value,
+        // );
+        //
+        // let call_output = if exit_code == ExitCode::Ok {
+        //     let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
+        //     let mut call_output = EvmCallMethodOutput::default();
+        //     EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut call_output);
+        //     call_output
+        // } else {
+        //     EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
+        // };
 
         {
             println!("executed ECL call:");
@@ -569,50 +567,50 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         }
     }
 
-    #[cfg(feature = "std")]
-    fn exec_rwasm_binary(
-        &mut self,
-        gas: &mut Gas,
-        caller: &mut Account,
-        middleware: &mut Account,
-        callee_address: Option<Address>,
-        input: Bytes,
-        value: U256,
-    ) -> (Bytes, ExitCode) {
-        use fluentbase_runtime::{Runtime, RuntimeContext};
-        let input = self
-            .input_from_env(
-                gas,
-                caller,
-                callee_address.unwrap_or(Address::ZERO),
-                input,
-                value,
-            )
-            .encode_to_vec(0);
-        let jzkt = JournalDbWrapper {
-            ctx: RefCell::new(&mut self.context.evm),
-        };
-        let rwasm_bytecode = jzkt.preimage(&middleware.rwasm_code_hash.0);
-        if rwasm_bytecode.is_empty() {
-            return (Bytes::default(), ExitCode::Ok);
-        }
-        let ctx = RuntimeContext::new(rwasm_bytecode)
-            .with_input(input)
-            .with_fuel_limit(gas.remaining())
-            .with_jzkt(jzkt)
-            .with_state(STATE_MAIN);
-        let mut runtime = Runtime::new(ctx);
-        let result = match runtime.call() {
-            Ok(result) => result,
-            Err(err) => {
-                let exit_code = Runtime::catch_trap(&err);
-                println!("execution failed with err: {:?}", err);
-                return (Bytes::default(), ExitCode::from(exit_code));
-            }
-        };
-        gas.record_cost(result.fuel_consumed);
-        (Bytes::from(result.output.clone()), result.exit_code.into())
-    }
+    // #[cfg(feature = "std")]
+    // fn exec_rwasm_binary(
+    //     &mut self,
+    //     gas: &mut Gas,
+    //     caller: &mut Account,
+    //     middleware: &mut Account,
+    //     callee_address: Option<Address>,
+    //     input: Bytes,
+    //     value: U256,
+    // ) -> (Bytes, ExitCode) {
+    //     use fluentbase_runtime::{Runtime, RuntimeContext};
+    //     let input = self
+    //         .input_from_env(
+    //             gas,
+    //             caller,
+    //             callee_address.unwrap_or(Address::ZERO),
+    //             input,
+    //             value,
+    //         )
+    //         .encode_to_vec(0);
+    //     let jzkt = JournalDbWrapper {
+    //         ctx: RefCell::new(&mut self.context.evm),
+    //     };
+    //     let rwasm_bytecode = jzkt.preimage(&middleware.rwasm_code_hash.0);
+    //     if rwasm_bytecode.is_empty() {
+    //         return (Bytes::default(), ExitCode::Ok);
+    //     }
+    //     let ctx = RuntimeContext::new(rwasm_bytecode)
+    //         .with_input(input)
+    //         .with_fuel_limit(gas.remaining())
+    //         .with_jzkt(jzkt)
+    //         .with_state(STATE_MAIN);
+    //     let mut runtime = Runtime::new(ctx);
+    //     let result = match runtime.call() {
+    //         Ok(result) => result,
+    //         Err(err) => {
+    //             let exit_code = Runtime::catch_trap(&err);
+    //             println!("execution failed with err: {:?}", err);
+    //             return (Bytes::default(), ExitCode::from(exit_code));
+    //         }
+    //     };
+    //     gas.record_cost(result.fuel_consumed);
+    //     (Bytes::from(result.output.clone()), result.exit_code.into())
+    // }
 
     #[cfg(not(feature = "std"))]
     fn exec_rwasm_binary(
@@ -811,94 +809,133 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     }
 }
 
-// impl<EXT, DB: Database> Host for Evm<'_, EXT, DB> {
-//     fn env_mut(&mut self) -> &mut Env {
-//         &mut self.context.evm.env
-//     }
-//     fn env(&self) -> &Env {
-//         &self.context.evm.env
-//     }
-//
-//     #[inline]
-//     fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
-//         self.context
-//             .evm
-//             .load_account_exist(address)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     #[inline]
-//     fn block_hash(&mut self, number: U256) -> Option<B256> {
-//         self.context
-//             .evm
-//             .block_hash(number)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     #[inline]
-//     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-//         self.context
-//             .evm
-//             .balance(address)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     #[inline]
-//     fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
-//         self.context
-//             .evm
-//             .code(address)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     #[inline]
-//     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-//         self.context
-//             .evm
-//             .code_hash(address)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-//         self.context
-//             .evm
-//             .sload(address, index)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-//         self.context
-//             .evm
-//             .sstore(address, index, value)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-//
-//     fn tload(&mut self, address: Address, index: U256) -> U256 {
-//         self.context.evm.tload(address, index)
-//     }
-//
-//     fn tstore(&mut self, address: Address, index: U256, value: U256) {
-//         self.context.evm.tstore(address, index, value)
-//     }
-//
-//     fn log(&mut self, log: Log) {
-//         self.context.evm.journaled_state.log(log);
-//     }
-//
-//     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-//         self.context
-//             .evm
-//             .inner
-//             .journaled_state
-//             .selfdestruct(address, target, &mut self.context.evm.inner.db)
-//             .map_err(|e| self.context.evm.error = Err(e))
-//             .ok()
-//     }
-// }
+impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
+    fn checkpoint(&self) -> AccountCheckpoint {
+        let mut ctx = self.ctx.borrow_mut();
+        let (a, b) = ctx.journaled_state.checkpoint().into();
+        fluentbase_types::JournalCheckpoint::from((a, b)).to_u64()
+    }
+
+    fn commit(&self) {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state.checkpoint_commit();
+    }
+
+    fn rollback(&self, checkpoint: AccountCheckpoint) {
+        let checkpoint = fluentbase_types::JournalCheckpoint::from_u64(checkpoint);
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state
+            .checkpoint_revert((checkpoint.0, checkpoint.1).into());
+    }
+
+    fn account(&self, address: Address) -> (Account, bool) {
+        let mut ctx = self.ctx.borrow_mut();
+        let (account, is_cold) = ctx.load_account(address).expect("database error");
+        let mut account = Account::from(account.info.clone());
+        account.address = address;
+        (account, is_cold)
+    }
+
+    fn write_account(&self, account: &Account) {
+        let mut ctx = self.ctx.borrow_mut();
+        let (db_account, _) = ctx
+            .load_account_with_code(account.address)
+            .expect("database error");
+        db_account.info.balance = account.balance;
+        db_account.info.nonce = account.nonce;
+        db_account.info.code_hash = account.source_code_hash;
+        db_account.info.rwasm_code_hash = account.rwasm_code_hash;
+        db_account.mark_touch();
+    }
+
+    fn preimage_size(&self, hash: &[u8; 32]) -> u32 {
+        self.ctx
+            .borrow_mut()
+            .db
+            .code_by_hash(B256::from(hash))
+            .map(|b| b.bytecode.len() as u32)
+            .unwrap_or_default()
+    }
+
+    fn preimage(&self, hash: &[u8; 32]) -> Bytes {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.code_by_hash(B256::from(hash))
+            .expect("failed to get bytecode by hash")
+    }
+
+    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) {
+        let mut ctx = self.ctx.borrow_mut();
+        let address = Address::from_slice(&key[12..]);
+        if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD {
+            ctx.journaled_state.set_code(
+                address,
+                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
+                None,
+            );
+        } else if field == JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD {
+            ctx.journaled_state.set_rwasm_code(
+                address,
+                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
+                None,
+            );
+        }
+    }
+
+    fn storage(&self, _address: Address, slot: U256) -> (U256, bool) {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.sload(EVM_STORAGE_ADDRESS, slot)
+            .expect("failed to read storage slot")
+    }
+
+    fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool {
+        let mut ctx = self.ctx.borrow_mut();
+        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+        let result = ctx
+            .sstore(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key), value)
+            .expect("failed to update storage slot");
+        result.is_cold
+    }
+
+    fn log(&self, address: Address, data: Bytes, topics: &[B256]) {
+        self.emit_log(address, topics.into(), data)
+    }
+
+    fn exec_hash(
+        &self,
+        hash32_offset: *const u8,
+        input: &[u8],
+        fuel_offset: *mut u32,
+        state: u32,
+    ) -> (Bytes, i32) {
+        use fluentbase_runtime::{Runtime, RuntimeContext};
+        let hash32: [u8; 32] = unsafe { &*core::ptr::slice_from_raw_parts(hash32_offset, 32) }
+            .try_into()
+            .unwrap();
+        let rwasm_bytecode = AccountManager::preimage(self, &hash32);
+        if rwasm_bytecode.is_empty() {
+            return (Bytes::default(), ExitCode::Ok.into_i32());
+        }
+        let mut ctx = self.ctx.borrow_mut();
+        let jzkt = JournalDbWrapper {
+            ctx: RefCell::new(&mut ctx),
+        };
+        let ctx = RuntimeContext::new(rwasm_bytecode)
+            .with_input(input.into())
+            .with_fuel_limit(unsafe { *fuel_offset } as u64)
+            .with_jzkt(jzkt)
+            .with_state(state);
+        let mut runtime = Runtime::new(ctx);
+        let result = match runtime.call() {
+            Ok(result) => result,
+            Err(err) => {
+                let exit_code = Runtime::catch_trap(&err);
+                println!("execution failed with err: {:?}", err);
+                return (Bytes::default(), exit_code);
+            }
+        };
+        unsafe {
+            *fuel_offset -= result.fuel_consumed as u32;
+        }
+        (Bytes::from(result.output.clone()), result.exit_code.into())
+    }
+}

@@ -66,6 +66,10 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
 
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
+        // write account changes
+        am.write_account(&caller_account);
+        am.write_account(&callee_account);
+        // commit journal
         am.commit();
         debug_log(&format!("_evm_call return: exit_code: {}", ExitCode::Ok));
         return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit);

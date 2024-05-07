@@ -40,8 +40,8 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
     LowLevelSDK::crypto_keccak256(
-        input.init_code.as_ptr(),
-        input.init_code.len() as u32,
+        input.bytecode.as_ptr(),
+        input.bytecode.len() as u32,
         source_code_hash.as_mut_ptr(),
     );
 
@@ -58,7 +58,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
             }
         };
 
-    let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.init_code.into()));
+    let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.bytecode.into()));
     let deployer_bytecode_locked = BytecodeLocked::try_from(analyzed_bytecode).unwrap();
 
     let contract = Contract {
