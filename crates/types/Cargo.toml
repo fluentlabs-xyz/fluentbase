@@ -14,8 +14,8 @@ rwasm = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true }
 hashbrown = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
-strum = { version = "=0.25.0", optional = true }
-strum_macros = { version = "=0.25.2", optional = true }
+strum = { workspace = true, optional = true }
+strum_macros = { workspace = true, optional = true }
 byteorder = { workspace = true }
 
 [features]
