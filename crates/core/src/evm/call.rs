@@ -35,7 +35,10 @@ pub fn _evm_call<CR: ContextReader>(cr: &CR, input: EvmCallMethodInput) -> EvmCa
     match Account::transfer(&mut caller_account, &mut callee_account, input.value) {
         Ok(_) => {}
         Err(exit_code) => {
-            debug_log(&format!("_evm_call return: Err: exit_code: {}", exit_code));
+            debug_log(&format!(
+                "_evm_call return: Err: exit_code: {} caller.balance {} input.value {}",
+                exit_code, caller_account.balance, input.value
+            ));
             return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit);
         }
     }
