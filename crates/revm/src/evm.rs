@@ -12,7 +12,7 @@ use crate::{
     Context, ContextWithHandlerCfg, EvmContext, FrameResult, JournalCheckpoint, JournalEntry,
 };
 use core::{cell::RefCell, fmt, str::from_utf8};
-use fluentbase_codec::Encoder;
+use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::evm::call::_evm_call;
 use fluentbase_core::evm::sload::_evm_sload;
 use fluentbase_core::evm::sstore::_evm_sstore;
@@ -27,9 +27,9 @@ use fluentbase_core::{
     JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
 };
 use fluentbase_sdk::{
-    ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, LowLevelSDK,
-    WasmCallMethodInput, WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
-    WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    ContractInput, CoreInput, EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput,
+    EvmCreateMethodOutput, LowLevelSDK, WasmCallMethodInput, WasmCreateMethodInput,
+    EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
     address, BytecodeType, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
@@ -371,27 +371,36 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             value,
         );
 
-        let created_address = if exit_code == ExitCode::Ok {
-            if output_buffer.len() != 20 {
-                return return_result(ExitCode::CreateError, gas);
-            }
-            assert_eq!(
-                output_buffer.len(),
-                20,
-                "output buffer is not 20 bytes after create/create2"
-            );
-            Some(Address::from_slice(output_buffer.as_ref()))
+        let create_output = if exit_code == ExitCode::Ok {
+            let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
+            let mut create_output = EvmCreateMethodOutput::default();
+            EvmCreateMethodOutput::decode_body(&mut buffer_decoder, 0, &mut create_output);
+            create_output
         } else {
-            None
+            EvmCreateMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
         };
+
+        // let created_address = if exit_code == ExitCode::Ok {
+        //     if output_buffer.len() != 20 {
+        //         return return_result(ExitCode::CreateError, gas);
+        //     }
+        //     assert_eq!(
+        //         output_buffer.len(),
+        //         20,
+        //         "output buffer is not 20 bytes after create/create2"
+        //     );
+        //     Some(Address::from_slice(output_buffer.as_ref()))
+        // } else {
+        //     None
+        // };
 
         CreateOutcome {
             result: InterpreterResult {
-                result: exit_code,
+                result: ExitCode::from(create_output.exit_code),
                 output: Bytes::new(),
-                gas,
+                gas: Gas::new(create_output.gas),
             },
-            address: created_address,
+            address: create_output.address,
         }
     }
 
@@ -486,11 +495,20 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             value,
         );
 
+        let call_output = if exit_code == ExitCode::Ok {
+            let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
+            let mut call_output = EvmCallMethodOutput::default();
+            EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut call_output);
+            call_output
+        } else {
+            EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
+        };
+
         CallOutcome {
             result: InterpreterResult {
-                result: exit_code,
-                output: output_buffer.into(),
-                gas,
+                result: ExitCode::from(call_output.exit_code),
+                output: call_output.output,
+                gas: Gas::new(call_output.gas),
             },
             memory_offset: Default::default(),
         }
@@ -533,7 +551,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         &mut self,
         gas: &mut Gas,
         caller: &mut Account,
-        callee: &mut Account,
+        middleware: &mut Account,
         callee_address: Option<Address>,
         input: Bytes,
         value: U256,
@@ -543,7 +561,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             .input_from_env(
                 gas,
                 caller,
-                callee_address.unwrap_or(callee.address),
+                callee_address.unwrap_or(Address::ZERO),
                 input,
                 value,
             )
@@ -551,7 +569,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let jzkt = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
         };
-        let rwasm_bytecode = jzkt.preimage(&callee.rwasm_code_hash.0);
+        let rwasm_bytecode = jzkt.preimage(&middleware.rwasm_code_hash.0);
         if rwasm_bytecode.is_empty() {
             return (Bytes::default(), ExitCode::Ok);
         }
@@ -572,11 +590,17 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         {
             println!("executed rWASM binary:");
             println!(" - caller: 0x{}", hex::encode(caller.address));
-            println!(" - callee: 0x{}", hex::encode(callee.address));
-            println!(" - source hash: 0x{}", hex::encode(callee.source_code_hash));
-            println!(" - source size: {}", callee.source_code_size);
-            println!(" - rwasm hash: 0x{}", hex::encode(callee.rwasm_code_hash));
-            println!(" - rwasm size: {}", callee.rwasm_code_size);
+            println!(" - callee: 0x{}", hex::encode(middleware.address));
+            println!(
+                " - source hash: 0x{}",
+                hex::encode(middleware.source_code_hash)
+            );
+            println!(" - source size: {}", middleware.source_code_size);
+            println!(
+                " - rwasm hash: 0x{}",
+                hex::encode(middleware.rwasm_code_hash)
+            );
+            println!(" - rwasm size: {}", middleware.rwasm_code_size);
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(" - fuel consumed: {}", result.fuel_consumed);
             println!(" - exit code: {}", result.exit_code);

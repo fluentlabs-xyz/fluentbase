@@ -2,7 +2,9 @@ use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
 use crate::{account::Account, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use alloc::format;
-use fluentbase_sdk::{ContextReader, EvmCreateMethodInput, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{
+    ContextReader, EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelAPI, LowLevelSDK,
+};
 use fluentbase_types::{Address, ExitCode, B256};
 use revm_interpreter::InstructionResult;
 use revm_interpreter::{
@@ -16,7 +18,7 @@ use revm_primitives::U256;
 pub fn _evm_create<CR: ContextReader>(
     cr: &CR,
     input: EvmCreateMethodInput,
-) -> Result<Address, ExitCode> {
+) -> EvmCreateMethodOutput {
     debug_log("ecl(_evm_create): start");
 
     // check write protection
@@ -26,7 +28,7 @@ pub fn _evm_create<CR: ContextReader>(
             "ecl(_evm_create): return: Err: exit_code: {}",
             ExitCode::WriteProtection
         ));
-        return Err(ExitCode::WriteProtection);
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
 
     // load deployer and contract accounts
@@ -46,11 +48,14 @@ pub fn _evm_create<CR: ContextReader>(
 
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
-    let mut callee_account = Account::create_account(&mut caller_account, input.value, salt_hash)
-        .map_err(|err| {
-        Account::rollback(checkpoint);
-        err
-    })?;
+    let mut callee_account =
+        match Account::create_account(&mut caller_account, input.value, salt_hash) {
+            Ok(result) => result,
+            Err(err) => {
+                Account::rollback(checkpoint);
+                return EvmCreateMethodOutput::from_exit_code(err);
+            }
+        };
 
     let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.init_code.into()));
     let deployer_bytecode_locked = BytecodeLocked::try_from(analyzed_bytecode).unwrap();
@@ -64,7 +69,7 @@ pub fn _evm_create<CR: ContextReader>(
         value: input.value,
     };
 
-    let result = exec_evm_bytecode::<CR>(cr, contract, u64::MAX, is_static);
+    let result = exec_evm_bytecode::<CR>(cr, contract, input.gas_limit, is_static);
 
     if !matches!(result.result, return_ok!()) {
         Account::rollback(checkpoint);
@@ -72,7 +77,8 @@ pub fn _evm_create<CR: ContextReader>(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
         ));
-        return Err(exit_code_from_evm_error(result.result));
+        return EvmCreateMethodOutput::from_exit_code(exit_code_from_evm_error(result.result))
+            .with_gas(result.gas.remaining());
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         Account::rollback(checkpoint);
@@ -80,7 +86,8 @@ pub fn _evm_create<CR: ContextReader>(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
         ));
-        return Err(exit_code_from_evm_error(result.result));
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::CreateContractStartingWithEF)
+            .with_gas(result.gas.remaining());
     }
     if result.output.len() > MAX_CODE_SIZE {
         Account::rollback(checkpoint);
@@ -88,7 +95,8 @@ pub fn _evm_create<CR: ContextReader>(
             "ecl(_evm_create): return: Err: {:?}",
             result.result
         ));
-        return Err(exit_code_from_evm_error(result.result));
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
+            .with_gas(result.gas.remaining());
     }
 
     // write caller changes to database
@@ -106,5 +114,7 @@ pub fn _evm_create<CR: ContextReader>(
 
     Account::commit();
 
-    Ok(callee_account.address)
+    return EvmCreateMethodOutput::from_exit_code(ExitCode::Ok)
+        .with_gas(result.gas.remaining())
+        .with_address(callee_account.address);
 }

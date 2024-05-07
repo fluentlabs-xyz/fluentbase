@@ -14,18 +14,14 @@ rwasm = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true }
 hashbrown = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
-strum = { workspace = true, optional = true }
-strum_macros = { workspace = true, optional = true }
+strum_macros = { workspace = true }
 byteorder = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
-    "dep:strum",
-    "dep:strum_macros",
     "rwasm/std",
     "alloy-primitives/std",
     "revm-primitives/std",
-    "strum/std",
     "byteorder/std",
 ]

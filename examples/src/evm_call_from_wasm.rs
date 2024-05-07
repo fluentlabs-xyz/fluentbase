@@ -1,26 +1,23 @@
 use alloc::vec;
 use fluentbase_codec::Encoder;
 use fluentbase_core::Account;
-use fluentbase_sdk::{
-    evm::{ContractInput, ExecutionContext},
-    LowLevelAPI, LowLevelSDK,
-};
+use fluentbase_sdk::{ContextReader, ContractInput, ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{ExitCode, STATE_MAIN};
 
 pub fn deploy() {}
 
 pub fn main() {
     let ctx = ExecutionContext::default();
-    let contract_input = ExecutionContext::contract_input();
-    let evm_contract_address = ExecutionContext::contract_address();
-    let gas_limit: u32 = ExecutionContext::contract_gas_limit() as u32;
+    let contract_input = ExecutionContext::DEFAULT.contract_input();
+    let evm_contract_address = ExecutionContext::DEFAULT.contract_address();
+    let gas_limit: u32 = ExecutionContext::DEFAULT.contract_gas_limit() as u32;
     let contract_input = ContractInput {
-        journal_checkpoint: ExecutionContext::journal_checkpoint().into(),
+        journal_checkpoint: ExecutionContext::DEFAULT.journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
         contract_address: evm_contract_address,
-        contract_caller: ExecutionContext::contract_caller(),
+        contract_caller: ExecutionContext::DEFAULT.contract_caller(),
         contract_input,
-        tx_caller: ExecutionContext::tx_caller(),
+        tx_caller: ExecutionContext::DEFAULT.tx_caller(),
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
