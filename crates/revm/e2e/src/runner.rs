@@ -144,111 +144,9 @@ fn check_evm_execution<EXT1, EXT2>(
     let logs_root = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
     let logs_root2 = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
 
-    if logs_root != logs_root2 {
-        // let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
-        // let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
-        // println!("logs from EVM ({}):", logs1.len());
-        // for log in logs1 {
-        //     println!(
-        //         " - {}: {}",
-        //         hex::encode(log.address),
-        //         log.topics()
-        //             .get(0)
-        //             .map(|v| hex::encode(&v))
-        //             .unwrap_or_default()
-        //     )
-        // }
-        // println!("logs from FLUENT ({}):", logs2.len());
-        // for log in logs2 {
-        //     println!(
-        //         " - {}: {}",
-        //         hex::encode(log.address),
-        //         log.topics()
-        //             .get(0)
-        //             .map(|v| hex::encode(&v))
-        //             .unwrap_or_default()
-        //     )
-        // }
-        assert_eq!(logs_root, logs_root2, "LOGS ARE CORRUPTED!!!");
-    }
-
     let state_root = state_merkle_trie_root(evm.context.evm.db.cache.trie_account().into_iter());
-    let state_root2 = state_merkle_trie_root2(evm2.context.evm.db.cache.trie_account().into_iter());
-
-    // compare contracts
-    for (k, v) in evm.context.evm.db.cache.contracts.iter() {
-        let v2 = evm2
-            .context
-            .evm
-            .db
-            .cache
-            .contracts
-            .get(k)
-            .expect("missing fluent contract");
-        // we compare only evm bytecode
-        assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
-    }
-    for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        let v2 = evm2
-            .context
-            .evm
-            .db
-            .cache
-            .accounts
-            .get(address)
-            .expect("missing fluent account");
-        // assert_eq!(
-        //     format!("{:?}", v1.status),
-        //     format!("{:?}", v2.status),
-        //     "EVM account status mismatch",
-        // );
-        if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
-            println!("comparing account (0x{})...", hex::encode(address));
-            let a2 = v2
-                .account
-                .as_ref()
-                .map(|v| &v.info)
-                .expect("missing fluent account");
-            // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
-            println!(" - nonce: {}", a1.nonce);
-            assert_eq!(a1.nonce, a2.nonce, "EVM account nonce mismatch",);
-            println!(" - code_hash: {}", hex::encode(a1.code_hash));
-            assert_eq!(a1.code_hash, a2.code_hash, "EVM account code_hash mismatch",);
-            assert_eq!(
-                a1.code.as_ref().map(|b| b.original_bytes()),
-                a2.code.as_ref().map(|b| b.original_bytes()),
-                "EVM account code mismatch",
-            );
-        }
-        println!(" - storage:");
-        if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
-            for (slot, value) in s1.iter() {
-                println!(
-                    " - + slot ({}) => ({})",
-                    hex::encode(&slot.to_be_bytes::<32>()),
-                    hex::encode(&value.to_be_bytes::<32>())
-                );
-                let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
-                let fluent_evm_storage = evm2
-                    .context
-                    .evm
-                    .db
-                    .cache
-                    .accounts
-                    .get(&EVM_STORAGE_ADDRESS)
-                    .expect("missing special EVM storage account");
-                let value2 = fluent_evm_storage
-                    .storage_slot(U256::from_le_bytes(storage_key))
-                    .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
-                assert_eq!(
-                    *value,
-                    value2,
-                    "EVM storage value ({}) mismatch",
-                    hex::encode(&slot.to_be_bytes::<32>())
-                );
-            }
-        }
-    }
+    let _state_root2 =
+        state_merkle_trie_root2(evm2.context.evm.db.cache.trie_account().into_iter());
 
     let print_json_output = |error: Option<String>| {
         if print_json_outcome {
@@ -343,6 +241,109 @@ fn check_evm_execution<EXT1, EXT2>(
         });
     }
 
+    if logs_root != logs_root2 {
+        // let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
+        // let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
+        // println!("logs from EVM ({}):", logs1.len());
+        // for log in logs1 {
+        //     println!(
+        //         " - {}: {}",
+        //         hex::encode(log.address),
+        //         log.topics()
+        //             .get(0)
+        //             .map(|v| hex::encode(&v))
+        //             .unwrap_or_default()
+        //     )
+        // }
+        // println!("logs from FLUENT ({}):", logs2.len());
+        // for log in logs2 {
+        //     println!(
+        //         " - {}: {}",
+        //         hex::encode(log.address),
+        //         log.topics()
+        //             .get(0)
+        //             .map(|v| hex::encode(&v))
+        //             .unwrap_or_default()
+        //     )
+        // }
+        assert_eq!(logs_root, logs_root2, "LOGS ARE CORRUPTED!!!");
+    }
+
+    // compare contracts
+    for (k, v) in evm.context.evm.db.cache.contracts.iter() {
+        let v2 = evm2
+            .context
+            .evm
+            .db
+            .cache
+            .contracts
+            .get(k)
+            .expect("missing fluent contract");
+        // we compare only evm bytecode
+        assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
+    }
+    for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
+        let v2 = evm2
+            .context
+            .evm
+            .db
+            .cache
+            .accounts
+            .get(address)
+            .expect("missing fluent account");
+        // assert_eq!(
+        //     format!("{:?}", v1.status),
+        //     format!("{:?}", v2.status),
+        //     "EVM account status mismatch",
+        // );
+        if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
+            println!("comparing account (0x{})...", hex::encode(address));
+            let a2 = v2
+                .account
+                .as_ref()
+                .map(|v| &v.info)
+                .expect("missing fluent account");
+            // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
+            println!(" - nonce: {}", a1.nonce);
+            assert_eq!(a1.nonce, a2.nonce, "EVM account nonce mismatch",);
+            println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            assert_eq!(a1.code_hash, a2.code_hash, "EVM account code_hash mismatch",);
+            assert_eq!(
+                a1.code.as_ref().map(|b| b.original_bytes()),
+                a2.code.as_ref().map(|b| b.original_bytes()),
+                "EVM account code mismatch",
+            );
+        }
+        println!(" - storage:");
+        if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
+            for (slot, value) in s1.iter() {
+                println!(
+                    " - + slot ({}) => ({})",
+                    hex::encode(&slot.to_be_bytes::<32>()),
+                    hex::encode(&value.to_be_bytes::<32>())
+                );
+                let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
+                let fluent_evm_storage = evm2
+                    .context
+                    .evm
+                    .db
+                    .cache
+                    .accounts
+                    .get(&EVM_STORAGE_ADDRESS)
+                    .expect("missing special EVM storage account");
+                let value2 = fluent_evm_storage
+                    .storage_slot(U256::from_le_bytes(storage_key))
+                    .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
+                assert_eq!(
+                    *value,
+                    value2,
+                    "EVM storage value ({}) mismatch",
+                    hex::encode(&slot.to_be_bytes::<32>())
+                );
+            }
+        }
+    }
+
     print_json_output(None);
 
     Ok(())
@@ -362,6 +363,7 @@ pub fn execute_test_suite(
     elapsed: &Arc<Mutex<Duration>>,
     trace: bool,
     print_json_outcome: bool,
+    test_num: Option<usize>,
 ) -> Result<(), TestError> {
     if skip_test(path) {
         return Ok(());
@@ -526,10 +528,18 @@ pub fn execute_test_suite(
             }
 
             let spec_id = spec_name.to_spec_id();
+            let tests_count = tests.len();
 
             for (index, test) in tests.into_iter().enumerate() {
+                if let Some(test_num) = test_num {
+                    if test_num != 0 {
+                        continue;
+                    }
+                }
                 println!(
-                    "\n\n\n\n\nRunning test with txdata: {}",
+                    "\n\n\n\n\nRunning test with txdata: ({}/{}) {}",
+                    index,
+                    tests_count,
                     hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
                 );
                 env.tx.gas_limit = unit.transaction.gas_limit[test.indexes.gas].saturating_to();
@@ -767,7 +777,7 @@ pub fn run(
                 (prev_idx, test_path)
             };
 
-            if let Err(err) = execute_test_suite(&test_path, &elapsed, trace, print_outcome) {
+            if let Err(err) = execute_test_suite(&test_path, &elapsed, trace, print_outcome, None) {
                 endjob.store(true, Ordering::SeqCst);
                 return Err(err);
             }

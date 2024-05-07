@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
+use quote::__private::Span;
 use quote::{format_ident, quote, ToTokens};
 use syn::{self, Data, Fields, Ident};
 
@@ -15,6 +16,20 @@ pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
     let method_id: u32 = u32::from_be_bytes(dst);
     TokenStream::from(quote! {
         #method_id
+    })
+}
+
+#[proc_macro]
+pub fn path_to_test_name(token: TokenStream) -> TokenStream {
+    let path = token.to_string();
+    let file_name = path
+        .split("/")
+        .last()
+        .expect("there is no last part in the path");
+    let file_name = file_name.replace(".", "_").replace("\"", "");
+    let file_ident = Ident::new_raw(file_name.as_str(), Span::call_site());
+    TokenStream::from(quote! {
+        #file_ident
     })
 }
 

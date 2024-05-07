@@ -17,6 +17,7 @@ fluentbase-revm = { workspace = true, default-features = false, features = [
     "serde-json",
     "c-kzg",
 ] }
+fluentbase-codec-derive = { workspace = true }
 revm = { workspace = true }
 hash-db = "=0.15"
 hex = "0.4"
@@ -39,3 +40,4 @@ triehash = "0.8"
 walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
 lazy_static = "1.4.0"
+paste.workspace = true

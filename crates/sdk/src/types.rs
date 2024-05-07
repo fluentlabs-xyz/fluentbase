@@ -31,7 +31,29 @@ pub struct EvmCreateMethodInput {
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCreateMethodOutput {
-    pub address: Address,
+    pub address: Option<Address>,
+    pub exit_code: i32,
+    pub gas: u64,
+}
+
+impl EvmCreateMethodOutput {
+    pub fn from_exit_code(exit_code: ExitCode) -> Self {
+        Self {
+            address: None,
+            exit_code: exit_code.into_i32(),
+            gas: 0,
+        }
+    }
+
+    pub fn with_address(mut self, address: Address) -> Self {
+        self.address = Some(address);
+        self
+    }
+
+    pub fn with_gas(mut self, gas: u64) -> Self {
+        self.gas = gas;
+        self
+    }
 }
 
 pub const EVM_CALL_METHOD_ID: u32 =
@@ -39,6 +61,8 @@ pub const EVM_CALL_METHOD_ID: u32 =
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCallMethodInput {
+    /// Callee is an address that holds bytecode only, it doesn't mean that its also
+    /// used as callee address itself. Callee is managed by context reader and can differ.
     pub callee: Address,
     pub value: U256,
     pub input: Bytes,
@@ -85,7 +109,29 @@ pub struct WasmCreateMethodInput {
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct WasmCreateMethodOutput {
-    pub address: Address,
+    pub address: Option<Address>,
+    pub exit_code: i32,
+    pub gas: u64,
+}
+
+impl WasmCreateMethodOutput {
+    pub fn from_exit_code(exit_code: ExitCode) -> Self {
+        Self {
+            address: None,
+            exit_code: exit_code.into_i32(),
+            gas: 0,
+        }
+    }
+
+    pub fn with_address(mut self, address: Address) -> Self {
+        self.address = Some(address);
+        self
+    }
+
+    pub fn with_gas(mut self, gas: u64) -> Self {
+        self.gas = gas;
+        self
+    }
 }
 
 pub const WASM_CALL_METHOD_ID: u32 =

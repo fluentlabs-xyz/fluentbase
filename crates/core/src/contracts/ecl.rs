@@ -25,20 +25,17 @@ pub fn main() {
     match method_id {
         EVM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<EvmCreateMethodInput>();
-            let address = unwrap_exit_code(_evm_create(&cr, method_input));
-            LowLevelSDK::sys_write(address.as_slice())
+            let method_output = _evm_create(&cr, method_input);
+            LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
         }
         EVM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<EvmCallMethodInput>();
             let method_output = _evm_call(&cr, method_input);
-            if !method_output.output.is_empty() {
-                LowLevelSDK::sys_write(method_output.output.as_ref());
-            }
+            LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
             debug_log(&format!(
                 "ecl(main): return exit_code={}",
                 method_output.exit_code
             ));
-            LowLevelSDK::sys_halt(method_output.exit_code);
         }
         _ => panic!("unknown method id: {}", method_id),
     }
