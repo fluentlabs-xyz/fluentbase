@@ -13,8 +13,8 @@ categories.workspace = true
 byteorder = { workspace = true }
 alloy-primitives = { workspace = true }
 hashbrown = { workspace = true }
-strum = { version = "0.25.0", optional = true }
-strum_macros = { version = "0.25.2", optional = true }
+strum = { workspace = true, optional = true }
+strum_macros = { workspace = true, optional = true }
 serde = { workspace = true }
 casey = { workspace = true }
 paste = { workspace = true }
