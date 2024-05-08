@@ -31,16 +31,45 @@ mod e2e_tests {
 
     define_tests! {
 
-        // fn call_recursive_bomb_log2("tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json"); // FAIL
-        // fn sstore_combinations_initial01_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json");
+        // --- FAIL --- (bug with gas calculation, it affects other tests as well)
+        // fn call_recursive_bomb_log2("tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json");
 
+        // --- ALL PASS ---
+        // fn sstore_combinations_initial01_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json");
+        // fn sstore_combinations_initial00_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial00_Paris.json");
+        // fn sstore_combinations_initial11_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial11_Paris.json");
+        // fn sstore_combinations_initial00_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial00_2_Paris.json");
+        // fn static_call50000_sha256("tests/GeneralStateTests/stTimeConsuming/static_Call50000_sha256.json");
+        // fn sstore_combinations_initial20_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_2.json");
+        // fn sstore_combinations_initial00_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial00_2.json");
+        // fn sstore_combinations_initial10_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10_2.json");
+        // fn sstore_combinations_initial21_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial21_Paris.json");
+        // fn call_blake2f_max_rounds("tests/GeneralStateTests/stTimeConsuming/CALLBlake2f_MaxRounds.json");
+        // fn sstore_combinations_initial21("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial21.json");
+        // fn sstore_combinations_initial01("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01.json");
+        // fn sstore_combinations_initial21_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial21_2.json");
+        // fn sstore_combinations_initial01_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_Paris.json");
+        // fn sstore_combinations_initial00("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial00.json");
+        // fn sstore_combinations_initial10_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10_Paris.json");
+        // fn sstore_combinations_initial20("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20.json");
+        // fn sstore_combinations_initial01_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2.json");
+        // fn sstore_combinations_initial11("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial11.json");
+        // fn sstore_combinations_initial20_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_Paris.json");
+        // fn sstore_combinations_initial10_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10_2_Paris.json");
+        // fn sstore_combinations_initial21_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial21_2_Paris.json");
+        // fn sstore_combinations_initial11_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial11_2_Paris.json");
+        // fn sstore_combinations_initial11_2("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial11_2.json");
+        // fn sstore_combinations_initial20_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_2_Paris.json");
+        // fn sstore_combinations_initial10("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10.json");
+
+        // -- MOST PASS --- (failing marked with FAIL or CRASH comments, also gas calculation issue)
         // fn random_statetest16("tests/GeneralStateTests/stRandom/randomStatetest16.json");
         // fn random_statetest380("tests/GeneralStateTests/stRandom/randomStatetest380.json");
         // fn random_statetest103("tests/GeneralStateTests/stRandom/randomStatetest103.json");
         // fn random_statetest338("tests/GeneralStateTests/stRandom/randomStatetest338.json");
         // fn random_statetest41("tests/GeneralStateTests/stRandom/randomStatetest41.json");
         // fn random_statetest292("tests/GeneralStateTests/stRandom/randomStatetest292.json");
-        // fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json"); // FAIL
+        fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json"); // FAIL
         // fn random_statetest57("tests/GeneralStateTests/stRandom/randomStatetest57.json");
         // fn random_statetest142("tests/GeneralStateTests/stRandom/randomStatetest142.json");
         // fn random_statetest379("tests/GeneralStateTests/stRandom/randomStatetest379.json");
@@ -55,7 +84,7 @@ mod e2e_tests {
         // fn random_statetest82("tests/GeneralStateTests/stRandom/randomStatetest82.json");
         // fn random_statetest251("tests/GeneralStateTests/stRandom/randomStatetest251.json");
         // fn random_statetest197("tests/GeneralStateTests/stRandom/randomStatetest197.json");
-        // fn random_statetest178("tests/GeneralStateTests/stRandom/randomStatetest178.json"); // FAIL
+        fn random_statetest178("tests/GeneralStateTests/stRandom/randomStatetest178.json"); // FAIL
         // fn random_statetest363("tests/GeneralStateTests/stRandom/randomStatetest363.json");
         // fn random_statetest0("tests/GeneralStateTests/stRandom/randomStatetest0.json");
         // fn random_statetest226("tests/GeneralStateTests/stRandom/randomStatetest226.json");
@@ -70,7 +99,7 @@ mod e2e_tests {
         // fn random_statetest162("tests/GeneralStateTests/stRandom/randomStatetest162.json");
         // fn random_statetest98("tests/GeneralStateTests/stRandom/randomStatetest98.json");
         // fn random_statetest77("tests/GeneralStateTests/stRandom/randomStatetest77.json");
-        // fn random_statetest135("tests/GeneralStateTests/stRandom/randomStatetest135.json"); // FAIL
+        // fn random_statetest135("tests/GeneralStateTests/stRandom/randomStatetest135.json");
         // fn random_statetest359("tests/GeneralStateTests/stRandom/randomStatetest359.json");
         // fn random_statetest20("tests/GeneralStateTests/stRandom/randomStatetest20.json");
         // fn random_statetest36("tests/GeneralStateTests/stRandom/randomStatetest36.json");
@@ -89,7 +118,7 @@ mod e2e_tests {
         // fn random_statetest266("tests/GeneralStateTests/stRandom/randomStatetest266.json");
         // fn random_statetest335("tests/GeneralStateTests/stRandom/randomStatetest335.json");
         // fn random_statetest270("tests/GeneralStateTests/stRandom/randomStatetest270.json");
-        // fn random_statetest159("tests/GeneralStateTests/stRandom/randomStatetest159.json"); // FAIL
+        fn random_statetest159("tests/GeneralStateTests/stRandom/randomStatetest159.json"); // FAIL
         // fn random_statetest362("tests/GeneralStateTests/stRandom/randomStatetest362.json");
         // fn random_statetest1("tests/GeneralStateTests/stRandom/randomStatetest1.json");
         // fn random_statetest227("tests/GeneralStateTests/stRandom/randomStatetest227.json");
@@ -213,15 +242,15 @@ mod e2e_tests {
         // fn random_statetest351("tests/GeneralStateTests/stRandom/randomStatetest351.json");
         // fn random_statetest214("tests/GeneralStateTests/stRandom/randomStatetest214.json");
         // fn random_statetest185("tests/GeneralStateTests/stRandom/randomStatetest185.json");
-        // fn random_statetest306("tests/GeneralStateTests/stRandom/randomStatetest306.json");
+        fn random_statetest306("tests/GeneralStateTests/stRandom/randomStatetest306.json"); // FAIL
         // fn random_statetest90("tests/GeneralStateTests/stRandom/randomStatetest90.json");
         // fn random_statetest243("tests/GeneralStateTests/stRandom/randomStatetest243.json");
         // fn random_statetest111("tests/GeneralStateTests/stRandom/randomStatetest111.json");
         // fn random_statetest238("tests/GeneralStateTests/stRandom/randomStatetest238.json");
         // fn random_statetest146("tests/GeneralStateTests/stRandom/randomStatetest146.json");
-        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json");
+        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json"); // CRASH
         // fn random_statetest280("tests/GeneralStateTests/stRandom/randomStatetest280.json");
-        // fn random_statetest150("tests/GeneralStateTests/stRandom/randomStatetest150.json");
+        fn random_statetest150("tests/GeneralStateTests/stRandom/randomStatetest150.json"); // FAIL
         // fn random_statetest279("tests/GeneralStateTests/stRandom/randomStatetest279.json");
         // fn random_statetest296("tests/GeneralStateTests/stRandom/randomStatetest296.json");
         // fn random_statetest45("tests/GeneralStateTests/stRandom/randomStatetest45.json");
@@ -238,7 +267,7 @@ mod e2e_tests {
         // fn random_statetest52("tests/GeneralStateTests/stRandom/randomStatetest52.json");
         // fn random_statetest147("tests/GeneralStateTests/stRandom/randomStatetest147.json");
         // fn random_statetest110("tests/GeneralStateTests/stRandom/randomStatetest110.json");
-        // fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json");
+        fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json"); // FAIL
         // fn random_statetest242("tests/GeneralStateTests/stRandom/randomStatetest242.json");
         // fn random_statetest184("tests/GeneralStateTests/stRandom/randomStatetest184.json");
         // fn random_statetest29("tests/GeneralStateTests/stRandom/randomStatetest29.json");
@@ -252,7 +281,7 @@ mod e2e_tests {
         // fn random_statetest366("tests/GeneralStateTests/stRandom/randomStatetest366.json");
         // fn random_statetest5("tests/GeneralStateTests/stRandom/randomStatetest5.json");
         // fn random_statetest274("tests/GeneralStateTests/stRandom/randomStatetest274.json");
-        // fn random_statetest48("tests/GeneralStateTests/stRandom/randomStatetest48.json");
+        fn random_statetest48("tests/GeneralStateTests/stRandom/randomStatetest48.json"); // FAIL
         // fn random_statetest327("tests/GeneralStateTests/stRandom/randomStatetest327.json");
         // fn random_statetest370("tests/GeneralStateTests/stRandom/randomStatetest370.json");
         // fn random_statetest167("tests/GeneralStateTests/stRandom/randomStatetest167.json");
@@ -340,51 +369,53 @@ mod e2e_tests {
         // fn random_statetest356("tests/GeneralStateTests/stRandom/randomStatetest356.json");
         // fn random_statetest340("tests/GeneralStateTests/stRandom/randomStatetest340.json");
         // fn random_statetest39("tests/GeneralStateTests/stRandom/randomStatetest39.json");
-        // fn random_statetest205("tests/GeneralStateTests/stRandom/randomStatetest205.json");
+        fn random_statetest205("tests/GeneralStateTests/stRandom/randomStatetest205.json"); // FAIL
         // fn random_statetest81("tests/GeneralStateTests/stRandom/randomStatetest81.json");
         // fn random_statetest252("tests/GeneralStateTests/stRandom/randomStatetest252.json");
         // fn random_statetest194("tests/GeneralStateTests/stRandom/randomStatetest194.json");
 
-        fn returndatacopy_following_too_big_transfer("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_too_big_transfer.json");
-        fn returndatasize_bug("tests/GeneralStateTests/stReturnDataTest/returndatasize_bug.json");
-        fn returndatasize_initial_zero_read("tests/GeneralStateTests/stReturnDataTest/returndatasize_initial_zero_read.json");
-        fn returndatasize_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatasize_following_successful_create.json");
-        fn returndatacopy_following_revert_in_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_revert_in_create.json");
-        fn returndatacopy_following_failing_call("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_failing_call.json");
-        fn returndatacopy_following_revert("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_revert.json");
-        fn subcall_return_more_then_expected("tests/GeneralStateTests/stReturnDataTest/subcallReturnMoreThenExpected.json");
-        fn returndatacopy_after_failing_callcode("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_callcode.json");
-        fn returndatacopy_after_failing_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_afterFailing_create.json");
-        fn returndatacopy_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_successful_create.json");
-        fn returndatacopy_after_failing_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_staticcall.json");
-        fn returndatasize_after_failing_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_delegatecall.json");
-        fn create_callprecompile_returndatasize("tests/GeneralStateTests/stReturnDataTest/create_callprecompile_returndatasize.json");
-        fn returndatacopy_overrun("tests/GeneralStateTests/stReturnDataTest/returndatacopy_overrun.json");
-        fn call_then_call_value_fail_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_then_call_value_fail_then_returndatasize.json");
-        fn returndatasize_after_failing_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_staticcall.json");
-        fn call_then_create_successful_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_then_create_successful_then_returndatasize.json");
-        fn returndatasize_after_successful_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_delegatecall.json");
-        fn returndatacopy_following_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_create.json");
-        fn revert_ret_data_size("tests/GeneralStateTests/stReturnDataTest/revertRetDataSize.json");
-        fn too_long_return_data_copy("tests/GeneralStateTests/stReturnDataTest/tooLongReturnDataCopy.json");
-        fn returndatacopy_initial_big_sum("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial_big_sum.json");
-        fn call_ecrec_success_empty_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_ecrec_success_empty_then_returndatasize.json");
-        fn returndatacopy_initial("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial.json");
-        fn returndatacopy_following_call("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_call.json");
-        fn returndatacopy_after_successful_callcode("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_callcode.json");
-        fn returndatasize_after_oog_after_deeper("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_oog_after_deeper.json");
-        fn modexp_modsize0_returndatasize("tests/GeneralStateTests/stReturnDataTest/modexp_modsize0_returndatasize.json");
-        fn returndatacopy_initial_256("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial_256.json");
-        fn returndatacopy_after_successful_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_staticcall.json");
-        fn returndatacopy_0_0_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_0_0_following_successful_create.json");
-        fn clear_return_buffer("tests/GeneralStateTests/stReturnDataTest/clearReturnBuffer.json");
-        fn call_outsize_then_create_successful_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_outsize_then_create_successful_then_returndatasize.json");
-        fn returndatacopy_after_revert_in_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_revert_in_staticcall.json");
-        fn returndatasize_after_successful_callcode("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_callcode.json");
-        fn returndatacopy_after_failing_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_delegatecall.json");
-        fn returndatasize_after_successful_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_staticcall.json");
-        fn returndatasize_initial("tests/GeneralStateTests/stReturnDataTest/returndatasize_initial.json");
-        fn returndatacopy_after_successful_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_delegatecall.json");
-        fn returndatasize_after_failing_callcode("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_callcode.json");
+
+        // --- ALL PASS ---
+        // fn returndatacopy_following_too_big_transfer("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_too_big_transfer.json");
+        // fn returndatasize_bug("tests/GeneralStateTests/stReturnDataTest/returndatasize_bug.json");
+        // fn returndatasize_initial_zero_read("tests/GeneralStateTests/stReturnDataTest/returndatasize_initial_zero_read.json");
+        // fn returndatasize_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatasize_following_successful_create.json");
+        // fn returndatacopy_following_revert_in_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_revert_in_create.json");
+        // fn returndatacopy_following_failing_call("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_failing_call.json");
+        // fn returndatacopy_following_revert("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_revert.json");
+        // fn subcall_return_more_then_expected("tests/GeneralStateTests/stReturnDataTest/subcallReturnMoreThenExpected.json");
+        // fn returndatacopy_after_failing_callcode("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_callcode.json");
+        // fn returndatacopy_after_failing_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_afterFailing_create.json");
+        // fn returndatacopy_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_successful_create.json");
+        // fn returndatacopy_after_failing_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_staticcall.json");
+        // fn returndatasize_after_failing_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_delegatecall.json");
+        // fn create_callprecompile_returndatasize("tests/GeneralStateTests/stReturnDataTest/create_callprecompile_returndatasize.json");
+        // fn returndatacopy_overrun("tests/GeneralStateTests/stReturnDataTest/returndatacopy_overrun.json");
+        // fn call_then_call_value_fail_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_then_call_value_fail_then_returndatasize.json");
+        // fn returndatasize_after_failing_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_staticcall.json");
+        // fn call_then_create_successful_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_then_create_successful_then_returndatasize.json");
+        // fn returndatasize_after_successful_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_delegatecall.json");
+        // fn returndatacopy_following_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_create.json");
+        // fn revert_ret_data_size("tests/GeneralStateTests/stReturnDataTest/revertRetDataSize.json");
+        // fn too_long_return_data_copy("tests/GeneralStateTests/stReturnDataTest/tooLongReturnDataCopy.json");
+        // fn returndatacopy_initial_big_sum("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial_big_sum.json");
+        // fn call_ecrec_success_empty_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_ecrec_success_empty_then_returndatasize.json");
+        // fn returndatacopy_initial("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial.json");
+        // fn returndatacopy_following_call("tests/GeneralStateTests/stReturnDataTest/returndatacopy_following_call.json");
+        // fn returndatacopy_after_successful_callcode("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_callcode.json");
+        // fn returndatasize_after_oog_after_deeper("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_oog_after_deeper.json");
+        // fn modexp_modsize0_returndatasize("tests/GeneralStateTests/stReturnDataTest/modexp_modsize0_returndatasize.json");
+        // fn returndatacopy_initial_256("tests/GeneralStateTests/stReturnDataTest/returndatacopy_initial_256.json");
+        // fn returndatacopy_after_successful_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_staticcall.json");
+        // fn returndatacopy_0_0_following_successful_create("tests/GeneralStateTests/stReturnDataTest/returndatacopy_0_0_following_successful_create.json");
+        // fn clear_return_buffer("tests/GeneralStateTests/stReturnDataTest/clearReturnBuffer.json");
+        // fn call_outsize_then_create_successful_then_returndatasize("tests/GeneralStateTests/stReturnDataTest/call_outsize_then_create_successful_then_returndatasize.json");
+        // fn returndatacopy_after_revert_in_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_revert_in_staticcall.json");
+        // fn returndatasize_after_successful_callcode("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_callcode.json");
+        // fn returndatacopy_after_failing_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_failing_delegatecall.json");
+        // fn returndatasize_after_successful_staticcall("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_successful_staticcall.json");
+        // fn returndatasize_initial("tests/GeneralStateTests/stReturnDataTest/returndatasize_initial.json");
+        // fn returndatacopy_after_successful_delegatecall("tests/GeneralStateTests/stReturnDataTest/returndatacopy_after_successful_delegatecall.json");
+        // fn returndatasize_after_failing_callcode("tests/GeneralStateTests/stReturnDataTest/returndatasize_after_failing_callcode.json");
     }
 }

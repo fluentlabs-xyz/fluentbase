@@ -154,7 +154,14 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn selfdestruct(&mut self, _address: Address, _target: Address) -> Option<SelfDestructResult> {
-        panic!("SELFDESTRUCT opcode is not supported")
+    fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
+        let [had_value, target_exists, is_cold, previously_destroyed] =
+            self.am.unwrap().self_destruct(address, target);
+        Some(SelfDestructResult {
+            had_value,
+            target_exists,
+            is_cold,
+            previously_destroyed,
+        })
     }
 }
