@@ -999,4 +999,17 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             gas_refund: result.gas.refunded(),
         })
     }
+
+    fn self_destruct(&self, address: Address, target: Address) -> [bool; 4] {
+        let mut ctx = self.ctx.borrow_mut();
+        let result = ctx
+            .selfdestruct(address, target)
+            .expect("unexpected EVM self destruct error");
+        [
+            result.had_value,
+            result.target_exists,
+            result.is_cold,
+            result.previously_destroyed,
+        ]
+    }
 }

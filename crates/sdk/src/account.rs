@@ -56,6 +56,7 @@ pub trait AccountManager {
     fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
     fn precompile(&self, address: &Address, input: &Bytes, gas: u64)
         -> Option<EvmCallMethodOutput>;
+    fn self_destruct(&self, address: Address, target: Address) -> [bool; 4];
 }
 
 #[derive(Debug, Clone)]
