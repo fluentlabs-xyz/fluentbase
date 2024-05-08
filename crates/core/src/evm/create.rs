@@ -37,6 +37,11 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     let caller_address = cr.contract_caller();
     let (mut caller_account, _) = am.account(caller_address);
 
+    // call depth check
+    if input.depth > 1024 {
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
+    }
+
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
     LowLevelSDK::crypto_keccak256(
@@ -45,13 +50,10 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         source_code_hash.as_mut_ptr(),
     );
 
-    // create journal checkpoint
-    let checkpoint = am.checkpoint();
-
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
-    let mut callee_account =
-        match Account::create_account(am, &mut caller_account, input.value, salt_hash) {
+    let (mut callee_account, checkpoint) =
+        match Account::create_account_checkpoint(am, &mut caller_account, input.value, salt_hash) {
             Ok(result) => result,
             Err(err) => {
                 return EvmCreateMethodOutput::from_exit_code(err);
@@ -70,25 +72,28 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         value: input.value,
     };
 
-    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static);
+    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);
 
     if !matches!(result.result, return_ok!()) {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(exit_code_from_evm_error(result.result))
-            .with_gas(result.gas.remaining());
+            .with_output(result.output)
+            .with_gas(result.gas.remaining(), 0);
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::CreateContractStartingWithEF)
-            .with_gas(result.gas.remaining());
+            .with_output(result.output)
+            .with_gas(result.gas.remaining(), 0);
     }
     if result.output.len() > MAX_CODE_SIZE {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
-            .with_gas(result.gas.remaining());
+            .with_output(result.output)
+            .with_gas(result.gas.remaining(), 0);
     }
 
     // write caller changes to database
@@ -107,6 +112,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     am.commit();
 
     return EvmCreateMethodOutput::from_exit_code(ExitCode::Ok)
-        .with_gas(result.gas.remaining())
+        .with_output(result.output)
+        .with_gas(result.gas.remaining(), result.gas.refunded())
         .with_address(callee_account.address);
 }

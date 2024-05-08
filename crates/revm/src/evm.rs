@@ -11,6 +11,7 @@ use crate::{
     },
     Context, ContextWithHandlerCfg, EvmContext, FrameResult, JournalCheckpoint, JournalEntry,
 };
+use core::fmt::Debug;
 use core::{cell::RefCell, fmt, str::from_utf8};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::evm::call::_evm_call;
@@ -249,8 +250,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
-        let mut caller_account = ctx.evm.load_jzkt_account(ctx.evm.env.tx.caller)?;
-
         // Load EVM storage account
         let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
         evm_storage.info.nonce = 1;
@@ -259,16 +258,10 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         // call inner handling of call/create
         let mut frame_result = match ctx.evm.env.tx.transact_to {
             TransactTo::Call(address) => {
-                let mut callee_account = ctx.evm.load_jzkt_account(address)?;
                 let value = ctx.evm.env.tx.value;
+                let caller = ctx.evm.env.tx.caller;
                 let data = ctx.evm.env.tx.data.clone();
-                let result = self.call_inner(
-                    &mut caller_account,
-                    &mut callee_account,
-                    value,
-                    data,
-                    gas_limit,
-                );
+                let result = self.call_inner(caller, address, value, data, gas_limit);
                 FrameResult::Call(result)
             }
             TransactTo::Create(scheme) => {
@@ -277,8 +270,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     CreateScheme::Create => None,
                 };
                 let value = ctx.evm.env.tx.value;
+                let caller = ctx.evm.env.tx.caller;
                 let data = ctx.evm.env.tx.data.clone();
-                let result = self.create_inner(&mut caller_account, value, data, gas_limit, salt);
+                let result = self.create_inner(caller, value, data, gas_limit, salt);
                 FrameResult::Create(result)
             }
         };
@@ -302,7 +296,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// EVM create opcode for both initial crate and CREATE and CREATE2 opcodes.
     fn create_inner(
         &mut self,
-        caller_account: &mut Account,
+        caller_address: Address,
         value: U256,
         input: Bytes,
         gas_limit: u64,
@@ -321,7 +315,14 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         if self.context.evm.journaled_state.depth as u64 > CALL_STACK_LIMIT {
             return return_result(ExitCode::CallDepthOverflow, gas);
-        } else if caller_account.balance < value {
+        }
+
+        let (caller_account, _) = self
+            .context
+            .evm
+            .load_account(caller_address)
+            .expect("external database error");
+        if caller_account.info.balance < value {
             return return_result(ExitCode::InsufficientBalance, gas);
         }
 
@@ -335,6 +336,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                         value,
                         gas_limit: gas.remaining(),
                         salt,
+                        depth: 0,
                     },
                 ),
                 BytecodeType::WASM => (
@@ -345,13 +347,14 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                         value,
                         gas_limit: gas.remaining(),
                         salt,
+                        depth: 0,
                     },
                 ),
             };
 
         let contract_input = self.input_from_env(
             &mut gas,
-            caller_account,
+            caller_address,
             Address::ZERO,
             Default::default(),
             value,
@@ -410,8 +413,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     /// Main contract call of the EVM.
     fn call_inner(
         &mut self,
-        caller_account: &mut Account,
-        callee_account: &mut Account,
+        caller_address: Address,
+        callee_address: Address,
         value: U256,
         input: Bytes,
         gas_limit: u64,
@@ -422,22 +425,15 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         if value == U256::ZERO {
             self.context
                 .evm
-                .load_account(callee_account.address)
+                .load_account(callee_address)
                 .expect("failed to load");
-            self.context
-                .evm
-                .journaled_state
-                .touch(&callee_account.address);
+            self.context.evm.journaled_state.touch(&callee_address);
         }
 
-        self.context.evm.touch(&caller_account.address);
-        self.context.evm.touch(&callee_account.address);
+        self.context.evm.touch(&caller_address);
+        self.context.evm.touch(&callee_address);
 
-        let (callee_bytecode, _) = self
-            .context
-            .evm
-            .load_account(callee_account.address)
-            .unwrap();
+        let (callee_bytecode, _) = self.context.evm.load_account(callee_address).unwrap();
 
         let (_middleware_account, method_id, method_data) =
             match bytecode_type_from_account(&callee_bytecode.info) {
@@ -445,28 +441,30 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                     ECL_CONTRACT_ADDRESS,
                     EVM_CALL_METHOD_ID,
                     EvmCallMethodInput {
-                        callee: callee_account.address,
+                        callee: callee_address,
                         value,
                         input,
                         gas_limit: gas.remaining(),
+                        depth: 0,
                     },
                 ),
                 BytecodeType::WASM => (
                     WCL_CONTRACT_ADDRESS,
                     WASM_CALL_METHOD_ID,
                     WasmCallMethodInput {
-                        callee: callee_account.address,
+                        callee: callee_address,
                         value,
                         input,
                         gas_limit: gas.remaining(),
+                        depth: 0,
                     },
                 ),
             };
 
         let contract_input = self.input_from_env(
             &mut gas,
-            caller_account,
-            callee_account.address,
+            caller_address,
+            callee_address,
             Default::default(),
             value,
         );
@@ -505,8 +503,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         {
             println!("executed ECL call:");
-            println!(" - caller: 0x{}", hex::encode(caller_account.address));
-            println!(" - callee: 0x{}", hex::encode(callee_account.address));
+            println!(" - caller: 0x{}", hex::encode(caller_address));
+            println!(" - callee: 0x{}", hex::encode(callee_address));
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(
                 " - fuel consumed: {}",
@@ -539,7 +537,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     fn input_from_env(
         &self,
         gas: &Gas,
-        caller: &mut Account,
+        caller_address: Address,
         callee_address: Address,
         input: Bytes,
         value: U256,
@@ -548,7 +546,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             journal_checkpoint: 0,
             contract_gas_limit: gas.remaining(),
             contract_address: callee_address,
-            contract_caller: caller.address,
+            contract_caller: caller_address,
             contract_input: input,
             contract_value: value,
             contract_is_static: false,
@@ -668,35 +666,42 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
         fluentbase_types::JournalCheckpoint::from((a, b))
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+    fn get(&self, key: &[u8; 32], committed: bool) -> Option<(Vec<[u8; 32]>, u32, bool)> {
         let mut ctx = self.ctx.borrow_mut();
         // if first 12 bytes are empty then its account load otherwise storage
         if key[..12] == [0u8; 12] {
             let address = Address::from_slice(&key[12..]);
-            let (account, _) = ctx
-                .load_account_with_code(address)
-                .expect("can't load account");
-            let account = Account::from(account.info.clone());
+            let (account, is_cold) = if committed {
+                (ctx.db.basic(address).ok()??, true)
+            } else {
+                let (account, is_cold) = ctx
+                    .load_account_with_code(address)
+                    .expect("can't load account");
+                (account.info.clone(), is_cold)
+            };
+            let account = Account::from(account);
             Some((
                 account.get_fields().to_vec(),
                 JZKT_ACCOUNT_COMPRESSION_FLAGS,
-                false,
+                is_cold,
             ))
         } else {
-            ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(*key))
-                .ok()
-                .map(|(value, is_cold)| {
-                    // println!(
-                    //     "reading storage value: slot={}, value={}",
-                    //     hex::encode(U256::from_le_bytes(*key).to_be_bytes::<32>()),
-                    //     hex::encode(value.to_be_bytes::<32>())
-                    // );
-                    (
-                        vec![value.to_le_bytes::<32>()],
-                        JZKT_STORAGE_COMPRESSION_FLAGS,
-                        is_cold,
-                    )
-                })
+            let index = U256::from_le_bytes(*key);
+            if committed {
+                ctx.db
+                    .storage(EVM_STORAGE_ADDRESS, index)
+                    .ok()
+                    .map(|val| (val, true))
+            } else {
+                ctx.sload(EVM_STORAGE_ADDRESS, index).ok()
+            }
+            .map(|(value, is_cold)| {
+                (
+                    vec![value.to_le_bytes::<32>()],
+                    JZKT_STORAGE_COMPRESSION_FLAGS,
+                    is_cold,
+                )
+            })
         }
     }
 
@@ -882,13 +887,23 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         }
     }
 
-    fn storage(&self, address: Address, slot: U256) -> (U256, bool) {
+    fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool) {
         let mut ctx = self.ctx.borrow_mut();
         // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
         // ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
         //     .expect("failed to read storage slot")
-        ctx.sload(address, slot)
-            .expect("failed to read storage slot")
+        if committed {
+            let value = ctx
+                .db
+                .storage(address, slot)
+                .ok()
+                .expect("failed to read storage slot");
+            (value, true)
+        } else {
+            ctx.sload(address, slot)
+                .ok()
+                .expect("failed to read storage slot")
+        }
     }
 
     fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool {

@@ -118,8 +118,13 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe { _jzkt_checkpoint() }
     }
     #[inline(always)]
-    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool {
-        unsafe { _jzkt_get(key32_offset, field, output32_offset) }
+    fn jzkt_get(
+        key32_offset: *const u8,
+        field: u32,
+        output32_offset: *mut u8,
+        committed: bool,
+    ) -> bool {
+        unsafe { _jzkt_get(key32_offset, field, output32_offset, committed) }
     }
     #[inline(always)]
     fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {

@@ -40,32 +40,40 @@ impl AccountManager for JzktAccountManager {
             address_word.as_ptr(),
             JZKT_ACCOUNT_NONCE_FIELD,
             buffer32.as_mut_ptr(),
+            false,
         );
         result.nonce = LittleEndian::read_u64(&buffer32);
-        LowLevelSDK::jzkt_get(address_word.as_ptr(), JZKT_ACCOUNT_BALANCE_FIELD, unsafe {
-            result.balance.as_le_slice_mut().as_mut_ptr()
-        });
+        LowLevelSDK::jzkt_get(
+            address_word.as_ptr(),
+            JZKT_ACCOUNT_BALANCE_FIELD,
+            unsafe { result.balance.as_le_slice_mut().as_mut_ptr() },
+            false,
+        );
         LowLevelSDK::jzkt_get(
             address_word.as_ptr(),
             JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
             buffer32.as_mut_ptr(),
+            false,
         );
         result.rwasm_code_size = LittleEndian::read_u64(&buffer32);
         LowLevelSDK::jzkt_get(
             address_word.as_ptr(),
             JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
             result.rwasm_code_hash.as_mut_ptr(),
+            false,
         );
         LowLevelSDK::jzkt_get(
             address_word.as_ptr(),
             JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
             buffer32.as_mut_ptr(),
+            false,
         );
         result.source_code_size = LittleEndian::read_u64(&buffer32);
         LowLevelSDK::jzkt_get(
             address_word.as_ptr(),
             JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
             result.source_code_hash.as_mut_ptr(),
+            false,
         );
         (result, true)
     }
@@ -106,12 +114,15 @@ impl AccountManager for JzktAccountManager {
     }
 
     #[inline(always)]
-    fn storage(&self, address: Address, slot: U256) -> (U256, bool) {
+    fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool) {
         let mut value = U256::ZERO;
         let storage_key = calc_storage_key(address, slot.as_le_slice().as_ptr());
-        let is_cold = LowLevelSDK::jzkt_get(storage_key.as_ptr(), 0, unsafe {
-            value.as_le_slice_mut().as_mut_ptr()
-        });
+        let is_cold = LowLevelSDK::jzkt_get(
+            storage_key.as_ptr(),
+            0,
+            unsafe { value.as_le_slice_mut().as_mut_ptr() },
+            committed,
+        );
         (value, is_cold)
     }
 

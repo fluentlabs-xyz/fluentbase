@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
-use fluentbase_types::{Address, ExitCode, B256, STATE_DEPLOY, U256};
+use fluentbase_types::{Address, Bytes, ExitCode, B256, STATE_DEPLOY, U256};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
@@ -49,7 +49,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     let (mut deployer_account, _) = am.account(caller_address);
 
     // create an account
-    let mut contract_account = match Account::create_account(
+    let (mut contract_account, checkpoint) = match Account::create_account_checkpoint(
         am,
         &mut deployer_account,
         input.value,
@@ -111,8 +111,10 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     );
 
     WasmCreateMethodOutput {
+        output: Bytes::new(),
         address: Some(contract_account.address),
         exit_code,
         gas: gas_limit as u64,
+        gas_refund: 0,
     }
 }

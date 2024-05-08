@@ -188,9 +188,14 @@ impl LowLevelAPI for LowLevelSDK {
         let result = with_context_mut(|ctx| JzktCheckpoint::fn_impl(ctx).unwrap());
         result.to_u64()
     }
-    fn jzkt_get(key32_offset: *const u8, field: u32, output32_offset: *mut u8) -> bool {
+    fn jzkt_get(
+        key32_offset: *const u8,
+        field: u32,
+        output32_offset: *mut u8,
+        committed: bool,
+    ) -> bool {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_offset, 32) };
-        match with_context_mut(|ctx| JzktGet::fn_impl(ctx, key, field)) {
+        match with_context_mut(|ctx| JzktGet::fn_impl(ctx, key, field, committed)) {
             Some((output, is_cold)) => {
                 unsafe { ptr::copy(output.as_ptr(), output32_offset, 32) }
                 is_cold
