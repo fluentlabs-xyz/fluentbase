@@ -21,6 +21,7 @@ use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_core::wasm::call::_wasm_call;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
+    debug_log,
     evm::create::_evm_create,
     wasm::create::_wasm_create,
 };
@@ -883,16 +884,21 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
 
     fn storage(&self, address: Address, slot: U256) -> (U256, bool) {
         let mut ctx = self.ctx.borrow_mut();
-        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
-        ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
+        // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+        // ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
+        //     .expect("failed to read storage slot")
+        ctx.sload(address, slot)
             .expect("failed to read storage slot")
     }
 
     fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool {
         let mut ctx = self.ctx.borrow_mut();
-        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+        // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+        // let result = ctx
+        //     .sstore(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key), value)
+        //     .expect("failed to update storage slot");
         let result = ctx
-            .sstore(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key), value)
+            .sstore(address, slot, value)
             .expect("failed to update storage slot");
         result.is_cold
     }
