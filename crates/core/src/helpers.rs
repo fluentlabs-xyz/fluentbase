@@ -331,7 +331,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
             }
             InterpreterAction::Return { result } => {
                 debug_log!(
-                    "ecl(exec_evm_bytecode): return result={:?}, message={} gas_spend={}",
+                    "ecl(exec_evm_bytecode): return result={:?}, message={} gas_spent={}",
                     result.result,
                     hex::encode(result.output.as_ref()),
                     result.gas.spend(),
