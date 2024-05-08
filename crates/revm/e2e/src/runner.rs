@@ -284,22 +284,16 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
     }
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        let v2 = evm2
-            .context
-            .evm
-            .db
-            .cache
-            .accounts
-            .get(address)
-            .expect("missing fluent account");
-        // assert_eq!(
-        //     format!("{:?}", v1.status),
-        //     format!("{:?}", v2.status),
-        //     "EVM account status mismatch",
-        // );
+        println!("comparing account (0x{})...", hex::encode(address));
+        let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
-            println!("comparing account (0x{})...", hex::encode(address));
+            // assert_eq!(
+            //     format!("{:?}", v1.status),
+            //     format!("{:?}", v2.status),
+            //     "EVM account status mismatch",
+            // );
             let a2 = v2
+                .expect("missing fluent account")
                 .account
                 .as_ref()
                 .map(|v| &v.info)
@@ -339,6 +333,7 @@ fn check_evm_execution<EXT1, EXT2>(
                 //     .storage_slot(U256::from_le_bytes(storage_key))
                 //     .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
                 let value2 = v2
+                    .expect("missing FLUENT account")
                     .account
                     .as_ref()
                     .map(|v| &v.storage)

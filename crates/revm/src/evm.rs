@@ -1,3 +1,4 @@
+use crate::interpreter::InstructionResult;
 use crate::types::{bytecode_type_from_account, SStoreResult, SelfDestructResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
@@ -959,5 +960,43 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             *fuel_offset -= result.fuel_consumed as u32;
         }
         (Bytes::from(result.output.clone()), result.exit_code.into())
+    }
+
+    fn inc_nonce(&self, account: &mut Account) -> Option<u64> {
+        let old_nonce = account.nonce;
+        account.nonce += 1;
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state.inc_nonce(account.address)?;
+        Some(old_nonce)
+    }
+
+    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode> {
+        Account::transfer(from, to, value)?;
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.transfer(&from.address, &to.address, value)
+            .expect("unexpected EVM transfer error")
+            .and_then(|err| -> Option<InstructionResult> {
+                panic!(
+                    "it seems there is an account balance mismatch between ECL and REVM: {}",
+                    err
+                );
+            });
+        Ok(())
+    }
+
+    fn precompile(
+        &self,
+        address: &Address,
+        input: &Bytes,
+        gas: u64,
+    ) -> Option<EvmCallMethodOutput> {
+        let mut ctx = self.ctx.borrow_mut();
+        let result = ctx.call_precompile(*address, input, Gas::new(gas))?;
+        Some(EvmCallMethodOutput {
+            output: result.output,
+            exit_code: result.result.into_i32(),
+            gas: result.gas.remaining(),
+            gas_refund: result.gas.refunded(),
+        })
     }
 }

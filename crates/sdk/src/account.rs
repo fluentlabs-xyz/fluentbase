@@ -1,5 +1,5 @@
 use crate::utils::{calc_create2_address, calc_create_address};
-use crate::{LowLevelAPI, LowLevelSDK};
+use crate::{EvmCallMethodOutput, LowLevelAPI, LowLevelSDK};
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{
@@ -52,6 +52,10 @@ pub trait AccountManager {
         fuel_offset: *mut u32,
         state: u32,
     ) -> (Bytes, i32);
+    fn inc_nonce(&self, account: &mut Account) -> Option<u64>;
+    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
+    fn precompile(&self, address: &Address, input: &Bytes, gas: u64)
+        -> Option<EvmCallMethodOutput>;
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +256,7 @@ impl Account {
             return Err(ExitCode::InsufficientBalance);
         }
         // try to increment nonce
-        let old_nonce = caller.inc_nonce()?;
+        let old_nonce = am.inc_nonce(caller).ok_or(ExitCode::NonceOverflow)?;
         // calc address
         let callee_address = if let Some((salt, hash)) = salt_hash {
             calc_create2_address(&caller.address, &salt, &hash)
@@ -269,7 +273,7 @@ impl Account {
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
-        if let Err(exit_code) = Self::transfer(caller, &mut callee, amount) {
+        if let Err(exit_code) = am.transfer(caller, &mut callee, amount) {
             return Err(exit_code);
         }
         // emit transfer log
