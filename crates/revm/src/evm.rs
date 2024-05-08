@@ -881,9 +881,10 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         }
     }
 
-    fn storage(&self, _address: Address, slot: U256) -> (U256, bool) {
+    fn storage(&self, address: Address, slot: U256) -> (U256, bool) {
         let mut ctx = self.ctx.borrow_mut();
-        ctx.sload(EVM_STORAGE_ADDRESS, slot)
+        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+        ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
             .expect("failed to read storage slot")
     }
 
