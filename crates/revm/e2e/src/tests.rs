@@ -31,7 +31,8 @@ mod e2e_tests {
 
     define_tests! {
 
-        fn sstore_combinations_initial01_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json");
+        fn call_recursive_bomb_log2("tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json");
+        // fn sstore_combinations_initial01_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json");
 
         // fn random_statetest16("tests/GeneralStateTests/stRandom/randomStatetest16.json");
         // fn random_statetest380("tests/GeneralStateTests/stRandom/randomStatetest380.json");

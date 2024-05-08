@@ -1,5 +1,6 @@
+use crate::debug_log;
+use crate::helpers::exit_code_from_evm_error;
 use crate::helpers::wasm2rwasm;
-use crate::helpers::{debug_log, exit_code_from_evm_error};
 use alloc::vec::Vec;
 use alloc::{format, vec};
 use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
@@ -12,26 +13,26 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: WasmCreateMethodInput,
 ) -> WasmCreateMethodOutput {
-    debug_log("_wasm_create start");
+    debug_log!("_wasm_create start");
 
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
 
     // check write protection
     if cr.contract_is_static() {
-        debug_log(&format!(
+        debug_log!(
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::WriteProtection
-        ));
+        );
         return WasmCreateMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
 
     // code length can't exceed max constructor limit
     if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
-        debug_log(&format!(
+        debug_log!(
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::ContractSizeLimit
-        ));
+        );
         return WasmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit);
     }
 
@@ -64,10 +65,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     let rwasm_bytecode = match wasm2rwasm(&input.bytecode) {
         Ok(result) => result,
         Err(exit_code) => {
-            debug_log(&format!(
-                "_wasm_create return: panic: exit_code: {}",
-                exit_code
-            ));
+            debug_log!("_wasm_create return: panic: exit_code: {}", exit_code);
             return WasmCreateMethodOutput::from_exit_code(exit_code);
         }
     };
@@ -103,14 +101,14 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     );
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {
-        debug_log("_wasm_create return: Err: ExitCode::TransactError");
+        debug_log!("_wasm_create return: Err: ExitCode::TransactError");
         return WasmCreateMethodOutput::from_exit_code(ExitCode::from(exit_code));
     }
 
-    debug_log(&format!(
+    debug_log!(
         "_wasm_create return: Ok: contract_account.address {}",
         contract_account.address
-    ));
+    );
 
     WasmCreateMethodOutput {
         address: Some(contract_account.address),

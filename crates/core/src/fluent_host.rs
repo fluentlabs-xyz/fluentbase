@@ -1,5 +1,5 @@
+use crate::debug_log;
 use crate::evm::{sload::_evm_sload, sstore::_evm_sstore};
-use crate::helpers::debug_log;
 use alloc::{format, vec};
 use core::cell::Cell;
 use core::marker::PhantomData;
@@ -108,23 +108,23 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
         let (value, is_cold) = self.am.unwrap().storage(address, index);
-        debug_log(&format!(
+        debug_log!(
             "ecl(sload): address={}, index={}, value={}",
             address,
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
-        ));
+        );
         Some((value, is_cold))
     }
 
     #[inline]
     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-        debug_log(&format!(
+        debug_log!(
             "ecl(sstore): address={}, index={}, value={}",
             address,
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
-        ));
+        );
         let (previous, is_cold) = self.am.unwrap().storage(address, index);
         self.am.unwrap().write_storage(address, index, value);
         return Some(SStoreResult {

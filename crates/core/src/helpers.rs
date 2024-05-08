@@ -108,10 +108,15 @@ macro_rules! result_value {
     };
 }
 
-#[inline(always)]
-pub fn debug_log(msg: &str) {
-    let msg_bytes = msg.as_bytes();
-    LowLevelSDK::debug_log(msg_bytes.as_ptr(), msg_bytes.len() as u32)
+#[macro_export]
+macro_rules! debug_log {
+    ($msg:tt) => {{
+        fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
+    }};
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        fluentbase_sdk::LowLevelSDK::debug_log(msg.as_ptr(), msg.len() as u32);
+    }};
 }
 
 const DOMAIN: [u8; 32] = [0u8; 32];
@@ -282,13 +287,13 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     is_static: bool,
 ) -> InterpreterResult {
     use crate::evm::create::_evm_create;
-    debug_log(&format!(
+    debug_log!(
         "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={}",
         &contract.address,
         &contract.caller,
         gas_limit,
         hex::encode(contract.bytecode.original_bytecode_slice()),
-    ));
+    );
     let contract_address = contract.address;
 
     let instruction_table = make_instruction_table::<FluentHost<CR, AM>, DefaultEvmSpec>();
@@ -309,7 +314,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
 
         match next_action {
             InterpreterAction::Call { inputs } => {
-                debug_log(&format!(
+                debug_log!(
                     "ecl(exec_evm_bytecode): nested call={:?} code={} caller={} callee={} address={} gas={} prev_address={}",
                     inputs.context.scheme,
                     &inputs.context.code_address,
@@ -318,20 +323,20 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
                     &inputs.context.address,
                     inputs.gas_limit,
                     contract_address,
-                ));
+                );
                 interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs))
             }
             InterpreterAction::Create { inputs } => {
-                debug_log(&format!("ecl(exec_evm_bytecode): nested create"));
+                debug_log!("ecl(exec_evm_bytecode): nested create");
                 interpreter.insert_create_outcome(exec_evm_create(cr, am, inputs))
             }
             InterpreterAction::Return { result } => {
-                debug_log(&format!(
+                debug_log!(
                     "ecl(exec_evm_bytecode): return result={:?}, message={} gas_spend={}",
                     result.result,
                     hex::encode(result.output.as_ref()),
                     result.gas.spend(),
-                ));
+                );
                 return result;
             }
             InterpreterAction::None => unreachable!("not supported EVM interpreter state"),
@@ -382,8 +387,9 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
 #[inline(always)]
 pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
     result.unwrap_or_else(|v| {
-        debug_log(&format!("unwrap_exit_code: {}", v));
+        debug_log!("unwrap_exit_code: {}", v);
         LowLevelSDK::sys_halt(v.into_i32());
+        // we can it for testing purposes, this branch never happens
         panic!("execution halted: {v}")
     })
 }

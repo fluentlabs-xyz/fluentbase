@@ -242,9 +242,9 @@ fn check_evm_execution<EXT1, EXT2>(
     }
 
     if logs_root != logs_root2 {
-        // let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
-        // let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
-        // println!("logs from EVM ({}):", logs1.len());
+        let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
+        let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
+        println!("logs from EVM ({}):", logs1.len());
         // for log in logs1 {
         //     println!(
         //         " - {}: {}",
@@ -255,7 +255,7 @@ fn check_evm_execution<EXT1, EXT2>(
         //             .unwrap_or_default()
         //     )
         // }
-        // println!("logs from FLUENT ({}):", logs2.len());
+        println!("logs from FLUENT ({}):", logs2.len());
         // for log in logs2 {
         //     println!(
         //         " - {}: {}",

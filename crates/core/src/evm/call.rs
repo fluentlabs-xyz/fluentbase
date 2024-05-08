@@ -1,5 +1,5 @@
-use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{fluent_host::FluentHost, helpers::DefaultEvmSpec, result_value};
+use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
+use crate::{debug_log, fluent_host::FluentHost, helpers::DefaultEvmSpec, result_value};
 use alloc::boxed::Box;
 use alloc::format;
 use core::ascii::escape_default;
@@ -20,7 +20,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    debug_log("_evm_call start");
+    debug_log!("_evm_call start");
     // for static calls passing value is not allowed according to standards
     let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
@@ -39,10 +39,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     match Account::transfer(&mut caller_account, &mut callee_account, input.value) {
         Ok(_) => {}
         Err(exit_code) => {
-            debug_log(&format!(
+            debug_log!(
                 "_evm_call return: Err: exit_code: {} caller.balance {} input.value {}",
-                exit_code, caller_account.balance, input.value
-            ));
+                exit_code,
+                caller_account.balance,
+                input.value
+            );
             return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit);
         }
     }
@@ -71,7 +73,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         am.write_account(&callee_account);
         // commit journal
         am.commit();
-        debug_log(&format!("_evm_call return: exit_code: {}", ExitCode::Ok));
+        debug_log!("_evm_call return: exit_code: {}", ExitCode::Ok);
         return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit);
     }
 
@@ -98,7 +100,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
 
     let exit_code = exit_code_from_evm_error(result.result);
 
-    debug_log(&format!("ecl(_evm_call) return exit_code={}", exit_code));
+    debug_log!("ecl(_evm_call) return exit_code={}", exit_code);
     EvmCallMethodOutput {
         output: result.output,
         exit_code: exit_code.into_i32(),

@@ -1,5 +1,5 @@
-use crate::helpers::{debug_log, exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{fluent_host::FluentHost, helpers::DefaultEvmSpec};
+use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
+use crate::{debug_log, fluent_host::FluentHost, helpers::DefaultEvmSpec};
 use alloc::boxed::Box;
 use alloc::format;
 use fluentbase_sdk::{
@@ -21,15 +21,15 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
-    debug_log("ecl(_evm_create): start");
+    debug_log!("ecl(_evm_create): start");
 
     // check write protection
     let is_static = cr.contract_is_static();
     if is_static {
-        debug_log(&format!(
+        debug_log!(
             "ecl(_evm_create): return: Err: exit_code: {}",
             ExitCode::WriteProtection
-        ));
+        );
         return EvmCreateMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
 
@@ -74,28 +74,19 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     if !matches!(result.result, return_ok!()) {
         am.rollback(checkpoint);
-        debug_log(&format!(
-            "ecl(_evm_create): return: Err: {:?}",
-            result.result
-        ));
+        debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(exit_code_from_evm_error(result.result))
             .with_gas(result.gas.remaining());
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         am.rollback(checkpoint);
-        debug_log(&format!(
-            "ecl(_evm_create): return: Err: {:?}",
-            result.result
-        ));
+        debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::CreateContractStartingWithEF)
             .with_gas(result.gas.remaining());
     }
     if result.output.len() > MAX_CODE_SIZE {
         am.rollback(checkpoint);
-        debug_log(&format!(
-            "ecl(_evm_create): return: Err: {:?}",
-            result.result
-        ));
+        debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
             .with_gas(result.gas.remaining());
     }
@@ -108,10 +99,10 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     callee_account.update_bytecode(am, &result.output, None, &evm_loader, None);
 
-    debug_log(&format!(
+    debug_log!(
         "ecl(_evm_create): return: Ok: callee_account.address: {}",
         callee_account.address
-    ));
+    );
 
     am.commit();
 
