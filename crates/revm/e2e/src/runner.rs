@@ -4,10 +4,8 @@ use super::{
     utils::recover_address,
 };
 use crate::merkle_trie::state_merkle_trie_root2;
-use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_revm::EVM_STORAGE_ADDRESS;
 use fluentbase_types::{Address, ExitCode};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use lazy_static::lazy_static;
@@ -322,21 +320,33 @@ fn check_evm_execution<EXT1, EXT2>(
                     hex::encode(&slot.to_be_bytes::<32>()),
                     hex::encode(&value.to_be_bytes::<32>())
                 );
-                let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
-                let fluent_evm_storage = evm2
-                    .context
-                    .evm
-                    .db
-                    .cache
-                    .accounts
-                    .get(&EVM_STORAGE_ADDRESS)
-                    .expect("missing special EVM storage account");
-                let value2 = fluent_evm_storage
-                    .storage_slot(U256::from_le_bytes(storage_key))
-                    .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
+                // let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
+                // let fluent_evm_storage = evm2
+                //     .context
+                //     .evm
+                //     .db
+                //     .cache
+                //     .accounts
+                //     .get(&EVM_STORAGE_ADDRESS)
+                //     .expect("missing special EVM storage account");
+                // let value2 = fluent_evm_storage
+                //     .storage_slot(U256::from_le_bytes(storage_key))
+                //     .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
+                let value2 = v2
+                    .account
+                    .as_ref()
+                    .map(|v| &v.storage)
+                    .expect("missing FLUENT account")
+                    .get(slot)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "missing storage key {}",
+                            hex::encode(slot.to_be_bytes::<32>())
+                        )
+                    });
                 assert_eq!(
                     *value,
-                    value2,
+                    *value2,
                     "EVM storage value ({}) mismatch",
                     hex::encode(&slot.to_be_bytes::<32>())
                 );
@@ -386,7 +396,7 @@ pub fn execute_test_suite(
         let mut cache_state = revm::CacheState::new(false);
         let mut cache_state2 = fluentbase_revm::CacheState::new(false);
 
-        let mut evm_storage: PlainStorage = PlainStorage::default();
+        // let mut evm_storage: PlainStorage = PlainStorage::default();
         for (address, info) in &devnet_genesis.alloc {
             let code_hash = info
                 .storage
@@ -408,13 +418,15 @@ pub fn execute_test_suite(
                 code: None,
                 rwasm_code: Some(Bytecode::new_raw(info.code.clone().unwrap_or_default())),
             };
+            let mut account_storage = PlainStorage::default();
             if let Some(storage) = info.storage.as_ref() {
                 for (k, v) in storage.iter() {
-                    let storage_key = calc_storage_key(address, k.as_ptr());
-                    evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+                    // let storage_key = calc_storage_key(address, k.as_ptr());
+                    // evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+                    account_storage.insert(U256::from_be_bytes(k.0), U256::from_be_bytes(v.0));
                 }
             }
-            cache_state2.insert_account_with_storage(*address, acc_info, PlainStorage::default());
+            cache_state2.insert_account_with_storage(*address, acc_info, account_storage);
         }
 
         for (address, info) in unit.pre {
@@ -432,28 +444,28 @@ pub fn execute_test_suite(
             );
             // acc_info.rwasm_code_hash = rwasm_hash;
             // acc_info.rwasm_code = Some(Bytecode::new_raw(rwasm_bytecode.clone()));
-            for (k, v) in info.storage.iter() {
-                let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
-                // println!(
-                //     "mapping EVM storage address=0x{}, slot={}, storage_key={}, value={}",
-                //     hex::encode(&address),
-                //     hex::encode(k.to_be_bytes::<32>().as_slice()),
-                //     hex::encode(&storage_key),
-                //     hex::encode(v.to_be_bytes::<32>().as_slice()),
-                // );
-                evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
-            }
+            // for (k, v) in info.storage.iter() {
+            //     let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
+            //     println!(
+            //         "mapping EVM storage address=0x{}, slot={}, storage_key={}, value={}",
+            //         hex::encode(&address),
+            //         hex::encode(k.to_be_bytes::<32>().as_slice()),
+            //         hex::encode(&storage_key),
+            //         hex::encode(v.to_be_bytes::<32>().as_slice()),
+            //     );
+            //     evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+            // }
             cache_state2.insert_account_with_storage(address, acc_info, info.storage);
         }
 
-        cache_state2.insert_account_with_storage(
-            EVM_STORAGE_ADDRESS,
-            AccountInfo {
-                nonce: 1,
-                ..AccountInfo::default()
-            },
-            evm_storage,
-        );
+        // cache_state2.insert_account_with_storage(
+        //     EVM_STORAGE_ADDRESS,
+        //     AccountInfo {
+        //         nonce: 1,
+        //         ..AccountInfo::default()
+        //     },
+        //     evm_storage,
+        // );
 
         let mut env = Box::<Env>::default();
         // for mainnet

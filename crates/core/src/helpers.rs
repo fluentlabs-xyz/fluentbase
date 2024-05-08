@@ -286,7 +286,6 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     gas_limit: u64,
     is_static: bool,
 ) -> InterpreterResult {
-    use crate::evm::create::_evm_create;
     debug_log!(
         "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={}",
         &contract.address,
