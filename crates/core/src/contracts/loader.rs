@@ -1,4 +1,5 @@
 use crate::consts::ECL_CONTRACT_ADDRESS;
+use crate::debug_log;
 use crate::helpers::debug_log;
 use alloc::format;
 use byteorder::{BigEndian, ByteOrder};
@@ -42,10 +43,7 @@ pub fn main() {
     let out_size = LowLevelSDK::sys_output_size();
     LowLevelSDK::sys_forward_output(0, out_size);
     // forward exit code as well
-    debug_log(&format!(
-        "evm loader: return: sys_halt: exit_code: {}",
-        exit_code
-    ));
+    debug_log!("evm loader: return: sys_halt: exit_code: {}", exit_code);
     LowLevelSDK::sys_halt(exit_code);
 }
 

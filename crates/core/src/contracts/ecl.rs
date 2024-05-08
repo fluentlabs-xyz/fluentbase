@@ -1,6 +1,6 @@
-use crate::helpers::{debug_log, InputHelper};
+use crate::helpers::InputHelper;
 use crate::{
-    decode_method_input,
+    debug_log, decode_method_input,
     evm::{call::_evm_call, create::_evm_create},
     helpers::unwrap_exit_code,
 };
@@ -21,7 +21,7 @@ pub fn deploy() {}
 pub fn main() {
     let cr = ExecutionContext::default();
     let am = JzktAccountManager::default();
-    debug_log("ecl(main): started method");
+    debug_log!("ecl(main): started method");
     let input_helper = InputHelper::new(cr);
     let method_id = input_helper.decode_method_id();
     match method_id {
@@ -34,14 +34,11 @@ pub fn main() {
             let method_input = input_helper.decode_method_input::<EvmCallMethodInput>();
             let method_output = _evm_call(&cr, &am, method_input);
             LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
-            debug_log(&format!(
-                "ecl(main): return exit_code={}",
-                method_output.exit_code
-            ));
+            debug_log!("ecl(main): return exit_code={}", method_output.exit_code);
         }
         _ => panic!("unknown method id: {}", method_id),
     }
 
-    debug_log("ecl(main): return exit_code=0");
+    debug_log!("ecl(main): return exit_code=0");
     LowLevelSDK::sys_halt(ExitCode::Ok.into_i32());
 }

@@ -1,6 +1,6 @@
-use crate::decode_method_input;
-use crate::helpers::{debug_log, unwrap_exit_code, InputHelper};
+use crate::helpers::{unwrap_exit_code, InputHelper};
 use crate::wasm::{call::_wasm_call, create::_wasm_create};
+use crate::{debug_log, decode_method_input};
 use alloc::{format, vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
@@ -28,10 +28,10 @@ pub fn main() {
             let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
             let method_output = _wasm_call(&cr, &am, method_input);
             LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
-            debug_log(&format!(
+            debug_log!(
                 "wcl: WASM_CALL_METHOD_ID: sys_halt: exit_code: {}",
                 method_output.exit_code
-            ));
+            );
         }
         _ => panic!("unknown method id: {}", method_id),
     }

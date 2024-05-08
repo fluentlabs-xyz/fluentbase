@@ -1,4 +1,4 @@
-use crate::helpers::debug_log;
+use crate::debug_log;
 use alloc::{format, vec};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
@@ -12,15 +12,15 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: WasmCallMethodInput,
 ) -> WasmCallMethodOutput {
-    debug_log("_wasm_call start");
+    debug_log!("_wasm_call start");
 
     // don't allow to do static calls with non zero value
     let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
-        debug_log(&format!(
+        debug_log!(
             "_wasm_call return: Err: exit_code: {}",
             ExitCode::WriteProtection
-        ));
+        );
         return WasmCallMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
     // parse callee address
@@ -47,7 +47,7 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
         STATE_MAIN,
     );
 
-    debug_log(&format!("_wasm_call return: OK: exit_code: {}", exit_code));
+    debug_log!("_wasm_call return: OK: exit_code: {}", exit_code);
     WasmCallMethodOutput {
         output: output_buffer.into(),
         exit_code,
