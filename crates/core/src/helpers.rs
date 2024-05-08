@@ -235,11 +235,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
 
     CreateOutcome {
         result: InterpreterResult {
-            result: match ExitCode::from(create_output.exit_code) {
-                ExitCode::Ok => InstructionResult::Continue,
-                ExitCode::Panic => InstructionResult::Revert,
-                _ => InstructionResult::FatalExternalError,
-            },
+            result: evm_error_from_exit_code(create_output.exit_code.into()),
             output: create_output.output,
             gas,
         },
@@ -301,11 +297,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     gas.record_refund(call_output.gas_refund);
 
     let interpreter_result = InterpreterResult {
-        result: match ExitCode::from(call_output.exit_code) {
-            ExitCode::Ok => InstructionResult::Continue,
-            ExitCode::Panic => InstructionResult::Revert,
-            _ => InstructionResult::Revert,
-        },
+        result: evm_error_from_exit_code(call_output.exit_code.into()),
         output: call_output.output.into(),
         gas,
     };
@@ -384,6 +376,33 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         // move cr back
         host.cr = Some(cr);
         host.am = Some(am);
+    }
+}
+
+pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+    match exit_code {
+        ExitCode::Ok => InstructionResult::Stop,
+        ExitCode::Panic => InstructionResult::Revert,
+        ExitCode::CallDepthOverflow => InstructionResult::CallTooDeep,
+        ExitCode::InsufficientBalance => InstructionResult::OutOfFunds,
+        ExitCode::OutOfFuel => InstructionResult::OutOfGas,
+        ExitCode::OpcodeNotFound => InstructionResult::OpcodeNotFound,
+        ExitCode::WriteProtection => InstructionResult::StateChangeDuringStaticCall,
+        ExitCode::InvalidEfOpcode => InstructionResult::InvalidFEOpcode,
+        ExitCode::InvalidJump => InstructionResult::InvalidJump,
+        ExitCode::NotActivatedEIP => InstructionResult::NotActivated,
+        ExitCode::StackUnderflow => InstructionResult::StackUnderflow,
+        ExitCode::StackOverflow => InstructionResult::StackOverflow,
+        ExitCode::OutputOverflow => InstructionResult::OutOfOffset,
+        ExitCode::CreateCollision => InstructionResult::CreateCollision,
+        ExitCode::OverflowPayment => InstructionResult::OverflowPayment,
+        ExitCode::PrecompileError => InstructionResult::PrecompileError,
+        ExitCode::NonceOverflow => InstructionResult::NonceOverflow,
+        ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
+        ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
+        ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
+        // TODO(dmitry123): "what's proper unknown error code mapping?"
+        _ => InstructionResult::OutOfGas,
     }
 }
 

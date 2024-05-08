@@ -1,6 +1,6 @@
 use crate::utils::calc_storage_key;
 use crate::{
-    Account, AccountCheckpoint, AccountManager, LowLevelAPI, LowLevelSDK,
+    Account, AccountCheckpoint, AccountManager, EvmCallMethodOutput, LowLevelAPI, LowLevelSDK,
     JZKT_ACCOUNT_BALANCE_FIELD, JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_NONCE_FIELD,
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
@@ -8,7 +8,7 @@ use crate::{
 };
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{Address, Bytes, Bytes32, B256, U256};
+use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, B256, U256};
 
 #[derive(Default)]
 pub struct JzktAccountManager;
@@ -169,5 +169,29 @@ impl AccountManager for JzktAccountManager {
         let mut output_buffer = vec![0u8; out_size as usize];
         LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, out_size);
         (output_buffer.into(), exit_code)
+    }
+
+    fn inc_nonce(&self, account: &mut Account) -> Option<u64> {
+        let old_nonce = account.nonce;
+        account.nonce += 1;
+        // check potential nonce overflow (such genesis can exist)
+        if account.nonce == u64::MAX {
+            return None;
+        }
+        Some(old_nonce)
+    }
+
+    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode> {
+        Account::transfer(from, to, value)
+    }
+
+    fn precompile(
+        &self,
+        _address: &Address,
+        _input: &Bytes,
+        _gas: u64,
+    ) -> Option<EvmCallMethodOutput> {
+        // in jzkt mode we don't support precompiles
+        None
     }
 }

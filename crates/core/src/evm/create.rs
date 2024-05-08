@@ -7,14 +7,14 @@ use fluentbase_sdk::{
     LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, ExitCode, B256};
-use revm_interpreter::InstructionResult;
 use revm_interpreter::{
     analysis::to_analysed,
     opcode::make_instruction_table,
     primitives::{Bytecode, Bytes},
-    return_ok, BytecodeLocked, Contract, Interpreter, SharedMemory, MAX_CODE_SIZE,
+    return_ok, BytecodeLocked, Contract, Gas, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
-use revm_primitives::U256;
+use revm_interpreter::{gas, InstructionResult};
+use revm_primitives::{HOMESTEAD, U256};
 
 pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
@@ -30,7 +30,8 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
             "ecl(_evm_create): return: Err: exit_code: {}",
             ExitCode::WriteProtection
         );
-        return EvmCreateMethodOutput::from_exit_code(ExitCode::WriteProtection);
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::WriteProtection)
+            .with_gas(input.gas_limit, 0);
     }
 
     // load deployer and contract accounts
@@ -39,7 +40,8 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     // call depth check
     if input.depth > 1024 {
-        return EvmCreateMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::CallDepthOverflow)
+            .with_gas(input.gas_limit, 0);
     }
 
     // calc source code hash
@@ -56,7 +58,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         match Account::create_account_checkpoint(am, &mut caller_account, input.value, salt_hash) {
             Ok(result) => result,
             Err(err) => {
-                return EvmCreateMethodOutput::from_exit_code(err);
+                return EvmCreateMethodOutput::from_exit_code(err).with_gas(input.gas_limit, 0);
             }
         };
 
@@ -72,43 +74,51 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         value: input.value,
     };
 
-    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);
+    let mut result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);
 
     if !matches!(result.result, return_ok!()) {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(exit_code_from_evm_error(result.result))
             .with_output(result.output)
-            .with_gas(result.gas.remaining(), 0);
+            .with_gas(result.gas.remaining(), result.gas.refunded());
     }
     if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::CreateContractStartingWithEF)
             .with_output(result.output)
-            .with_gas(result.gas.remaining(), 0);
+            .with_gas(result.gas.remaining(), result.gas.refunded());
     }
     if result.output.len() > MAX_CODE_SIZE {
         am.rollback(checkpoint);
         debug_log!("ecl(_evm_create): return: Err: {:?}", result.result);
         return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
             .with_output(result.output)
-            .with_gas(result.gas.remaining(), 0);
+            .with_gas(result.gas.remaining(), result.gas.refunded());
+    }
+
+    // record gas for each created byte
+    let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
+    if !result.gas.record_cost(gas_for_code) {
+        am.rollback(checkpoint);
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::OutOfFuel)
+            .with_output(result.output)
+            .with_gas(result.gas.remaining(), result.gas.refunded());
     }
 
     // write caller changes to database
     am.write_account(&caller_account);
 
-    // write callee changes to database
-    let evm_loader = Bytes::default();
-
-    callee_account.update_bytecode(am, &result.output, None, &evm_loader, None);
+    // write callee changes to database (lets keep rWASM part empty for now since universal loader is not ready yet)
+    callee_account.update_bytecode(am, &result.output, None, &Bytes::new(), None);
 
     debug_log!(
         "ecl(_evm_create): return: Ok: callee_account.address: {}",
         callee_account.address
     );
 
+    // commit all changes made
     am.commit();
 
     return EvmCreateMethodOutput::from_exit_code(ExitCode::Ok)
