@@ -10,9 +10,10 @@ impl JzktGet {
         key32_offset: u32,
         field: u32,
         output32_offset: u32,
+        committed: u32,
     ) -> Result<u32, Trap> {
         let key = caller.read_memory(key32_offset, 32)?.to_vec();
-        let is_cold = match Self::fn_impl(caller.data_mut(), &key, field) {
+        let is_cold = match Self::fn_impl(caller.data_mut(), &key, field, committed != 0) {
             Some((value, is_cold)) => {
                 caller.write_memory(output32_offset, &value)?;
                 is_cold
@@ -26,8 +27,9 @@ impl JzktGet {
         ctx: &mut RuntimeContext<DB>,
         key: &[u8],
         field: u32,
+        committed: bool,
     ) -> Option<([u8; 32], bool)> {
-        let (field_values, _flags, is_cold) = ctx.jzkt().get(key.try_into().unwrap())?;
+        let (field_values, _flags, is_cold) = ctx.jzkt().get(key.try_into().unwrap(), committed)?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {
             return None;

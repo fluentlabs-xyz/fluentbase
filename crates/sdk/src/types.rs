@@ -27,22 +27,32 @@ pub struct EvmCreateMethodInput {
     pub value: U256,
     pub gas_limit: u64,
     pub salt: Option<U256>,
+    pub depth: u32,
 }
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCreateMethodOutput {
+    pub output: Bytes,
     pub address: Option<Address>,
     pub exit_code: i32,
     pub gas: u64,
+    pub gas_refund: i64,
 }
 
 impl EvmCreateMethodOutput {
     pub fn from_exit_code(exit_code: ExitCode) -> Self {
         Self {
+            output: Bytes::new(),
             address: None,
             exit_code: exit_code.into_i32(),
             gas: 0,
+            gas_refund: 0,
         }
+    }
+
+    pub fn with_output(mut self, output: Bytes) -> Self {
+        self.output = output;
+        self
     }
 
     pub fn with_address(mut self, address: Address) -> Self {
@@ -50,8 +60,9 @@ impl EvmCreateMethodOutput {
         self
     }
 
-    pub fn with_gas(mut self, gas: u64) -> Self {
+    pub fn with_gas(mut self, gas: u64, gas_refund: i64) -> Self {
         self.gas = gas;
+        self.gas_refund = gas_refund;
         self
     }
 }
@@ -67,6 +78,7 @@ pub struct EvmCallMethodInput {
     pub value: U256,
     pub input: Bytes,
     pub gas_limit: u64,
+    pub depth: u32,
 }
 
 #[derive(Default, Debug, Clone, Codec)]
@@ -74,6 +86,7 @@ pub struct EvmCallMethodOutput {
     pub output: Bytes,
     pub exit_code: i32,
     pub gas: u64,
+    pub gas_refund: i64,
 }
 
 impl EvmCallMethodOutput {
@@ -82,6 +95,7 @@ impl EvmCallMethodOutput {
             output: Default::default(),
             exit_code: exit_code.into_i32(),
             gas: 0,
+            gas_refund: 0,
         }
     }
 
@@ -90,8 +104,9 @@ impl EvmCallMethodOutput {
         self
     }
 
-    pub fn with_gas(mut self, gas: u64) -> Self {
+    pub fn with_gas(mut self, gas: u64, refund: i64) -> Self {
         self.gas = gas;
+        self.gas_refund = refund;
         self
     }
 }

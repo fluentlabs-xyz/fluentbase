@@ -42,7 +42,7 @@ pub trait AccountManager {
     fn preimage_size(&self, hash: &[u8; 32]) -> u32;
     fn preimage(&self, hash: &[u8; 32]) -> Bytes;
     fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]);
-    fn storage(&self, address: Address, slot: U256) -> (U256, bool);
+    fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool);
     fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool;
     fn log(&self, address: Address, data: Bytes, topics: &[B256]);
     fn exec_hash(
@@ -241,12 +241,12 @@ impl Account {
         );
     }
 
-    pub fn create_account<AM: AccountManager>(
+    pub fn create_account_checkpoint<AM: AccountManager>(
         am: &AM,
         caller: &mut Account,
         amount: U256,
         salt_hash: Option<(U256, B256)>,
-    ) -> Result<Account, ExitCode> {
+    ) -> Result<(Account, AccountCheckpoint), ExitCode> {
         // check if caller have enough balance
         if caller.balance < amount {
             return Err(ExitCode::InsufficientBalance);
@@ -259,6 +259,10 @@ impl Account {
         } else {
             calc_create_address(&caller.address, old_nonce)
         };
+        am.write_account(&caller);
+        // create new checkpoint (before loading account)
+        let checkpoint = am.checkpoint();
+        // load callee account and write to AM to save nonce in case of rollback
         let (mut callee, _) = am.account(callee_address);
         // make sure there is no creation collision
         if callee.is_not_empty() {
@@ -272,7 +276,9 @@ impl Account {
         // Self::emit_transfer_log(&caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)
         callee.nonce = 1;
-        Ok(callee)
+        am.write_account(&callee);
+        // return callee and checkpoint
+        Ok((callee, checkpoint))
     }
 
     pub fn emit_transfer_log(_from: &Address, _to: &Address, _amount: &U256) {
@@ -316,9 +322,16 @@ impl Account {
     }
 
     pub fn transfer(from: &mut Account, to: &mut Account, amount: U256) -> Result<(), ExitCode> {
-        // update balances
-        from.sub_balance(amount)?;
-        to.add_balance(amount)?;
+        let from_balance = from
+            .balance
+            .checked_sub(amount)
+            .ok_or(ExitCode::InsufficientBalance)?;
+        let to_balance = to
+            .balance
+            .checked_add(amount)
+            .ok_or(ExitCode::OverflowPayment)?;
+        from.balance = from_balance;
+        to.balance = to_balance;
         Ok(())
     }
 

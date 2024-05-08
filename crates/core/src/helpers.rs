@@ -179,26 +179,59 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
     }
 }
 
-const EVM_GAS_MULTIPLIER: u64 = 1;
+fn contract_input_from_create_inputs<CR: ContextReader>(
+    cr: &CR,
+    create_inputs: &Box<CreateInputs>,
+    input: Bytes,
+) -> ContractInput {
+    ContractInput {
+        journal_checkpoint: cr.journal_checkpoint(),
+        contract_gas_limit: create_inputs.gas_limit,
+        contract_address: Address::ZERO,
+        contract_caller: create_inputs.caller,
+        contract_input: input,
+        contract_value: create_inputs.value,
+        contract_is_static: false,
+        block_chain_id: cr.block_chain_id(),
+        block_coinbase: cr.block_coinbase(),
+        block_timestamp: cr.block_timestamp(),
+        block_number: cr.block_number(),
+        block_difficulty: cr.block_difficulty(),
+        block_gas_limit: cr.block_gas_limit(),
+        block_base_fee: cr.block_base_fee(),
+        tx_gas_limit: cr.tx_gas_limit(),
+        tx_nonce: cr.tx_nonce(),
+        tx_gas_price: cr.tx_gas_price(),
+        tx_gas_priority_fee: cr.tx_gas_priority_fee(),
+        tx_caller: cr.tx_caller(),
+        tx_access_list: cr.tx_access_list(),
+    }
+}
 
 #[cfg(feature = "ecl")]
 fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
     inputs: Box<CreateInputs>,
+    depth: u32,
 ) -> CreateOutcome {
     // calc create input
+    let contract_input = contract_input_from_create_inputs(cr, &inputs, Bytes::new());
     let create_input = EvmCreateMethodInput {
         value: inputs.value,
         bytecode: inputs.init_code,
-        gas_limit: inputs.gas_limit * EVM_GAS_MULTIPLIER,
+        gas_limit: inputs.gas_limit,
         salt: match inputs.scheme {
             CreateScheme::Create2 { salt } => Some(salt),
             CreateScheme::Create => None,
         },
+        depth: depth + 1,
     };
 
-    let create_output = _evm_create(cr, am, create_input);
+    let create_output = _evm_create(&contract_input, am, create_input);
+
+    let mut gas = Gas::new(create_output.gas);
+    gas.record_refund(create_output.gas_refund);
 
     CreateOutcome {
         result: InterpreterResult {
@@ -207,8 +240,8 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
                 ExitCode::Panic => InstructionResult::Revert,
                 _ => InstructionResult::FatalExternalError,
             },
-            output: Default::default(),
-            gas: Gas::new(inputs.gas_limit),
+            output: create_output.output,
+            gas,
         },
         address: None,
     }
@@ -219,6 +252,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
     mut inputs: Box<CallInputs>,
+    depth: u32,
 ) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
@@ -231,6 +265,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
             value: inputs.context.apparent_value,
             input: take(&mut inputs.input),
             gas_limit: inputs.gas_limit,
+            depth: depth + 1,
         },
     );
 
@@ -262,6 +297,9 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     //     EvmCallMethodOutput::from_exit_code(exit_code.into()).with_gas(0)
     // };
 
+    let mut gas = Gas::new(call_output.gas);
+    gas.record_refund(call_output.gas_refund);
+
     let interpreter_result = InterpreterResult {
         result: match ExitCode::from(call_output.exit_code) {
             ExitCode::Ok => InstructionResult::Continue,
@@ -269,7 +307,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
             _ => InstructionResult::Revert,
         },
         output: call_output.output.into(),
-        gas: Gas::new(call_output.gas),
+        gas,
     };
 
     CallOutcome {
@@ -285,6 +323,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
+    depth: u32,
 ) -> InterpreterResult {
     debug_log!(
         "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={}",
@@ -323,11 +362,12 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
                     inputs.gas_limit,
                     contract_address,
                 );
-                interpreter.insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs))
+                interpreter
+                    .insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs, depth))
             }
             InterpreterAction::Create { inputs } => {
                 debug_log!("ecl(exec_evm_bytecode): nested create");
-                interpreter.insert_create_outcome(exec_evm_create(cr, am, inputs))
+                interpreter.insert_create_outcome(exec_evm_create(cr, am, inputs, depth))
             }
             InterpreterAction::Return { result } => {
                 debug_log!(

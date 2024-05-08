@@ -80,7 +80,7 @@ impl_runtime_handler!(SysFuel, SYS_FUEL, fn fluentbase_v1alpha::_sys_fuel(delta:
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
-impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32) -> u32);
+impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32, committed: u32) -> u32);
 impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
 impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_offset: u32) -> ());
 impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_offset: u32) -> ());

@@ -42,7 +42,12 @@ extern "C" {
     /// Journaled ZK Trie methods to work with blockchain state
     pub fn _jzkt_open(root32_ptr: *const u8);
     pub fn _jzkt_checkpoint() -> u64;
-    pub fn _jzkt_get(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8) -> bool;
+    pub fn _jzkt_get(
+        key32_ptr: *const u8,
+        field: u32,
+        output32_ptr: *mut u8,
+        committed: bool,
+    ) -> bool;
     pub fn _jzkt_update(
         key32_ptr: *const u8,
         flags: u32,

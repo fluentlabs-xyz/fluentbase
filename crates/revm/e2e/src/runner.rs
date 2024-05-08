@@ -306,13 +306,16 @@ fn check_evm_execution<EXT1, EXT2>(
                 .expect("missing fluent account");
             // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
             println!(" - nonce: {}", a1.nonce);
-            assert_eq!(a1.nonce, a2.nonce, "EVM account nonce mismatch",);
+            assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch",);
             println!(" - code_hash: {}", hex::encode(a1.code_hash));
-            assert_eq!(a1.code_hash, a2.code_hash, "EVM account code_hash mismatch",);
+            assert_eq!(
+                a1.code_hash, a2.code_hash,
+                "EVM <> FLUENT account code_hash mismatch",
+            );
             assert_eq!(
                 a1.code.as_ref().map(|b| b.original_bytes()),
                 a2.code.as_ref().map(|b| b.original_bytes()),
-                "EVM account code mismatch",
+                "EVM <> FLUENT account code mismatch",
             );
         }
         println!(" - storage:");

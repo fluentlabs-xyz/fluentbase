@@ -8,7 +8,7 @@ use crate::RuntimeContext;
 pub struct DebugLog;
 
 thread_local! {
-    pub static LAST_LOG_TIME: Cell<i64> = const { Cell::new(1) };
+    pub static LAST_LOG_TIME: Cell<i64> = const { Cell::new(0) };
 }
 
 impl DebugLog {
@@ -34,7 +34,7 @@ impl DebugLog {
         LAST_LOG_TIME.set(curr_time);
         // let now_str = now.format("%Y%m%d_%H%M%S%.3f");
         println!(
-            "(diff {}ms) debug_log: {}",
+            "debug_log (diff {}ms): {}",
             time_diff,
             std::str::from_utf8(msg)
                 .map(|s| s.to_string())

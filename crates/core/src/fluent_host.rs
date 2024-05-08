@@ -39,7 +39,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_limit: U256::from(cr.block_gas_limit()),
                     basefee: cr.block_base_fee(),
                     difficulty: U256::from(cr.block_difficulty()),
-                    prevrandao: Some(B256::ZERO),
+                    prevrandao: Some(B256::from(U256::from(cr.block_difficulty()))),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
@@ -107,7 +107,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        let (value, is_cold) = self.am.unwrap().storage(address, index);
+        let (value, is_cold) = self.am.unwrap().storage(address, index, false);
         debug_log!(
             "ecl(sload): address={}, index={}, value={}",
             address,
@@ -125,11 +125,12 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         );
-        let (previous, is_cold) = self.am.unwrap().storage(address, index);
+        let (original_value, _) = self.am.unwrap().storage(address, index, true);
+        let (present_value, is_cold) = self.am.unwrap().storage(address, index, false);
         self.am.unwrap().write_storage(address, index, value);
         return Some(SStoreResult {
-            original_value: previous,
-            present_value: previous,
+            original_value,
+            present_value,
             new_value: value,
             is_cold,
         });

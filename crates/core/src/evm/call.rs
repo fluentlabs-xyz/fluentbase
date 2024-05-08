@@ -5,8 +5,8 @@ use alloc::format;
 use core::ascii::escape_default;
 use core::ptr;
 use fluentbase_sdk::{
-    Account, AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput, LowLevelAPI,
-    LowLevelSDK,
+    Account, AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput,
+    EvmCreateMethodOutput, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, U256};
 use revm_interpreter::{
@@ -20,12 +20,17 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    debug_log!("_evm_call start");
+    debug_log!("ecl(_evm_call): start");
     // for static calls passing value is not allowed according to standards
     let is_static = cr.contract_is_static();
     if is_static && input.value != U256::ZERO {
         return EvmCallMethodOutput::from_exit_code(ExitCode::WriteProtection)
-            .with_gas(input.gas_limit);
+            .with_gas(input.gas_limit, 0);
+    }
+
+    // call depth check
+    if input.depth > 1024 {
+        return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
     }
 
     // create new checkpoint position in the journal
@@ -36,18 +41,24 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     let (mut callee_account, _) = am.account(cr.contract_address());
 
     // transfer funds from caller to callee
+    if !input.value.is_zero() {
+        debug_log!(
+            "ecm(_evm_call): transfer from={} to={} value={}",
+            caller_account.address,
+            callee_account.address,
+            hex::encode(input.value.to_be_bytes::<32>())
+        )
+    }
     match Account::transfer(&mut caller_account, &mut callee_account, input.value) {
         Ok(_) => {}
         Err(exit_code) => {
-            debug_log!(
-                "_evm_call return: Err: exit_code: {} caller.balance {} input.value {}",
-                exit_code,
-                caller_account.balance,
-                input.value
-            );
-            return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit);
+            return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit, 0);
         }
     }
+
+    // write current account state before doing nested calls
+    am.write_account(&caller_account);
+    am.write_account(&callee_account);
 
     // take right bytecode depending on context params
     let (source_hash, source_bytecode) = if input.callee != callee_account.address {
@@ -68,13 +79,9 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
 
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
-        // write account changes
-        am.write_account(&caller_account);
-        am.write_account(&callee_account);
-        // commit journal
         am.commit();
-        debug_log!("_evm_call return: exit_code: {}", ExitCode::Ok);
-        return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit);
+        debug_log!("ecl(_evm_call): empty bytecode exit_code=Ok");
+        return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit, 0);
     }
 
     // initiate contract instance and pass it to interpreter for and EVM transition
@@ -87,10 +94,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         caller: caller_account.address,
         value: input.value,
     };
-    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static);
-
-    am.write_account(&caller_account);
-    am.write_account(&callee_account);
+    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);
 
     if matches!(result.result, return_ok!()) {
         am.commit();
@@ -100,10 +104,16 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
 
     let exit_code = exit_code_from_evm_error(result.result);
 
-    debug_log!("ecl(_evm_call) return exit_code={}", exit_code);
+    debug_log!(
+        "ecl(_evm_call): return exit_code={} gas_remaining={} gas_refund={}",
+        exit_code,
+        result.gas.remaining(),
+        result.gas.refunded()
+    );
     EvmCallMethodOutput {
         output: result.output,
         exit_code: exit_code.into_i32(),
         gas: result.gas.remaining(),
+        gas_refund: result.gas.refunded(),
     }
 }

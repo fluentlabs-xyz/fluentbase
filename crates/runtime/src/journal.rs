@@ -55,6 +55,12 @@ impl<DB: TrieStorage> JournalTrieInner<DB> {
         }
     }
 
+    fn get_committed(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+        self.storage
+            .get(key)
+            .map(|(values, flags)| (values, flags, true))
+    }
+
     fn update(&mut self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32) {
         let pos = self.journal.len();
         self.journal.push(JournalEvent::ItemChanged {
@@ -257,8 +263,12 @@ impl<DB: TrieStorage> IJournaledTrie for JournaledTrie<DB> {
         self.inner.read().unwrap().checkpoint()
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
-        self.inner.read().unwrap().get(key)
+    fn get(&self, key: &[u8; 32], committed: bool) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+        if committed {
+            self.inner.read().unwrap().get_committed(key)
+        } else {
+            self.inner.read().unwrap().get(key)
+        }
     }
 
     fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32) {

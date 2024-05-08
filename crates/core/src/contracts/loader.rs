@@ -1,6 +1,5 @@
 use crate::consts::ECL_CONTRACT_ADDRESS;
 use crate::debug_log;
-use crate::helpers::debug_log;
 use alloc::format;
 use byteorder::{BigEndian, ByteOrder};
 use fluentbase_codec::Encoder;
@@ -14,7 +13,7 @@ use revm_primitives::{hex, U256};
 pub fn deploy() {}
 
 pub fn main() {
-    debug_log("evm loader: started");
+    debug_log!("evm loader: started");
     let mut contract_input_data = ExecutionContext::contract_input_full();
     let am = JzktAccountManager::default();
     let mut gas_limit = contract_input_data.contract_gas_limit as u32;
@@ -23,6 +22,7 @@ pub fn main() {
         value: contract_input_data.contract_value,
         input: contract_input_data.contract_input,
         gas_limit: gas_limit as u64,
+        depth: 0,
     };
     let core_input = CoreInput::new(EVM_CALL_METHOD_ID, method_data);
     contract_input_data.contract_input = core_input.encode_to_vec(0).into();

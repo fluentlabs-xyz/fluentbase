@@ -90,7 +90,7 @@ pub struct JournalLog {
 
 pub trait IJournaledTrie {
     fn checkpoint(&self) -> JournalCheckpoint;
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)>;
+    fn get(&self, key: &[u8; 32], committed: bool) -> Option<(Vec<[u8; 32]>, u32, bool)>;
     fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, flags: u32);
     fn remove(&self, key: &[u8; 32]);
     fn compute_root(&self) -> [u8; 32];
@@ -112,7 +112,7 @@ impl IJournaledTrie for EmptyJournalTrie {
         todo!()
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<(Vec<[u8; 32]>, u32, bool)> {
+    fn get(&self, key: &[u8; 32], committed: bool) -> Option<(Vec<[u8; 32]>, u32, bool)> {
         todo!()
     }
 
