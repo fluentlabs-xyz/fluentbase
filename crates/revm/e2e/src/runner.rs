@@ -270,14 +270,6 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(logs_root, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
-    assert_eq!(
-        exec_result1.as_ref().unwrap().gas_used(),
-        exec_result2.as_ref().unwrap().gas_used(),
-        "EVM <> FLUENT gas used mismatch ({})",
-        exec_result2.as_ref().unwrap().gas_used() as i64
-            - exec_result1.as_ref().unwrap().gas_used() as i64
-    );
-
     // compare contracts
     for (k, v) in evm.context.evm.db.cache.contracts.iter() {
         let v2 = evm2
@@ -311,6 +303,78 @@ fn check_evm_execution<EXT1, EXT2>(
             // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
             println!(" - nonce: {}", a1.nonce);
             assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch");
+            println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            assert_eq!(
+                a1.code_hash, a2.code_hash,
+                "EVM <> FLUENT account code_hash mismatch",
+            );
+            assert_eq!(
+                a1.code.as_ref().map(|b| b.original_bytes()),
+                a2.code.as_ref().map(|b| b.original_bytes()),
+                "EVM <> FLUENT account code mismatch",
+            );
+            println!(" - storage:");
+            if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
+                for (slot, value) in s1.iter() {
+                    println!(
+                        " - + slot ({}) => ({})",
+                        hex::encode(&slot.to_be_bytes::<32>()),
+                        hex::encode(&value.to_be_bytes::<32>())
+                    );
+                    // let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
+                    // let fluent_evm_storage = evm2
+                    //     .context
+                    //     .evm
+                    //     .db
+                    //     .cache
+                    //     .accounts
+                    //     .get(&EVM_STORAGE_ADDRESS)
+                    //     .expect("missing special EVM storage account");
+                    // let value2 = fluent_evm_storage
+                    //     .storage_slot(U256::from_le_bytes(storage_key))
+                    //     .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
+                    let value2 = v2
+                        .expect("missing FLUENT account")
+                        .account
+                        .as_ref()
+                        .map(|v| &v.storage)
+                        .expect("missing FLUENT account")
+                        .get(slot)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing storage key {}",
+                                hex::encode(slot.to_be_bytes::<32>())
+                            )
+                        });
+                    assert_eq!(
+                        *value,
+                        *value2,
+                        "EVM storage value ({}) mismatch",
+                        hex::encode(&slot.to_be_bytes::<32>())
+                    );
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        exec_result1.as_ref().unwrap().gas_used(),
+        exec_result2.as_ref().unwrap().gas_used(),
+        "EVM <> FLUENT gas used mismatch ({})",
+        exec_result2.as_ref().unwrap().gas_used() as i64
+            - exec_result1.as_ref().unwrap().gas_used() as i64
+    );
+
+    for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
+        println!("comparing balances (0x{})...", hex::encode(address));
+        let v2 = evm2.context.evm.db.cache.accounts.get(address);
+        if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
+            let a2 = v2
+                .expect("missing FLUENT account")
+                .account
+                .as_ref()
+                .map(|v| &v.info)
+                .expect("missing FLUENT account");
             println!(" - balance: {}", a1.balance);
             let balance_diff = if a1.balance > a2.balance {
                 a1.balance - a2.balance
@@ -322,57 +386,6 @@ fn check_evm_execution<EXT1, EXT2>(
                 assert_eq!(
                     a1.balance, a2.balance,
                     "EVM <> FLUENT account balance mismatch"
-                );
-            }
-            println!(" - code_hash: {}", hex::encode(a1.code_hash));
-            assert_eq!(
-                a1.code_hash, a2.code_hash,
-                "EVM <> FLUENT account code_hash mismatch",
-            );
-            assert_eq!(
-                a1.code.as_ref().map(|b| b.original_bytes()),
-                a2.code.as_ref().map(|b| b.original_bytes()),
-                "EVM <> FLUENT account code mismatch",
-            );
-        }
-        println!(" - storage:");
-        if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
-            for (slot, value) in s1.iter() {
-                println!(
-                    " - + slot ({}) => ({})",
-                    hex::encode(&slot.to_be_bytes::<32>()),
-                    hex::encode(&value.to_be_bytes::<32>())
-                );
-                // let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
-                // let fluent_evm_storage = evm2
-                //     .context
-                //     .evm
-                //     .db
-                //     .cache
-                //     .accounts
-                //     .get(&EVM_STORAGE_ADDRESS)
-                //     .expect("missing special EVM storage account");
-                // let value2 = fluent_evm_storage
-                //     .storage_slot(U256::from_le_bytes(storage_key))
-                //     .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
-                let value2 = v2
-                    .expect("missing FLUENT account")
-                    .account
-                    .as_ref()
-                    .map(|v| &v.storage)
-                    .expect("missing FLUENT account")
-                    .get(slot)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "missing storage key {}",
-                            hex::encode(slot.to_be_bytes::<32>())
-                        )
-                    });
-                assert_eq!(
-                    *value,
-                    *value2,
-                    "EVM storage value ({}) mismatch",
-                    hex::encode(&slot.to_be_bytes::<32>())
                 );
             }
         }
