@@ -229,7 +229,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
             output: create_output.output,
             gas,
         },
-        address: None,
+        address: create_output.address,
     }
 }
 
@@ -309,11 +309,13 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     depth: u32,
 ) -> InterpreterResult {
     debug_log!(
-        "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={}",
+        "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={} input={} depth={}",
         &contract.address,
         &contract.caller,
         gas_limit,
         hex::encode(contract.bytecode.original_bytecode_slice()),
+        hex::encode(&contract.input),
+        depth,
     );
     let contract_address = contract.address;
 
