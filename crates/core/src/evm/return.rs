@@ -1,5 +1,4 @@
-use core::slice;
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::ContextReader;
 
 pub fn _evm_return<CR: ContextReader>(_output_offset: *mut u8, _size: u32) {
     // if size <= 0 {

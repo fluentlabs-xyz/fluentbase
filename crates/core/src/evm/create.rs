@@ -1,20 +1,17 @@
+use crate::debug_log;
 use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{debug_log, fluent_host::FluentHost, helpers::DefaultEvmSpec};
-use alloc::boxed::Box;
-use alloc::format;
 use fluentbase_sdk::{
     Account, AccountManager, ContextReader, EvmCreateMethodInput, EvmCreateMethodOutput,
     LowLevelAPI, LowLevelSDK,
 };
-use fluentbase_types::{Address, ExitCode, B256};
+use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::{
     analysis::to_analysed,
-    opcode::make_instruction_table,
     primitives::{Bytecode, Bytes},
-    return_ok, BytecodeLocked, Contract, Gas, Interpreter, SharedMemory, MAX_CODE_SIZE,
+    return_ok, BytecodeLocked, Contract, MAX_CODE_SIZE,
 };
 use revm_interpreter::{gas, InstructionResult};
-use revm_primitives::{MAX_INITCODE_SIZE, U256};
+use revm_primitives::MAX_INITCODE_SIZE;
 
 pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,

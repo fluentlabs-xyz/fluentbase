@@ -1,4 +1,4 @@
-use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{AccountManager, ContextReader};
 
 pub fn _evm_log0<CR: ContextReader, AM: AccountManager>(
     _cr: &CR,

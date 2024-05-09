@@ -1,6 +1,4 @@
-use byteorder::{ByteOrder, LittleEndian};
-use core::ptr;
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::ContextReader;
 
 pub fn _evm_calldatasize<CR: ContextReader>(_output32_offset: *mut u8) {
     todo!("not implemented yet")

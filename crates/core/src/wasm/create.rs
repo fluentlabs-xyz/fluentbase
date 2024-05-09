@@ -1,11 +1,8 @@
 use crate::debug_log;
-use crate::helpers::exit_code_from_evm_error;
 use crate::helpers::wasm2rwasm;
-use alloc::vec::Vec;
-use alloc::{format, vec};
 use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
 use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
-use fluentbase_types::{Address, Bytes, ExitCode, B256, STATE_DEPLOY, U256};
+use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(

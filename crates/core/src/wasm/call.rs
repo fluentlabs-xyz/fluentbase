@@ -1,11 +1,10 @@
 use crate::debug_log;
-use alloc::{format, vec};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    AccountManager, ContextReader, ContractInput, EvmCallMethodOutput, LowLevelAPI, LowLevelSDK,
+    AccountManager, ContextReader, ContractInput, EvmCallMethodOutput, LowLevelAPI,
     WasmCallMethodInput, WasmCallMethodOutput,
 };
-use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
+use fluentbase_types::{ExitCode, STATE_MAIN, U256};
 
 pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
     cr: &CR,

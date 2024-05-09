@@ -1,15 +1,10 @@
 use crate::debug_log;
-use crate::evm::{sload::_evm_sload, sstore::_evm_sstore};
-use alloc::{format, vec};
-use core::cell::Cell;
-use core::marker::PhantomData;
+use alloc::vec;
 use core::mem::take;
-use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::Bytes32;
+use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI};
 use revm_interpreter::{
     primitives::{
-        Address, AnalysisKind, BlockEnv, Bytecode, Bytes, CfgEnv, Env, Log, TransactTo, TxEnv,
-        B256, U256,
+        Address, AnalysisKind, BlockEnv, Bytecode, CfgEnv, Env, Log, TransactTo, TxEnv, B256, U256,
     },
     Host, SStoreResult, SelfDestructResult,
 };

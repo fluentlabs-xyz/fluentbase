@@ -1,19 +1,13 @@
+use crate::debug_log;
 use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
-use crate::{debug_log, fluent_host::FluentHost, helpers::DefaultEvmSpec, result_value};
-use alloc::boxed::Box;
-use alloc::format;
-use core::ascii::escape_default;
-use core::ptr;
 use fluentbase_sdk::{
-    Account, AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput,
-    EvmCreateMethodOutput, LowLevelAPI, LowLevelSDK,
+    AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput, LowLevelAPI,
 };
-use fluentbase_types::{Address, Bytes, ExitCode, U256};
+use fluentbase_types::{ExitCode, U256};
 use revm_interpreter::{
-    analysis::to_analysed, opcode::make_instruction_table, primitives::Bytecode, return_ok,
-    BytecodeLocked, Contract, InstructionResult, Interpreter, InterpreterAction, SharedMemory,
+    analysis::to_analysed, primitives::Bytecode, return_ok, BytecodeLocked, Contract,
+    InstructionResult,
 };
-use revm_primitives::CreateScheme;
 
 pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
