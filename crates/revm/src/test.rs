@@ -509,7 +509,9 @@ fn test_evm_revert() {
     .value(U256::from(1e18))
     .exec()
     .unwrap();
-    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
+    // here nonce must be 1 because we increment nonce for failed txs
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 1);
+    println!("{}", contract_address);
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
@@ -764,6 +766,7 @@ fn test_codec_case() {
         ),
         input: Bytes::copy_from_slice(&hex::decode("").unwrap()),
         gas_limit: 9999979000,
+        depth: 0,
     };
     let call_method_input_encoded = call_method_input.encode_to_vec(0);
     let mut buffer = BufferDecoder::new(&call_method_input_encoded);
