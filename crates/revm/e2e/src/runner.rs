@@ -270,6 +270,14 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(logs_root, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
+    assert_eq!(
+        exec_result1.as_ref().unwrap().gas_used(),
+        exec_result2.as_ref().unwrap().gas_used(),
+        "EVM <> FLUENT gas used mismatch ({})",
+        exec_result2.as_ref().unwrap().gas_used() as i64
+            - exec_result1.as_ref().unwrap().gas_used() as i64
+    );
+
     // compare contracts
     for (k, v) in evm.context.evm.db.cache.contracts.iter() {
         let v2 = evm2
@@ -287,20 +295,35 @@ fn check_evm_execution<EXT1, EXT2>(
         println!("comparing account (0x{})...", hex::encode(address));
         let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
-            // assert_eq!(
-            //     format!("{:?}", v1.status),
-            //     format!("{:?}", v2.status),
-            //     "EVM account status mismatch",
-            // );
             let a2 = v2
-                .expect("missing fluent account")
+                .expect("missing FLUENT account")
                 .account
                 .as_ref()
                 .map(|v| &v.info)
-                .expect("missing fluent account");
+                .expect("missing FLUENT account");
+            // assert_eq!(
+            //     format!("{:?}", v1.status),
+            //     format!("{:?}", v2.unwrap().status),
+            //     "EVM account status mismatch ({:?}) <> ({:?})",
+            //     v1,
+            //     v2.unwrap()
+            // );
             // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
             println!(" - nonce: {}", a1.nonce);
-            assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch",);
+            assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch");
+            println!(" - balance: {}", a1.balance);
+            let balance_diff = if a1.balance > a2.balance {
+                a1.balance - a2.balance
+            } else {
+                a2.balance - a1.balance
+            };
+            // yes, there is a 1 wei diff in some tests.... debug it please
+            if balance_diff > U256::from(0) {
+                assert_eq!(
+                    a1.balance, a2.balance,
+                    "EVM <> FLUENT account balance mismatch"
+                );
+            }
             println!(" - code_hash: {}", hex::encode(a1.code_hash));
             assert_eq!(
                 a1.code_hash, a2.code_hash,

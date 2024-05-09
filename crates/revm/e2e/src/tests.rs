@@ -62,14 +62,27 @@ mod e2e_tests {
         // fn sstore_combinations_initial20_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_2_Paris.json");
         // fn sstore_combinations_initial10("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10.json");
 
-        // -- MOST PASS --- (failing marked with FAIL or CRASH comments, also gas calculation issue)
+        // -- MOST PASS --- (failing marked with FAIL or CRASH comments)
+        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json"); // CRASH?
+        // fn random_statetest341("tests/GeneralStateTests/stRandom/randomStatetest341.json"); // CRASH?
+        fn random_statetest248("tests/GeneralStateTests/stRandom/randomStatetest248.json"); // FAIL
+        // fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json");
+        // fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json");
+        // fn random_statetest178("tests/GeneralStateTests/stRandom/randomStatetest178.json");
+        // fn random_statetest159("tests/GeneralStateTests/stRandom/randomStatetest159.json");
+        // fn random_statetest85("tests/GeneralStateTests/stRandom/randomStatetest85.json");
+        // fn random_statetest306("tests/GeneralStateTests/stRandom/randomStatetest306.json");
+        // fn random_statetest146("tests/GeneralStateTests/stRandom/randomStatetest146.json");
+        // fn random_statetest150("tests/GeneralStateTests/stRandom/randomStatetest150.json");
+        // fn random_statetest48("tests/GeneralStateTests/stRandom/randomStatetest48.json");
+        // fn random_statetest100("tests/GeneralStateTests/stRandom/randomStatetest100.json");
+        // fn random_statetest205("tests/GeneralStateTests/stRandom/randomStatetest205.json");
         // fn random_statetest16("tests/GeneralStateTests/stRandom/randomStatetest16.json");
         // fn random_statetest380("tests/GeneralStateTests/stRandom/randomStatetest380.json");
         // fn random_statetest103("tests/GeneralStateTests/stRandom/randomStatetest103.json");
         // fn random_statetest338("tests/GeneralStateTests/stRandom/randomStatetest338.json");
         // fn random_statetest41("tests/GeneralStateTests/stRandom/randomStatetest41.json");
         // fn random_statetest292("tests/GeneralStateTests/stRandom/randomStatetest292.json");
-        fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json"); // FAIL
         // fn random_statetest57("tests/GeneralStateTests/stRandom/randomStatetest57.json");
         // fn random_statetest142("tests/GeneralStateTests/stRandom/randomStatetest142.json");
         // fn random_statetest379("tests/GeneralStateTests/stRandom/randomStatetest379.json");
@@ -84,7 +97,6 @@ mod e2e_tests {
         // fn random_statetest82("tests/GeneralStateTests/stRandom/randomStatetest82.json");
         // fn random_statetest251("tests/GeneralStateTests/stRandom/randomStatetest251.json");
         // fn random_statetest197("tests/GeneralStateTests/stRandom/randomStatetest197.json");
-        fn random_statetest178("tests/GeneralStateTests/stRandom/randomStatetest178.json"); // FAIL
         // fn random_statetest363("tests/GeneralStateTests/stRandom/randomStatetest363.json");
         // fn random_statetest0("tests/GeneralStateTests/stRandom/randomStatetest0.json");
         // fn random_statetest226("tests/GeneralStateTests/stRandom/randomStatetest226.json");
@@ -118,7 +130,6 @@ mod e2e_tests {
         // fn random_statetest266("tests/GeneralStateTests/stRandom/randomStatetest266.json");
         // fn random_statetest335("tests/GeneralStateTests/stRandom/randomStatetest335.json");
         // fn random_statetest270("tests/GeneralStateTests/stRandom/randomStatetest270.json");
-        fn random_statetest159("tests/GeneralStateTests/stRandom/randomStatetest159.json"); // FAIL
         // fn random_statetest362("tests/GeneralStateTests/stRandom/randomStatetest362.json");
         // fn random_statetest1("tests/GeneralStateTests/stRandom/randomStatetest1.json");
         // fn random_statetest227("tests/GeneralStateTests/stRandom/randomStatetest227.json");
@@ -185,7 +196,6 @@ mod e2e_tests {
         // fn random_statetest312("tests/GeneralStateTests/stRandom/randomStatetest312.json");
         // fn random_statetest191("tests/GeneralStateTests/stRandom/randomStatetest191.json");
         // fn random_statetest190("tests/GeneralStateTests/stRandom/randomStatetest190.json");
-        // fn random_statetest85("tests/GeneralStateTests/stRandom/randomStatetest85.json");
         // fn random_statetest313("tests/GeneralStateTests/stRandom/randomStatetest313.json");
         // fn random_statetest201("tests/GeneralStateTests/stRandom/randomStatetest201.json");
         // fn random_statetest217("tests/GeneralStateTests/stRandom/randomStatetest217.json");
@@ -242,15 +252,11 @@ mod e2e_tests {
         // fn random_statetest351("tests/GeneralStateTests/stRandom/randomStatetest351.json");
         // fn random_statetest214("tests/GeneralStateTests/stRandom/randomStatetest214.json");
         // fn random_statetest185("tests/GeneralStateTests/stRandom/randomStatetest185.json");
-        fn random_statetest306("tests/GeneralStateTests/stRandom/randomStatetest306.json"); // FAIL
         // fn random_statetest90("tests/GeneralStateTests/stRandom/randomStatetest90.json");
         // fn random_statetest243("tests/GeneralStateTests/stRandom/randomStatetest243.json");
         // fn random_statetest111("tests/GeneralStateTests/stRandom/randomStatetest111.json");
         // fn random_statetest238("tests/GeneralStateTests/stRandom/randomStatetest238.json");
-        // fn random_statetest146("tests/GeneralStateTests/stRandom/randomStatetest146.json");
-        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json"); // CRASH
         // fn random_statetest280("tests/GeneralStateTests/stRandom/randomStatetest280.json");
-        fn random_statetest150("tests/GeneralStateTests/stRandom/randomStatetest150.json"); // FAIL
         // fn random_statetest279("tests/GeneralStateTests/stRandom/randomStatetest279.json");
         // fn random_statetest296("tests/GeneralStateTests/stRandom/randomStatetest296.json");
         // fn random_statetest45("tests/GeneralStateTests/stRandom/randomStatetest45.json");
@@ -267,7 +273,6 @@ mod e2e_tests {
         // fn random_statetest52("tests/GeneralStateTests/stRandom/randomStatetest52.json");
         // fn random_statetest147("tests/GeneralStateTests/stRandom/randomStatetest147.json");
         // fn random_statetest110("tests/GeneralStateTests/stRandom/randomStatetest110.json");
-        // fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json");
         // fn random_statetest242("tests/GeneralStateTests/stRandom/randomStatetest242.json");
         // fn random_statetest184("tests/GeneralStateTests/stRandom/randomStatetest184.json");
         // fn random_statetest29("tests/GeneralStateTests/stRandom/randomStatetest29.json");
@@ -281,7 +286,6 @@ mod e2e_tests {
         // fn random_statetest366("tests/GeneralStateTests/stRandom/randomStatetest366.json");
         // fn random_statetest5("tests/GeneralStateTests/stRandom/randomStatetest5.json");
         // fn random_statetest274("tests/GeneralStateTests/stRandom/randomStatetest274.json");
-        fn random_statetest48("tests/GeneralStateTests/stRandom/randomStatetest48.json"); // FAIL
         // fn random_statetest327("tests/GeneralStateTests/stRandom/randomStatetest327.json");
         // fn random_statetest370("tests/GeneralStateTests/stRandom/randomStatetest370.json");
         // fn random_statetest167("tests/GeneralStateTests/stRandom/randomStatetest167.json");
@@ -297,7 +301,6 @@ mod e2e_tests {
         // fn random_statetest195("tests/GeneralStateTests/stRandom/randomStatetest195.json");
         // fn random_statetest316("tests/GeneralStateTests/stRandom/randomStatetest316.json");
         // fn random_statetest80("tests/GeneralStateTests/stRandom/randomStatetest80.json");
-        // fn random_statetest341("tests/GeneralStateTests/stRandom/randomStatetest341.json");
         // fn random_statetest204("tests/GeneralStateTests/stRandom/randomStatetest204.json");
         // fn random_statetest357("tests/GeneralStateTests/stRandom/randomStatetest357.json");
         // fn random_statetest212("tests/GeneralStateTests/stRandom/randomStatetest212.json");
@@ -345,7 +348,6 @@ mod e2e_tests {
         // fn random_statetest376("tests/GeneralStateTests/stRandom/randomStatetest376.json");
         // fn random_statetest161("tests/GeneralStateTests/stRandom/randomStatetest161.json");
         // fn random_statetest74("tests/GeneralStateTests/stRandom/randomStatetest74.json");
-        // fn random_statetest248("tests/GeneralStateTests/stRandom/randomStatetest248.json");
         // fn random_statetest23("tests/GeneralStateTests/stRandom/randomStatetest23.json");
         // fn random_statetest120("tests/GeneralStateTests/stRandom/randomStatetest120.json");
         // fn random_statetest209("tests/GeneralStateTests/stRandom/randomStatetest209.json");
@@ -354,7 +356,6 @@ mod e2e_tests {
         // fn random_statetest62("tests/GeneralStateTests/stRandom/randomStatetest62.json");
         // fn random_statetest383("tests/GeneralStateTests/stRandom/randomStatetest383.json");
         // fn random_statetest15("tests/GeneralStateTests/stRandom/randomStatetest15.json");
-        // fn random_statetest100("tests/GeneralStateTests/stRandom/randomStatetest100.json");
         // fn random_statetest42("tests/GeneralStateTests/stRandom/randomStatetest42.json");
         // fn random_statetest291("tests/GeneralStateTests/stRandom/randomStatetest291.json");
         // fn random_statetest157("tests/GeneralStateTests/stRandom/randomStatetest157.json");
@@ -369,7 +370,6 @@ mod e2e_tests {
         // fn random_statetest356("tests/GeneralStateTests/stRandom/randomStatetest356.json");
         // fn random_statetest340("tests/GeneralStateTests/stRandom/randomStatetest340.json");
         // fn random_statetest39("tests/GeneralStateTests/stRandom/randomStatetest39.json");
-        fn random_statetest205("tests/GeneralStateTests/stRandom/randomStatetest205.json"); // FAIL
         // fn random_statetest81("tests/GeneralStateTests/stRandom/randomStatetest81.json");
         // fn random_statetest252("tests/GeneralStateTests/stRandom/randomStatetest252.json");
         // fn random_statetest194("tests/GeneralStateTests/stRandom/randomStatetest194.json");

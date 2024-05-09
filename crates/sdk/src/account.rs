@@ -57,6 +57,7 @@ pub trait AccountManager {
     fn precompile(&self, address: &Address, input: &Bytes, gas: u64)
         -> Option<EvmCallMethodOutput>;
     fn self_destruct(&self, address: Address, target: Address) -> [bool; 4];
+    fn block_hash(&self, number: U256) -> B256;
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +282,7 @@ impl Account {
         // Self::emit_transfer_log(&caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)
         callee.nonce = 1;
+        am.write_account(&caller);
         am.write_account(&callee);
         // return callee and checkpoint
         Ok((callee, checkpoint))

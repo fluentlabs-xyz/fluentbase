@@ -24,7 +24,6 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     let mut cfg_env = CfgEnv::default();
                     cfg_env.chain_id = cr.block_chain_id();
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
-                    cfg_env.limit_contract_code_size = Some(RWASM_MAX_CODE_SIZE);
                     cfg_env
                 },
                 block: BlockEnv {
@@ -70,15 +69,15 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn load_account(&mut self, _address: Address) -> Option<(bool, bool)> {
-        // TODO(dmitry123): "fix `is_cold` and `is_new` calculation"
-        Some((true, true))
+    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
+        let (account, is_cold) = self.am.unwrap().account(address);
+        Some((is_cold, account.is_not_empty()))
     }
 
     #[inline]
-    fn block_hash(&mut self, _number: U256) -> Option<B256> {
-        // TODO(dmitry123): "not supported yet"
-        Some(B256::ZERO)
+    fn block_hash(&mut self, number: U256) -> Option<B256> {
+        let block_hash = self.am.unwrap().block_hash(number);
+        Some(block_hash)
     }
 
     #[inline]

@@ -43,16 +43,22 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
             hex::encode(input.value.to_be_bytes::<32>())
         )
     }
-    match am.transfer(&mut caller_account, &mut callee_account, input.value) {
-        Ok(_) => {}
-        Err(exit_code) => {
-            return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit, 0);
-        }
-    }
 
-    // write current account state before doing nested calls
-    am.write_account(&caller_account);
-    am.write_account(&callee_account);
+    if caller_account.address != callee_account.address {
+        // do transfer from caller to callee
+        match am.transfer(&mut caller_account, &mut callee_account, input.value) {
+            Ok(_) => {}
+            Err(exit_code) => {
+                return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit, 0);
+            }
+        }
+        // write current account state before doing nested calls
+        am.write_account(&caller_account);
+        am.write_account(&callee_account);
+    } else {
+        // write only one account's state since caller equals callee
+        am.write_account(&caller_account);
+    }
 
     // check is it precompile
     if let Some(result) = am.precompile(&input.callee, &input.input, input.gas_limit) {

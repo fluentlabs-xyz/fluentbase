@@ -252,9 +252,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
         // Load EVM storage account
-        let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
-        evm_storage.info.nonce = 1;
-        ctx.evm.touch(&EVM_STORAGE_ADDRESS);
+        // let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
+        // evm_storage.info.nonce = 1;
+        // ctx.evm.touch(&EVM_STORAGE_ADDRESS);
 
         // call inner handling of call/create
         let mut frame_result = match ctx.evm.env.tx.transact_to {
@@ -401,11 +401,14 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         //     None
         // };
 
+        let mut gas = Gas::new(create_output.gas);
+        gas.record_refund(create_output.gas_refund);
+
         CreateOutcome {
             result: InterpreterResult {
                 result: ExitCode::from(create_output.exit_code),
                 output: Bytes::new(),
-                gas: Gas::new(create_output.gas),
+                gas,
             },
             address: create_output.address,
         }
@@ -525,11 +528,14 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             }
         }
 
+        let mut gas = Gas::new(call_output.gas);
+        gas.record_refund(call_output.gas_refund);
+
         CallOutcome {
             result: InterpreterResult {
                 result: ExitCode::from(call_output.exit_code),
                 output: call_output.output,
-                gas: Gas::new(call_output.gas),
+                gas,
             },
             memory_offset: Default::default(),
         }
@@ -873,13 +879,13 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) {
         let mut ctx = self.ctx.borrow_mut();
         let address = Address::from_slice(&key[12..]);
-        if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD {
+        if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD && !preimage.is_empty() {
             ctx.journaled_state.set_code(
                 address,
                 Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
                 None,
             );
-        } else if field == JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD {
+        } else if field == JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD && !preimage.is_empty() {
             ctx.journaled_state.set_rwasm_code(
                 address,
                 Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
@@ -1011,5 +1017,10 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             result.is_cold,
             result.previously_destroyed,
         ]
+    }
+
+    fn block_hash(&self, number: U256) -> B256 {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.block_hash(number).expect("unexpected EVM error")
     }
 }
