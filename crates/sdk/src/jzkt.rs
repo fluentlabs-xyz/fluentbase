@@ -173,11 +173,10 @@ impl AccountManager for JzktAccountManager {
 
     fn inc_nonce(&self, account: &mut Account) -> Option<u64> {
         let old_nonce = account.nonce;
-        account.nonce += 1;
-        // check potential nonce overflow (such genesis can exist)
-        if account.nonce == u64::MAX {
+        if old_nonce == u64::MAX {
             return None;
         }
+        account.nonce += 1;
         Some(old_nonce)
     }
 

@@ -970,6 +970,9 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
 
     fn inc_nonce(&self, account: &mut Account) -> Option<u64> {
         let old_nonce = account.nonce;
+        if old_nonce == u64::MAX {
+            return None;
+        }
         account.nonce += 1;
         let mut ctx = self.ctx.borrow_mut();
         ctx.journaled_state.inc_nonce(account.address)?;
