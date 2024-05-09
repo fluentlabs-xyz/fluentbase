@@ -101,7 +101,9 @@ impl TestingContext {
         };
         let mut info: AccountInfo = account.into();
         info.code = None;
-        info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+        if !rwasm_binary.is_empty() {
+            info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+        }
         self.db.insert_account_info(address, info.clone());
         info
     }

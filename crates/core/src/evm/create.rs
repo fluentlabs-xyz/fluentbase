@@ -16,7 +16,7 @@ use revm_primitives::MAX_INITCODE_SIZE;
 pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
-    mut input: EvmCreateMethodInput,
+    input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     debug_log!("ecl(_evm_create): start");
 
@@ -46,12 +46,6 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
             .with_gas(input.gas_limit, 0);
     }
-    let init_gas_code = gas::initcode_cost(input.bytecode.len() as u64);
-    if init_gas_code > input.gas_limit {
-        return EvmCreateMethodOutput::from_exit_code(ExitCode::OutOfFuel)
-            .with_gas(input.gas_limit, 0);
-    }
-    input.gas_limit -= init_gas_code;
 
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
@@ -70,6 +64,14 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
                 return EvmCreateMethodOutput::from_exit_code(err).with_gas(input.gas_limit, 0);
             }
         };
+    if !input.value.is_zero() {
+        debug_log!(
+            "ecm(_evm_create): transfer from={} to={} value={}",
+            caller_account.address,
+            contract_account.address,
+            hex::encode(input.value.to_be_bytes::<32>())
+        )
+    }
 
     debug_log!(
         "ecl(_evm_create): creating account={} balance={}",

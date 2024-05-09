@@ -57,6 +57,14 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
             return WasmCreateMethodOutput::from_exit_code(exit_code);
         }
     };
+    if !input.value.is_zero() {
+        debug_log!(
+            "ecm(_wasm_create): transfer from={} to={} value={}",
+            contract_account.address,
+            contract_account.address,
+            hex::encode(input.value.to_be_bytes::<32>())
+        )
+    }
 
     debug_log!(
         "ecl(_wasm_create): creating account={} balance={}",

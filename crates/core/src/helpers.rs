@@ -18,7 +18,7 @@ use revm_interpreter::{
     opcode::make_instruction_table, CallInputs, CallOutcome, Contract, CreateInputs, CreateOutcome,
     Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
 };
-use revm_primitives::CreateScheme;
+use revm_primitives::{CancunSpec, CreateScheme};
 use rwasm::engine::bytecode::Instruction;
 use rwasm::engine::{RwasmConfig, StateRouterConfig};
 use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
@@ -32,8 +32,6 @@ macro_rules! decode_method_input {
         method_input
     }};
 }
-
-pub type DefaultEvmSpec = revm_interpreter::primitives::ShanghaiSpec;
 
 #[inline(always)]
 pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
@@ -250,7 +248,8 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
         am,
         EvmCallMethodInput {
             callee: inputs.contract,
-            value: inputs.context.apparent_value,
+            // here we take transfer value, because for DELEGATECALL it's not apparent
+            value: inputs.transfer.value,
             input: take(&mut inputs.input),
             gas_limit: inputs.gas_limit,
             depth: depth + 1,
@@ -318,7 +317,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     );
     let contract_address = contract.address;
 
-    let instruction_table = make_instruction_table::<FluentHost<CR, AM>, DefaultEvmSpec>();
+    let instruction_table = make_instruction_table::<FluentHost<CR, AM>, CancunSpec>();
 
     let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
     let mut host = FluentHost::new(cr, am);

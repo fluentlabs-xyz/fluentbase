@@ -196,6 +196,10 @@ impl AccountManager for JzktAccountManager {
     }
 
     fn self_destruct(&self, _address: Address, _target: Address) -> [bool; 4] {
-        unreachable!("how we can support SELFDESTRUCT?")
+        todo!("how we can support SELFDESTRUCT (?)")
+    }
+
+    fn block_hash(&self, number: U256) -> B256 {
+        todo!("how we can support BLOCKHASH (?)")
     }
 }
