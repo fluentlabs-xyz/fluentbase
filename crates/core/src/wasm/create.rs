@@ -65,6 +65,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     let rwasm_bytecode = match wasm2rwasm(&input.bytecode) {
         Ok(result) => result,
         Err(exit_code) => {
+            am.rollback(checkpoint);
             debug_log!("_wasm_create return: panic: exit_code: {}", exit_code);
             return WasmCreateMethodOutput::from_exit_code(exit_code);
         }
@@ -101,6 +102,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     );
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {
+        am.rollback(checkpoint);
         debug_log!("_wasm_create return: Err: ExitCode::TransactError");
         return WasmCreateMethodOutput::from_exit_code(ExitCode::from(exit_code));
     }
