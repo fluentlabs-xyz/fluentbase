@@ -199,7 +199,7 @@ impl AccountManager for JzktAccountManager {
         todo!("how we can support SELFDESTRUCT (?)")
     }
 
-    fn block_hash(&self, number: U256) -> B256 {
+    fn block_hash(&self, _number: U256) -> B256 {
         todo!("how we can support BLOCKHASH (?)")
     }
 }

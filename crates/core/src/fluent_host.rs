@@ -8,7 +8,6 @@ use revm_interpreter::{
     },
     Host, SStoreResult, SelfDestructResult,
 };
-use revm_primitives::RWASM_MAX_CODE_SIZE;
 
 pub struct FluentHost<'cr, 'am, CR: ContextReader, AM: AccountManager> {
     pub(crate) env: Env,

@@ -1,9 +1,7 @@
+use crate::RuntimeContext;
+use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 use std::cell::Cell;
-
-use fluentbase_types::IJournaledTrie;
-
-use crate::RuntimeContext;
 
 pub struct DebugLog;
 
@@ -33,6 +31,11 @@ impl DebugLog {
         };
         LAST_LOG_TIME.set(curr_time);
         // let now_str = now.format("%Y%m%d_%H%M%S%.3f");
+        let msg = if msg.len() > 1000 {
+            &msg[..1000]
+        } else {
+            &msg[..]
+        };
         println!(
             "debug_log (diff {}ms): {}",
             time_diff,

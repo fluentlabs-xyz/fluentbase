@@ -336,7 +336,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         match next_action {
             InterpreterAction::Call { inputs } => {
                 debug_log!(
-                    "ecl(exec_evm_bytecode): nested call={:?} code={} caller={} callee={} address={} gas={} prev_address={}",
+                    "ecl(exec_evm_bytecode): nested call={:?} code={} caller={} callee={} address={} gas={} prev_address={} value={}",
                     inputs.context.scheme,
                     &inputs.context.code_address,
                     &inputs.context.caller,
@@ -344,6 +344,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
                     &inputs.context.address,
                     inputs.gas_limit,
                     contract_address,
+                    hex::encode(inputs.transfer.value.to_be_bytes::<32>())
                 );
                 interpreter
                     .insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs, depth))
