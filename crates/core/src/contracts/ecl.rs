@@ -1,20 +1,14 @@
 use crate::helpers::InputHelper;
 use crate::{
-    debug_log, decode_method_input,
+    debug_log,
     evm::{call::_evm_call, create::_evm_create},
-    helpers::unwrap_exit_code,
 };
-use alloc::format;
-use byteorder::{ByteOrder, LittleEndian};
-use core::ptr::null_mut;
-use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    ContractInput, CoreInput, EvmCallMethodInput, EvmCreateMethodInput, ExecutionContext,
-    IContractInput, ICoreInput, JzktAccountManager, LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
-    EVM_CREATE_METHOD_ID,
+    EvmCallMethodInput, EvmCreateMethodInput, ExecutionContext, JzktAccountManager, LowLevelAPI,
+    LowLevelSDK, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
 };
-use fluentbase_types::{Bytes, ExitCode};
-use revm_interpreter::SharedMemory;
+use fluentbase_types::ExitCode;
 
 pub fn deploy() {}
 

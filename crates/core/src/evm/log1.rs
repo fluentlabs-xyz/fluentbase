@@ -1,4 +1,4 @@
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::ContextReader;
 
 pub fn _evm_log1<CR: ContextReader>(
     _cr: &CR,

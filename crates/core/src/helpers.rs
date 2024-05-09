@@ -1,32 +1,24 @@
-use crate::consts::ECL_CONTRACT_ADDRESS;
 #[cfg(feature = "ecl")]
 use crate::evm::{call::_evm_call, create::_evm_create};
 use crate::fluent_host::FluentHost;
-use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
-use byteorder::{ByteOrder, LittleEndian};
-use core::marker::{PhantomData, PhantomPinned};
+use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+use core::marker::PhantomData;
 use core::mem::take;
-use core::str::from_utf8;
-use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    Account, AccountManager, ContextReader, ContractInput, CoreInput, EvmCallMethodInput,
-    EvmCallMethodOutput, EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
-    EVM_CALL_METHOD_ID, JZKT_ACCOUNT_BALANCE_FIELD,
+    AccountManager, ContextReader, ContractInput, CoreInput, EvmCallMethodInput,
+    EvmCreateMethodInput, ICoreInput, LowLevelAPI, LowLevelSDK,
 };
 use fluentbase_types::SysFuncIdx::SYS_STATE;
 use fluentbase_types::{
     create_sovereign_import_linker, Address, Bytes, Bytes32, ExitCode, B256, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
-use hashbrown::Equivalent;
-use revm_interpreter::instructions::host::create;
-use revm_interpreter::opcode::InstructionTable;
 use revm_interpreter::{
-    opcode::make_instruction_table, return_ok, CallInputs, CallOutcome, CallScheme, Contract,
-    CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter, InterpreterAction,
-    InterpreterResult, SharedMemory,
+    opcode::make_instruction_table, CallInputs, CallOutcome, Contract, CreateInputs, CreateOutcome,
+    Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
 };
-use revm_primitives::{CreateScheme, MAX_CODE_SIZE};
+use revm_primitives::CreateScheme;
 use rwasm::engine::bytecode::Instruction;
 use rwasm::engine::{RwasmConfig, StateRouterConfig};
 use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
@@ -114,7 +106,7 @@ macro_rules! debug_log {
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
     }};
     ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
+        let msg = alloc::format!($($arg)*);
         fluentbase_sdk::LowLevelSDK::debug_log(msg.as_ptr(), msg.len() as u32);
     }};
 }

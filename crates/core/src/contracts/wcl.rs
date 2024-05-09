@@ -1,15 +1,11 @@
-use crate::helpers::{unwrap_exit_code, InputHelper};
+use crate::debug_log;
+use crate::helpers::InputHelper;
 use crate::wasm::{call::_wasm_call, create::_wasm_create};
-use crate::{debug_log, decode_method_input};
-use alloc::{format, vec};
-use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    CoreInput, EvmCreateMethodInput, ExecutionContext, ICoreInput, JzktAccountManager, LowLevelAPI,
-    LowLevelSDK, WasmCallMethodInput, WasmCreateMethodInput, WASM_CALL_METHOD_ID,
-    WASM_CREATE_METHOD_ID,
+    ExecutionContext, JzktAccountManager, LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
+    WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
-use fluentbase_types::Bytes;
 
 pub fn deploy() {}
 

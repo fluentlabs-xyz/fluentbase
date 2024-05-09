@@ -1,8 +1,4 @@
-use core::ptr;
-use fluentbase_sdk::{
-    AccountManager, ContextReader, LowLevelAPI, LowLevelSDK, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-};
-use fluentbase_types::Bytes32;
+use fluentbase_sdk::{AccountManager, ContextReader};
 
 pub fn _evm_codehash<CR: ContextReader, AM: AccountManager>(
     _cr: &CR,

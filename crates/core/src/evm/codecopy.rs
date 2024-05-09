@@ -1,8 +1,4 @@
-use alloc::vec;
-use byteorder::{ByteOrder, LittleEndian};
-use core::ptr;
-use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::Bytes32;
+use fluentbase_sdk::{AccountManager, ContextReader};
 
 pub fn _evm_codecopy<CR: ContextReader, AM: AccountManager>(
     _cr: &CR,
