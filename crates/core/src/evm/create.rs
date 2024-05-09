@@ -54,13 +54,19 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
-    let (mut callee_account, checkpoint) =
+    let (mut contract_account, checkpoint) =
         match Account::create_account_checkpoint(am, &mut caller_account, input.value, salt_hash) {
             Ok(result) => result,
             Err(err) => {
                 return EvmCreateMethodOutput::from_exit_code(err).with_gas(input.gas_limit, 0);
             }
         };
+
+    debug_log!(
+        "ecl(_evm_create): creating account={} balance={}",
+        contract_account.address,
+        hex::encode(contract_account.balance.to_be_bytes::<32>())
+    );
 
     let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.bytecode.into()));
     let deployer_bytecode_locked = BytecodeLocked::try_from(analyzed_bytecode).unwrap();
@@ -69,7 +75,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         input: Bytes::new(),
         bytecode: deployer_bytecode_locked,
         hash: source_code_hash,
-        address: callee_account.address,
+        address: contract_account.address,
         caller: caller_address,
         value: input.value,
     };
@@ -111,11 +117,11 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     am.write_account(&caller_account);
 
     // write callee changes to database (lets keep rWASM part empty for now since universal loader is not ready yet)
-    callee_account.update_bytecode(am, &result.output, None, &Bytes::new(), None);
+    contract_account.update_bytecode(am, &result.output, None, &Bytes::new(), None);
 
     debug_log!(
         "ecl(_evm_create): return: Ok: callee_account.address: {}",
-        callee_account.address
+        contract_account.address
     );
 
     // commit all changes made
@@ -124,5 +130,5 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     return EvmCreateMethodOutput::from_exit_code(ExitCode::Ok)
         .with_output(result.output)
         .with_gas(result.gas.remaining(), result.gas.refunded())
-        .with_address(callee_account.address);
+        .with_address(contract_account.address);
 }

@@ -61,6 +61,12 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
         }
     };
 
+    debug_log!(
+        "ecl(_wasm_create): creating account={} balance={}",
+        contract_account.address,
+        hex::encode(contract_account.balance.to_be_bytes::<32>())
+    );
+
     // translate WASM to rWASM
     let rwasm_bytecode = match wasm2rwasm(&input.bytecode) {
         Ok(result) => result,
@@ -111,6 +117,9 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
         "_wasm_create return: Ok: contract_account.address {}",
         contract_account.address
     );
+
+    // commit all changes made
+    am.commit();
 
     WasmCreateMethodOutput {
         output: Bytes::new(),
