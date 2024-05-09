@@ -14,12 +14,12 @@ use revm_interpreter::{
     return_ok, BytecodeLocked, Contract, Gas, Interpreter, SharedMemory, MAX_CODE_SIZE,
 };
 use revm_interpreter::{gas, InstructionResult};
-use revm_primitives::{HOMESTEAD, U256};
+use revm_primitives::{MAX_INITCODE_SIZE, U256};
 
 pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
-    input: EvmCreateMethodInput,
+    mut input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     debug_log!("ecl(_evm_create): start");
 
@@ -43,6 +43,18 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
         return EvmCreateMethodOutput::from_exit_code(ExitCode::CallDepthOverflow)
             .with_gas(input.gas_limit, 0);
     }
+
+    // check init max code size for EIP-3860 and charge 2 gas per word
+    if input.bytecode.len() > MAX_INITCODE_SIZE {
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
+            .with_gas(input.gas_limit, 0);
+    }
+    let init_gas_code = gas::initcode_cost(input.bytecode.len() as u64);
+    if init_gas_code > input.gas_limit {
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::OutOfFuel)
+            .with_gas(input.gas_limit, 0);
+    }
+    input.gas_limit -= init_gas_code;
 
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
