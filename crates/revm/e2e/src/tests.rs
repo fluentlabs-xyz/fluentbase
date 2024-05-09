@@ -34,7 +34,7 @@ mod e2e_tests {
         // --- FAIL --- (bug with gas calculation, it affects other tests as well)
         // fn call_recursive_bomb_log2("tests/GeneralStateTests/stSystemOperationsTest/CallRecursiveBombLog2.json");
 
-        // --- ALL PASS ---
+        // --- ALL PASS (run with commented debug log) ---
         // fn sstore_combinations_initial01_2_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial01_2_Paris.json");
         // fn sstore_combinations_initial00_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial00_Paris.json");
         // fn sstore_combinations_initial11_paris("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial11_Paris.json");
@@ -63,9 +63,9 @@ mod e2e_tests {
         // fn sstore_combinations_initial10("tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial10.json");
 
         // -- MOST PASS --- (failing marked with FAIL or CRASH comments)
-        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json"); // CRASH?
-        // fn random_statetest341("tests/GeneralStateTests/stRandom/randomStatetest341.json"); // CRASH?
         fn random_statetest248("tests/GeneralStateTests/stRandom/randomStatetest248.json"); // FAIL
+        // fn random_statetest53("tests/GeneralStateTests/stRandom/randomStatetest53.json");
+        // fn random_statetest341("tests/GeneralStateTests/stRandom/randomStatetest341.json");
         // fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json");
         // fn random_statetest154("tests/GeneralStateTests/stRandom/randomStatetest154.json");
         // fn random_statetest178("tests/GeneralStateTests/stRandom/randomStatetest178.json");
