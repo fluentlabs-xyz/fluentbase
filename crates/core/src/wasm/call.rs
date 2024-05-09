@@ -2,8 +2,8 @@ use crate::debug_log;
 use alloc::{format, vec};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    AccountManager, ContextReader, ContractInput, LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
-    WasmCallMethodOutput,
+    AccountManager, ContextReader, ContractInput, EvmCallMethodOutput, LowLevelAPI, LowLevelSDK,
+    WasmCallMethodInput, WasmCallMethodOutput,
 };
 use fluentbase_types::{Address, Bytes, ExitCode, STATE_MAIN, U256};
 
@@ -23,6 +23,15 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
         );
         return WasmCallMethodOutput::from_exit_code(ExitCode::WriteProtection);
     }
+
+    // call depth check
+    if input.depth > 1024 {
+        return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
+    }
+
+    // create new checkpoint position in the journal
+    let checkpoint = am.checkpoint();
+
     // parse callee address
     let (callee_account, _) = am.account(input.callee);
 
@@ -46,6 +55,13 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
         &mut gas_limit as *mut u32,
         STATE_MAIN,
     );
+
+    // if exit code success then commit changes, otherwise rollback
+    if ExitCode::from(exit_code).is_ok() {
+        am.commit();
+    } else {
+        am.rollback(checkpoint);
+    }
 
     debug_log!("_wasm_call return: OK: exit_code: {}", exit_code);
     WasmCallMethodOutput {
