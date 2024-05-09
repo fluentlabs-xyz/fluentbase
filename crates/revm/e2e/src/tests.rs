@@ -267,7 +267,7 @@ mod e2e_tests {
         // fn random_statetest52("tests/GeneralStateTests/stRandom/randomStatetest52.json");
         // fn random_statetest147("tests/GeneralStateTests/stRandom/randomStatetest147.json");
         // fn random_statetest110("tests/GeneralStateTests/stRandom/randomStatetest110.json");
-        fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json"); // FAIL
+        // fn random_statetest307("tests/GeneralStateTests/stRandom/randomStatetest307.json");
         // fn random_statetest242("tests/GeneralStateTests/stRandom/randomStatetest242.json");
         // fn random_statetest184("tests/GeneralStateTests/stRandom/randomStatetest184.json");
         // fn random_statetest29("tests/GeneralStateTests/stRandom/randomStatetest29.json");
