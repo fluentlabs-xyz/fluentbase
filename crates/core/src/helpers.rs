@@ -215,7 +215,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
             CreateScheme::Create2 { salt } => Some(salt),
             CreateScheme::Create => None,
         },
-        depth: depth + 1,
+        depth,
     };
 
     let create_output = _evm_create(&contract_input, am, create_input);
@@ -252,7 +252,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
             value: inputs.transfer.value,
             input: take(&mut inputs.input),
             gas_limit: inputs.gas_limit,
-            depth: depth + 1,
+            depth,
         },
     );
 
@@ -317,6 +317,9 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         hex::encode(&contract.input),
         depth,
     );
+    if depth == 1024 {
+        debug_log!("wow");
+    }
     let contract_address = contract.address;
 
     let instruction_table = make_instruction_table::<FluentHost<CR, AM>, CancunSpec>();
@@ -332,6 +335,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         // take memory and cr from interpreter and host back (return later)
         shared_memory = interpreter.take_memory();
 
+        // take cr/am
         cr = host.cr.take().unwrap();
         am = host.am.take().unwrap();
 
@@ -348,12 +352,17 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
                     contract_address,
                     hex::encode(inputs.transfer.value.to_be_bytes::<32>())
                 );
-                interpreter
-                    .insert_call_outcome(&mut shared_memory, exec_evm_call(cr, am, inputs, depth))
+                let call_outcome = exec_evm_call(cr, am, inputs, depth + 1);
+                interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
             }
             InterpreterAction::Create { inputs } => {
-                debug_log!("ecl(exec_evm_bytecode): nested create");
-                interpreter.insert_create_outcome(exec_evm_create(cr, am, inputs, depth))
+                debug_log!(
+                    "ecl(exec_evm_bytecode): nested create caller={}, value={}",
+                    inputs.caller,
+                    hex::encode(inputs.value.to_be_bytes::<32>())
+                );
+                let create_outcome = exec_evm_create(cr, am, inputs, depth + 1);
+                interpreter.insert_create_outcome(create_outcome);
             }
             InterpreterAction::Return { result } => {
                 debug_log!(
@@ -367,7 +376,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
             InterpreterAction::None => unreachable!("not supported EVM interpreter state"),
         }
 
-        // move cr back
+        // move cr/am back
         host.cr = Some(cr);
         host.am = Some(am);
     }
@@ -434,16 +443,6 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
     }
-}
-
-#[inline(always)]
-pub(crate) fn unwrap_exit_code<T>(result: Result<T, ExitCode>) -> T {
-    result.unwrap_or_else(|v| {
-        debug_log!("unwrap_exit_code: {}", v);
-        LowLevelSDK::sys_halt(v.into_i32());
-        // we can it for testing purposes, this branch never happens
-        panic!("execution halted: {v}")
-    })
 }
 
 pub(crate) struct InputHelper<CR: ContextReader> {
