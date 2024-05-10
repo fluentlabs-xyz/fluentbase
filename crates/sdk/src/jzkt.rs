@@ -206,4 +206,12 @@ impl AccountManager for JzktAccountManager {
     fn block_hash(&self, _number: U256) -> B256 {
         todo!("how we can support BLOCKHASH (?)")
     }
+
+    fn write_transient_storage(&self, _address: Address, _index: U256, _value: U256) {
+        todo!("how we can support TLOAD (?)")
+    }
+
+    fn transient_storage(&self, _address: Address, _index: U256) -> U256 {
+        todo!("how we can support TSTORE (?)")
+    }
 }

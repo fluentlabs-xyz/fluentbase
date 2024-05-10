@@ -133,13 +133,15 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn tload(&mut self, _address: Address, _index: U256) -> U256 {
-        panic!("TLOAD opcode is not supported")
+    fn tload(&mut self, address: Address, index: U256) -> U256 {
+        self.am.unwrap().transient_storage(address, index)
     }
 
     #[inline]
-    fn tstore(&mut self, _address: Address, _index: U256, _value: U256) {
-        panic!("TSTORE opcode is not supported")
+    fn tstore(&mut self, address: Address, index: U256, value: U256) {
+        self.am
+            .unwrap()
+            .write_transient_storage(address, index, value)
     }
 
     #[inline]

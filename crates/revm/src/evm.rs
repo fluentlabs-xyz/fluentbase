@@ -1006,7 +1006,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     }
 
     fn is_precompile(&self, address: &Address) -> bool {
-        let mut ctx = self.ctx.borrow_mut();
+        let ctx = self.ctx.borrow_mut();
         ctx.journaled_state
             .warm_preloaded_addresses
             .contains(address)
@@ -1028,5 +1028,15 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     fn block_hash(&self, number: U256) -> B256 {
         let mut ctx = self.ctx.borrow_mut();
         ctx.block_hash(number).expect("unexpected EVM error")
+    }
+
+    fn write_transient_storage(&self, address: Address, index: U256, value: U256) {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.tstore(address, index, value)
+    }
+
+    fn transient_storage(&self, address: Address, index: U256) -> U256 {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.tload(address, index)
     }
 }
