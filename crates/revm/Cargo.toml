@@ -26,9 +26,6 @@ fluentbase-core = { workspace = true, default-features = false, features = ["ecl
 fluentbase-types = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 
-# rwasm
-rwasm = { workspace = true, optional = true, default-features = false }
-
 # misc
 auto_impl = { version = "1.2", default-features = false }
 cfg-if = "1.0"
@@ -50,8 +47,6 @@ tokio = { version = "1.36", features = [
 ], optional = true }
 ethers-providers = { version = "2.0", optional = true }
 ethers-core = { version = "2.0", optional = true }
-lazy_static = "1.4.0"
-regex = "1.10.4"
 
 [dev-dependencies]
 ethers-contract = { version = "2.0.14", default-features = false }
@@ -73,8 +68,6 @@ std = [
     "dep:fluentbase-runtime",
     "fluentbase-runtime?/std",
     "fluentbase-sdk/std",
-    "dep:rwasm",
-    "rwasm?/std",
 ]
 serde = ["dep:serde", "revm-precompile/serde", "revm-primitives/serde"]
 serde-json = ["serde", "dep:serde_json"]
