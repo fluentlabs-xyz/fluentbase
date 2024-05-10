@@ -1005,6 +1005,13 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         })
     }
 
+    fn is_precompile(&self, address: &Address) -> bool {
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state
+            .warm_preloaded_addresses
+            .contains(address)
+    }
+
     fn self_destruct(&self, address: Address, target: Address) -> [bool; 4] {
         let mut ctx = self.ctx.borrow_mut();
         let result = ctx
