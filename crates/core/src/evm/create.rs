@@ -57,7 +57,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
-    let (mut contract_account, checkpoint) =
+    let (contract_account, checkpoint) =
         match Account::create_account_checkpoint(am, &mut caller_account, input.value, salt_hash) {
             Ok(result) => result,
             Err(err) => {
