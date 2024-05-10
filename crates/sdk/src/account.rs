@@ -265,7 +265,6 @@ impl Account {
         } else {
             calc_create_address(&caller.address, old_nonce)
         };
-        am.write_account(&caller);
         // create new checkpoint (before loading account)
         let checkpoint = am.checkpoint();
         // load callee account and write to AM to save nonce in case of rollback

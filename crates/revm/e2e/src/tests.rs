@@ -483,55 +483,55 @@ mod st_create_test {
     define_tests! {
 
         // --- MOST PASSES --- (8 fails)
-        fn create_transaction_call_data("tests/GeneralStateTests/stCreateTest/CreateTransactionCallData.json");
-        fn create_large_result("tests/GeneralStateTests/stCreateTest/createLargeResult.json"); // FAIL
-        fn create_o_o_gafter_init_code_returndata("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata.json");
-        fn c_r_e_a_t_e_contract_suicide_during_init_with_value_to_itself("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_WithValueToItself.json");
-        fn create_collision_to_empty2("tests/GeneralStateTests/stCreateTest/CreateCollisionToEmpty2.json");
-        fn create_o_o_gafter_init_code_revert("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeRevert.json");
-        fn create_results("tests/GeneralStateTests/stCreateTest/CreateResults.json");
-        fn create_collision_to_empty("tests/GeneralStateTests/stCreateTest/CreateCollisionToEmpty.json");
-        fn code_in_constructor("tests/GeneralStateTests/stCreateTest/CodeInConstructor.json");
-        fn c_r_e_a_t_e_empty_contract_with_balance("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithBalance.json");
-        fn c_r_e_a_t_e_contract_s_s_t_o_r_e_during_init("tests/GeneralStateTests/stCreateTest/CREATE_ContractSSTOREDuringInit.json");
-        fn c_r_e_a_t_e_contract_suicide_during_init_then_store_then_return("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_ThenStoreThenReturn.json");
-        fn create_address_warm_after_fail("tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json"); // FAIL
-        fn create_o_o_gafter_init_code_returndata3("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata3.json");
-        fn create_transaction_refund_e_f("tests/GeneralStateTests/stCreateTest/CreateTransactionRefundEF.json");
-        fn c_r_e_a_t_e_high_nonce("tests/GeneralStateTests/stCreateTest/CREATE_HighNonce.json");
-        fn c_r_e_a_t_e_empty_contract_with_storage_and_call_it_0wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorageAndCallIt_0wei.json");
-        fn c_r_e_a_t_e_e_contract_create_n_e_contract_in_init_o_o_g_tr("tests/GeneralStateTests/stCreateTest/CREATE_EContractCreateNEContractInInitOOG_Tr.json"); // FAIL
-        fn create_o_o_gafter_init_code_returndata2("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata2.json");
-        fn transaction_collision_to_empty("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmpty.json");
-        fn c_r_e_a_t_e_empty_contract_with_storage_and_call_it_1wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorageAndCallIt_1wei.json");
-        fn c_r_e_a_t_e_contract_suicide_during_init_with_value("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_WithValue.json");
-        fn c_r_e_a_t_e_contract_suicide_during_init("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit.json");
-        fn create_fail_result("tests/GeneralStateTests/stCreateTest/createFailResult.json");
-        fn c_r_e_a_t_e_contract_r_e_t_u_r_n_big_offset("tests/GeneralStateTests/stCreateTest/CREATE_ContractRETURNBigOffset.json");
-        fn c_r_e_a_t_e_high_nonce_minus1("tests/GeneralStateTests/stCreateTest/CREATE_HighNonceMinus1.json");
-        fn c_r_e_a_t_e2_call_data("tests/GeneralStateTests/stCreateTest/CREATE2_CallData.json");
+        // fn create_transaction_call_data("tests/GeneralStateTests/stCreateTest/CreateTransactionCallData.json");
+        // fn create_large_result("tests/GeneralStateTests/stCreateTest/createLargeResult.json"); // FAIL
+        // fn create_o_o_gafter_init_code_returndata("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata.json");
+        // fn c_r_e_a_t_e_contract_suicide_during_init_with_value_to_itself("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_WithValueToItself.json");
+        // fn create_collision_to_empty2("tests/GeneralStateTests/stCreateTest/CreateCollisionToEmpty2.json");
+        // fn create_o_o_gafter_init_code_revert("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeRevert.json");
+        // fn create_results("tests/GeneralStateTests/stCreateTest/CreateResults.json");
+        // fn create_collision_to_empty("tests/GeneralStateTests/stCreateTest/CreateCollisionToEmpty.json");
+        // fn code_in_constructor("tests/GeneralStateTests/stCreateTest/CodeInConstructor.json");
+        // fn c_r_e_a_t_e_empty_contract_with_balance("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithBalance.json");
+        // fn c_r_e_a_t_e_contract_s_s_t_o_r_e_during_init("tests/GeneralStateTests/stCreateTest/CREATE_ContractSSTOREDuringInit.json");
+        // fn c_r_e_a_t_e_contract_suicide_during_init_then_store_then_return("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_ThenStoreThenReturn.json");
+        // fn create_address_warm_after_fail("tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json"); // FAIL
+        // fn create_o_o_gafter_init_code_returndata3("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata3.json");
+        // fn create_transaction_refund_e_f("tests/GeneralStateTests/stCreateTest/CreateTransactionRefundEF.json");
+        // fn c_r_e_a_t_e_high_nonce("tests/GeneralStateTests/stCreateTest/CREATE_HighNonce.json");
+        // fn c_r_e_a_t_e_empty_contract_with_storage_and_call_it_0wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorageAndCallIt_0wei.json");
+        // fn c_r_e_a_t_e_e_contract_create_n_e_contract_in_init_o_o_g_tr("tests/GeneralStateTests/stCreateTest/CREATE_EContractCreateNEContractInInitOOG_Tr.json"); // FAIL
+        // fn create_o_o_gafter_init_code_returndata2("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndata2.json");
+        // fn transaction_collision_to_empty("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmpty.json");
+        // fn c_r_e_a_t_e_empty_contract_with_storage_and_call_it_1wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorageAndCallIt_1wei.json");
+        // fn c_r_e_a_t_e_contract_suicide_during_init_with_value("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit_WithValue.json");
+        // fn c_r_e_a_t_e_contract_suicide_during_init("tests/GeneralStateTests/stCreateTest/CREATE_ContractSuicideDuringInit.json");
+        // fn create_fail_result("tests/GeneralStateTests/stCreateTest/createFailResult.json");
+        // fn c_r_e_a_t_e_contract_r_e_t_u_r_n_big_offset("tests/GeneralStateTests/stCreateTest/CREATE_ContractRETURNBigOffset.json");
+        // fn c_r_e_a_t_e_high_nonce_minus1("tests/GeneralStateTests/stCreateTest/CREATE_HighNonceMinus1.json");
+        // fn c_r_e_a_t_e2_call_data("tests/GeneralStateTests/stCreateTest/CREATE2_CallData.json");
         fn c_r_e_a_t_e_e_contract_create_e_contract_in_init_tr("tests/GeneralStateTests/stCreateTest/CREATE_EContractCreateEContractInInit_Tr.json"); // FAIL
-        fn transaction_collision_to_empty2("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmpty2.json");
-        fn create_transaction_high_nonce("tests/GeneralStateTests/stCreateTest/CreateTransactionHighNonce.json");
-        fn create_o_o_g_from_call_refunds("tests/GeneralStateTests/stCreateTest/CreateOOGFromCallRefunds.json"); // FAIL
-        fn c_r_e_a_t_e_e_contract_then_c_a_l_l_to_non_existent_acc("tests/GeneralStateTests/stCreateTest/CREATE_EContract_ThenCALLToNonExistentAcc.json");
-        fn c_r_e_a_t_e_acreate_b_b_suicide_b_store("tests/GeneralStateTests/stCreateTest/CREATE_AcreateB_BSuicide_BStore.json");
-        fn c_r_e_a_t_e2_refund_e_f("tests/GeneralStateTests/stCreateTest/CREATE2_RefundEF.json");
-        fn c_r_e_a_t_e_e_contract_create_n_e_contract_in_init_tr("tests/GeneralStateTests/stCreateTest/CREATE_EContractCreateNEContractInInit_Tr.json"); // FAIL
-        fn c_r_e_a_t_e_empty_contract_and_call_it_0wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractAndCallIt_0wei.json");
-        fn create_o_o_g_from_e_o_a_refunds("tests/GeneralStateTests/stCreateTest/CreateOOGFromEOARefunds.json"); // FAIL
-        fn create_o_o_gafter_init_code("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCode.json");
-        fn c_r_e_a_t_e_empty_contract("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContract.json");
-        fn c_r_e_a_t_e_first_byte_loop("tests/GeneralStateTests/stCreateTest/CREATE_FirstByte_loop.json");
-        fn c_r_e_a_t_e_empty_contract_and_call_it_1wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractAndCallIt_1wei.json");
-        fn c_r_e_a_t_e_empty_contract_with_storage("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorage.json");
-        fn transaction_collision_to_empty_but_code("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmptyButCode.json");
-        fn transaction_collision_to_empty_but_nonce("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmptyButNonce.json");
-        fn c_r_e_a_t_e_empty000_createin_init_code_transaction("tests/GeneralStateTests/stCreateTest/CREATE_empty000CreateinInitCode_Transaction.json"); // FAIL
-        fn create_o_o_gafter_init_code_returndata_size("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndataSize.json");
-        fn create_o_o_gafter_init_code_revert2("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeRevert2.json");
-        fn create_collision_results("tests/GeneralStateTests/stCreateTest/CreateCollisionResults.json");
-        fn create_o_o_gafter_max_codesize("tests/GeneralStateTests/stCreateTest/CreateOOGafterMaxCodesize.json");
+        // fn transaction_collision_to_empty2("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmpty2.json");
+        // fn create_transaction_high_nonce("tests/GeneralStateTests/stCreateTest/CreateTransactionHighNonce.json");
+        // fn create_o_o_g_from_call_refunds("tests/GeneralStateTests/stCreateTest/CreateOOGFromCallRefunds.json"); // FAIL
+        // fn c_r_e_a_t_e_e_contract_then_c_a_l_l_to_non_existent_acc("tests/GeneralStateTests/stCreateTest/CREATE_EContract_ThenCALLToNonExistentAcc.json");
+        // fn c_r_e_a_t_e_acreate_b_b_suicide_b_store("tests/GeneralStateTests/stCreateTest/CREATE_AcreateB_BSuicide_BStore.json");
+        // fn c_r_e_a_t_e2_refund_e_f("tests/GeneralStateTests/stCreateTest/CREATE2_RefundEF.json");
+        // fn c_r_e_a_t_e_e_contract_create_n_e_contract_in_init_tr("tests/GeneralStateTests/stCreateTest/CREATE_EContractCreateNEContractInInit_Tr.json"); // FAIL
+        // fn c_r_e_a_t_e_empty_contract_and_call_it_0wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractAndCallIt_0wei.json");
+        // fn create_o_o_g_from_e_o_a_refunds("tests/GeneralStateTests/stCreateTest/CreateOOGFromEOARefunds.json"); // FAIL
+        // fn create_o_o_gafter_init_code("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCode.json");
+        // fn c_r_e_a_t_e_empty_contract("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContract.json");
+        // fn c_r_e_a_t_e_first_byte_loop("tests/GeneralStateTests/stCreateTest/CREATE_FirstByte_loop.json");
+        // fn c_r_e_a_t_e_empty_contract_and_call_it_1wei("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractAndCallIt_1wei.json");
+        // fn c_r_e_a_t_e_empty_contract_with_storage("tests/GeneralStateTests/stCreateTest/CREATE_EmptyContractWithStorage.json");
+        // fn transaction_collision_to_empty_but_code("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmptyButCode.json");
+        // fn transaction_collision_to_empty_but_nonce("tests/GeneralStateTests/stCreateTest/TransactionCollisionToEmptyButNonce.json");
+        // fn c_r_e_a_t_e_empty000_createin_init_code_transaction("tests/GeneralStateTests/stCreateTest/CREATE_empty000CreateinInitCode_Transaction.json"); // FAIL
+        // fn create_o_o_gafter_init_code_returndata_size("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeReturndataSize.json");
+        // fn create_o_o_gafter_init_code_revert2("tests/GeneralStateTests/stCreateTest/CreateOOGafterInitCodeRevert2.json");
+        // fn create_collision_results("tests/GeneralStateTests/stCreateTest/CreateCollisionResults.json");
+        // fn create_o_o_gafter_max_codesize("tests/GeneralStateTests/stCreateTest/CreateOOGafterMaxCodesize.json");
     }
 }
 

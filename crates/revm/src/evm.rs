@@ -851,14 +851,17 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
 
     fn write_account(&self, account: &Account) {
         let mut ctx = self.ctx.borrow_mut();
+        // load account with this address from journaled state
         let (db_account, _) = ctx
             .load_account_with_code(account.address)
             .expect("database error");
+        // copy all account info fields
         db_account.info.balance = account.balance;
         db_account.info.nonce = account.nonce;
         db_account.info.code_hash = account.source_code_hash;
         db_account.info.rwasm_code_hash = account.rwasm_code_hash;
-        db_account.mark_touch();
+        // mark account as touched
+        ctx.journaled_state.touch(&account.address);
     }
 
     fn preimage_size(&self, hash: &[u8; 32]) -> u32 {
