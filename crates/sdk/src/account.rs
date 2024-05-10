@@ -258,7 +258,7 @@ impl Account {
             return Err(ExitCode::InsufficientBalance);
         }
         // try to increment nonce
-        let old_nonce = am.inc_nonce(caller).ok_or(ExitCode::NonceOverflow)?;
+        let old_nonce = am.inc_nonce(caller).ok_or(ExitCode::Ok)?;
         // calc address
         let callee_address = if let Some((salt, hash)) = salt_hash {
             calc_create2_address(&caller.address, &salt, &hash)
