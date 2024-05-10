@@ -265,10 +265,10 @@ impl Account {
         } else {
             calc_create_address(&caller.address, old_nonce)
         };
+        // load account before checkpoint to keep it warm even in case of revert
+        let (mut callee, _) = am.account(callee_address);
         // create new checkpoint (before loading account)
         let checkpoint = am.checkpoint();
-        // load callee account and write to AM to save nonce in case of rollback
-        let (mut callee, _) = am.account(callee_address);
         // make sure there is no creation collision
         if callee.is_not_empty() {
             return Err(ExitCode::CreateCollision);
@@ -277,30 +277,30 @@ impl Account {
         if let Err(exit_code) = am.transfer(caller, &mut callee, amount) {
             return Err(exit_code);
         }
-        // emit transfer log
+        // emit transfer log (do we want to have native transfer events or native wrapper?)
         // Self::emit_transfer_log(&caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)
-        callee.nonce = 1;
+        am.inc_nonce(&mut callee);
+        // write account changes
         am.write_account(&caller);
         am.write_account(&callee);
         // return callee and checkpoint
         Ok((callee, checkpoint))
     }
 
-    pub fn emit_transfer_log(_from: &Address, _to: &Address, _amount: &U256) {
-        // let topics: [B256; 4] = [
-        //     NATIVE_TRANSFER_KECCAK,
-        //     from.into_word(),
-        //     to.into_word(),
-        //     B256::from(amount.to_be_bytes::<32>()),
-        // ];
-        // LowLevelSDK::jzkt_emit_log(
-        //     NATIVE_TRANSFER_ADDRESS.as_ptr(),
-        //     topics.as_ptr() as *const [u8; 32],
-        //     4 * 32,
-        //     core::ptr::null(),
-        //     0,
-        // );
+    pub fn emit_transfer_log<AM: AccountManager>(
+        am: &AM,
+        from: &Address,
+        to: &Address,
+        amount: &U256,
+    ) {
+        let topics: [B256; 4] = [
+            NATIVE_TRANSFER_KECCAK,
+            from.into_word(),
+            to.into_word(),
+            B256::from(amount.to_be_bytes::<32>()),
+        ];
+        am.log(Address::ZERO, Bytes::new(), &topics);
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {
@@ -342,9 +342,19 @@ impl Account {
     }
 
     #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        let code_empty = self.is_empty_code_hash()
+            || self.source_code_hash == B256::ZERO && self.rwasm_code_hash == B256::ZERO;
+        code_empty && self.balance == U256::ZERO && self.nonce == 0
+    }
+
+    #[inline(always)]
+    pub fn is_empty_code_hash(&self) -> bool {
+        self.source_code_hash == KECCAK_EMPTY && self.rwasm_code_hash == POSEIDON_EMPTY
+    }
+
+    #[inline(always)]
     pub fn is_not_empty(&self) -> bool {
-        self.nonce != 0
-            || self.source_code_hash != KECCAK_EMPTY
-            || self.rwasm_code_hash != POSEIDON_EMPTY
+        !self.is_empty()
     }
 }

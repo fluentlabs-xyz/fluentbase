@@ -434,9 +434,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             self.context.evm.journaled_state.touch(&callee_address);
         }
 
-        self.context.evm.touch(&caller_address);
-        self.context.evm.touch(&callee_address);
-
         let (callee_bytecode, _) = self.context.evm.load_account(callee_address).unwrap();
 
         let (_middleware_account, method_id, method_data) =

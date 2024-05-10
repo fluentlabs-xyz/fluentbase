@@ -27,12 +27,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
     }
 
-    // create new checkpoint position in the journal
-    let checkpoint = am.checkpoint();
-
     // read caller and callee
     let (mut caller_account, _) = am.account(cr.contract_caller());
     let (mut callee_account, _) = am.account(cr.contract_address());
+
+    // create new checkpoint position in the journal
+    let checkpoint = am.checkpoint();
 
     // transfer funds from caller to callee
     if !input.value.is_zero() {
