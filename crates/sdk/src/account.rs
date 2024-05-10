@@ -59,6 +59,8 @@ pub trait AccountManager {
     fn is_precompile(&self, address: &Address) -> bool;
     fn self_destruct(&self, address: Address, target: Address) -> [bool; 4];
     fn block_hash(&self, number: U256) -> B256;
+    fn write_transient_storage(&self, address: Address, index: U256, value: U256);
+    fn transient_storage(&self, address: Address, index: U256) -> U256;
 }
 
 #[derive(Debug, Clone)]
