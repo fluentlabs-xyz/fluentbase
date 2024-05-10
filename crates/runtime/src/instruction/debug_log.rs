@@ -36,12 +36,12 @@ impl DebugLog {
         } else {
             &msg[..]
         };
-        // println!(
-        //     "debug_log (diff {}ms): {}",
-        //     time_diff,
-        //     std::str::from_utf8(msg)
-        //         .map(|s| s.to_string())
-        //         .unwrap_or_else(|_| { hex::encode(msg) })
-        // );
+        println!(
+            "debug_log (diff {}ms): {}",
+            time_diff,
+            std::str::from_utf8(msg)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|_| { hex::encode(msg) })
+        );
     }
 }
