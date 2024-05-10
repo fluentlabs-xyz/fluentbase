@@ -194,6 +194,11 @@ impl AccountManager for JzktAccountManager {
         None
     }
 
+    fn is_precompile(&self, _address: &Address) -> bool {
+        // in jzkt mode we don't support precompiles
+        false
+    }
+
     fn self_destruct(&self, _address: Address, _target: Address) -> [bool; 4] {
         todo!("how we can support SELFDESTRUCT (?)")
     }

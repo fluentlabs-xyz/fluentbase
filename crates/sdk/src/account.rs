@@ -56,6 +56,7 @@ pub trait AccountManager {
     fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
     fn precompile(&self, address: &Address, input: &Bytes, gas: u64)
         -> Option<EvmCallMethodOutput>;
+    fn is_precompile(&self, address: &Address) -> bool;
     fn self_destruct(&self, address: Address, target: Address) -> [bool; 4];
     fn block_hash(&self, number: U256) -> B256;
 }
@@ -270,7 +271,10 @@ impl Account {
         // create new checkpoint (before loading account)
         let checkpoint = am.checkpoint();
         // make sure there is no creation collision
-        if callee.is_not_empty() {
+        let is_empty = callee.source_code_hash == KECCAK_EMPTY
+            && callee.rwasm_code_hash == POSEIDON_EMPTY
+            && callee.nonce == 0;
+        if !is_empty || am.is_precompile(&callee_address) {
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
