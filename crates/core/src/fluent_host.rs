@@ -95,6 +95,9 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     #[inline]
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
         let (account, is_cold) = self.am.unwrap().account(address);
+        if !account.is_not_empty() {
+            return Some((B256::ZERO, is_cold));
+        }
         Some((account.source_code_hash, is_cold))
     }
 
