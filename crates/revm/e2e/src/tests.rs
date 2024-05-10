@@ -1641,6 +1641,7 @@ mod st_solidity_test {
     }
 }
 
+#[allow(non_snake_case)]
 mod st_memory_test {
     define_tests! {
 
