@@ -29,9 +29,12 @@ pub trait ContextReader {
     fn tx_gas_limit(&self) -> u64;
     fn tx_nonce(&self) -> u64;
     fn tx_gas_price(&self) -> U256;
-    fn tx_gas_priority_fee(&self) -> Option<U256>;
     fn tx_caller(&self) -> Address;
     fn tx_access_list(&self) -> Vec<(Address, Vec<U256>)>;
+    fn tx_gas_priority_fee(&self) -> Option<U256>;
+    fn tx_blob_hashes(&self) -> Vec<B256>;
+    fn tx_blob_hashes_size(&self) -> (u32, u32);
+    fn tx_max_fee_per_blob_gas(&self) -> Option<U256>;
     fn contract_gas_limit(&self) -> u64;
     fn contract_address(&self) -> Address;
     fn contract_caller(&self) -> Address;
@@ -60,6 +63,8 @@ pub struct ContractInput {
     pub tx_gas_priority_fee: Option<U256>,
     pub tx_caller: Address,
     pub tx_access_list: Vec<(Address, Vec<U256>)>,
+    pub tx_blob_hashes: Vec<B256>,
+    pub tx_max_fee_per_blob_gas: Option<U256>,
     // contract info
     pub contract_gas_limit: u64,
     pub contract_address: Address,
@@ -152,6 +157,18 @@ impl ContextReader for ContractInput {
 
     fn contract_input_size(&self) -> (u32, u32) {
         (0, self.contract_input.len() as u32)
+    }
+
+    fn tx_blob_hashes(&self) -> Vec<B256> {
+        self.tx_blob_hashes.clone()
+    }
+
+    fn tx_max_fee_per_blob_gas(&self) -> Option<U256> {
+        self.tx_max_fee_per_blob_gas.clone()
+    }
+
+    fn tx_blob_hashes_size(&self) -> (u32, u32) {
+        (0, self.tx_blob_hashes.len() as u32 * 32)
     }
 }
 
@@ -246,6 +263,8 @@ impl ContextReader for ExecutionContext {
     impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, TxGasPriorityFee);
     impl_reader_func!(fn tx_caller() -> Address, TxCaller);
     impl_reader_func!(fn tx_access_list() -> Vec<(Address, Vec<U256>)>, TxAccessList);
+    impl_reader_func!(@dynamic fn tx_blob_hashes() -> Vec<B256>, TxBlobHashes);
+    impl_reader_func!(fn tx_max_fee_per_blob_gas() -> Option<U256>, TxMaxFeePerBlobGas);
     // contract info
     impl_reader_func!(fn contract_gas_limit() -> u64, ContractGasLimit);
     impl_reader_func!(fn contract_address() -> Address, ContractAddress);

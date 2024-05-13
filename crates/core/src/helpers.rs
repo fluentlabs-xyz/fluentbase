@@ -190,6 +190,8 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
         tx_gas_priority_fee: cr.tx_gas_priority_fee(),
         tx_caller: cr.tx_caller(),
         tx_access_list: cr.tx_access_list(),
+        tx_blob_hashes: cr.tx_blob_hashes(),
+        tx_max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
     }
 }
 
@@ -219,6 +221,8 @@ fn contract_input_from_create_inputs<CR: ContextReader>(
         tx_gas_priority_fee: cr.tx_gas_priority_fee(),
         tx_caller: cr.tx_caller(),
         tx_access_list: cr.tx_access_list(),
+        tx_blob_hashes: cr.tx_blob_hashes(),
+        tx_max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
     }
 }
 

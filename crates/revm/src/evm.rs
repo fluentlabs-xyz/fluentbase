@@ -38,7 +38,6 @@ use fluentbase_core::{
     helpers::calc_storage_key,
     wasm::{call::_wasm_call, create::_wasm_create},
 };
-use fluentbase_sdk::LowLevelAPI;
 use fluentbase_sdk::{
     Account,
     AccountCheckpoint,
@@ -49,6 +48,7 @@ use fluentbase_sdk::{
     EvmCallMethodOutput,
     EvmCreateMethodInput,
     EvmCreateMethodOutput,
+    LowLevelAPI,
     LowLevelSDK,
     WasmCallMethodInput,
     WasmCreateMethodInput,
@@ -606,6 +606,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             tx_gas_priority_fee: self.context.evm.env.tx.gas_priority_fee,
             tx_caller: self.context.evm.env.tx.caller,
             tx_access_list: self.context.evm.env.tx.access_list.clone(),
+            tx_blob_hashes: self.context.evm.env.tx.blob_hashes.clone(),
+            tx_max_fee_per_blob_gas: self.context.evm.env.tx.max_fee_per_blob_gas,
         }
     }
 
