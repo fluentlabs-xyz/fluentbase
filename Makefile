@@ -1,10 +1,12 @@
 all: build
 
+SKIP_EXAMPLES=n
+
 .PHONY: build
 build:
 	clear
 	cd crates/contracts && $(MAKE)
-	cd examples && $(MAKE)
+	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
 	cd crates/genesis && $(MAKE)
 	notify-send "fluentbase" "build finished" || true
 
