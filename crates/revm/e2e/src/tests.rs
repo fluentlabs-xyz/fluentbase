@@ -30,21 +30,21 @@ macro_rules! define_tests {
 
 mod specific_tests {
     define_tests! {
-        fn t04("tests/GeneralStateTests/Pyspecs/shanghai/eip3651_warm_coinbase/warm_coinbase_gas_usage.json"); // account code mismatch
+        fn t01("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhBounds.json"); // storage value mismatch
     }
 }
 
 mod all_that_fail {
     define_tests! {
-        fn t04("tests/GeneralStateTests/Pyspecs/shanghai/eip3651_warm_coinbase/warm_coinbase_gas_usage.json"); // account code mismatch
+        // fn t04("tests/GeneralStateTests/Pyspecs/shanghai/eip3651_warm_coinbase/warm_coinbase_gas_usage.json"); // account code mismatch
 
         fn t39("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromContractInitialization.json"); // missing FLUENT account
 
         fn t38("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromCalledContract.json"); // missing storage key
         fn t40("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromTransaction.json"); // missing storage key
 
-        fn t01("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhBounds.json"); // storage value mismatch
-        fn t02("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhashOutOfRange.json"); // storage value mismatch
+        // fn t01("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhBounds.json"); // storage value mismatch
+        // fn t02("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhashOutOfRange.json"); // storage value mismatch
         fn t03("tests/GeneralStateTests/Pyspecs/cancun/eip6780_selfdestruct/create_selfdestruct_same_tx.json"); // storage value mismatch
         fn t09("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcallcode_01.json"); // storage value mismatch
         fn t10("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcallcodecallcode_011.json"); // storage value mismatch

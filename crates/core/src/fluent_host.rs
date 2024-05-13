@@ -1,5 +1,4 @@
 use crate::debug_log;
-use alloc::vec;
 use core::mem::take;
 use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI};
 use revm_interpreter::{
@@ -58,8 +57,8 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     chain_id: None, // no checks
                     access_list: cr.tx_access_list(),
                     gas_priority_fee: cr.tx_gas_priority_fee(),
-                    blob_hashes: vec![],
-                    max_fee_per_blob_gas: None,
+                    blob_hashes: cr.tx_blob_hashes(),
+                    max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
