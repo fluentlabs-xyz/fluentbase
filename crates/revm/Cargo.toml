@@ -26,13 +26,10 @@ fluentbase-core = { workspace = true, default-features = false, features = ["ecl
 fluentbase-types = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 
-rwasm = { workspace = true, default-features = false }
-
 # misc
 auto_impl = { version = "1.2", default-features = false }
 cfg-if = "1.0"
 dyn-clone = "1.0"
-regex = { workspace = true }
 
 # Optional
 serde = { version = "1.0", default-features = false, features = [
@@ -50,7 +47,6 @@ tokio = { version = "1.36", features = [
 ], optional = true }
 ethers-providers = { version = "2.0", optional = true }
 ethers-core = { version = "2.0", optional = true }
-lazy_static = { workspace = true }
 
 [dev-dependencies]
 ethers-contract = { version = "2.0.14", default-features = false }
