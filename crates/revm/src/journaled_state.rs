@@ -602,10 +602,7 @@ impl JournaledState {
                 {
                     account.into()
                 } else {
-                    let mut account = Account::new_not_existing();
-                    account.info.code = None;
-                    account.info.rwasm_code = None;
-                    account
+                    Account::new_not_existing()
                 };
 
                 // journal loading of account. AccessList touch.
