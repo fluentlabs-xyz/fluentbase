@@ -1,6 +1,6 @@
 use alloc::vec;
 use fluentbase_codec::Encoder;
-use fluentbase_core::Account;
+use fluentbase_sdk::Account;
 use fluentbase_sdk::{ContextReader, ContractInput, ExecutionContext, LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{ExitCode, STATE_MAIN};
 
@@ -10,7 +10,7 @@ pub fn main() {
     let ctx = ExecutionContext::default();
     let contract_input = ExecutionContext::DEFAULT.contract_input();
     let evm_contract_address = ExecutionContext::DEFAULT.contract_address();
-    let gas_limit: u32 = ExecutionContext::DEFAULT.contract_gas_limit() as u32;
+    let mut gas_limit: u32 = ExecutionContext::DEFAULT.contract_gas_limit() as u32;
     let contract_input = ContractInput {
         journal_checkpoint: ExecutionContext::DEFAULT.journal_checkpoint().into(),
         contract_gas_limit: gas_limit as u64,
@@ -21,7 +21,7 @@ pub fn main() {
         ..Default::default()
     };
     let contract_input_vec = contract_input.encode_to_vec(0);
-    let account = Account::new_from_jzkt(evm_contract_address);
+    let account = Account::new(evm_contract_address);
     let rwasm_bytecode_hash = account.rwasm_code_hash;
 
     let exit_code = LowLevelSDK::sys_exec_hash(
@@ -30,7 +30,7 @@ pub fn main() {
         contract_input_vec.len() as u32,
         core::ptr::null_mut(),
         0,
-        &gas_limit as *const u32,
+        &mut gas_limit,
         STATE_MAIN,
     );
     if exit_code != ExitCode::Ok.into_i32() {

@@ -320,8 +320,8 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         hex::encode(&contract.input),
         depth,
     );
-    if depth == 1024 {
-        debug_log!("wow");
+    if depth >= 1024 {
+        debug_log!("depth limit reached: {}", depth);
     }
     let contract_address = contract.address;
 
