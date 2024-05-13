@@ -1,11 +1,10 @@
 //! GasIspector. Helper Inspector to calculate gas for others.
 
-use crate::interpreter::CallOutcome;
-
 use crate::{
-    interpreter::{CallInputs, CreateInputs, CreateOutcome},
+    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome},
     primitives::db::Database,
-    EvmContext, Inspector,
+    EvmContext,
+    Inspector,
 };
 
 /// Helper [Inspector] that keeps track of gas.
@@ -74,14 +73,13 @@ impl<DB: Database> Inspector<DB> for GasInspector {
 #[cfg(test)]
 mod tests {
 
-    use crate::interpreter::CallOutcome;
-    use crate::interpreter::CreateOutcome;
-
     use crate::{
         inspectors::GasInspector,
-        interpreter::{CallInputs, CreateInputs, Interpreter},
+        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
         primitives::Log,
-        Database, EvmContext, Inspector,
+        Database,
+        EvmContext,
+        Inspector,
     };
 
     #[derive(Default, Debug)]

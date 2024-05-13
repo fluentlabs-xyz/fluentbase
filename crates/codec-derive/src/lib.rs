@@ -1,14 +1,12 @@
 #![allow(unused_imports)]
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::__private::Span;
-use quote::{format_ident, quote, ToTokens};
+use quote::{__private::Span, format_ident, quote, ToTokens};
 use syn::{self, Data, Fields, Ident};
 
 #[proc_macro]
 pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
-    use crypto_hashes::digest::Digest;
-    use crypto_hashes::sha3::Keccak256;
+    use crypto_hashes::{digest::Digest, sha3::Keccak256};
     let mut hash = Keccak256::new();
     hash.update(token.to_string());
     let mut dst = [0u8; 4];

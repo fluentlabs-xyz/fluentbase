@@ -28,23 +28,38 @@ pub mod sys_write;
 pub mod wasm_to_rwasm;
 pub mod wasm_to_rwasm_size;
 
-use crate::instruction::debug_log::DebugLog;
-use crate::instruction::sys_fuel::SysFuel;
-use crate::instruction::wasm_to_rwasm::WasmToRwasm;
-use crate::instruction::wasm_to_rwasm_size::WasmToRwasmSize;
 use crate::{
     impl_runtime_handler,
     instruction::{
-        crypto_ecrecover::CryptoEcrecover, crypto_keccak256::CryptoKeccak256,
-        crypto_poseidon::CryptoPoseidon, crypto_poseidon2::CryptoPoseidon2,
-        jzkt_checkpoint::JzktCheckpoint, jzkt_commit::JzktCommit,
-        jzkt_compute_root::JzktComputeRoot, jzkt_emit_log::JzktEmitLog, jzkt_get::JzktGet,
-        jzkt_open::JzktOpen, jzkt_preimage_copy::JzktPreimageCopy,
-        jzkt_preimage_size::JzktPreimageSize, jzkt_remove::JzktRemove, jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate, jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec_hash::SysExecHash, sys_forward_output::SysForwardOutput, sys_halt::SysHalt,
-        sys_input_size::SysInputSize, sys_output_size::SysOutputSize, sys_read::SysRead,
-        sys_read_output::SysReadOutput, sys_state::SysState, sys_write::SysWrite,
+        crypto_ecrecover::CryptoEcrecover,
+        crypto_keccak256::CryptoKeccak256,
+        crypto_poseidon::CryptoPoseidon,
+        crypto_poseidon2::CryptoPoseidon2,
+        debug_log::DebugLog,
+        jzkt_checkpoint::JzktCheckpoint,
+        jzkt_commit::JzktCommit,
+        jzkt_compute_root::JzktComputeRoot,
+        jzkt_emit_log::JzktEmitLog,
+        jzkt_get::JzktGet,
+        jzkt_open::JzktOpen,
+        jzkt_preimage_copy::JzktPreimageCopy,
+        jzkt_preimage_size::JzktPreimageSize,
+        jzkt_remove::JzktRemove,
+        jzkt_rollback::JzktRollback,
+        jzkt_update::JzktUpdate,
+        jzkt_update_preimage::JzktUpdatePreimage,
+        sys_exec_hash::SysExecHash,
+        sys_forward_output::SysForwardOutput,
+        sys_fuel::SysFuel,
+        sys_halt::SysHalt,
+        sys_input_size::SysInputSize,
+        sys_output_size::SysOutputSize,
+        sys_read::SysRead,
+        sys_read_output::SysReadOutput,
+        sys_state::SysState,
+        sys_write::SysWrite,
+        wasm_to_rwasm::WasmToRwasm,
+        wasm_to_rwasm_size::WasmToRwasmSize,
     },
     RuntimeContext,
 };

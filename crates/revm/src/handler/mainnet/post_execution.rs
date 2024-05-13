@@ -1,9 +1,16 @@
 use crate::{
     interpreter::Gas,
     primitives::{
-        db::Database, EVMError, ExecutionResult, ResultAndState, Spec, SpecId::LONDON, U256,
+        db::Database,
+        EVMError,
+        ExecutionResult,
+        ResultAndState,
+        Spec,
+        SpecId::LONDON,
+        U256,
     },
-    Context, FrameResult,
+    Context,
+    FrameResult,
 };
 use fluentbase_types::ExitCode;
 use revm_primitives::SuccessReason;

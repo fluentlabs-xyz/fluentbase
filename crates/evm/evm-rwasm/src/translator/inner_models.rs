@@ -46,7 +46,8 @@ impl CreateInputs {
         Address::new([0; 20])
     }
 
-    /// Returns the address that this create call will create, without calculating the init code hash.
+    /// Returns the address that this create call will create, without calculating the init code
+    /// hash.
     ///
     /// Note: `hash` must be `keccak256(&self.init_code)`.
     pub fn created_address_with_hash(&self, nonce: u64, hash: &B256) -> Address {

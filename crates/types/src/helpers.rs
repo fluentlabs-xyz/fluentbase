@@ -1,10 +1,13 @@
-use crate::SysFuncIdx::SYS_STATE;
-use crate::{create_sovereign_import_linker, ExitCode, STATE_DEPLOY, STATE_MAIN};
-use alloc::boxed::Box;
-use alloc::string::ToString;
-use alloc::vec;
-use alloc::vec::Vec;
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{RwasmConfig, StateRouterConfig};
-use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
-use rwasm::Error;
+use crate::{
+    create_sovereign_import_linker,
+    ExitCode,
+    SysFuncIdx::SYS_STATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
+use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+use rwasm::{
+    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
+    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    Error,
+};

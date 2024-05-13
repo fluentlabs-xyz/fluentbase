@@ -1,12 +1,11 @@
-use crate::primitives::Bytecode;
-
 use super::analysis::{to_analysed, BytecodeLocked};
+use crate::primitives::Bytecode;
 
 /// EVM contract information.
 #[derive(Clone, Debug, Default)]
 pub struct Contract {
-    /// Bytecode contains contract code, size of original code, analysis with gas block and jump table.
-    /// Note that current code is extended with push padding and STOP at end.
+    /// Bytecode contains contract code, size of original code, analysis with gas block and jump
+    /// table. Note that current code is extended with push padding and STOP at end.
     pub bytecode: BytecodeLocked,
 }
 

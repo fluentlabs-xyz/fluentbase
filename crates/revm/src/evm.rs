@@ -1,43 +1,80 @@
-use crate::interpreter::InstructionResult;
-use crate::types::{bytecode_type_from_account, SStoreResult, SelfDestructResult};
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
     gas::Gas,
     handler::Handler,
-    interpreter::{CallOutcome, CreateOutcome, InterpreterResult},
+    interpreter::{CallOutcome, CreateOutcome, InstructionResult, InterpreterResult},
     primitives::{
-        specification::SpecId, Address, BlockEnv, CfgEnv, EVMError, EVMResult, EnvWithHandlerCfg,
-        ExecutionResult, HandlerCfg, ResultAndState, TransactTo, TxEnv, B256, U256,
+        specification::SpecId,
+        Address,
+        BlockEnv,
+        CfgEnv,
+        EVMError,
+        EVMResult,
+        EnvWithHandlerCfg,
+        ExecutionResult,
+        HandlerCfg,
+        ResultAndState,
+        TransactTo,
+        TxEnv,
+        B256,
+        U256,
     },
-    Context, ContextWithHandlerCfg, EvmContext, FrameResult, JournalCheckpoint, JournalEntry,
+    types::{bytecode_type_from_account, SStoreResult, SelfDestructResult},
+    Context,
+    ContextWithHandlerCfg,
+    EvmContext,
+    FrameResult,
+    JournalCheckpoint,
+    JournalEntry,
 };
-use core::fmt::Debug;
-use core::{cell::RefCell, fmt, str::from_utf8};
+use core::{cell::RefCell, fmt, fmt::Debug, str::from_utf8};
 use fluentbase_codec::{BufferDecoder, Encoder};
-use fluentbase_core::evm::call::_evm_call;
-use fluentbase_core::evm::sload::_evm_sload;
-use fluentbase_core::evm::sstore::_evm_sstore;
-use fluentbase_core::fluent_host::FluentHost;
-use fluentbase_core::helpers::calc_storage_key;
-use fluentbase_core::wasm::call::_wasm_call;
 use fluentbase_core::{
     consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     debug_log,
-    evm::create::_evm_create,
-    wasm::create::_wasm_create,
+    evm::{call::_evm_call, create::_evm_create, sload::_evm_sload, sstore::_evm_sstore},
+    fluent_host::FluentHost,
+    helpers::calc_storage_key,
+    wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
-    Account, AccountCheckpoint, AccountManager, ContractInput, CoreInput, EvmCallMethodInput,
-    EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput, LowLevelSDK,
-    WasmCallMethodInput, WasmCreateMethodInput, EVM_CALL_METHOD_ID, EVM_CREATE_METHOD_ID,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_FIELDS_COUNT, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, JZKT_STORAGE_COMPRESSION_FLAGS, JZKT_STORAGE_FIELDS_COUNT,
-    WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    Account,
+    AccountCheckpoint,
+    AccountManager,
+    ContractInput,
+    CoreInput,
+    EvmCallMethodInput,
+    EvmCallMethodOutput,
+    EvmCreateMethodInput,
+    EvmCreateMethodOutput,
+    LowLevelSDK,
+    WasmCallMethodInput,
+    WasmCreateMethodInput,
+    EVM_CALL_METHOD_ID,
+    EVM_CREATE_METHOD_ID,
+    JZKT_ACCOUNT_COMPRESSION_FLAGS,
+    JZKT_ACCOUNT_FIELDS_COUNT,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+    JZKT_STORAGE_COMPRESSION_FLAGS,
+    JZKT_STORAGE_FIELDS_COUNT,
+    WASM_CALL_METHOD_ID,
+    WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
-    address, BytecodeType, Bytes, Bytes32, ExitCode, IJournaledTrie, JournalEvent, JournalLog,
-    NATIVE_TRANSFER_ADDRESS, NATIVE_TRANSFER_KECCAK, POSEIDON_EMPTY, STATE_MAIN,
+    address,
+    BytecodeType,
+    Bytes,
+    Bytes32,
+    ExitCode,
+    IJournaledTrie,
+    JournalEvent,
+    JournalLog,
+    NATIVE_TRANSFER_ADDRESS,
+    NATIVE_TRANSFER_KECCAK,
+    POSEIDON_EMPTY,
+    STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Env, Log, LogData};
 use std::vec::Vec;

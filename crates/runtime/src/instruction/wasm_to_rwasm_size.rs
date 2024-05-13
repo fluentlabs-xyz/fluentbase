@@ -1,5 +1,4 @@
-use crate::instruction::wasm_to_rwasm::WasmToRwasm;
-use crate::RuntimeContext;
+use crate::{instruction::wasm_to_rwasm::WasmToRwasm, RuntimeContext};
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 

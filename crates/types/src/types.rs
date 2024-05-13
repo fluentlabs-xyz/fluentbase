@@ -1,7 +1,6 @@
 use crate::U256;
 use alloy_primitives::hex;
-use core::fmt;
-use core::fmt::Formatter;
+use core::{fmt, fmt::Formatter};
 use rwasm::{
     core::{Trap, TrapCode},
     engine::bytecode::FuncIdx,

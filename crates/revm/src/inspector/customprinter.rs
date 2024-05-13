@@ -1,12 +1,13 @@
 //! Custom print inspector, it has step level information of execution.
 //! It is a great tool if some debugging is needed.
 
-use crate::interpreter::{CallOutcome, CreateOutcome};
 use crate::{
     inspectors::GasInspector,
-    interpreter::{CallInputs, CreateInputs, Interpreter},
+    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
     primitives::{Address, U256},
-    Database, EvmContext, Inspector,
+    Database,
+    EvmContext,
+    Inspector,
 };
 
 /// Custom print [Inspector], it has step level information of execution.
@@ -33,8 +34,8 @@ impl<DB: Database> Inspector<DB> for CustomPrintTracer {
         // let memory_size = interp.shared_memory.len();
         //
         // println!(
-        //     "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
-        //     context.journaled_state.depth(),
+        //     "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?},
+        // Data size:{}",     context.journaled_state.depth(),
         //     interp.program_counter(),
         //     gas_remaining,
         //     gas_remaining,
@@ -113,7 +114,8 @@ mod test {
         inspector_handle_register,
         inspectors::CustomPrintTracer,
         primitives::{address, bytes, AccountInfo, SpecId},
-        Evm, InMemoryDB,
+        Evm,
+        InMemoryDB,
     };
 
     #[test]

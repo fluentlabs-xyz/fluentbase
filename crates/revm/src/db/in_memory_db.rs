@@ -1,8 +1,17 @@
 use super::{DatabaseCommit, DatabaseRef, EmptyDB};
 use crate::{
     primitives::{
-        hash_map::Entry, Account, AccountInfo, Address, Bytecode, HashMap, Log, B256, KECCAK_EMPTY,
-        POSEIDON_EMPTY, U256,
+        hash_map::Entry,
+        Account,
+        AccountInfo,
+        Address,
+        Bytecode,
+        HashMap,
+        Log,
+        B256,
+        KECCAK_EMPTY,
+        POSEIDON_EMPTY,
+        U256,
     },
     Database,
 };

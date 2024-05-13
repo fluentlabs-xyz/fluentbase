@@ -1,12 +1,22 @@
-use std::prelude::v1::*;
-
-use core::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
-
 use crate::{
-    node_bytes, Byte32, Database, Error, Hash, HashScheme, Node, NodeValue, PreimageDatabase,
-    ZkTrie, MAGIC_HASH, MAGIC_SMT_BYTES,
+    node_bytes,
+    Byte32,
+    Database,
+    Error,
+    Hash,
+    HashScheme,
+    Node,
+    NodeValue,
+    PreimageDatabase,
+    ZkTrie,
+    MAGIC_HASH,
+    MAGIC_SMT_BYTES,
+};
+use core::cell::RefCell;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    prelude::v1::*,
+    sync::Arc,
 };
 
 pub trait KeyValueWriter {

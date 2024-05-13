@@ -1,10 +1,9 @@
-use crate::gas;
-use fluentbase_types::ExitCode;
-
 use crate::{
+    gas,
     primitives::{db::Database, EVMError, Env, InvalidTransaction, Spec},
     Context,
 };
+use fluentbase_types::ExitCode;
 
 /// Validate environment for the mainnet.
 pub fn validate_env<SPEC: Spec, DB: Database>(env: &Env) -> Result<(), EVMError<ExitCode>> {

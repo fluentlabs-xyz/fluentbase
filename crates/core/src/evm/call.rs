@@ -1,11 +1,21 @@
-use crate::debug_log;
-use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
+use crate::{
+    debug_log,
+    helpers::{exec_evm_bytecode, exit_code_from_evm_error},
+};
 use fluentbase_sdk::{
-    AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput, LowLevelAPI,
+    AccountManager,
+    ContextReader,
+    EvmCallMethodInput,
+    EvmCallMethodOutput,
+    LowLevelAPI,
 };
 use fluentbase_types::{ExitCode, U256};
 use revm_interpreter::{
-    analysis::to_analysed, primitives::Bytecode, return_ok, BytecodeLocked, Contract,
+    analysis::to_analysed,
+    primitives::Bytecode,
+    return_ok,
+    BytecodeLocked,
+    Contract,
     InstructionResult,
 };
 

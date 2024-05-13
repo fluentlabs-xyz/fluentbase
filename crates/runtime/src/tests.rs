@@ -1,10 +1,15 @@
 use crate::{runtime::Runtime, DefaultEmptyRuntimeDatabase, RuntimeContext};
-use fluentbase_types::SysFuncIdx::SYS_STATE;
-use fluentbase_types::{create_sovereign_import_linker, STATE_DEPLOY, STATE_MAIN};
+use fluentbase_types::{
+    create_sovereign_import_linker,
+    SysFuncIdx::SYS_STATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
 use hex_literal::hex;
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{RwasmConfig, StateRouterConfig};
-use rwasm::rwasm::{BinaryFormat, RwasmModule};
+use rwasm::{
+    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
+    rwasm::{BinaryFormat, RwasmModule},
+};
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
     let import_linker = Runtime::new_sovereign_linker();

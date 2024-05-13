@@ -146,9 +146,9 @@ impl From<InstructionResult> for SuccessOrHalt {
             InstructionResult::SelfDestruct => Self::Success(Eval::SelfDestruct),
             InstructionResult::Revert => Self::Revert,
             InstructionResult::CallTooDeep => Self::Halt(Halt::CallTooDeep), /* not gonna happen for first call */
-            InstructionResult::OutOfFund => Self::Halt(Halt::OutOfFund),     /* Check for first
-                                                                               * call is done
-                                                                               * separately. */
+            InstructionResult::OutOfFund => Self::Halt(Halt::OutOfFund),     /* Check for first */
+            // call is done
+            // separately.
             InstructionResult::OutOfGas => Self::Halt(Halt::OutOfGas(OutOfGasError::BasicOutOfGas)),
             InstructionResult::MemoryLimitOOG => {
                 Self::Halt(Halt::OutOfGas(OutOfGasError::MemoryLimit))

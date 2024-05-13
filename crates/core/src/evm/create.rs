@@ -1,16 +1,27 @@
-use crate::debug_log;
-use crate::helpers::{exec_evm_bytecode, exit_code_from_evm_error};
+use crate::{
+    debug_log,
+    helpers::{exec_evm_bytecode, exit_code_from_evm_error},
+};
 use fluentbase_sdk::{
-    Account, AccountManager, ContextReader, EvmCreateMethodInput, EvmCreateMethodOutput,
-    LowLevelAPI, LowLevelSDK,
+    Account,
+    AccountManager,
+    ContextReader,
+    EvmCreateMethodInput,
+    EvmCreateMethodOutput,
+    LowLevelAPI,
+    LowLevelSDK,
 };
 use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::{
     analysis::to_analysed,
+    gas,
     primitives::{Bytecode, Bytes},
-    return_ok, BytecodeLocked, Contract, MAX_CODE_SIZE,
+    return_ok,
+    BytecodeLocked,
+    Contract,
+    InstructionResult,
+    MAX_CODE_SIZE,
 };
-use revm_interpreter::{gas, InstructionResult};
 use revm_primitives::MAX_INITCODE_SIZE;
 
 pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
@@ -124,7 +135,8 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
             .with_gas(result.gas.remaining(), result.gas.refunded());
     }
 
-    // write callee changes to database (lets keep rWASM part empty for now since universal loader is not ready yet)
+    // write callee changes to database (lets keep rWASM part empty for now since universal loader
+    // is not ready yet)
     let (mut contract_account, _) = am.account(contract_account.address);
     contract_account.update_bytecode(am, &result.output, None, &Bytes::new(), None);
 

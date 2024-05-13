@@ -1,5 +1,8 @@
-use crate::primitives::{AccountInfo, Address, Bytecode, B256, KECCAK_EMPTY, U256};
-use crate::{Database, DatabaseRef};
+use crate::{
+    primitives::{AccountInfo, Address, Bytecode, B256, KECCAK_EMPTY, U256},
+    Database,
+    DatabaseRef,
+};
 use ethers_core::types::{BlockId, H160 as eH160, H256, U64 as eU64};
 use ethers_providers::Middleware;
 use std::sync::Arc;
@@ -12,7 +15,8 @@ pub struct EthersDB<M: Middleware> {
 }
 
 impl<M: Middleware> EthersDB<M> {
-    /// create ethers db connector inputs are url and block on what we are basing our database (None for latest)
+    /// create ethers db connector inputs are url and block on what we are basing our database (None
+    /// for latest)
     pub fn new(client: Arc<M>, block_number: Option<BlockId>) -> Option<Self> {
         let client = client;
         let mut out = Self {

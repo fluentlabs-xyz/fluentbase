@@ -1,9 +1,19 @@
 use super::{
-    plain_account::PlainStorage, transition_account::TransitionAccount, CacheAccount, PlainAccount,
+    plain_account::PlainStorage,
+    transition_account::TransitionAccount,
+    CacheAccount,
+    PlainAccount,
 };
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use revm_primitives::{
-    Account, AccountInfo, Address, Bytecode, HashMap, State as EVMState, B256, KECCAK_EMPTY,
+    Account,
+    AccountInfo,
+    Address,
+    Bytecode,
+    HashMap,
+    State as EVMState,
+    B256,
+    KECCAK_EMPTY,
     POSEIDON_EMPTY,
 };
 use std::vec::Vec;
@@ -123,7 +133,8 @@ impl CacheState {
         }
     }
 
-    /// Apply output of revm execution and create account transitions that are used to build BundleState.
+    /// Apply output of revm execution and create account transitions that are used to build
+    /// BundleState.
     pub fn apply_evm_state(&mut self, evm_state: EVMState) -> Vec<(Address, TransitionAccount)> {
         let mut transitions = Vec::with_capacity(evm_state.len());
         for (address, account) in evm_state {

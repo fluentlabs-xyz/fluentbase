@@ -1,13 +1,23 @@
 use crate::{
     handler::mainnet,
-    interpreter::{CallInputs, CreateInputs, SharedMemory},
+    interpreter::{
+        CallInputs,
+        CallOutcome,
+        CreateInputs,
+        CreateOutcome,
+        InterpreterResult,
+        SharedMemory,
+    },
     primitives::{db::Database, EVMError, Spec},
-    CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
+    CallFrame,
+    Context,
+    CreateFrame,
+    Frame,
+    FrameOrResult,
+    FrameResult,
 };
 use fluentbase_types::ExitCode;
 use std::{boxed::Box, sync::Arc};
-
-use crate::interpreter::{CallOutcome, CreateOutcome, InterpreterResult};
 
 /// Handles first frame return handle.
 pub type LastFrameReturnHandle<'a, EXT, DB> =

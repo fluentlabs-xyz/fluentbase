@@ -1,11 +1,15 @@
 use crate::{ExecutionResult, Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{ExitCode, IJournaledTrie};
-use rwasm::core::HostError;
-use rwasm::{core::Trap, Caller};
-use std::fmt::{Display, Formatter};
-use std::mem::take;
-use std::time::{SystemTime, UNIX_EPOCH};
+use rwasm::{
+    core::{HostError, Trap},
+    Caller,
+};
+use std::{
+    fmt::{Display, Formatter},
+    mem::take,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub struct SysExecHash;
 

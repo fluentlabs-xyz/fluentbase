@@ -1,13 +1,19 @@
 use crate::{
-    Account, AccountCheckpoint, LowLevelAPI, LowLevelSDK, JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS, JZKT_ACCOUNT_NONCE_FIELD, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+    Account,
+    AccountCheckpoint,
+    LowLevelAPI,
+    LowLevelSDK,
+    JZKT_ACCOUNT_BALANCE_FIELD,
+    JZKT_ACCOUNT_COMPRESSION_FLAGS,
+    JZKT_ACCOUNT_NONCE_FIELD,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
 };
 use alloc::{vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_codec::BufferDecoder;
-use fluentbase_codec::Encoder;
+use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_codec_derive::Codec;
 use fluentbase_types::{Address, Bytes, Bytes32, B256, U256};
 
@@ -273,9 +279,8 @@ impl ExecutionContext {
 
 #[cfg(test)]
 mod test {
-    use crate::evm::ContextReader;
     use crate::{
-        evm::{ContractInput, ExecutionContext},
+        evm::{ContextReader, ContractInput, ExecutionContext},
         LowLevelSDK,
     };
     use fluentbase_codec::{BufferDecoder, Encoder};

@@ -1,12 +1,9 @@
-use std::{cell::RefCell, sync::Arc};
-
+use crate::{storage::TrieStorage, types::TrieDb};
 use eth_trie::{EthTrie, Trie};
+use fluentbase_types::{Bytes, ExitCode};
 use hex_literal::hex;
 use keccak_hash::H256;
-
-use fluentbase_types::{Bytes, ExitCode};
-
-use crate::{storage::TrieStorage, types::TrieDb};
+use std::{cell::RefCell, sync::Arc};
 
 pub const EMPTY_ROOT_HASH: [u8; 32] =
     hex!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
@@ -116,12 +113,9 @@ impl<DB: eth_trie::DB + TrieDb> TrieStorage for MPTrieStateDb<DB> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use crate::{mptrie::MPTrieStateDb, TrieStorage};
     use eth_trie::MemoryDB;
-
-    use crate::mptrie::MPTrieStateDb;
-    use crate::TrieStorage;
+    use std::sync::Arc;
 
     macro_rules! bytes32 {
         ($val:expr) => {{

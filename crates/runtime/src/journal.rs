@@ -1,10 +1,15 @@
-use crate::types::InMemoryTrieDb;
-use crate::zktrie::ZkTrieStateDb;
-use crate::TrieStorage;
+use crate::{types::InMemoryTrieDb, zktrie::ZkTrieStateDb, TrieStorage};
 use core::mem::take;
 use fluentbase_poseidon::{hash_with_domain, Poseidon};
 use fluentbase_types::{
-    Address, Bytes, ExitCode, IJournaledTrie, JournalCheckpoint, JournalEvent, JournalLog, B256,
+    Address,
+    Bytes,
+    ExitCode,
+    IJournaledTrie,
+    JournalCheckpoint,
+    JournalEvent,
+    JournalLog,
+    B256,
 };
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;

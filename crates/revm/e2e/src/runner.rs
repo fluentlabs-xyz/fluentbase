@@ -15,10 +15,23 @@ use revm::{
     inspectors::TracerEip3155,
     interpreter::CreateScheme,
     primitives::{
-        calc_excess_blob_gas, keccak256, AccountInfo, Bytecode, Bytes, EVMError, Env,
-        ExecutionResult, SpecId, TransactTo, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
+        calc_excess_blob_gas,
+        keccak256,
+        AccountInfo,
+        Bytecode,
+        Bytes,
+        EVMError,
+        Env,
+        ExecutionResult,
+        SpecId,
+        TransactTo,
+        B256,
+        KECCAK_EMPTY,
+        POSEIDON_EMPTY,
+        U256,
     },
-    Evm, State,
+    Evm,
+    State,
 };
 use serde_json::json;
 use std::{
@@ -27,7 +40,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
+        Mutex,
     },
     time::{Duration, Instant},
 };
@@ -332,7 +346,8 @@ fn check_evm_execution<EXT1, EXT2>(
                     //     .expect("missing special EVM storage account");
                     // let value2 = fluent_evm_storage
                     //     .storage_slot(U256::from_le_bytes(storage_key))
-                    //     .unwrap_or_else(|| panic!("missing storage key {}", hex::encode(storage_key)));
+                    //     .unwrap_or_else(|| panic!("missing storage key {}",
+                    // hex::encode(storage_key)));
                     let value2 = v2
                         .expect("missing FLUENT account")
                         .account

@@ -2,7 +2,8 @@
 use crate::{
     handler::mainnet,
     primitives::{db::Database, EVMError, EVMResultGeneric, Spec},
-    Context, ContextPrecompiles,
+    Context,
+    ContextPrecompiles,
 };
 use fluentbase_types::ExitCode;
 use std::sync::Arc;

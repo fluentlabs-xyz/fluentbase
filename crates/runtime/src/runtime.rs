@@ -1,28 +1,49 @@
-use crate::instruction::sys_exec_hash::{SysExecHash, SysExecHashResumable};
 use crate::{
-    instruction::{runtime_register_shared_handlers, runtime_register_sovereign_handlers},
+    instruction::{
+        runtime_register_shared_handlers,
+        runtime_register_sovereign_handlers,
+        sys_exec_hash::{SysExecHash, SysExecHashResumable},
+    },
     types::{InMemoryTrieDb, RuntimeError},
     zktrie::ZkTrieStateDb,
     JournaledTrie,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::SysFuncIdx::SYS_STATE;
 use fluentbase_types::{
-    create_shared_import_linker, create_sovereign_import_linker, Bytes, EmptyJournalTrie, ExitCode,
-    IJournaledTrie, F254, POSEIDON_EMPTY, STATE_DEPLOY, STATE_MAIN,
+    create_shared_import_linker,
+    create_sovereign_import_linker,
+    Bytes,
+    EmptyJournalTrie,
+    ExitCode,
+    IJournaledTrie,
+    SysFuncIdx::SYS_STATE,
+    F254,
+    POSEIDON_EMPTY,
+    STATE_DEPLOY,
+    STATE_MAIN,
 };
-use hashbrown::hash_map::Entry;
-use hashbrown::HashMap;
-use rwasm::core::Trap;
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{DropKeep, RwasmConfig, StateRouterConfig};
+use hashbrown::{hash_map::Entry, HashMap};
 use rwasm::{
-    core::ImportLinker, instruction_set, rwasm::RwasmModule, AsContextMut, Caller, Engine,
-    FuelConsumptionMode, Instance, Linker, Module, ResumableCall, Store, Value,
+    core::{ImportLinker, Trap},
+    engine::{bytecode::Instruction, DropKeep, RwasmConfig, StateRouterConfig},
+    instruction_set,
+    rwasm::RwasmModule,
+    AsContextMut,
+    Caller,
+    Engine,
+    FuelConsumptionMode,
+    Instance,
+    Linker,
+    Module,
+    ResumableCall,
+    Store,
+    Value,
 };
-use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
-use std::mem::take;
+use std::{
+    cell::RefCell,
+    fmt::{Debug, Formatter},
+    mem::take,
+};
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
 
@@ -216,7 +237,8 @@ impl CachingRuntime {
     }
 
     fn new_engine() -> Engine {
-        // we can safely use sovereign import linker because all protected are filtered out during translation process
+        // we can safely use sovereign import linker because all protected are filtered out during
+        // translation process
         let import_linker = Runtime::new_sovereign_linker();
         let mut config = RwasmModule::default_config(None);
         config.rwasm_config(RwasmConfig {
@@ -414,7 +436,8 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                         let exit_code = if let Some(exit_code) =
                             state.host_error().i32_exit_status()
                         {
-                            // if we have exit code then just return it, somehow execution failed, maybe if was out of fuel
+                            // if we have exit code then just return it, somehow execution failed,
+                            // maybe if was out of fuel
                             let mut execution_result = self.store.data().execution_result.clone();
                             execution_result.exit_code = exit_code;
                             return Ok(execution_result);

@@ -1,13 +1,26 @@
 use crate::{
     db::Database,
-    interpreter::{CallInputs, CreateInputs, CreateOutcome, Gas, SharedMemory},
+    interpreter::{
+        CallInputs,
+        CallOutcome,
+        CreateInputs,
+        CreateOutcome,
+        Gas,
+        InterpreterResult,
+        SharedMemory,
+    },
     primitives::{EVMError, Env, Spec},
-    return_ok, return_revert, CallFrame, Context, CreateFrame, Frame, FrameOrResult, FrameResult,
+    return_ok,
+    return_revert,
+    CallFrame,
+    Context,
+    CreateFrame,
+    Frame,
+    FrameOrResult,
+    FrameResult,
 };
 use fluentbase_types::ExitCode;
 use std::boxed::Box;
-
-use crate::interpreter::{CallOutcome, InterpreterResult};
 
 /// Helper function called inside [`last_frame_return`]
 #[inline]
@@ -137,11 +150,10 @@ pub fn insert_create_outcome<EXT, DB: Database>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::interpreter::{InstructionResult, InterpreterResult};
     use revm_precompile::Bytes;
     use revm_primitives::CancunSpec;
-
-    use super::*;
 
     /// Creates frame result.
     fn call_last_frame_return(instruction_result: InstructionResult, gas: Gas) -> Gas {

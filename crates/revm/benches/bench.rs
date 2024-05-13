@@ -1,12 +1,24 @@
 use crate::interpreter::{opcode::make_instruction_table, SharedMemory, EMPTY_SHARED_MEMORY};
 use criterion::{
-    criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion,
+    criterion_group,
+    criterion_main,
+    measurement::WallTime,
+    BenchmarkGroup,
+    Criterion,
 };
 use revm::{
     db::BenchmarkDB,
     interpreter::{analysis::to_analysed, BytecodeLocked, Contract, DummyHost, Interpreter},
     primitives::{
-        address, bytes, hex, BerlinSpec, Bytecode, BytecodeState, Bytes, TransactTo, U256,
+        address,
+        bytes,
+        hex,
+        BerlinSpec,
+        Bytecode,
+        BytecodeState,
+        Bytes,
+        TransactTo,
+        U256,
     },
     Evm,
 };

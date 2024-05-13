@@ -1,7 +1,6 @@
 use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
-use rwasm::errors::FuelError;
-use rwasm::{core::Trap, Caller};
+use rwasm::{core::Trap, errors::FuelError, Caller};
 
 pub struct SysFuel;
 

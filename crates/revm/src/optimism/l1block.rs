@@ -4,22 +4,24 @@ use core::ops::Mul;
 const ZERO_BYTE_COST: u64 = 4;
 const NON_ZERO_BYTE_COST: u64 = 16;
 
-/// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the 8-byte sequence number.
-/// Byte offset within the storage slot of the 4-byte baseFeeScalar attribute.
+/// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the 8-byte
+/// sequence number. Byte offset within the storage slot of the 4-byte baseFeeScalar attribute.
 const BASE_FEE_SCALAR_OFFSET: usize = 16;
-/// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the 8-byte sequence number.
-/// Byte offset within the storage slot of the 4-byte blobBaseFeeScalar attribute.
+/// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the 8-byte
+/// sequence number. Byte offset within the storage slot of the 4-byte blobBaseFeeScalar attribute.
 const BLOB_BASE_FEE_SCALAR_OFFSET: usize = 20;
 
 const L1_BASE_FEE_SLOT: U256 = U256::from_limbs([1u64, 0, 0, 0]);
 const L1_OVERHEAD_SLOT: U256 = U256::from_limbs([5u64, 0, 0, 0]);
 const L1_SCALAR_SLOT: U256 = U256::from_limbs([6u64, 0, 0, 0]);
 
-/// [ECOTONE_L1_BLOB_BASE_FEE_SLOT] was added in the Ecotone upgrade and stores the L1 blobBaseFee attribute.
+/// [ECOTONE_L1_BLOB_BASE_FEE_SLOT] was added in the Ecotone upgrade and stores the L1 blobBaseFee
+/// attribute.
 const ECOTONE_L1_BLOB_BASE_FEE_SLOT: U256 = U256::from_limbs([7u64, 0, 0, 0]);
 
-/// As of the ecotone upgrade, this storage slot stores the 32-bit basefeeScalar and blobBaseFeeScalar attributes at
-/// offsets [BASE_FEE_SCALAR_OFFSET] and [BLOB_BASE_FEE_SCALAR_OFFSET] respectively.
+/// As of the ecotone upgrade, this storage slot stores the 32-bit basefeeScalar and
+/// blobBaseFeeScalar attributes at offsets [BASE_FEE_SCALAR_OFFSET] and
+/// [BLOB_BASE_FEE_SCALAR_OFFSET] respectively.
 const ECOTONE_L1_FEE_SCALARS_SLOT: U256 = U256::from_limbs([3u64, 0, 0, 0]);
 
 /// An empty 64-bit set of scalar values.
@@ -53,7 +55,8 @@ pub struct L1BlockInfo {
     pub l1_fee_overhead: Option<U256>,
     /// The current L1 fee scalar.
     pub l1_base_fee_scalar: U256,
-    /// The current L1 blob base fee. None if Ecotone is not activated, except if `empty_scalars` is `true`.
+    /// The current L1 blob base fee. None if Ecotone is not activated, except if `empty_scalars`
+    /// is `true`.
     pub l1_blob_base_fee: Option<U256>,
     /// The current L1 blob base fee scalar. None if Ecotone is not activated.
     pub l1_blob_base_fee_scalar: Option<U256>,
@@ -64,8 +67,9 @@ pub struct L1BlockInfo {
 impl L1BlockInfo {
     /// Try to fetch the L1 block info from the database.
     pub fn try_fetch<DB: Database>(db: &mut DB, spec_id: SpecId) -> Result<L1BlockInfo, ExitCode> {
-        // Ensure the L1 Block account is loaded into the cache after Ecotone. With EIP-4788, it is no longer the case
-        // that the L1 block account is loaded into the cache prior to the first inquiry for the L1 block info.
+        // Ensure the L1 Block account is loaded into the cache after Ecotone. With EIP-4788, it is
+        // no longer the case that the L1 block account is loaded into the cache prior to
+        // the first inquiry for the L1 block info.
         if spec_id.is_enabled_in(SpecId::CANCUN) {
             let _ = db.basic(L1_BLOCK_CONTRACT)?;
         }
@@ -96,8 +100,9 @@ impl L1BlockInfo {
                     .as_ref(),
             );
 
-            // Check if the L1 fee scalars are empty. If so, we use the Bedrock cost function. The L1 fee overhead is
-            // only necessary if `empty_scalars` is true, as it was deprecated in Ecotone.
+            // Check if the L1 fee scalars are empty. If so, we use the Bedrock cost function. The
+            // L1 fee overhead is only necessary if `empty_scalars` is true, as it was
+            // deprecated in Ecotone.
             let empty_scalars = l1_blob_base_fee == U256::ZERO
                 && l1_fee_scalars[BASE_FEE_SCALAR_OFFSET..BLOB_BASE_FEE_SCALAR_OFFSET + 4]
                     == EMPTY_SCALARS;
@@ -138,7 +143,8 @@ impl L1BlockInfo {
         rollup_data_gas_cost
     }
 
-    /// Calculate the gas cost of a transaction based on L1 block data posted on L2, depending on the [SpecId] passed.
+    /// Calculate the gas cost of a transaction based on L1 block data posted on L2, depending on
+    /// the [SpecId] passed.
     pub fn calculate_tx_l1_cost(&self, input: &[u8], spec_id: SpecId) -> U256 {
         // If the input is a deposit transaction or empty, the default value is zero.
         if input.is_empty() || input.first() == Some(&0x7F) {
@@ -167,15 +173,15 @@ impl L1BlockInfo {
     /// [SpecId::ECOTONE] L1 cost function:
     /// `(calldataGas/16)*(l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar)/1e6`
     ///
-    /// We divide "calldataGas" by 16 to change from units of calldata gas to "estimated # of bytes when compressed".
-    /// Known as "compressedTxSize" in the spec.
+    /// We divide "calldataGas" by 16 to change from units of calldata gas to "estimated # of bytes
+    /// when compressed". Known as "compressedTxSize" in the spec.
     ///
     /// Function is actually computed as follows for better precision under integer arithmetic:
     /// `calldataGas*(l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar)/16e6`
     fn calculate_tx_l1_cost_ecotone(&self, input: &[u8], spec_id: SpecId) -> U256 {
-        // There is an edgecase where, for the very first Ecotone block (unless it is activated at Genesis), we must
-        // use the Bedrock cost function. To determine if this is the case, we can check if the Ecotone parameters are
-        // unset.
+        // There is an edgecase where, for the very first Ecotone block (unless it is activated at
+        // Genesis), we must use the Bedrock cost function. To determine if this is the
+        // case, we can check if the Ecotone parameters are unset.
         if self.empty_scalars {
             return self.calculate_tx_l1_cost_bedrock(input, spec_id);
         }
@@ -287,8 +293,8 @@ mod tests {
             ..Default::default()
         };
 
-        // calldataGas * (l1BaseFee * 16 * l1BaseFeeScalar + l1BlobBaseFee * l1BlobBaseFeeScalar) / (16 * 1e6)
-        // = (16 * 3) * (1000 * 16 * 1000 + 1000 * 1000) / (16 * 1e6)
+        // calldataGas * (l1BaseFee * 16 * l1BaseFeeScalar + l1BlobBaseFee * l1BlobBaseFeeScalar) /
+        // (16 * 1e6) = (16 * 3) * (1000 * 16 * 1000 + 1000 * 1000) / (16 * 1e6)
         // = 51
         let input = bytes!("FACADE");
         let gas_cost = l1_block_info.calculate_tx_l1_cost(&input, SpecId::ECOTONE);
