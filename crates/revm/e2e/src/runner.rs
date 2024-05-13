@@ -153,7 +153,7 @@ fn check_evm_execution<EXT1, EXT2>(
     >,
     print_json_outcome: bool,
 ) -> Result<(), TestError> {
-    let logs_root = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
+    let logs_root1 = log_rlp_hash(exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default());
     let logs_root2 = log_rlp_hash(exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default());
 
     let state_root = state_merkle_trie_root(evm.context.evm.db.cache.trie_account().into_iter());
@@ -164,13 +164,13 @@ fn check_evm_execution<EXT1, EXT2>(
         if print_json_outcome {
             let json = json!({
                     "stateRoot": state_root,
-                    "logsRoot": logs_root,
+                    "logsRoot": logs_root1,
                     "output": exec_result1.as_ref().ok().and_then(|r| r.output().cloned()).unwrap_or_default(),
                     "gasUsed": exec_result1.as_ref().ok().map(|r| r.gas_used()).unwrap_or_default(),
                     "pass": error.is_none(),
                     "errorMsg": error.unwrap_or_default(),
                     "evmResult": exec_result1.as_ref().err().map(|e| e.to_string()).unwrap_or("Ok".to_string()),
-                    "postLogsHash": logs_root,
+                    "postLogsHash": logs_root1,
                     "fork": evm.handler.cfg().spec_id,
                     "test": test_name,
                     "d": test.indexes.data,
@@ -227,10 +227,10 @@ fn check_evm_execution<EXT1, EXT2>(
         }
     }
 
-    if logs_root != test.logs {
+    if logs_root1 != test.logs {
         let kind = TestErrorKind::LogsRootMismatch {
             spec_name: spec_name.clone(),
-            got: logs_root,
+            got: logs_root1,
             expected: test.logs,
         };
         print_json_output(Some(kind.to_string()));
@@ -253,7 +253,7 @@ fn check_evm_execution<EXT1, EXT2>(
         });
     }
 
-    if logs_root != logs_root2 {
+    if logs_root1 != logs_root2 {
         let logs1 = exec_result1.as_ref().map(|r| r.logs()).unwrap_or_default();
         let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
         // for log in logs1 {
@@ -281,7 +281,7 @@ fn check_evm_execution<EXT1, EXT2>(
             logs2.len(),
             "EVM <> FLUENT logs count mismatch"
         );
-        assert_eq!(logs_root, logs_root2, "EVM <> FLUENT logs root mismatch");
+        assert_eq!(logs_root1, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
     // compare contracts
@@ -329,11 +329,11 @@ fn check_evm_execution<EXT1, EXT2>(
             );
             println!(" - storage:");
             if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
-                for (slot, value) in s1.iter() {
+                for (slot, value1) in s1.iter() {
                     println!(
                         " - + slot ({}) => ({})",
                         hex::encode(&slot.to_be_bytes::<32>()),
-                        hex::encode(&value.to_be_bytes::<32>())
+                        hex::encode(&value1.to_be_bytes::<32>())
                     );
                     // let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
                     // let fluent_evm_storage = evm2
@@ -362,7 +362,7 @@ fn check_evm_execution<EXT1, EXT2>(
                             )
                         });
                     assert_eq!(
-                        *value,
+                        *value1,
                         *value2,
                         "EVM storage value ({}) mismatch",
                         hex::encode(&slot.to_be_bytes::<32>())
