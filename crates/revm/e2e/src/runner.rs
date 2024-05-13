@@ -467,7 +467,7 @@ pub fn execute_test_suite(
                 nonce: info.nonce.unwrap_or_default(),
                 code_hash,
                 rwasm_code_hash,
-                code: None,
+                code: Some(Bytecode::new()),
                 rwasm_code: Some(Bytecode::new_raw(info.code.clone().unwrap_or_default())),
             };
             let mut account_storage = PlainStorage::default();
