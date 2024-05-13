@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-poseidon = { workspace = true, default-features = false }
-lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
+lazy_static = { workspace = true, default-features = false, features = ["spin_no_std"] }
 halo2curves = { workspace = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 uint = { version = "0.9.5", default-features = false }

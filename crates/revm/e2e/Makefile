@@ -1,5 +1,3 @@
-PACKAGE_VERSION=0.3.1
-
 .PHONY: clone_state_tests
 clone_state_tests:
 	if [ ! -d tests ]; then \
