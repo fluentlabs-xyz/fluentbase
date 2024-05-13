@@ -48,10 +48,7 @@ impl<DB: TrieStorage> JournalTrieInner<DB> {
                 .unwrap()
                 .preimage()
                 .map(|(values, flags)| (values, flags, false)),
-            None => self
-                .storage
-                .get(key)
-                .map(|(values, flags)| (values, flags, true)),
+            None => self.get_committed(key),
         }
     }
 
