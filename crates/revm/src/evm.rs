@@ -38,6 +38,7 @@ use fluentbase_core::{
     helpers::calc_storage_key,
     wasm::{call::_wasm_call, create::_wasm_create},
 };
+use fluentbase_sdk::LowLevelAPI;
 use fluentbase_sdk::{
     Account,
     AccountCheckpoint,
@@ -77,6 +78,7 @@ use fluentbase_types::{
     STATE_MAIN,
 };
 use revm_primitives::{hex, Bytecode, CreateScheme, Env, Log, LogData};
+use std as alloc;
 use std::vec::Vec;
 
 /// EVM call stack limit.
@@ -916,6 +918,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) {
         let mut ctx = self.ctx.borrow_mut();
         let address = Address::from_slice(&key[12..]);
+        debug_log!("am: update_preimage for address {}", address);
         if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD && !preimage.is_empty() {
             ctx.journaled_state.set_code(
                 address,
