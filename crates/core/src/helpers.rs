@@ -1,9 +1,16 @@
-#[cfg(feature = "ecl")]
-use crate::evm::{call::_evm_call, create::_evm_create};
-use crate::fluent_host::FluentHost;
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::marker::PhantomData;
 use core::mem::take;
+
+use revm_interpreter::{
+    opcode::make_instruction_table, CallInputs, CallOutcome, Contract, CreateInputs, CreateOutcome,
+    Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
+};
+use revm_primitives::{CancunSpec, CreateScheme};
+use rwasm::engine::bytecode::Instruction;
+use rwasm::engine::{RwasmConfig, StateRouterConfig};
+use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
+
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     AccountManager, ContextReader, ContractInput, CoreInput, EvmCallMethodInput,
@@ -14,14 +21,10 @@ use fluentbase_types::{
     create_sovereign_import_linker, Address, Bytes, Bytes32, ExitCode, B256, STATE_DEPLOY,
     STATE_MAIN, U256,
 };
-use revm_interpreter::{
-    opcode::make_instruction_table, CallInputs, CallOutcome, Contract, CreateInputs, CreateOutcome,
-    Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
-};
-use revm_primitives::{CancunSpec, CreateScheme};
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{RwasmConfig, StateRouterConfig};
-use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
+
+#[cfg(feature = "ecl")]
+use crate::evm::{call::_evm_call, create::_evm_create};
+use crate::fluent_host::FluentHost;
 
 #[macro_export]
 macro_rules! decode_method_input {
@@ -105,7 +108,7 @@ macro_rules! debug_log {
     }};
     ($($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
-        fluentbase_sdk::LowLevelSDK::debug_log(msg.as_ptr(), msg.len() as u32);
+        debug_log!(msg);
     }};
 }
 
@@ -476,12 +479,11 @@ impl<CR: ContextReader> InputHelper<CR> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use fluentbase_sdk::ExecutionContext;
+    use revm_primitives::b256;
+
     use fluentbase_types::address;
-    use revm_interpreter::analysis::to_analysed;
-    use revm_interpreter::BytecodeLocked;
-    use revm_primitives::{b256, hex, Bytecode};
+
+    use super::*;
 
     #[test]
     fn test_create_address() {

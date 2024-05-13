@@ -1,11 +1,12 @@
-use crate::debug_log;
-use crate::helpers::InputHelper;
-use crate::wasm::{call::_wasm_call, create::_wasm_create};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     ExecutionContext, JzktAccountManager, LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
     WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
 };
+
+use crate::debug_log;
+use crate::helpers::InputHelper;
+use crate::wasm::{call::_wasm_call, create::_wasm_create};
 
 pub fn deploy() {}
 
@@ -35,12 +36,12 @@ pub fn main() {
 
 #[cfg(test)]
 mod tests {
+    use revm_primitives::U256;
+
     use fluentbase_codec::Encoder;
     use fluentbase_sdk::{
         ContractInput, CoreInput, LowLevelSDK, WasmCreateMethodInput, WASM_CREATE_METHOD_ID,
     };
-    use fluentbase_types::{Address, Bytes};
-    use revm_primitives::U256;
 
     #[test]
     fn test_greeting_deploy() {
@@ -52,6 +53,7 @@ mod tests {
                 bytecode: wasm_bytecode.into(),
                 gas_limit: 3_000_000,
                 salt: None,
+                depth: 0,
             },
         };
         let contract_input = ContractInput {

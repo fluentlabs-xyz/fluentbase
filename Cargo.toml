@@ -74,6 +74,8 @@ hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "0.4.1" }
 strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
+lazy_static = { version = "1.4.0" }
+regex = { version = "1.10" }
 
 [profile.bench]
 lto = "fat"
