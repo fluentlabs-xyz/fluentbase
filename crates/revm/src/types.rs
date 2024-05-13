@@ -2,10 +2,7 @@ pub use crate::gas::Gas;
 use core::ops::Range;
 use fluentbase_types::{Address, BytecodeType, Bytes, ExitCode, B256, U256};
 pub use revm_primitives::CreateScheme;
-use revm_primitives::Env;
-use revm_primitives::TransactTo;
-use revm_primitives::TxEnv;
-use revm_primitives::{AccountInfo, Bytecode};
+use revm_primitives::{AccountInfo, Bytecode, Env, TransactTo, TxEnv};
 use std::boxed::Box;
 
 pub type InstructionResult = ExitCode;
@@ -70,8 +67,8 @@ macro_rules! return_revert {
 pub struct Contract {
     /// Contracts data
     pub input: Bytes,
-    /// Bytecode contains contract code, size of original code, analysis with gas block and jump table.
-    /// Note that current code is extended with push padding and STOP at end.
+    /// Bytecode contains contract code, size of original code, analysis with gas block and jump
+    /// table. Note that current code is extended with push padding and STOP at end.
     pub bytecode: Bytecode,
     /// Bytecode hash.
     pub hash: B256,

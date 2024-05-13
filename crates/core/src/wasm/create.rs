@@ -1,7 +1,13 @@
-use crate::debug_log;
-use crate::helpers::wasm2rwasm;
-use fluentbase_sdk::{Account, AccountManager, ContextReader, LowLevelSDK, WasmCreateMethodOutput};
-use fluentbase_sdk::{LowLevelAPI, WasmCreateMethodInput};
+use crate::{debug_log, helpers::wasm2rwasm};
+use fluentbase_sdk::{
+    Account,
+    AccountManager,
+    ContextReader,
+    LowLevelAPI,
+    LowLevelSDK,
+    WasmCreateMethodInput,
+    WasmCreateMethodOutput,
+};
 use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
 use revm_primitives::RWASM_MAX_CODE_SIZE;
 

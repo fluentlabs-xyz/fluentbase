@@ -3,7 +3,8 @@ use fluentbase_types::{ExitCode, IJournaledTrie};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
-    EncodedPoint, PublicKey,
+    EncodedPoint,
+    PublicKey,
 };
 use rwasm::{core::Trap, Caller};
 

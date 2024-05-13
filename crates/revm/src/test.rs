@@ -4,22 +4,44 @@ use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::helpers::calc_create_address;
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY},
-    Genesis, EXAMPLE_GREETING_ADDRESS,
+    Genesis,
+    EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_sdk::{Account, ContractInput, CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
-    address, bytes, Address, Bytes, ExitCode, SysFuncIdx, B256, KECCAK_EMPTY, POSEIDON_EMPTY, U256,
+    address,
+    bytes,
+    Address,
+    Bytes,
+    ExitCode,
+    SysFuncIdx,
+    B256,
+    KECCAK_EMPTY,
+    POSEIDON_EMPTY,
+    U256,
 };
 use lazy_static::lazy_static;
 use regex::Regex;
 use revm_primitives::{
-    db::DatabaseCommit, hex, keccak256, AccountInfo, Bytecode, CreateScheme, EVMError, Env,
-    ExecutionResult, HashMap, Output, TransactTo,
+    db::DatabaseCommit,
+    hex,
+    keccak256,
+    AccountInfo,
+    Bytecode,
+    CreateScheme,
+    EVMError,
+    Env,
+    ExecutionResult,
+    HashMap,
+    Output,
+    TransactTo,
 };
-use rwasm::engine::DropKeep;
-use rwasm::instruction_set;
-use rwasm::rwasm::{BinaryFormat, InstructionSet, RwasmModule};
+use rwasm::{
+    engine::DropKeep,
+    instruction_set,
+    rwasm::{BinaryFormat, InstructionSet, RwasmModule},
+};
 
 #[allow(dead_code)]
 struct TestingContext {
@@ -64,7 +86,8 @@ impl TestingContext {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
+                // it makes not much sense to fill these fields, but it optimizes hash calculation a
+                // bit
                 source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
                 source_code_hash: keccak_hash,
                 rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),

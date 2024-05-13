@@ -3,7 +3,10 @@ use crate::{
     db::Database,
     interpreter::{CallInputs, Contract, Gas, InstructionResult, Interpreter, InterpreterResult},
     primitives::{Address, Bytes, EVMError, Env, HashSet, U256},
-    return_ok, ContextPrecompiles, FrameOrResult, CALL_STACK_LIMIT,
+    return_ok,
+    ContextPrecompiles,
+    FrameOrResult,
+    CALL_STACK_LIMIT,
 };
 use core::{
     fmt,
@@ -224,9 +227,9 @@ impl<DB: Database> EvmContext<DB> {
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) mod test_utils {
     use super::*;
-    use crate::interpreter::{CallContext, CallScheme, Transfer};
     use crate::{
         db::{CacheDB, EmptyDB},
+        interpreter::{CallContext, CallScheme, Transfer},
         journaled_state::JournaledState,
         primitives::{address, AccountInfo, Address, Bytes, Env, HashSet, SpecId, B256, U256},
         InnerEvmContext,
@@ -322,7 +325,9 @@ mod tests {
         db::{CacheDB, EmptyDB},
         interpreter::InstructionResult,
         primitives::{address, AccountInfo, Bytecode, Bytes, Env, U256},
-        Frame, FrameOrResult, JournalEntry,
+        Frame,
+        FrameOrResult,
+        JournalEntry,
     };
     use std::boxed::Box;
     use test_utils::*;

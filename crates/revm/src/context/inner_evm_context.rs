@@ -1,15 +1,36 @@
-use crate::interpreter::{SStoreResult, SelfDestructResult};
 use crate::{
     db::Database,
-    interpreter::{Contract, CreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult},
+    interpreter::{
+        Contract,
+        CreateInputs,
+        Gas,
+        InstructionResult,
+        Interpreter,
+        InterpreterResult,
+        SStoreResult,
+        SelfDestructResult,
+    },
     journaled_state::JournaledState,
     primitives::{
-        keccak256, Account, Address, AnalysisKind, Bytecode, Bytes, CreateScheme, EVMError, Env,
-        HashSet, Spec,
+        keccak256,
+        Account,
+        Address,
+        AnalysisKind,
+        Bytecode,
+        Bytes,
+        CreateScheme,
+        EVMError,
+        Env,
+        HashSet,
+        Spec,
         SpecId::{self, *},
-        B256, U256,
+        B256,
+        U256,
     },
-    return_ok, FrameOrResult, JournalCheckpoint, CALL_STACK_LIMIT,
+    return_ok,
+    FrameOrResult,
+    JournalCheckpoint,
+    CALL_STACK_LIMIT,
 };
 use fluentbase_types::ExitCode;
 use revm_primitives::MAX_CODE_SIZE;
@@ -184,7 +205,8 @@ impl<DB: Database> InnerEvmContext<DB> {
         Ok((acc.info.code_hash, is_cold))
     }
 
-    /// Load storage slot, if storage is not present inside the account then it will be loaded from database.
+    /// Load storage slot, if storage is not present inside the account then it will be loaded from
+    /// database.
     #[inline]
     pub fn sload(
         &mut self,

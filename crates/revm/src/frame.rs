@@ -1,6 +1,12 @@
-use crate::interpreter::{CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult};
 use crate::{
-    interpreter::Interpreter,
+    interpreter::{
+        CallOutcome,
+        CreateOutcome,
+        Gas,
+        InstructionResult,
+        Interpreter,
+        InterpreterResult,
+    },
     primitives::{Address, Output},
     JournalCheckpoint,
 };

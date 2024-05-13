@@ -1,7 +1,9 @@
 use crate::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::{b256, Address, Bytes32, B256, U256};
 use revm_primitives::alloy_primitives::private::alloy_rlp::{
-    Encodable, EMPTY_LIST_CODE, EMPTY_STRING_CODE,
+    Encodable,
+    EMPTY_LIST_CODE,
+    EMPTY_STRING_CODE,
 };
 
 const DOMAIN: [u8; 32] =

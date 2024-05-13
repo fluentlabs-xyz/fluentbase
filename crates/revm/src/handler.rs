@@ -4,14 +4,12 @@ pub mod mainnet;
 pub mod register;
 
 // Exports.
-pub use handle_types::*;
-
+use self::register::{HandleRegister, HandleRegisterBox};
 // Includes.
 use crate::primitives::{db::Database, spec_to_generic, HandlerCfg, Spec, SpecId};
+pub use handle_types::*;
 use register::{EvmHandler, HandleRegisters};
 use std::vec::Vec;
-
-use self::register::{HandleRegister, HandleRegisterBox};
 
 /// Handler acts as a proxy and allow to define different behavior for different
 /// sections of the code. This allows nice integration of different chains or
@@ -180,12 +178,10 @@ impl<'a, EXT, DB: Database> EvmHandler<'a, EXT, DB> {
 
 #[cfg(test)]
 mod test {
-    use core::cell::RefCell;
-
-    use crate::{db::EmptyDB, primitives::EVMError};
-    use std::{rc::Rc, sync::Arc};
-
     use super::*;
+    use crate::{db::EmptyDB, primitives::EVMError};
+    use core::cell::RefCell;
+    use std::{rc::Rc, sync::Arc};
 
     #[test]
     fn test_handler_register_pop() {

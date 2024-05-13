@@ -2,7 +2,8 @@ use crate::{
     inspectors::GasInspector,
     interpreter::{CallInputs, CallOutcome, Interpreter},
     primitives::{db::Database, hex, HashMap, B256, U256},
-    EvmContext, Inspector,
+    EvmContext,
+    Inspector,
 };
 use serde::Serialize;
 use std::io::Write;

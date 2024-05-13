@@ -1,8 +1,7 @@
 use eth_trie::DB;
+use fluentbase_types::{Bytes, F254};
 use hashbrown::HashMap;
 use rwasm::{rwasm::BinaryFormatError, Error as RwasmError};
-
-use fluentbase_types::{Bytes, F254};
 
 pub trait TrieDb {
     fn get_node(&mut self, key: &[u8]) -> Option<Bytes>;

@@ -1,7 +1,9 @@
 use crate::runner::execute_test_suite;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 fn run_e2e_test(test_path: &'static str) {
     let path = if cfg!(target_os = "linux") {

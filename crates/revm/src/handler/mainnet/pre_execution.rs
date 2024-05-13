@@ -6,11 +6,16 @@ use crate::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         db::Database,
-        Account, EVMError, Env, Spec,
+        Account,
+        EVMError,
+        Env,
+        Spec,
         SpecId::{CANCUN, SHANGHAI},
-        TransactTo, U256,
+        TransactTo,
+        U256,
     },
-    Context, ContextPrecompiles,
+    Context,
+    ContextPrecompiles,
 };
 use fluentbase_types::ExitCode;
 
@@ -48,7 +53,8 @@ pub fn load_accounts<SPEC: Spec, EXT, DB: Database>(
 #[inline]
 pub fn deduct_caller_inner<SPEC: Spec>(caller_account: &mut Account, env: &Env) {
     // Subtract gas costs from the caller's account.
-    // We need to saturate the gas cost to prevent underflow in case that `disable_balance_check` is enabled.
+    // We need to saturate the gas cost to prevent underflow in case that `disable_balance_check` is
+    // enabled.
     let mut gas_cost = U256::from(env.tx.gas_limit).saturating_mul(env.effective_gas_price());
 
     // EIP-4844

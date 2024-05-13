@@ -1,12 +1,18 @@
 use crate::RuntimeContext;
-use fluentbase_types::SysFuncIdx::SYS_STATE;
 use fluentbase_types::{
-    create_sovereign_import_linker, ExitCode, IJournaledTrie, STATE_DEPLOY, STATE_MAIN,
+    create_sovereign_import_linker,
+    ExitCode,
+    IJournaledTrie,
+    SysFuncIdx::SYS_STATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
 };
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{RwasmConfig, StateRouterConfig};
-use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
-use rwasm::{core::Trap, Caller};
+use rwasm::{
+    core::Trap,
+    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
+    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    Caller,
+};
 
 pub struct WasmToRwasm;
 

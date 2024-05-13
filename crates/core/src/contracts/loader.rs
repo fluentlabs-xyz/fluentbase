@@ -1,14 +1,16 @@
-use crate::consts::ECL_CONTRACT_ADDRESS;
-use crate::debug_log;
-use alloc::format;
-use byteorder::{BigEndian, ByteOrder};
+use crate::{consts::ECL_CONTRACT_ADDRESS, debug_log};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    Account, AccountManager, CoreInput, EvmCallMethodInput, ExecutionContext, JzktAccountManager,
-    LowLevelAPI, LowLevelSDK, EVM_CALL_METHOD_ID,
+    AccountManager,
+    CoreInput,
+    EvmCallMethodInput,
+    ExecutionContext,
+    JzktAccountManager,
+    LowLevelAPI,
+    LowLevelSDK,
+    EVM_CALL_METHOD_ID,
 };
-use fluentbase_types::{Bytes, ExitCode, STATE_MAIN};
-use revm_primitives::{hex, U256};
+use fluentbase_types::STATE_MAIN;
 
 pub fn deploy() {}
 

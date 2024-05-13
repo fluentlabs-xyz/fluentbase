@@ -1,12 +1,19 @@
+use crate::{
+    debug_log,
+    helpers::InputHelper,
+    wasm::{call::_wasm_call, create::_wasm_create},
+};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    ExecutionContext, JzktAccountManager, LowLevelAPI, LowLevelSDK, WasmCallMethodInput,
-    WasmCreateMethodInput, WASM_CALL_METHOD_ID, WASM_CREATE_METHOD_ID,
+    ExecutionContext,
+    JzktAccountManager,
+    LowLevelAPI,
+    LowLevelSDK,
+    WasmCallMethodInput,
+    WasmCreateMethodInput,
+    WASM_CALL_METHOD_ID,
+    WASM_CREATE_METHOD_ID,
 };
-
-use crate::debug_log;
-use crate::helpers::InputHelper;
-use crate::wasm::{call::_wasm_call, create::_wasm_create};
 
 pub fn deploy() {}
 
@@ -36,12 +43,15 @@ pub fn main() {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::U256;
-
     use fluentbase_codec::Encoder;
     use fluentbase_sdk::{
-        ContractInput, CoreInput, LowLevelSDK, WasmCreateMethodInput, WASM_CREATE_METHOD_ID,
+        ContractInput,
+        CoreInput,
+        LowLevelSDK,
+        WasmCreateMethodInput,
+        WASM_CREATE_METHOD_ID,
     };
+    use revm_primitives::U256;
 
     #[test]
     fn test_greeting_deploy() {

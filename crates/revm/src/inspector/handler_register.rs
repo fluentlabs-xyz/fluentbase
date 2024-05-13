@@ -218,11 +218,12 @@ mod tests {
     use super::*;
     use crate::{
         inspectors::NoOpInspector,
-        interpreter::{CallInputs, CreateInputs, Interpreter},
-        Database, Evm, EvmContext, Inspector,
+        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+        Database,
+        Evm,
+        EvmContext,
+        Inspector,
     };
-
-    use crate::interpreter::{CallOutcome, CreateOutcome};
 
     #[derive(Default, Debug)]
     struct StackInspector {

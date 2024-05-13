@@ -2,9 +2,19 @@ use crate::{
     db::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef},
     handler::register,
     primitives::{
-        BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, Env, EnvWithHandlerCfg, HandlerCfg, SpecId, TxEnv,
+        BlockEnv,
+        CfgEnv,
+        CfgEnvWithHandlerCfg,
+        Env,
+        EnvWithHandlerCfg,
+        HandlerCfg,
+        SpecId,
+        TxEnv,
     },
-    Context, ContextWithHandlerCfg, Evm, Handler,
+    Context,
+    ContextWithHandlerCfg,
+    Evm,
+    Handler,
 };
 use core::marker::PhantomData;
 use std::boxed::Box;
@@ -445,7 +455,11 @@ mod test {
         inspector::inspector_handle_register,
         inspectors::NoOpInspector,
         primitives::{Address, Bytes, PrecompileResult},
-        Context, ContextPrecompile, ContextStatefulPrecompile, Evm, InnerEvmContext,
+        Context,
+        ContextPrecompile,
+        ContextStatefulPrecompile,
+        Evm,
+        InnerEvmContext,
     };
     use std::{cell::RefCell, rc::Rc, sync::Arc};
 

@@ -169,9 +169,9 @@ impl AccountStatus {
         match self {
             // Non existing account can't be destroyed.
             AccountStatus::LoadedNotExisting => AccountStatus::LoadedNotExisting,
-            // If account is created and selfdestructed in the same block, mark it as destroyed again.
-            // Note: there is no big difference between Destroyed and DestroyedAgain in this case,
-            // but was added for clarity.
+            // If account is created and selfdestructed in the same block, mark it as destroyed
+            // again. Note: there is no big difference between Destroyed and
+            // DestroyedAgain in this case, but was added for clarity.
             AccountStatus::DestroyedChanged
             | AccountStatus::DestroyedAgain
             | AccountStatus::Destroyed => AccountStatus::DestroyedAgain,

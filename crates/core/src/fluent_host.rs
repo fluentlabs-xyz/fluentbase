@@ -4,9 +4,21 @@ use core::mem::take;
 use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI};
 use revm_interpreter::{
     primitives::{
-        Address, AnalysisKind, BlockEnv, Bytecode, CfgEnv, Env, Log, TransactTo, TxEnv, B256, U256,
+        Address,
+        AnalysisKind,
+        BlockEnv,
+        Bytecode,
+        CfgEnv,
+        Env,
+        Log,
+        TransactTo,
+        TxEnv,
+        B256,
+        U256,
     },
-    Host, SStoreResult, SelfDestructResult,
+    Host,
+    SStoreResult,
+    SelfDestructResult,
 };
 
 pub struct FluentHost<'cr, 'am, CR: ContextReader, AM: AccountManager> {

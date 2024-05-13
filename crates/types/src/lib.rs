@@ -13,9 +13,8 @@ pub use journal::*;
 mod linker;
 pub use linker::*;
 mod types;
-pub use types::*;
-
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use types::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");

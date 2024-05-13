@@ -1,15 +1,24 @@
-use crate::debug_unreachable;
-use crate::primitives::{
-    bitvec::prelude::{bitvec, BitVec, Lsb0},
-    keccak256, Bytecode, BytecodeState, Bytes, JumpMap, B256, KECCAK_EMPTY,
+use crate::{
+    debug_unreachable,
+    primitives::{
+        bitvec::prelude::{bitvec, BitVec, Lsb0},
+        keccak256,
+        Bytecode,
+        BytecodeState,
+        Bytes,
+        JumpMap,
+        B256,
+        KECCAK_EMPTY,
+    },
+    translator::instructions::opcode,
 };
-use crate::translator::instructions::opcode;
 use alloc::sync::Arc;
 use core::fmt;
 
 /// Perform bytecode analysis.
 ///
-/// The analysis finds and caches valid jump destinations for later execution as an optimization step.
+/// The analysis finds and caches valid jump destinations for later execution as an optimization
+/// step.
 ///
 /// If the bytecode is already analyzed, it is returned as-is.
 pub fn to_analysed(bytecode: Bytecode) -> Bytecode {
