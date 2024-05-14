@@ -4,8 +4,10 @@ use super::{
     utils::recover_address,
 };
 use crate::merkle_trie::state_merkle_trie_root2;
+use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_poseidon::poseidon_hash;
+use fluentbase_revm::EVM_STORAGE_ADDRESS;
 use fluentbase_types::{Address, ExitCode};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use lazy_static::lazy_static;
@@ -137,6 +139,8 @@ fn skip_test(path: &Path) -> bool {
         | "CALLBlake2f_MaxRounds.json"
     ) || path_str.contains("stEOF")
 }
+
+const USE_FLUENT_STORAGE: bool = false;
 
 fn check_evm_execution<EXT1, EXT2>(
     test: &Test,
@@ -284,6 +288,8 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(logs_root1, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
+    const PRINT: bool = true;
+
     // compare contracts
     for (k, v) in evm.context.evm.db.cache.contracts.iter() {
         let v2 = evm2
@@ -298,7 +304,9 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
     }
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        println!("comparing account (0x{})...", hex::encode(address));
+        if PRINT {
+            println!("comparing account (0x{})...", hex::encode(address));
+        }
         let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
             let a2 = v2
@@ -315,9 +323,13 @@ fn check_evm_execution<EXT1, EXT2>(
             //     v2.unwrap()
             // );
             // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
-            println!(" - nonce: {}", a1.nonce);
+            if PRINT {
+                println!(" - nonce: {}", a1.nonce);
+            }
             assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch");
-            println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            if PRINT {
+                println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            }
             assert_eq!(
                 a1.code_hash, a2.code_hash,
                 "EVM <> FLUENT account code_hash mismatch",
@@ -327,7 +339,9 @@ fn check_evm_execution<EXT1, EXT2>(
                 a2.code.as_ref().map(|b| b.original_bytes()),
                 "EVM <> FLUENT account code mismatch",
             );
-            println!(" - storage:");
+            if PRINT {
+                println!(" - storage:");
+            }
             if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
                 for (slot, value1) in s1.iter() {
                     println!(
@@ -381,7 +395,9 @@ fn check_evm_execution<EXT1, EXT2>(
     );
 
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        println!("comparing balances (0x{})...", hex::encode(address));
+        if PRINT {
+            println!("comparing balances (0x{})...", hex::encode(address));
+        }
         let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
             let a2 = v2
@@ -390,7 +406,9 @@ fn check_evm_execution<EXT1, EXT2>(
                 .as_ref()
                 .map(|v| &v.info)
                 .expect("missing FLUENT account");
-            println!(" - balance: {}", a1.balance);
+            if PRINT {
+                println!(" - balance: {}", a1.balance);
+            }
             let balance_diff = if a1.balance > a2.balance {
                 a1.balance - a2.balance
             } else {
@@ -445,7 +463,7 @@ pub fn execute_test_suite(
 
     let selected_test_cases = vec![
         // 16
-        "src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_100000-single_call_self-create_opcode_CREATE]",
+        // "src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_100000-single_call_self-create_opcode_CREATE]",
         // 22
         // src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_0-multiple_calls_single_self_recipient-create_opcode_CREATE]
         // 22
@@ -460,6 +478,7 @@ pub fn execute_test_suite(
         let mut cache_state = revm::CacheState::new(false);
         let mut cache_state2 = fluentbase_revm::CacheState::new(false);
 
+        let mut evm_storage: PlainStorage = PlainStorage::default();
         for (address, info) in &devnet_genesis.alloc {
             let code_hash = info
                 .storage
@@ -484,9 +503,12 @@ pub fn execute_test_suite(
             let mut account_storage = PlainStorage::default();
             if let Some(storage) = info.storage.as_ref() {
                 for (k, v) in storage.iter() {
-                    // let storage_key = calc_storage_key(address, k.as_ptr());
-                    // evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
-                    account_storage.insert(U256::from_be_bytes(k.0), U256::from_be_bytes(v.0));
+                    if USE_FLUENT_STORAGE {
+                        let storage_key = calc_storage_key(address, k.as_ptr());
+                        evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+                    } else {
+                        account_storage.insert(U256::from_be_bytes(k.0), U256::from_be_bytes(v.0));
+                    }
                 }
             }
             cache_state2.insert_account_with_storage(*address, acc_info, account_storage);
@@ -507,28 +529,38 @@ pub fn execute_test_suite(
             );
             // acc_info.rwasm_code_hash = rwasm_hash;
             // acc_info.rwasm_code = Some(Bytecode::new_raw(rwasm_bytecode.clone()));
-            // for (k, v) in info.storage.iter() {
-            //     let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
-            //     println!(
-            //         "mapping EVM storage address=0x{}, slot={}, storage_key={}, value={}",
-            //         hex::encode(&address),
-            //         hex::encode(k.to_be_bytes::<32>().as_slice()),
-            //         hex::encode(&storage_key),
-            //         hex::encode(v.to_be_bytes::<32>().as_slice()),
-            //     );
-            //     evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
-            // }
-            cache_state2.insert_account_with_storage(address, acc_info, info.storage);
+            if USE_FLUENT_STORAGE {
+                for (k, v) in info.storage.iter() {
+                    let storage_key = calc_storage_key(&address, k.to_le_bytes::<32>().as_ptr());
+                    println!(
+                        "mapping EVM storage address=0x{}, slot={}, storage_key={}, value={}",
+                        hex::encode(&address),
+                        hex::encode(k.to_be_bytes::<32>().as_slice()),
+                        hex::encode(&storage_key),
+                        hex::encode(v.to_be_bytes::<32>().as_slice()),
+                    );
+                    evm_storage.insert(U256::from_le_bytes(storage_key), (*v).into());
+                }
+                cache_state2.insert_account_with_storage(
+                    address,
+                    acc_info,
+                    PlainStorage::default(),
+                );
+            } else {
+                cache_state2.insert_account_with_storage(address, acc_info, info.storage);
+            }
         }
 
-        // cache_state2.insert_account_with_storage(
-        //     EVM_STORAGE_ADDRESS,
-        //     AccountInfo {
-        //         nonce: 1,
-        //         ..AccountInfo::default()
-        //     },
-        //     evm_storage,
-        // );
+        if USE_FLUENT_STORAGE {
+            cache_state2.insert_account_with_storage(
+                EVM_STORAGE_ADDRESS,
+                AccountInfo {
+                    nonce: 1,
+                    ..AccountInfo::default()
+                },
+                evm_storage,
+            );
+        }
 
         let mut env = Box::<Env>::default();
         // for mainnet
