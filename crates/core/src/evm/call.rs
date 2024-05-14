@@ -9,7 +9,7 @@ use fluentbase_sdk::{
     EvmCallMethodOutput,
     LowLevelAPI,
 };
-use fluentbase_types::{ExitCode, U256};
+use fluentbase_types::ExitCode;
 use revm_interpreter::{
     analysis::to_analysed,
     primitives::Bytecode,
@@ -25,12 +25,6 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
     debug_log!("ecl(_evm_call): start");
-    // for static calls passing value is not allowed according to standards
-    let is_static = cr.contract_is_static();
-    if is_static && input.value != U256::ZERO {
-        return EvmCallMethodOutput::from_exit_code(ExitCode::WriteProtection)
-            .with_gas(input.gas_limit, 0);
-    }
 
     // call depth check
     if input.depth > 1024 {
@@ -117,9 +111,16 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         // we don't take contract callee, because callee refers to address with bytecode
         address: cr.contract_address(),
         caller: caller_account.address,
-        value: input.value,
+        value: cr.contract_value(),
     };
-    let result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);
+    let result = exec_evm_bytecode(
+        cr,
+        am,
+        contract,
+        input.gas_limit,
+        cr.contract_is_static(),
+        input.depth,
+    );
 
     if matches!(result.result, return_ok!()) {
         am.commit();

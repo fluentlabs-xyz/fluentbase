@@ -223,4 +223,6 @@ impl AccountManager for JzktAccountManager {
     fn transient_storage(&self, _address: Address, _index: U256) -> U256 {
         todo!("how we can support TSTORE (?)")
     }
+
+    fn mark_account_created(&self, _address: Address) {}
 }

@@ -1021,4 +1021,10 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         let mut ctx = self.ctx.borrow_mut();
         ctx.tload(address, index)
     }
+
+    fn mark_account_created(&self, address: Address) {
+        let mut ctx = self.ctx.borrow_mut();
+        let (account, _) = ctx.load_account(address).expect("unexpected EVM error");
+        account.mark_created();
+    }
 }

@@ -288,7 +288,7 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(logs_root1, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
-    const PRINT: bool = true;
+    const PRINT: bool = false;
 
     // compare contracts
     for (k, v) in evm.context.evm.db.cache.contracts.iter() {
@@ -610,6 +610,8 @@ pub fn execute_test_suite(
         let max_fee_per_blob_gas = unit.transaction.max_fee_per_blob_gas;
         env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
 
+        let mut TOTAL_TESTS = 0;
+
         // post and execution
         for (spec_name, tests) in unit.post {
             if matches!(
@@ -626,6 +628,7 @@ pub fn execute_test_suite(
 
             let spec_id = spec_name.to_spec_id();
             let tests_count = tests.len();
+            TOTAL_TESTS += tests_count;
 
             for (index, test) in tests.into_iter().enumerate() {
                 if let Some(test_num) = test_num {
@@ -817,6 +820,8 @@ pub fn execute_test_suite(
                 return Err(e);
             }
         }
+
+        println!("FINISHED!!!!!!!!!!!\n\n{}", TOTAL_TESTS)
     }
     Ok(())
 }
