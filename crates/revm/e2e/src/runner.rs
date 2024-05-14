@@ -349,11 +349,11 @@ fn check_evm_execution<EXT1, EXT2>(
                     //     .unwrap_or_else(|| panic!("missing storage key {}",
                     // hex::encode(storage_key)));
                     let value2 = v2
-                        .expect("missing FLUENT account")
+                        .expect("missing FLUENT account (cache)")
                         .account
                         .as_ref()
                         .map(|v| &v.storage)
-                        .expect("missing FLUENT account")
+                        .expect("missing FLUENT account (storage)")
                         .get(slot)
                         .unwrap_or_else(|| {
                             panic!(
@@ -443,12 +443,23 @@ pub fn execute_test_suite(
 
     // let (rwasm_bytecode, rwasm_hash) = (*EVM_LOADER).clone();
 
+    let selected_test_cases = vec![
+        // 16
+        "src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_100000-single_call_self-create_opcode_CREATE]",
+        // 22
+        // src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_0-multiple_calls_single_self_recipient-create_opcode_CREATE]
+        // 22
+        // src/GeneralStateTestsFiller/Pyspecs/cancun/eip6780_selfdestruct/test_selfdestruct.py::test_create_selfdestruct_same_tx[fork_Cancun-state_test-selfdestruct_contract_initial_balance_100000-multiple_calls_single_self_recipient-create_opcode_CREATE]
+    ];
     for (name, unit) in suite.0 {
+        if selected_test_cases.len() > 0 && !selected_test_cases.contains(&name.as_str()) {
+            continue;
+        }
+        println!("test case: {}", &name);
         // Create database and insert cache
         let mut cache_state = revm::CacheState::new(false);
         let mut cache_state2 = fluentbase_revm::CacheState::new(false);
 
-        // let mut evm_storage: PlainStorage = PlainStorage::default();
         for (address, info) in &devnet_genesis.alloc {
             let code_hash = info
                 .storage
@@ -817,6 +828,7 @@ pub fn run(
         (false, Ok(n)) => n.get(),
     };
     let num_threads = num_threads.min(n_files);
+    // let num_threads = 1;
     let mut handles = Vec::with_capacity(num_threads);
     for i in 0..num_threads {
         let queue = queue.clone();
@@ -831,7 +843,7 @@ pub fn run(
                 return Ok(());
             }
 
-            let (_index, test_path) = {
+            let (index, test_path) = {
                 let (current_idx, queue) = &mut *queue.lock().unwrap();
                 let prev_idx = *current_idx;
                 let Some(test_path) = queue.get(prev_idx).cloned() else {
