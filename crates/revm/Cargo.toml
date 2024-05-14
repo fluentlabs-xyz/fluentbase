@@ -55,6 +55,8 @@ criterion = "0.5"
 indicatif = "0.17"
 fluentbase-genesis = { workspace = true }
 fluentbase-poseidon = { workspace = true }
+rwasm = { workspace = true, default-features = false }
+lazy_static = { workspace = true }
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable", "output_debug"]
