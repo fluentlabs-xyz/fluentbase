@@ -291,9 +291,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let gas_limit = ctx.evm.env.tx.gas_limit - initial_gas_spend;
 
         // Load EVM storage account
-        // let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
-        // evm_storage.info.nonce = 1;
-        // ctx.evm.touch(&EVM_STORAGE_ADDRESS);
+        let (evm_storage, _) = ctx.evm.load_account(EVM_STORAGE_ADDRESS)?;
+        evm_storage.info.nonce = 1;
+        ctx.evm.touch(&EVM_STORAGE_ADDRESS);
 
         // call inner handling of call/create
         let mut frame_result = match ctx.evm.env.tx.transact_to {
@@ -706,25 +706,14 @@ pub const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd
 
 impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     fn checkpoint(&self) -> fluentbase_types::JournalCheckpoint {
-        let mut ctx = self.ctx.borrow_mut();
-        let (a, b) = ctx.journaled_state.checkpoint().into();
-        fluentbase_types::JournalCheckpoint::from((a, b))
+        fluentbase_types::JournalCheckpoint::from_u64(AccountManager::checkpoint(self))
     }
 
     fn get(&self, key: &[u8; 32], committed: bool) -> Option<(Vec<[u8; 32]>, u32, bool)> {
-        let mut ctx = self.ctx.borrow_mut();
         // if first 12 bytes are empty then its account load otherwise storage
         if key[..12] == [0u8; 12] {
             let address = Address::from_slice(&key[12..]);
-            let (account, is_cold) = if committed {
-                (ctx.db.basic(address).ok()??, true)
-            } else {
-                let (account, is_cold) = ctx
-                    .load_account_with_code(address)
-                    .expect("can't load account");
-                (account.info.clone(), is_cold)
-            };
-            let account = Account::from(account);
+            let (account, is_cold) = AccountManager::account(self, address);
             Some((
                 account.get_fields().to_vec(),
                 JZKT_ACCOUNT_COMPRESSION_FLAGS,
@@ -732,47 +721,28 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
             ))
         } else {
             let index = U256::from_le_bytes(*key);
-            if committed {
-                ctx.db
-                    .storage(EVM_STORAGE_ADDRESS, index)
-                    .ok()
-                    .map(|val| (val, true))
-            } else {
-                ctx.sload(EVM_STORAGE_ADDRESS, index).ok()
-            }
-            .map(|(value, is_cold)| {
-                (
-                    vec![value.to_le_bytes::<32>()],
-                    JZKT_STORAGE_COMPRESSION_FLAGS,
-                    is_cold,
-                )
-            })
+            let (value, is_cold) =
+                AccountManager::storage(self, EVM_STORAGE_ADDRESS, index, committed);
+            Some((
+                vec![value.to_le_bytes::<32>()],
+                JZKT_STORAGE_COMPRESSION_FLAGS,
+                is_cold,
+            ))
         }
     }
 
     fn update(&self, key: &[u8; 32], value: &Vec<[u8; 32]>, _flags: u32) {
-        let mut ctx = self.ctx.borrow_mut();
         if value.len() == JZKT_ACCOUNT_FIELDS_COUNT as usize {
             let address = Address::from_slice(&key[12..]);
-            let (account, _) = ctx.load_account_with_code(address).expect("database error");
-            account.mark_touch();
             let jzkt_account = Account::new_from_fields(address, value.as_slice());
-            account.info.balance = jzkt_account.balance;
-            account.info.nonce = jzkt_account.nonce;
-            account.info.code_hash = jzkt_account.source_code_hash;
-            account.info.rwasm_code_hash = jzkt_account.rwasm_code_hash;
+            AccountManager::write_account(self, &jzkt_account);
         } else if value.len() == JZKT_STORAGE_FIELDS_COUNT as usize {
-            // println!(
-            //     "writing storage value: slot={}, value={}",
-            //     hex::encode(U256::from_le_bytes(*key).to_be_bytes::<32>()),
-            //     hex::encode(U256::from_le_bytes(*value.get(0).unwrap()).to_be_bytes::<32>())
-            // );
-            ctx.sstore(
+            AccountManager::write_storage(
+                self,
                 EVM_STORAGE_ADDRESS,
                 U256::from_le_bytes(*key),
                 U256::from_le_bytes(*value.get(0).unwrap()),
-            )
-            .expect("failed to update storage slot");
+            );
         } else {
             panic!("not supported field count: {}", value.len())
         }
@@ -788,70 +758,29 @@ impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     }
 
     fn emit_log(&self, address: Address, topics: Vec<B256>, data: Bytes) {
-        let mut ctx = self.ctx.borrow_mut();
-        if address == NATIVE_TRANSFER_ADDRESS && topics[0] == NATIVE_TRANSFER_KECCAK {
-            assert_eq!(topics.len(), 4, "topics count mismatched");
-            let from = Address::from_slice(&topics[1][12..]);
-            let to = Address::from_slice(&topics[2][12..]);
-            let balance = U256::from_be_slice(&topics[3][..]);
-            ctx.journaled_state
-                .journal
-                .last_mut()
-                .unwrap()
-                .push(JournalEntry::BalanceTransfer { from, to, balance });
-        }
-        ctx.journaled_state.log(Log {
-            address,
-            data: LogData::new_unchecked(topics, data),
-        });
+        AccountManager::log(self, address, data, &topics);
     }
 
     fn commit(&self) -> Result<([u8; 32], Vec<JournalLog>), ExitCode> {
-        let mut ctx = self.ctx.borrow_mut();
-        ctx.journaled_state.checkpoint_commit();
+        AccountManager::commit(self);
         Ok(([0u8; 32], vec![]))
     }
 
     fn rollback(&self, checkpoint: fluentbase_types::JournalCheckpoint) {
-        let mut ctx = self.ctx.borrow_mut();
-        ctx.journaled_state
-            .checkpoint_revert((checkpoint.0, checkpoint.1).into());
+        AccountManager::rollback(self, checkpoint.to_u64());
     }
 
     fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
-        let mut ctx = self.ctx.borrow_mut();
-        let address = Address::from_slice(&key[12..]);
-        if field == JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD {
-            ctx.journaled_state.set_code(
-                address,
-                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
-                None,
-            );
-        } else if field == JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD {
-            ctx.journaled_state.set_rwasm_code(
-                address,
-                Bytecode::new_raw(Bytes::copy_from_slice(preimage)),
-                None,
-            );
-        }
+        AccountManager::update_preimage(self, key, field, preimage);
         true
     }
 
     fn preimage(&self, hash: &[u8; 32]) -> Vec<u8> {
-        let mut ctx = self.ctx.borrow_mut();
-        let bytecode = ctx
-            .code_by_hash(B256::from(hash))
-            .expect("failed to get bytecode by hash");
-        bytecode.to_vec()
+        AccountManager::preimage(self, hash).to_vec()
     }
 
     fn preimage_size(&self, hash: &[u8; 32]) -> u32 {
-        self.ctx
-            .borrow_mut()
-            .db
-            .code_by_hash(B256::from(hash))
-            .map(|b| b.bytecode.len() as u32)
-            .unwrap_or_default()
+        AccountManager::preimage_size(self, hash)
     }
 
     fn journal(&self) -> Vec<JournalEvent> {
@@ -938,9 +867,13 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
 
     fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool) {
         let mut ctx = self.ctx.borrow_mut();
-        // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
-        // ctx.sload(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
-        //     .expect("failed to read storage slot")
+        let (address, slot) = if address != EVM_STORAGE_ADDRESS {
+            // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+            // (EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
+            (address, slot)
+        } else {
+            (address, slot)
+        };
         if committed {
             let value = ctx
                 .db
@@ -957,10 +890,13 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
 
     fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool {
         let mut ctx = self.ctx.borrow_mut();
-        // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
-        // let result = ctx
-        //     .sstore(EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key), value)
-        //     .expect("failed to update storage slot");
+        let (address, slot) = if address != EVM_STORAGE_ADDRESS {
+            // let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
+            // (EVM_STORAGE_ADDRESS, U256::from_le_bytes(storage_key))
+            (address, slot)
+        } else {
+            (address, slot)
+        };
         let result = ctx
             .sstore(address, slot, value)
             .expect("failed to update storage slot");
@@ -968,7 +904,11 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     }
 
     fn log(&self, address: Address, data: Bytes, topics: &[B256]) {
-        self.emit_log(address, topics.into(), data)
+        let mut ctx = self.ctx.borrow_mut();
+        ctx.journaled_state.log(Log {
+            address,
+            data: LogData::new_unchecked(topics.into(), data),
+        });
     }
 
     fn exec_hash(

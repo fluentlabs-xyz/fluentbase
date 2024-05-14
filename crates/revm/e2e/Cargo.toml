@@ -41,3 +41,7 @@ walkdir = "2.5"
 k256 = { version = "0.13.3", features = ["ecdsa"] }
 lazy_static = { workspace = true }
 paste.workspace = true
+
+[features]
+default = ["e2e"]
+e2e = ["fluentbase-core/e2e", "fluentbase-revm/e2e"]
