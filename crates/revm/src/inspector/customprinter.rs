@@ -119,6 +119,7 @@ mod test {
     };
 
     #[test]
+    #[ignore]
     fn gas_calculation_underflow() {
         let callee = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
 

@@ -14,6 +14,7 @@ pub mod consts;
 mod contracts;
 pub mod fluent_host;
 pub mod helpers;
+mod loader;
 #[cfg(any(
     feature = "precompile_blake2",
     feature = "precompile_bn128",
