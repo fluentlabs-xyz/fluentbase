@@ -22,7 +22,6 @@ use fluentbase_types::{
     U256,
 };
 use lazy_static::lazy_static;
-use regex::Regex;
 use revm_primitives::{
     db::DatabaseCommit,
     hex,
@@ -540,6 +539,57 @@ fn test_evm_revert() {
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
+}
+
+#[test]
+fn test_evm_self_destricut() {
+    // deploy greeting EVM contract
+    let mut ctx = TestingContext::default();
+    const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
+    let gas_price = U256::from(0);
+    let result = TxBuilder::create(
+        &mut ctx,
+        SENDER_ADDRESS,
+        hex!("6003600c60003960036000F36003ff").into(),
+        None,
+    )
+    .gas_price(gas_price)
+    .value(U256::from(1e18))
+    .exec()
+    .unwrap();
+    let contract_address = calc_create_address(&SENDER_ADDRESS, 0);
+    assert!(result.is_success());
+    assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
+    assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
+    // call self destruct contract
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address)
+        .gas_price(gas_price)
+        .exec()
+        .unwrap();
+    assert!(result.is_success());
+    assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
+    assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
+    assert_eq!(
+        ctx.get_balance(address!("0000000000000000000000000000000000000003")),
+        U256::from(1e18)
+    );
+    // destruct in nested call
+    let result = TxBuilder::create(
+        &mut ctx,
+        SENDER_ADDRESS,
+        hex!("6000600060006000600073f91c20c0cafbfdc150adff51bbfc5808edde7cb561FFFFF1").into(),
+        None,
+    )
+    .exec()
+    .unwrap();
+    assert!(result.is_success());
+    assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
+    assert_eq!(ctx.get_balance(contract_address), U256::from(0e18));
+    assert_eq!(
+        ctx.get_balance(address!("0000000000000000000000000000000000000003")),
+        U256::from(1e18)
+    );
 }
 
 #[test]
