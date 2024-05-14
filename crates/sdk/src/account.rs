@@ -74,6 +74,7 @@ pub trait AccountManager {
     fn block_hash(&self, number: U256) -> B256;
     fn write_transient_storage(&self, address: Address, index: U256, value: U256);
     fn transient_storage(&self, address: Address, index: U256) -> U256;
+    fn mark_account_created(&self, address: Address);
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +293,8 @@ impl Account {
         if !is_empty || am.is_precompile(&callee_address) {
             return Err(ExitCode::CreateCollision);
         }
+        // tidy hack to make SELFDESTRUCT work for now
+        am.mark_account_created(callee_address);
         // change balance from caller and callee
         if let Err(exit_code) = am.transfer(caller, &mut callee, amount) {
             return Err(exit_code);
