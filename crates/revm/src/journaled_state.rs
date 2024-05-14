@@ -20,8 +20,9 @@ use crate::{
     },
 };
 use core::mem;
+use fluentbase_core::debug_log;
 use fluentbase_types::{Bytes, ExitCode, B256, F254, POSEIDON_EMPTY};
-use revm_primitives::SpecId;
+use revm_primitives::{hex, SpecId};
 use std::vec::Vec;
 
 /// JournalState is internal EVM state that is used to contain state and track changes to that
@@ -752,6 +753,12 @@ impl JournaledState {
         new: U256,
         db: &mut DB,
     ) -> Result<SStoreResult, EVMError<ExitCode>> {
+        // println!(
+        //     "fluentbase: JournaledState(sstore): address {} key {} new_val {}",
+        //     address,
+        //     hex::encode(key.to_be_bytes::<32>()),
+        //     hex::encode(new.to_be_bytes::<32>())
+        // );
         // assume that acc exists and load the slot.
         let (present, is_cold) = self.sload(address, key, db)?;
         let acc = self.state.get_mut(&address).unwrap();
