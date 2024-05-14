@@ -85,8 +85,8 @@ impl TestingContext {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
-                // it makes not much sense to fill these fields, but it optimizes hash calculation a
-                // bit
+                // it makes not much sense to fill these fields, but it reduces hash calculation
+                // time a bit
                 source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
                 source_code_hash: keccak_hash,
                 rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
@@ -100,7 +100,7 @@ impl TestingContext {
         Self { genesis, db }
     }
 
-    pub(crate) fn add_contract<I: Into<RwasmModule>>(
+    pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
         &mut self,
         address: Address,
         rwasm_module: I,
@@ -853,7 +853,7 @@ fn test_codec_case() {
 #[test]
 fn test_simple_nested_call() {
     let mut ctx = TestingContext::default();
-    let account1 = ctx.add_contract(
+    let account1 = ctx.add_wasm_contract(
         address!("0000000000000000000000000000000000000001"),
         instruction_set! {
             I32Const(100)
@@ -891,7 +891,7 @@ fn test_simple_nested_call() {
         Call(SysFuncIdx::SYS_HALT)
     };
     let code_section_len = code_section.len() as u32;
-    ctx.add_contract(
+    ctx.add_wasm_contract(
         address!("0000000000000000000000000000000000000002"),
         RwasmModule {
             code_section,

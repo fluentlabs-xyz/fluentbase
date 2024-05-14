@@ -1,19 +1,21 @@
 #[cfg(feature = "ecl")]
-use crate::evm::{call::_evm_call, create::_evm_create};
-use crate::fluent_host::FluentHost;
+use crate::evm::create::_evm_create;
+use crate::{consts::ECL_CONTRACT_ADDRESS, fluent_host::FluentHost};
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::{marker::PhantomData, mem::take};
-use fluentbase_codec::Encoder;
+use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_sdk::{
     AccountManager,
     ContextReader,
     ContractInput,
     CoreInput,
     EvmCallMethodInput,
+    EvmCallMethodOutput,
     EvmCreateMethodInput,
     ICoreInput,
     LowLevelAPI,
     LowLevelSDK,
+    EVM_CALL_METHOD_ID,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
@@ -147,20 +149,34 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
     // pad address to 32 bytes value (11 bytes to avoid 254 overflow)
     let mut address32: [u8; 32] = [0u8; 32];
     address32[11..31].copy_from_slice(address.as_slice());
-    // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
     let mut storage_key: [u8; 32] = [0u8; 32];
-    LowLevelSDK::crypto_poseidon2(
-        slot0.as_ptr(),
-        slot1.as_ptr(),
-        DOMAIN.as_ptr(),
-        storage_key.as_mut_ptr(),
-    );
-    LowLevelSDK::crypto_poseidon2(
-        address32.as_ptr(),
-        storage_key.as_ptr(),
-        DOMAIN.as_ptr(),
-        storage_key.as_mut_ptr(),
-    );
+    if cfg!(feature = "e2e") {
+        // let's use keccak256 for e2e tests to speedup execution process
+        let mut hashing_data = [0u8; 32 + 20];
+        unsafe {
+            core::ptr::copy(slot32_le_ptr, hashing_data.as_mut_ptr(), 32);
+            core::ptr::copy(address.as_ptr(), hashing_data.as_mut_ptr().offset(32), 20);
+        }
+        LowLevelSDK::crypto_keccak256(
+            hashing_data.as_ptr(),
+            hashing_data.len() as u32,
+            storage_key.as_mut_ptr(),
+        );
+    } else {
+        // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
+        LowLevelSDK::crypto_poseidon2(
+            slot0.as_ptr(),
+            slot1.as_ptr(),
+            DOMAIN.as_ptr(),
+            storage_key.as_mut_ptr(),
+        );
+        LowLevelSDK::crypto_poseidon2(
+            address32.as_ptr(),
+            storage_key.as_ptr(),
+            DOMAIN.as_ptr(),
+            storage_key.as_mut_ptr(),
+        );
+    }
     storage_key
 }
 
@@ -271,33 +287,26 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     let return_memory_offset = inputs.return_memory_offset.clone();
 
     let contract_input = contract_input_from_call_inputs(cr, &inputs, Bytes::new());
-    let call_output = _evm_call(
-        &contract_input,
-        am,
-        EvmCallMethodInput {
-            callee: inputs.contract,
-            // here we take transfer value, because for DELEGATECALL it's not apparent
-            value: inputs.transfer.value,
-            input: take(&mut inputs.input),
-            gas_limit: inputs.gas_limit,
-            depth,
-        },
-    );
+    let method_data = EvmCallMethodInput {
+        callee: inputs.contract,
+        // here we take transfer value, because for DELEGATECALL it's not apparent
+        value: inputs.transfer.value,
+        input: take(&mut inputs.input),
+        gas_limit: inputs.gas_limit,
+        depth,
+    };
+    let call_output = crate::evm::call::_evm_call(&contract_input, am, method_data);
 
     // let core_input = CoreInput {
     //     method_id: EVM_CALL_METHOD_ID,
-    //     method_data: EvmCallMethodInput {
-    //         callee: inputs.contract,
-    //         value: inputs.context.apparent_value,
-    //         input: take(&mut inputs.input),
-    //         gas_limit: inputs.gas_limit,
-    //     },
+    //     method_data,
     // };
-    // let mut gas_limit = inputs.gas_limit as u32 * EVM_GAS_MULTIPLIER as u32;
+    // let mut gas_limit = inputs.gas_limit as u32;
     // let contract_input =
-    //     contract_input_from_call_inputs(cr, inputs,
-    // core_input.encode_to_vec(0).into()).encode_to_vec(0); let (callee, _) =
-    // am.account(ECL_CONTRACT_ADDRESS); let (output_buffer, exit_code) = am.exec_hash(
+    //     contract_input_from_call_inputs(cr, &inputs, core_input.encode_to_vec(0).into())
+    //         .encode_to_vec(0);
+    // let (callee, _) = am.account(ECL_CONTRACT_ADDRESS);
+    // let (output_buffer, exit_code) = am.exec_hash(
     //     callee.rwasm_code_hash.as_ptr(),
     //     &contract_input,
     //     &mut gas_limit as *mut u32,
@@ -309,7 +318,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     //     EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut method_output);
     //     method_output
     // } else {
-    //     EvmCallMethodOutput::from_exit_code(exit_code.into()).with_gas(0)
+    //     EvmCallMethodOutput::from_exit_code(exit_code.into())
     // };
 
     let mut gas = Gas::new(call_output.gas);
