@@ -288,6 +288,8 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(logs_root1, logs_root2, "EVM <> FLUENT logs root mismatch");
     }
 
+    const PRINT: bool = true;
+
     // compare contracts
     for (k, v) in evm.context.evm.db.cache.contracts.iter() {
         let v2 = evm2
@@ -302,7 +304,9 @@ fn check_evm_execution<EXT1, EXT2>(
         assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
     }
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        println!("comparing account (0x{})...", hex::encode(address));
+        if PRINT {
+            println!("comparing account (0x{})...", hex::encode(address));
+        }
         let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
             let a2 = v2
@@ -319,9 +323,13 @@ fn check_evm_execution<EXT1, EXT2>(
             //     v2.unwrap()
             // );
             // assert_eq!(a1.balance, a2.balance, "EVM account balance mismatch");
-            println!(" - nonce: {}", a1.nonce);
+            if PRINT {
+                println!(" - nonce: {}", a1.nonce);
+            }
             assert_eq!(a1.nonce, a2.nonce, "EVM <> FLUENT account nonce mismatch");
-            println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            if PRINT {
+                println!(" - code_hash: {}", hex::encode(a1.code_hash));
+            }
             assert_eq!(
                 a1.code_hash, a2.code_hash,
                 "EVM <> FLUENT account code_hash mismatch",
@@ -331,14 +339,18 @@ fn check_evm_execution<EXT1, EXT2>(
                 a2.code.as_ref().map(|b| b.original_bytes()),
                 "EVM <> FLUENT account code mismatch",
             );
-            println!(" - storage:");
+            if PRINT {
+                println!(" - storage:");
+            }
             if let Some(s1) = v1.account.as_ref().map(|v| &v.storage) {
                 for (slot, value1) in s1.iter() {
-                    println!(
-                        " - + slot ({}) => ({})",
-                        hex::encode(&slot.to_be_bytes::<32>()),
-                        hex::encode(&value1.to_be_bytes::<32>())
-                    );
+                    if PRINT {
+                        println!(
+                            " - + slot ({}) => ({})",
+                            hex::encode(&slot.to_be_bytes::<32>()),
+                            hex::encode(&value1.to_be_bytes::<32>())
+                        );
+                    }
                     let value2 = if USE_FLUENT_STORAGE {
                         let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
                         let fluent_evm_storage = evm2
@@ -385,7 +397,9 @@ fn check_evm_execution<EXT1, EXT2>(
     );
 
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
-        println!("comparing balances (0x{})...", hex::encode(address));
+        if PRINT {
+            println!("comparing balances (0x{})...", hex::encode(address));
+        }
         let v2 = evm2.context.evm.db.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
             let a2 = v2
@@ -394,7 +408,9 @@ fn check_evm_execution<EXT1, EXT2>(
                 .as_ref()
                 .map(|v| &v.info)
                 .expect("missing FLUENT account");
-            println!(" - balance: {}", a1.balance);
+            if PRINT {
+                println!(" - balance: {}", a1.balance);
+            }
             let balance_diff = if a1.balance > a2.balance {
                 a1.balance - a2.balance
             } else {

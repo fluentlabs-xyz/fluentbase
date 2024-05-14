@@ -1,21 +1,20 @@
-#[cfg(feature = "ecl")]
-use crate::evm::create::_evm_create;
-use crate::{consts::ECL_CONTRACT_ADDRESS, fluent_host::FluentHost};
+use crate::{
+    fluent_host::FluentHost,
+    loader::{_loader_call, _loader_create},
+};
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::{marker::PhantomData, mem::take};
-use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     AccountManager,
     ContextReader,
     ContractInput,
     CoreInput,
     EvmCallMethodInput,
-    EvmCallMethodOutput,
     EvmCreateMethodInput,
     ICoreInput,
     LowLevelAPI,
     LowLevelSDK,
-    EVM_CALL_METHOD_ID,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
@@ -251,7 +250,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
 ) -> CreateOutcome {
     // calc create input
     let contract_input = contract_input_from_create_inputs(cr, &inputs, Bytes::new());
-    let create_input = EvmCreateMethodInput {
+    let method_data = EvmCreateMethodInput {
         value: inputs.value,
         bytecode: inputs.init_code,
         gas_limit: inputs.gas_limit,
@@ -261,8 +260,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
         },
         depth,
     };
-
-    let create_output = _evm_create(&contract_input, am, create_input);
+    let create_output = _loader_create(&contract_input, am, method_data);
 
     let mut gas = Gas::new(create_output.gas);
     gas.record_refund(create_output.gas_refund);
@@ -295,7 +293,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
         gas_limit: inputs.gas_limit,
         depth,
     };
-    let call_output = crate::evm::call::_evm_call(&contract_input, am, method_data);
+    let call_output = _loader_call(&contract_input, am, method_data);
 
     // let core_input = CoreInput {
     //     method_id: EVM_CALL_METHOD_ID,
