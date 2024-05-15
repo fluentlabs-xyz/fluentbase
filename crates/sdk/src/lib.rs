@@ -25,8 +25,8 @@ mod runtime;
 mod rwasm;
 mod types;
 mod utils;
-
 pub use types::*;
+pub use utils::*;
 
 #[cfg(not(feature = "std"))]
 #[panic_handler]
