@@ -124,6 +124,7 @@ impl AccountManager for JzktAccountManager {
 
     #[inline(always)]
     fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool) {
+        // TODO(dmitry123): "what if account is newly created? then result value must be zero"
         let mut value = U256::ZERO;
         let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
         let is_cold = LowLevelSDK::jzkt_get(
