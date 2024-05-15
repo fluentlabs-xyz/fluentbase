@@ -90,6 +90,7 @@ macro_rules! result_value {
 }
 
 #[macro_export]
+#[cfg(feature = "e2e")]
 macro_rules! debug_log {
     ($msg:tt) => {{
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
@@ -98,6 +99,11 @@ macro_rules! debug_log {
         let msg = alloc::format!($($arg)*);
         debug_log!(msg);
     }};
+}
+#[cfg(not(feature = "e2e"))]
+macro_rules! debug_log {
+    ($msg:tt) => {};
+    ($($arg:tt)*) => {};
 }
 
 fn contract_input_from_call_inputs<CR: ContextReader>(
