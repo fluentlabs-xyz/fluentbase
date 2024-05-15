@@ -194,7 +194,7 @@ pub(crate) fn div_le(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64Tuple
 }
 
 /// tries to divide two numbers which quotient must be less than u8::MAX.
-/// saves result in a. doesnt panic in any problems - instead UB in such situations.
+/// saves result in a. doesn't panic in any problems - instead UB in such situations.
 #[inline]
 pub(crate) fn try_divide_close_numbers(
     a_start_ptr: *mut u8,

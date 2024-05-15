@@ -520,7 +520,7 @@ impl<H: HashScheme> ZkTrie<H> {
         Ok(proof)
     }
 
-    // Prove is a simlified calling of ProveWithDeletion
+    // Prove is a simplified calling of ProveWithDeletion
     pub fn prove<D, F>(
         &self,
         db: &D,
