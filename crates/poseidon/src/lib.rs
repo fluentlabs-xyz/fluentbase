@@ -1,3 +1,4 @@
+/*
 pub mod hash;
 pub use hash::*;
 mod primitives;
@@ -6,6 +7,7 @@ mod septidon;
 use halo2curves::bn256::Fr;
 pub use poseidon::Poseidon;
 pub use septidon::*;
+*/
 
 pub use scroll_poseidon::poseidon_hash;
 pub mod scroll_poseidon {
@@ -59,6 +61,8 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     h.to_bytes()
 }
 */
+
+/*
 
 #[cfg(test)]
 mod poseidon_tests {
@@ -121,3 +125,4 @@ mod poseidon_tests {
         assert_eq!(expected_repr, repr_h2);
     }
 }
+*/
