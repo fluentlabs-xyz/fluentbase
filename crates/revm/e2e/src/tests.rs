@@ -30,34 +30,12 @@ macro_rules! define_tests {
 
 mod specific_test_that_fails {
     define_tests! {
-        fn t03("tests/GeneralStateTests/Pyspecs/cancun/eip6780_selfdestruct/create_selfdestruct_same_tx.json"); // storage value mismatch
+        fn t20("tests/GeneralStateTests/stRevertTest/RevertInCreateInInit_Paris.json"); // gas
     }
 }
 
 mod all_that_fail {
     define_tests! {
-        // fn t04("tests/GeneralStateTests/Pyspecs/shanghai/eip3651_warm_coinbase/warm_coinbase_gas_usage.json"); // account code mismatch
-
-        fn t39("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromContractInitialization.json"); // missing FLUENT account (OutOfGas)
-
-        fn t38("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromCalledContract.json"); // missing storage key (OutOfFuel)
-        fn t40("tests/GeneralStateTests/stStaticFlagEnabled/CallcodeToPrecompileFromTransaction.json"); // missing storage key (OutOfGas)
-
-        // fn t01("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhBounds.json"); // storage value mismatch
-        // fn t02("tests/GeneralStateTests/Cancun/stEIP4844-blobtransactions/opcodeBlobhashOutOfRange.json"); // storage value mismatch
-        fn t03("tests/GeneralStateTests/Pyspecs/cancun/eip6780_selfdestruct/create_selfdestruct_same_tx.json"); // storage value mismatch
-        fn t09("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcallcode_01.json"); // storage value mismatch
-        fn t10("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcallcodecallcode_011.json"); // storage value mismatch
-        fn t11("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcodecallcallcode_101.json"); // storage value mismatch
-        fn t12("tests/GeneralStateTests/stCallDelegateCodesHomestead/callcallcallcode_001.json"); // storage value mismatch
-        fn t13("tests/GeneralStateTests/stCallDelegateCodesHomestead/callcallcodecallcode_011.json"); // storage value mismatch
-        fn t14("tests/GeneralStateTests/stCallDelegateCodesHomestead/callcodecallcallcode_101.json"); // storage value mismatch
-        fn t19("tests/GeneralStateTests/stDelegatecallTestHomestead/delegatecallValueCheck.json"); // storage value mismatch
-        fn t36("tests/GeneralStateTests/stStaticCall/static_CheckOpcodes2.json"); // storage value mismatch
-        fn t37("tests/GeneralStateTests/stStaticCall/static_CheckOpcodes3.json"); // storage value mismatch
-        fn t42("tests/GeneralStateTests/stCallDelegateCodesCallCodeHomestead/callcallcallcode_001.json"); // storage value mismatch
-        fn t43("tests/GeneralStateTests/stCallDelegateCodesHomestead/callcallcode_01.json"); // storage value mismatch
-
         fn t05("tests/GeneralStateTests/stCallCreateCallCodeTest/Call1024BalanceTooLow.json"); // gas
         fn t06("tests/GeneralStateTests/stCallCreateCallCodeTest/Call1024PreCalls.json"); // gas
         fn t07("tests/GeneralStateTests/stCallCreateCallCodeTest/CallRecursiveBombPreCall.json"); // gas
@@ -66,23 +44,13 @@ mod all_that_fail {
         fn t16("tests/GeneralStateTests/stDelegatecallTestHomestead/Call1024PreCalls.json"); // gas
         fn t17("tests/GeneralStateTests/stDelegatecallTestHomestead/CallRecursiveBombPreCall.json"); // gas
         fn t18("tests/GeneralStateTests/stDelegatecallTestHomestead/Delegatecall1024.json"); // gas
-        fn t20("tests/GeneralStateTests/stRevertTest/RevertInCreateInInit_Paris.json"); // gas
         fn t21("tests/GeneralStateTests/stStaticCall/static_Call1024BalanceTooLow.json"); // gas
         fn t22("tests/GeneralStateTests/stStaticCall/static_Call1024BalanceTooLow2.json"); // gas
         fn t23("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls.json"); // gas
         fn t24("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls2.json"); // gas
         fn t25("tests/GeneralStateTests/stStaticCall/static_Call1024PreCalls3.json"); // gas
-        fn t26("tests/GeneralStateTests/stStaticCall/static_callBasic.json"); // gas
         fn t27("tests/GeneralStateTests/stStaticCall/static_CallRecursiveBombPreCall.json"); // gas
         fn t28("tests/GeneralStateTests/stStaticCall/static_CallRecursiveBombPreCall2.json"); // gas
-        fn t29("tests/GeneralStateTests/stStaticCall/static_callcallcode_01_2.json"); // gas
-        fn t30("tests/GeneralStateTests/stStaticCall/static_callcallcodecall_010_2.json"); // gas
-        fn t31("tests/GeneralStateTests/stStaticCall/static_callcallcodecallcode_011_2.json"); // gas
-        fn t32("tests/GeneralStateTests/stStaticCall/static_callcallcodecallcode_011_OOGE_2.json"); // gas
-        fn t33("tests/GeneralStateTests/stStaticCall/static_callcallcodecallcode_011_OOGMBefore2.json"); // gas
-        fn t34("tests/GeneralStateTests/stStaticCall/static_callcodecallcallcode_101_2.json"); // gas
-        fn t35("tests/GeneralStateTests/stStaticCall/static_callcodecallcallcode_ABCB_RECURSIVE2.json"); // gas
-        fn t41("tests/GeneralStateTests/VMTests/vmIOandFlowOperations/loop_stacklimit.json"); // gas
     }
 }
 
