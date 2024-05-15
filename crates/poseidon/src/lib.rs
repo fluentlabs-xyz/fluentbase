@@ -1,6 +1,6 @@
-/*
 pub mod hash;
 pub use hash::*;
+/*
 mod primitives;
 pub use primitives::*;
 mod septidon;
