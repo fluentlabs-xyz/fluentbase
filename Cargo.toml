@@ -2,6 +2,7 @@
 members = [
     "bin",
     "crates/*",
+    #"crates/poseidon",
     "e2e",
     "examples",
 ]

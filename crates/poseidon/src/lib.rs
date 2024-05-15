@@ -7,6 +7,45 @@ use halo2curves::bn256::Fr;
 pub use poseidon::Poseidon;
 pub use septidon::*;
 
+pub use scroll_poseidon::poseidon_hash;
+pub mod scroll_poseidon {
+    use halo2_proofs::halo2curves::ff::FromUniformBytes;
+    use poseidon_circuit::{hash::Hashable, poseidon::primitives::{Hash, Domain}, HASHABLE_DOMAIN_SPEC};
+    use halo2_proofs::arithmetic::Field;
+    use halo2_proofs::halo2curves::ff::PrimeField;
+    //use halo2curves::bn256::Fr;
+    use halo2_proofs::halo2curves::bn256::Fr;
+    use std::cmp::{min, max};
+    
+    pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
+        type SpecType = <Fr as Hashable>::SpecType;
+        type DomainType = <Fr as Hashable>::DomainType;
+        type Hasher = Hash::<Fr, SpecType, DomainType, 3, 2>;
+        let mut hasher = Hasher::init();
+        let initial = <DomainType as Domain<Fr, 2>>::initial_capacity_element();
+        let layout = <DomainType as Domain<Fr, 2>>::layout(3);
+        let mut state = [Fr::ZERO; 3];
+        const CHUNK_LEN: usize = 31;
+        state[0] = Fr::from_u128(data.len() as u128 * HASHABLE_DOMAIN_SPEC);
+        for chunk in data.chunks(CHUNK_LEN * 2).into_iter() {
+            let len = chunk.len();
+            let mut buffer_a: [u8; 32] = [0u8; 32];
+            let mut buffer_b: [u8; 32] = [0u8; 32];
+            buffer_a[0..31].copy_from_slice(chunk[0..min(len, 31)].iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
+            if len > 31 {
+                buffer_b[0..31].copy_from_slice(chunk[31..min(len, 62)].iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
+            }
+            state[1] += Fr::from_bytes(&buffer_a).unwrap();
+            state[2] += Fr::from_bytes(&buffer_b).unwrap();
+            hasher.permute(&mut state);
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(state[0].to_bytes().iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
+        out
+    }
+}
+
+/*
 pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
     const CHUNK_LEN: usize = 31;
@@ -19,6 +58,7 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
     let h = hasher.squeeze();
     h.to_bytes()
 }
+*/
 
 #[cfg(test)]
 mod poseidon_tests {

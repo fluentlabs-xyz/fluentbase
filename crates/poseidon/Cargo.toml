@@ -12,7 +12,12 @@ categories.workspace = true
 [dependencies]
 poseidon = {git = "https://github.com/scroll-tech/poseidon", rev = "0b9965fbcd9e03559088b8f68489592286bc55e0"}
 lazy_static = "1.4.0"
-halo2curves = { workspace = true }
+#halo2curves = { workspace = false }
+halo2curves = { version = "0.1.0", features = [ "derive_serde" ] }
 bitvec = "1"
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", rev = "04d8dc09bd4df542feccac85e34dff4b38a467d3" }
+#halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2022_09_10" }
+poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", rev = "c6f058bcf3bb0c7933d1979563c414f5cc480f25", default-features = false }
+#ff = "0.13.0"
 
 [dev-dependencies]
