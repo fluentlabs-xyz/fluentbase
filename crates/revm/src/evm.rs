@@ -35,7 +35,6 @@ use fluentbase_core::{
     debug_log,
     evm::{call::_evm_call, create::_evm_create, sload::_evm_sload, sstore::_evm_sstore},
     fluent_host::FluentHost,
-    helpers::calc_storage_key,
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{

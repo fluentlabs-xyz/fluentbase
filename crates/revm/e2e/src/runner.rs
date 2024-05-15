@@ -4,10 +4,10 @@ use super::{
     utils::recover_address,
 };
 use crate::merkle_trie::state_merkle_trie_root2;
-use fluentbase_core::helpers::calc_storage_key;
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_revm::EVM_STORAGE_ADDRESS;
+use fluentbase_sdk::calc_storage_key;
 use fluentbase_types::{Address, ExitCode};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use lazy_static::lazy_static;

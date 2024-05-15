@@ -27,3 +27,4 @@ std = [
     "dep:fluentbase-runtime",
     "byteorder/std",
 ]
+e2e = []
