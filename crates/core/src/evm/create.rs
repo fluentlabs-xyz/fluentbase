@@ -29,7 +29,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
-    debug_log!("ecl(_evm_create): start");
+    debug_log!("ecl(_evm_create): start. gas_limit {}", input.gas_limit);
 
     // check write protection
     let is_static = cr.contract_is_static();

@@ -24,7 +24,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    debug_log!("ecl(_evm_call): start");
+    debug_log!("ecl(_evm_call): start. gas_limit {}", input.gas_limit);
 
     // call depth check
     if input.depth > 1024 {
