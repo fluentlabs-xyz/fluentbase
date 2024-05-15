@@ -1,7 +1,6 @@
-use crate::{
-    fluent_host::FluentHost,
-    loader::{_loader_call, _loader_create},
-};
+use crate::fluent_host::FluentHost;
+#[cfg(feature = "ecl")]
+use crate::{loader::_loader_call, loader::_loader_create};
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::{marker::PhantomData, mem::take};
 use fluentbase_codec::Encoder;
