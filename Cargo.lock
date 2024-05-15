@@ -1551,6 +1551,7 @@ dependencies = [
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-revm",
+ "fluentbase-sdk",
  "fluentbase-types",
  "hash-db",
  "hashbrown",
@@ -3106,6 +3107,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "7.2.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#70d26e0b3e4c95dd3eb3d1d10894d92b8098aee0"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -3122,6 +3124,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "3.4.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#70d26e0b3e4c95dd3eb3d1d10894d92b8098aee0"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -3130,6 +3133,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "5.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#70d26e0b3e4c95dd3eb3d1d10894d92b8098aee0"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -3145,6 +3149,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "3.1.0"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#70d26e0b3e4c95dd3eb3d1d10894d92b8098aee0"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -3357,6 +3362,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#af0d55a1a1e34b84ecd2da6af39f7b74c326c60f"
 dependencies = [
  "byteorder",
  "downcast-rs",

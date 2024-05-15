@@ -125,7 +125,7 @@ impl AccountManager for JzktAccountManager {
     #[inline(always)]
     fn storage(&self, address: Address, slot: U256, committed: bool) -> (U256, bool) {
         let mut value = U256::ZERO;
-        let storage_key = calc_storage_key(address, slot.as_le_slice().as_ptr());
+        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
         let is_cold = LowLevelSDK::jzkt_get(
             storage_key.as_ptr(),
             0,
@@ -137,7 +137,7 @@ impl AccountManager for JzktAccountManager {
 
     #[inline(always)]
     fn write_storage(&self, address: Address, slot: U256, value: U256) -> bool {
-        let storage_key = calc_storage_key(address, slot.as_le_slice().as_ptr());
+        let storage_key = calc_storage_key(&address, slot.as_le_slice().as_ptr());
         LowLevelSDK::jzkt_update(
             storage_key.as_ptr(),
             JZKT_STORAGE_COMPRESSION_FLAGS,

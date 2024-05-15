@@ -10,7 +10,7 @@ const DOMAIN: [u8; 32] =
     b256!("0000000000000000000000000000000000000000000000010000000000000000").0;
 
 #[inline(always)]
-pub fn calc_storage_key(address: Address, slot32_le_ptr: *const u8) -> [u8; 32] {
+pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32] {
     let mut slot0: [u8; 32] = [0u8; 32];
     let mut slot1: [u8; 32] = [0u8; 32];
     // split slot32 into two 16 byte values (slot is always 32 bytes)
@@ -21,20 +21,34 @@ pub fn calc_storage_key(address: Address, slot32_le_ptr: *const u8) -> [u8; 32] 
     // pad address to 32 bytes value (11 bytes to avoid 254 overflow)
     let mut address32: [u8; 32] = [0u8; 32];
     address32[11..31].copy_from_slice(address.as_slice());
-    // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
     let mut storage_key: [u8; 32] = [0u8; 32];
-    LowLevelSDK::crypto_poseidon2(
-        slot0.as_ptr(),
-        slot1.as_ptr(),
-        DOMAIN.as_ptr(),
-        storage_key.as_mut_ptr(),
-    );
-    LowLevelSDK::crypto_poseidon2(
-        address32.as_ptr(),
-        storage_key.as_ptr(),
-        DOMAIN.as_ptr(),
-        storage_key.as_mut_ptr(),
-    );
+    if cfg!(feature = "e2e") {
+        // let's use keccak256 for e2e tests to speedup execution process
+        let mut hashing_data = [0u8; 32 + 20];
+        unsafe {
+            core::ptr::copy(slot32_le_ptr, hashing_data.as_mut_ptr(), 32);
+            core::ptr::copy(address.as_ptr(), hashing_data.as_mut_ptr().offset(32), 20);
+        }
+        LowLevelSDK::crypto_keccak256(
+            hashing_data.as_ptr(),
+            hashing_data.len() as u32,
+            storage_key.as_mut_ptr(),
+        );
+    } else {
+        // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
+        LowLevelSDK::crypto_poseidon2(
+            slot0.as_ptr(),
+            slot1.as_ptr(),
+            DOMAIN.as_ptr(),
+            storage_key.as_mut_ptr(),
+        );
+        LowLevelSDK::crypto_poseidon2(
+            address32.as_ptr(),
+            storage_key.as_ptr(),
+            DOMAIN.as_ptr(),
+            storage_key.as_mut_ptr(),
+        );
+    }
     storage_key
 }
 

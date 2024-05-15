@@ -11,6 +11,7 @@ categories.workspace = true
 
 [dependencies]
 fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-revm = { workspace = true, default-features = false, features = [
     "ethersdb",
     "std",
@@ -44,4 +45,4 @@ paste.workspace = true
 
 [features]
 default = ["e2e"]
-e2e = ["fluentbase-core/e2e", "fluentbase-revm/e2e"]
+e2e = ["fluentbase-core/e2e", "fluentbase-revm/e2e", "fluentbase-sdk/e2e"]

@@ -1,14 +1,13 @@
 use crate::{Evm, InMemoryDB};
 use core::{mem::take, str::from_utf8};
 use fluentbase_codec::{BufferDecoder, Encoder};
-use fluentbase_core::helpers::calc_create_address;
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY},
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_sdk::{Account, ContractInput, CoreInput, EvmCallMethodInput};
+use fluentbase_sdk::{calc_create_address, Account, ContractInput, CoreInput, EvmCallMethodInput};
 use fluentbase_types::{
     address,
     bytes,
