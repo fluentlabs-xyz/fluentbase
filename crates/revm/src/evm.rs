@@ -874,6 +874,10 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             (address, slot)
         };
         if committed {
+            let (account, _) = ctx.load_account(address).expect("failed to load account");
+            if account.is_created() {
+                return (U256::ZERO, true);
+            }
             let value = ctx
                 .db
                 .storage(address, slot)
