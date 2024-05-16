@@ -46,7 +46,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
             caller_account.address,
             callee_account.address,
             hex::encode(input.value.to_be_bytes::<32>())
-        )
+        );
     }
 
     if caller_account.address != callee_account.address {
