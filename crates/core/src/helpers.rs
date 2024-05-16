@@ -103,8 +103,8 @@ macro_rules! debug_log {
 #[cfg(not(feature = "e2e"))]
 #[macro_export]
 macro_rules! debug_log {
-    ($msg:tt) => {};
-    ($($arg:tt)*) => {};
+    ($msg:tt) => {{}};
+    ($($arg:tt)*) => {{}};
 }
 
 fn contract_input_from_call_inputs<CR: ContextReader>(
