@@ -240,7 +240,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     //     EvmCallMethodOutput::from_exit_code(exit_code.into())
     // };
 
-    let mut gas = Gas::new(call_output.gas);
+    let mut gas = Gas::new(call_output.gas_remaining);
     gas.record_refund(call_output.gas_refund);
 
     let interpreter_result = InterpreterResult {
