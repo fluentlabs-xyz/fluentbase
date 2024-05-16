@@ -1,7 +1,8 @@
 use crate::{fr_from_little_endian, fr_to_little_endian, reverse_byte_order, Byte32, Fr};
-use fluentbase_poseidon::MessageHashable;
-use halo2curves::FieldExt;
+use fluentbase_poseidon::hash_msg;
+//use halo2curves::FieldExt;
 use std::{prelude::v1::*, sync::Arc};
+//use poseidon_circuit::HASHABLE_DOMAIN_SPEC;
 
 pub const HASH_DOMAIN_ELEMS_BASE: usize = 256;
 pub const HASH_DOMAIN_BYTE32: usize = 2 * HASH_DOMAIN_ELEMS_BASE;
@@ -29,7 +30,8 @@ impl HashScheme for () {
 pub struct PoseidonHash;
 impl HashScheme for PoseidonHash {
     fn hash_scheme(arr: &[Fr], domain: &Fr) -> Fr {
-        Fr::hash_msg(arr, Some(domain.get_lower_128()))
+        //Fr::hash_msg(arr, Some(domain.get_lower_128()))
+        hash_msg(arr, None)
     }
 }
 pub trait HashScheme: PartialEq + Clone + std::fmt::Debug {

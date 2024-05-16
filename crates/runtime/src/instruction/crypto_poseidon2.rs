@@ -1,8 +1,9 @@
 use crate::RuntimeContext;
-use fluentbase_poseidon::Hashable;
+//use fluentbase_poseidon::Hashable;
 use fluentbase_types::ExitCode;
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use rwasm::{common::Trap, Caller};
+use fluentbase_poseidon::hash_msg_with_domain;
 
 pub struct CryptoPoseidon2;
 
@@ -37,8 +38,9 @@ impl CryptoPoseidon2 {
         let fa = fr_from_bytes(fa)?;
         let fb = fr_from_bytes(fb)?;
         let fd = fr_from_bytes(fd)?;
-        let hasher = Fr::hasher();
-        let h2 = hasher.hash([fa, fb], fd);
+        //let hasher = Fr::hasher();
+        //let h2 = hasher.hash([fa, fb], fd);
+        let h2 = hash_msg_with_domain(&[fa, fb], fd);
         Ok(h2.to_repr())
     }
 }

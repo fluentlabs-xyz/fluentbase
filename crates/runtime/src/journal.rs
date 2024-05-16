@@ -1,5 +1,5 @@
 use crate::TrieStorage;
-use fluentbase_poseidon::{Hashable, Poseidon};
+use fluentbase_poseidon::{hash_msg, poseidon_hash_fr};
 use fluentbase_types::{Address, Bytes, ExitCode, B256};
 use halo2curves::bn256::Fr;
 use hashbrown::HashMap;
@@ -127,6 +127,7 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
     }
 
     pub fn message_hash(val: &[u8]) -> Fr {
+        /*
         let mut hasher = Poseidon::<Fr, 3, 2>::new(8, 56);
         const CHUNK_LEN: usize = 31;
         for chunk in val.chunks(CHUNK_LEN).into_iter() {
@@ -136,6 +137,8 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
             hasher.update(&[v]);
         }
         hasher.squeeze()
+        */
+        poseidon_hash_fr(val)
     }
 
     pub fn compress_value(val: &[u8; 32]) -> Fr {
@@ -144,16 +147,18 @@ impl<'a, DB: TrieStorage + 'a> JournaledTrie<'a, DB> {
         let val1 = Fr::from_bytes(&bytes32).unwrap();
         bytes32[0..16].copy_from_slice(&val[16..]);
         let val2 = Fr::from_bytes(&bytes32).unwrap();
-        let hasher = Fr::hasher();
-        hasher.hash([val1, val2], Self::DOMAIN)
+        //let hasher = Fr::hasher();
+        //hasher.hash([val1, val2], Self::DOMAIN)
+        hash_msg(&[val1, val2], None)
     }
 
     pub fn storage_key(address: &Address, slot: &[u8; 32]) -> [u8; 32] {
         // storage key is `p(address, p(slot_0, slot_1, d), d)`
         let address = Fr::from_bytes(&address.into_word()).unwrap();
         let slot = Self::compress_value(slot);
-        let hasher = Fr::hasher();
-        let key = hasher.hash([address, slot], Self::DOMAIN);
+        //let hasher = Fr::hasher();
+        //let key = hasher.hash([address, slot], Self::DOMAIN);
+        let key = hash_msg(&[address, slot], None);
         key.to_bytes()
     }
 }

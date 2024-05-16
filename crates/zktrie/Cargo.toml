@@ -16,3 +16,4 @@ halo2curves = { workspace = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 uint = "0.9.5"
 byteorder = { workspace = true }
+#poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", rev = "c6f058bcf3bb0c7933d1979563c414f5cc480f25", defau-features = false }
