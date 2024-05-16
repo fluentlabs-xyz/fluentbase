@@ -89,8 +89,8 @@ macro_rules! result_value {
     };
 }
 
-#[macro_export]
 #[cfg(feature = "e2e")]
+#[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
@@ -101,6 +101,7 @@ macro_rules! debug_log {
     }};
 }
 #[cfg(not(feature = "e2e"))]
+#[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {};
     ($($arg:tt)*) => {};
