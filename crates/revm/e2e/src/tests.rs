@@ -30,7 +30,7 @@ macro_rules! define_tests {
 
 mod specific_test_that_fails {
     define_tests! {
-        fn t20("tests/GeneralStateTests/stRevertTest/RevertInCreateInInit_Paris.json"); // gas
+        fn t05("tests/GeneralStateTests/stCallCreateCallCodeTest/Call1024BalanceTooLow.json"); // gas
     }
 }
 
