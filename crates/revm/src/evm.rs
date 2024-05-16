@@ -547,7 +547,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             println!(" - value: 0x{}", hex::encode(&value.to_be_bytes::<32>()));
             println!(
                 " - fuel consumed: {}",
-                gas.remaining() as i64 - call_output.gas as i64
+                gas.remaining() as i64 - call_output.gas_remaining as i64
             );
             println!(" - exit code: {}", call_output.exit_code);
             if call_output.output.iter().all(|c| c.is_ascii()) {
@@ -563,7 +563,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             }
         }
 
-        let mut gas = Gas::new(call_output.gas);
+        let mut gas = Gas::new(call_output.gas_remaining);
         gas.record_refund(call_output.gas_refund);
 
         CallOutcome {
@@ -985,7 +985,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         Some(EvmCallMethodOutput {
             output: result.output,
             exit_code: result.result.into_i32(),
-            gas: result.gas.remaining(),
+            gas_remaining: result.gas.remaining(),
             gas_refund: result.gas.refunded(),
         })
     }

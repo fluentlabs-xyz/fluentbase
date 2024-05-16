@@ -85,7 +85,7 @@ pub struct EvmCallMethodInput {
 pub struct EvmCallMethodOutput {
     pub output: Bytes,
     pub exit_code: i32,
-    pub gas: u64,
+    pub gas_remaining: u64,
     pub gas_refund: i64,
 }
 
@@ -94,7 +94,7 @@ impl EvmCallMethodOutput {
         Self {
             output: Default::default(),
             exit_code: exit_code.into_i32(),
-            gas: 0,
+            gas_remaining: 0,
             gas_refund: 0,
         }
     }
@@ -105,7 +105,7 @@ impl EvmCallMethodOutput {
     }
 
     pub fn with_gas(mut self, gas: u64, refund: i64) -> Self {
-        self.gas = gas;
+        self.gas_remaining = gas;
         self.gas_refund = refund;
         self
     }

@@ -24,11 +24,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     am: &AM,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    debug_log!("ecl(_evm_call): start");
+    debug_log!("ecl(_evm_call): start. gas_limit {}", input.gas_limit);
 
     // call depth check
     if input.depth > 1024 {
-        return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
+        return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow)
+            .with_gas(input.gas_limit, 0);
     }
 
     // read caller and callee
@@ -139,7 +140,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     EvmCallMethodOutput {
         output: result.output,
         exit_code: exit_code.into_i32(),
-        gas: result.gas.remaining(),
+        gas_remaining: result.gas.remaining(),
         gas_refund: result.gas.refunded(),
     }
 }

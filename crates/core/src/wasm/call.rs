@@ -71,7 +71,7 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
     WasmCallMethodOutput {
         output: output_buffer.into(),
         exit_code,
-        gas: gas_limit as u64,
+        gas_remaining: gas_limit as u64,
         gas_refund: 0,
     }
 }
