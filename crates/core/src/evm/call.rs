@@ -2,13 +2,7 @@ use crate::{
     debug_log,
     helpers::{exec_evm_bytecode, exit_code_from_evm_error},
 };
-use fluentbase_sdk::{
-    AccountManager,
-    ContextReader,
-    EvmCallMethodInput,
-    EvmCallMethodOutput,
-    LowLevelAPI,
-};
+use fluentbase_sdk::{AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput};
 use fluentbase_types::ExitCode;
 use revm_interpreter::{
     analysis::to_analysed,
