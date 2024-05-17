@@ -69,7 +69,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
             contract_account.address,
             contract_account.address,
             hex::encode(input.value.to_be_bytes::<32>())
-        )
+        );
     }
 
     debug_log!(

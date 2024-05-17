@@ -38,8 +38,8 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
-#rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-rwasm = { path = "../rwasm/rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+#rwasm = { path = "../rwasm/rwasm", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.6.4", default-features = false, features = ["rlp"] }
@@ -48,26 +48,26 @@ serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
 alloy-rlp = { version = "0.3.4", default-features = false }
-#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-#revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false, features = ["rwasm"] }
-revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
-revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
-#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = [
-#    "ethersdb",
-#    "std",
-#    "serde-json",
-#    "c-kzg",
-#    "rwasm",
-#] }
-revm = { path = "../revm-rwasm/crates/revm", default-features = false, features = [
+revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
+revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
+#revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false, features = ["rwasm"] }
+#revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
+#revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
+revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = [
     "ethersdb",
     "std",
     "serde-json",
     "c-kzg",
     "rwasm",
 ] }
+#revm = { path = "../revm-rwasm/crates/revm", default-features = false, features = [
+#    "ethersdb",
+#    "std",
+#    "serde-json",
+#    "c-kzg",
+#    "rwasm",
+#] }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4.0" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }

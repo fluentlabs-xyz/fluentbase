@@ -89,6 +89,7 @@ macro_rules! result_value {
     };
 }
 
+#[cfg(feature = "e2e")]
 #[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
@@ -98,6 +99,12 @@ macro_rules! debug_log {
         let msg = alloc::format!($($arg)*);
         debug_log!(msg);
     }};
+}
+#[cfg(not(feature = "e2e"))]
+#[macro_export]
+macro_rules! debug_log {
+    ($msg:tt) => {{}};
+    ($($arg:tt)*) => {{}};
 }
 
 fn contract_input_from_call_inputs<CR: ContextReader>(

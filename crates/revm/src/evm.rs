@@ -35,6 +35,7 @@ use fluentbase_core::{
     debug_log,
     evm::{call::_evm_call, create::_evm_create, sload::_evm_sload, sstore::_evm_sstore},
     fluent_host::FluentHost,
+    loader::{_loader_call, _loader_create},
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
@@ -365,31 +366,13 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             return return_result(ExitCode::InsufficientBalance, gas);
         }
 
-        let (_middleware_account, method_id, method_data) =
-            match BytecodeType::from_slice(input.as_ref()) {
-                BytecodeType::EVM => (
-                    ECL_CONTRACT_ADDRESS,
-                    EVM_CREATE_METHOD_ID,
-                    EvmCreateMethodInput {
-                        bytecode: input,
-                        value,
-                        gas_limit: gas.remaining(),
-                        salt,
-                        depth: 0,
-                    },
-                ),
-                BytecodeType::WASM => (
-                    WCL_CONTRACT_ADDRESS,
-                    WASM_CREATE_METHOD_ID,
-                    WasmCreateMethodInput {
-                        bytecode: input,
-                        value,
-                        gas_limit: gas.remaining(),
-                        salt,
-                        depth: 0,
-                    },
-                ),
-            };
+        let method_data = EvmCreateMethodInput {
+            bytecode: input,
+            value,
+            gas_limit: gas.remaining(),
+            salt,
+            depth: 0,
+        };
 
         let contract_input = self.input_from_env(
             &mut gas,
@@ -401,11 +384,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let am = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
         };
-        let create_output = match method_id {
-            EVM_CREATE_METHOD_ID => _evm_create(&contract_input, &am, method_data),
-            WASM_CREATE_METHOD_ID => _wasm_create(&contract_input, &am, method_data),
-            _ => unreachable!(),
-        };
+        let create_output = _loader_create(&contract_input, &am, method_data);
 
         // let (output_buffer, exit_code) = self.exec_rwasm_binary(
         //     &mut gas,
@@ -472,34 +451,13 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             self.context.evm.journaled_state.touch(&callee_address);
         }
 
-        let (callee_bytecode, _) = self.context.evm.load_account(callee_address).unwrap();
-
-        let (_middleware_account, method_id, method_data) =
-            match bytecode_type_from_account(&callee_bytecode.info) {
-                BytecodeType::EVM => (
-                    ECL_CONTRACT_ADDRESS,
-                    EVM_CALL_METHOD_ID,
-                    EvmCallMethodInput {
-                        callee: callee_address,
-                        value,
-                        input,
-                        gas_limit: gas.remaining(),
-                        depth: 0,
-                    },
-                ),
-                BytecodeType::WASM => (
-                    WCL_CONTRACT_ADDRESS,
-                    WASM_CALL_METHOD_ID,
-                    WasmCallMethodInput {
-                        callee: callee_address,
-                        value,
-                        input,
-                        gas_limit: gas.remaining(),
-                        depth: 0,
-                    },
-                ),
-            };
-
+        let method_input = EvmCallMethodInput {
+            callee: callee_address,
+            value,
+            input,
+            gas_limit: gas.remaining(),
+            depth: 0,
+        };
         let contract_input = self.input_from_env(
             &mut gas,
             caller_address,
@@ -510,11 +468,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let am = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
         };
-        let call_output = match method_id {
-            EVM_CALL_METHOD_ID => _evm_call(&contract_input, &am, method_data),
-            WASM_CALL_METHOD_ID => _wasm_call(&contract_input, &am, method_data),
-            _ => unreachable!(),
-        };
+        let call_output = _loader_call(&contract_input, &am, method_input);
 
         // let core_input = CoreInput {
         //     method_id,
