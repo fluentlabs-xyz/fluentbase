@@ -5,7 +5,6 @@ use fluentbase_sdk::{
     ContextReader,
     ContractInput,
     EvmCallMethodOutput,
-    LowLevelAPI,
     WasmCallMethodInput,
     WasmCallMethodOutput,
 };
