@@ -50,20 +50,22 @@ const main = async () => {
     let contractAddress = '';
     console.log('Sending transaction...');
     await web3.eth.sendSignedTransaction(signedTransaction.rawTransaction)
-       .on('confirmation', confirmation => {
-           contractAddress = confirmation.receipt.contractAddress;
-           console.log(confirmation)
-           if (contractAddress) {
-               console.log(`Contract address is: ${contractAddress}`);
-           }
-       });
+        .on('confirmation', confirmation => {
+            contractAddress = confirmation.receipt.contractAddress;
+            console.log(confirmation)
+            if (contractAddress) {
+                console.log(`Contract address is: ${contractAddress}`);
+            }
+        });
 
     const result = await web3.eth.call({
         to: contractAddress,
     });
+
     function isASCII(str) {
         return /^[\x00-\x7F]*$/.test(str);
     }
+
     if (isASCII(web3.utils.hexToAscii(result))) {
         console.log(`Message: "${web3.utils.hexToAscii(result)}"`)
     } else {
