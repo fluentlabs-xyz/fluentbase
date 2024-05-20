@@ -50,6 +50,10 @@ pub enum ExitCode {
     InvalidEfOpcode = -1031,
     InvalidJump = -1032,
     NotActivatedEIP = -1033,
+    ReturnContract = -1034,
+    ReturnContractInNotInitEOF = -1035,
+    EOFOpcodeDisabledInLegacy = -1036,
+    EOFFunctionStackOverflow = -1037,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,

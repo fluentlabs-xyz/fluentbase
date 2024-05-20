@@ -301,7 +301,7 @@ fn check_evm_execution<EXT1, EXT2>(
             .get(k)
             .expect("missing fluent contract");
         // we compare only evm bytecode
-        assert_eq!(v.bytecode, v2.bytecode, "EVM bytecode mismatch");
+        assert_eq!(v.bytecode(), v2.bytecode(), "EVM bytecode mismatch");
     }
     for (address, v1) in evm.context.evm.db.cache.accounts.iter() {
         if PRINT {
@@ -679,7 +679,7 @@ pub fn execute_test_suite(
 
                 let to = match unit.transaction.to {
                     Some(add) => TransactTo::Call(add),
-                    None => TransactTo::Create(CreateScheme::Create),
+                    None => TransactTo::Create,
                 };
                 env.tx.transact_to = to.clone();
 
@@ -714,10 +714,7 @@ pub fn execute_test_suite(
                 let (e, exec_result) = if trace {
                     let mut evm = evm
                         .modify()
-                        .reset_handler_with_external_context(TracerEip3155::new(
-                            Box::new(stderr()),
-                            false,
-                        ))
+                        .reset_handler_with_external_context(TracerEip3155::new(Box::new(stderr())))
                         .append_handler_register(inspector_handle_register)
                         .build();
                     // let mut evm2 = evm2
@@ -800,13 +797,13 @@ pub fn execute_test_suite(
                 let mut evm = Evm::builder()
                     .with_spec_id(spec_id)
                     .with_db(state)
-                    .with_external_context(TracerEip3155::new(Box::new(stdout()), false))
+                    .with_external_context(TracerEip3155::new(Box::new(stdout())))
                     // .append_handler_register(inspector_handle_register)
                     .build();
                 let mut evm2 = revm::Evm::builder()
                     .with_spec_id(spec_id)
                     .with_db(state_original)
-                    .with_external_context(TracerEip3155::new(Box::new(stdout()), false))
+                    .with_external_context(TracerEip3155::new(Box::new(stdout())))
                     // .append_handler_register(inspector_handle_register)
                     .build();
                 let _ = evm.transact_commit();

@@ -31,6 +31,7 @@ pub fn devnet_chain_config() -> ChainConfig {
         terminal_total_difficulty_passed: false,
         ethash: None,
         clique: None,
+        extra_fields: Default::default(),
     }
 }
 

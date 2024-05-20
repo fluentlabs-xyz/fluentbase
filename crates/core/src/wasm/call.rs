@@ -1,4 +1,4 @@
-use crate::debug_log;
+use crate::{debug_log, fluentbase_sdk::LowLevelAPI};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     AccountManager,
