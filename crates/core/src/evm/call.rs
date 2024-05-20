@@ -2,13 +2,18 @@ use crate::{
     debug_log,
     helpers::{exec_evm_bytecode, exit_code_from_evm_error},
 };
-use fluentbase_sdk::{AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput};
+use fluentbase_sdk::{
+    AccountManager,
+    ContextReader,
+    EvmCallMethodInput,
+    EvmCallMethodOutput,
+    LowLevelAPI,
+};
 use fluentbase_types::ExitCode;
 use revm_interpreter::{
     analysis::to_analysed,
     primitives::Bytecode,
     return_ok,
-    BytecodeLocked,
     Contract,
     InstructionResult,
 };
@@ -88,8 +93,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         )
     };
     // load bytecode and convert it to analysed (we can safely unwrap here)
-    let bytecode =
-        BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(source_bytecode))).unwrap();
+    let bytecode = to_analysed(Bytecode::new_raw(source_bytecode));
 
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
@@ -101,12 +105,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     // initiate contract instance and pass it to interpreter for and EVM transition
     let contract = Contract {
         input: input.input,
-        hash: source_hash,
-        bytecode,
+        hash: Some(source_hash),
+        bytecode: bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
-        address: cr.contract_address(),
+        target_address: cr.contract_address(),
+        call_value: cr.contract_value(),
         caller: caller_account.address,
-        value: cr.contract_value(),
     };
     let result = exec_evm_bytecode(
         cr,

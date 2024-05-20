@@ -428,7 +428,7 @@ impl<DB: Database> InnerEvmContext<DB> {
         // Do analysis of bytecode straight away.
         let bytecode = match self.env.cfg.perf_analyse_created_bytecodes {
             AnalysisKind::Raw => Bytecode::new_raw(interpreter_result.output.clone()),
-            _ => Bytecode::new_raw(interpreter_result.output.clone()).to_checked(),
+            _ => Bytecode::new_raw(interpreter_result.output.clone()),
         };
 
         // set code

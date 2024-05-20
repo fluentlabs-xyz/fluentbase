@@ -18,6 +18,7 @@ proc-macro = false
 # revm
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
+#revm-interpreter = { workspace = true }
 
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
@@ -59,8 +60,7 @@ rwasm = { workspace = true, default-features = false }
 lazy_static = { workspace = true }
 
 [features]
-default = ["std", "c-kzg", "secp256k1", "portable", "output_debug"]
-output_debug = []
+default = ["std", "c-kzg", "secp256k1", "portable"]
 std = [
     "serde?/std",
     "serde_json?/std",
@@ -71,7 +71,11 @@ std = [
     "fluentbase-runtime?/std",
     "fluentbase-sdk/std",
 ]
-serde = ["dep:serde", "revm-precompile/serde", "revm-primitives/serde"]
+serde = [
+    "dep:serde",
+    #    "revm-precompile/serde",
+    #    "revm-primitives/serde",
+]
 serde-json = ["serde", "dep:serde_json"]
 arbitrary = []
 asm-keccak = [

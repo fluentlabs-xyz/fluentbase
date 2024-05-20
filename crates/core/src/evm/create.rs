@@ -17,7 +17,6 @@ use revm_interpreter::{
     gas,
     primitives::{Bytecode, Bytes},
     return_ok,
-    BytecodeLocked,
     Contract,
     InstructionResult,
     MAX_CODE_SIZE,
@@ -91,15 +90,14 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     );
 
     let analyzed_bytecode = to_analysed(Bytecode::new_raw(input.bytecode.into()));
-    let deployer_bytecode_locked = BytecodeLocked::try_from(analyzed_bytecode).unwrap();
 
     let contract = Contract {
         input: Bytes::new(),
-        bytecode: deployer_bytecode_locked,
-        hash: source_code_hash,
-        address: contract_account.address,
+        bytecode: analyzed_bytecode,
+        hash: Some(source_code_hash),
+        target_address: contract_account.address,
         caller: caller_address,
-        value: input.value,
+        call_value: input.value,
     };
 
     let mut result = exec_evm_bytecode(cr, am, contract, input.gas_limit, is_static, input.depth);

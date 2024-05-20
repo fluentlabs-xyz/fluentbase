@@ -115,10 +115,10 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
     ContractInput {
         journal_checkpoint: cr.journal_checkpoint(),
         contract_gas_limit: call_inputs.gas_limit,
-        contract_address: call_inputs.context.address,
-        contract_caller: call_inputs.context.caller,
+        contract_address: call_inputs.target_address,
+        contract_caller: call_inputs.caller,
         contract_input: input,
-        contract_value: call_inputs.context.apparent_value,
+        contract_value: call_inputs.value.apparent().unwrap_or_default(),
         contract_is_static: call_inputs.is_static,
         block_chain_id: cr.block_chain_id(),
         block_coinbase: cr.block_coinbase(),
@@ -214,9 +214,9 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
 
     let contract_input = contract_input_from_call_inputs(cr, &inputs, Bytes::new());
     let method_data = EvmCallMethodInput {
-        callee: inputs.contract,
+        callee: inputs.target_address,
         // here we take transfer value, because for DELEGATECALL it's not apparent
-        value: inputs.transfer.value,
+        value: inputs.value.transfer().unwrap_or_default(),
         input: take(&mut inputs.input),
         gas_limit: inputs.gas_limit,
         depth,
@@ -273,21 +273,21 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
 ) -> InterpreterResult {
     debug_log!(
         "ecl(exec_evm_bytecode): executing EVM contract={}, caller={}, gas_limit={} bytecode={} input={} depth={}",
-        &contract.address,
+        &contract.target_address,
         &contract.caller,
         gas_limit,
-        hex::encode(contract.bytecode.original_bytecode_slice()),
+        hex::encode(contract.bytecode.original_byte_slice()),
         hex::encode(&contract.input),
         depth,
     );
     if depth >= 1024 {
         debug_log!("depth limit reached: {}", depth);
     }
-    let contract_address = contract.address;
+    let contract_address = contract.target_address;
 
     let instruction_table = make_instruction_table::<FluentHost<CR, AM>, CancunSpec>();
 
-    let mut interpreter = Interpreter::new(Box::new(contract), gas_limit, is_static);
+    let mut interpreter = Interpreter::new(contract, gas_limit, is_static);
     let mut host = FluentHost::new(cr, am);
     let mut shared_memory = SharedMemory::new();
 
@@ -305,16 +305,15 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
         match next_action {
             InterpreterAction::Call { inputs } => {
                 debug_log!(
-                    "ecl(exec_evm_bytecode): nested call={:?} code={} caller={} callee={} address={} gas={} prev_address={} value={} apparent_value={}",
-                    inputs.context.scheme,
-                    &inputs.context.code_address,
-                    &inputs.context.caller,
-                    &inputs.contract,
-                    &inputs.context.address,
+                    "ecl(exec_evm_bytecode): nested call={:?} code={} caller={} callee={} gas={} prev_address={} value={} apparent_value={}",
+                    inputs.scheme,
+                    &inputs.bytecode_address,
+                    &inputs.caller,
+                    &inputs.target_address,
                     inputs.gas_limit,
                     contract_address,
-                    hex::encode(inputs.transfer.value.to_be_bytes::<32>()),
-                    hex::encode(inputs.context.apparent_value.to_be_bytes::<32>()),
+                    hex::encode(inputs.value.transfer().unwrap_or_default().to_be_bytes::<32>()),
+                    hex::encode(inputs.value.apparent().unwrap_or_default().to_be_bytes::<32>()),
                 );
                 let call_outcome = exec_evm_call(cr, am, inputs, depth + 1);
                 interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
@@ -338,6 +337,9 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
                 return result;
             }
             InterpreterAction::None => unreachable!("not supported EVM interpreter state"),
+            InterpreterAction::EOFCreate { .. } => {
+                unreachable!("not supported EVM interpreter state: EOF")
+            }
         }
 
         // move cr/am back
@@ -368,6 +370,10 @@ pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult
         ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
+        ExitCode::ReturnContract => InstructionResult::ReturnContract,
+        ExitCode::ReturnContractInNotInitEOF => InstructionResult::ReturnContractInNotInitEOF,
+        ExitCode::EOFOpcodeDisabledInLegacy => InstructionResult::EOFOpcodeDisabledInLegacy,
+        ExitCode::EOFFunctionStackOverflow => InstructionResult::EOFFunctionStackOverflow,
         // TODO(dmitry123): "what's proper unknown error code mapping?"
         _ => InstructionResult::OutOfGas,
     }
@@ -406,6 +412,10 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         }
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
+        InstructionResult::ReturnContract => ExitCode::ReturnContract,
+        InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
+        InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
+        InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
     }
 }
 

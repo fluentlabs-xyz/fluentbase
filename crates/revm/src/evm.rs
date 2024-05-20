@@ -304,15 +304,11 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 let result = self.call_inner(caller, address, value, data, gas_limit);
                 FrameResult::Call(result)
             }
-            TransactTo::Create(scheme) => {
-                let salt = match scheme {
-                    CreateScheme::Create2 { salt } => Some(salt),
-                    CreateScheme::Create => None,
-                };
+            TransactTo::Create => {
                 let value = ctx.evm.env.tx.value;
                 let caller = ctx.evm.env.tx.caller;
                 let data = ctx.evm.env.tx.data.clone();
-                let result = self.create_inner(caller, value, data, gas_limit, salt);
+                let result = self.create_inner(caller, value, data, gas_limit);
                 FrameResult::Create(result)
             }
         };
@@ -340,7 +336,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         value: U256,
         input: Bytes,
         gas_limit: u64,
-        salt: Option<U256>,
+        // salt: Option<U256>,
     ) -> CreateOutcome {
         let return_result = |instruction_result: ExitCode, gas: Gas| CreateOutcome {
             result: InterpreterResult {
@@ -370,7 +366,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             bytecode: input,
             value,
             gas_limit: gas.remaining(),
-            salt,
+            salt: None,
             depth: 0,
         };
 
@@ -789,7 +785,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             .borrow_mut()
             .db
             .code_by_hash(B256::from(hash))
-            .map(|b| b.bytecode.len() as u32)
+            .map(|b| b.bytecode().len() as u32)
             .unwrap_or_default()
     }
 
