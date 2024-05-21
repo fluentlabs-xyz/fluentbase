@@ -27,7 +27,6 @@ keccak-hash = { version = "0.10.0" }
 k256 = { version = "0.13.1" }
 hashbrown.workspace = true
 hex = "0.4.3"
-chrono = "0.4.38"
 
 [dev-dependencies]
 hex = { version = "0.4.3" }

@@ -1,7 +1,9 @@
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use shakmaty::{Chess, Position};
 
 pub fn deploy() {}
 
 pub fn main() {
-    LowLevelSDK::sys_write("Hello, World".as_bytes());
+    let pos = Chess::default();
+    let legals = pos.legal_moves();
+    assert_eq!(legals.len(), 20);
 }

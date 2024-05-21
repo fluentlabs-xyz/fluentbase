@@ -11,7 +11,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 # poseidon (no deps)
 
 # shakmaty
-shakmaty = { version = "0.27.0", default-features = false, features = ["alloc"], optional = true }
+shakmaty = { git = "https://github.com/dmitry123/shakmaty", default-features = false, features = ["alloc"], optional = true }
 
 #fluentbase-codec = { workspace = true, default-features = false }
 #fluentbase-core = { workspace = true, default-features = false }
