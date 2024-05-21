@@ -1,6 +1,7 @@
 use crate::U256;
 use alloy_primitives::hex;
 use core::{fmt, fmt::Formatter};
+#[cfg(feature = "rwasm")]
 use rwasm::{
     core::{Trap, TrapCode},
     engine::bytecode::FuncIdx,
@@ -86,6 +87,7 @@ impl ExitCode {
         self as i32
     }
 
+    #[cfg(feature = "rwasm")]
     pub fn into_trap(self) -> Trap {
         Trap::i32_exit(self as i32)
     }
@@ -99,6 +101,7 @@ impl ExitCode {
     }
 }
 
+#[cfg(feature = "rwasm")]
 impl From<TrapCode> for ExitCode {
     fn from(value: TrapCode) -> Self {
         match value {
@@ -118,6 +121,7 @@ impl From<TrapCode> for ExitCode {
     }
 }
 
+#[cfg(feature = "rwasm")]
 impl Into<Trap> for ExitCode {
     fn into(self) -> Trap {
         self.into_trap()
@@ -251,6 +255,7 @@ impl Into<u32> for SysFuncIdx {
     }
 }
 
+#[cfg(feature = "rwasm")]
 impl Into<FuncIdx> for SysFuncIdx {
     fn into(self) -> FuncIdx {
         (self as u32).into()

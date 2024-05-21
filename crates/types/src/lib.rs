@@ -6,8 +6,6 @@ extern crate core;
 
 mod bytecode;
 pub use bytecode::*;
-mod helpers;
-pub use helpers::*;
 mod journal;
 pub use journal::*;
 mod linker;
