@@ -354,12 +354,12 @@ pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult
         ExitCode::Panic => InstructionResult::Revert,
         ExitCode::CallDepthOverflow => InstructionResult::CallTooDeep,
         ExitCode::InsufficientBalance => InstructionResult::OutOfFunds,
-        ExitCode::OutOfFuel => InstructionResult::OutOfGas,
+        ExitCode::OutOfGas => InstructionResult::OutOfGas,
         ExitCode::OpcodeNotFound => InstructionResult::OpcodeNotFound,
         ExitCode::WriteProtection => InstructionResult::StateChangeDuringStaticCall,
         ExitCode::InvalidEfOpcode => InstructionResult::InvalidFEOpcode,
         ExitCode::InvalidJump => InstructionResult::InvalidJump,
-        ExitCode::NotActivatedEIP => InstructionResult::NotActivated,
+        ExitCode::NotActivated => InstructionResult::NotActivated,
         ExitCode::StackUnderflow => InstructionResult::StackUnderflow,
         ExitCode::StackOverflow => InstructionResult::StackOverflow,
         ExitCode::OutputOverflow => InstructionResult::OutOfOffset,
@@ -393,13 +393,13 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         | InstructionResult::MemoryOOG
         | InstructionResult::MemoryLimitOOG
         | InstructionResult::PrecompileOOG
-        | InstructionResult::InvalidOperandOOG => ExitCode::OutOfFuel,
+        | InstructionResult::InvalidOperandOOG => ExitCode::OutOfGas,
         InstructionResult::OpcodeNotFound => ExitCode::OpcodeNotFound,
         InstructionResult::CallNotAllowedInsideStatic
         | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
         InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
         InstructionResult::InvalidJump => ExitCode::InvalidJump,
-        InstructionResult::NotActivated => ExitCode::NotActivatedEIP,
+        InstructionResult::NotActivated => ExitCode::NotActivated,
         InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
         InstructionResult::StackOverflow => ExitCode::StackOverflow,
         InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
@@ -416,6 +416,7 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
         InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
         InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
+        _ => ExitCode::UnknownError,
     }
 }
 

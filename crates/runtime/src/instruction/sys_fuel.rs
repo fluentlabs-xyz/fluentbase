@@ -13,7 +13,7 @@ impl SysFuel {
             Ok(remaining) => return Ok(remaining),
             Err(err) => match err {
                 FuelError::FuelMeteringDisabled => return Ok(u64::MAX),
-                FuelError::OutOfFuel => Err(ExitCode::OutOfFuel.into_trap()),
+                FuelError::OutOfFuel => Err(ExitCode::OutOfGas.into_trap()),
             },
         }
     }

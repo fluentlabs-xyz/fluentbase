@@ -128,7 +128,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
     let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
     if !result.gas.record_cost(gas_for_code) {
         am.rollback(checkpoint);
-        return EvmCreateMethodOutput::from_exit_code(ExitCode::OutOfFuel)
+        return EvmCreateMethodOutput::from_exit_code(ExitCode::OutOfGas)
             .with_output(result.output)
             .with_gas(result.gas.remaining(), result.gas.refunded());
     }

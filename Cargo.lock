@@ -1534,6 +1534,7 @@ dependencies = [
  "fluentbase-types",
  "indicatif",
  "lazy_static",
+ "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
@@ -1617,6 +1618,7 @@ dependencies = [
  "hashbrown",
  "revm-primitives",
  "rwasm",
+ "serde",
  "strum_macros",
 ]
 
@@ -3093,6 +3095,7 @@ dependencies = [
  "dyn-clone",
  "ethers-core",
  "ethers-providers",
+ "fluentbase-sdk",
  "revm-interpreter",
  "revm-precompile",
  "serde",
@@ -3104,6 +3107,7 @@ dependencies = [
 name = "revm-interpreter"
 version = "5.0.0"
 dependencies = [
+ "fluentbase-types",
  "revm-primitives",
  "serde",
 ]

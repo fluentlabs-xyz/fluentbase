@@ -14,7 +14,7 @@ pub fn main() {
         Ok((_, result)) => result,
         Err(err) => match err {
             PrecompileError::OutOfGas => {
-                LowLevelSDK::sys_halt(ExitCode::OutOfFuel.into_i32());
+                LowLevelSDK::sys_halt(ExitCode::OutOfGas.into_i32());
                 Bytes::new()
             }
             _ => {

@@ -1,17 +1,6 @@
 use crate::{
     db::Database,
-    interpreter::{
-        CallInputs,
-        CallOutcome,
-        CreateInputs,
-        CreateOutcome,
-        Gas,
-        InterpreterResult,
-        SharedMemory,
-    },
     primitives::{EVMError, Env, Spec},
-    return_ok,
-    return_revert,
     CallFrame,
     Context,
     CreateFrame,
@@ -20,6 +9,19 @@ use crate::{
     FrameResult,
 };
 use fluentbase_types::ExitCode;
+use revm_interpreter::{
+    return_ok,
+    return_revert,
+    CallInputs,
+    CallOutcome,
+    CreateInputs,
+    CreateOutcome,
+    Gas,
+    InstructionResult,
+    InterpreterResult,
+    SharedMemory,
+};
+use revm_primitives::SpecId;
 use std::boxed::Box;
 
 /// Helper function called inside [`last_frame_return`]
@@ -36,7 +38,7 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
 
     // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
     *gas = Gas::new(env.tx.gas_limit);
-    gas.record_cost(env.tx.gas_limit);
+    let _ = gas.record_cost(env.tx.gas_limit);
 
     match instruction_result {
         return_ok!() => {
@@ -55,7 +57,7 @@ pub fn frame_return_with_refund_flag<SPEC: Spec>(
     // gas spend. (Before london it was 2th part of gas spend)
     if refund_enabled {
         // EIP-3529: Reduction in refunds
-        gas.set_final_refund::<SPEC>();
+        gas.set_final_refund(SPEC::enabled(SpecId::LONDON));
     }
 }
 
@@ -151,7 +153,7 @@ pub fn insert_create_outcome<EXT, DB: Database>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interpreter::{InstructionResult, InterpreterResult};
+    use crate::interpreter::InstructionResult;
     use revm_precompile::Bytes;
     use revm_primitives::CancunSpec;
 

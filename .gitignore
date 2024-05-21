@@ -18,3 +18,5 @@ libzktrie.so
 
 # exclude all wat files
 *.wat
+
+crates/revm/e2e/tests

@@ -1,13 +1,6 @@
 use crate::{
+    // self,
     handler::mainnet,
-    interpreter::{
-        CallInputs,
-        CallOutcome,
-        CreateInputs,
-        CreateOutcome,
-        InterpreterResult,
-        SharedMemory,
-    },
     primitives::{db::Database, EVMError, Spec},
     CallFrame,
     Context,
@@ -17,6 +10,14 @@ use crate::{
     FrameResult,
 };
 use fluentbase_types::ExitCode;
+use revm_interpreter::{
+    CallInputs,
+    CallOutcome,
+    CreateInputs,
+    CreateOutcome,
+    InterpreterResult,
+    SharedMemory,
+};
 use std::{boxed::Box, sync::Arc};
 
 /// Handles first frame return handle.

@@ -1,16 +1,10 @@
 use crate::{
-    interpreter::{
-        CallOutcome,
-        CreateOutcome,
-        Gas,
-        InstructionResult,
-        Interpreter,
-        InterpreterResult,
-    },
+    interpreter::InstructionResult,
     primitives::{Address, Output},
     JournalCheckpoint,
 };
 use core::ops::Range;
+use revm_interpreter::{CallOutcome, CreateOutcome, Gas, Interpreter, InterpreterResult};
 use std::boxed::Box;
 
 /// Call CallStackFrame.

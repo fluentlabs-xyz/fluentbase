@@ -11,6 +11,7 @@ pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
 pub enum ExitCode {
     // warning: when adding new codes don't forget to add them to impls below
@@ -49,11 +50,29 @@ pub enum ExitCode {
     OpcodeNotFound = -1030,
     InvalidEfOpcode = -1031,
     InvalidJump = -1032,
-    NotActivatedEIP = -1033,
+    NotActivated = -1033,
     ReturnContract = -1034,
     ReturnContractInNotInitEOF = -1035,
     EOFOpcodeDisabledInLegacy = -1036,
     EOFFunctionStackOverflow = -1037,
+    InvalidOperandOOG = -1038,
+    MemoryOOG = -1039,
+    CallOrCreate = -1040,
+    CallNotAllowedInsideStatic = -1041,
+    StateChangeDuringStaticCall = -1042,
+    CreateInitCodeSizeLimit = -1043,
+    Return = -1044,
+    Revert = -1045,
+    Stop = -1046,
+    InvalidFEOpcode = -1047,
+    SelfDestruct = -1048,
+    OutOfOffset = -1049,
+    Continue = -1050,
+    CallTooDeep = -1051,
+    OutOfFunds = -1052,
+    PrecompileOOG = -1053,
+    CreateContractSizeLimit = -1054,
+    MemoryLimitOOG = -1055,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -64,7 +83,7 @@ pub enum ExitCode {
     BadConversionToInteger = -2012,
     StackOverflow = -2013,
     BadSignature = -2014,
-    OutOfFuel = -2015,
+    OutOfGas = -2015,
     GrowthOperationLimited = -2016,
     UnknownError = -2017,
     UnresolvedFunction = -2018,
@@ -78,11 +97,19 @@ impl From<i32> for ExitCode {
 }
 
 impl ExitCode {
+    #[inline]
     pub const fn is_ok(&self) -> bool {
         self.into_i32() == Self::Ok.into_i32()
     }
 
+    #[inline]
     pub const fn is_error(&self) -> bool {
+        self.into_i32() != Self::Ok.into_i32()
+    }
+
+    /// Returns whether the result is a revert.
+    #[inline]
+    pub const fn is_revert(self) -> bool {
         self.into_i32() != Self::Ok.into_i32()
     }
 
@@ -115,7 +142,7 @@ impl From<TrapCode> for ExitCode {
             TrapCode::BadConversionToInteger => ExitCode::BadConversionToInteger,
             TrapCode::StackOverflow => ExitCode::StackOverflow,
             TrapCode::BadSignature => ExitCode::BadSignature,
-            TrapCode::OutOfFuel => ExitCode::OutOfFuel,
+            TrapCode::OutOfFuel => ExitCode::OutOfGas,
             TrapCode::GrowthOperationLimited => ExitCode::GrowthOperationLimited,
             TrapCode::UnresolvedFunction => ExitCode::UnresolvedFunction,
         }

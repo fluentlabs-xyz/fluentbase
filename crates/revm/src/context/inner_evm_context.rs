@@ -1,14 +1,11 @@
 use crate::{
     db::Database,
     interpreter::{
-        Contract,
-        CreateInputs,
-        Gas,
+        // CreateInputs,
         InstructionResult,
-        Interpreter,
-        InterpreterResult,
-        SStoreResult,
-        SelfDestructResult,
+        // InterpreterResult,
+        // SStoreResult,
+        // SelfDestructResult,
     },
     journaled_state::JournaledState,
     primitives::{
@@ -35,6 +32,15 @@ use crate::{
 use fluentbase_core::debug_log;
 use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 use fluentbase_types::ExitCode;
+use revm_interpreter::{
+    Contract,
+    CreateInputs,
+    Gas,
+    Interpreter,
+    InterpreterResult,
+    SStoreResult,
+    SelfDestructResult,
+};
 use revm_primitives::MAX_CODE_SIZE;
 use std::boxed::Box;
 
@@ -337,14 +343,14 @@ impl<DB: Database> InnerEvmContext<DB> {
 
         let bytecode = Bytecode::new_raw(inputs.init_code.clone());
 
-        let contract = Box::new(Contract::new(
+        let contract = Contract::new(
             Bytes::new(),
             bytecode,
-            init_code_hash,
+            Some(init_code_hash),
             created_address,
             inputs.caller,
             inputs.value,
-        ));
+        );
 
         Ok(FrameOrResult::new_create_frame(
             created_address,
@@ -408,7 +414,8 @@ impl<DB: Database> InnerEvmContext<DB> {
             interpreter_result.result = InstructionResult::CreateCollision;
             return;
         }
-        let gas_for_code = interpreter_result.output.len() as u64 * crate::gas::CODEDEPOSIT;
+        let gas_for_code =
+            interpreter_result.output.len() as u64 * revm_interpreter::gas::CODEDEPOSIT;
         if !interpreter_result.gas.record_cost(gas_for_code) {
             // record code deposit gas cost and check if we are out of gas.
             // EIP-2 point 3: If contract creation does not have enough gas to pay for the
@@ -416,7 +423,7 @@ impl<DB: Database> InnerEvmContext<DB> {
             //  creation fails (i.e. goes out-of-gas) rather than leaving an empty contract.
             if SPEC::enabled(HOMESTEAD) {
                 self.journaled_state.checkpoint_revert(journal_checkpoint);
-                interpreter_result.result = InstructionResult::OutOfFuel;
+                interpreter_result.result = InstructionResult::OutOfGas;
                 return;
             } else {
                 interpreter_result.output = Bytes::new();
