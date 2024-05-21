@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
+#![warn(unused_crate_dependencies)]
 
 extern crate alloc;
 extern crate core;
