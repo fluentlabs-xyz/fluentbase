@@ -1,4 +1,4 @@
-use crate::fluent_host::FluentHost;
+use crate::{fluent_host::FluentHost, fluentbase_sdk::LowLevelAPI};
 #[cfg(feature = "ecl")]
 use crate::{loader::_loader_call, loader::_loader_create};
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
@@ -12,7 +12,6 @@ use fluentbase_sdk::{
     EvmCallMethodInput,
     EvmCreateMethodInput,
     ICoreInput,
-    LowLevelAPI,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
