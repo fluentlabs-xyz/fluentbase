@@ -4,12 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fluentbase-types = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false }
+
+# greeting (no deps)
+# keccak256 (no deps)
+# poseidon (no deps)
+
+# shakmaty
+shakmaty = { version = "0.27.0", default-features = false, features = ["alloc"], optional = true }
+
+#fluentbase-codec = { workspace = true, default-features = false }
+#fluentbase-core = { workspace = true, default-features = false }
 #fluentbase-runtime-api = { path = "../crates/runtime-api", default-features = false }
-rwasm = { workspace = true, default-features = false }
+rwasm = { workspace = true, default-features = false, optional = true }
 #revm = { version = "3.3.0", default-features = false }
 #revm-primitives = { version = "1.1.2", default-features = false }
 #revm-interpreter = { version = "1.1.2", default-features = false }
@@ -17,12 +24,13 @@ rwasm = { workspace = true, default-features = false }
 #revm-interpreter = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #revm-primitives = { git="https://github.com/fluentlabs-xyz/revm-rwasm.git", branch="devel", default-features=false }
 #wat = "1.0.77"
-#alloy-sol-types = { version = "0.5.1", default-features = false }
+#alloy-sol-types = { version = "0.6.4", default-features = false }
 #byteorder = { workspace = true }
-bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
-cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
-stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
-lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }
+#bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
+#cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
+#stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true }
+#lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", optional = true, default-features = false, features = ["lambdaworks-serde-binary"] }
+#num-traits = { version = "=0.2.16", default-features = false }
 #serde = { version = "1.0", features = ["derive"], default-features = false }
 #hashbrown = { workspace = true, default-features = false }
 
@@ -46,13 +54,18 @@ contract_input_check_recode = []
 keccak256 = []
 panic = []
 poseidon = []
-rwasm = []
+rwasm = [
+    "dep:rwasm"
+]
 secp256k1 = []
 stack = []
 evm_call_from_wasm = []
+shakmaty = [
+    "dep:shakmaty"
+]
 cairo = [
     "fluentbase-sdk/std",
-    "dep:cairo-platinum-prover",
-    "dep:stark-platinum-prover",
-    "dep:lambdaworks-math",
+    #    "dep:cairo-platinum-prover",
+    #    "dep:stark-platinum-prover",
+    #    "dep:lambdaworks-math",
 ]

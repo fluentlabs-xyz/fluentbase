@@ -13,7 +13,7 @@ categories.workspace = true
 rwasm = { workspace = true, default-features = false }
 fluentbase-poseidon = { workspace = true }
 fluentbase-zktrie = { workspace = true }
-fluentbase-types = { workspace = true }
+fluentbase-types = { workspace = true, features = ["rwasm"] }
 
 halo2curves = { workspace = true }
 byteorder = { workspace = true }

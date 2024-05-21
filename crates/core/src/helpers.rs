@@ -93,6 +93,7 @@ macro_rules! result_value {
 #[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
+        use fluentbase_sdk::LowLevelAPI;
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
     }};
     ($($arg:tt)*) => {{

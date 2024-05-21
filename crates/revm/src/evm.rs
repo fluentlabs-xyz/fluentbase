@@ -20,7 +20,7 @@ use crate::{
         B256,
         U256,
     },
-    types::{bytecode_type_from_account, SStoreResult, SelfDestructResult},
+    types::{SStoreResult, SelfDestructResult},
     Context,
     ContextWithHandlerCfg,
     EvmContext,

@@ -1,6 +1,5 @@
 use core::{alloc::Layout, ptr};
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
-use fluentbase_types::create_sovereign_import_linker;
+use fluentbase_sdk::{create_sovereign_import_linker, LowLevelAPI, LowLevelSDK};
 use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 
 pub fn deploy() {}

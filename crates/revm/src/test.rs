@@ -545,7 +545,7 @@ fn test_evm_self_destruct() {
     // deploy greeting EVM contract
     let mut ctx = TestingContext::default();
     const SENDER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
-    const DESTROYED_ADDRESS: Address = address!("f91c20c0cafbfdc150adff51bbfc5808edde7cb5");
+    // const DESTROYED_ADDRESS: Address = address!("f91c20c0cafbfdc150adff51bbfc5808edde7cb5");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(0);
     let result = TxBuilder::create(
