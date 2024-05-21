@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 extern crate alloc;
+#[macro_use]
 extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
@@ -10,8 +11,8 @@ use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 mod cairo;
 #[cfg(feature = "contract_input_check_recode")]
 mod contract_input_check_recode;
-// #[cfg(feature = "erc20")]
-// mod erc20;
+#[cfg(feature = "erc20")]
+mod erc20;
 #[cfg(feature = "evm_call_from_wasm")]
 mod evm_call_from_wasm;
 #[cfg(feature = "greeting")]
@@ -26,6 +27,8 @@ mod poseidon;
 mod rwasm;
 #[cfg(feature = "secp256k1")]
 mod secp256k1;
+#[cfg(feature = "shakmaty")]
+mod shakmaty;
 #[cfg(feature = "stack")]
 mod stack;
 

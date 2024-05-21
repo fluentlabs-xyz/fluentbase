@@ -180,23 +180,6 @@ impl Stack {
     }
 }
 
-pub(crate) fn bytecode_type_from_account(info: &AccountInfo) -> BytecodeType {
-    // special case for rWASM genesis precompiles (there is no source code)
-    if info
-        .rwasm_code
-        .as_ref()
-        .map(|v| !v.is_empty())
-        .unwrap_or_default()
-        && info.code.as_ref().map(|v| v.is_empty()).unwrap_or_default()
-    {
-        BytecodeType::WASM
-    } else if let Some(code) = &info.code {
-        BytecodeType::from_slice(code.bytes().as_ref())
-    } else {
-        BytecodeType::EVM
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterpreterResult {
     /// The result of the instruction execution.
