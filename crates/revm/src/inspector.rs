@@ -1,9 +1,9 @@
 use crate::{
-    interpreter::{CallInputs, CreateInputs, Interpreter},
     primitives::{db::Database, Address, Log, U256},
     EvmContext,
 };
 use auto_impl::auto_impl;
+use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 
 #[cfg(feature = "std")]
 mod customprinter;
@@ -15,7 +15,6 @@ mod noop;
 
 // Exports.
 
-use crate::interpreter::{CallOutcome, CreateOutcome};
 pub use handler_register::{inspector_handle_register, GetInspector};
 
 /// [Inspector] implementations.

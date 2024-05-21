@@ -41,6 +41,7 @@ std = [
     "byteorder/std",
     "alloy-rlp/std",
 ]
+fluent_revm = ["fluentbase-types/fluent_revm", "revm-interpreter/fluent_revm"]
 ecl = []
 loader = []
 wcl = []

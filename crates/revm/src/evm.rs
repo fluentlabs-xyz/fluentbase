@@ -1,9 +1,8 @@
 use crate::{
     builder::{EvmBuilder, HandlerStage, SetGenericStage},
     db::{Database, DatabaseCommit, EmptyDB},
-    gas::Gas,
     handler::Handler,
-    interpreter::{CallOutcome, CreateOutcome, InstructionResult, InterpreterResult},
+    interpreter::InstructionResult,
     primitives::{
         specification::SpecId,
         Address,
@@ -20,7 +19,7 @@ use crate::{
         B256,
         U256,
     },
-    types::{bytecode_type_from_account, SStoreResult, SelfDestructResult},
+    // types::{bytecode_type_from_account, SStoreResult, SelfDestructResult},
     Context,
     ContextWithHandlerCfg,
     EvmContext,
@@ -29,9 +28,9 @@ use crate::{
     JournalEntry,
 };
 use core::{cell::RefCell, fmt, fmt::Debug, str::from_utf8};
-use fluentbase_codec::{BufferDecoder, Encoder};
+// use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::{
-    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
+    // consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     debug_log,
     evm::{call::_evm_call, create::_evm_create, sload::_evm_sload, sstore::_evm_sstore},
     fluent_host::FluentHost,
@@ -65,6 +64,7 @@ use fluentbase_sdk::{
 };
 use fluentbase_types::{
     address,
+    consts::EVM_STORAGE_ADDRESS,
     BytecodeType,
     Bytes,
     Bytes32,
@@ -77,6 +77,7 @@ use fluentbase_types::{
     POSEIDON_EMPTY,
     STATE_MAIN,
 };
+use revm_interpreter::{CallOutcome, CreateOutcome, Gas, InterpreterResult};
 use revm_primitives::{hex, Bytecode, CreateScheme, Env, Log, LogData};
 use std as alloc;
 use std::vec::Vec;
@@ -649,9 +650,6 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 struct JournalDbWrapper<'a, DB: Database> {
     ctx: RefCell<&'a mut EvmContext<DB>>,
 }
-
-/// A special account for storing EVM storage trie `keccak256("evm_storage_trie")[12..32]`
-pub const EVM_STORAGE_ADDRESS: Address = address!("fabefeab43f96e51d7ace194b9abd33305bb6bfb");
 
 impl<'a, DB: Database> IJournaledTrie for JournalDbWrapper<'a, DB> {
     fn checkpoint(&self) -> fluentbase_types::JournalCheckpoint {

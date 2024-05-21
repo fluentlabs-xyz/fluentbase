@@ -18,13 +18,14 @@ proc-macro = false
 # revm
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
-#revm-interpreter = { workspace = true }
+revm-interpreter = { workspace = true, features = ["fluent_revm"] }
+#revm = { workspace = true, features = ["fluent_revm"] }
 
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
-fluentbase-types = { workspace = true, default-features = false }
+fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl", "fluent_revm"] }
+fluentbase-types = { workspace = true, default-features = false, features = ["fluent_revm"] }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 
 # misc
@@ -61,6 +62,7 @@ lazy_static = { workspace = true }
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable"]
+#fluent_revm = ["revm-interpreter/fluent_revm"]
 std = [
     "serde?/std",
     "serde_json?/std",

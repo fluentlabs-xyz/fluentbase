@@ -214,16 +214,9 @@ pub fn inspector_handle_register<'a, DB: Database, EXT: GetInspector<DB>>(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::{
-        inspectors::NoOpInspector,
-        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
-        Database,
-        Evm,
-        EvmContext,
-        Inspector,
-    };
+    use crate::{inspectors::NoOpInspector, Database, Evm, EvmContext, Inspector};
+    use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 
     #[derive(Default, Debug)]
     struct StackInspector {

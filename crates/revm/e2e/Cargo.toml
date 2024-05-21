@@ -19,6 +19,10 @@ fluentbase-revm = { workspace = true, default-features = false, features = [
     "c-kzg",
 ] }
 fluentbase-codec-derive = { workspace = true }
+fluentbase-types = { path = "../../types" }
+fluentbase-poseidon = { path = "../../poseidon" }
+fluentbase-genesis = { path = "../../genesis" }
+
 revm = { workspace = true }
 hash-db = "=0.15"
 hex = "0.4"
@@ -26,9 +30,6 @@ hashbrown = "0.14"
 indicatif = "0.17"
 microbench = "0.5"
 plain_hasher = "0.2"
-fluentbase-types = { path = "../../types" }
-fluentbase-poseidon = { path = "../../poseidon" }
-fluentbase-genesis = { path = "../../genesis" }
 alloy-rlp = { version = "0.3", default-features = false, features = [
     "arrayvec",
     "derive",

@@ -12,7 +12,9 @@ mod journal;
 pub use journal::*;
 mod linker;
 pub use linker::*;
+pub mod consts;
 mod types;
+
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
 pub use types::*;
 

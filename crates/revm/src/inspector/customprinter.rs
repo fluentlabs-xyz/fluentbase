@@ -3,12 +3,12 @@
 
 use crate::{
     inspectors::GasInspector,
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
     primitives::{Address, U256},
     Database,
     EvmContext,
     Inspector,
 };
+use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 
 /// Custom print [Inspector], it has step level information of execution.
 ///
@@ -79,10 +79,10 @@ impl<DB: Database> Inspector<DB> for CustomPrintTracer {
     ) -> Option<CallOutcome> {
         println!(
             "SM CALL:   {:?}, context:{:?}, is_static:{:?}, transfer:{:?}, input_size:{:?}",
-            inputs.contract,
-            inputs.context,
+            inputs.bytecode_address,
+            inputs.caller,
             inputs.is_static,
-            inputs.transfer,
+            inputs.transfer_value(),
             inputs.input.len(),
         );
         None

@@ -1,11 +1,7 @@
 //! GasIspector. Helper Inspector to calculate gas for others.
 
-use crate::{
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome},
-    primitives::db::Database,
-    EvmContext,
-    Inspector,
-};
+use crate::{primitives::db::Database, EvmContext, Inspector};
+use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 
 /// Helper [Inspector] that keeps track of gas.
 #[allow(dead_code)]
@@ -26,19 +22,11 @@ impl GasInspector {
 }
 
 impl<DB: Database> Inspector<DB> for GasInspector {
-    fn initialize_interp(
-        &mut self,
-        interp: &mut crate::interpreter::Interpreter,
-        _context: &mut EvmContext<DB>,
-    ) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         self.gas_remaining = interp.gas.limit();
     }
 
-    fn step_end(
-        &mut self,
-        interp: &mut crate::interpreter::Interpreter,
-        _context: &mut EvmContext<DB>,
-    ) {
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         let last_gas_remaining =
             core::mem::replace(&mut self.gas_remaining, interp.gas.remaining());
         self.last_gas_cost = last_gas_remaining.saturating_sub(self.gas_remaining);
@@ -51,7 +39,7 @@ impl<DB: Database> Inspector<DB> for GasInspector {
         mut outcome: CallOutcome,
     ) -> CallOutcome {
         if outcome.result.result.is_error() {
-            outcome
+            let _ = outcome
                 .result
                 .gas
                 .record_cost(outcome.result.gas.remaining());
@@ -72,15 +60,8 @@ impl<DB: Database> Inspector<DB> for GasInspector {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::{
-        inspectors::GasInspector,
-        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
-        primitives::Log,
-        Database,
-        EvmContext,
-        Inspector,
-    };
+    use crate::{inspectors::GasInspector, primitives::Log, Database, EvmContext, Inspector};
+    use revm_interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter};
 
     #[derive(Default, Debug)]
     struct StackInspector {

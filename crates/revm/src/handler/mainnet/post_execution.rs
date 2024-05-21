@@ -1,5 +1,4 @@
 use crate::{
-    interpreter::Gas,
     primitives::{
         db::Database,
         EVMError,
@@ -13,6 +12,7 @@ use crate::{
     FrameResult,
 };
 use fluentbase_types::ExitCode;
+use revm_interpreter::Gas;
 use revm_primitives::SuccessReason;
 
 /// Mainnet end handle does not change the output.

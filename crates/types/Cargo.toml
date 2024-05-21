@@ -10,6 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# optional
+serde = { version = "1.0", default-features = false, features = [
+    "derive",
+    "rc",
+], optional = true }
+
 rwasm = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true }
 hashbrown = { workspace = true }
@@ -19,6 +25,8 @@ byteorder = { workspace = true }
 
 [features]
 default = ["std"]
+serde = ["dep:serde"]
+fluent_revm = []
 std = [
     "rwasm/std",
     "alloy-primitives/std",

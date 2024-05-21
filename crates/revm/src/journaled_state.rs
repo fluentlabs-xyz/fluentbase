@@ -1,5 +1,5 @@
 use crate::{
-    interpreter::{InstructionResult, SStoreResult, SelfDestructResult},
+    interpreter::InstructionResult,
     primitives::{
         db::Database,
         hash_map::Entry,
@@ -22,6 +22,7 @@ use crate::{
 use core::mem;
 use fluentbase_core::debug_log;
 use fluentbase_types::{Bytes, ExitCode, B256, F254, POSEIDON_EMPTY};
+use revm_interpreter::{SStoreResult, SelfDestructResult};
 use revm_primitives::{hex, SpecId};
 use std::vec::Vec;
 

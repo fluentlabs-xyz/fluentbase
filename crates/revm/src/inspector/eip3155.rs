@@ -1,10 +1,10 @@
 use crate::{
     inspectors::GasInspector,
-    interpreter::{CallInputs, CallOutcome, Interpreter},
     primitives::{db::Database, hex, HashMap, B256, U256},
     EvmContext,
     Inspector,
 };
+use revm_interpreter::{CallInputs, CallOutcome, Interpreter};
 use serde::Serialize;
 use std::io::Write;
 

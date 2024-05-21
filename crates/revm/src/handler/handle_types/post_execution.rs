@@ -1,12 +1,12 @@
 // Includes.
 use crate::{
     handler::mainnet,
-    interpreter::Gas,
     primitives::{db::Database, EVMError, EVMResultGeneric, ResultAndState, Spec},
     Context,
     FrameResult,
 };
 use fluentbase_types::ExitCode;
+use revm_interpreter::Gas;
 use std::sync::Arc;
 
 /// Reimburse the caller with ethereum it didn't spent.
