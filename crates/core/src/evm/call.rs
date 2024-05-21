@@ -1,5 +1,6 @@
 use crate::{
     debug_log,
+    fluentbase_sdk::LowLevelAPI,
     helpers::{exec_evm_bytecode, exit_code_from_evm_error},
 };
 use fluentbase_sdk::{AccountManager, ContextReader, EvmCallMethodInput, EvmCallMethodOutput};
