@@ -9,7 +9,7 @@ use fluentbase_sdk::{
     WasmCreateMethodOutput,
 };
 use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
-use revm_primitives::RWASM_MAX_CODE_SIZE;
+use revm_primitives::WASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
@@ -31,7 +31,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     }
 
     // code length can't exceed max constructor limit
-    if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
+    if input.bytecode.len() > WASM_MAX_CODE_SIZE {
         debug_log!(
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::ContractSizeLimit
