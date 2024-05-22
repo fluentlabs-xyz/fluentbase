@@ -1,13 +1,12 @@
 use alloy_sol_types::{sol, SolCall, SolEvent, SolType, SolValue};
-use fluentbase_core::evm::sstore::_evm_sstore;
 use fluentbase_sdk::{
     ContextReader,
     ExecutionContext,
     JzktAccountManager,
     LowLevelAPI,
     LowLevelSDK,
+    U256,
 };
-use fluentbase_types::{Address, Bytes, U256};
 use hex_literal::hex;
 
 sol! {
@@ -182,8 +181,7 @@ mod test {
     use super::*;
     use alloc::{string::ToString, vec};
     use fluentbase_codec::Encoder;
-    use fluentbase_sdk::{ContractInput, LowLevelSDK};
-    use fluentbase_types::{Address, Bytes, U256};
+    use fluentbase_sdk::{Address, Bytes, ContractInput, LowLevelSDK, U256};
     use hex_literal::hex;
     use serial_test::serial;
 
