@@ -8,8 +8,8 @@ sync_tests:
 
 .PHONY: run_general_state_tests
 run_general_state_tests:
-	cargo run --color=always --bin revme statetest tests/GeneralStateTests -s
+	cargo run --color=always --bin fluentbase-revm-e2e statetest tests/GeneralStateTests -s
 
 .PHONY: help
 help:
-	cargo run --color=always --bin revme -h
+	cargo run --color=always --bin fluentbase-revm-e2e -h
