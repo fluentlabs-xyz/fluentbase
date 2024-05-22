@@ -1,15 +1,15 @@
-.PHONY: clone_state_tests
-clone_state_tests:
+.PHONY: sync_tests
+sync_tests:
 	if [ ! -d tests ]; then \
   		git clone https://github.com/ethereum/tests; \
   	else \
-  		cd tests; git pull; git checkout 1c23e3c27ac53b794de0844d2d5e19cd2495b9d8; \
+  		cd tests; git pull; git checkout 65994979ae7e318f32d99eaceb4f2180d10145a7; \
   	fi
 
-.PHONY: run_state_tests
-run_state_tests:
-	cargo run --color=always --bin fluentbase-revm-e2e statetest tests/GeneralStateTests -s
+.PHONY: run_general_state_tests
+run_general_state_tests:
+	cargo run --color=always --bin revme statetest tests/GeneralStateTests -s
 
-.PHONY: command_help
-command_help:
-	cargo run --color=always --bin fluentbase-revm-e2e -h
+.PHONY: help
+help:
+	cargo run --color=always --bin revme -h
