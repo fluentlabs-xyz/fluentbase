@@ -24,10 +24,8 @@ revm-interpreter = { workspace = true, features = ["fluent_revm"] }
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl", "fluent_revm"] }
-fluentbase-types = { workspace = true, default-features = false, features = [
-    #    "fluent_revm"
-] }
+fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 
 # misc

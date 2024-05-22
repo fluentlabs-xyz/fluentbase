@@ -1,6 +1,4 @@
-use crate::{fluent_host::FluentHost, fluentbase_sdk::LowLevelAPI};
-#[cfg(feature = "ecl")]
-use crate::{loader::_loader_call, loader::_loader_create};
+use crate::fluent_host::FluentHost;
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::{marker::PhantomData, mem::take};
 use fluentbase_codec::Encoder;
@@ -92,6 +90,7 @@ macro_rules! result_value {
 #[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
+        use fluentbase_sdk::LowLevelAPI;
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
     }};
     ($($arg:tt)*) => {{
@@ -187,7 +186,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
         },
         depth,
     };
-    let create_output = _loader_create(&contract_input, am, method_data);
+    let create_output = crate::loader::_loader_create(&contract_input, am, method_data);
 
     let mut gas = Gas::new(create_output.gas);
     gas.record_refund(create_output.gas_refund);
@@ -220,7 +219,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
         gas_limit: inputs.gas_limit,
         depth,
     };
-    let call_output = _loader_call(&contract_input, am, method_data);
+    let call_output = crate::loader::_loader_call(&contract_input, am, method_data);
 
     // let core_input = CoreInput {
     //     method_id: EVM_CALL_METHOD_ID,
