@@ -1,7 +1,6 @@
-#![allow(unused_imports)]
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::{__private::Span, format_ident, quote, ToTokens};
+use quote::{__private::Span, format_ident, quote};
 use syn::{self, Data, Fields, Ident};
 
 #[proc_macro]

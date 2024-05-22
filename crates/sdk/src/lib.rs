@@ -44,3 +44,5 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[cfg(target_arch = "wasm32")]
 static ALLOCATOR: lol_alloc::AssumeSingleThreaded<lol_alloc::LeakingAllocator> =
     unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::LeakingAllocator::new()) };
+
+pub use fluentbase_sdk_derive::{derive_keccak256_id, derive_solidity_router};
