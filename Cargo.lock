@@ -1034,7 +1034,9 @@ name = "fluentbase-example"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
+ "fluentbase-codec",
  "fluentbase-sdk",
+ "fluentbase-types",
  "hex",
  "hex-literal",
  "rwasm",
