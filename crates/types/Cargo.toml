@@ -26,7 +26,7 @@ byteorder = { workspace = true }
 [features]
 default = ["std"]
 serde = ["dep:serde"]
-fluent_revm = []
+#fluent_revm = []
 std = [
     "rwasm/std",
     "alloy-primitives/std",
