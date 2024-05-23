@@ -101,7 +101,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     let contract = Contract {
         input: input.input,
         hash: Some(source_hash),
-        bytecode: bytecode,
+        bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
         target_address: cr.contract_address(),
         call_value: cr.contract_value(),
