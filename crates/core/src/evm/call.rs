@@ -129,9 +129,10 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     let exit_code = exit_code_from_evm_error(result.result);
 
     debug_log!(
-        "ecl(_evm_call): return exit_code={} gas_remaining={} gas_refund={}",
+        "ecl(_evm_call): return exit_code={} gas_remaining={} spent={} gas_refund={}",
         exit_code,
         result.gas.remaining(),
+        result.gas.spent(),
         result.gas.refunded()
     );
     EvmCallMethodOutput {
