@@ -87,6 +87,10 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
             am.preimage(&callee_account.source_code_hash),
         )
     };
+    debug_log!(
+        "ecl(_evm_call): source_bytecode: {}",
+        hex::encode(&source_bytecode)
+    );
     // load bytecode and convert it to analysed (we can safely unwrap here)
     let bytecode = to_analysed(Bytecode::new_raw(source_bytecode));
 
