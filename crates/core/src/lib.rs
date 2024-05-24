@@ -7,6 +7,8 @@ extern crate fluentbase_sdk;
 extern crate paste;
 
 pub use fluentbase_types::ExitCode;
+#[cfg(feature = "fluent_revm")]
+extern crate revm_interpreter_fluent as revm_interpreter;
 
 pub mod evm;
 
