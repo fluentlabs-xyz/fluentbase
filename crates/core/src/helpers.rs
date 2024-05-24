@@ -346,7 +346,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     }
 }
 
-pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
+pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
     match exit_code {
         ExitCode::Ok => InstructionResult::Stop,
         ExitCode::Panic => InstructionResult::Revert,
@@ -357,7 +357,7 @@ pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult
         ExitCode::WriteProtection => InstructionResult::StateChangeDuringStaticCall,
         ExitCode::InvalidEfOpcode => InstructionResult::InvalidFEOpcode,
         ExitCode::InvalidJump => InstructionResult::InvalidJump,
-        ExitCode::NotActivated => InstructionResult::NotActivated,
+        // ExitCode::NotActivated => InstructionResult::NotActivated,
         ExitCode::StackUnderflow => InstructionResult::StackUnderflow,
         ExitCode::StackOverflow => InstructionResult::StackOverflow,
         ExitCode::OutputOverflow => InstructionResult::OutOfOffset,
@@ -368,16 +368,16 @@ pub(crate) fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult
         ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
-        ExitCode::ReturnContract => InstructionResult::ReturnContract,
-        ExitCode::ReturnContractInNotInitEOF => InstructionResult::ReturnContractInNotInitEOF,
-        ExitCode::EOFOpcodeDisabledInLegacy => InstructionResult::EOFOpcodeDisabledInLegacy,
-        ExitCode::EOFFunctionStackOverflow => InstructionResult::EOFFunctionStackOverflow,
+        // ExitCode::ReturnContract => InstructionResult::ReturnContract,
+        // ExitCode::ReturnContractInNotInitEOF => InstructionResult::ReturnContractInNotInitEOF,
+        // ExitCode::EOFOpcodeDisabledInLegacy => InstructionResult::EOFOpcodeDisabledInLegacy,
+        // ExitCode::EOFFunctionStackOverflow => InstructionResult::EOFFunctionStackOverflow,
         // TODO(dmitry123): "what's proper unknown error code mapping?"
         _ => InstructionResult::OutOfGas,
     }
 }
 
-pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
+pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
     match evm_error {
         InstructionResult::Continue
         | InstructionResult::Stop
@@ -397,7 +397,7 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
         InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
         InstructionResult::InvalidJump => ExitCode::InvalidJump,
-        InstructionResult::NotActivated => ExitCode::NotActivated,
+        // InstructionResult::NotActivated => ExitCode::NotActivated,
         InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
         InstructionResult::StackOverflow => ExitCode::StackOverflow,
         InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
@@ -410,10 +410,10 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
         }
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
-        InstructionResult::ReturnContract => ExitCode::ReturnContract,
-        InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
-        InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
-        InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
+        // InstructionResult::ReturnContract => ExitCode::ReturnContract,
+        // InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
+        // InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
+        // InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
         _ => ExitCode::UnknownError,
     }
 }
