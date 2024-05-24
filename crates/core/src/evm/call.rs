@@ -57,8 +57,9 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     } else {
         // what if self-transfer amount exceeds our balance?
         if input.value > caller_account.balance {
-            return EvmCallMethodOutput::from_exit_code(ExitCode::InsufficientBalance)
+            let res = EvmCallMethodOutput::from_exit_code(ExitCode::InsufficientBalance)
                 .with_gas(input.gas_limit, 0);
+            return res;
         }
         // write only one account's state since caller equals callee
         am.write_account(&caller_account);
