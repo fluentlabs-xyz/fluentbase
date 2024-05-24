@@ -9,7 +9,6 @@ members = [
 ]
 exclude = [
     "crates/evm",
-    "crates/revm",
     "crates/evm/evm-rwasm",
     "crates/evm/evm-snippets",
 ]
@@ -61,6 +60,7 @@ alloy-rlp = { version = "0.3.4", default-features = false }
 #    "rwasm",
 #] }
 revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features = false, features = ["rwasm"] }
+revm-interpreter-fluent = { path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
 revm = { path = "../revm-rwasm/crates/revm", default-features = false, features = [

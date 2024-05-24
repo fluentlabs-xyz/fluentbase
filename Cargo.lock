@@ -992,6 +992,7 @@ dependencies = [
  "keccak-hash",
  "paste",
  "revm-interpreter",
+ "revm-interpreter-fluent",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
@@ -2039,6 +2040,14 @@ dependencies = [
  "fluentbase-types",
  "revm-primitives",
  "serde",
+]
+
+[[package]]
+name = "revm-interpreter-fluent"
+version = "5.0.0"
+dependencies = [
+ "fluentbase-types",
+ "revm-primitives",
 ]
 
 [[package]]
