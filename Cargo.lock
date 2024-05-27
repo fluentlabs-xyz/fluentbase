@@ -32,7 +32,7 @@ checksum = "5c6cb57a04249c6480766f7f7cef5467412af1490f8d1e243141daddada3264f"
 [[package]]
 name = "alloy-genesis"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=44b8a6d#44b8a6da656602fd9fd2c52f28ecffa4acaed96c"
+source = "git+https://github.com/alloy-rs/alloy?rev=5940871#5940871a103ed9332956959a9f2efcc2caa73bf0"
 dependencies = [
  "alloy-primitives 0.7.4",
  "alloy-serde",
@@ -91,7 +91,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "0.1.0"
-source = "git+https://github.com/alloy-rs/alloy?rev=44b8a6d#44b8a6da656602fd9fd2c52f28ecffa4acaed96c"
+source = "git+https://github.com/alloy-rs/alloy?rev=5940871#5940871a103ed9332956959a9f2efcc2caa73bf0"
 dependencies = [
  "alloy-primitives 0.7.4",
  "serde",
