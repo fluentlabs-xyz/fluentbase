@@ -116,7 +116,7 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
         contract_address: call_inputs.target_address,
         contract_caller: call_inputs.caller,
         contract_input: input,
-        contract_value: call_inputs.value.transfer().unwrap_or_default(),
+        contract_value: call_inputs.value.get(),
         contract_is_static: call_inputs.is_static,
         block_chain_id: cr.block_chain_id(),
         block_coinbase: cr.block_coinbase(),
