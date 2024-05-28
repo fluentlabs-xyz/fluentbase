@@ -32,6 +32,9 @@ pub fn devnet_chain_config() -> ChainConfig {
         ethash: None,
         clique: None,
         extra_fields: Default::default(),
+        parlia: None,
+        deposit_contract_address: None,
+        prague_time: None,
     }
 }
 
