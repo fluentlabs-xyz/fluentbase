@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-PKG_NAME := greeting
+PKG_NAME := $(shell basename $(PWD))
 
 # Compilation flags
 RUSTFLAGS := '-C link-arg=-zstack-size=131072 -C target-feature=+bulk-memory -C opt-level=z -C strip=symbols'
