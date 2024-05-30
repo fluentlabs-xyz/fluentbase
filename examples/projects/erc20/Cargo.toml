@@ -1,0 +1,29 @@
+[package]
+edition = "2021"
+name = "erc20"
+version = "0.1.0"
+
+[workspace]
+
+[dependencies]
+alloy-sol-types = {version = "0.7.4", default-features = false}
+fluentbase-codec = {git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false}
+fluentbase-sdk = {git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false}
+hex-literal = "0.4.1"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
+
+[features]
+default = []
+no_std = []
+std = [
+  "fluentbase-sdk/std",
+]
