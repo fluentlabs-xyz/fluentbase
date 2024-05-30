@@ -11,6 +11,9 @@ fluentbase-codec = {git = "https://github.com/fluentlabs-xyz/fluentbase", defaul
 fluentbase-sdk = {git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false}
 hex-literal = "0.4.1"
 
+[dev-dependencies]
+serial_test = "3.0.0"
+
 [lib]
 crate-type = ["cdylib", "staticlib"]
 path = "lib.rs"
