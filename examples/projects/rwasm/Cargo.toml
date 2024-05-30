@@ -1,0 +1,27 @@
+[package]
+edition = "2021"
+name = "rwasm"
+version = "0.1.0"
+
+[workspace]
+
+[dependencies]
+fluentbase-sdk = {git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false}
+rwasm = {git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false}
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
+
+[features]
+default = []
+no_std = []
+std = [
+  "fluentbase-sdk/std",
+]
