@@ -60,10 +60,6 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_priority_fee: cr.tx_gas_priority_fee(),
                     blob_hashes: cr.tx_blob_hashes(),
                     max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
-                    // TODO recheck
-                    eof_initcodes: Default::default(),
-                    // TODO recheck
-                    eof_initcodes_hashed: Default::default(),
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
