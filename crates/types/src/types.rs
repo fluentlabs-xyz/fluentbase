@@ -1,4 +1,5 @@
 use crate::U256;
+use alloc::format;
 use alloy_primitives::hex;
 use core::{fmt, fmt::Formatter};
 #[cfg(feature = "rwasm")]
