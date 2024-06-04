@@ -18,7 +18,7 @@ fluentbase-types = { workspace = true, default-features = false }
 
 [features]
 default = ["std"]
-fluent_revm = ["fluentbase-core/fluent_revm"]
+revm-rwasm = ["fluentbase-core/revm-rwasm"]
 std = [
     "fluentbase-core/std",
     "fluentbase-types/std",

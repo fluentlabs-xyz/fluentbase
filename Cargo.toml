@@ -70,7 +70,7 @@ revm = { path = "../revm-rwasm/crates/revm", default-features = false, features 
     "serde-json",
     "c-kzg",
     "rwasm",
-    "fluent_revm",
+    "revm-rwasm",
 ] }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4.0" }

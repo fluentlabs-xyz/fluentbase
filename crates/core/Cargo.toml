@@ -44,9 +44,9 @@ std = [
     "alloy-rlp/std",
 ]
 
-fluent_revm = [
-    #    "fluentbase-types/fluent_revm",
-    "revm-interpreter-fluent/fluent_revm",
+revm-rwasm = [
+    #    "fluentbase-types/revm-rwasm",
+    "revm-interpreter-fluent/revm-rwasm",
 ]
 ecl = []
 loader = []
