@@ -1,11 +1,24 @@
-use proc_macro::TokenStream;
-
 use alloy_sol_types::{SolCall, SolType, SolValue};
 use convert_case::{Case, Casing};
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    self, Expr, ExprLit, FnArg, Ident, ImplItem, ItemImpl, Lit,
-    Meta, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, Token, Type, TypePath, Visibility,
+    self,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    Expr,
+    ExprLit,
+    FnArg,
+    Ident,
+    ImplItem,
+    ItemImpl,
+    Lit,
+    Meta,
+    Token,
+    Type,
+    TypePath,
+    Visibility,
 };
 
 #[proc_macro]
@@ -36,9 +49,9 @@ impl Parse for SolidityRouterInput {
             if let Meta::NameValue(m) = meta {
                 if m.path.is_ident("with_main") {
                     if let Expr::Lit(ExprLit {
-                                         lit: Lit::Bool(lit_bool),
-                                         ..
-                                     }) = &m.value
+                        lit: Lit::Bool(lit_bool),
+                        ..
+                    }) = &m.value
                     {
                         with_main = lit_bool.value();
                     } else {
@@ -111,7 +124,7 @@ fn expand_router(
         impl #struct_name {
             #(#methods)*
 
-            pub fn route(&self, input: &Vec<u8>) -> Vec<u8> {
+            pub fn route(&self, input: &alloc::Vec<u8>) -> alloc::Vec<u8> {
                 if input.len() < 4 {
                     panic!("input too short, cannot extract selector");
                 }
@@ -369,9 +382,8 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use syn::{Ident, ImplItem, parse_quote, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
-
     use super::*;
+    use syn::{parse_quote, Ident, ImplItem, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
 
     #[test]
     fn test_rust_name_to_sol() {
