@@ -1,6 +1,6 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
     self,
     parse::{Parse, ParseStream},
@@ -299,7 +299,8 @@ fn rust_type_to_sol(ty: &Type) -> proc_macro2::TokenStream {
         Type::Slice(ty) => convert_slice_type(ty),
         Type::Tuple(ty) => convert_tuple_type(ty),
         Type::Path(type_path) => convert_path_type(type_path),
-        _ => panic!("Unsupported type: {:?}", ty),
+        Type::Reference(type_ref) => rust_type_to_sol(&type_ref.elem),
+        _ => panic!("Unsupported type: {}", ty.to_token_stream().to_string()),
     }
 }
 
@@ -335,7 +336,7 @@ fn convert_tuple_type(ty: &syn::TypeTuple) -> proc_macro2::TokenStream {
 fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
     let ident = &type_path.path.segments.last().unwrap().ident;
     match ident.to_string().as_str() {
-        "String" => quote! { string },
+        "String" | "str" => quote! { string },
         "bool" => quote! { bool },
         "u8" => quote! { uint8 },
         "u16" => quote! { uint16 },
@@ -522,6 +523,9 @@ mod tests {
     #[test]
     fn test_convert_path_type_string() {
         let ty: TypePath = parse_quote!(String);
+        let result = convert_path_type(&ty);
+        assert_eq!(result.to_string(), "string");
+        let ty: TypePath = parse_quote!(str);
         let result = convert_path_type(&ty);
         assert_eq!(result.to_string(), "string");
     }
