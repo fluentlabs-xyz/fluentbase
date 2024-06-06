@@ -613,7 +613,7 @@ pub fn execute_test_suite(
         let max_fee_per_blob_gas = unit.transaction.max_fee_per_blob_gas;
         env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
 
-        let mut TOTAL_TESTS = 0;
+        let mut total_tests_pass = 0;
 
         // post and execution
         for (spec_name, tests) in unit.post {
@@ -631,7 +631,7 @@ pub fn execute_test_suite(
 
             let spec_id = spec_name.to_spec_id();
             let tests_count = tests.len();
-            TOTAL_TESTS += tests_count;
+            total_tests_pass += tests_count;
 
             for (index, test) in tests.into_iter().enumerate() {
                 if let Some(test_num) = test_num {
@@ -824,7 +824,7 @@ pub fn execute_test_suite(
             }
         }
 
-        println!("FINISHED!!!!!!!!!!!\n\n{}", TOTAL_TESTS)
+        println!("\nFINISHED: total_tests_pass={}\n", total_tests_pass)
     }
     Ok(())
 }
@@ -873,7 +873,7 @@ pub fn run(
                 return Ok(());
             }
 
-            let (index, test_path) = {
+            let (_index, test_path) = {
                 let (current_idx, queue) = &mut *queue.lock().unwrap();
                 let prev_idx = *current_idx;
                 let Some(test_path) = queue.get(prev_idx).cloned() else {

@@ -15,7 +15,8 @@ pub mod jzkt_remove;
 pub mod jzkt_rollback;
 pub mod jzkt_update;
 pub mod jzkt_update_preimage;
-pub mod sys_exec_hash;
+pub mod sys_context;
+pub mod sys_exec;
 pub mod sys_forward_output;
 pub mod sys_fuel;
 pub mod sys_halt;
@@ -23,6 +24,7 @@ pub mod sys_input_size;
 pub mod sys_output_size;
 pub mod sys_read;
 pub mod sys_read_output;
+pub mod sys_rewrite_context;
 pub mod sys_state;
 pub mod sys_write;
 pub mod wasm_to_rwasm;
@@ -48,7 +50,8 @@ use crate::{
         jzkt_rollback::JzktRollback,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec_hash::SysExecHash,
+        sys_context::SysContext,
+        sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_fuel::SysFuel,
         sys_halt::SysHalt,
@@ -56,6 +59,7 @@ use crate::{
         sys_output_size::SysOutputSize,
         sys_read::SysRead,
         sys_read_output::SysReadOutput,
+        sys_rewrite_context::SysRewriteContext,
         sys_state::SysState,
         sys_write::SysWrite,
         wasm_to_rwasm::WasmToRwasm,
@@ -77,10 +81,10 @@ pub trait RuntimeHandler {
     );
 }
 
-impl_runtime_handler!(CryptoKeccak256, CRYPTO_KECCAK256, fn fluentbase_v1alpha::_crypto_keccak256(data_offset: u32, data_len: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_crypto_poseidon(f32s_offset: u32, f32s_len: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoPoseidon2, CRYPTO_POSEIDON2, fn fluentbase_v1alpha::_crypto_poseidon2(fa32_offset: u32, fb32_offset: u32, fd32_offset: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_offset: u32, sig64_offset: u32, output65_offset: u32, rec_id: u32) -> ());
+impl_runtime_handler!(CryptoKeccak256, CRYPTO_KECCAK256, fn fluentbase_v1alpha::_crypto_keccak256(data_ptr: u32, data_len: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(CryptoPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_crypto_poseidon(f32s_ptr: u32, f32s_len: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(CryptoPoseidon2, CRYPTO_POSEIDON_HASH, fn fluentbase_v1alpha::_crypto_poseidon_hash(fa32_ptr: u32, fb32_ptr: u32, fd32_ptr: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(CryptoEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_ptr: u32, sig64_ptr: u32, output65_ptr: u32, rec_id: u32) -> ());
 
 impl_runtime_handler!(SysHalt, SYS_HALT, fn fluentbase_v1alpha::_sys_halt(exit_code: i32) -> ());
 impl_runtime_handler!(SysWrite, SYS_WRITE, fn fluentbase_v1alpha::_sys_write(offset: u32, length: u32) -> ());
@@ -89,27 +93,29 @@ impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target
 impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
-impl_runtime_handler!(SysExecHash, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec_hash(code_hash32_offset: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
+impl_runtime_handler!(SysExec, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
 impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SysFuel, SYS_FUEL, fn fluentbase_v1alpha::_sys_fuel(delta: u64) -> u64);
+impl_runtime_handler!(SysRewriteContext, SYS_REWRITE_CONTEXT, fn fluentbase_v1alpha::_sys_rewrite_context(context_ptr: u32, context_len: u32) -> ());
+impl_runtime_handler!(SysContext, SYS_CONTEXT, fn fluentbase_v1alpha::_sys_context(target_ptr: u32, offset: u32, length: u32) -> ());
 
-impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
+impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_ptr: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
-impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32, committed: u32) -> u32);
-impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
-impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_offset: u32) -> ());
-impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_offset: u32) -> ());
+impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_ptr: u32, field: u32, output32_ptr: u32, committed: u32) -> u32);
+impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_ptr: u32, flags: u32, vals32_ptr: u32, vals32_len: u32) -> ());
+impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_ptr: u32) -> ());
+impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_ptr: u32) -> ());
 impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
-impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
+impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_ptr: u32) -> ());
 impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint: u64) -> ());
 impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
 
-impl_runtime_handler!(WasmToRwasmSize, WASM_TO_RWASM_SIZE, fn fluentbase_v1alpha::_wasm_to_rwasm_size(input_offset: u32, input_len: u32) -> i32);
-impl_runtime_handler!(WasmToRwasm, WASM_TO_RWASM, fn fluentbase_v1alpha::_wasm_to_rwasm(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
+impl_runtime_handler!(WasmToRwasmSize, WASM_TO_RWASM_SIZE, fn fluentbase_v1alpha::_wasm_to_rwasm_size(input_ptr: u32, input_len: u32) -> i32);
+impl_runtime_handler!(WasmToRwasm, WASM_TO_RWASM, fn fluentbase_v1alpha::_wasm_to_rwasm(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
 
-impl_runtime_handler!(DebugLog, DEBUG_LOG, fn fluentbase_v1alpha::_debug_log(msg_offset: u32, msg_len: u32) -> ());
+impl_runtime_handler!(DebugLog, DEBUG_LOG, fn fluentbase_v1alpha::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
 fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     linker: &mut Linker<RuntimeContext<DB>>,
@@ -126,9 +132,13 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SysRead::register_handler(linker, store);
     SysOutputSize::register_handler(linker, store);
     SysReadOutput::register_handler(linker, store);
-    SysExecHash::register_handler(linker, store);
+    SysExec::register_handler(linker, store);
     SysState::register_handler(linker, store);
     SysFuel::register_handler(linker, store);
+    if IS_SOVEREIGN {
+        SysRewriteContext::register_handler(linker, store);
+    }
+    SysContext::register_handler(linker, store);
     if IS_SOVEREIGN {
         JzktOpen::register_handler(linker, store);
         JzktCheckpoint::register_handler(linker, store);

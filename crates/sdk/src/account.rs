@@ -61,6 +61,7 @@ pub trait AccountManager {
     fn exec_hash(
         &self,
         hash32_offset: *const u8,
+        context: &[u8],
         input: &[u8],
         fuel_offset: *mut u32,
         state: u32,
@@ -198,26 +199,8 @@ impl Account {
 
     pub fn inc_nonce(&mut self) -> Result<u64, ExitCode> {
         let prev_nonce = self.nonce;
-        self.nonce += 1;
-        if self.nonce == u64::MAX {
-            return Err(ExitCode::NonceOverflow);
-        }
+        self.nonce = self.nonce.checked_add(1).ok_or(ExitCode::NonceOverflow)?;
         Ok(prev_nonce)
-    }
-
-    #[deprecated(note = "use [write_account] method instead")]
-    pub fn write_to_jzkt<AM: AccountManager>(&self, am: &AM) {
-        am.write_account(self);
-    }
-
-    #[deprecated(note = "use [preimage] method instead")]
-    pub fn load_source_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
-        return am.preimage(&self.source_code_hash);
-    }
-
-    #[deprecated(note = "use [preimage] method instead")]
-    pub fn load_rwasm_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
-        return am.preimage(&self.rwasm_code_hash);
     }
 
     pub fn update_bytecode<AM: AccountManager>(

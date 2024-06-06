@@ -6,7 +6,7 @@ pub fn deploy() {}
 
 pub fn main() {
     let cr = ExecutionContext::DEFAULT;
-    let input = cr.contract_input();
+    let input = ExecutionContext::raw_input();
     let gas_limit = cr.contract_gas_limit();
 
     let result = revm_precompile::blake2::run(&input, gas_limit);

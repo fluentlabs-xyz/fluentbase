@@ -24,25 +24,25 @@ pub enum ExitCode {
     NotSupportedCall = -1003,
     TransactError = -1004,
     OutputOverflow = -1005,
-    InputDecodeFailure = -1006,
+    // InputDecodeFailure = -1006,
     PoseidonError = -1007,
     PersistentStorageError = -1008,
     WriteProtection = -1009,
-    CreateError = -1010,
-    PreimageUnavailable = -1011,
+    // CreateError = -1010,
+    // PreimageUnavailable = -1011,
     InsufficientBalance = -1012,
     CreateCollision = -1013,
     ContractSizeLimit = -1014,
-    StorageSlotOverflow = -1015,
+    // StorageSlotOverflow = -1015,
     CallDepthOverflow = -1016,
     FatalExternalError = -1017,
     CompilationError = -1018,
     OverflowPayment = -1019,
-    EVMCreateError = -1020,
-    EVMCreateRevert = -1021,
-    EVMCallError = -1022,
-    EVMCallRevert = -1023,
-    EVMNotFound = -1024,
+    // EVMCreateError = -1020,
+    // EVMCreateRevert = -1021,
+    // EVMCallError = -1022,
+    // EVMCallRevert = -1023,
+    // EVMNotFound = -1024,
     PrecompileError = -1025,
     EcrecoverBadSignature = -1026,
     EcrecoverError = -1027,
@@ -52,6 +52,7 @@ pub enum ExitCode {
     InvalidEfOpcode = -1031,
     InvalidJump = -1032,
     NotActivatedEIP = -1033,
+    ImmutableContext = -1034,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -145,7 +146,7 @@ pub enum SysFuncIdx {
     // crypto
     CRYPTO_KECCAK256 = 0x0101,
     CRYPTO_POSEIDON = 0x0102,
-    CRYPTO_POSEIDON2 = 0x0103,
+    CRYPTO_POSEIDON_HASH = 0x0103,
     CRYPTO_ECRECOVER = 0x0104,
 
     // SYS host
@@ -159,6 +160,8 @@ pub enum SysFuncIdx {
     SYS_EXEC_HASH = 0x0009,
     SYS_FORWARD_OUTPUT = 0x000a,
     SYS_FUEL = 0x000b,
+    SYS_REWRITE_CONTEXT = 0x000c,
+    SYS_CONTEXT = 0x000d,
 
     // jzkt
     JZKT_OPEN = 0x0701,
@@ -191,7 +194,7 @@ impl SysFuncIdx {
             SysFuncIdx::SYS_WRITE => 1,
             SysFuncIdx::CRYPTO_KECCAK256 => 1,
             SysFuncIdx::CRYPTO_POSEIDON => 1,
-            SysFuncIdx::CRYPTO_POSEIDON2 => 1,
+            SysFuncIdx::CRYPTO_POSEIDON_HASH => 1,
             SysFuncIdx::CRYPTO_ECRECOVER => 1,
             SysFuncIdx::JZKT_OPEN => 1,
             SysFuncIdx::JZKT_UPDATE => 1,
@@ -200,52 +203,6 @@ impl SysFuncIdx {
             SysFuncIdx::JZKT_ROLLBACK => 1,
             SysFuncIdx::JZKT_COMMIT => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
-        }
-    }
-}
-
-impl From<u32> for SysFuncIdx {
-    fn from(value: u32) -> Self {
-        match value {
-            0x0000 => Self::UNKNOWN,
-
-            // crypto
-            0x0101 => Self::CRYPTO_KECCAK256,
-            0x0102 => Self::CRYPTO_POSEIDON,
-            0x0103 => Self::CRYPTO_POSEIDON2,
-            0x0104 => Self::CRYPTO_ECRECOVER,
-
-            // SYS host
-            0x0001 => Self::SYS_HALT,
-            0x0002 => Self::SYS_STATE,
-            0x0003 => Self::SYS_READ,
-            0x0004 => Self::SYS_INPUT_SIZE,
-            0x0005 => Self::SYS_WRITE,
-            0x0006 => Self::SYS_OUTPUT_SIZE,
-            0x0007 => Self::SYS_READ_OUTPUT,
-            0x0009 => Self::SYS_EXEC_HASH,
-            0x000a => Self::SYS_FORWARD_OUTPUT,
-
-            // jzkt
-            0x0701 => Self::JZKT_OPEN,
-            0x0702 => Self::JZKT_CHECKPOINT,
-            0x0703 => Self::JZKT_GET,
-            0x0704 => Self::JZKT_UPDATE,
-            0x0705 => Self::JZKT_UPDATE_PREIMAGE,
-            0x0706 => Self::JZKT_REMOVE,
-            0x0707 => Self::JZKT_COMPUTE_ROOT,
-            0x0708 => Self::JZKT_EMIT_LOG,
-            0x0709 => Self::JZKT_COMMIT,
-            0x070A => Self::JZKT_ROLLBACK,
-            0x070D => Self::JZKT_PREIMAGE_SIZE,
-            0x070E => Self::JZKT_PREIMAGE_COPY,
-
-            0x0801 => Self::WASM_TO_RWASM_SIZE,
-            0x0802 => Self::WASM_TO_RWASM,
-
-            0x0901 => Self::DEBUG_LOG,
-
-            _ => Self::UNKNOWN,
         }
     }
 }

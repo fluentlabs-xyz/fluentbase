@@ -36,13 +36,13 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
         );
     } else {
         // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
-        LowLevelSDK::crypto_poseidon2(
+        LowLevelSDK::crypto_poseidon_hash(
             slot0.as_ptr(),
             slot1.as_ptr(),
             DOMAIN.as_ptr(),
             storage_key.as_mut_ptr(),
         );
-        LowLevelSDK::crypto_poseidon2(
+        LowLevelSDK::crypto_poseidon_hash(
             address32.as_ptr(),
             storage_key.as_ptr(),
             DOMAIN.as_ptr(),

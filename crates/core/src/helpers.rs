@@ -11,6 +11,7 @@ use fluentbase_sdk::{
     EvmCreateMethodInput,
     ICoreInput,
     LowLevelAPI,
+    LowLevelSDK,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
@@ -106,17 +107,14 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {{}};
 }
 
-fn contract_input_from_call_inputs<CR: ContextReader>(
+fn contract_context_from_call_inputs<CR: ContextReader>(
     cr: &CR,
     call_inputs: &Box<CallInputs>,
-    input: Bytes,
 ) -> ContractInput {
     ContractInput {
-        journal_checkpoint: cr.journal_checkpoint(),
         contract_gas_limit: call_inputs.gas_limit,
         contract_address: call_inputs.context.address,
         contract_caller: call_inputs.context.caller,
-        contract_input: input,
         contract_value: call_inputs.context.apparent_value,
         contract_is_static: call_inputs.is_static,
         block_chain_id: cr.block_chain_id(),
@@ -137,17 +135,14 @@ fn contract_input_from_call_inputs<CR: ContextReader>(
     }
 }
 
-fn contract_input_from_create_inputs<CR: ContextReader>(
+fn contract_context_from_create_inputs<CR: ContextReader>(
     cr: &CR,
     create_inputs: &Box<CreateInputs>,
-    input: Bytes,
 ) -> ContractInput {
     ContractInput {
-        journal_checkpoint: cr.journal_checkpoint(),
         contract_gas_limit: create_inputs.gas_limit,
         contract_address: Address::ZERO,
         contract_caller: create_inputs.caller,
-        contract_input: input,
         contract_value: create_inputs.value,
         contract_is_static: false,
         block_chain_id: cr.block_chain_id(),
@@ -176,7 +171,7 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
     depth: u32,
 ) -> CreateOutcome {
     // calc create input
-    let contract_input = contract_input_from_create_inputs(cr, &inputs, Bytes::new());
+    let contract_input = contract_context_from_create_inputs(cr, &inputs);
     let method_data = EvmCreateMethodInput {
         value: inputs.value,
         bytecode: inputs.init_code,
@@ -211,7 +206,7 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
 ) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
-    let contract_input = contract_input_from_call_inputs(cr, &inputs, Bytes::new());
+    let contract_input = contract_context_from_call_inputs(cr, &inputs);
     let method_data = EvmCallMethodInput {
         callee: inputs.contract,
         // here we take transfer value, because for DELEGATECALL it's not apparent
@@ -408,16 +403,17 @@ pub(crate) fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode
     }
 }
 
-pub(crate) struct InputHelper<CR: ContextReader> {
+pub(crate) struct InputHelper {
     input: Bytes,
-    _phantom: PhantomData<CR>,
 }
 
-impl<CR: ContextReader> InputHelper<CR> {
-    pub(crate) fn new(cr: CR) -> Self {
+impl InputHelper {
+    pub(crate) fn new() -> Self {
+        let input_size = LowLevelSDK::sys_input_size();
+        let mut input = vec![0u8; input_size as usize];
+        LowLevelSDK::sys_read(&mut input, 0);
         Self {
-            input: cr.contract_input(),
-            _phantom: Default::default(),
+            input: input.into(),
         }
     }
 

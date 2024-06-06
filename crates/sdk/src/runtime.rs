@@ -19,7 +19,8 @@ use fluentbase_runtime::{
         jzkt_rollback::JzktRollback,
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec_hash::SysExecHash,
+        sys_context::SysContext,
+        sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_fuel::SysFuel,
         sys_halt::SysHalt,
@@ -27,6 +28,7 @@ use fluentbase_runtime::{
         sys_output_size::SysOutputSize,
         sys_read::SysRead,
         sys_read_output::SysReadOutput,
+        sys_rewrite_context::SysRewriteContext,
         sys_state::SysState,
         sys_write::SysWrite,
         wasm_to_rwasm::WasmToRwasm,
@@ -72,25 +74,25 @@ where
 }
 
 impl LowLevelAPI for LowLevelSDK {
-    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+    fn crypto_keccak256(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
         let result = CryptoKeccak256::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
+            &*ptr::slice_from_raw_parts(data_ptr, data_len as usize)
         });
         unsafe {
-            ptr::copy(result.as_ptr(), output32_offset, 32);
+            ptr::copy(result.as_ptr(), output32_ptr, 32);
         }
     }
 
-    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
+    fn crypto_poseidon(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
         let result = CryptoPoseidon::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_offset, data_len as usize)
+            &*ptr::slice_from_raw_parts(data_ptr, data_len as usize)
         });
         unsafe {
-            ptr::copy(result.as_ptr(), output32_offset, 32);
+            ptr::copy(result.as_ptr(), output32_ptr, 32);
         }
     }
 
-    fn crypto_poseidon2(
+    fn crypto_poseidon_hash(
         fa32_ptr: *const u8,
         fb32_ptr: *const u8,
         fd32_ptr: *const u8,
@@ -156,23 +158,28 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     fn sys_exec_hash(
-        bytecode_hash32_offset: *const u8,
-        input_offset: *const u8,
+        bytecode_hash32_ptr: *const u8,
+        input_ptr: *const u8,
         input_len: u32,
-        return_offset: *mut u8,
+        context_ptr: *const u8,
+        context_len: u32,
+        return_ptr: *mut u8,
         return_len: u32,
-        fuel_offset: *mut u32,
+        fuel_ptr: *mut u32,
         state: u32,
     ) -> i32 {
-        let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_offset, 32) };
-        let input =
-            unsafe { &*ptr::slice_from_raw_parts(input_offset, input_len as usize) }.to_vec();
-        let fuel = unsafe { *fuel_offset };
-        with_context_mut(move |ctx| {
-            match SysExecHash::fn_impl(
+        with_context_mut(|ctx| {
+            let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_ptr, 32) };
+            let input =
+                unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) }.to_vec();
+            let context =
+                unsafe { &*ptr::slice_from_raw_parts(context_ptr, context_len as usize) }.to_vec();
+            let fuel = unsafe { *fuel_ptr };
+            match SysExec::fn_impl(
                 ctx,
                 bytecode_hash32.try_into().unwrap(),
-                input.clone(),
+                input,
+                context,
                 return_len,
                 fuel as u64,
                 state,
@@ -180,12 +187,10 @@ impl LowLevelAPI for LowLevelSDK {
                 Ok(remaining_fuel) => {
                     if return_len > 0 {
                         let return_data = ctx.return_data();
-                        unsafe {
-                            ptr::copy(return_data.as_ptr(), return_offset, return_len as usize)
-                        }
+                        unsafe { ptr::copy(return_data.as_ptr(), return_ptr, return_len as usize) }
                     }
                     unsafe {
-                        *fuel_offset = remaining_fuel as u32;
+                        *fuel_ptr = remaining_fuel as u32;
                     }
                     0
                 }
@@ -198,35 +203,46 @@ impl LowLevelAPI for LowLevelSDK {
         with_context_mut(|ctx| SysFuel::fn_impl(ctx, delta))
     }
 
+    fn sys_context(target_ptr: *mut u8, offset: u32, length: u32) {
+        let context = with_context_mut(|ctx| SysContext::fn_impl(ctx, offset, length).unwrap());
+        unsafe {
+            ptr::copy(context.as_ptr(), target_ptr, length as usize);
+        }
+    }
+
+    fn sys_rewrite_context(context_ptr: *const u8, context_len: u32) {
+        let context = unsafe { &*ptr::slice_from_raw_parts(context_ptr, context_len as usize) };
+        with_context_mut(|ctx| SysRewriteContext::fn_impl(ctx, context.to_vec()).unwrap())
+    }
+
     fn jzkt_open(root32_ptr: *const u8) {
         let root = unsafe { &*ptr::slice_from_raw_parts(root32_ptr, 32) };
         with_context_mut(|ctx| JzktOpen::fn_impl(ctx, root).unwrap());
     }
+
     fn jzkt_checkpoint() -> u64 {
         let result = with_context_mut(|ctx| JzktCheckpoint::fn_impl(ctx).unwrap());
         result.to_u64()
     }
-    fn jzkt_get(
-        key32_offset: *const u8,
-        field: u32,
-        output32_offset: *mut u8,
-        committed: bool,
-    ) -> bool {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_offset, 32) };
+
+    fn jzkt_get(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8, committed: bool) -> bool {
+        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         match with_context_mut(|ctx| JzktGet::fn_impl(ctx, key, field, committed)) {
             Some((output, is_cold)) => {
-                unsafe { ptr::copy(output.as_ptr(), output32_offset, 32) }
+                unsafe { ptr::copy(output.as_ptr(), output32_ptr, 32) }
                 is_cold
             }
             None => true,
         }
     }
+
     fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         let values =
             unsafe { &*ptr::slice_from_raw_parts(vals32_ptr, vals32_len as usize / 32) }.to_vec();
         with_context_mut(|ctx| JzktUpdate::fn_impl(ctx, key, flags, values.clone()).unwrap());
     }
+
     fn jzkt_update_preimage(
         key32_ptr: *const u8,
         field: u32,
@@ -237,14 +253,17 @@ impl LowLevelAPI for LowLevelSDK {
         let preimage = unsafe { &*ptr::slice_from_raw_parts(preimage_ptr, preimage_len as usize) };
         with_context_mut(|ctx| JzktUpdatePreimage::fn_impl(ctx, key, field, preimage).unwrap())
     }
+
     fn jzkt_remove(key32_ptr: *const u8) {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         with_context_mut(|ctx| JzktRemove::fn_impl(ctx, key).unwrap())
     }
-    fn jzkt_compute_root(output32_offset: *mut u8) {
+
+    fn jzkt_compute_root(output32_ptr: *mut u8) {
         let root = with_context_mut(|ctx| JzktComputeRoot::fn_impl(ctx));
-        unsafe { ptr::copy(root.as_ptr(), output32_offset, 32) }
+        unsafe { ptr::copy(root.as_ptr(), output32_ptr, 32) }
     }
+
     fn jzkt_emit_log(
         address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
@@ -268,17 +287,21 @@ impl LowLevelAPI for LowLevelSDK {
             )
         });
     }
-    fn jzkt_commit(root32_offset: *mut u8) {
+
+    fn jzkt_commit(root32_ptr: *mut u8) {
         let root = with_context_mut(|ctx| JzktCommit::fn_impl(ctx).unwrap());
-        unsafe { ptr::copy(root.as_ptr(), root32_offset, 32) }
+        unsafe { ptr::copy(root.as_ptr(), root32_ptr, 32) }
     }
+
     fn jzkt_rollback(checkpoint: u64) {
         with_context_mut(|ctx| JzktRollback::fn_impl(ctx, JournalCheckpoint::from_u64(checkpoint)));
     }
+
     fn jzkt_preimage_size(key32_ptr: *const u8) -> u32 {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         return with_context_mut(|ctx| JzktPreimageSize::fn_impl(ctx, key).unwrap());
     }
+
     fn jzkt_preimage_copy(key32_ptr: *const u8, preimage_ptr: *mut u8) {
         let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
         let preimage_copy = with_context_mut(|ctx| JzktPreimageCopy::fn_impl(ctx, key).unwrap());
@@ -286,11 +309,13 @@ impl LowLevelAPI for LowLevelSDK {
             unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
         dest.copy_from_slice(&preimage_copy);
     }
+
     fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
         let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
         with_context_mut(|ctx| WasmToRwasmSize::fn_impl(ctx, wasm_binary).map_err(|v| v.into_i32()))
             .unwrap()
     }
+
     fn wasm_to_rwasm(
         input_ptr: *const u8,
         input_len: u32,
@@ -312,6 +337,7 @@ impl LowLevelAPI for LowLevelSDK {
         }
         ExitCode::Ok.into_i32()
     }
+
     fn debug_log(msg_ptr: *const u8, msg_len: u32) {
         let msg = unsafe { &*ptr::slice_from_raw_parts(msg_ptr, msg_len as usize) };
         DebugLog::fn_impl(msg)
@@ -322,6 +348,12 @@ impl LowLevelSDK {
     pub fn with_test_input(input: Vec<u8>) {
         with_context_mut(|ctx| {
             ctx.change_input(input.clone());
+        });
+    }
+
+    pub fn with_test_context(input: Vec<u8>) {
+        with_context_mut(|ctx| {
+            ctx.change_context(input.clone());
         });
     }
 

@@ -20,10 +20,10 @@ impl DebugLog {
         Ok(())
     }
 
-    pub fn fn_impl(msg: &[u8]) {
-        // let now = chrono::offset::Utc::now();
+    pub fn fn_impl(_msg: &[u8]) {
+        // let now = time::Instant::now();
         // let last_time = LAST_LOG_TIME.get();
-        // let curr_time = now.timestamp_millis();
+        // let curr_time = now.elapsed().as_millis() as i64;
         // let time_diff = if last_time > 0 {
         //     curr_time - last_time
         // } else {

@@ -2,7 +2,7 @@ use crate::{
     instruction::{
         runtime_register_shared_handlers,
         runtime_register_sovereign_handlers,
-        sys_exec_hash::{SysExecHash, SysExecHashResumable},
+        sys_exec::{SysExec, SysExecHashResumable},
     },
     types::{InMemoryTrieDb, RuntimeError},
     zktrie::ZkTrieStateDb,
@@ -85,6 +85,7 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) state: u32,
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) context: Vec<u8>,
     pub(crate) depth: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
@@ -106,6 +107,7 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
             state: 0,
             is_shared: false,
             input: vec![],
+            context: vec![],
             depth: 0,
             execution_result: Default::default(),
             jzkt: None,
@@ -133,8 +135,17 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
+    pub fn with_context(mut self, context: Vec<u8>) -> Self {
+        self.context = context;
+        self
+    }
+
     pub fn change_input(&mut self, input_data: Vec<u8>) {
         self.input = input_data;
+    }
+
+    pub fn change_context(&mut self, new_context: Vec<u8>) {
+        self.context = new_context;
     }
 
     pub fn with_state(mut self, state: u32) -> Self {
@@ -361,10 +372,10 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         }
 
         // register linker trampolines for external calls
-        if !store.data().is_shared {
-            runtime_register_sovereign_handlers(&mut linker, &mut store)
-        } else {
+        if store.data().is_shared {
             runtime_register_shared_handlers(&mut linker, &mut store)
+        } else {
+            runtime_register_sovereign_handlers(&mut linker, &mut store)
         }
 
         Self { store, linker }
@@ -445,7 +456,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             state.host_error().downcast_ref::<SysExecHashResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            match SysExecHash::fn_continue(
+                            match SysExec::fn_continue(
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
                             ) {

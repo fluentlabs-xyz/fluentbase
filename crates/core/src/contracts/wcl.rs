@@ -20,7 +20,7 @@ pub fn deploy() {}
 pub fn main() {
     let cr = ExecutionContext::default();
     let am = JzktAccountManager::default();
-    let input_helper = InputHelper::new(cr);
+    let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
         WASM_CREATE_METHOD_ID => {
@@ -66,11 +66,8 @@ mod tests {
                 depth: 0,
             },
         };
-        let contract_input = ContractInput {
-            contract_input: core_input.encode_to_vec(0).into(),
-            ..Default::default()
-        }
-        .encode_to_vec(0);
+        let contract_input = core_input.encode_to_vec(0);
+        LowLevelSDK::with_test_context(ContractInput::default().encode_to_vec(0));
         LowLevelSDK::with_test_input(contract_input);
         super::main();
         assert!(LowLevelSDK::get_test_output().len() > 0);

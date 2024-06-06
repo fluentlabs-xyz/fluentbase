@@ -374,17 +374,11 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             depth: 0,
         };
 
-        let contract_input = self.input_from_env(
-            &mut gas,
-            caller_address,
-            Address::ZERO,
-            Default::default(),
-            value,
-        );
+        let context = self.context_from_env(&mut gas, caller_address, Address::ZERO, value);
         let am = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
         };
-        let create_output = _loader_create(&contract_input, &am, method_data);
+        let create_output = _loader_create(&context, &am, method_data);
 
         // let (output_buffer, exit_code) = self.exec_rwasm_binary(
         //     &mut gas,
@@ -458,17 +452,11 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             gas_limit: gas.remaining(),
             depth: 0,
         };
-        let contract_input = self.input_from_env(
-            &mut gas,
-            caller_address,
-            callee_address,
-            Default::default(),
-            value,
-        );
+        let context = self.context_from_env(&mut gas, caller_address, callee_address, value);
         let am = JournalDbWrapper {
             ctx: RefCell::new(&mut self.context.evm),
         };
-        let call_output = _loader_call(&contract_input, &am, method_input);
+        let call_output = _loader_call(&context, &am, method_input);
 
         // let core_input = CoreInput {
         //     method_id,
@@ -530,20 +518,17 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         }
     }
 
-    fn input_from_env(
+    fn context_from_env(
         &self,
         gas: &Gas,
         caller_address: Address,
         callee_address: Address,
-        input: Bytes,
         value: U256,
     ) -> ContractInput {
         ContractInput {
-            journal_checkpoint: 0,
             contract_gas_limit: gas.remaining(),
             contract_address: callee_address,
             contract_caller: caller_address,
-            contract_input: input,
             contract_value: value,
             contract_is_static: false,
             block_chain_id: self.context.evm.env.cfg.chain_id,
@@ -619,8 +604,8 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         input: Bytes,
         value: U256,
     ) -> (Bytes, ExitCode) {
-        let input = self
-            .input_from_env(checkpoint, gas, caller, callee, input, value)
+        let context = self
+            .context_from_env(checkpoint, gas, caller, callee, value)
             .encode_to_vec(0);
 
         let mut gas_limit_ref = gas.remaining() as u32;
@@ -871,6 +856,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
     fn exec_hash(
         &self,
         hash32_offset: *const u8,
+        context: &[u8],
         input: &[u8],
         fuel_offset: *mut u32,
         state: u32,
@@ -888,6 +874,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             ctx: RefCell::new(&mut ctx),
         };
         let ctx = RuntimeContext::new(rwasm_bytecode)
+            .with_context(context.into())
             .with_input(input.into())
             .with_fuel_limit(unsafe { *fuel_offset } as u64)
             .with_jzkt(jzkt)
