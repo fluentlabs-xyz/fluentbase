@@ -123,7 +123,7 @@ fn expand_router(
         impl #struct_name {
             #(#methods)*
 
-            pub fn route(&self, input: &alloc::Vec<u8>) -> alloc::Vec<u8> {
+            pub fn route(&self, input: &alloc::vec::Vec<u8>) -> alloc::vec::Vec<u8> {
                 if input.len() < 4 {
                     panic!("input too short, cannot extract selector");
                 }
@@ -140,12 +140,15 @@ fn expand_router(
 
 fn expand_main_fn(struct_name: &Box<Type>) -> proc_macro2::TokenStream {
     quote! {
-        fn main() {
+        #[cfg(not(feature = "std"))]
+        #[no_mangle]
+        #[cfg(target_arch = "wasm32")]
+        pub extern "C" fn main() {
             // Create a default execution context
             let ctx = ExecutionContext::default();
             // Get the contract input
-            let input = ctx.contract_input().clone();
-            let mut contract = #struct_name(&mut ctx);
+            let input = ctx.contract_input().to_vec();
+            let mut contract = #struct_name {};
 
             let output = contract.route(&input);
             LowLevelSDK::sys_write(&output);
