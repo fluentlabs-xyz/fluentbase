@@ -12,7 +12,7 @@ macro_rules! import_func {
 const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 22] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
-    import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
+    import_func!("_crypto_poseidon_hash", CRYPTO_POSEIDON_HASH),
     import_func!("_crypto_ecrecover", CRYPTO_ECRECOVER),
     import_func!("_sys_halt", SYS_HALT),
     import_func!("_sys_write", SYS_WRITE),
@@ -22,8 +22,10 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 22] = [
     import_func!("_sys_read_output", SYS_READ_OUTPUT),
     import_func!("_sys_forward_output", SYS_FORWARD_OUTPUT),
     import_func!("_sys_state", SYS_STATE),
-    import_func!("_sys_exec_hash", SYS_EXEC_HASH),
+    import_func!("_sys_exec", SYS_EXEC_HASH),
     import_func!("_sys_fuel", SYS_FUEL),
+    // import_func!("_sys_rewrite_context", SYS_REWRITE_CONTEXT),
+    // import_func!("_sys_context", SYS_CONTEXT),
     // import_func!("_jzkt_open", JZKT_OPEN),
     // import_func!("_jzkt_checkpoint", JZKT_CHECKPOINT),
     import_func!("_jzkt_get", JZKT_GET),
@@ -41,14 +43,16 @@ const SHARED_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 22] = [
     import_func!("_debug_log", DEBUG_LOG),
 ];
 
-pub fn create_shared_import_linker<F: From<[(&'static str, &'static str, u32, u32); 22]>>() -> F {
+pub fn create_shared_import_linker<
+    F: From<[(&'static str, &'static str, u32, u32); SHARED_IMPORT_LINKER.len()]>,
+>() -> F {
     F::from(SHARED_IMPORT_LINKER)
 }
 
-const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 29] = [
+const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 31] = [
     import_func!("_crypto_keccak256", CRYPTO_KECCAK256),
     import_func!("_crypto_poseidon", CRYPTO_KECCAK256),
-    import_func!("_crypto_poseidon2", CRYPTO_POSEIDON2),
+    import_func!("_crypto_poseidon_hash", CRYPTO_POSEIDON_HASH),
     import_func!("_crypto_ecrecover", CRYPTO_ECRECOVER),
     import_func!("_sys_halt", SYS_HALT),
     import_func!("_sys_write", SYS_WRITE),
@@ -58,8 +62,10 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 29] = [
     import_func!("_sys_read_output", SYS_READ_OUTPUT),
     import_func!("_sys_forward_output", SYS_FORWARD_OUTPUT),
     import_func!("_sys_state", SYS_STATE),
-    import_func!("_sys_exec_hash", SYS_EXEC_HASH),
+    import_func!("_sys_exec", SYS_EXEC_HASH),
     import_func!("_sys_fuel", SYS_FUEL),
+    import_func!("_sys_rewrite_context", SYS_REWRITE_CONTEXT),
+    import_func!("_sys_context", SYS_CONTEXT),
     import_func!("_jzkt_open", JZKT_OPEN),
     import_func!("_jzkt_checkpoint", JZKT_CHECKPOINT),
     import_func!("_jzkt_get", JZKT_GET),
@@ -77,7 +83,8 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 29] = [
     import_func!("_debug_log", DEBUG_LOG),
 ];
 
-pub fn create_sovereign_import_linker<F: From<[(&'static str, &'static str, u32, u32); 29]>>() -> F
-{
+pub fn create_sovereign_import_linker<
+    F: From<[(&'static str, &'static str, u32, u32); SOVEREIGN_IMPORT_LINKER.len()]>,
+>() -> F {
     F::from(SOVEREIGN_IMPORT_LINKER)
 }

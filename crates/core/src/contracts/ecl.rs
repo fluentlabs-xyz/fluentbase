@@ -22,7 +22,7 @@ pub fn main() {
     let cr = ExecutionContext::default();
     let am = JzktAccountManager::default();
     debug_log!("ecl(main): started method");
-    let input_helper = InputHelper::new(cr);
+    let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
         EVM_CREATE_METHOD_ID => {

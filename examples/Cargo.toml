@@ -50,7 +50,6 @@ std = [
 ]
 erc20 = []
 greeting = []
-contract_input_check_recode = []
 keccak256 = []
 panic = []
 poseidon = []
@@ -59,7 +58,6 @@ rwasm = [
 ]
 secp256k1 = []
 stack = []
-evm_call_from_wasm = []
 shakmaty = [
     "dep:shakmaty"
 ]

@@ -162,6 +162,7 @@ impl AccountManager for JzktAccountManager {
     fn exec_hash(
         &self,
         hash32_offset: *const u8,
+        context: &[u8],
         input: &[u8],
         fuel_offset: *mut u32,
         state: u32,
@@ -170,6 +171,8 @@ impl AccountManager for JzktAccountManager {
             hash32_offset,
             input.as_ptr(),
             input.len() as u32,
+            context.as_ptr(),
+            context.len() as u32,
             core::ptr::null_mut(),
             0,
             fuel_offset,

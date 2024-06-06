@@ -6,7 +6,7 @@ extern "C" {
     /// - Ecrecover
     pub fn _crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
     pub fn _crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    pub fn _crypto_poseidon2(
+    pub fn _crypto_poseidon_hash(
         fa32_offset: *const u8,
         fb32_offset: *const u8,
         fd32_offset: *const u8,
@@ -28,16 +28,40 @@ extern "C" {
     pub fn _sys_read_output(target: *mut u8, offset: u32, length: u32);
     pub fn _sys_forward_output(offset: u32, len: u32);
     pub fn _sys_state() -> u32;
-    pub fn _sys_exec_hash(
-        code_hash32_offset: *const u8,
-        input_offset: *const u8,
+
+    /// Executes nested call with specified bytecode poseidon hash:
+    /// - `code_hash32_ptr` - a 254-bit poseidon hash of a contract to be called
+    /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
+    /// - `input_len` - length of input (can be zero)
+    /// - `context_ptr` - pointer to the context (must be `ptr::null()` for shared env)
+    /// - `context_len` - length of the context
+    /// - `return_ptr` - pointer to the return data (might be `ptr::null()`)
+    /// - `return_len` - length of return data buffer (might be zero)
+    /// - `fuel_ptr` - pointer to the fuel memory field (modifiable)
+    /// - `state` - state of the call, for example deployment or main call
+    pub fn _sys_exec(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
         input_len: u32,
-        return_offset: *mut u8,
+        context_ptr: *const u8,
+        context_len: u32,
+        return_ptr: *mut u8,
         return_len: u32,
-        fuel_offset: *mut u32,
+        fuel_ptr: *mut u32,
         state: u32,
     ) -> i32;
+
     pub fn _sys_fuel(delta: u64) -> u64;
+
+    /// This function modifies context register for nested calls, we suppose to have two registers:
+    /// 1. CO - context offset
+    /// 2. CL - context length
+    /// Nested calls can read context only relatively using this CO/CL constraints.
+    pub fn _sys_rewrite_context(context_ptr: *const u8, context_len: u32);
+
+    /// Read context and write into specified target with offset and length. Registers CO & CL must
+    /// be initialized using `_sys_rewrite_context` function in advance.
+    pub fn _sys_context(target_ptr: *mut u8, offset: u32, length: u32);
 
     /// Journaled ZK Trie methods to work with blockchain state
     pub fn _jzkt_open(root32_ptr: *const u8);

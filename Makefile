@@ -8,7 +8,7 @@ build:
 	cd crates/contracts && $(MAKE)
 	if [ "$(SKIP_EXAMPLES)" = "n" ]; then cd examples && $(MAKE); fi
 	cd crates/genesis && $(MAKE)
-	notify-send "fluentbase" "build finished" || true
+	[[ -f /usr/bin/notify-send ]] && notify-send "fluentbase" "build finished" || true
 
 .PHONY: test
 test:

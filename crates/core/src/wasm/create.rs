@@ -1,8 +1,10 @@
 use crate::{debug_log, helpers::wasm2rwasm};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     Account,
     AccountManager,
     ContextReader,
+    ContractInput,
     LowLevelAPI,
     LowLevelSDK,
     WasmCreateMethodInput,
@@ -110,9 +112,16 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     // write contract to the trie
     contract_account.update_bytecode(am, &input.bytecode, None, &rwasm_bytecode.into(), None);
 
+    let mut context = ContractInput::clone_from_cr(cr);
+    context.contract_value = input.value;
+    context.contract_gas_limit = input.gas_limit;
+    context.contract_address = contract_account.address;
+    let contract_context = context.encode_to_vec(0);
+
     let mut gas_limit = input.gas_limit as u32;
     let (_, exit_code) = am.exec_hash(
         contract_account.rwasm_code_hash.as_ptr(),
+        &contract_context,
         &[],
         &mut gas_limit as *mut u32,
         STATE_DEPLOY,
