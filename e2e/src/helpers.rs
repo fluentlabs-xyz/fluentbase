@@ -10,7 +10,6 @@ use fluentbase_runtime::{
 use fluentbase_sdk::ContractInput;
 use fluentbase_types::{
     create_sovereign_import_linker,
-    Bytes,
     ExitCode,
     SysFuncIdx::SYS_STATE,
     STATE_DEPLOY,
