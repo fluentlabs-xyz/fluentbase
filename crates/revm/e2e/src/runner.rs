@@ -5,7 +5,6 @@ use super::{
 };
 use crate::merkle_trie::state_merkle_trie_root2;
 use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
-use fluentbase_poseidon::poseidon_hash;
 use fluentbase_revm::EVM_STORAGE_ADDRESS;
 use fluentbase_sdk::calc_storage_key;
 use fluentbase_types::{Address, ExitCode};
@@ -429,14 +428,14 @@ fn check_evm_execution<EXT1, EXT2>(
     Ok(())
 }
 
-lazy_static! {
-    static ref EVM_LOADER: (Bytes, B256) = {
-        let rwasm_bytecode: Bytes =
-            include_bytes!("../../../contracts/assets/loader_contract.rwasm").into();
-        let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
-        (rwasm_bytecode, rwasm_hash)
-    };
-}
+// lazy_static! {
+//     static ref EVM_LOADER: (Bytes, B256) = {
+//         let rwasm_bytecode: Bytes =
+//             include_bytes!("../../../contracts/assets/loader_contract.rwasm").into();
+//         let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
+//         (rwasm_bytecode, rwasm_hash)
+//     };
+// }
 
 pub fn execute_test_suite(
     path: &Path,

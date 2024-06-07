@@ -13,7 +13,7 @@ pub trait SharedAPI {
     fn input_size() -> u32;
     fn write(value: &[u8]);
     fn forward_output(offset: u32, len: u32);
-    fn exit(exit_code: i32);
+    fn exit(exit_code: i32) -> !;
     fn output_size() -> u32;
     fn read_output(target: *mut u8, offset: u32, length: u32);
     fn state() -> u32;
@@ -30,7 +30,7 @@ pub trait SharedAPI {
     ) -> i32;
 }
 
-pub trait SovereignAPI {
+pub trait SovereignAPI: SharedAPI {
     fn context_call(
         code_hash32_ptr: *const u8,
         input_ptr: *const u8,

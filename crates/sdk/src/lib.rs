@@ -40,7 +40,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     let panic_message = alloc::format!("{}", info).replace("\n", " ");
     LowLevelSDK::write(panic_message.as_bytes());
     LowLevelSDK::exit(fluentbase_types::ExitCode::Panic.into_i32());
-    loop {}
 }
 
 #[cfg(not(feature = "std"))]

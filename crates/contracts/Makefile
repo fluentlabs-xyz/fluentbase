@@ -1,26 +1,14 @@
-OUT_FOLDER=assets
+PRECOMPILES=blake2 sha256 ripemd160 identity modexp ecrecover evm
 CUR_DIR="$(shell pwd)"
-OUT_DIR="${CUR_DIR}/${OUT_FOLDER}"
+OUT_DIR="${CUR_DIR}/assets"
+RUSTFLAGS='-C link-arg=-zstack-size=262144 -C target-feature=+bulk-memory'
 
-.PHONY: build
-all: build
+all: $(PRECOMPILES)
 
-.PHONY: build
-build: build_core_contracts build_precompiles build_all_contracts_wats
-
-.PHONY: build_core_contracts
-build_core_contracts:
-	cd ../core; $(MAKE) build_all_contracts OUT_DIR="$(OUT_DIR)"
-
-.PHONY: build_all_contracts_wats
-build_all_contracts_wats:
-	cd ../core; $(MAKE) build_all_contracts_wats OUT_DIR="$(OUT_DIR)"
-
-.PHONY: build_precompiles
-build_precompiles:
-	cd ../core; $(MAKE) precompile_blake2 OUT_DIR="$(OUT_DIR)"
-	#cd ../core; $(MAKE) precompile_bn128 OUT_DIR="$(OUT_DIR)"
-	cd ../core; $(MAKE) precompile_identity OUT_DIR="$(OUT_DIR)"
-	#cd ../core; $(MAKE) precompile_kzg_point_evaluation OUT_DIR="$(OUT_DIR)"
-	cd ../core; $(MAKE) precompile_modexp OUT_DIR="$(OUT_DIR)"
-	cd ../core; $(MAKE) precompile_secp256k1 OUT_DIR="$(OUT_DIR)"
+.PHONY: $(PRECOMPILES)
+$(PRECOMPILES):
+	mkdir -p $(OUT_DIR)
+	RUSTFLAGS=$(RUSTFLAGS) cargo b --release --target=wasm32-unknown-unknown --no-default-features --features=$@
+	cp ../../target/wasm32-unknown-unknown/release/fluentbase_contracts.wasm ./assets/precompile_$@.wasm
+	wasm2wat $(OUT_DIR)/precompile_$@.wasm > $(OUT_DIR)/precompile_$@.wat || true
+	cd ../../bin; $(MAKE) custom_file FILE_IN="$(OUT_DIR)/precompile_$@.wasm" FILE_OUT="$(OUT_DIR)/precompile_$@.rwasm"

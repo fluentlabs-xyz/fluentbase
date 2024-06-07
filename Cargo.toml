@@ -4,13 +4,7 @@ members = [
     "crates/*",
     "crates/genesis/bin",
     "crates/revm/e2e",
-    "examples/cairo",
-    "examples/erc20",
-    "examples/greeting",
-    "examples/hashing",
-    "examples/panic",
-    "examples/rwasm",
-    "examples/shakmaty",
+    "examples/*",
     "e2e",
 ]
 exclude = [
@@ -38,7 +32,7 @@ fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = f
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
-fluentbase-revm = { path = "crates/revm" }
+fluentbase-revm = { path = "crates/revm", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
@@ -81,7 +75,7 @@ hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "0.4.1" }
 strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
-lazy_static = { version = "1.4.0" }
+lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 regex = { version = "1.10" }
 
 [profile.bench]

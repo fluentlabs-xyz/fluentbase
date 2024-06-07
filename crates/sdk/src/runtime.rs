@@ -134,8 +134,9 @@ impl SharedAPI for LowLevelSDK {
         with_context_mut(|ctx| SyscallForwardOutput::fn_impl(ctx, offset, len)).unwrap()
     }
 
-    fn exit(exit_code: i32) {
-        with_context_mut(|ctx| SyscallExit::fn_impl(ctx, exit_code))
+    fn exit(exit_code: i32) -> ! {
+        with_context_mut(|ctx| SyscallExit::fn_impl(ctx, exit_code));
+        unreachable!("exit code: {}", exit_code);
     }
 
     fn output_size() -> u32 {

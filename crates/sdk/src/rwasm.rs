@@ -54,7 +54,7 @@ impl SharedAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn exit(exit_code: i32) {
+    fn exit(exit_code: i32) -> ! {
         unsafe { _exit(exit_code) }
     }
 

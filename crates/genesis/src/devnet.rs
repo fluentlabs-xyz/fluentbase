@@ -1,4 +1,4 @@
-use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
+use crate::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{address, b256, Address, Bytes, B256, U256};
@@ -107,12 +107,12 @@ pub fn devnet_genesis() -> Genesis {
     }
     enable_rwasm_contract!(
         ECL_CONTRACT_ADDRESS,
-        "../../contracts/assets/ecl_contract.rwasm"
+        "../../contracts/assets/precompile_evm.rwasm"
     );
-    enable_rwasm_contract!(
-        WCL_CONTRACT_ADDRESS,
-        "../../contracts/assets/wcl_contract.rwasm"
-    );
+    // enable_rwasm_contract!(
+    //     WCL_CONTRACT_ADDRESS,
+    //     "../../contracts/assets/wcl_contract.rwasm"
+    // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BLAKE2_ADDRESS,
     //     "../../contracts/assets/precompile_blake2.rwasm"
