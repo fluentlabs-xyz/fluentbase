@@ -43,6 +43,15 @@ extern "C" {
         code_hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
+        state: u32,
+    ) -> i32;
+    pub fn _sys_context_call(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
         context_ptr: *const u8,
         context_len: u32,
         return_ptr: *mut u8,
@@ -53,14 +62,7 @@ extern "C" {
 
     pub fn _sys_fuel(delta: u64) -> u64;
 
-    /// This function modifies context register for nested calls, we suppose to have two registers:
-    /// 1. CO - context offset
-    /// 2. CL - context length
-    /// Nested calls can read context only relatively using this CO/CL constraints.
-    pub fn _sys_rewrite_context(context_ptr: *const u8, context_len: u32);
-
-    /// Read context and write into specified target with offset and length. Registers CO & CL must
-    /// be initialized using `_sys_rewrite_context` function in advance.
+    /// Read context and write into specified target with offset and length.
     pub fn _sys_context(target_ptr: *mut u8, offset: u32, length: u32);
 
     /// Journaled ZK Trie methods to work with blockchain state

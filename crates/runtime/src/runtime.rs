@@ -2,7 +2,8 @@ use crate::{
     instruction::{
         runtime_register_shared_handlers,
         runtime_register_sovereign_handlers,
-        sys_exec::{SysExec, SysExecHashResumable},
+        sys_context_call::{SysContextCall, SysContextCallResumable},
+        sys_exec::{SysExec, SysExecResumable},
     },
     types::{InMemoryTrieDb, RuntimeError},
     zktrie::ZkTrieStateDb,
@@ -83,6 +84,7 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) bytecode: BytecodeOrHash,
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
+    #[deprecated(note = "this parameter can be removed, we allowed filter on the AOT level")]
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
     pub(crate) context: Vec<u8>,
@@ -453,18 +455,31 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             execution_result.exit_code = exit_code;
                             return Ok(execution_result);
                         } else if let Some(delayed_state) =
-                            state.host_error().downcast_ref::<SysExecHashResumable>()
+                            state.host_error().downcast_ref::<SysExecResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            match SysExec::fn_continue(
+                            SysExec::fn_continue(
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
-                            ) {
-                                Ok(exit_code) => exit_code,
-                                Err(exit_code) => exit_code
+                            )
+                            .unwrap_or_else(|exit_code| {
+                                exit_code
                                     .i32_exit_status()
-                                    .unwrap_or(ExitCode::UnknownError.into_i32()),
-                            }
+                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                            })
+                        } else if let Some(delayed_state) =
+                            state.host_error().downcast_ref::<SysContextCallResumable>()
+                        {
+                            // execute `_sys_exec_hash` function
+                            SysContextCall::fn_continue(
+                                Caller::new(&mut self.store, Some(&instance)),
+                                delayed_state,
+                            )
+                            .unwrap_or_else(|exit_code| {
+                                exit_code
+                                    .i32_exit_status()
+                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                            })
                         } else {
                             return Err(RuntimeError::Rwasm(
                                 Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),

@@ -884,7 +884,7 @@ fn test_simple_nested_call() {
         I32Const(0) // return_len
         I32Const(32) // fuel_offset
         I32Const(0) // state
-        Call(SysFuncIdx::SYS_EXEC_HASH)
+        Call(SysFuncIdx::SYS_EXEC)
         Drop
         // check error
         I32Const(ExitCode::Ok.into_i32())

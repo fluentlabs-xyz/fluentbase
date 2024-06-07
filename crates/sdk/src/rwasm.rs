@@ -18,6 +18,7 @@ use crate::{
         _jzkt_update,
         _jzkt_update_preimage,
         _sys_context,
+        _sys_context_call,
         _sys_exec,
         _sys_forward_output,
         _sys_fuel,
@@ -26,7 +27,6 @@ use crate::{
         _sys_output_size,
         _sys_read,
         _sys_read_output,
-        _sys_rewrite_context,
         _sys_state,
         _sys_write,
         _wasm_to_rwasm,
@@ -78,7 +78,30 @@ impl LowLevelAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn sys_exec_hash(
+    fn sys_exec(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
+        state: u32,
+    ) -> i32 {
+        unsafe {
+            _sys_exec(
+                code_hash32_ptr,
+                input_ptr,
+                input_len,
+                return_ptr,
+                return_len,
+                fuel_ptr,
+                state,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn sys_context_call(
         code_hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
@@ -90,7 +113,7 @@ impl LowLevelAPI for LowLevelSDK {
         state: u32,
     ) -> i32 {
         unsafe {
-            _sys_exec(
+            _sys_context_call(
                 code_hash32_ptr,
                 input_ptr,
                 input_len,
@@ -112,11 +135,6 @@ impl LowLevelAPI for LowLevelSDK {
     #[inline(always)]
     fn sys_context(target_ptr: *mut u8, offset: u32, length: u32) {
         unsafe { _sys_context(target_ptr, offset, length) }
-    }
-
-    #[inline(always)]
-    fn sys_rewrite_context(context_ptr: *const u8, context_len: u32) {
-        unsafe { _sys_rewrite_context(context_ptr, context_len) }
     }
 
     #[inline(always)]

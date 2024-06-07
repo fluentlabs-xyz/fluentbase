@@ -11,13 +11,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub struct SysExec;
+pub struct SysContextCall;
 
 #[derive(Debug)]
-pub struct SysExecResumable {
+pub struct SysContextCallResumable {
     pub code_hash32_ptr: u32,
     pub input_ptr: u32,
     pub input_len: u32,
+    pub context_ptr: u32,
+    pub context_len: u32,
     pub return_ptr: u32,
     pub return_len: u32,
     pub fuel_ptr: u32,
@@ -26,29 +28,33 @@ pub struct SysExecResumable {
 
 pub const CALL_STACK_LIMIT: u32 = 1024;
 
-impl Display for SysExecResumable {
+impl Display for SysContextCallResumable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "runtime resume error")
     }
 }
 
-impl HostError for SysExecResumable {}
+impl HostError for SysContextCallResumable {}
 
-impl SysExec {
+impl SysContextCall {
     pub fn fn_handler<DB: IJournaledTrie>(
         _caller: Caller<'_, RuntimeContext<DB>>,
         code_hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
+        context_ptr: u32,
+        context_len: u32,
         return_ptr: u32,
         return_len: u32,
         fuel_ptr: u32,
         state: u32,
     ) -> Result<i32, Trap> {
-        return Err(SysExecResumable {
+        return Err(SysContextCallResumable {
             code_hash32_ptr,
             input_ptr,
             input_len,
+            context_ptr,
+            context_len,
             return_ptr,
             return_len,
             fuel_ptr,
@@ -59,7 +65,7 @@ impl SysExec {
 
     pub fn fn_continue<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
-        state: &SysExecResumable,
+        state: &SysContextCallResumable,
     ) -> Result<i32, Trap> {
         let bytecode_hash32: [u8; 32] = caller
             .read_memory(state.code_hash32_ptr, 32)?
@@ -68,12 +74,16 @@ impl SysExec {
         let input = caller
             .read_memory(state.input_ptr, state.input_len)?
             .to_vec();
+        let context = caller
+            .read_memory(state.context_ptr, state.context_len)?
+            .to_vec();
         let fuel_data = caller.read_memory(state.fuel_ptr, 4)?;
         let fuel_limit = LittleEndian::read_u32(fuel_data);
         let exit_code = match Self::fn_impl(
             caller.data_mut(),
             &bytecode_hash32,
             input,
+            context,
             state.return_len,
             fuel_limit as u64,
             state.state,
@@ -97,6 +107,7 @@ impl SysExec {
         ctx: &mut RuntimeContext<DB>,
         bytecode_hash32: &[u8; 32],
         input: Vec<u8>,
+        context: Vec<u8>,
         return_len: u32,
         fuel_limit: u64,
         state: u32,
@@ -113,14 +124,12 @@ impl SysExec {
 
         // take jzkt from the existing context (we will return it back soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
-        let context = take(&mut ctx.context);
 
         // create new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input)
             .with_context(context)
             .with_state(state)
-            .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(jzkt)
             .with_state(state)
@@ -132,7 +141,6 @@ impl SysExec {
 
         // return jzkt context back
         ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
-        ctx.context = take(&mut runtime.store.data_mut().context);
 
         // make sure there is no return overflow
         if return_len > 0 && execution_result.output.len() > return_len as usize {

@@ -20,6 +20,7 @@ use fluentbase_runtime::{
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
         sys_context::SysContext,
+        sys_context_call::SysContextCall,
         sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_fuel::SysFuel,
@@ -28,7 +29,6 @@ use fluentbase_runtime::{
         sys_output_size::SysOutputSize,
         sys_read::SysRead,
         sys_read_output::SysReadOutput,
-        sys_rewrite_context::SysRewriteContext,
         sys_state::SysState,
         sys_write::SysWrite,
         wasm_to_rwasm::WasmToRwasm,
@@ -157,7 +157,44 @@ impl LowLevelAPI for LowLevelSDK {
         with_context(|ctx| SysState::fn_impl(ctx))
     }
 
-    fn sys_exec_hash(
+    fn sys_exec(
+        bytecode_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
+        state: u32,
+    ) -> i32 {
+        with_context_mut(|ctx| {
+            let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_ptr, 32) };
+            let input =
+                unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) }.to_vec();
+            let fuel = unsafe { *fuel_ptr };
+            match SysExec::fn_impl(
+                ctx,
+                bytecode_hash32.try_into().unwrap(),
+                input,
+                return_len,
+                fuel as u64,
+                state,
+            ) {
+                Ok(remaining_fuel) => {
+                    if return_len > 0 {
+                        let return_data = ctx.return_data();
+                        unsafe { ptr::copy(return_data.as_ptr(), return_ptr, return_len as usize) }
+                    }
+                    unsafe {
+                        *fuel_ptr = remaining_fuel as u32;
+                    }
+                    0
+                }
+                Err(err) => err,
+            }
+        })
+    }
+
+    fn sys_context_call(
         bytecode_hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
@@ -175,7 +212,7 @@ impl LowLevelAPI for LowLevelSDK {
             let context =
                 unsafe { &*ptr::slice_from_raw_parts(context_ptr, context_len as usize) }.to_vec();
             let fuel = unsafe { *fuel_ptr };
-            match SysExec::fn_impl(
+            match SysContextCall::fn_impl(
                 ctx,
                 bytecode_hash32.try_into().unwrap(),
                 input,
@@ -208,11 +245,6 @@ impl LowLevelAPI for LowLevelSDK {
         unsafe {
             ptr::copy(context.as_ptr(), target_ptr, length as usize);
         }
-    }
-
-    fn sys_rewrite_context(context_ptr: *const u8, context_len: u32) {
-        let context = unsafe { &*ptr::slice_from_raw_parts(context_ptr, context_len as usize) };
-        with_context_mut(|ctx| SysRewriteContext::fn_impl(ctx, context.to_vec()).unwrap())
     }
 
     fn jzkt_open(root32_ptr: *const u8) {
