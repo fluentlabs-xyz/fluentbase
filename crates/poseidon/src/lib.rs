@@ -106,7 +106,9 @@ pub fn hash_msg_with_domain(msg: &[Fr], domain: Fr) -> Fr {
         let len = chunk.len();
         state[1] += chunk[0];
         state[2] += chunk[1];
+        println!("DEBUG HWD pre state {:#?}", &state);
         hasher.permute(&mut state);
+        println!("DEBUG HWD post state {:#?}", &state);
     }
     state[0]
 }

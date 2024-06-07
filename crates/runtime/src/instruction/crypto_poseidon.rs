@@ -10,7 +10,9 @@ impl CryptoPoseidon {
         f32s_len: u32,
         output_offset: u32,
     ) -> Result<(), Trap> {
+        println!("DEBUG POSEIDON 1 WE CALL fn handler");
         let data = caller.read_memory(f32s_offset, f32s_len);
+        println!("DEBUG WE DO MEMORY WRITE FOR POSEIDON 1 fn handler");
         caller.write_memory(output_offset, &Self::fn_impl(data));
         Ok(())
     }
