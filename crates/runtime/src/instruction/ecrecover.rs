@@ -8,9 +8,9 @@ use k256::{
 };
 use rwasm::{core::Trap, Caller};
 
-pub struct CryptoEcrecover;
+pub struct SyscallEcrecover;
 
-impl CryptoEcrecover {
+impl SyscallEcrecover {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         digest32_offset: u32,
@@ -43,7 +43,7 @@ impl CryptoEcrecover {
 mod secp256k1_tests {
     extern crate alloc;
 
-    use crate::instruction::crypto_ecrecover::CryptoEcrecover;
+    use crate::instruction::ecrecover::SyscallEcrecover;
     use hex_literal::hex;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
     use sha2::{Digest, Sha256};
@@ -93,7 +93,7 @@ mod secp256k1_tests {
             pk.copy_from_slice(pk_uncompressed.as_bytes());
 
             let result =
-                CryptoEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32).unwrap();
+                SyscallEcrecover::fn_impl(&digest, &vector.sig, vector.rec_id as u32).unwrap();
             assert_eq!(result, pk);
         }
     }

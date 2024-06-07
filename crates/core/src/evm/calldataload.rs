@@ -1,8 +1,10 @@
-use core::ptr;
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
-use fluentbase_types::Bytes32;
+use fluentbase_sdk::ContextReader;
 
-pub fn _evm_calldataload<CR: ContextReader>(cr: &CR, calldata_idx: u32, output32_offset: *mut u8) {
+pub fn _evm_calldataload<CR: ContextReader>(
+    _cr: &CR,
+    _calldata_idx: u32,
+    _output32_offset: *mut u8,
+) {
     // let (calldata_offset, calldata_length) = cr.contract_input_size();
     // let value: Bytes32 = if calldata_idx < calldata_length {
     //     let length = core::cmp::min(calldata_length - calldata_idx, 32) as usize;

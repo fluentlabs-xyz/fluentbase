@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktCommit;
+pub struct SyscallCommit;
 
-impl JzktCommit {
+impl SyscallCommit {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         root32_offset: u32,

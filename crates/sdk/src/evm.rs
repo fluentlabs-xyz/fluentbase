@@ -1,8 +1,8 @@
 use crate::{
     Account,
     AccountCheckpoint,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
     JZKT_ACCOUNT_BALANCE_FIELD,
     JZKT_ACCOUNT_COMPRESSION_FLAGS,
     JZKT_ACCOUNT_NONCE_FIELD,
@@ -184,7 +184,7 @@ impl ContextReader for ContractInput {
 macro_rules! impl_reader_helper {
     (@header $input_type:ty, $return_typ:ty) => {
         let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
-        LowLevelSDK::sys_context(
+        LowLevelSDK::read_context(
             buffer.as_mut_ptr(),
             <$input_type>::FIELD_OFFSET as u32,
             buffer.len() as u32,
@@ -195,7 +195,7 @@ macro_rules! impl_reader_helper {
     };
     (@dynamic $input_type:ty, $return_typ:ty) => {
         let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
-        LowLevelSDK::sys_context(
+        LowLevelSDK::read_context(
             buffer.as_mut_ptr(),
             <$input_type>::FIELD_OFFSET as u32,
             buffer.len() as u32,
@@ -206,14 +206,14 @@ macro_rules! impl_reader_helper {
             let mut buffer2 = vec![0; offset + length];
             buffer2[0..<$input_type>::FIELD_SIZE].copy_from_slice(&buffer);
             let buffer3 = &mut buffer2.as_mut_slice()[offset..(offset + length)];
-            LowLevelSDK::sys_context(buffer3.as_mut_ptr(), offset as u32, buffer3.len() as u32);
+            LowLevelSDK::read_context(buffer3.as_mut_ptr(), offset as u32, buffer3.len() as u32);
             <$input_type>::decode_field_body_at(&buffer2, 0, &mut result);
         }
         result
     };
     (@size $input_type:ty, $return_typ:ty) => {
         let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
-        LowLevelSDK::sys_context(
+        LowLevelSDK::read_context(
             buffer.as_mut_ptr(),
             <$input_type>::FIELD_OFFSET as u32,
             buffer.len() as u32,
@@ -292,14 +292,14 @@ impl ContextReader for ExecutionContext {
 
 impl ExecutionContext {
     pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
-        LowLevelSDK::sys_write(return_data.into().as_ref());
-        LowLevelSDK::sys_halt(exit_code);
+        LowLevelSDK::write(return_data.into().as_ref());
+        LowLevelSDK::exit(exit_code);
     }
 
     pub fn raw_input() -> Bytes {
-        let input_size = LowLevelSDK::sys_input_size();
+        let input_size = LowLevelSDK::input_size();
         let mut buffer = vec![0u8; input_size as usize];
-        LowLevelSDK::sys_read(&mut buffer, 0);
+        LowLevelSDK::read(&mut buffer, 0);
         buffer.into()
     }
 }

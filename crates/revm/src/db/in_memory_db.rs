@@ -16,7 +16,7 @@ use crate::{
     Database,
 };
 use core::convert::Infallible;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelSDK, SharedAPI};
 use fluentbase_types::ExitCode;
 use std::vec::Vec;
 
@@ -89,7 +89,7 @@ impl<ExtDB> CacheDB<ExtDB> {
         if let Some(rwasm_code) = &account.rwasm_code {
             if !rwasm_code.is_empty() {
                 if account.rwasm_code_hash == POSEIDON_EMPTY {
-                    LowLevelSDK::crypto_poseidon(
+                    LowLevelSDK::poseidon(
                         rwasm_code.bytes().as_ptr(),
                         rwasm_code.len() as u32,
                         account.rwasm_code_hash.as_mut_ptr(),

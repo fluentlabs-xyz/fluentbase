@@ -822,14 +822,14 @@ fn test_bridge_contract_with_call() {
     assert!(result.is_success());
 }
 
-lazy_static! {
-    static ref EVM_LOADER: (Bytes, B256) = {
-        let rwasm_bytecode: Bytes =
-            include_bytes!("../../contracts/assets/evm_loader_contract.rwasm").into();
-        let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
-        (rwasm_bytecode, rwasm_hash)
-    };
-}
+// lazy_static! {
+//     static ref EVM_LOADER: (Bytes, B256) = {
+//         let rwasm_bytecode: Bytes =
+//             include_bytes!("../../contracts/assets/evm_loader_contract.rwasm").into();
+//         let rwasm_hash = B256::from(poseidon_hash(&rwasm_bytecode));
+//         (rwasm_bytecode, rwasm_hash)
+//     };
+// }
 
 #[test]
 fn test_codec_case() {
@@ -861,7 +861,7 @@ fn test_simple_nested_call() {
             I32Add
             I32Const(3)
             I32Add
-            Call(SysFuncIdx::SYS_HALT)
+            Call(SysFuncIdx::EXIT)
         },
     );
     let mut memory_section = vec![0u8; 32 + 8];
@@ -884,11 +884,11 @@ fn test_simple_nested_call() {
         I32Const(0) // return_len
         I32Const(32) // fuel_offset
         I32Const(0) // state
-        Call(SysFuncIdx::SYS_EXEC)
+        Call(SysFuncIdx::EXEC)
         Drop
         // check error
         I32Const(ExitCode::Ok.into_i32())
-        Call(SysFuncIdx::SYS_HALT)
+        Call(SysFuncIdx::EXIT)
     };
     let code_section_len = code_section.len() as u32;
     ctx.add_wasm_contract(

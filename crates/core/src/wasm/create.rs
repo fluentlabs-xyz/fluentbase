@@ -5,8 +5,8 @@ use fluentbase_sdk::{
     AccountManager,
     ContextReader,
     ContractInput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
     WasmCreateMethodInput,
     WasmCreateMethodOutput,
 };
@@ -42,7 +42,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     }
 
     let mut source_code_hash: B256 = B256::ZERO;
-    LowLevelSDK::crypto_keccak256(
+    LowLevelSDK::keccak256(
         input.bytecode.as_ptr(),
         input.bytecode.len() as u32,
         source_code_hash.as_mut_ptr(),

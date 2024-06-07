@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{Address, Bytes, IJournaledTrie, B256};
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktEmitLog;
+pub struct SyscallEmitLog;
 
-impl JzktEmitLog {
+impl SyscallEmitLog {
     pub fn fn_fuel_cost(n: u8, len: u64) -> Option<u64> {
         // TODO(dmitry123): "how we can replace it with constants from EVM lib? do we need?"
         375u64

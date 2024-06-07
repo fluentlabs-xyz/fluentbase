@@ -97,31 +97,31 @@ macro_rules! count_ret_args {
 #[macro_export]
 macro_rules! impl_runtime_handler {
     ($runtime_handler:ty, $sys_func:ident, fn $module:ident::$name:ident($($t:tt)*) -> $out:tt) => {
-        impl $crate::instruction::RuntimeHandler for $runtime_handler {
-            const MODULE_NAME: &'static str = stringify!($module);
-            const FUNC_NAME: &'static str = stringify!($name);
+            impl $crate::instruction::RuntimeHandler for $runtime_handler {
+                const MODULE_NAME: &'static str = stringify!($module);
+                const FUNC_NAME: &'static str = stringify!($name);
 
-            const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
+                const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
 
-            fn register_handler<DB: IJournaledTrie>(
-                linker: &mut rwasm::Linker<RuntimeContext<DB>>,
-                store: &mut rwasm::Store<RuntimeContext<DB>>,
-            ) {
-                use rwasm::AsContextMut;
-                let func = rwasm::Func::wrap(
-                    store.as_context_mut(),
-                    |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
-                        return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
-                    });
-                let wrapped_index = store.inner.wrap_stored(rwasm::engine::bytecode::FuncIdx::from(Self::FUNC_INDEX as u32));
-                linker.engine().register_trampoline(wrapped_index, func);
-                linker.define(
-                    stringify!($module),
-                    stringify!($name),
-                    func
-                ).unwrap();
+                fn register_handler<DB: IJournaledTrie>(
+                    linker: &mut rwasm::Linker<RuntimeContext<DB>>,
+                    store: &mut rwasm::Store<RuntimeContext<DB>>,
+                ) {
+                    use rwasm::AsContextMut;
+                    let func = rwasm::Func::wrap(
+                        store.as_context_mut(),
+                        |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
+                            return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
+                        });
+                    let wrapped_index = store.inner.wrap_stored(rwasm::engine::bytecode::FuncIdx::from(Self::FUNC_INDEX as u32));
+                    linker.engine().register_trampoline(wrapped_index, func);
+                    linker.define(
+                        stringify!($module),
+                        stringify!($name),
+                        func
+                    ).unwrap();
+                }
             }
-        }
     };
 }
 

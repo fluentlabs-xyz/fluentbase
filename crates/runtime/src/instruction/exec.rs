@@ -1,6 +1,6 @@
 use crate::{ExecutionResult, Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
 use rwasm::{
     core::{HostError, Trap},
     Caller,
@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub struct SysExec;
+pub struct SyscallExec;
 
 #[derive(Debug)]
 pub struct SysExecResumable {
@@ -21,7 +21,6 @@ pub struct SysExecResumable {
     pub return_ptr: u32,
     pub return_len: u32,
     pub fuel_ptr: u32,
-    pub state: u32,
 }
 
 pub const CALL_STACK_LIMIT: u32 = 1024;
@@ -34,7 +33,7 @@ impl Display for SysExecResumable {
 
 impl HostError for SysExecResumable {}
 
-impl SysExec {
+impl SyscallExec {
     pub fn fn_handler<DB: IJournaledTrie>(
         _caller: Caller<'_, RuntimeContext<DB>>,
         code_hash32_ptr: u32,
@@ -43,7 +42,6 @@ impl SysExec {
         return_ptr: u32,
         return_len: u32,
         fuel_ptr: u32,
-        state: u32,
     ) -> Result<i32, Trap> {
         return Err(SysExecResumable {
             code_hash32_ptr,
@@ -52,7 +50,6 @@ impl SysExec {
             return_ptr,
             return_len,
             fuel_ptr,
-            state,
         }
         .into());
     }
@@ -76,7 +73,6 @@ impl SysExec {
             input,
             state.return_len,
             fuel_limit as u64,
-            state.state,
         ) {
             Ok(remaining_fuel) => {
                 if state.return_len > 0 {
@@ -99,7 +95,6 @@ impl SysExec {
         input: Vec<u8>,
         return_len: u32,
         fuel_limit: u64,
-        state: u32,
     ) -> Result<u64, i32> {
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -119,11 +114,10 @@ impl SysExec {
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input)
             .with_context(context)
-            .with_state(state)
             .with_is_shared(false)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(jzkt)
-            .with_state(state)
+            .with_state(STATE_MAIN)
             .with_depth(ctx.depth + 1);
         let mut runtime = Runtime::new(ctx2);
         let execution_result = runtime

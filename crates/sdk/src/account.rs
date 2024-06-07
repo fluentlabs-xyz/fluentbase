@@ -1,8 +1,8 @@
 use crate::{
     utils::{calc_create2_address, calc_create_address},
     EvmCallMethodOutput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
 };
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
@@ -214,7 +214,7 @@ impl Account {
         let address_word = self.address.into_word();
         // calc source code hash (we use keccak256 for backward compatibility)
         self.source_code_hash = source_hash.unwrap_or_else(|| {
-            LowLevelSDK::crypto_keccak256(
+            LowLevelSDK::keccak256(
                 source_bytecode.as_ptr(),
                 source_bytecode.len() as u32,
                 self.source_code_hash.as_mut_ptr(),
@@ -224,7 +224,7 @@ impl Account {
         self.source_code_size = source_bytecode.len() as u64;
         // calc rwasm code hash (we use poseidon function for rWASM bytecode)
         self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| {
-            LowLevelSDK::crypto_poseidon(
+            LowLevelSDK::poseidon(
                 rwasm_bytecode.as_ptr(),
                 rwasm_bytecode.len() as u32,
                 self.rwasm_code_hash.as_mut_ptr(),

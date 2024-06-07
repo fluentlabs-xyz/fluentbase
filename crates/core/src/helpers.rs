@@ -1,6 +1,6 @@
 use crate::fluent_host::FluentHost;
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use core::{marker::PhantomData, mem::take};
+use core::mem::take;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     AccountManager,
@@ -10,15 +10,15 @@ use fluentbase_sdk::{
     EvmCallMethodInput,
     EvmCreateMethodInput,
     ICoreInput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
     Address,
     Bytes,
     ExitCode,
-    SysFuncIdx::SYS_STATE,
+    SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
 };
@@ -61,7 +61,7 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call(SYS_STATE.into()),
+            opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_sovereign_import_linker()),
@@ -92,7 +92,7 @@ macro_rules! result_value {
 #[macro_export]
 macro_rules! debug_log {
     ($msg:tt) => {{
-        use fluentbase_sdk::LowLevelAPI;
+        use fluentbase_sdk::SovereignAPI;
         fluentbase_sdk::LowLevelSDK::debug_log($msg.as_ptr(), $msg.len() as u32);
     }};
     ($($arg:tt)*) => {{
@@ -409,9 +409,9 @@ pub(crate) struct InputHelper {
 
 impl InputHelper {
     pub(crate) fn new() -> Self {
-        let input_size = LowLevelSDK::sys_input_size();
+        let input_size = LowLevelSDK::input_size();
         let mut input = vec![0u8; input_size as usize];
-        LowLevelSDK::sys_read(&mut input, 0);
+        LowLevelSDK::read(&mut input, 0);
         Self {
             input: input.into(),
         }

@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie, JournalCheckpoint};
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktCheckpoint;
+pub struct SyscallCheckpoint;
 
-impl JzktCheckpoint {
+impl SyscallCheckpoint {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
     ) -> Result<u64, Trap> {

@@ -7,8 +7,8 @@ use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     ExecutionContext,
     JzktAccountManager,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
     WasmCallMethodInput,
     WasmCreateMethodInput,
     WASM_CALL_METHOD_ID,
@@ -26,12 +26,12 @@ pub fn main() {
         WASM_CREATE_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCreateMethodInput>();
             let method_output = _wasm_create(&cr, &am, method_input);
-            LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
+            LowLevelSDK::write(&method_output.encode_to_vec(0));
         }
         WASM_CALL_METHOD_ID => {
             let method_input = input_helper.decode_method_input::<WasmCallMethodInput>();
             let method_output = _wasm_call(&cr, &am, method_input);
-            LowLevelSDK::sys_write(&method_output.encode_to_vec(0));
+            LowLevelSDK::write(&method_output.encode_to_vec(0));
             debug_log!(
                 "wcl: WASM_CALL_METHOD_ID: sys_halt: exit_code: {}",
                 method_output.exit_code

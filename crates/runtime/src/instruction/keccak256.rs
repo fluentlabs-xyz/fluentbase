@@ -2,22 +2,23 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct CryptoPoseidon;
+pub struct SyscallKeccak256;
 
-impl CryptoPoseidon {
+impl SyscallKeccak256 {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
-        f32s_offset: u32,
-        f32s_len: u32,
+        data_offset: u32,
+        data_len: u32,
         output_offset: u32,
     ) -> Result<(), Trap> {
-        let data = caller.read_memory(f32s_offset, f32s_len)?;
+        let data = caller.read_memory(data_offset, data_len)?;
         caller.write_memory(output_offset, &Self::fn_impl(data))?;
         Ok(())
     }
 
     pub fn fn_impl(data: &[u8]) -> [u8; 32] {
-        use fluentbase_poseidon::poseidon_hash;
-        poseidon_hash(data)
+        let mut result = [0u8; 32];
+        keccak_hash::write_keccak(data, &mut result);
+        result
     }
 }

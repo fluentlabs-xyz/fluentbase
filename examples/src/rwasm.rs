@@ -1,16 +1,16 @@
 use core::{alloc::Layout, ptr};
-use fluentbase_sdk::{create_sovereign_import_linker, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{create_sovereign_import_linker, LowLevelSDK, SharedAPI};
 use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 
 pub fn deploy() {}
 
 pub fn main() {
-    let size = LowLevelSDK::sys_input_size() as usize;
+    let size = LowLevelSDK::input_size() as usize;
     let wasm_binary = unsafe {
         let buffer = alloc::alloc::alloc(Layout::from_size_align_unchecked(size, 8usize));
         &mut *ptr::slice_from_raw_parts_mut(buffer, size)
     };
-    LowLevelSDK::sys_read(wasm_binary, 0);
+    LowLevelSDK::read(wasm_binary, 0);
     let import_linker = create_sovereign_import_linker();
     let rwasm_module =
         RwasmModule::compile(wasm_binary, Some(import_linker)).expect("failed to compile");
@@ -24,8 +24,8 @@ pub fn main() {
         .write_binary(&mut binary_format_writer)
         .expect("failed to encode rWASM");
     assert_eq!(n_bytes, encoded_length, "encoded bytes mismatch");
-    LowLevelSDK::sys_write(rwasm_bytecode);
-    LowLevelSDK::sys_halt(0);
+    LowLevelSDK::write(rwasm_bytecode);
+    LowLevelSDK::exit(0);
 }
 
 #[cfg(test)]

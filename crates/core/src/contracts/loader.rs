@@ -7,7 +7,6 @@ use fluentbase_sdk::{
     EvmCallMethodInput,
     ExecutionContext,
     JzktAccountManager,
-    LowLevelAPI,
     LowLevelSDK,
     EVM_CALL_METHOD_ID,
 };

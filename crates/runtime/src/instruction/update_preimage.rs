@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktUpdatePreimage;
+pub struct SyscallUpdatePreimage;
 
-impl JzktUpdatePreimage {
+impl SyscallUpdatePreimage {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         key32_ptr: u32,

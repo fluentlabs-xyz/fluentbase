@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, errors::FuelError, Caller};
 
-pub struct SysFuel;
+pub struct SyscallChargeFuel;
 
-impl SysFuel {
+impl SyscallChargeFuel {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         delta: u64,

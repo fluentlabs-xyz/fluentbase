@@ -1,10 +1,10 @@
-use fluentbase_sdk::{ContextReader, LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::ContextReader;
 
 pub fn _evm_calldatacopy<CR: ContextReader>(
-    cr: &CR,
-    calldata_idx: u32,
-    len: u32,
-    output32_offset: *mut u8,
+    _cr: &CR,
+    _calldata_idx: u32,
+    _len: u32,
+    _output32_offset: *mut u8,
 ) {
     // if len <= 0 {
     //     return;

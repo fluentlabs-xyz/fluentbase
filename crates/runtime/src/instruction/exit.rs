@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct SysHalt;
+pub struct SyscallExit;
 
-impl SysHalt {
+impl SyscallExit {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         exit_code: i32,

@@ -1,4 +1,4 @@
-use crate::{LowLevelAPI, LowLevelSDK};
+use crate::{LowLevelSDK, SharedAPI};
 use fluentbase_types::{b256, Address, Bytes32, B256, U256};
 use revm_primitives::alloy_primitives::private::alloy_rlp::{
     Encodable,
@@ -29,20 +29,20 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
             core::ptr::copy(slot32_le_ptr, hashing_data.as_mut_ptr(), 32);
             core::ptr::copy(address.as_ptr(), hashing_data.as_mut_ptr().offset(32), 20);
         }
-        LowLevelSDK::crypto_keccak256(
+        LowLevelSDK::keccak256(
             hashing_data.as_ptr(),
             hashing_data.len() as u32,
             storage_key.as_mut_ptr(),
         );
     } else {
         // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
-        LowLevelSDK::crypto_poseidon_hash(
+        LowLevelSDK::poseidon_hash(
             slot0.as_ptr(),
             slot1.as_ptr(),
             DOMAIN.as_ptr(),
             storage_key.as_mut_ptr(),
         );
-        LowLevelSDK::crypto_poseidon_hash(
+        LowLevelSDK::poseidon_hash(
             address32.as_ptr(),
             storage_key.as_ptr(),
             DOMAIN.as_ptr(),
@@ -65,7 +65,7 @@ pub fn calc_create_address(deployer: &Address, nonce: u64) -> Address {
     Encodable::encode(&nonce, &mut &mut out[22..]);
     let mut hash = B256::ZERO;
     let out = &out[..len];
-    LowLevelSDK::crypto_keccak256(out.as_ptr(), out.len() as u32, hash.as_mut_ptr());
+    LowLevelSDK::keccak256(out.as_ptr(), out.len() as u32, hash.as_mut_ptr());
     Address::from_word(hash)
 }
 
@@ -76,7 +76,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B2
     bytes[1..21].copy_from_slice(deployer.as_slice());
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
-    LowLevelSDK::crypto_keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
+    LowLevelSDK::keccak256(bytes.as_ptr(), bytes.len() as u32, bytes.as_mut_ptr());
     let bytes32: Bytes32 = bytes[0..32].try_into().unwrap();
     Address::from_word(B256::from(bytes32))
 }

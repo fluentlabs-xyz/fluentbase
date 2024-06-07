@@ -1,7 +1,7 @@
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelSDK, SharedAPI};
 
 pub fn deploy() {}
 
 pub fn main() {
-    LowLevelSDK::sys_write("Hello, World".as_bytes());
+    LowLevelSDK::write("Hello, World".as_bytes());
 }
