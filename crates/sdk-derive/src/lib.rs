@@ -72,6 +72,8 @@ pub fn derive_main_fn(args: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #ast
 
+        use fluentbase_sdk::{ContextReader, ExecutionContext, LowLevelAPI, LowLevelSDK};
+
         #[cfg(not(feature = "std"))]
         #[no_mangle]
         #[cfg(target_arch = "wasm32")]
@@ -109,6 +111,8 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
     let router = derive_route_method(struct_name, &methods_to_route);
 
     let expanded = quote! {
+        use alloy_sol_types::{sol, SolCall, SolValue};
+
         #router
         #sol_signatures
     };
