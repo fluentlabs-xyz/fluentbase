@@ -7,8 +7,8 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Expr, ExprLit, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit, LitStr, Meta, Token, Type,
-    TypePath, Visibility,
+    Expr, ExprLit, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ItemStruct, Lit, LitStr, Meta,
+    Token, Type, TypePath, Visibility,
 };
 
 #[proc_macro]
@@ -25,37 +25,68 @@ pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
 }
 
 #[derive(Debug)]
-struct SolidityRouterInput {
-    pub with_main: bool,
+struct MainFnArgs {
+    max_output_size: usize,
 }
 
-impl Parse for SolidityRouterInput {
+impl Parse for MainFnArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut with_main = false;
+        let mut max_output_size = None;
 
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
 
         for meta in metas {
             if let Meta::NameValue(m) = meta {
-                if m.path.is_ident("with_main") {
+                if m.path.is_ident("max_output_size") {
                     if let Expr::Lit(ExprLit {
-                        lit: Lit::Bool(lit_bool),
+                        lit: Lit::Int(lit_int),
                         ..
                     }) = &m.value
                     {
-                        with_main = lit_bool.value();
+                        max_output_size = Some(lit_int.base10_parse::<usize>()?);
                     } else {
                         return Err(syn::Error::new_spanned(
                             &m.value,
-                            "Expected a boolean value",
+                            "Expected an integer value",
                         ));
                     }
                 }
             }
         }
 
-        Ok(Self { with_main })
+        let max_output_size = max_output_size
+            .ok_or_else(|| syn::Error::new(input.span(), "max_output_size is required"))?;
+
+        Ok(Self { max_output_size })
     }
+}
+
+#[proc_macro_attribute]
+pub fn derive_main_fn(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as MainFnArgs);
+    let ast = parse_macro_input!(item as ItemStruct);
+
+    let max_output_size = args.max_output_size;
+    let struct_name = &ast.ident;
+
+    let expanded = quote! {
+        #ast
+
+        #[cfg(not(feature = "std"))]
+        #[no_mangle]
+        #[cfg(target_arch = "wasm32")]
+        pub extern "C" fn main() {
+            let ctx = ExecutionContext::default();
+            let input = ctx.contract_input();
+
+            let contract = #struct_name {};
+            let mut output = [0u8; #max_output_size];
+            contract.route(&input, &mut output);
+            LowLevelSDK::sys_write(&output);
+        }
+    };
+
+    TokenStream::from(expanded)
 }
 
 // Fake implementation of the attribute to avoid compiler and linter complaints
@@ -65,8 +96,7 @@ pub fn sol_signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn derive_solidity_router(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(attr as SolidityRouterInput);
+pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
 
     let struct_name = &ast.self_ty;
@@ -77,17 +107,10 @@ pub fn derive_solidity_router(attr: TokenStream, item: TokenStream) -> TokenStre
     let sol_signatures = get_sol_signatures(&methods_to_route);
     // Derive route method that dispatches Solidity function calls
     let router = derive_route_method(struct_name, &methods_to_route);
-    // Generate main function that is used in the contract entry point
-    let main_fn = if input.with_main {
-        derive_main_fn(struct_name)
-    } else {
-        quote! {}
-    };
 
     let expanded = quote! {
         #router
         #sol_signatures
-        #main_fn
     };
 
     TokenStream::from(expanded)
@@ -249,24 +272,6 @@ fn derive_route_selector_args(
                     panic!("Failed to decode input {:?}", e);
                 }
             };
-        }
-    }
-}
-
-fn derive_main_fn(struct_name: &Box<Type>) -> proc_macro2::TokenStream {
-    quote! {
-        #[cfg(not(feature = "std"))]
-        #[no_mangle]
-        #[cfg(target_arch = "wasm32")]
-        pub extern "C" fn main() {
-            // Create a default execution context
-            let ctx = ExecutionContext::default();
-            // Get the contract input
-            let input = ctx.contract_input().to_vec();
-            let mut contract = #struct_name {};
-
-            let output = contract.route(&input);
-            LowLevelSDK::sys_write(&output);
         }
     }
 }
