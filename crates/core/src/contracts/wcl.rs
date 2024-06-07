@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn test_greeting_deploy() {
-        let wasm_bytecode = include_bytes!("../../../../examples/bin/greeting.wasm");
+        let wasm_bytecode = include_bytes!("../../../../examples/greeting/lib.wasm");
         let core_input = CoreInput {
             method_id: WASM_CREATE_METHOD_ID,
             method_data: WasmCreateMethodInput {

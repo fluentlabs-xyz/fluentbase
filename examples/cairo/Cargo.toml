@@ -1,0 +1,34 @@
+[package]
+name = "fluentbase-example-cairo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+
+# cairo verifier
+bincode = { version = "2.0.0-rc.2", tag = "v2.0.0-rc.2", git = "https://github.com/bincode-org/bincode.git", features = ["serde"] }
+cairo-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0" }
+stark-platinum-prover = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0" }
+lambdaworks-math = { git = "https://github.com/lambdaclass/lambdaworks", rev = "212c040c5fa21fcb5095a0b1ac92501292517db0", default-features = false, features = ["lambdaworks-serde-binary"] }
+
+[dev-dependencies]
+hex-literal = "0.4.1"
+hex = "0.4.3"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+[profile.release]
+lto = true
+opt-level = 'z'
+panic = "abort"
+strip = true
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
