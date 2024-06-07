@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct SysState;
+pub struct SyscallState;
 
-impl SysState {
+impl SyscallState {
     pub fn fn_handler<DB: IJournaledTrie>(
         caller: Caller<'_, RuntimeContext<DB>>,
     ) -> Result<u32, Trap> {

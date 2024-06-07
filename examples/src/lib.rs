@@ -4,7 +4,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelSDK, SharedAPI};
 
 #[cfg(feature = "cairo")]
 mod cairo;
@@ -59,13 +59,13 @@ export_and_forward!(deploy);
 export_and_forward!(main);
 
 pub(crate) fn get_input() -> Vec<u8> {
-    let input_size = LowLevelSDK::sys_input_size();
+    let input_size = LowLevelSDK::input_size();
     let mut input_buffer = Vec::with_capacity(input_size as usize);
-    LowLevelSDK::sys_read(&mut input_buffer, 0);
+    LowLevelSDK::read(&mut input_buffer, 0);
     input_buffer
 }
 
 pub(crate) fn write_output(output: Vec<u8>) {
-    LowLevelSDK::sys_write(&output);
-    LowLevelSDK::sys_halt(0);
+    LowLevelSDK::write(&output);
+    LowLevelSDK::exit(0);
 }

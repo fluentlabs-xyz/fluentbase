@@ -3,13 +3,13 @@ use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 use std::cell::Cell;
 
-pub struct DebugLog;
+pub struct SyscallDebugLog;
 
 thread_local! {
     pub static LAST_LOG_TIME: Cell<i64> = const { Cell::new(0) };
 }
 
-impl DebugLog {
+impl SyscallDebugLog {
     pub fn fn_handler<DB: IJournaledTrie>(
         caller: Caller<'_, RuntimeContext<DB>>,
         msg_offset: u32,

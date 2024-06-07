@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct SysInputSize;
+pub struct SyscallInputSize;
 
-impl SysInputSize {
+impl SyscallInputSize {
     pub fn fn_handler<DB: IJournaledTrie>(
         caller: Caller<'_, RuntimeContext<DB>>,
     ) -> Result<u32, Trap> {

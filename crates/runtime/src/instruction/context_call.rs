@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub struct SysContextCall;
+pub struct SyscallContextCall;
 
 #[derive(Debug)]
 pub struct SysContextCallResumable {
@@ -36,7 +36,7 @@ impl Display for SysContextCallResumable {
 
 impl HostError for SysContextCallResumable {}
 
-impl SysContextCall {
+impl SyscallContextCall {
     pub fn fn_handler<DB: IJournaledTrie>(
         _caller: Caller<'_, RuntimeContext<DB>>,
         code_hash32_ptr: u32,

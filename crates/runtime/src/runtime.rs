@@ -1,9 +1,9 @@
 use crate::{
     instruction::{
+        context_call::{SysContextCallResumable, SyscallContextCall},
+        exec::{SysExecResumable, SyscallExec},
         runtime_register_shared_handlers,
         runtime_register_sovereign_handlers,
-        sys_context_call::{SysContextCall, SysContextCallResumable},
-        sys_exec::{SysExec, SysExecResumable},
     },
     types::{InMemoryTrieDb, RuntimeError},
     zktrie::ZkTrieStateDb,
@@ -17,7 +17,7 @@ use fluentbase_types::{
     EmptyJournalTrie,
     ExitCode,
     IJournaledTrie,
-    SysFuncIdx::SYS_STATE,
+    SysFuncIdx::STATE,
     F254,
     POSEIDON_EMPTY,
     STATE_DEPLOY,
@@ -84,7 +84,7 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) bytecode: BytecodeOrHash,
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
-    #[deprecated(note = "this parameter can be removed, we allowed filter on the AOT level")]
+    #[deprecated(note = "this parameter can be removed, we filter on the AOT level")]
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
     pub(crate) context: Vec<u8>,
@@ -260,7 +260,7 @@ impl CachingRuntime {
                     ("deploy".to_string(), STATE_DEPLOY),
                     ("main".to_string(), STATE_MAIN),
                 ]),
-                opcode: Instruction::Call(SYS_STATE.into()),
+                opcode: Instruction::Call(STATE.into()),
             }),
             entrypoint_name: None,
             import_linker: Some(import_linker),
@@ -458,7 +458,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             state.host_error().downcast_ref::<SysExecResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            SysExec::fn_continue(
+                            SyscallExec::fn_continue(
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
                             )
@@ -471,7 +471,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             state.host_error().downcast_ref::<SysContextCallResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            SysContextCall::fn_continue(
+                            SyscallContextCall::fn_continue(
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
                             )

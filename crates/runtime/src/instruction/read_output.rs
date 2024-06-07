@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
-pub struct SysReadOutput;
+pub struct SyscallReadOutput;
 
-impl SysReadOutput {
+impl SyscallReadOutput {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         target: u32,

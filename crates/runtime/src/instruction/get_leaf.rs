@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktGet;
+pub struct SyscallGetLeaf;
 
-impl JzktGet {
+impl SyscallGetLeaf {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         key32_offset: u32,

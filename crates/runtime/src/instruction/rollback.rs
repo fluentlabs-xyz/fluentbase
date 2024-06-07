@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{IJournaledTrie, JournalCheckpoint};
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktRollback;
+pub struct SyscallRollback;
 
-impl JzktRollback {
+impl SyscallRollback {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         checkpoint: u64,

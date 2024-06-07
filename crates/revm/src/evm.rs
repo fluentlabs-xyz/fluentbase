@@ -48,8 +48,9 @@ use fluentbase_sdk::{
     EvmCallMethodOutput,
     EvmCreateMethodInput,
     EvmCreateMethodOutput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
+    SovereignAPI,
     WasmCallMethodInput,
     WasmCreateMethodInput,
     EVM_CALL_METHOD_ID,
@@ -612,7 +613,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
 
         let mut gas_limit_ref = gas.remaining() as u32;
         let gas_limit_ref = &mut gas_limit_ref as *mut u32;
-        let exit_code = LowLevelSDK::sys_context_call(
+        let exit_code = LowLevelSDK::context_call(
             rwasm_code_hash.as_ptr(),
             input.as_ptr(),
             input.len() as u32,
@@ -626,9 +627,9 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
         let gas_used = gas.remaining() - unsafe { *gas_limit_ref } as u64;
         gas.record_cost(gas_used);
 
-        let output_size = LowLevelSDK::sys_output_size();
+        let output_size = LowLevelSDK::output_size();
         let mut output_buffer = vec![0u8; output_size as usize];
-        LowLevelSDK::sys_read_output(output_buffer.as_mut_ptr(), 0, output_size);
+        LowLevelSDK::read_output(output_buffer.as_mut_ptr(), 0, output_size);
 
         let exit_code = match exit_code {
             0 => ExitCode::Ok,

@@ -4,9 +4,9 @@ use fluentbase_types::{ExitCode, IJournaledTrie};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use rwasm::{core::Trap, Caller};
 
-pub struct CryptoPoseidon2;
+pub struct SyscallPoseidonHash;
 
-impl CryptoPoseidon2 {
+impl SyscallPoseidonHash {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         fa_offset: u32,

@@ -33,7 +33,7 @@ use crate::{
     CALL_STACK_LIMIT,
 };
 use fluentbase_core::debug_log;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::LowLevelSDK;
 use fluentbase_types::ExitCode;
 use revm_primitives::MAX_CODE_SIZE;
 use std::boxed::Box;

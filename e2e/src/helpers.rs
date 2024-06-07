@@ -11,7 +11,7 @@ use fluentbase_sdk::ContractInput;
 use fluentbase_types::{
     create_sovereign_import_linker,
     ExitCode,
-    SysFuncIdx::SYS_STATE,
+    SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
 };
@@ -58,7 +58,7 @@ pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call(SYS_STATE.into()),
+            opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_sovereign_import_linker()),

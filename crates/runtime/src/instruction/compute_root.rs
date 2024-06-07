@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
-pub struct JzktComputeRoot;
+pub struct SyscallComputeRoot;
 
-impl JzktComputeRoot {
+impl SyscallComputeRoot {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         output32_offset: u32,

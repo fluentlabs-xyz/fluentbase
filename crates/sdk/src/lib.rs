@@ -11,7 +11,7 @@ mod evm;
 pub use evm::*;
 mod sdk;
 
-pub use sdk::LowLevelAPI;
+pub use sdk::{SharedAPI, SovereignAPI};
 
 mod account;
 pub use account::*;
@@ -34,8 +34,8 @@ pub use utils::*;
 #[inline(always)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     let panic_message = alloc::format!("{}", info).replace("\n", " ");
-    LowLevelSDK::sys_write(panic_message.as_bytes());
-    LowLevelSDK::sys_halt(fluentbase_types::ExitCode::Panic.into_i32());
+    LowLevelSDK::write(panic_message.as_bytes());
+    LowLevelSDK::exit(fluentbase_types::ExitCode::Panic.into_i32());
     loop {}
 }
 

@@ -2,9 +2,9 @@ use crate::RuntimeContext;
 use fluentbase_types::{ExitCode, IJournaledTrie};
 use rwasm::{core::Trap, Caller};
 
-pub struct SysForwardOutput;
+pub struct SyscallForwardOutput;
 
-impl SysForwardOutput {
+impl SyscallForwardOutput {
     pub fn fn_handler<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         offset: u32,
