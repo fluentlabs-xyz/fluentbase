@@ -6,7 +6,7 @@ pub fn deploy() {}
 
 pub fn main() {
     let cr = ExecutionContext::DEFAULT;
-    let input = ExecutionContext::raw_input();
+    let input = ExecutionContext::contract_input();
     let gas_limit = cr.contract_gas_limit();
 
     let result = revm_precompile::modexp::berlin_run(&input, gas_limit);

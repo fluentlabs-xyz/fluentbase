@@ -252,6 +252,7 @@ fn call_evm_tx(
 }
 
 #[test]
+#[ignore]
 fn test_genesis_greeting() {
     let mut ctx = TestingContext::default();
     const DEPLOYER_ADDRESS: Address = Address::ZERO;

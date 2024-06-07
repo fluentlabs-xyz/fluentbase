@@ -23,6 +23,10 @@ use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, B256, U256};
 #[derive(Default)]
 pub struct JzktAccountManager;
 
+impl JzktAccountManager {
+    pub const DEFAULT: JzktAccountManager = JzktAccountManager {};
+}
+
 impl AccountManager for JzktAccountManager {
     #[inline(always)]
     fn checkpoint(&self) -> AccountCheckpoint {

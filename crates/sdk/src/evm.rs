@@ -1,4 +1,5 @@
 use crate::{
+    alloc_slice,
     Account,
     AccountCheckpoint,
     LowLevelSDK,
@@ -291,15 +292,10 @@ impl ContextReader for ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn fast_return_and_exit<R: Into<Bytes>>(&self, return_data: R, exit_code: i32) {
-        LowLevelSDK::write(return_data.into().as_ref());
-        LowLevelSDK::exit(exit_code);
-    }
-
-    pub fn raw_input() -> Bytes {
+    pub fn contract_input<'a>() -> &'a [u8] {
         let input_size = LowLevelSDK::input_size();
-        let mut buffer = vec![0u8; input_size as usize];
-        LowLevelSDK::read(&mut buffer, 0);
-        buffer.into()
+        let input = alloc_slice(input_size as usize);
+        LowLevelSDK::read(input, 0);
+        input
     }
 }

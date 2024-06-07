@@ -1,17 +1,33 @@
-extern crate fluentbase_core;
+#![cfg_attr(target_arch = "wasm32", no_std)]
 
-use fluentbase_types::{address, Address};
+mod evm;
+#[cfg(any(
+    feature = "blake2",
+    feature = "sha256",
+    feature = "ripemd160",
+    feature = "identity",
+    feature = "modexp",
+    feature = "ecrecover",
+))]
+mod precompile;
+#[cfg(feature = "evm")]
+mod svm;
+mod wasm;
 
-pub const ECL_CONTRACT_ADDRESS: Address = address!("5200000000000000000000000000000000000001");
-pub const WCL_CONTRACT_ADDRESS: Address = address!("5200000000000000000000000000000000000002");
+#[cfg(feature = "blake2")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::BlakeInvokeFunc>);
+#[cfg(feature = "sha256")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::Sha256InvokeFunc>);
+#[cfg(feature = "ripemd160")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::Ripemd160InvokeFunc>);
+#[cfg(feature = "identity")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::IdentityInvokeFunc>);
+#[cfg(feature = "modexp")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::ModexpInvokeFunc>);
+#[cfg(feature = "ecrecover")]
+fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::EcrecoverInvokeFunc>);
 
-// precompiles
-pub const PRECOMPILE_BLAKE2_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
-pub const PRECOMPILE_BN128_ADDRESS: Address = address!("0000000000000000000000000000000000000002");
-pub const PRECOMPILE_IDENTITY_ADDRESS: Address =
-    address!("0000000000000000000000000000000000000003");
-pub const PRECOMPILE_KZG_POINT_EVALUATION_ADDRESS: Address =
-    address!("0000000000000000000000000000000000000004");
-pub const PRECOMPILE_MODEXP_ADDRESS: Address = address!("0000000000000000000000000000000000000005");
-pub const PRECOMPILE_SECP256K1_ADDRESS: Address =
-    address!("0000000000000000000000000000000000000006");
+#[cfg(feature = "evm")]
+fluentbase_sdk::basic_entrypoint!(
+    evm::EVM<'static, fluentbase_sdk::ExecutionContext, fluentbase_sdk::JzktAccountManager>
+);
