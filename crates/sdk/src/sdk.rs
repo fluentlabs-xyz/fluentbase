@@ -24,9 +24,17 @@ pub trait LowLevelAPI {
     fn sys_state() -> u32;
     fn sys_fuel(delta: u64) -> u64;
     fn sys_context(target_ptr: *mut u8, offset: u32, length: u32);
-    fn sys_rewrite_context(context_ptr: *const u8, context_len: u32);
 
-    fn sys_exec_hash(
+    fn sys_exec(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
+        state: u32,
+    ) -> i32;
+    fn sys_context_call(
         code_hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,

@@ -157,11 +157,11 @@ pub enum SysFuncIdx {
     SYS_WRITE = 0x0005,
     SYS_OUTPUT_SIZE = 0x0006,
     SYS_READ_OUTPUT = 0x0007,
-    SYS_EXEC_HASH = 0x0009,
+    SYS_EXEC = 0x0009,
     SYS_FORWARD_OUTPUT = 0x000a,
     SYS_FUEL = 0x000b,
-    SYS_REWRITE_CONTEXT = 0x000c,
     SYS_CONTEXT = 0x000d,
+    SYS_CONTEXT_CALL = 0x000e,
 
     // jzkt
     JZKT_OPEN = 0x0701,

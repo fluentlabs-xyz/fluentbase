@@ -167,7 +167,7 @@ impl AccountManager for JzktAccountManager {
         fuel_offset: *mut u32,
         state: u32,
     ) -> (Bytes, i32) {
-        let exit_code = LowLevelSDK::sys_exec_hash(
+        let exit_code = LowLevelSDK::sys_context_call(
             hash32_offset,
             input.as_ptr(),
             input.len() as u32,

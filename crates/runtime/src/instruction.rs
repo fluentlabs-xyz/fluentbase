@@ -16,6 +16,7 @@ pub mod jzkt_rollback;
 pub mod jzkt_update;
 pub mod jzkt_update_preimage;
 pub mod sys_context;
+pub mod sys_context_call;
 pub mod sys_exec;
 pub mod sys_forward_output;
 pub mod sys_fuel;
@@ -24,7 +25,6 @@ pub mod sys_input_size;
 pub mod sys_output_size;
 pub mod sys_read;
 pub mod sys_read_output;
-pub mod sys_rewrite_context;
 pub mod sys_state;
 pub mod sys_write;
 pub mod wasm_to_rwasm;
@@ -51,6 +51,7 @@ use crate::{
         jzkt_update::JzktUpdate,
         jzkt_update_preimage::JzktUpdatePreimage,
         sys_context::SysContext,
+        sys_context_call::SysContextCall,
         sys_exec::SysExec,
         sys_forward_output::SysForwardOutput,
         sys_fuel::SysFuel,
@@ -59,7 +60,6 @@ use crate::{
         sys_output_size::SysOutputSize,
         sys_read::SysRead,
         sys_read_output::SysReadOutput,
-        sys_rewrite_context::SysRewriteContext,
         sys_state::SysState,
         sys_write::SysWrite,
         wasm_to_rwasm::WasmToRwasm,
@@ -93,11 +93,11 @@ impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target
 impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
 impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
-impl_runtime_handler!(SysExec, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
+impl_runtime_handler!(SysExec, SYS_EXEC, fn fluentbase_v1alpha::_sys_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
 impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SysFuel, SYS_FUEL, fn fluentbase_v1alpha::_sys_fuel(delta: u64) -> u64);
-impl_runtime_handler!(SysRewriteContext, SYS_REWRITE_CONTEXT, fn fluentbase_v1alpha::_sys_rewrite_context(context_ptr: u32, context_len: u32) -> ());
 impl_runtime_handler!(SysContext, SYS_CONTEXT, fn fluentbase_v1alpha::_sys_context(target_ptr: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SysContextCall, SYS_CONTEXT_CALL, fn fluentbase_v1alpha::_sys_context_call(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
 
 impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_ptr: u32) -> ());
 impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
@@ -135,11 +135,9 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SysExec::register_handler(linker, store);
     SysState::register_handler(linker, store);
     SysFuel::register_handler(linker, store);
-    if IS_SOVEREIGN {
-        SysRewriteContext::register_handler(linker, store);
-    }
     SysContext::register_handler(linker, store);
     if IS_SOVEREIGN {
+        SysContextCall::register_handler(linker, store);
         JzktOpen::register_handler(linker, store);
         JzktCheckpoint::register_handler(linker, store);
         JzktUpdate::register_handler(linker, store);

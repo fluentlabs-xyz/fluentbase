@@ -453,35 +453,40 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
             depth: 0,
         };
         let context = self.context_from_env(&mut gas, caller_address, callee_address, value);
-        let am = JournalDbWrapper {
-            ctx: RefCell::new(&mut self.context.evm),
+
+        let call_output = if cfg!(feature = "std") {
+            let am = JournalDbWrapper {
+                ctx: RefCell::new(&mut self.context.evm),
+            };
+            let call_output = _loader_call(&context, &am, method_input);
+            call_output
+        } else {
+            let core_input = CoreInput {
+                method_id: EVM_CALL_METHOD_ID,
+                method_data: method_input,
+            };
+            let (middleware_account, _) =
+                self.context.evm.load_account(ECL_CONTRACT_ADDRESS).unwrap();
+            let middleware_code_hash = middleware_account.info.rwasm_code_hash;
+            let (output_buffer, exit_code) = self.exec_rwasm_binary(
+                &mut gas,
+                middleware_code_hash,
+                core_input.encode_to_vec(0).into(),
+                context,
+                STATE_MAIN,
+            );
+            let call_output = if exit_code == ExitCode::Ok {
+                let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
+                let mut call_output = EvmCallMethodOutput::default();
+                EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut call_output);
+                call_output
+            } else {
+                EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining(), 0)
+            };
+            call_output
         };
-        let call_output = _loader_call(&context, &am, method_input);
 
-        // let core_input = CoreInput {
-        //     method_id,
-        //     method_data,
-        // }
-        // .encode_to_vec(0);
-        //
-        // let (output_buffer, exit_code) = self.exec_rwasm_binary(
-        //     &mut gas,
-        //     caller_account,
-        //     &mut middleware_account,
-        //     Some(callee_account.address),
-        //     core_input.into(),
-        //     value,
-        // );
-        //
-        // let call_output = if exit_code == ExitCode::Ok {
-        //     let mut buffer_decoder = BufferDecoder::new(output_buffer.as_ref());
-        //     let mut call_output = EvmCallMethodOutput::default();
-        //     EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut call_output);
-        //     call_output
-        // } else {
-        //     EvmCallMethodOutput::from_exit_code(exit_code).with_gas(gas.remaining())
-        // };
-
+        #[cfg(feature = "std")]
         {
             println!("executed ECL call:");
             println!(" - caller: 0x{}", hex::encode(caller_address));
@@ -594,26 +599,25 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
     //     (Bytes::from(result.output.clone()), result.exit_code.into())
     // }
 
-    #[cfg(not(feature = "std"))]
+    // #[cfg(not(feature = "std"))]
     fn exec_rwasm_binary(
         &mut self,
-        checkpoint: AccountCheckpoint,
         gas: &mut Gas,
-        caller: &mut Account,
-        callee: &mut Account,
+        rwasm_code_hash: B256,
         input: Bytes,
-        value: U256,
+        context: ContractInput,
+        state: u32,
     ) -> (Bytes, ExitCode) {
-        let context = self
-            .context_from_env(checkpoint, gas, caller, callee, value)
-            .encode_to_vec(0);
+        let context = context.encode_to_vec(0);
 
         let mut gas_limit_ref = gas.remaining() as u32;
         let gas_limit_ref = &mut gas_limit_ref as *mut u32;
-        let exit_code = LowLevelSDK::sys_exec_hash(
-            callee.rwasm_code_hash.as_ptr(),
+        let exit_code = LowLevelSDK::sys_context_call(
+            rwasm_code_hash.as_ptr(),
             input.as_ptr(),
             input.len() as u32,
+            context.as_ptr(),
+            context.len() as u32,
             core::ptr::null_mut(),
             0,
             gas_limit_ref,
@@ -884,6 +888,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
             Ok(result) => result,
             Err(err) => {
                 let exit_code = Runtime::catch_trap(&err);
+                #[cfg(feature = "std")]
                 println!("execution failed with err: {:?}", err);
                 return (Bytes::default(), exit_code);
             }
@@ -915,6 +920,7 @@ impl<'a, DB: Database> AccountManager for JournalDbWrapper<'a, DB> {
         Ok(())
     }
 
+    //noinspection RsBorrowChecker
     fn precompile(
         &self,
         address: &Address,
