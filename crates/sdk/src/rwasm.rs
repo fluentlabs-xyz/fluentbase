@@ -1,180 +1,197 @@
 use crate::{
     bindings::{
-        _crypto_ecrecover,
-        _crypto_keccak256,
-        _crypto_poseidon,
-        _crypto_poseidon2,
+        _charge_fuel,
+        _checkpoint,
+        _commit,
+        _compute_root,
+        _context_call,
         _debug_log,
-        _jzkt_checkpoint,
-        _jzkt_commit,
-        _jzkt_compute_root,
-        _jzkt_emit_log,
-        _jzkt_get,
-        _jzkt_open,
-        _jzkt_preimage_copy,
-        _jzkt_preimage_size,
-        _jzkt_remove,
-        _jzkt_rollback,
-        _jzkt_update,
-        _jzkt_update_preimage,
-        _sys_exec_hash,
-        _sys_forward_output,
-        _sys_fuel,
-        _sys_halt,
-        _sys_input_size,
-        _sys_output_size,
-        _sys_read,
-        _sys_read_output,
-        _sys_state,
-        _sys_write,
-        _wasm_to_rwasm,
-        _wasm_to_rwasm_size,
+        _ecrecover,
+        _emit_log,
+        _exec,
+        _exit,
+        _forward_output,
+        _get_leaf,
+        _input_size,
+        _keccak256,
+        _output_size,
+        _poseidon,
+        _poseidon_hash,
+        _preimage_copy,
+        _preimage_size,
+        _read,
+        _read_context,
+        _read_output,
+        _rollback,
+        _state,
+        _update_leaf,
+        _update_preimage,
+        _write,
     },
-    LowLevelAPI,
+    sdk::{SharedAPI, SovereignAPI},
     LowLevelSDK,
 };
 
-impl LowLevelAPI for LowLevelSDK {
+impl SharedAPI for LowLevelSDK {
     #[inline(always)]
-    fn sys_read(target: &mut [u8], offset: u32) {
-        unsafe { _sys_read(target.as_mut_ptr(), offset, target.len() as u32) }
+    fn read(target: &mut [u8], offset: u32) {
+        unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
     }
 
     #[inline(always)]
-    fn sys_input_size() -> u32 {
-        unsafe { _sys_input_size() }
+    fn input_size() -> u32 {
+        unsafe { _input_size() }
     }
 
     #[inline(always)]
-    fn sys_write(value: &[u8]) {
-        unsafe { _sys_write(value.as_ptr(), value.len() as u32) }
+    fn write(value: &[u8]) {
+        unsafe { _write(value.as_ptr(), value.len() as u32) }
     }
 
     #[inline(always)]
-    fn sys_forward_output(offset: u32, len: u32) {
-        unsafe { _sys_forward_output(offset, len) }
+    fn forward_output(offset: u32, len: u32) {
+        unsafe { _forward_output(offset, len) }
     }
 
     #[inline(always)]
-    fn sys_halt(exit_code: i32) {
-        unsafe { _sys_halt(exit_code) }
+    fn exit(exit_code: i32) {
+        unsafe { _exit(exit_code) }
     }
 
     #[inline(always)]
-    fn sys_output_size() -> u32 {
-        unsafe { _sys_output_size() }
+    fn output_size() -> u32 {
+        unsafe { _output_size() }
     }
 
     #[inline(always)]
-    fn sys_read_output(target: *mut u8, offset: u32, length: u32) {
-        unsafe { _sys_read_output(target, offset, length) }
+    fn read_output(target: *mut u8, offset: u32, length: u32) {
+        unsafe { _read_output(target, offset, length) }
     }
 
     #[inline(always)]
-    fn sys_state() -> u32 {
-        unsafe { _sys_state() }
+    fn state() -> u32 {
+        unsafe { _state() }
     }
 
     #[inline(always)]
-    fn sys_exec_hash(
-        code_hash32_offset: *const u8,
-        input_offset: *const u8,
+    fn exec(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
         input_len: u32,
-        return_offset: *mut u8,
+        return_ptr: *mut u8,
         return_len: u32,
-        fuel_offset: *mut u32,
+        fuel_ptr: *mut u32,
+    ) -> i32 {
+        unsafe {
+            _exec(
+                code_hash32_ptr,
+                input_ptr,
+                input_len,
+                return_ptr,
+                return_len,
+                fuel_ptr,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn charge_fuel(delta: u64) -> u64 {
+        unsafe { _charge_fuel(delta) }
+    }
+
+    #[inline(always)]
+    fn read_context(target_ptr: *mut u8, offset: u32, length: u32) {
+        unsafe { _read_context(target_ptr, offset, length) }
+    }
+
+    #[inline(always)]
+    fn keccak256(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
+        unsafe { _keccak256(data_ptr, data_len, output32_ptr) }
+    }
+
+    #[inline(always)]
+    fn poseidon(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
+        unsafe { _poseidon(data_ptr, data_len, output32_ptr) }
+    }
+
+    #[inline(always)]
+    fn poseidon_hash(
+        fa32_ptr: *const u8,
+        fb32_ptr: *const u8,
+        fd32_ptr: *const u8,
+        output32_ptr: *mut u8,
+    ) {
+        unsafe { _poseidon_hash(fa32_ptr, fb32_ptr, fd32_ptr, output32_ptr) }
+    }
+
+    #[inline(always)]
+    fn ecrecover(digest32_ptr: *const u8, sig64_ptr: *const u8, output65_ptr: *mut u8, rec_id: u8) {
+        unsafe { _ecrecover(digest32_ptr, sig64_ptr, output65_ptr, rec_id as u32) }
+    }
+}
+
+impl SovereignAPI for LowLevelSDK {
+    #[inline(always)]
+    fn context_call(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
+        context_ptr: *const u8,
+        context_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
         state: u32,
     ) -> i32 {
         unsafe {
-            _sys_exec_hash(
-                code_hash32_offset,
-                input_offset,
+            _context_call(
+                code_hash32_ptr,
+                input_ptr,
                 input_len,
-                return_offset,
+                context_ptr,
+                context_len,
+                return_ptr,
                 return_len,
-                fuel_offset,
+                fuel_ptr,
                 state,
             )
         }
     }
 
     #[inline(always)]
-    fn sys_fuel(delta: u64) -> u64 {
-        unsafe { _sys_fuel(delta) }
+    fn checkpoint() -> u64 {
+        unsafe { _checkpoint() }
     }
 
     #[inline(always)]
-    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
-        unsafe { _crypto_keccak256(data_offset, data_len, output32_offset) }
+    fn get_leaf(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8, committed: bool) -> bool {
+        unsafe { _get_leaf(key32_ptr, field, output32_ptr, committed) }
     }
 
     #[inline(always)]
-    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8) {
-        unsafe { _crypto_poseidon(data_offset, data_len, output32_offset) }
-    }
-
-    #[inline(always)]
-    fn crypto_poseidon2(
-        fa32_ptr: *const u8,
-        fb32_ptr: *const u8,
-        fd32_ptr: *const u8,
-        output32_ptr: *mut u8,
-    ) {
-        unsafe { _crypto_poseidon2(fa32_ptr, fb32_ptr, fd32_ptr, output32_ptr) }
-    }
-
-    #[inline(always)]
-    fn crypto_ecrecover(
-        digest32_ptr: *const u8,
-        sig64_ptr: *const u8,
-        output65_ptr: *mut u8,
-        rec_id: u8,
-    ) {
-        unsafe { _crypto_ecrecover(digest32_ptr, sig64_ptr, output65_ptr, rec_id as u32) }
-    }
-
-    #[inline(always)]
-    fn jzkt_open(root32_ptr: *const u8) {
-        unsafe { _jzkt_open(root32_ptr) }
-    }
-    #[inline(always)]
-    fn jzkt_checkpoint() -> u64 {
-        unsafe { _jzkt_checkpoint() }
-    }
-    #[inline(always)]
-    fn jzkt_get(
-        key32_offset: *const u8,
-        field: u32,
-        output32_offset: *mut u8,
-        committed: bool,
-    ) -> bool {
-        unsafe { _jzkt_get(key32_offset, field, output32_offset, committed) }
-    }
-    #[inline(always)]
-    fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
+    fn update_leaf(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
         unsafe {
-            _jzkt_update(key32_ptr, flags, vals32_ptr, vals32_len);
+            _update_leaf(key32_ptr, flags, vals32_ptr, vals32_len);
         }
     }
+
     #[inline(always)]
-    fn jzkt_update_preimage(
+    fn update_preimage(
         key32_ptr: *const u8,
         field: u32,
         preimage_ptr: *const u8,
         preimage_len: u32,
     ) -> bool {
-        unsafe { _jzkt_update_preimage(key32_ptr, field, preimage_ptr, preimage_len) }
+        unsafe { _update_preimage(key32_ptr, field, preimage_ptr, preimage_len) }
     }
+
     #[inline(always)]
-    fn jzkt_remove(key32_offset: *const u8) {
-        unsafe { _jzkt_remove(key32_offset) }
+    fn compute_root(output32_ptr: *mut u8) {
+        unsafe { _compute_root(output32_ptr) }
     }
+
     #[inline(always)]
-    fn jzkt_compute_root(output32_offset: *mut u8) {
-        unsafe { _jzkt_compute_root(output32_offset) }
-    }
-    #[inline(always)]
-    fn jzkt_emit_log(
+    fn emit_log(
         address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
@@ -182,7 +199,7 @@ impl LowLevelAPI for LowLevelSDK {
         data_len: u32,
     ) {
         unsafe {
-            _jzkt_emit_log(
+            _emit_log(
                 address20_ptr,
                 topics32s_ptr,
                 topics32s_len,
@@ -192,34 +209,25 @@ impl LowLevelAPI for LowLevelSDK {
         }
     }
     #[inline(always)]
-    fn jzkt_commit(root32_offset: *mut u8) {
-        unsafe { _jzkt_commit(root32_offset) }
+    fn commit(root32_ptr: *mut u8) {
+        unsafe { _commit(root32_ptr) }
     }
+
     #[inline(always)]
-    fn jzkt_rollback(checkpoint: u64) {
-        unsafe { _jzkt_rollback(checkpoint) }
+    fn rollback(checkpoint: u64) {
+        unsafe { _rollback(checkpoint) }
     }
+
     #[inline(always)]
-    fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32 {
-        unsafe { _jzkt_preimage_size(hash32_ptr) }
+    fn preimage_size(hash32_ptr: *const u8) -> u32 {
+        unsafe { _preimage_size(hash32_ptr) }
     }
+
     #[inline(always)]
-    fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
-        unsafe { _jzkt_preimage_copy(hash32_ptr, preimage_ptr) }
+    fn preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
+        unsafe { _preimage_copy(hash32_ptr, preimage_ptr) }
     }
-    #[inline(always)]
-    fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
-        unsafe { _wasm_to_rwasm_size(input_ptr, input_len) }
-    }
-    #[inline(always)]
-    fn wasm_to_rwasm(
-        input_ptr: *const u8,
-        input_len: u32,
-        output_ptr: *mut u8,
-        output_len: u32,
-    ) -> i32 {
-        unsafe { _wasm_to_rwasm(input_ptr, input_len, output_ptr, output_len) }
-    }
+
     #[inline(always)]
     fn debug_log(msg_ptr: *const u8, msg_len: u32) {
         unsafe { _debug_log(msg_ptr, msg_len) }

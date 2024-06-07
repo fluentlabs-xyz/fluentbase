@@ -1,4 +1,4 @@
-FILES = keccak256 greeting secp256k1 poseidon rwasm panic contract_input_check_recode evm_call_from_wasm shakmaty
+FILES = keccak256 greeting secp256k1 poseidon rwasm panic shakmaty
 
 CUR_DIR="$(shell pwd)"
 OUT_FOLDER="bin"

@@ -1,7 +1,7 @@
 use crate::{runtime::Runtime, DefaultEmptyRuntimeDatabase, RuntimeContext};
 use fluentbase_types::{
     create_sovereign_import_linker,
-    SysFuncIdx::SYS_STATE,
+    SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
 };
@@ -21,7 +21,7 @@ pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call(SYS_STATE.into()),
+            opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_sovereign_import_linker()),
@@ -102,8 +102,8 @@ fn test_keccak256() {
   (type (;0;) (func (param i32 i32 i32)))
   (type (;1;) (func))
   (type (;2;) (func (param i32 i32)))
-  (import "fluentbase_v1alpha" "_crypto_keccak256" (func $_evm_keccak256 (type 0)))
-  (import "fluentbase_v1alpha" "_sys_write" (func $_evm_return (type 2)))
+  (import "fluentbase_v1preview" "_keccak256" (func $_evm_keccak256 (type 0)))
+  (import "fluentbase_v1preview" "_write" (func $_evm_return (type 2)))
   (func $main (type 1)
     i32.const 0
     i32.const 12

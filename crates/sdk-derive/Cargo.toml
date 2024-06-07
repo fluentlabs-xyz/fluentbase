@@ -1,23 +1,24 @@
 [package]
-name = "fluentbase-sdk-derive"
-version = "0.1.0"
 authors.workspace = true
-repository.workspace = true
-edition.workspace = true
-readme.workspace = true
-license.workspace = true
-keywords.workspace = true
 categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "fluentbase-sdk-derive"
+readme.workspace = true
+repository.workspace = true
+version = "0.1.0"
 
 [dependencies]
+#alloy-sol-types = {version = "0.7.4", default-features = false}
 convert_case = "0.6.0"
+crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
+proc-macro2 = "1.0"
 quote = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 syn = { version = "2.0.60", features = ["full"] }
-crypto-hashes = { version = "0.10.0", default-features = false, features = ["include_weak"] }
 
 [dev-dependencies]
 
 [lib]
 proc-macro = true
-

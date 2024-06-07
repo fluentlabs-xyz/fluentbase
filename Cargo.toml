@@ -3,7 +3,6 @@ members = [
     "bin",
     "crates/*",
     "crates/genesis/bin",
-    #    "crates/revm/e2e",
     "e2e",
     "examples",
 ]
@@ -50,10 +49,10 @@ hashbrown = { version = "0.14.3" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
-#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
-#revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
-#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = ["rwasm"] }
-#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "dev2", default-features = false, features = [
+#revm-interpreter = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
+#revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
+#revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
+#revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = [
 #    "ethersdb",
 #    "std",
 #    "serde-json",

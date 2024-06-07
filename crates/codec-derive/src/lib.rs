@@ -4,19 +4,6 @@ use quote::{__private::Span, format_ident, quote};
 use syn::{self, Data, Fields, Ident};
 
 #[proc_macro]
-pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
-    use crypto_hashes::{digest::Digest, sha3::Keccak256};
-    let mut hash = Keccak256::new();
-    hash.update(token.to_string());
-    let mut dst = [0u8; 4];
-    dst.copy_from_slice(hash.finalize().as_slice()[0..4].as_ref());
-    let method_id: u32 = u32::from_be_bytes(dst);
-    TokenStream::from(quote! {
-        #method_id
-    })
-}
-
-#[proc_macro]
 pub fn path_to_test_name(token: TokenStream) -> TokenStream {
     let path = token.to_string();
     let file_name = path

@@ -1,15 +1,17 @@
 use crate::{debug_log, helpers::wasm2rwasm};
+use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     Account,
     AccountManager,
     ContextReader,
-    LowLevelAPI,
+    ContractInput,
     LowLevelSDK,
+    SharedAPI,
     WasmCreateMethodInput,
     WasmCreateMethodOutput,
 };
 use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
-use revm_primitives::RWASM_MAX_CODE_SIZE;
+use revm_primitives::WASM_MAX_CODE_SIZE;
 
 pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
@@ -31,7 +33,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     }
 
     // code length can't exceed max constructor limit
-    if input.bytecode.len() > RWASM_MAX_CODE_SIZE {
+    if input.bytecode.len() > WASM_MAX_CODE_SIZE {
         debug_log!(
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::ContractSizeLimit
@@ -40,7 +42,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     }
 
     let mut source_code_hash: B256 = B256::ZERO;
-    LowLevelSDK::crypto_keccak256(
+    LowLevelSDK::keccak256(
         input.bytecode.as_ptr(),
         input.bytecode.len() as u32,
         source_code_hash.as_mut_ptr(),
@@ -110,9 +112,16 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     // write contract to the trie
     contract_account.update_bytecode(am, &input.bytecode, None, &rwasm_bytecode.into(), None);
 
+    let mut context = ContractInput::clone_from_cr(cr);
+    context.contract_value = input.value;
+    context.contract_gas_limit = input.gas_limit;
+    context.contract_address = contract_account.address;
+    let contract_context = context.encode_to_vec(0);
+
     let mut gas_limit = input.gas_limit as u32;
     let (_, exit_code) = am.exec_hash(
         contract_account.rwasm_code_hash.as_ptr(),
+        &contract_context,
         &[],
         &mut gas_limit as *mut u32,
         STATE_DEPLOY,

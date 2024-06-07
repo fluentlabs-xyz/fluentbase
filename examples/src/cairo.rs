@@ -45,9 +45,9 @@ pub fn deploy() {}
 
 pub fn main() {
     let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
-    let input_size = LowLevelSDK::sys_input_size();
+    let input_size = LowLevelSDK::input_size();
     let mut input_buffer = vec![0u8; input_size as usize];
-    LowLevelSDK::sys_read(&mut input_buffer, 0);
+    LowLevelSDK::read(&mut input_buffer, 0);
     assert!(
         verify_cairo_proof_wasm(&input_buffer[..], &proof_options),
         "failed to verify cairo proof"

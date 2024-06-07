@@ -8,8 +8,8 @@ use fluentbase_sdk::{
     ContextReader,
     EvmCreateMethodInput,
     EvmCreateMethodOutput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
 };
 use fluentbase_types::{ExitCode, B256};
 use revm_interpreter::{
@@ -59,7 +59,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
 
     // calc source code hash
     let mut source_code_hash: B256 = B256::ZERO;
-    LowLevelSDK::crypto_keccak256(
+    LowLevelSDK::keccak256(
         input.bytecode.as_ptr(),
         input.bytecode.len() as u32,
         source_code_hash.as_mut_ptr(),

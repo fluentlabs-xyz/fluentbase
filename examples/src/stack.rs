@@ -9,6 +9,6 @@ pub fn deploy() {}
 
 pub fn main() {
     unsafe {
-        LowLevelSDK::sys_halt(__get_stack_pointer() as i32);
+        LowLevelSDK::exit(__get_stack_pointer() as i32);
     }
 }

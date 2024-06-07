@@ -1,6 +1,6 @@
 use crate::debug_log;
 use core::mem::take;
-use fluentbase_sdk::{AccountManager, ContextReader, LowLevelAPI};
+use fluentbase_sdk::{AccountManager, ContextReader};
 use revm_interpreter::{
     primitives::{
         Address,
@@ -53,7 +53,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_price: cr.tx_gas_price(),
                     transact_to: TransactTo::Call(Address::ZERO), // will do nothing
                     value: cr.contract_value(),
-                    data: cr.contract_input(),
+                    data: Default::default(), // not used because we already pass all validations
                     nonce: Some(cr.tx_nonce()),
                     chain_id: None, // no checks
                     access_list: cr.tx_access_list(),

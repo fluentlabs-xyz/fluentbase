@@ -1,73 +1,69 @@
-pub trait LowLevelAPI {
-    fn crypto_keccak256(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    fn crypto_poseidon(data_offset: *const u8, data_len: u32, output32_offset: *mut u8);
-    fn crypto_poseidon2(
+pub trait SharedAPI {
+    fn keccak256(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8);
+    fn poseidon(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8);
+    fn poseidon_hash(
         fa32_ptr: *const u8,
         fb32_ptr: *const u8,
         fd32_ptr: *const u8,
         output32_ptr: *mut u8,
     );
-    fn crypto_ecrecover(
-        digest32_ptr: *const u8,
-        sig65_ptr: *const u8,
-        output65_ptr: *mut u8,
-        rec_id: u8,
-    );
+    fn ecrecover(digest32_ptr: *const u8, sig65_ptr: *const u8, output65_ptr: *mut u8, rec_id: u8);
 
-    fn sys_read(target: &mut [u8], offset: u32);
-    fn sys_input_size() -> u32;
-    fn sys_write(value: &[u8]);
-    fn sys_forward_output(offset: u32, len: u32);
-    fn sys_halt(exit_code: i32);
-    fn sys_output_size() -> u32;
-    fn sys_read_output(target: *mut u8, offset: u32, length: u32);
-    fn sys_state() -> u32;
-    fn sys_fuel(delta: u64) -> u64;
+    fn read(target: &mut [u8], offset: u32);
+    fn input_size() -> u32;
+    fn write(value: &[u8]);
+    fn forward_output(offset: u32, len: u32);
+    fn exit(exit_code: i32);
+    fn output_size() -> u32;
+    fn read_output(target: *mut u8, offset: u32, length: u32);
+    fn state() -> u32;
+    fn charge_fuel(delta: u64) -> u64;
+    fn read_context(target_ptr: *mut u8, offset: u32, length: u32);
 
-    fn sys_exec_hash(
-        code_hash32_offset: *const u8,
-        input_offset: *const u8,
+    fn exec(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
         input_len: u32,
-        return_offset: *mut u8,
+        return_ptr: *mut u8,
         return_len: u32,
-        fuel_offset: *mut u32,
+        fuel_ptr: *mut u32,
+    ) -> i32;
+}
+
+pub trait SovereignAPI {
+    fn context_call(
+        code_hash32_ptr: *const u8,
+        input_ptr: *const u8,
+        input_len: u32,
+        context_ptr: *const u8,
+        context_len: u32,
+        return_ptr: *mut u8,
+        return_len: u32,
+        fuel_ptr: *mut u32,
         state: u32,
     ) -> i32;
 
-    fn jzkt_open(root32_ptr: *const u8);
-    fn jzkt_checkpoint() -> u64;
-    fn jzkt_get(
-        key32_offset: *const u8,
-        field: u32,
-        output32_offset: *mut u8,
-        committed: bool,
-    ) -> bool;
-    fn jzkt_update(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32);
-    fn jzkt_update_preimage(
+    fn checkpoint() -> u64;
+    fn get_leaf(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8, committed: bool) -> bool;
+    fn update_leaf(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32);
+    fn update_preimage(
         key32_ptr: *const u8,
         field: u32,
         preimage_ptr: *const u8,
         preimage_len: u32,
     ) -> bool;
-    fn jzkt_remove(key32_offset: *const u8);
-    fn jzkt_compute_root(output32_offset: *mut u8);
-    fn jzkt_emit_log(
+    fn compute_root(output32_ptr: *mut u8);
+    fn emit_log(
         address20_ptr: *const u8,
         topics32s_ptr: *const [u8; 32],
         topics32s_len: u32,
         data_ptr: *const u8,
         data_len: u32,
     );
-    fn jzkt_commit(root32_offset: *mut u8);
-    fn jzkt_rollback(checkpoint: u64);
-    fn jzkt_preimage_size(hash32_ptr: *const u8) -> u32;
-    fn jzkt_preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
-    fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32;
-    fn wasm_to_rwasm(
-        input_ptr: *const u8,
-        input_len: u32,
-        output_ptr: *mut u8,
-        output_len: u32,
-    ) -> i32;
+    fn commit(root32_ptr: *mut u8);
+    fn rollback(checkpoint: u64);
+    fn preimage_size(hash32_ptr: *const u8) -> u32;
+    fn preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
+
     fn debug_log(msg_ptr: *const u8, msg_len: u32);
 }

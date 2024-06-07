@@ -1,8 +1,9 @@
 use crate::{
     instruction::{
+        context_call::{SysContextCallResumable, SyscallContextCall},
+        exec::{SysExecResumable, SyscallExec},
         runtime_register_shared_handlers,
         runtime_register_sovereign_handlers,
-        sys_exec_hash::{SysExecHash, SysExecHashResumable},
     },
     types::{InMemoryTrieDb, RuntimeError},
     zktrie::ZkTrieStateDb,
@@ -16,7 +17,7 @@ use fluentbase_types::{
     EmptyJournalTrie,
     ExitCode,
     IJournaledTrie,
-    SysFuncIdx::SYS_STATE,
+    SysFuncIdx::STATE,
     F254,
     POSEIDON_EMPTY,
     STATE_DEPLOY,
@@ -83,8 +84,10 @@ pub struct RuntimeContext<DB: IJournaledTrie> {
     pub(crate) bytecode: BytecodeOrHash,
     pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
+    #[deprecated(note = "this parameter can be removed, we filter on the AOT level")]
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) context: Vec<u8>,
     pub(crate) depth: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
@@ -106,6 +109,7 @@ impl<DB: IJournaledTrie> Default for RuntimeContext<DB> {
             state: 0,
             is_shared: false,
             input: vec![],
+            context: vec![],
             depth: 0,
             execution_result: Default::default(),
             jzkt: None,
@@ -133,8 +137,17 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
+    pub fn with_context(mut self, context: Vec<u8>) -> Self {
+        self.context = context;
+        self
+    }
+
     pub fn change_input(&mut self, input_data: Vec<u8>) {
         self.input = input_data;
+    }
+
+    pub fn change_context(&mut self, new_context: Vec<u8>) {
+        self.context = new_context;
     }
 
     pub fn with_state(mut self, state: u32) -> Self {
@@ -247,7 +260,7 @@ impl CachingRuntime {
                     ("deploy".to_string(), STATE_DEPLOY),
                     ("main".to_string(), STATE_MAIN),
                 ]),
-                opcode: Instruction::Call(SYS_STATE.into()),
+                opcode: Instruction::Call(STATE.into()),
             }),
             entrypoint_name: None,
             import_linker: Some(import_linker),
@@ -361,10 +374,10 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         }
 
         // register linker trampolines for external calls
-        if !store.data().is_shared {
-            runtime_register_sovereign_handlers(&mut linker, &mut store)
-        } else {
+        if store.data().is_shared {
             runtime_register_shared_handlers(&mut linker, &mut store)
+        } else {
+            runtime_register_sovereign_handlers(&mut linker, &mut store)
         }
 
         Self { store, linker }
@@ -442,18 +455,31 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             execution_result.exit_code = exit_code;
                             return Ok(execution_result);
                         } else if let Some(delayed_state) =
-                            state.host_error().downcast_ref::<SysExecHashResumable>()
+                            state.host_error().downcast_ref::<SysExecResumable>()
                         {
                             // execute `_sys_exec_hash` function
-                            match SysExecHash::fn_continue(
+                            SyscallExec::fn_continue(
                                 Caller::new(&mut self.store, Some(&instance)),
                                 delayed_state,
-                            ) {
-                                Ok(exit_code) => exit_code,
-                                Err(exit_code) => exit_code
+                            )
+                            .unwrap_or_else(|exit_code| {
+                                exit_code
                                     .i32_exit_status()
-                                    .unwrap_or(ExitCode::UnknownError.into_i32()),
-                            }
+                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                            })
+                        } else if let Some(delayed_state) =
+                            state.host_error().downcast_ref::<SysContextCallResumable>()
+                        {
+                            // execute `_sys_exec_hash` function
+                            SyscallContextCall::fn_continue(
+                                Caller::new(&mut self.store, Some(&instance)),
+                                delayed_state,
+                            )
+                            .unwrap_or_else(|exit_code| {
+                                exit_code
+                                    .i32_exit_status()
+                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                            })
                         } else {
                             return Err(RuntimeError::Rwasm(
                                 Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),
