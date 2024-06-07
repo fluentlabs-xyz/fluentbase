@@ -8,6 +8,7 @@ extern crate lol_alloc;
 pub struct LowLevelSDK;
 
 mod evm;
+
 pub use evm::*;
 mod sdk;
 
@@ -19,12 +20,15 @@ pub use account::*;
 mod bindings;
 mod jzkt;
 pub use jzkt::*;
+#[macro_use]
+pub mod macros;
 #[cfg(feature = "std")]
 mod runtime;
 #[cfg(not(feature = "std"))]
 mod rwasm;
 mod types;
 mod utils;
+
 pub use types::*;
 pub use utils::*;
 
@@ -49,4 +53,14 @@ pub use fluentbase_sdk_derive::{derive_keccak256_id, derive_solidity_router};
 
 pub mod codec {
     pub use fluentbase_codec::*;
+}
+
+pub fn alloc_ptr(len: usize) -> *mut u8 {
+    use alloc::alloc::{alloc, Layout};
+    unsafe { alloc(Layout::from_size_align_unchecked(len, 8)) }
+}
+
+pub fn alloc_slice<'a>(len: usize) -> &'a mut [u8] {
+    use core::ptr;
+    unsafe { &mut *ptr::slice_from_raw_parts_mut(alloc_ptr(len), len) }
 }

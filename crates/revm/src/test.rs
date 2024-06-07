@@ -277,7 +277,7 @@ fn test_deploy_greeting() {
     let contract_address = deploy_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
-        include_bytes!("../../../examples/bin/greeting.wasm").into(),
+        include_bytes!("../../../examples/greeting/lib.wasm").into(),
     );
     // call greeting WASM contract
     let result = call_evm_tx(
@@ -301,7 +301,7 @@ fn test_deploy_keccak256() {
     let contract_address = deploy_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
-        include_bytes!("../../../examples/bin/keccak256.wasm").into(),
+        include_bytes!("../../../examples/hashing/lib.wasm").into(),
     );
     // call greeting WASM contract
     let result = call_evm_tx(
@@ -313,10 +313,10 @@ fn test_deploy_keccak256() {
     )
     .unwrap();
     assert!(result.is_success());
-    let bytes = result.output().unwrap_or_default();
+    let bytes = result.output().unwrap_or_default().as_ref();
     assert_eq!(
         "a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529",
-        hex::encode(bytes.as_ref()),
+        hex::encode(&bytes[0..32]),
     );
 }
 
@@ -328,7 +328,7 @@ fn test_deploy_panic() {
     let contract_address = deploy_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
-        include_bytes!("../../../examples/bin/panic.wasm").into(),
+        include_bytes!("../../../examples/panic/lib.wasm").into(),
     );
     // call greeting WASM contract
     let result = call_evm_tx(
@@ -342,7 +342,7 @@ fn test_deploy_panic() {
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
     assert_eq!(
-        "panicked at examples/src/panic.rs:4:5: it is panic time",
+        "panicked at examples/panic/lib.rs:15:9: it is panic time",
         from_utf8(bytes.as_ref()).unwrap()
     );
 }
@@ -491,7 +491,7 @@ fn test_create_send() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        include_bytes!("../../../examples/bin/greeting.wasm").into(),
+        include_bytes!("../../../examples/greeting/lib.wasm").into(),
         None,
     )
     .gas_price(gas_price)
@@ -525,7 +525,7 @@ fn test_evm_revert() {
     let result = TxBuilder::create(
         &mut ctx,
         SENDER_ADDRESS,
-        include_bytes!("../../../examples/bin/greeting.wasm").into(),
+        include_bytes!("../../../examples/greeting/lib.wasm").into(),
         None,
     )
     .gas_price(gas_price)
