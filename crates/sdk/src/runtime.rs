@@ -31,8 +31,6 @@ use fluentbase_runtime::{
         sys_read_output::SysReadOutput,
         sys_state::SysState,
         sys_write::SysWrite,
-        wasm_to_rwasm::WasmToRwasm,
-        wasm_to_rwasm_size::WasmToRwasmSize,
     },
     types::InMemoryTrieDb,
     zktrie::ZkTrieStateDb,
@@ -340,34 +338,6 @@ impl LowLevelAPI for LowLevelSDK {
         let dest =
             unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
         dest.copy_from_slice(&preimage_copy);
-    }
-
-    fn wasm_to_rwasm_size(input_ptr: *const u8, input_len: u32) -> i32 {
-        let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
-        with_context_mut(|ctx| WasmToRwasmSize::fn_impl(ctx, wasm_binary).map_err(|v| v.into_i32()))
-            .unwrap()
-    }
-
-    fn wasm_to_rwasm(
-        input_ptr: *const u8,
-        input_len: u32,
-        output_ptr: *mut u8,
-        output_len: u32,
-    ) -> i32 {
-        let wasm_binary = unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) };
-        let rwasm_binary_res = with_context_mut(|v| {
-            WasmToRwasm::fn_impl(v, wasm_binary, output_len).map_err(|v| v.into_i32())
-        });
-        if let Err(e) = rwasm_binary_res {
-            return e;
-        }
-        let rwasm_binary = rwasm_binary_res.unwrap();
-        if output_len > 0 {
-            let dest =
-                unsafe { &mut *ptr::slice_from_raw_parts_mut(output_ptr, output_len as usize) };
-            dest[..output_len as usize].copy_from_slice(&rwasm_binary);
-        }
-        ExitCode::Ok.into_i32()
     }
 
     fn debug_log(msg_ptr: *const u8, msg_len: u32) {
