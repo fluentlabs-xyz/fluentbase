@@ -27,8 +27,6 @@ pub mod sys_read;
 pub mod sys_read_output;
 pub mod sys_state;
 pub mod sys_write;
-pub mod wasm_to_rwasm;
-pub mod wasm_to_rwasm_size;
 
 use crate::{
     impl_runtime_handler,
@@ -62,8 +60,6 @@ use crate::{
         sys_read_output::SysReadOutput,
         sys_state::SysState,
         sys_write::SysWrite,
-        wasm_to_rwasm::WasmToRwasm,
-        wasm_to_rwasm_size::WasmToRwasmSize,
     },
     RuntimeContext,
 };
@@ -112,9 +108,6 @@ impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alph
 impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
 impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
 
-impl_runtime_handler!(WasmToRwasmSize, WASM_TO_RWASM_SIZE, fn fluentbase_v1alpha::_wasm_to_rwasm_size(input_ptr: u32, input_len: u32) -> i32);
-impl_runtime_handler!(WasmToRwasm, WASM_TO_RWASM, fn fluentbase_v1alpha::_wasm_to_rwasm(input_ptr: u32, input_len: u32, output_ptr: u32, output_len: u32) -> i32);
-
 impl_runtime_handler!(DebugLog, DEBUG_LOG, fn fluentbase_v1alpha::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
 fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
@@ -155,8 +148,6 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
         JzktUpdatePreimage::register_handler(linker, store);
     }
     JzktPreimageCopy::register_handler(linker, store);
-    WasmToRwasmSize::register_handler(linker, store);
-    WasmToRwasm::register_handler(linker, store);
     DebugLog::register_handler(linker, store);
 }
 
