@@ -1,20 +1,15 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(dead_code)]
 extern crate alloc;
-#[macro_use]
 extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
+use fluentbase_sdk::{LowLevelSDK, SharedAPI};
 
 #[cfg(feature = "cairo")]
 mod cairo;
-#[cfg(feature = "contract_input_check_recode")]
-mod contract_input_check_recode;
 #[cfg(feature = "erc20")]
 mod erc20;
-#[cfg(feature = "evm_call_from_wasm")]
-mod evm_call_from_wasm;
 #[cfg(feature = "greeting")]
 mod greeting;
 #[cfg(feature = "keccak256")]
@@ -44,10 +39,6 @@ macro_rules! export_and_forward {
             // erc20::$fn_name();
             #[cfg(feature = "greeting")]
             greeting::$fn_name();
-            #[cfg(feature = "contract_input_check_recode")]
-            contract_input_check_recode::$fn_name();
-            #[cfg(feature = "evm_call_from_wasm")]
-            evm_call_from_wasm::$fn_name();
             #[cfg(feature = "keccak256")]
             keccak256::$fn_name();
             #[cfg(feature = "poseidon")]
@@ -68,13 +59,13 @@ export_and_forward!(deploy);
 export_and_forward!(main);
 
 pub(crate) fn get_input() -> Vec<u8> {
-    let input_size = LowLevelSDK::sys_input_size();
+    let input_size = LowLevelSDK::input_size();
     let mut input_buffer = Vec::with_capacity(input_size as usize);
-    LowLevelSDK::sys_read(&mut input_buffer, 0);
+    LowLevelSDK::read(&mut input_buffer, 0);
     input_buffer
 }
 
 pub(crate) fn write_output(output: Vec<u8>) {
-    LowLevelSDK::sys_write(&output);
-    LowLevelSDK::sys_halt(0);
+    LowLevelSDK::write(&output);
+    LowLevelSDK::exit(0);
 }

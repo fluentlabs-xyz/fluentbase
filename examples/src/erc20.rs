@@ -35,7 +35,7 @@ fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
     raw_storage_key[0..32].copy_from_slice(slot);
     raw_storage_key[32..64].copy_from_slice(value);
     let mut storage_key: [u8; 32] = [0; 32];
-    LowLevelSDK::crypto_keccak256(
+    LowLevelSDK::keccak256(
         raw_storage_key.as_ptr(),
         raw_storage_key.len() as u32,
         storage_key.as_mut_ptr(),
@@ -173,7 +173,7 @@ pub fn main() {
         }
         _ => panic!("unknown method"),
     };
-    LowLevelSDK::sys_write(&output);
+    LowLevelSDK::write(&output);
 }
 
 #[cfg(test)]

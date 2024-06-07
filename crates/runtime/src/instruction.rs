@@ -1,65 +1,61 @@
-pub mod crypto_ecrecover;
-pub mod crypto_keccak256;
-pub mod crypto_poseidon;
-pub mod crypto_poseidon2;
+pub mod charge_fuel;
+pub mod checkpoint;
+pub mod commit;
+pub mod compute_root;
+pub mod context_call;
 pub mod debug_log;
-pub mod jzkt_checkpoint;
-pub mod jzkt_commit;
-pub mod jzkt_compute_root;
-pub mod jzkt_emit_log;
-pub mod jzkt_get;
-pub mod jzkt_open;
-pub mod jzkt_preimage_copy;
-pub mod jzkt_preimage_size;
-pub mod jzkt_remove;
-pub mod jzkt_rollback;
-pub mod jzkt_update;
-pub mod jzkt_update_preimage;
-pub mod sys_exec_hash;
-pub mod sys_forward_output;
-pub mod sys_fuel;
-pub mod sys_halt;
-pub mod sys_input_size;
-pub mod sys_output_size;
-pub mod sys_read;
-pub mod sys_read_output;
-pub mod sys_state;
-pub mod sys_write;
-pub mod wasm_to_rwasm;
-pub mod wasm_to_rwasm_size;
+pub mod ecrecover;
+pub mod emit_log;
+pub mod exec;
+pub mod exit;
+pub mod forward_output;
+pub mod get_leaf;
+pub mod input_size;
+pub mod keccak256;
+pub mod output_size;
+pub mod poseidon;
+pub mod poseidon_hash;
+pub mod preimage_copy;
+pub mod preimage_size;
+pub mod read;
+pub mod read_context;
+pub mod read_output;
+pub mod rollback;
+pub mod state;
+pub mod update_leaf;
+pub mod update_preimage;
+pub mod write;
 
 use crate::{
     impl_runtime_handler,
     instruction::{
-        crypto_ecrecover::CryptoEcrecover,
-        crypto_keccak256::CryptoKeccak256,
-        crypto_poseidon::CryptoPoseidon,
-        crypto_poseidon2::CryptoPoseidon2,
-        debug_log::DebugLog,
-        jzkt_checkpoint::JzktCheckpoint,
-        jzkt_commit::JzktCommit,
-        jzkt_compute_root::JzktComputeRoot,
-        jzkt_emit_log::JzktEmitLog,
-        jzkt_get::JzktGet,
-        jzkt_open::JzktOpen,
-        jzkt_preimage_copy::JzktPreimageCopy,
-        jzkt_preimage_size::JzktPreimageSize,
-        jzkt_remove::JzktRemove,
-        jzkt_rollback::JzktRollback,
-        jzkt_update::JzktUpdate,
-        jzkt_update_preimage::JzktUpdatePreimage,
-        sys_exec_hash::SysExecHash,
-        sys_forward_output::SysForwardOutput,
-        sys_fuel::SysFuel,
-        sys_halt::SysHalt,
-        sys_input_size::SysInputSize,
-        sys_output_size::SysOutputSize,
-        sys_read::SysRead,
-        sys_read_output::SysReadOutput,
-        sys_state::SysState,
-        sys_write::SysWrite,
-        wasm_to_rwasm::WasmToRwasm,
-        wasm_to_rwasm_size::WasmToRwasmSize,
+        charge_fuel::SyscallChargeFuel,
+        checkpoint::SyscallCheckpoint,
+        commit::SyscallCommit,
+        compute_root::SyscallComputeRoot,
+        context_call::SyscallContextCall,
+        debug_log::SyscallDebugLog,
+        ecrecover::SyscallEcrecover,
+        emit_log::SyscallEmitLog,
+        exec::SyscallExec,
+        exit::SyscallExit,
+        forward_output::SyscallForwardOutput,
+        get_leaf::SyscallGetLeaf,
+        input_size::SyscallInputSize,
+        keccak256::SyscallKeccak256,
+        output_size::SyscallOutputSize,
+        poseidon::SyscallPoseidon,
+        poseidon_hash::SyscallPoseidonHash,
+        preimage_copy::SyscallPreimageCopy,
+        preimage_size::SyscallPreimageSize,
+        read::SyscallRead,
+        read_context::SyscallReadContext,
+        read_output::SyscallReadOutput,
+        rollback::SyscallRollback,
+        state::SyscallState,
+        update_leaf::SyscallUpdateLeaf,
+        update_preimage::SyscallUpdatePreimage,
+        write::SyscallWrite,
     },
     RuntimeContext,
 };
@@ -77,79 +73,71 @@ pub trait RuntimeHandler {
     );
 }
 
-impl_runtime_handler!(CryptoKeccak256, CRYPTO_KECCAK256, fn fluentbase_v1alpha::_crypto_keccak256(data_offset: u32, data_len: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoPoseidon, CRYPTO_POSEIDON, fn fluentbase_v1alpha::_crypto_poseidon(f32s_offset: u32, f32s_len: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoPoseidon2, CRYPTO_POSEIDON2, fn fluentbase_v1alpha::_crypto_poseidon2(fa32_offset: u32, fb32_offset: u32, fd32_offset: u32, output_offset: u32) -> ());
-impl_runtime_handler!(CryptoEcrecover, CRYPTO_ECRECOVER, fn fluentbase_v1alpha::_crypto_ecrecover(digest32_offset: u32, sig64_offset: u32, output65_offset: u32, rec_id: u32) -> ());
-
-impl_runtime_handler!(SysHalt, SYS_HALT, fn fluentbase_v1alpha::_sys_halt(exit_code: i32) -> ());
-impl_runtime_handler!(SysWrite, SYS_WRITE, fn fluentbase_v1alpha::_sys_write(offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysInputSize, SYS_INPUT_SIZE, fn fluentbase_v1alpha::_sys_input_size() -> u32);
-impl_runtime_handler!(SysRead, SYS_READ, fn fluentbase_v1alpha::_sys_read(target: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysOutputSize, SYS_OUTPUT_SIZE, fn fluentbase_v1alpha::_sys_output_size() -> u32);
-impl_runtime_handler!(SysReadOutput, SYS_READ_OUTPUT, fn fluentbase_v1alpha::_sys_read_output(target: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SysState, SYS_STATE, fn fluentbase_v1alpha::_sys_state() -> u32);
-impl_runtime_handler!(SysExecHash, SYS_EXEC_HASH, fn fluentbase_v1alpha::_sys_exec_hash(code_hash32_offset: u32, input_offset: u32, input_len: u32, return_offset: u32, return_len: u32, fuel_offset: u32, state: u32) -> i32);
-impl_runtime_handler!(SysForwardOutput, SYS_FORWARD_OUTPUT, fn fluentbase_v1alpha::_sys_forward_output(offset: u32, len: u32) -> ());
-impl_runtime_handler!(SysFuel, SYS_FUEL, fn fluentbase_v1alpha::_sys_fuel(delta: u64) -> u64);
-
-impl_runtime_handler!(JzktOpen, JZKT_OPEN, fn fluentbase_v1alpha::_zktrie_open(root32_offset: u32) -> ());
-impl_runtime_handler!(JzktCheckpoint, JZKT_CHECKPOINT, fn fluentbase_v1alpha::_jzkt_checkpoint() -> u64);
-impl_runtime_handler!(JzktGet, JZKT_GET, fn fluentbase_v1alpha::_jzkt_get(key32_offset: u32, field: u32, output32_offset: u32, committed: u32) -> u32);
-impl_runtime_handler!(JzktUpdate, JZKT_UPDATE, fn fluentbase_v1alpha::_jzkt_update(key32_offset: u32, flags: u32, vals32_offset: u32, vals32_len: u32) -> ());
-impl_runtime_handler!(JzktRemove, JZKT_REMOVE, fn fluentbase_v1alpha::_jzkt_remove(key32_offset: u32) -> ());
-impl_runtime_handler!(JzktComputeRoot, JZKT_COMPUTE_ROOT, fn fluentbase_v1alpha::_jzkt_compute_root(output32_offset: u32) -> ());
-impl_runtime_handler!(JzktEmitLog, JZKT_EMIT_LOG, fn fluentbase_v1alpha::_jzkt_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
-impl_runtime_handler!(JzktCommit, JZKT_COMMIT, fn fluentbase_v1alpha::_jzkt_commit(root32_offset: u32) -> ());
-impl_runtime_handler!(JzktRollback, JZKT_ROLLBACK, fn fluentbase_v1alpha::_jzkt_rollback(checkpoint: u64) -> ());
-impl_runtime_handler!(JzktPreimageSize, JZKT_PREIMAGE_SIZE, fn fluentbase_v1alpha::_jzkt_preimage_size(hash32_ptr: u32) -> u32);
-impl_runtime_handler!(JzktPreimageCopy, JZKT_PREIMAGE_COPY, fn fluentbase_v1alpha::_jzkt_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
-impl_runtime_handler!(JzktUpdatePreimage, JZKT_UPDATE_PREIMAGE, fn fluentbase_v1alpha::_jzkt_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
-
-impl_runtime_handler!(WasmToRwasmSize, WASM_TO_RWASM_SIZE, fn fluentbase_v1alpha::_wasm_to_rwasm_size(input_offset: u32, input_len: u32) -> i32);
-impl_runtime_handler!(WasmToRwasm, WASM_TO_RWASM, fn fluentbase_v1alpha::_wasm_to_rwasm(input_offset: u32, input_len: u32, output_offset: u32, output_len: u32) -> i32);
-
-impl_runtime_handler!(DebugLog, DEBUG_LOG, fn fluentbase_v1alpha::_debug_log(msg_offset: u32, msg_len: u32) -> ());
+impl_runtime_handler!(SyscallKeccak256, KECCAK256, fn fluentbase_v1preview::_keccak256(data_ptr: u32, data_len: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(SyscallPoseidon, POSEIDON, fn fluentbase_v1preview::_poseidon(f32s_ptr: u32, f32s_len: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(SyscallPoseidonHash, POSEIDON_HASH, fn fluentbase_v1preview::_poseidon_hash(fa32_ptr: u32, fb32_ptr: u32, fd32_ptr: u32, output_ptr: u32) -> ());
+impl_runtime_handler!(SyscallEcrecover, ECRECOVER, fn fluentbase_v1preview::_ecrecover(digest32_ptr: u32, sig64_ptr: u32, output65_ptr: u32, rec_id: u32) -> ());
+impl_runtime_handler!(SyscallExit, EXIT, fn fluentbase_v1preview::_exit(exit_code: i32) -> ());
+impl_runtime_handler!(SyscallWrite, WRITE, fn fluentbase_v1preview::_write(offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallInputSize, INPUT_SIZE, fn fluentbase_v1preview::_input_size() -> u32);
+impl_runtime_handler!(SyscallRead, READ, fn fluentbase_v1preview::_read(target: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_output_size() -> u32);
+impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
+impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32) -> i32);
+impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
+impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);
+impl_runtime_handler!(SyscallReadContext, READ_CONTEXT, fn fluentbase_v1preview::_read_context(target_ptr: u32, offset: u32, length: u32) -> ());
+impl_runtime_handler!(SyscallContextCall, CONTEXT_CALL, fn fluentbase_v1preview::_context_call(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
+impl_runtime_handler!(SyscallCheckpoint, CHECKPOINT, fn fluentbase_v1preview::_checkpoint() -> u64);
+impl_runtime_handler!(SyscallGetLeaf, GET_LEAF, fn fluentbase_v1preview::_get_leaf(key32_ptr: u32, field: u32, output32_ptr: u32, committed: u32) -> u32);
+impl_runtime_handler!(SyscallUpdateLeaf, UPDATE_LEAF, fn fluentbase_v1preview::_update_leaf(key32_ptr: u32, flags: u32, vals32_ptr: u32, vals32_len: u32) -> ());
+impl_runtime_handler!(SyscallComputeRoot, COMPUTE_ROOT, fn fluentbase_v1preview::_compute_root(output32_ptr: u32) -> ());
+impl_runtime_handler!(SyscallEmitLog, EMIT_LOG, fn fluentbase_v1preview::_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
+impl_runtime_handler!(SyscallCommit, COMMIT, fn fluentbase_v1preview::_commit(root32_ptr: u32) -> ());
+impl_runtime_handler!(SyscallRollback, ROLLBACK, fn fluentbase_v1preview::_rollback(checkpoint: u64) -> ());
+impl_runtime_handler!(SyscallPreimageSize, PREIMAGE_SIZE, fn fluentbase_v1preview::_preimage_size(hash32_ptr: u32) -> u32);
+impl_runtime_handler!(SyscallPreimageCopy, PREIMAGE_COPY, fn fluentbase_v1preview::_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
+impl_runtime_handler!(SyscallUpdatePreimage, UPDATE_PREIMAGE, fn fluentbase_v1preview::_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
+impl_runtime_handler!(SyscallDebugLog, DEBUG_LOG, fn fluentbase_v1preview::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
 fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     linker: &mut Linker<RuntimeContext<DB>>,
     store: &mut Store<RuntimeContext<DB>>,
 ) {
-    CryptoKeccak256::register_handler(linker, store);
-    CryptoPoseidon::register_handler(linker, store);
-    CryptoPoseidon2::register_handler(linker, store);
-    CryptoEcrecover::register_handler(linker, store);
-    SysHalt::register_handler(linker, store);
-    SysWrite::register_handler(linker, store);
-    SysForwardOutput::register_handler(linker, store);
-    SysInputSize::register_handler(linker, store);
-    SysRead::register_handler(linker, store);
-    SysOutputSize::register_handler(linker, store);
-    SysReadOutput::register_handler(linker, store);
-    SysExecHash::register_handler(linker, store);
-    SysState::register_handler(linker, store);
-    SysFuel::register_handler(linker, store);
+    SyscallKeccak256::register_handler(linker, store);
+    SyscallPoseidon::register_handler(linker, store);
+    SyscallPoseidonHash::register_handler(linker, store);
+    SyscallEcrecover::register_handler(linker, store);
+    SyscallExit::register_handler(linker, store);
+    SyscallWrite::register_handler(linker, store);
+    SyscallForwardOutput::register_handler(linker, store);
+    SyscallInputSize::register_handler(linker, store);
+    SyscallRead::register_handler(linker, store);
+    SyscallOutputSize::register_handler(linker, store);
+    SyscallReadOutput::register_handler(linker, store);
+    SyscallExec::register_handler(linker, store);
+    SyscallState::register_handler(linker, store);
+    SyscallChargeFuel::register_handler(linker, store);
+    SyscallReadContext::register_handler(linker, store);
     if IS_SOVEREIGN {
-        JzktOpen::register_handler(linker, store);
-        JzktCheckpoint::register_handler(linker, store);
-        JzktUpdate::register_handler(linker, store);
-        JzktRemove::register_handler(linker, store);
-        JzktComputeRoot::register_handler(linker, store);
+        SyscallContextCall::register_handler(linker, store);
+        SyscallCheckpoint::register_handler(linker, store);
+        SyscallUpdateLeaf::register_handler(linker, store);
+        SyscallComputeRoot::register_handler(linker, store);
     }
-    JzktGet::register_handler(linker, store);
-    JzktEmitLog::register_handler(linker, store);
+    SyscallGetLeaf::register_handler(linker, store);
+    SyscallEmitLog::register_handler(linker, store);
     if IS_SOVEREIGN {
-        JzktCommit::register_handler(linker, store);
-        JzktRollback::register_handler(linker, store);
+        SyscallCommit::register_handler(linker, store);
+        SyscallRollback::register_handler(linker, store);
     }
     if IS_SOVEREIGN {
-        JzktPreimageSize::register_handler(linker, store);
-        JzktUpdatePreimage::register_handler(linker, store);
+        SyscallPreimageSize::register_handler(linker, store);
+        SyscallUpdatePreimage::register_handler(linker, store);
     }
-    JzktPreimageCopy::register_handler(linker, store);
-    WasmToRwasmSize::register_handler(linker, store);
-    WasmToRwasm::register_handler(linker, store);
-    DebugLog::register_handler(linker, store);
+    SyscallPreimageCopy::register_handler(linker, store);
+    SyscallDebugLog::register_handler(linker, store);
 }
 
 pub fn runtime_register_sovereign_handlers<DB: IJournaledTrie>(

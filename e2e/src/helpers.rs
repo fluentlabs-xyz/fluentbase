@@ -1,27 +1,38 @@
 use fluentbase_codec::Encoder;
 use fluentbase_runtime::{
-    instruction::runtime_register_sovereign_handlers, types::RuntimeError,
-    DefaultEmptyRuntimeDatabase, ExecutionResult, Runtime, RuntimeContext,
+    instruction::runtime_register_sovereign_handlers,
+    types::RuntimeError,
+    DefaultEmptyRuntimeDatabase,
+    ExecutionResult,
+    Runtime,
+    RuntimeContext,
 };
 use fluentbase_sdk::ContractInput;
-use fluentbase_types::SysFuncIdx::SYS_STATE;
-use fluentbase_types::{create_sovereign_import_linker, Bytes, ExitCode, STATE_DEPLOY, STATE_MAIN};
-use rwasm::engine::bytecode::Instruction;
-use rwasm::engine::{RwasmConfig, StateRouterConfig};
-use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
-use rwasm::{Config, Engine, Error, Linker, Module, Store};
+use fluentbase_types::{
+    create_sovereign_import_linker,
+    ExitCode,
+    SysFuncIdx::STATE,
+    STATE_DEPLOY,
+    STATE_MAIN,
+};
+use rwasm::{
+    engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
+    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    Config,
+    Engine,
+    Error,
+    Linker,
+    Module,
+    Store,
+};
 
 pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult {
-    let input_data = {
-        let mut contract_input = ContractInput::default();
-        contract_input.contract_input = Bytes::copy_from_slice(input_data);
-        contract_input.encode_to_vec(0)
-    };
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000)
-        .with_input(input_data);
+        .with_context(ContractInput::default().encode_to_vec(0))
+        .with_input(input_data.into());
     let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
     runtime.data_mut().clean_output();
     runtime.call().unwrap()
@@ -47,7 +58,7 @@ pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call(SYS_STATE.into()),
+            opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_sovereign_import_linker()),

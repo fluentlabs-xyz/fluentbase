@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use fluentbase_codec::Encoder;
-use fluentbase_codec_derive::{derive_keccak256_id, Codec};
+use fluentbase_codec_derive::Codec;
+use fluentbase_sdk_derive::derive_keccak256_id;
 pub use fluentbase_types::*;
 
 #[derive(Default, Debug, Clone, Codec)]

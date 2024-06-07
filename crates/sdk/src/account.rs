@@ -1,8 +1,8 @@
 use crate::{
     utils::{calc_create2_address, calc_create_address},
     EvmCallMethodOutput,
-    LowLevelAPI,
     LowLevelSDK,
+    SharedAPI,
 };
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
@@ -61,6 +61,7 @@ pub trait AccountManager {
     fn exec_hash(
         &self,
         hash32_offset: *const u8,
+        context: &[u8],
         input: &[u8],
         fuel_offset: *mut u32,
         state: u32,
@@ -198,26 +199,8 @@ impl Account {
 
     pub fn inc_nonce(&mut self) -> Result<u64, ExitCode> {
         let prev_nonce = self.nonce;
-        self.nonce += 1;
-        if self.nonce == u64::MAX {
-            return Err(ExitCode::NonceOverflow);
-        }
+        self.nonce = self.nonce.checked_add(1).ok_or(ExitCode::NonceOverflow)?;
         Ok(prev_nonce)
-    }
-
-    #[deprecated(note = "use [write_account] method instead")]
-    pub fn write_to_jzkt<AM: AccountManager>(&self, am: &AM) {
-        am.write_account(self);
-    }
-
-    #[deprecated(note = "use [preimage] method instead")]
-    pub fn load_source_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
-        return am.preimage(&self.source_code_hash);
-    }
-
-    #[deprecated(note = "use [preimage] method instead")]
-    pub fn load_rwasm_bytecode<AM: AccountManager>(&self, am: &AM) -> Bytes {
-        return am.preimage(&self.rwasm_code_hash);
     }
 
     pub fn update_bytecode<AM: AccountManager>(
@@ -231,7 +214,7 @@ impl Account {
         let address_word = self.address.into_word();
         // calc source code hash (we use keccak256 for backward compatibility)
         self.source_code_hash = source_hash.unwrap_or_else(|| {
-            LowLevelSDK::crypto_keccak256(
+            LowLevelSDK::keccak256(
                 source_bytecode.as_ptr(),
                 source_bytecode.len() as u32,
                 self.source_code_hash.as_mut_ptr(),
@@ -241,7 +224,7 @@ impl Account {
         self.source_code_size = source_bytecode.len() as u64;
         // calc rwasm code hash (we use poseidon function for rWASM bytecode)
         self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| {
-            LowLevelSDK::crypto_poseidon(
+            LowLevelSDK::poseidon(
                 rwasm_bytecode.as_ptr(),
                 rwasm_bytecode.len() as u32,
                 self.rwasm_code_hash.as_mut_ptr(),
