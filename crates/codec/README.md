@@ -3,9 +3,9 @@ Fluentbase Codec
 
 Is our encoding/decoding format that is optimized for random reads.
 It is very similar to the standard Solidity ABI encoding with one major difference that is uses static structure, and it doesn't align elements with 32 bytes.
-We also support recursive encoding, so everything that can be encoded inside Codec can also be embedded as nested structure.
+We also support recursive encoding, so everything that can be encoded inside Codec can also be embedded as a nested structure.
 The idea of this codec is that you can access any first level information w/o reading the rest info.
-The only thing you need to know is a type of structure.
+The only thing you need to know is the type of structure.
 
 ## Primitives
 
@@ -18,9 +18,9 @@ List of primitive types:
 
 ## Non-primitives
 
-Non-primitives is everything that need meta information, like dynamic arrays, hash tables etc.
+Non-primitives is everything that needs meta information, like dynamic arrays, hash tables etc.
 For dynamic arrays we store information about offset and length (32 bits each).
-For hash tables we need to store the same for keys/values arrays, and it makes possible to read keys w/o knowing values and vise versa.
+For hash tables we need to store the same for keys/values arrays, and it makes possible to read keys w/o knowing values and vice versa.
 
 We support next non-primitive types:
 - `Vec<T>` - vec of encodable elements
