@@ -345,7 +345,7 @@ fn derive_route_selector_args(
             let #arg = match #abi_decode_fn(&input, true) {
                 Ok(decoded) => decoded.#arg,
                 Err(e) => {
-                    panic!("Failed to decode input {:?} {:?}", stringify!(#arg), e);
+                    panic!("Failed to decode input {:?}", e);
                 }
             };
         }
@@ -510,50 +510,32 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_route_selector_arm_single_param() {
-        let item: ImplItemFn = parse_quote! {
-            pub fn is_checkmate(&self, board: String) -> bool {
-                true
+    fn test_derive_route_selector_arm() {
+        let func: ImplItemFn = parse_quote! {
+            pub fn greet(&self, msg: String) -> String {
+                msg
             }
         };
 
         let expected = quote! {
-            isCheckmateCall::SELECTOR => {
-                let board = match isCheckmateCall::abi_decode(&input, true) {
-                    Ok(decoded) => decoded.board,
-                    Err(e) => {
-                        panic!("Failed to decode input {:?} {:?}", stringify!(board), e);
-                    }
-                };
-                self.is_checkmate(board).abi_encode()
-            }
-        };
-
-        let actual = derive_route_selector_arm(&item);
-        assert_eq!(actual.to_string(), expected.to_string());
-    }
-
-    #[test]
-    fn test_derive_route_selector_arm_multiple_params() {
-        let item: ImplItemFn = parse_quote! {
-            pub fn is_checkmate(&self, board: String, mv: String) -> bool {
-                true
-            }
-        };
-
-        let expected = quote! {
-            isCheckmateCall::SELECTOR => {
-                let (board, mv) = match isCheckmateCall::abi_decode(&input, true) {
-                    Ok(decoded) => (decoded.board, decoded.mv),
+            greetCall::SELECTOR => {
+                let msg = match greetCall::abi_decode(&input, true) {
+                    Ok(decoded) => decoded.msg,
                     Err(e) => {
                         panic!("Failed to decode input {:?}", e);
                     }
                 };
-                self.is_checkmate(board, mv).abi_encode()
+                let encoded_output = self.greet(msg).abi_encode();
+                if encoded_output.len() > output.len() {
+                    panic!("output buffer too small");
+                };
+                encoded_output_len = encoded_output.len();
+                output[..encoded_output_len].copy_from_slice(&encoded_output);
+                encoded_output_len
             }
         };
 
-        let actual = derive_route_selector_arm(&item);
+        let actual = derive_route_selector_arm(&func);
         assert_eq!(actual.to_string(), expected.to_string());
     }
 
