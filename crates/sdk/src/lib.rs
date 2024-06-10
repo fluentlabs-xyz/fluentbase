@@ -48,7 +48,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 static ALLOCATOR: lol_alloc::AssumeSingleThreaded<lol_alloc::LeakingAllocator> =
     unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::LeakingAllocator::new()) };
 
-pub use fluentbase_sdk_derive::{derive_keccak256_id, derive_solidity_router};
+pub use fluentbase_sdk_derive::{derive_keccak256_id, derive_solidity_router, router, signature};
 
 pub mod codec {
     pub use fluentbase_codec::*;
@@ -63,3 +63,4 @@ pub fn alloc_slice<'a>(len: usize) -> &'a mut [u8] {
     use core::ptr;
     unsafe { &mut *ptr::slice_from_raw_parts_mut(alloc_ptr(len), len) }
 }
+

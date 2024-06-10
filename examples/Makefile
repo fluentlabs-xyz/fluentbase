@@ -1,4 +1,4 @@
-FILES = cairo greeting hashing panic rwasm shakmaty
+FILES = cairo greeting hashing panic rwasm shakmaty router_greeting
 
 all: $(FILES) $(MANUAL)
 
