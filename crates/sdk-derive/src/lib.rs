@@ -196,6 +196,12 @@ fn derive_route_method(
         })
         .collect();
 
+    // TODO: (d1r1) add check for selectors length right now if there are no methods it will panic because of the "," inside the match statement
+    // match selector {
+    //     #(#selectors),*, <-- this ","
+    //     _ => panic!("unknown method"),
+    // }
+
     quote! {
         impl #struct_name {
             #(#methods)*
