@@ -1,12 +1,12 @@
 [package]
 edition = "2021"
-name = "fluentbase-example-router-greeting"
+name = "fluentbase-example-router"
 version = "0.1.0"
 
 [dependencies]
 #fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
-alloy-sol-types = {version = "0.7.4", default-features = false}
-fluentbase-sdk = {workspace = true, default-features = false}
+alloy-sol-types = { version = "0.7.4", default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -25,5 +25,5 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = [
-  "fluentbase-sdk/std",
+    "fluentbase-sdk/std",
 ]
