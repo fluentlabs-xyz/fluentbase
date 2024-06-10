@@ -1,7 +1,8 @@
 use proc_macro::TokenStream;
 
 use convert_case::{Case, Casing};
-use quote::quote;
+use quote::{quote, ToTokens};
+
 use syn::{
     self,
     parse::{Parse, ParseStream},
@@ -91,38 +92,111 @@ pub fn derive_main_fn(args: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+#[derive(Debug, PartialEq)]
+enum RouterMode {
+    Solidity,
+    Codec,
+}
+
+impl std::str::FromStr for RouterMode {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<RouterMode, Self::Err> {
+        match input {
+            "solidity" => Ok(RouterMode::Solidity),
+            "codec" => Ok(RouterMode::Codec),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RouterArgs {
+    mode: RouterMode,
+}
+
+impl Parse for RouterArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut mode = None;
+
+        let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
+
+        for meta in metas {
+            if let Meta::NameValue(m) = meta {
+                if m.path.is_ident("mode") {
+                    if let Expr::Lit(ExprLit {
+                        lit: Lit::Str(lit_str),
+                        ..
+                    }) = &m.value
+                    {
+                        mode = Some(lit_str.value().parse::<RouterMode>().map_err(|_| {
+                            syn::Error::new_spanned(&m.value, "Expected 'solidity' or 'codec'")
+                        })?);
+                    } else {
+                        return Err(syn::Error::new_spanned(&m.value, "Expected a string value"));
+                    }
+                }
+            }
+        }
+
+        let mode = mode.ok_or_else(|| syn::Error::new(input.span(), "mode is required"))?;
+
+        Ok(Self { mode })
+    }
+}
+
+#[proc_macro_attribute]
+pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as RouterArgs);
+
+    let expanded = match args.mode {
+        RouterMode::Solidity => derive_solidity_router(TokenStream::new(), item),
+        RouterMode::Codec => derive_codec_router(TokenStream::new(), item),
+    };
+    TokenStream::from(expanded)
+}
+
+// TODO: d1r1 Implement codec router
+#[proc_macro_attribute]
+pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
 // Fake implementation of the attribute to avoid compiler and linter complaints
 #[proc_macro_attribute]
-pub fn sol_signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
 #[proc_macro_attribute]
 pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
-
     let struct_name = &ast.self_ty;
 
-    // Get all public methods from the impl block
-    let methods_to_route = get_methods_to_route(&ast);
-    // Generate Solidity function signatures or use provided ones from #[sol_signature]
-    let sol_signatures = get_sol_signatures(&methods_to_route);
+    let all_methods = get_all_methods(&ast);
+    let public_methods = get_public_methods(&ast);
+
+    // Generate Solidity function signatures or use provided ones from #[signature]
+    let signatures = get_signatures(&public_methods);
+
     // Derive route method that dispatches Solidity function calls
-    let router = derive_route_method(struct_name, &methods_to_route);
+    let router_impl = derive_route_method(&public_methods);
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
 
-        #router
-        #sol_signatures
+        impl #struct_name {
+            #( #all_methods )*
+            #router_impl
+        }
+        #signatures
     };
 
     TokenStream::from(expanded)
 }
 
-fn get_methods_to_route(ast: &ItemImpl) -> Vec<&syn::ImplItemFn> {
-    let all_methods: Vec<_> = ast
-        .items
+fn get_all_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
+    ast.items
         .iter()
         .filter_map(|item| {
             if let ImplItem::Fn(func) = item {
@@ -131,21 +205,21 @@ fn get_methods_to_route(ast: &ItemImpl) -> Vec<&syn::ImplItemFn> {
                 None
             }
         })
-        .collect();
-
-    let public_methods: Vec<&ImplItemFn> = all_methods
-        .into_iter()
-        .filter(|func| matches!(func.vis, Visibility::Public(_)))
-        .collect();
-
-    public_methods
+        .collect()
 }
 
-fn get_sol_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
+fn get_public_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
+    get_all_methods(ast)
+        .into_iter()
+        .filter(|func| matches!(func.vis, Visibility::Public(_)))
+        .collect()
+}
+
+fn get_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
     let mut signatures: Vec<proc_macro2::TokenStream> = vec![];
     for func in methods {
         let sig: Option<LitStr> = func.attrs.iter().find_map(|attr| {
-            if attr.path().is_ident("sol_signature") {
+            if attr.path().is_ident("signature") {
                 attr.parse_args().ok()
             } else {
                 None
@@ -154,6 +228,7 @@ fn get_sol_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
 
         if let Some(fn_signature) = sig {
             let fn_signature = fn_signature.value() + "; ";
+
             let fn_signature = syn::parse_str::<proc_macro2::TokenStream>(&fn_signature)
                 .expect("Failed to parse signature");
             signatures.push(fn_signature);
@@ -184,10 +259,7 @@ fn get_sol_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
     }
 }
 
-fn derive_route_method(
-    struct_name: &Box<Type>,
-    methods: &Vec<&ImplItemFn>,
-) -> proc_macro2::TokenStream {
+fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
     let selectors: Vec<proc_macro2::TokenStream> = methods
         .iter()
         .filter_map(|method| {
@@ -196,26 +268,29 @@ fn derive_route_method(
         })
         .collect();
 
-    // TODO: (d1r1) add check for selectors length right now if there are no methods it will panic because of the "," inside the match statement
-    // match selector {
-    //     #(#selectors),*, <-- this ","
-    //     _ => panic!("unknown method"),
-    // }
+    let match_arms = if selectors.is_empty() {
+        quote! {
+            _ => panic!("No methods to route"),
+        }
+    } else {
+        quote! {
+            #(#selectors),*,
+            _ => panic!("unknown method"),
+        }
+    };
 
     quote! {
-        impl #struct_name {
-            #(#methods)*
+        pub fn route(&self, input: &[u8], output: &mut [u8]) -> usize {
+            if input.len() < 4 {
+                panic!("input too short, cannot extract selector");
+            }
+            let mut selector: [u8; 4] = [0; 4];
+            selector.copy_from_slice(&input[0..4]);
 
-            pub fn route(&self, input: &[u8], output: &mut [u8]) {
-                if input.len() < 4 {
-                    panic!("input too short, cannot extract selector");
-                }
-                let mut selector: [u8; 4] = [0; 4];
-                selector.copy_from_slice(&input[0..4]);
-                match selector {
-                    #(#selectors),*,
-                    _ => panic!("unknown method"),
-                }
+            let mut encoded_output_len = 0;
+
+            match selector {
+                #match_arms
             }
         }
     }
@@ -253,7 +328,9 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
             if encoded_output.len() > output.len() {
                 panic!("output buffer too small");
             };
-            output[..encoded_output.len()].copy_from_slice(&encoded_output);
+            encoded_output_len = encoded_output.len();
+            output[..encoded_output_len].copy_from_slice(&encoded_output);
+            encoded_output_len
         }
     }
 }
@@ -406,9 +483,31 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use syn::{parse_quote, Ident, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
-
     use super::*;
+    use syn::{parse_quote, Ident, LitStr, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
+
+    use proc_macro2::TokenStream;
+
+    #[test]
+    fn test_parse_solidity_mode() {
+        let input: TokenStream = parse_quote!(mode = "solidity");
+        let args: RouterArgs = syn::parse2(input).expect("Failed to parse");
+        assert_eq!(args.mode, RouterMode::Solidity);
+    }
+
+    #[test]
+    fn test_parse_codec_mode() {
+        let input: TokenStream = parse_quote!(mode = "codec");
+        let args: RouterArgs = syn::parse2(input).expect("Failed to parse");
+        assert_eq!(args.mode, RouterMode::Codec);
+    }
+
+    #[test]
+    fn test_parse_invalid_mode() {
+        let input: TokenStream = parse_quote!(mode = "InvalidMode");
+        let result = syn::parse2::<RouterArgs>(input);
+        assert!(result.is_err());
+    }
 
     #[test]
     fn test_derive_route_selector_arm_single_param() {
@@ -459,10 +558,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_sol_signatures() {
+    fn test_get_signatures() {
         let item_impl: ItemImpl = parse_quote! {
             impl ExampleStruct {
-                #[sol_signature("function greeting() external view returns ()")]
+                #[signature("function greeting() external view returns ()")]
                 pub fn greeting(&self, msg: String) -> String {
                     msg
                 }
@@ -476,8 +575,8 @@ mod tests {
             }
         };
 
-        let methods = get_methods_to_route(&item_impl);
-        let sol_signatures = get_sol_signatures(&methods);
+        let methods = get_public_methods(&item_impl);
+        let signatures = get_signatures(&methods);
 
         let expected = quote! {
             sol! {
@@ -487,7 +586,7 @@ mod tests {
             }
         };
 
-        assert_eq!(sol_signatures.to_string(), expected.to_string());
+        assert_eq!(signatures.to_string(), expected.to_string());
     }
 
     #[test]
