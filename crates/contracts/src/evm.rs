@@ -28,7 +28,7 @@ pub trait EvmAPI {
     fn address<SDK: SharedAPI>(&self) -> Address;
     fn balance<SDK: SharedAPI>(&self, address: Address) -> U256;
     fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64);
-    fn calldataload<SDK: SharedAPI>(&self, offset: u64, len: u64) -> U256;
+    fn calldataload<SDK: SharedAPI>(&self, offset: u64) -> U256;
     fn calldatasize<SDK: SharedAPI>(&self) -> u64;
     fn sload<SDK: SharedAPI>(&self, index: U256) -> U256;
     fn sstore<SDK: SharedAPI>(&self, index: U256, value: U256);
@@ -56,7 +56,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
         )
     }
 
-    fn calldataload<SDK: SharedAPI>(&self, mut offset: u64, len: u64) -> U256 {
+    fn calldataload<SDK: SharedAPI>(&self, mut offset: u64) -> U256 {
         let input_size = SDK::input_size() as u64;
         if offset > input_size {
             offset = input_size;

@@ -1,6 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
 mod evm;
+mod fluent;
 #[cfg(any(
     feature = "blake2",
     feature = "sha256",
