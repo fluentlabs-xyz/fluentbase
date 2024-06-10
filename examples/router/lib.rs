@@ -9,20 +9,19 @@ use fluentbase_sdk::{basic_entrypoint, router, signature, SharedAPI};
 struct ROUTER;
 
 pub trait RouterAPI {
+    fn deploy<SDK: SharedAPI>(&self);
     fn greeting(&self) -> String;
 }
 
 #[router(mode = "solidity")]
 impl RouterAPI for ROUTER {
+    fn deploy<SDK: SharedAPI>(&self) {
+        // any custom deployment logic here
+    }
+
     #[signature("function greeting(string message) external returns (string)")]
     pub fn greeting(&self, message: String) -> String {
         message
-    }
-}
-
-impl ROUTER {
-    fn deploy<SDK: SharedAPI>(&self) {
-        // any custom deployment logic here
     }
 }
 
