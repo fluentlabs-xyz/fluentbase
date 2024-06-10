@@ -5,8 +5,8 @@ use fluentbase_sdk::{
     ContextReader,
     CoreInput,
     EvmCallMethodInput,
-    ExecutionContext,
-    JzktAccountManager,
+    GuestAccountManager,
+    GuestContextReader,
     LowLevelSDK,
     EVM_CALL_METHOD_ID,
 };

@@ -5,8 +5,8 @@ use crate::{
 };
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
-    ExecutionContext,
-    JzktAccountManager,
+    GuestAccountManager,
+    GuestContextReader,
     LowLevelSDK,
     SharedAPI,
     WasmCallMethodInput,
@@ -18,8 +18,8 @@ use fluentbase_sdk::{
 pub fn deploy() {}
 
 pub fn main() {
-    let cr = ExecutionContext::default();
-    let am = JzktAccountManager::default();
+    let cr = GuestContextReader::default();
+    let am = GuestAccountManager::default();
     let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
     match method_id {
