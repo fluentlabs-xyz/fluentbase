@@ -29,5 +29,5 @@ fluentbase_sdk::basic_entrypoint!(precompile::PRECOMPILE<precompile::EcrecoverIn
 
 #[cfg(feature = "evm")]
 fluentbase_sdk::basic_entrypoint!(
-    evm::EVM<'static, fluentbase_sdk::ExecutionContext, fluentbase_sdk::JzktAccountManager>
+    evm::EVM<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
 );

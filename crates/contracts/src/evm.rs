@@ -11,9 +11,9 @@ use fluentbase_sdk::{
     EvmSloadMethodOutput,
     EvmSstoreMethodInput,
     EvmSstoreMethodOutput,
-    ExecutionContext,
+    GuestAccountManager,
+    GuestContextReader,
     ICoreInput,
-    JzktAccountManager,
     SharedAPI,
     EVM_CALL_METHOD_ID,
     EVM_CREATE_METHOD_ID,
@@ -46,7 +46,9 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
 }
 
 impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
-    pub fn deploy<SDK: SharedAPI>(&self) {}
+    pub fn deploy<SDK: SharedAPI>(&self) {
+        // precompiles can't be deployed, it exists since a genesis state :(
+    }
 
     fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
         let mut core_input = T::default();
@@ -55,7 +57,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
     }
 
     pub fn main<SDK: SharedAPI>(&self) {
-        let input = ExecutionContext::contract_input();
+        let input = GuestContextReader::contract_input();
         if input.len() < 4 {
             panic!("not well-formed input");
         }
@@ -92,11 +94,11 @@ impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
     }
 }
 
-impl Default for EVM<'static, ExecutionContext, JzktAccountManager> {
+impl Default for EVM<'static, GuestContextReader, GuestAccountManager> {
     fn default() -> Self {
         EVM {
-            cr: &ExecutionContext::DEFAULT,
-            am: &JzktAccountManager::DEFAULT,
+            cr: &GuestContextReader::DEFAULT,
+            am: &GuestAccountManager::DEFAULT,
         }
     }
 }

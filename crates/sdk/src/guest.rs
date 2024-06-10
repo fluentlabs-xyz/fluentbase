@@ -1,9 +1,13 @@
 use crate::{
+    alloc_slice,
     utils::calc_storage_key,
     Account,
     AccountCheckpoint,
     AccountManager,
+    ContextReader,
+    ContractInput,
     EvmCallMethodOutput,
+    IContractInput,
     LowLevelSDK,
     SharedAPI,
     SovereignAPI,
@@ -16,18 +20,18 @@ use crate::{
     JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
     JZKT_STORAGE_COMPRESSION_FLAGS,
 };
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, B256, U256};
 
 #[derive(Default)]
-pub struct JzktAccountManager;
+pub struct GuestAccountManager;
 
-impl JzktAccountManager {
-    pub const DEFAULT: JzktAccountManager = JzktAccountManager {};
+impl GuestAccountManager {
+    pub const DEFAULT: GuestAccountManager = GuestAccountManager {};
 }
 
-impl AccountManager for JzktAccountManager {
+impl AccountManager for GuestAccountManager {
     #[inline(always)]
     fn checkpoint(&self) -> AccountCheckpoint {
         LowLevelSDK::checkpoint()
@@ -234,4 +238,122 @@ impl AccountManager for JzktAccountManager {
     }
 
     fn mark_account_created(&self, _address: Address) {}
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct GuestContextReader;
+
+impl GuestContextReader {
+    pub const DEFAULT: GuestContextReader = GuestContextReader {};
+}
+
+macro_rules! impl_reader_helper {
+    (@header $input_type:ty, $return_typ:ty) => {
+        let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
+        LowLevelSDK::read_context(
+            buffer.as_mut_ptr(),
+            <$input_type>::FIELD_OFFSET as u32,
+            buffer.len() as u32,
+        );
+        let mut result: $return_typ = Default::default();
+        _ = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+        result
+    };
+    (@dynamic $input_type:ty, $return_typ:ty) => {
+        let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
+        LowLevelSDK::read_context(
+            buffer.as_mut_ptr(),
+            <$input_type>::FIELD_OFFSET as u32,
+            buffer.len() as u32,
+        );
+        let mut result: $return_typ = Default::default();
+        let (offset, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+        if length > 0 {
+            let mut buffer2 = vec![0; offset + length];
+            buffer2[0..<$input_type>::FIELD_SIZE].copy_from_slice(&buffer);
+            let buffer3 = &mut buffer2.as_mut_slice()[offset..(offset + length)];
+            LowLevelSDK::read_context(buffer3.as_mut_ptr(), offset as u32, buffer3.len() as u32);
+            <$input_type>::decode_field_body_at(&buffer2, 0, &mut result);
+        }
+        result
+    };
+    (@size $input_type:ty, $return_typ:ty) => {
+        let mut buffer: [u8; <$input_type>::FIELD_SIZE] = [0; <$input_type>::FIELD_SIZE];
+        LowLevelSDK::read_context(
+            buffer.as_mut_ptr(),
+            <$input_type>::FIELD_OFFSET as u32,
+            buffer.len() as u32,
+        );
+        let mut result: $return_typ = Default::default();
+        let (offset, length) = <$input_type>::decode_field_header_at(&buffer, 0, &mut result);
+        (offset as u32, length as u32)
+    };
+}
+
+macro_rules! impl_reader_func {
+    (fn $fn_name:ident() -> $return_typ:ty, $input_type:ty) => {
+        paste::paste! {
+            #[inline(always)]
+            fn $fn_name(&self) -> $return_typ {
+                impl_reader_helper!{@header <ContractInput as IContractInput>::$input_type, $return_typ}
+            }
+        }
+    };
+    (fn $fn_name:ident(result: &mut $return_typ:ty), $input_type:ty) => {
+        paste::paste! {
+            #[inline(always)]
+            fn $fn_name(&self, result: &mut $return_typ) {
+                let mut buffer: [u8; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE] = [0; <<ContractInput as IContractInput>::$input_type>::FIELD_SIZE];
+                LowLevelSDK::sys_context(buffer.as_mut_ptr(), <<ContractInput as IContractInput>::$input_type>::FIELD_OFFSET as u32, buffer.len() as u32);
+                _ = <<ContractInput as IContractInput>::$input_type>::decode_field_header_at(&buffer, 0, result);
+            }
+        }
+    };
+    (@dynamic fn $fn_name:ident() -> $return_typ:ty, $input_type:ty) => {
+        paste::paste! {
+            #[inline(always)]
+            fn $fn_name(&self) -> $return_typ {
+                impl_reader_helper!{@dynamic <ContractInput as IContractInput>::$input_type, $return_typ}
+            }
+            #[inline(always)]
+            fn [<$fn_name _size>](&self) -> (u32, u32) {
+                impl_reader_helper!{@size <ContractInput as IContractInput>::$input_type, $return_typ}
+            }
+        }
+    };
+}
+
+impl ContextReader for GuestContextReader {
+    // block info
+    impl_reader_func!(fn block_chain_id() -> u64, BlockChainId);
+    impl_reader_func!(fn block_coinbase() -> Address, BlockCoinbase);
+    impl_reader_func!(fn block_timestamp() -> u64, BlockTimestamp);
+    impl_reader_func!(fn block_number() -> u64, BlockNumber);
+    impl_reader_func!(fn block_difficulty() -> u64, BlockDifficulty);
+    impl_reader_func!(fn block_gas_limit() -> u64, BlockGasLimit);
+    impl_reader_func!(fn block_base_fee() -> U256, BlockBaseFee);
+    // tx info
+    impl_reader_func!(fn tx_gas_limit() -> u64, TxGasLimit);
+    impl_reader_func!(fn tx_nonce() -> u64, TxNonce);
+    impl_reader_func!(fn tx_gas_price() -> U256, TxGasPrice);
+    impl_reader_func!(fn tx_gas_priority_fee() -> Option<U256>, TxGasPriorityFee);
+    impl_reader_func!(fn tx_caller() -> Address, TxCaller);
+    impl_reader_func!(fn tx_access_list() -> Vec<(Address, Vec<U256>)>, TxAccessList);
+    impl_reader_func!(@dynamic fn tx_blob_hashes() -> Vec<B256>, TxBlobHashes);
+    impl_reader_func!(fn tx_max_fee_per_blob_gas() -> Option<U256>, TxMaxFeePerBlobGas);
+    // contract info
+    impl_reader_func!(fn contract_gas_limit() -> u64, ContractGasLimit);
+    impl_reader_func!(fn contract_address() -> Address, ContractAddress);
+    impl_reader_func!(fn contract_caller() -> Address, ContractCaller);
+    impl_reader_func!(fn contract_value() -> U256, ContractValue);
+    impl_reader_func!(fn contract_is_static() -> bool, ContractIsStatic);
+}
+
+impl GuestContextReader {
+    pub fn contract_input<'a>() -> &'a [u8] {
+        let input_size = LowLevelSDK::input_size();
+        let input = alloc_slice(input_size as usize);
+        LowLevelSDK::read(input, 0);
+        input
+    }
 }

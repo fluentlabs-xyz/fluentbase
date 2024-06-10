@@ -3,7 +3,7 @@ use fluentbase_sdk::{
     Address,
     Bytes,
     ContextReader,
-    ExecutionContext,
+    GuestContextReader,
     LowLevelSDK,
     SharedAPI,
     U256,
@@ -45,7 +45,7 @@ fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
 }
 
 pub fn deploy() {
-    let mut ctx = ExecutionContext::default();
+    let mut ctx = GuestContextReader::default();
     let owner_address = ctx.contract_caller();
     let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
     // mint balance to owner
@@ -53,7 +53,7 @@ pub fn deploy() {
     // LowLevelSDK::evm_sstore(&storage_key, owner_balance.as_le_slice())
 }
 
-struct ERC20<'a>(&'a mut ExecutionContext);
+struct ERC20<'a>(&'a mut GuestContextReader);
 
 impl<'a> ERC20<'a> {
     fn name(&self) -> Bytes {

@@ -18,8 +18,8 @@ mod account;
 pub use account::*;
 #[cfg(not(feature = "std"))]
 mod bindings;
-mod jzkt;
-pub use jzkt::*;
+mod guest;
+pub use guest::*;
 #[macro_use]
 pub mod macros;
 #[cfg(feature = "std")]

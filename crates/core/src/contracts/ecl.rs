@@ -7,8 +7,8 @@ use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     EvmCallMethodInput,
     EvmCreateMethodInput,
-    ExecutionContext,
-    JzktAccountManager,
+    GuestAccountManager,
+    GuestContextReader,
     LowLevelSDK,
     SharedAPI,
     EVM_CALL_METHOD_ID,
@@ -19,8 +19,8 @@ use fluentbase_types::ExitCode;
 pub fn deploy() {}
 
 pub fn main() {
-    let cr = ExecutionContext::default();
-    let am = JzktAccountManager::default();
+    let cr = GuestContextReader::default();
+    let am = GuestAccountManager::default();
     debug_log!("ecl(main): started method");
     let input_helper = InputHelper::new();
     let method_id = input_helper.decode_method_id();
