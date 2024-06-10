@@ -1,7 +1,9 @@
+use core::ptr;
 use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
 use fluentbase_sdk::{
     codec::Encoder,
     AccountManager,
+    Address,
     Bytes,
     ContextReader,
     CoreInput,
@@ -23,6 +25,11 @@ use fluentbase_sdk::{
 };
 
 pub trait EvmAPI {
+    fn address<SDK: SharedAPI>(&self) -> Address;
+    fn balance<SDK: SharedAPI>(&self, address: Address) -> U256;
+    fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64);
+    fn calldataload<SDK: SharedAPI>(&self, offset: u64, len: u64) -> U256;
+    fn calldatasize<SDK: SharedAPI>(&self) -> u64;
     fn sload<SDK: SharedAPI>(&self, index: U256) -> U256;
     fn sstore<SDK: SharedAPI>(&self, index: U256, value: U256);
 }
@@ -33,6 +40,39 @@ pub struct EVM<'a, CR: ContextReader, AM: AccountManager> {
 }
 
 impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
+    fn address<SDK: SharedAPI>(&self) -> Address {
+        self.cr.contract_address()
+    }
+
+    fn balance<SDK: SharedAPI>(&self, address: Address) -> U256 {
+        let (account, _) = self.am.account(address);
+        account.balance
+    }
+
+    fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64) {
+        SDK::read(
+            unsafe { &mut *ptr::slice_from_raw_parts_mut(mem_ptr, len as usize) },
+            data_offset as u32,
+        )
+    }
+
+    fn calldataload<SDK: SharedAPI>(&self, mut offset: u64, len: u64) -> U256 {
+        let input_size = SDK::input_size() as u64;
+        if offset > input_size {
+            offset = input_size;
+        }
+        let mut buffer32: [u8; 32] = [0u8; 32];
+        SDK::read(
+            &mut buffer32[..(input_size as usize - offset as usize)],
+            offset as u32,
+        );
+        U256::ZERO
+    }
+
+    fn calldatasize<SDK: SharedAPI>(&self) -> u64 {
+        SDK::input_size() as u64
+    }
+
     fn sload<SDK: SharedAPI>(&self, index: U256) -> U256 {
         let contract_address = self.cr.contract_address();
         let (value, _is_cold) = self.am.storage(contract_address, index, false);
