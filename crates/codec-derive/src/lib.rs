@@ -1,21 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::{__private::Span, format_ident, quote};
+use quote::{format_ident, quote};
 use syn::{self, Data, Fields, Ident};
-
-#[proc_macro]
-pub fn path_to_test_name(token: TokenStream) -> TokenStream {
-    let path = token.to_string();
-    let file_name = path
-        .split("/")
-        .last()
-        .expect("there is no last part in the path");
-    let file_name = file_name.replace(".", "_").replace("\"", "");
-    let file_ident = Ident::new_raw(file_name.as_str(), Span::call_site());
-    TokenStream::from(quote! {
-        #file_ident
-    })
-}
 
 fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
