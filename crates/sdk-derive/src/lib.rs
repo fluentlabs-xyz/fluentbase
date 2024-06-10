@@ -1,15 +1,26 @@
-use proc_macro::TokenStream;
-
 use convert_case::{Case, Casing};
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-
 use syn::{
     self,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Expr, ExprLit, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ItemStruct, Lit, LitStr, Meta,
-    Token, Type, TypePath, Visibility,
+    Expr,
+    ExprLit,
+    FnArg,
+    Ident,
+    ImplItem,
+    ImplItemFn,
+    ItemImpl,
+    ItemStruct,
+    Lit,
+    LitStr,
+    Meta,
+    Token,
+    Type,
+    TypePath,
+    Visibility,
 };
 
 #[proc_macro]
@@ -280,15 +291,15 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
     };
 
     quote! {
-        pub fn route(&self, input: &[u8], output: &mut [u8]) -> usize {
-            if input.len() < 4 {
+        pub fn main<SDK: SharedAPI>(&self) {
+            let input_size = SDK::input_size();
+            if input_size < 4 {
                 panic!("input too short, cannot extract selector");
             }
             let mut selector: [u8; 4] = [0; 4];
-            selector.copy_from_slice(&input[0..4]);
-
-            let mut encoded_output_len = 0;
-
+            SDK::read(&mut selector, 0);
+            let input = fluentbase_sdk::alloc_slice(input_size as usize);
+            SDK::read(input, 0);
             match selector {
                 #match_arms
             }
@@ -324,13 +335,8 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     quote! {
         #selector_name => {
             #args_expr
-            let encoded_output = self.#method_name(#(#args),*).abi_encode();
-            if encoded_output.len() > output.len() {
-                panic!("output buffer too small");
-            };
-            encoded_output_len = encoded_output.len();
-            output[..encoded_output_len].copy_from_slice(&encoded_output);
-            encoded_output_len
+            let output = self.#method_name(#(#args),*).abi_encode();
+            SDK::write(&output);
         }
     }
 }
@@ -484,9 +490,8 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use syn::{parse_quote, Ident, LitStr, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
-
     use proc_macro2::TokenStream;
+    use syn::{parse_quote, Ident, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
 
     #[test]
     fn test_parse_solidity_mode() {
@@ -525,13 +530,8 @@ mod tests {
                         panic!("Failed to decode input {:?}", e);
                     }
                 };
-                let encoded_output = self.greet(msg).abi_encode();
-                if encoded_output.len() > output.len() {
-                    panic!("output buffer too small");
-                };
-                encoded_output_len = encoded_output.len();
-                output[..encoded_output_len].copy_from_slice(&encoded_output);
-                encoded_output_len
+                let output = self.greet(msg).abi_encode();
+                SDK::write(&output);
             }
         };
 
