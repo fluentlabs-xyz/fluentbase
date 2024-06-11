@@ -187,11 +187,22 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
     let all_methods = get_all_methods(&ast);
     let public_methods = get_public_methods(&ast);
 
+    // Dispatch all methods (public and private) if implementing a trait
+    let methods_to_dispatch = if ast.trait_.is_some() {
+        all_methods
+            .clone()
+            .into_iter()
+            .filter(|func| func.sig.ident != "deploy")
+            .collect()
+    } else {
+        public_methods.clone()
+    };
+
     // Generate Solidity function signatures or use provided ones from #[signature]
-    let signatures = get_signatures(&public_methods);
+    let signatures = get_signatures(&methods_to_dispatch);
 
     // Derive route method that dispatches Solidity function calls
-    let router_impl = derive_route_method(&public_methods);
+    let router_impl = derive_route_method(&methods_to_dispatch);
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
