@@ -10,7 +10,7 @@ struct ROUTER;
 
 pub trait RouterAPI {
     fn deploy<SDK: SharedAPI>(&self);
-    fn greeting(&self) -> String;
+    fn greeting(&self, message: String) -> String;
 }
 
 #[router(mode = "solidity")]
@@ -20,7 +20,7 @@ impl RouterAPI for ROUTER {
     }
 
     #[signature("function greeting(string message) external returns (string)")]
-    pub fn greeting(&self, message: String) -> String {
+    fn greeting(&self, message: String) -> String {
         message
     }
 }
