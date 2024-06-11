@@ -182,28 +182,48 @@ fn get_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
         });
 
         if let Some(fn_signature) = sig {
-            let fn_signature = fn_signature.value() + "; ";
+            let signature_value = fn_signature.value();
+            let full_signature = if signature_value.starts_with("function ") {
+                signature_value + "; "
+            } else {
+                let method_name = &func.sig.ident;
+                let sol_method_name = rust_name_to_sol(method_name);
 
-            let fn_signature = syn::parse_str::<proc_macro2::TokenStream>(&fn_signature)
+                let inputs = parse_function_inputs(&func.sig.inputs);
+                let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
+                    rust_type_to_sol(ty)
+                } else {
+                    quote! { void }
+                };
+
+                format!(
+                    "function {}({}) external returns ({});",
+                    sol_method_name,
+                    inputs
+                        .into_iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    output.to_string()
+                )
+            };
+
+            let fn_signature = syn::parse_str::<proc_macro2::TokenStream>(&full_signature)
                 .expect("Failed to parse signature");
             signatures.push(fn_signature);
         } else {
             let method_name = &func.sig.ident;
             let sol_method_name = rust_name_to_sol(method_name);
 
-            // Collect input parameter types and names
             let inputs = parse_function_inputs(&func.sig.inputs);
-
-            // Collect output parameter type
             let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
                 rust_type_to_sol(ty)
             } else {
                 quote! { void }
             };
-
             // Generate function signature in Solidity syntax
             signatures.push(quote! {
-                function #sol_method_name(#(#inputs),*) external view returns (#output);
+                function #sol_method_name(#(#inputs),*) external returns (#output);
             });
         }
     }
@@ -456,6 +476,74 @@ mod tests {
         let input: TokenStream = parse_quote!(mode = "InvalidMode");
         let result = syn::parse2::<RouterArgs>(input);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_signatures_full_signature() {
+        let item_impl: ItemImpl = parse_quote! {
+            impl ExampleStruct {
+                #[signature("function greeting(string message) external returns (string)")]
+                fn greeting(&self, message: String) -> String {
+                    message
+                }
+            }
+        };
+
+        let methods = item_impl
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ImplItem::Fn(func) = item {
+                    Some(func)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&ImplItemFn>>();
+
+        let signatures = get_signatures(&methods);
+
+        let expected = quote! {
+            sol! {
+                function greeting(string message) external returns (string);
+            }
+        };
+
+        assert_eq!(signatures.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_get_signatures_short_signature() {
+        let item_impl: ItemImpl = parse_quote! {
+            impl ExampleStruct {
+                #[signature("customGreeting(string)")]
+                fn custom_greeting(&self, message: String) -> String {
+                    message
+                }
+            }
+        };
+
+        let methods = item_impl
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ImplItem::Fn(func) = item {
+                    Some(func)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&ImplItemFn>>();
+
+        let signatures = get_signatures(&methods);
+
+        let expected = quote! {
+            sol! {
+                function customGreeting(string message) external returns (string);
+            }
+        };
+
+        assert_eq!(signatures.to_string(), expected.to_string());
     }
 
     #[test]
