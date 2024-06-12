@@ -1,28 +1,39 @@
-use crate::utils::{calculate_keccak256_id, get_all_methods, parse_function_inputs};
+use crate::utils::{calculate_keccak256_id, get_all_methods};
 use convert_case::Casing;
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{self, parse::Parse, parse_macro_input, ImplItem, ImplItemFn, ItemImpl, LitStr};
+use quote::{__private::ext::RepToTokensExt, quote, ToTokens};
+use syn::{
+    self,
+    parse::Parse,
+    parse_macro_input,
+    punctuated::Punctuated,
+    FnArg,
+    ImplItem,
+    ImplItemFn,
+    ItemImpl,
+    LitStr,
+    Token,
+};
 
 pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut ast: ItemImpl = parse_macro_input!(item as ItemImpl);
 
-    let decode_method_input_impl: ImplItem = decode_method_input_impl();
-    let deploy_imp: ImplItem = deploy_impl();
+    let decode_method_input_impl: ImplItem = decode_method_input_fn_impl();
+    let deploy_imp: ImplItem = deploy_fn_impl();
     let methods = get_all_methods(&ast);
 
-    let dispatch_impl: ImplItem = dispatch_impl(&methods);
+    let dispatch_impl: ImplItem = main_fn_impl(&methods);
 
-    ast.items.push(dispatch_impl);
-    ast.items.push(decode_method_input_impl);
     ast.items.push(deploy_imp);
+    ast.items.push(decode_method_input_impl);
+    ast.items.push(dispatch_impl);
 
     TokenStream::from(quote! {
         #ast
     })
 }
 
-fn deploy_impl() -> ImplItem {
+fn deploy_fn_impl() -> ImplItem {
     syn::parse_quote! {
         pub fn deploy<SDK: SharedAPI>(&self) {
             // precompiles can't be deployed, it exists since a genesis state :(
@@ -30,7 +41,7 @@ fn deploy_impl() -> ImplItem {
     }
 }
 
-fn decode_method_input_impl() -> ImplItem {
+fn decode_method_input_fn_impl() -> ImplItem {
     syn::parse_quote! {
         fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
             let mut core_input = T::default();
@@ -40,7 +51,7 @@ fn decode_method_input_impl() -> ImplItem {
     }
 }
 
-fn dispatch_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
+fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
         pub fn main<SDK: SharedAPI>(&self) {
@@ -72,114 +83,61 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
     let method_name = &func.sig.ident;
     let method_signature = sig.expect("signature attribute is required");
     let method_id = calculate_keccak256_id(&method_signature.value());
-    let method_inputs = parse_function_inputs(&func.sig.inputs);
-    eprintln!(">>method_inputs: {:?}", method_inputs);
-
-    let method_body = &func.block;
+    let input_ty = method_input_ty(&func.sig.inputs);
 
     quote! {
         #method_id => {
+            let input = Self::decode_method_input::<#input_ty>(&input[4..]);
             let output = self.#method_name::<SDK>(input);
-             SDK::write(&output.encode_to_vec(0));
+            SDK::write(&output.encode_to_vec(0));
         }
     }
+}
+
+pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<proc_macro2::TokenStream> {
+    inputs
+        .iter()
+        .filter_map(|arg| {
+            if let FnArg::Typed(pat_type) = arg {
+                if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                    let param_name = &pat_ident.ident;
+                    if param_name == "input" {
+                        let param_type = &pat_type.ty;
+                        return Some(quote! { #param_type });
+                    }
+                }
+            }
+            None
+        })
+        .next()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
-    use syn::{parse_quote, ItemImpl};
+    use syn::{parse_quote, ImplItemFn};
 
     #[test]
-    fn test_generate_main_method() {
-        let item_impl: ItemImpl = parse_quote! {
-            #[router(mode="codec")]
-            impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
-                pub fn deploy<SDK: SharedAPI>(&self) {
-                    // precompiles can't be deployed, it exists since a genesis state :(
+    fn test_dispatch_impl() {
+        let methods: Vec<ImplItemFn> = vec![
+            parse_quote! {
+                #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
+                fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput {
+                    _evm_create(self.cr, self.am, input)
                 }
+            },
+            parse_quote! {
+                #[signature("_evm_call(address,uint256,bytes,uint64)")]
+                fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput {
+                    _evm_call(self.cr, self.am, input)
+                }
+            },
+        ];
 
-                #[signature="_evm_create(bytes,uint256,u64,bool,uint256)"]
-                fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) {
-                    let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-                    let output = _evm_create(self.cr, self.am, input);
-                    SDK::write(&output.encode_to_vec(0));
-                }
+        let method_refs: Vec<&ImplItemFn> = methods.iter().collect();
+        let dispatch = main_fn_impl(&method_refs);
 
-                #[signature="_evm_call(address,uint256,bytes,uint64)"]
-                fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) {
-                    let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-                    let output = _evm_call(self.cr, self.am, input);
-                    SDK::write(&output.encode_to_vec(0));
-                }
-
-                #[signature="_evm_sload(uint256)"]
-                fn evm_sload<SDK: SharedAPI>(&self, input: EvmSloadMethodInput) {
-                    let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
-                    let value = self.sload::<SDK>(input.index);
-                    let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-                    SDK::write(&output);
-                }
-
-                #[signature="_evm_sstore(uint256,uint256)"]
-                fn evm_sstore<SDK: SharedAPI>(&self, input: EvmSstoreMethodInput) {
-                    let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
-                    self.sstore::<SDK>(input.index, input.value);
-                    let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-                    SDK::write(&output);
-                }
-
-                fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
-                    let mut core_input = T::default();
-                    <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
-                    core_input
-                }
-            }
-        };
-
-        let expected_main = quote! {
-            impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
-                pub fn deploy<SDK: SharedAPI>(&self) {
-                    // precompiles can't be deployed, it exists since a genesis state :(
-                }
-
-                #[signature="_evm_create(bytes,uint256,u64,bool,uint256)"]
-                fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) {
-                    let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-                    let output = _evm_create(self.cr, self.am, input);
-                    SDK::write(&output.encode_to_vec(0));
-                }
-
-                #[signature="_evm_call(address,uint256,bytes,uint64)"]
-                fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) {
-                    let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-                    let output = _evm_call(self.cr, self.am, input);
-                    SDK::write(&output.encode_to_vec(0));
-                }
-
-                #[signature="_evm_sload(uint256)"]
-                fn evm_sload<SDK: SharedAPI>(&self, input: EvmSloadMethodInput) {
-                    let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
-                    let value = self.sload::<SDK>(input.index);
-                    let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-                    SDK::write(&output);
-                }
-
-                #[signature="_evm_sstore(uint256,uint256)"]
-                fn evm_sstore<SDK: SharedAPI>(&self, input: EvmSstoreMethodInput) {
-                    let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
-                    self.sstore::<SDK>(input.index, input.value);
-                    let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-                    SDK::write(&output);
-                }
-
-                fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
-                    let mut core_input = T::default();
-                    <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
-                    core_input
-                }
-            }
+        let expected_dispatch: ImplItem = parse_quote! {
             pub fn main<SDK: SharedAPI>(&self) {
                 let input = GuestContextReader::contract_input();
                 if input.len() < 4 {
@@ -191,36 +149,24 @@ mod tests {
                     &mut method_id,
                 );
                 match method_id {
-                    EVM_CREATE_METHOD_ID => {
+                    895509340u32 => {
                         let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-                        let output = _evm_create(self.cr, self.am, input);
+                        let output = self.evm_create::<SDK>(input);
                         SDK::write(&output.encode_to_vec(0));
-                    }
-                    EVM_CALL_METHOD_ID => {
+                    },
+                    4246677046u32 => {
                         let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-                        let output = _evm_call(self.cr, self.am, input);
+                        let output = self.evm_call::<SDK>(input);
                         SDK::write(&output.encode_to_vec(0));
-                    }
-                    EVM_SLOAD_METHOD_ID => {
-                        let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
-                        let value = self.sload::<SDK>(input.index);
-                        let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-                        SDK::write(&output);
-                    }
-                    EVM_SSTORE_METHOD_ID => {
-                        let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
-                        self.sstore::<SDK>(input.index, input.value);
-                        let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-                        SDK::write(&output);
-                    }
-                    _ => panic!("unknown method: {}", method_id),
+                    },
+                    _ => panic!("unknown method"),
                 }
             }
         };
 
-        let generated_main =
-            derive_codec_router(quote! {}.into(), item_impl.into_token_stream().into());
-
-        assert_eq!(generated_main.to_string(), expected_main.to_string());
+        assert_eq!(
+            dispatch.to_token_stream().to_string(),
+            expected_dispatch.to_token_stream().to_string()
+        );
     }
 }
