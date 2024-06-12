@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 revm-precompile = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-core = { workspace = true, default-features = false }
 
 [features]
 default = ["std"]
@@ -30,3 +30,6 @@ identity = []
 modexp = []
 ecrecover = []
 evm = []
+wasm = []
+svm = []
+fluent = []

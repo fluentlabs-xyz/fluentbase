@@ -1,7 +1,7 @@
 extern crate fluentbase_sdk;
 
 use core::marker::PhantomData;
-use fluentbase_sdk::{alloc_slice, Bytes, ExitCode, LowLevelSDK, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, LowLevelSDK, SharedAPI};
 use revm_precompile::{PrecompileError, PrecompileResult};
 
 pub trait PrecompileInvokeFunc {
@@ -70,3 +70,16 @@ pub(crate) fn map_precompile_error(err: PrecompileError) -> ExitCode {
         PrecompileError::Other(_) => ExitCode::PrecompileError,
     }
 }
+
+#[cfg(feature = "blake2")]
+basic_entrypoint!(PRECOMPILE<BlakeInvokeFunc>);
+#[cfg(feature = "sha256")]
+basic_entrypoint!(PRECOMPILE<Sha256InvokeFunc>);
+#[cfg(feature = "ripemd160")]
+basic_entrypoint!(PRECOMPILE<Ripemd160InvokeFunc>);
+#[cfg(feature = "identity")]
+basic_entrypoint!(PRECOMPILE<IdentityInvokeFunc>);
+#[cfg(feature = "modexp")]
+basic_entrypoint!(PRECOMPILE<ModexpInvokeFunc>);
+#[cfg(feature = "ecrecover")]
+basic_entrypoint!(PRECOMPILE<EcrecoverInvokeFunc>);

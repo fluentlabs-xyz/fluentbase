@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, ContextReader, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, SharedAPI};
 
 #[derive(Default)]
 struct HASHING;

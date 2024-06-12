@@ -1,12 +1,12 @@
 use crate::{
     alloc_slice,
+    types::EvmCallMethodOutput,
     utils::calc_storage_key,
     Account,
     AccountCheckpoint,
     AccountManager,
     ContextReader,
     ContractInput,
-    EvmCallMethodOutput,
     IContractInput,
     LowLevelSDK,
     SharedAPI,

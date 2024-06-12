@@ -1,7 +1,4 @@
-use crate::{
-    sdk::{SharedAPI, SovereignAPI},
-    LowLevelSDK,
-};
+use crate::LowLevelSDK;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
     instruction::{
@@ -38,7 +35,15 @@ use fluentbase_runtime::{
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
-use fluentbase_types::{Address, Bytes, ExitCode, JournalCheckpoint, B256};
+use fluentbase_types::{
+    Address,
+    Bytes,
+    ExitCode,
+    JournalCheckpoint,
+    SharedAPI,
+    SovereignAPI,
+    B256,
+};
 use std::ptr;
 
 type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;

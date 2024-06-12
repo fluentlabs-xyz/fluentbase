@@ -3,7 +3,11 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloc::string::String;
-use fluentbase_sdk::{basic_entrypoint, router, signature, SharedAPI};
+use fluentbase_sdk::{
+    basic_entrypoint,
+    derive::{router, signature},
+    SharedAPI,
+};
 
 #[derive(Default)]
 struct ROUTER;
@@ -31,30 +35,22 @@ basic_entrypoint!(ROUTER);
 mod tests {
     use super::*;
     use fluentbase_sdk::LowLevelSDK;
+    use hex_literal::hex;
 
     #[test]
     fn test_contract_method_works() {
-        let input = "f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000c48656c6c6f20776f726c64210000000000000000000000000000000000000000";
-        let input = hex::decode(input).expect("Failed to decode hex string");
-
-        let msg = match greetingCall::abi_decode(&input, true) {
-            Ok(decoded) => decoded.message,
-            Err(e) => {
-                {
-                    panic!("Failed to decode input {:?} {:?}", "msg", e,);
-                };
-            }
-        };
-
-        LowLevelSDK::with_test_input(input.clone());
-
+        // form test input
+        let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000");
+        let msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
+            panic!("Failed to decode input {:?} {:?}", "msg", e,);
+        });
+        LowLevelSDK::with_test_input(input.into());
+        // run router
         let greeting = ROUTER::default();
         greeting.deploy::<LowLevelSDK>();
         greeting.main::<LowLevelSDK>();
-
+        // check result
         let test_output = LowLevelSDK::get_test_output();
-        let res = greetingCall::abi_decode_returns(&test_output, false).unwrap();
-
-        assert_eq!(msg, res._0);
+        assert_eq!(test_output, hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000"));
     }
 }

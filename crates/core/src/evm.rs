@@ -1,11 +1,7 @@
-use fluentbase_sdk::{AccountManager, ContextReader};
-
-#[cfg(feature = "ecl")]
 pub mod call;
 pub mod codecopy;
 pub mod codehash;
 pub mod codesize;
-#[cfg(feature = "ecl")]
 pub mod create;
 pub mod extcodecopy;
 pub mod extcodehash;

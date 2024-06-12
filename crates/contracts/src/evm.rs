@@ -1,39 +1,35 @@
+use crate::utils::decode_method_input;
 use core::ptr;
 use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
 use fluentbase_sdk::{
+    basic_entrypoint,
     codec::Encoder,
+    contracts::EvmAPI,
+    derive::Contract,
+    types::{
+        CoreInput,
+        EvmCallMethodInput,
+        EvmCreateMethodInput,
+        EvmSloadMethodInput,
+        EvmSloadMethodOutput,
+        EvmSstoreMethodInput,
+        EvmSstoreMethodOutput,
+        ICoreInput,
+        EVM_CALL_METHOD_ID,
+        EVM_CREATE_METHOD_ID,
+        EVM_SLOAD_METHOD_ID,
+        EVM_SSTORE_METHOD_ID,
+    },
     AccountManager,
     Address,
     Bytes,
     ContextReader,
-    CoreInput,
-    EvmCallMethodInput,
-    EvmCreateMethodInput,
-    EvmSloadMethodInput,
-    EvmSloadMethodOutput,
-    EvmSstoreMethodInput,
-    EvmSstoreMethodOutput,
-    GuestAccountManager,
     GuestContextReader,
-    ICoreInput,
     SharedAPI,
-    EVM_CALL_METHOD_ID,
-    EVM_CREATE_METHOD_ID,
-    EVM_SLOAD_METHOD_ID,
-    EVM_SSTORE_METHOD_ID,
     U256,
 };
 
-pub trait EvmAPI {
-    fn address<SDK: SharedAPI>(&self) -> Address;
-    fn balance<SDK: SharedAPI>(&self, address: Address) -> U256;
-    fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64);
-    fn calldataload<SDK: SharedAPI>(&self, offset: u64) -> U256;
-    fn calldatasize<SDK: SharedAPI>(&self) -> u64;
-    fn sload<SDK: SharedAPI>(&self, index: U256) -> U256;
-    fn sstore<SDK: SharedAPI>(&self, index: U256, value: U256);
-}
-
+#[derive(Contract)]
 pub struct EVM<'a, CR: ContextReader, AM: AccountManager> {
     cr: &'a CR,
     am: &'a AM,
@@ -87,13 +83,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
 
 impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
     pub fn deploy<SDK: SharedAPI>(&self) {
-        // precompiles can't be deployed, it exists since a genesis state :(
-    }
-
-    fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
-        let mut core_input = T::default();
-        <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
-        core_input
+        unreachable!("precompiles can't be deployed, it exists since a genesis state")
     }
 
     pub fn main<SDK: SharedAPI>(&self) {
@@ -108,23 +98,23 @@ impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
         );
         match method_id {
             EVM_CREATE_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
+                let input = decode_method_input::<EvmCreateMethodInput>(&input[4..]);
                 let output = _evm_create(self.cr, self.am, input);
                 SDK::write(&output.encode_to_vec(0));
             }
             EVM_CALL_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
+                let input = decode_method_input::<EvmCallMethodInput>(&input[4..]);
                 let output = _evm_call(self.cr, self.am, input);
                 SDK::write(&output.encode_to_vec(0));
             }
             EVM_SLOAD_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
+                let input = decode_method_input::<EvmSloadMethodInput>(&input[4..]);
                 let value = self.sload::<SDK>(input.index);
                 let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
                 SDK::write(&output);
             }
             EVM_SSTORE_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
+                let input = decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
                 self.sstore::<SDK>(input.index, input.value);
                 let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
                 SDK::write(&output);
@@ -134,11 +124,6 @@ impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
     }
 }
 
-impl Default for EVM<'static, GuestContextReader, GuestAccountManager> {
-    fn default() -> Self {
-        EVM {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        }
-    }
-}
+basic_entrypoint!(
+    EVM<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
+);

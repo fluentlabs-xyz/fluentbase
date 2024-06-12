@@ -1,8 +1,7 @@
 use crate::{
+    types::EvmCallMethodOutput,
     utils::{calc_create2_address, calc_create_address},
-    EvmCallMethodOutput,
     LowLevelSDK,
-    SharedAPI,
 };
 use alloc::vec;
 use byteorder::{ByteOrder, LittleEndian};
@@ -11,6 +10,7 @@ use fluentbase_types::{
     Bytes,
     Bytes32,
     ExitCode,
+    SharedAPI,
     B256,
     F254,
     KECCAK_EMPTY,
