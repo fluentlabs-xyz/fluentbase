@@ -69,7 +69,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
             None
         }
     });
-
+    let method_name = &func.sig.ident;
     let method_signature = sig.expect("signature attribute is required");
 
     let method_id = calculate_keccak256_id(&method_signature.value());
@@ -78,7 +78,8 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
 
     quote! {
         #method_id => {
-            #method_body
+            let output = self.#method_name::<SDK>(input);
+             SDK::write(&output.encode_to_vec(0));
         }
     }
 }
