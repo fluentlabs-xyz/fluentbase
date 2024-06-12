@@ -1,6 +1,6 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
-#[cfg(feature = "fluent")]
+#[cfg(feature = "blended")]
 mod blended;
 #[cfg(feature = "evm")]
 mod evm;
