@@ -1,4 +1,4 @@
-use crate::utils::{calculate_keccak256_id, get_all_methods};
+use crate::utils::{calculate_keccak256_id, get_all_methods, parse_function_inputs};
 use convert_case::Casing;
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
@@ -71,8 +71,9 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
     });
     let method_name = &func.sig.ident;
     let method_signature = sig.expect("signature attribute is required");
-
     let method_id = calculate_keccak256_id(&method_signature.value());
+    let method_inputs = parse_function_inputs(&func.sig.inputs);
+    eprintln!(">>method_inputs: {:?}", method_inputs);
 
     let method_body = &func.block;
 
