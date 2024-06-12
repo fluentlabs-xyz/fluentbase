@@ -1,8 +1,10 @@
 use core::ptr;
 use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
+// use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
 use fluentbase_sdk::{
     codec::Encoder,
     router,
+    signature,
     AccountManager,
     Address,
     Bytes,
@@ -86,83 +88,79 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
     }
 }
 
-// #[router(mode = "codec")]
+#[router(mode = "codec")]
 impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
-    // pub fn deploy<SDK: SharedAPI>(&self) {
-    //     // precompiles can't be deployed, it exists since a genesis state :(
-    // }
-
-    // // #[signature = "_evm_create(bytes,uint256,u64,bool,uint256)"]
-    // fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) {
-    //     let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-    //     let output = _evm_create(self.cr, self.am, input);
-    //     SDK::write(&output.encode_to_vec(0));
-    // }
-
-    // // #[signature = "_evm_call(address,uint256,bytes,uint64)"]
-    // fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) {
-    //     let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-    //     let output = _evm_call(self.cr, self.am, input);
-    //     SDK::write(&output.encode_to_vec(0));
-    // }
-
-    // // #[signature = "_evm_sload(uint256)"]
-    // fn evm_sload<SDK: SharedAPI>(&self, input: EvmSloadMethodInput) {
-    //     let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
-    //     let value = self.sload::<SDK>(input.index);
-    //     let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-    //     SDK::write(&output);
-    // }
-    // // #[signature = "_evm_sstore(uint256,uint256)"]
-    // fn evm_sstore<SDK: SharedAPI>(&self, input: EvmSstoreMethodInput) {
-    //     let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
-    //     self.sstore::<SDK>(input.index, input.value);
-    //     let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-    //     SDK::write(&output);
-    // }
-
-    fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
-        let mut core_input = T::default();
-        <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
-        core_input
+    #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
+    fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) {
+        let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
+        let output = _evm_create(self.cr, self.am, input);
+        SDK::write(&output.encode_to_vec(0));
     }
 
-    pub fn main<SDK: SharedAPI>(&self) {
-        let input = GuestContextReader::contract_input();
-        if input.len() < 4 {
-            panic!("not well-formed input");
-        }
-        let mut method_id = 0u32;
-        <CoreInput<Bytes> as ICoreInput>::MethodId::decode_field_header(
-            &input[0..4],
-            &mut method_id,
-        );
-        match method_id {
-            EVM_CREATE_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-                let output = _evm_create(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
-            }
-            EVM_CALL_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-                let output = _evm_call(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
-            }
-            EVM_SLOAD_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
-                let value = self.sload::<SDK>(input.index);
-                let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-                SDK::write(&output);
-            }
-            EVM_SSTORE_METHOD_ID => {
-                let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
-                self.sstore::<SDK>(input.index, input.value);
-                let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-                SDK::write(&output);
-            }
-            _ => panic!("unknown method: {}", method_id),
-        }
+    #[signature("_evm_call(address,uint256,bytes,uint64)")]
+    fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) {
+        let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
+        let output = _evm_call(self.cr, self.am, input);
+        SDK::write(&output.encode_to_vec(0));
     }
+
+    #[signature("_evm_sload(uint256)")]
+    fn evm_sload<SDK: SharedAPI>(&self, input: EvmSloadMethodInput) {
+        let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
+        let value = self.sload::<SDK>(input.index);
+        let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
+        SDK::write(&output);
+    }
+    #[signature("_evm_sstore(uint256,uint256)")]
+    fn evm_sstore<SDK: SharedAPI>(&self, input: EvmSstoreMethodInput) {
+        let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
+        self.sstore::<SDK>(input.index, input.value);
+        let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
+        SDK::write(&output);
+    }
+
+    // fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
+    //     let mut core_input = T::default();
+    //     <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
+    //     core_input
+    // }
+
+    // pub fn main<SDK: SharedAPI>(&self) {
+    //     let input = GuestContextReader::contract_input();
+    //     if input.len() < 4 {
+    //         panic!("not well-formed input");
+    //     }
+    //     let mut method_id = 0u32;
+    //     <CoreInput<Bytes> as ICoreInput>::MethodId::decode_field_header(
+    //         &input[0..4],
+    //         &mut method_id,
+    //     );
+    //     match method_id {
+    //         EVM_CREATE_METHOD_ID => {
+    //             let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
+    //             let output = _evm_create(self.cr, self.am, input);
+    //             SDK::write(&output.encode_to_vec(0));
+    //         }
+    //         EVM_CALL_METHOD_ID => {
+    //             let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
+    //             let output = _evm_call(self.cr, self.am, input);
+    //             SDK::write(&output.encode_to_vec(0));
+    //         }
+    //         EVM_SLOAD_METHOD_ID => {
+    //             let input = Self::decode_method_input::<EvmSloadMethodInput>(&input[4..]);
+    //             let value = self.sload::<SDK>(input.index);
+    //             let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
+    //             SDK::write(&output);
+    //         }
+    //         EVM_SSTORE_METHOD_ID => {
+    //             let input = Self::decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
+    //             self.sstore::<SDK>(input.index, input.value);
+    //             let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
+    //             SDK::write(&output);
+    //         }
+    //         _ => panic!("unknown method: {}", method_id),
+    //     }
+    // }
 }
 
 impl Default for EVM<'static, GuestContextReader, GuestAccountManager> {

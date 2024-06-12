@@ -1,62 +1,48 @@
-use proc_macro::TokenStream;
-
+use crate::utils::{calculate_keccak256_id, get_all_methods};
 use convert_case::Casing;
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{self, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, parse::Parse, parse_macro_input};
+use syn::{self, parse::Parse, parse_macro_input, ImplItem, ImplItemFn, ItemImpl, LitStr};
 
-use crate::{
-    utils,
-    utils::{get_all_methods, get_public_methods},
-};
-
-// #[proc_macro_attribute]
 pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
-    let struct_name = &ast.self_ty;
+    let mut ast: ItemImpl = parse_macro_input!(item as ItemImpl);
 
-    let all_methods = get_all_methods(&ast);
-    // TODO: we need to take methods defined
-    let public_methods = get_public_methods(&ast);
+    let decode_method_input_impl: ImplItem = decode_method_input_impl();
+    let deploy_imp: ImplItem = deploy_impl();
+    let methods = get_all_methods(&ast);
 
-    let methods_to_dispatch = if ast.trait_.is_some() {
-        all_methods.clone()
-    } else {
-        public_methods.clone()
-    };
+    let dispatch_impl: ImplItem = dispatch_impl(&methods);
 
-    let router_impl = derive_codec_route_method(&methods_to_dispatch);
+    ast.items.push(dispatch_impl);
+    ast.items.push(decode_method_input_impl);
+    ast.items.push(deploy_imp);
 
-    let expanded = quote! {
-        impl #struct_name {
-            #( #all_methods )*
-            #router_impl
-        }
-    };
-
-    TokenStream::from(expanded)
+    TokenStream::from(quote! {
+        #ast
+    })
 }
 
-fn derive_codec_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
-    let selectors: Vec<proc_macro2::TokenStream> = methods
-        .iter()
-        .filter_map(|method| {
-            let selector = derive_codec_route_selector_arm(method);
-            Some(selector)
-        })
-        .collect();
-
-    let match_arms = if selectors.is_empty() {
-        quote! {
-            _ => panic!("No methods to route"),
+fn deploy_impl() -> ImplItem {
+    syn::parse_quote! {
+        pub fn deploy<SDK: SharedAPI>(&self) {
+            // precompiles can't be deployed, it exists since a genesis state :(
         }
-    } else {
-        quote! {
-            #(#selectors),*,
-            _ => panic!("unknown method"),
-        }
-    };
+    }
+}
 
-    quote! {
+fn decode_method_input_impl() -> ImplItem {
+    syn::parse_quote! {
+        fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
+            let mut core_input = T::default();
+            <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
+            core_input
+        }
+    }
+}
+
+fn dispatch_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
+    let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
+    syn::parse_quote! {
         pub fn main<SDK: SharedAPI>(&self) {
             let input = GuestContextReader::contract_input();
             if input.len() < 4 {
@@ -68,75 +54,40 @@ fn derive_codec_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenSt
                 &mut method_id,
             );
             match method_id {
-                #match_arms
+                #(#selectors),*,
+                _ => panic!("unknown method"),
             }
         }
     }
 }
 
-fn derive_codec_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
-    let method_name = &func.sig.ident;
-    let signature_attr = func
-        .attrs
-        .iter()
-        .find(|attr| attr.path().is_ident("signature"))
-        .expect("Method missing #[signature] attribute");
+fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
+    let sig: Option<LitStr> = func.attrs.iter().find_map(|attr| {
+        if attr.path().is_ident("signature") {
+            attr.parse_args().ok()
+        } else {
+            None
+        }
+    });
 
-    let method_signature: LitStr = signature_attr
-        .parse_args()
-        .expect("Failed to parse signature attribute");
+    let method_signature = sig.expect("signature attribute is required");
 
-    let method_id = utils::calculate_keccak256_id(&method_signature.value());
+    let method_id = calculate_keccak256_id(&method_signature.value());
 
-    let args: Vec<_> = func
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                    Some(&pat_ident.ident)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let args_expr = derive_codec_route_selector_args(&args);
+    let method_body = &func.block;
 
     quote! {
         #method_id => {
-            #args_expr
-            let output = self.#method_name(#(#args),*).encode_to_vec(0);
-            SDK::write(&output);
-        }
-    }
-}
-
-fn derive_codec_route_selector_args(args: &[&Ident]) -> proc_macro2::TokenStream {
-    if args.len() == 1 {
-        let arg = args[0];
-        quote! {
-            let #arg = Self::decode_method_input::<#arg>(&input[4..]);
-        }
-    } else {
-        let fields: Vec<proc_macro2::TokenStream> =
-            args.iter().map(|arg| quote! { #arg }).collect();
-        quote! {
-            let (#(#args),*) = Self::decode_method_input::<(#(#args),*)>(&input[4..]);
+            #method_body
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use quote::quote;
-    use syn::{ItemImpl, parse_quote};
-
     use super::*;
+    use quote::quote;
+    use syn::{parse_quote, ItemImpl};
 
     #[test]
     fn test_generate_main_method() {
