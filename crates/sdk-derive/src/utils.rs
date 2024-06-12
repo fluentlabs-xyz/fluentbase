@@ -3,14 +3,14 @@ use proc_macro2::Ident;
 use quote::{quote, ToTokens};
 use syn::{
     self,
-    parse::Parse,
-    punctuated::Punctuated,
     Expr,
     FnArg,
     ImplItem,
     ImplItemFn,
     ItemImpl,
     Lit,
+    parse::Parse,
+    punctuated::Punctuated,
     Token,
     Type,
     TypePath,
@@ -170,8 +170,9 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use syn::{parse_quote, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
+
+    use super::*;
 
     #[test]
     fn test_convert_array_type() {

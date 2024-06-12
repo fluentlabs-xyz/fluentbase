@@ -1,15 +1,16 @@
-use convert_case::Casing;
 use proc_macro::TokenStream;
+
+use convert_case::Casing;
 use quote::{quote, ToTokens};
 use syn::{
     self,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
     Expr,
     ExprLit,
     Lit,
     Meta,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
     Token,
 };
 
@@ -98,9 +99,10 @@ pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use proc_macro2::TokenStream;
     use syn::parse_quote;
+
+    use super::*;
 
     #[test]
     fn test_parse_solidity_mode() {
