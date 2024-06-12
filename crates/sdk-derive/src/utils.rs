@@ -1,4 +1,4 @@
-use syn::{self, ImplItem, ImplItemFn, ItemImpl, parse::Parse, Visibility};
+use syn::{self, parse::Parse, ImplItem, ImplItemFn, ItemImpl, Visibility};
 
 pub fn get_all_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
     ast.items

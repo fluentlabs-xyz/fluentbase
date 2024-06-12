@@ -1,9 +1,12 @@
-use proc_macro::TokenStream;
-
+use crate::utils::{get_all_methods, get_public_methods};
 use convert_case::{Case, Casing};
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     self,
+    parse::Parse,
+    parse_macro_input,
+    punctuated::Punctuated,
     Expr,
     FnArg,
     Ident,
@@ -12,15 +15,10 @@ use syn::{
     ItemImpl,
     Lit,
     LitStr,
-    parse::Parse,
-    parse_macro_input,
-    punctuated::Punctuated,
     Token,
     Type,
     TypePath,
 };
-
-use crate::utils::{get_all_methods, get_public_methods};
 
 // #[proc_macro_attribute]
 pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -350,9 +348,8 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use syn::{Ident, parse_quote, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
-
     use super::*;
+    use syn::{parse_quote, Ident, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
 
     #[test]
     fn test_get_signatures_full_signature() {

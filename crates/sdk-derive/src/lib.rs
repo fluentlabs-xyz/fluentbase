@@ -1,16 +1,15 @@
-use proc_macro::TokenStream;
-
 use convert_case::Casing;
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     self,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
     Expr,
     ExprLit,
     Lit,
     Meta,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
     Token,
 };
 
@@ -91,8 +90,6 @@ pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-// TODO: d1r1 Implement codec router
-
 // Fake implementation of the attribute to avoid compiler and linter complaints
 #[proc_macro_attribute]
 pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -101,10 +98,9 @@ pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use proc_macro2::TokenStream;
     use syn::parse_quote;
-
-    use super::*;
 
     #[test]
     fn test_parse_solidity_mode() {
