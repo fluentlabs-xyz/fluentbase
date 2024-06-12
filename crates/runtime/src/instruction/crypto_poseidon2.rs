@@ -59,7 +59,9 @@ impl CryptoPoseidon2 {
         //let hasher = Fr::hasher();
         //let h2 = hasher.hash([fa, fb], fd);
         let h2 = hash_msg_with_domain(&[fa, fb], fd);
+        let mut fix = [0u8; 32];
         println!("DEBUG POSEIDON 2 WE COMPUTING RESULT {:#?}", &h2);
-        Ok(h2.to_repr())
+        fix.copy_from_slice(h2.to_repr().iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
+        Ok(fix)
     }
 }

@@ -101,7 +101,7 @@ pub fn hash_msg_with_domain(msg: &[Fr], domain: Fr) -> Fr {
     let layout = <DomainType as Domain<Fr, 2>>::layout(3);
     let mut state = [Fr::ZERO; 3];
     const CHUNK_LEN: usize = 31;
-    state[0] = domain;
+    state[0] = domain + Fr::from_u128(HASHABLE_DOMAIN_SPEC);
     for chunk in msg.chunks(2).into_iter() {
         let len = chunk.len();
         state[1] += chunk[0];

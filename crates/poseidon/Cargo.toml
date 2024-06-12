@@ -17,7 +17,8 @@ halo2curves = { workspace = true }
 bitvec = "1"
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", rev = "04d8dc09bd4df542feccac85e34dff4b38a467d3" }
 #halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2022_09_10" }
-poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", rev = "c6f058bcf3bb0c7933d1979563c414f5cc480f25", default-features = false }
+#poseidon-circuit = { git = "https://github.com/scroll-tech/poseidon-circuit.git", rev = "c6f058bcf3bb0c7933d1979563c414f5cc480f25", default-features = false }
+poseidon-circuit = { path = "../../../poseidon-circuit" }
 #ff = "0.13.0"
 
 [dev-dependencies]
