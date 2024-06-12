@@ -22,7 +22,7 @@ revm-primitives = { workspace = true }
 # fluentbase
 fluentbase-codec = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-core = { workspace = true, default-features = false, features = ["ecl", "wcl"] }
+fluentbase-core = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 

@@ -1,3 +1,5 @@
+mod contract;
+use crate::contract::impl_derive_contract;
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
@@ -485,6 +487,12 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
         }
         _ => panic!("Unsupported type: {}", ident),
     }
+}
+
+#[proc_macro_derive(Contract)]
+pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    impl_derive_contract(&ast)
 }
 
 #[cfg(test)]

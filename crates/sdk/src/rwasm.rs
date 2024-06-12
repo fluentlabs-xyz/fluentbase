@@ -28,9 +28,9 @@ use crate::{
         _update_preimage,
         _write,
     },
-    sdk::{SharedAPI, SovereignAPI},
     LowLevelSDK,
 };
+use fluentbase_types::{SharedAPI, SovereignAPI};
 
 impl SharedAPI for LowLevelSDK {
     #[inline(always)]

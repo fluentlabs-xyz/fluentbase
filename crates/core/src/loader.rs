@@ -3,12 +3,9 @@ use crate::{
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
+    types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
     AccountManager,
     ContextReader,
-    EvmCallMethodInput,
-    EvmCallMethodOutput,
-    EvmCreateMethodInput,
-    EvmCreateMethodOutput,
 };
 use fluentbase_types::BytecodeType;
 
