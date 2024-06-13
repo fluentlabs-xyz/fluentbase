@@ -7,8 +7,10 @@ fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let crate_name = if crate_name == "fluentbase-codec" {
         quote! { crate }
-    } else {
+    } else if crate_name == "fluentbase-sdk" {
         quote! { fluentbase_codec }
+    } else {
+        quote! { fluentbase_sdk::codec }
     };
     let data_struct = match &ast.data {
         Data::Struct(data_struct) => data_struct,
