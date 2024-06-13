@@ -14,7 +14,7 @@ use syn::{
 };
 
 pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut ast: ItemImpl = parse_macro_input!(item as ItemImpl);
+    let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
     let struct_name = &ast.self_ty;
     let (impl_generics, _, _) = ast.generics.split_for_impl();
 
@@ -146,7 +146,7 @@ mod tests {
                     panic!("not well-formed input");
                 }
                 let mut method_id = 0u32;
-                <CoreInput<Bytes> as ICoreInput>::MethodId::decode_field_header(
+                <fluentbase_sdk::types::CoreInput<fluentbase_sdk::Bytes> as fluentbase_sdk::types::ICoreInput>::MethodId::decode_field_header(
                     &input[0..4],
                     &mut method_id,
                 );

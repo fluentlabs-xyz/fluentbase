@@ -1,11 +1,13 @@
 use alloy_sol_types::{sol, SolCall, SolEvent, SolType, SolValue};
 use fluentbase_sdk::{
+    b256,
     Address,
     Bytes,
     ContextReader,
     GuestContextReader,
     LowLevelSDK,
     SharedAPI,
+    B256,
     U256,
 };
 use hex_literal::hex;
@@ -30,6 +32,27 @@ const STORAGE_BALANCES: [u8; 32] =
     hex!("0000000000000000000000000000000000000000000000000000000000000000");
 const STORAGE_ALLOWANCES: [u8; 32] =
     hex!("0000000000000000000000000000000000000000000000000000000000000001");
+
+// macro_rules! derive_solidity_mapping {
+//     ($struct_name:ident, $slot:expr) => {
+//         struct $struct_name {
+//             const SLOT: B256 = $slot.into();
+//         }
+//         impl $struct_name {
+//             fn write(key: U256, value: U256) {
+//                 // .. get EVM client and call sstore
+//             }
+//             fn read(key: U256) -> U256 {
+//                 // .. get EVM client and call sload
+//             }
+//         }
+//     };
+// }
+//
+// derive_solidity_mapping!(
+//     BalanceStorage,
+//     b256!("0000000000000000000000000000000000000000000000000000000000000000")
+// );
 
 fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
     let mut raw_storage_key: [u8; 64] = [0; 64];
