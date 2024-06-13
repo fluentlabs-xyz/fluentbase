@@ -13,4 +13,5 @@ pub mod evm;
 pub mod fluent_host;
 pub mod helpers;
 pub mod loader;
+pub mod svm;
 pub mod wasm;
