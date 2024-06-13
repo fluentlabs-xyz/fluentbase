@@ -1,14 +1,13 @@
 use crate::{debug_log, helpers::wasm2rwasm};
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
+    types::{WasmCreateMethodInput, WasmCreateMethodOutput},
     Account,
     AccountManager,
     ContextReader,
     ContractInput,
     LowLevelSDK,
     SharedAPI,
-    WasmCreateMethodInput,
-    WasmCreateMethodOutput,
 };
 use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
 use revm_primitives::WASM_MAX_CODE_SIZE;

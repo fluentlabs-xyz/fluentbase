@@ -3,7 +3,6 @@ use crate::{
     Account,
     AccountCheckpoint,
     LowLevelSDK,
-    SharedAPI,
     JZKT_ACCOUNT_BALANCE_FIELD,
     JZKT_ACCOUNT_COMPRESSION_FLAGS,
     JZKT_ACCOUNT_NONCE_FIELD,

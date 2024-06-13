@@ -3,11 +3,10 @@ use crate::{
     helpers::{exec_evm_bytecode, exit_code_from_evm_error},
 };
 use fluentbase_sdk::{
+    types::{EvmCreateMethodInput, EvmCreateMethodOutput},
     Account,
     AccountManager,
     ContextReader,
-    EvmCreateMethodInput,
-    EvmCreateMethodOutput,
     LowLevelSDK,
     SharedAPI,
 };

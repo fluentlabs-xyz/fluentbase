@@ -31,7 +31,6 @@ use crate::{
 use core::{cell::RefCell, fmt, fmt::Debug, str::from_utf8};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_core::{
-    consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS},
     debug_log,
     evm::{call::_evm_call, create::_evm_create, sload::_evm_sload, sstore::_evm_sstore},
     fluent_host::FluentHost,
@@ -39,33 +38,36 @@ use fluentbase_core::{
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
+    types::{
+        CoreInput,
+        EvmCallMethodInput,
+        EvmCallMethodOutput,
+        EvmCreateMethodInput,
+        EvmCreateMethodOutput,
+        WasmCallMethodInput,
+        WasmCreateMethodInput,
+        EVM_CALL_METHOD_ID,
+        EVM_CREATE_METHOD_ID,
+        WASM_CALL_METHOD_ID,
+        WASM_CREATE_METHOD_ID,
+    },
     Account,
     AccountCheckpoint,
     AccountManager,
     ContractInput,
-    CoreInput,
-    EvmCallMethodInput,
-    EvmCallMethodOutput,
-    EvmCreateMethodInput,
-    EvmCreateMethodOutput,
     LowLevelSDK,
     SharedAPI,
     SovereignAPI,
-    WasmCallMethodInput,
-    WasmCreateMethodInput,
-    EVM_CALL_METHOD_ID,
-    EVM_CREATE_METHOD_ID,
     JZKT_ACCOUNT_COMPRESSION_FLAGS,
     JZKT_ACCOUNT_FIELDS_COUNT,
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_STORAGE_COMPRESSION_FLAGS,
     JZKT_STORAGE_FIELDS_COUNT,
-    WASM_CALL_METHOD_ID,
-    WASM_CREATE_METHOD_ID,
 };
 use fluentbase_types::{
     address,
+    contracts::PRECOMPILE_EVM,
     BytecodeType,
     Bytes,
     Bytes32,
@@ -466,8 +468,7 @@ impl<EXT, DB: Database> Evm<'_, EXT, DB> {
                 method_id: EVM_CALL_METHOD_ID,
                 method_data: method_input,
             };
-            let (middleware_account, _) =
-                self.context.evm.load_account(ECL_CONTRACT_ADDRESS).unwrap();
+            let (middleware_account, _) = self.context.evm.load_account(PRECOMPILE_EVM).unwrap();
             let middleware_code_hash = middleware_account.info.rwasm_code_hash;
             let (output_buffer, exit_code) = self.exec_rwasm_binary(
                 &mut gas,

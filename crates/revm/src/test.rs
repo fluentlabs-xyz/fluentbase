@@ -7,7 +7,12 @@ use fluentbase_genesis::{
     EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_sdk::{calc_create_address, Account, ContractInput, CoreInput, EvmCallMethodInput};
+use fluentbase_sdk::{
+    types::{CoreInput, EvmCallMethodInput},
+    utils::calc_create_address,
+    Account,
+    ContractInput,
+};
 use fluentbase_types::{
     address,
     bytes,
