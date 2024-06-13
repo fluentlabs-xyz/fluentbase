@@ -270,9 +270,7 @@ impl Account {
         // create new checkpoint (before loading account)
         let checkpoint = am.checkpoint();
         // make sure there is no creation collision
-        let is_empty = callee.source_code_hash == KECCAK_EMPTY
-            && callee.rwasm_code_hash == POSEIDON_EMPTY
-            && callee.nonce == 0;
+        let is_empty = callee.is_empty_code_hash() && callee.nonce == 0;
         if !is_empty || am.is_precompile(&callee_address) {
             return Err(ExitCode::CreateCollision);
         }
@@ -348,14 +346,18 @@ impl Account {
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        let code_empty = self.is_empty_code_hash()
-            || self.source_code_hash == B256::ZERO && self.rwasm_code_hash == B256::ZERO;
+        let code_empty = self.is_empty_code_hash() || self.is_zero_code_hash();
         code_empty && self.balance == U256::ZERO && self.nonce == 0
     }
 
     #[inline(always)]
     pub fn is_empty_code_hash(&self) -> bool {
         self.source_code_hash == KECCAK_EMPTY && self.rwasm_code_hash == POSEIDON_EMPTY
+    }
+
+    #[inline(always)]
+    pub fn is_zero_code_hash(&self) -> bool {
+        self.source_code_hash == B256::ZERO && self.rwasm_code_hash == B256::ZERO
     }
 
     #[inline(always)]
