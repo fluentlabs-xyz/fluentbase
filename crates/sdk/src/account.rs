@@ -275,6 +275,8 @@ impl Account {
             return Err(ExitCode::CreateCollision);
         }
         // tidy hack to make SELFDESTRUCT work for now
+        // TODO stas: this creates incorrect behavior for revm-rwasm test:
+        //  tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json
         am.mark_account_created(callee_address);
         // change balance from caller and callee
         if let Err(exit_code) = am.transfer(caller, &mut callee, amount) {
