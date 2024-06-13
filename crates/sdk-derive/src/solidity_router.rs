@@ -1,19 +1,3 @@
-use proc_macro::TokenStream;
-
-use convert_case::Casing;
-use quote::{quote, ToTokens};
-use syn::{
-    self,
-    FnArg,
-    Ident,
-    ImplItem,
-    ImplItemFn,
-    ItemImpl,
-    LitStr,
-    parse::Parse,
-    parse_macro_input,
-};
-
 use crate::utils::{
     get_all_methods,
     get_public_methods,
@@ -22,8 +6,10 @@ use crate::utils::{
     rust_type_to_sol,
     sol_call_fn_name,
 };
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{self, parse_macro_input, FnArg, Ident, ImplItemFn, ItemImpl, LitStr};
 
-// #[proc_macrot_attribute]
 pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
     let struct_name = &ast.self_ty;
@@ -231,9 +217,8 @@ fn derive_route_selector_args(
 
 #[cfg(test)]
 mod tests {
-    use syn::{Ident, parse_quote};
-
     use super::*;
+    use syn::{parse_quote, Ident, ImplItem};
 
     #[test]
     fn test_get_signatures_full_signature() {

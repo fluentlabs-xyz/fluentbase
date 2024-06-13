@@ -1606,6 +1606,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-precompile"
+version = "0.1.0"
+dependencies = [
+ "fluentbase-sdk",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-router"
 version = "0.1.0"
 dependencies = [

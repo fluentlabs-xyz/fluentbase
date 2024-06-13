@@ -1,10 +1,8 @@
 use crate::utils::{calculate_keccak256_id, get_all_methods};
-use convert_case::Casing;
 use proc_macro::TokenStream;
-use quote::{__private::ext::RepToTokensExt, quote, ToTokens};
+use quote::quote;
 use syn::{
     self,
-    parse::Parse,
     parse_macro_input,
     punctuated::Punctuated,
     FnArg,
@@ -17,6 +15,8 @@ use syn::{
 
 pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut ast: ItemImpl = parse_macro_input!(item as ItemImpl);
+    let struct_name = &ast.self_ty;
+    let (impl_generics, _, _) = ast.generics.split_for_impl();
 
     let decode_method_input_impl: ImplItem = decode_method_input_fn_impl();
     let deploy_imp: ImplItem = deploy_fn_impl();
@@ -24,12 +24,13 @@ pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream
 
     let dispatch_impl: ImplItem = main_fn_impl(&methods);
 
-    ast.items.push(deploy_imp);
-    ast.items.push(decode_method_input_impl);
-    ast.items.push(dispatch_impl);
-
     TokenStream::from(quote! {
         #ast
+        impl #impl_generics #struct_name {
+            #decode_method_input_impl
+            #deploy_imp
+            #dispatch_impl
+        }
     })
 }
 
@@ -45,7 +46,7 @@ fn decode_method_input_fn_impl() -> ImplItem {
     syn::parse_quote! {
         fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
             let mut core_input = T::default();
-            <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
+            <fluentbase_sdk::types::CoreInput<T> as fluentbase_sdk::types::ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
             core_input
         }
     }
@@ -55,12 +56,12 @@ fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
         pub fn main<SDK: SharedAPI>(&self) {
-            let input = GuestContextReader::contract_input();
+            let input = fluentbase_sdk::GuestContextReader::contract_input();
             if input.len() < 4 {
                 panic!("not well-formed input");
             }
             let mut method_id = 0u32;
-            <CoreInput<Bytes> as ICoreInput>::MethodId::decode_field_header(
+            <fluentbase_sdk::types::CoreInput<fluentbase_sdk::Bytes> as fluentbase_sdk::types::ICoreInput>::MethodId::decode_field_header(
                 &input[0..4],
                 &mut method_id,
             );
@@ -115,6 +116,7 @@ pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<proc_mac
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quote::ToTokens;
     use syn::{parse_quote, ImplItemFn};
 
     #[test]
@@ -139,7 +141,7 @@ mod tests {
 
         let expected_dispatch: ImplItem = parse_quote! {
             pub fn main<SDK: SharedAPI>(&self) {
-                let input = GuestContextReader::contract_input();
+                let input = fluentbase_sdk::GuestContextReader::contract_input();
                 if input.len() < 4 {
                     panic!("not well-formed input");
                 }

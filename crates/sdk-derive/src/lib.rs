@@ -1,16 +1,16 @@
 use proc_macro::TokenStream;
-
-use convert_case::Casing;
-use quote::{quote, ToTokens};
+mod contract;
+use crate::contract::impl_derive_contract;
+use quote::quote;
 use syn::{
     self,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
     Expr,
     ExprLit,
     Lit,
     Meta,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
     Token,
 };
 
@@ -97,12 +97,17 @@ pub fn signature(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+#[proc_macro_derive(Contract)]
+pub fn contract_macro_derive(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    impl_derive_contract(&ast)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use proc_macro2::TokenStream;
     use syn::parse_quote;
-
-    use super::*;
 
     #[test]
     fn test_parse_solidity_mode() {
