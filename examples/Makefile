@@ -6,6 +6,7 @@ all: $(FILES) $(MANUAL)
 $(FILES):
 	cd $@ && $(MAKE)
 
+.PHONY: clean
 clean:
-	find . -type f -name "*.wasm" -delete
-	find . -type f -name "*.wat" -delete
+	find . -type f -name "lib.wasm" -delete
+	find . -type f -name "lib.wat" -delete

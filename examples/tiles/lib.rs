@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::router, SharedAPI, Bytes};
+use fluentbase_sdk::{basic_entrypoint, derive::router, Bytes, SharedAPI};
 
 #[derive(Default)]
 struct TILES;
