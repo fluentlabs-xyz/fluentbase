@@ -44,10 +44,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_limit: U256::from(cr.block_gas_limit()),
                     basefee: cr.block_base_fee(),
                     difficulty: U256::from(cr.block_difficulty()),
-                    #[cfg(not(feature = "e2e"))]
-                    prevrandao: Some(B256::from(U256::from(cr.block_difficulty()))),
-                    #[cfg(feature = "e2e")]
-                    prevrandao: Some(B256::from(U256::from_str_radix("97538132613318714080088990359413911112733093221491361876831366585715360399750", 10).unwrap())),
+                    prevrandao: Some(cr.block_prevrandao()),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {

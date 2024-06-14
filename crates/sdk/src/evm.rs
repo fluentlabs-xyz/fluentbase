@@ -23,6 +23,7 @@ pub trait ContextReader {
     fn block_timestamp(&self) -> u64;
     fn block_number(&self) -> u64;
     fn block_difficulty(&self) -> u64;
+    fn block_prevrandao(&self) -> B256;
     fn block_gas_limit(&self) -> u64;
     fn block_base_fee(&self) -> U256;
     fn tx_gas_limit(&self) -> u64;
@@ -49,6 +50,7 @@ pub struct ContractInput {
     pub block_timestamp: u64,
     pub block_number: u64,
     pub block_difficulty: u64,
+    pub block_prevrandao: B256,
     pub block_gas_limit: u64,
     pub block_base_fee: U256,
     // tx info
@@ -76,6 +78,7 @@ impl ContractInput {
             block_timestamp: cr.block_timestamp(),
             block_number: cr.block_number(),
             block_difficulty: cr.block_difficulty(),
+            block_prevrandao: cr.block_prevrandao(),
             block_gas_limit: cr.block_gas_limit(),
             block_base_fee: cr.block_base_fee(),
             tx_gas_limit: cr.tx_gas_limit(),
@@ -114,6 +117,10 @@ impl ContextReader for ContractInput {
 
     fn block_difficulty(&self) -> u64 {
         self.block_difficulty
+    }
+
+    fn block_prevrandao(&self) -> B256 {
+        self.block_prevrandao
     }
 
     fn block_gas_limit(&self) -> u64 {
@@ -271,6 +278,7 @@ impl ContextReader for ExecutionContext {
     impl_reader_func!(fn block_timestamp() -> u64, BlockTimestamp);
     impl_reader_func!(fn block_number() -> u64, BlockNumber);
     impl_reader_func!(fn block_difficulty() -> u64, BlockDifficulty);
+    impl_reader_func!(fn block_prevrandao() -> B256, BlockPrevrandao);
     impl_reader_func!(fn block_gas_limit() -> u64, BlockGasLimit);
     impl_reader_func!(fn block_base_fee() -> U256, BlockBaseFee);
     // tx info
