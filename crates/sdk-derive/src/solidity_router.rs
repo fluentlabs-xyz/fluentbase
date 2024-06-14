@@ -36,12 +36,6 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
-        use fluentbase_sdk::{
-            Address,
-            Bytes,
-            U256,
-        };
-
         impl #struct_name {
             #( #all_methods )*
             #router_impl
