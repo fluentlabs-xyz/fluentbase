@@ -49,19 +49,22 @@ impl CryptoPoseidon2 {
         draft_fd.copy_from_slice(fd.iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
  
         println!("DEBUG POSEIDON 2 POINT A");
-        let fa = fr_from_bytes(&draft_fa)?;
+        let fa = fr_from_bytes(&fa)?;
         println!("DEBUG POSEIDON 2 POINT B");
-        let fb = fr_from_bytes(&draft_fb)?;
+        let fb = fr_from_bytes(&fb)?;
         println!("DEBUG POSEIDON 2 POINT D");
-        let fd = fr_from_bytes(&draft_fd)?;
+        let fd = fr_from_bytes(&fd)?;
         // TODO: example error is failing with this fr transformation from bytes
         println!("DEBUG POSEIDON 2 WE GETTING INPUT {:#?} {:#?} {:#?}", &fa, &fb, &fd);
         //let hasher = Fr::hasher();
         //let h2 = hasher.hash([fa, fb], fd);
         let h2 = hash_msg_with_domain(&[fa, fb], fd);
+/*
         let mut fix = [0u8; 32];
         println!("DEBUG POSEIDON 2 WE COMPUTING RESULT {:#?}", &h2);
         fix.copy_from_slice(h2.to_repr().iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
         Ok(fix)
+*/
+        Ok(h2.to_repr())
     }
 }
