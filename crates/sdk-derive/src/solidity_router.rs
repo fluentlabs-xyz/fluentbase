@@ -66,22 +66,21 @@ fn get_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
                 let sol_method_name = rust_name_to_sol(method_name);
 
                 let inputs = parse_function_inputs(&func.sig.inputs);
-                let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
-                    rust_type_to_sol(ty)
+                let inputs = inputs
+                    .into_iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                if let syn::ReturnType::Type(_, ty) = &func.sig.output {
+                    format!(
+                        "function {}({}) external returns ({});",
+                        sol_method_name,
+                        inputs,
+                        rust_type_to_sol(ty).to_string()
+                    )
                 } else {
-                    quote! { void }
-                };
-
-                format!(
-                    "function {}({}) external returns ({});",
-                    sol_method_name,
-                    inputs
-                        .into_iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    output.to_string()
-                )
+                    format!("function {}({}) external;", sol_method_name, inputs,)
+                }
             };
 
             let fn_signature = syn::parse_str::<proc_macro2::TokenStream>(&full_signature)
@@ -93,14 +92,17 @@ fn get_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
 
             let inputs = parse_function_inputs(&func.sig.inputs);
             let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
-                rust_type_to_sol(ty)
+                let output = rust_type_to_sol(ty);
+                quote! {
+                    function #sol_method_name(#(#inputs),*) external returns (#output);
+                }
             } else {
-                quote! { void }
+                quote! {
+                    function #sol_method_name(#(#inputs),*) external;
+                }
             };
             // Generate function signature in Solidity syntax
-            signatures.push(quote! {
-                function #sol_method_name(#(#inputs),*) external returns (#output);
-            });
+            signatures.push(output);
         }
     }
     quote! {
@@ -149,6 +151,7 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
 
 fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     let method_name = &func.sig.ident;
+    let (_impl_generics, type_generics, _where_clause) = func.sig.generics.split_for_impl();
     let method_name_call = sol_call_fn_name(method_name);
     let selector_name = quote! { #method_name_call::SELECTOR };
     let abi_decode = quote! { #method_name_call::abi_decode };
@@ -175,7 +178,7 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     quote! {
         #selector_name => {
             #args_expr
-            let output = self.#method_name(#(#args),*).abi_encode();
+            let output = self.#method_name::#type_generics(#(#args),*).abi_encode();
             SDK::write(&output);
         }
     }
@@ -190,22 +193,20 @@ fn derive_route_selector_args(
         quote! {
             let #arg = match #abi_decode_fn(&input, true) {
                 Ok(decoded) => decoded.#arg,
-                Err(e) => {
-                    panic!("Failed to decode input {:?}", e);
-                }
+                Err(_) => panic!("failed to decode input"),
             };
         }
-    } else {
+    } else if args.len() > 0 {
         let fields: Vec<proc_macro2::TokenStream> =
             args.iter().map(|arg| quote! { decoded.#arg }).collect();
         quote! {
             let (#(#args),*) = match #abi_decode_fn(&input, true) {
                 Ok(decoded) => (#(#fields),*),
-                Err(e) => {
-                    panic!("Failed to decode input {:?}", e);
-                }
+                Err(_) => panic!("failed to decode input"),
             };
         }
+    } else {
+        quote! {}
     }
 }
 

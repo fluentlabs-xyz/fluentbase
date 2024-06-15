@@ -7,6 +7,9 @@ edition = "2021"
 #fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
 
+# for Solidity ABI
+alloy-sol-types = { version = "=0.6.4", default-features = false }
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 hex = "0.4.3"
