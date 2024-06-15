@@ -1648,6 +1648,7 @@ dependencies = [
 name = "fluentbase-example-tiles"
 version = "0.1.0"
 dependencies = [
+ "alloy-sol-types 0.6.4",
  "fluentbase-sdk",
  "hex",
  "hex-literal",
