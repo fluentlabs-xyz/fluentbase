@@ -53,6 +53,12 @@ Resulting files can be found in the following directories:
 Testing includes all EVM official testing suite. This test consumes a lot of resources. We also suggest to increase Rust
 stack size to 20 mB.
 
+```bash=
+RUST_MIN_STACK=20000000 cargo test --no-fail-fast
+```
+
+P.S: Some tests are still failing (like zktrie), but 99% of them pass.
+
 ## Examples
 
 Fluentbase can be used to develop different types of applications, in most of cases the same interface is used. Here is
