@@ -1,59 +1,154 @@
-use alloy_sol_types::{sol, SolCall, SolEvent, SolType, SolValue};
+use alloy_sol_types::SolEvent;
 use fluentbase_sdk::{
-    b256,
-    Address,
-    Bytes,
-    ContextReader,
-    GuestContextReader,
-    LowLevelSDK,
-    SharedAPI,
-    B256,
-    U256,
+    basic_entrypoint,
+    derive::{router, Contract},
+    AccountManager, Bytes, ContextReader, GuestContextReader, LowLevelSDK, SharedAPI, B256, U256,
 };
+use fluentbase_types::{contracts::EvmAPI, Address};
 use hex_literal::hex;
+use std::ptr;
+
+pub trait ERC20API {
+    fn name(&self) -> Bytes;
+    fn symbol(&self) -> Bytes;
+    fn decimals(&self) -> U256;
+    fn total_supply(&self) -> U256;
+    fn balance_of(&self, address: Address) -> U256;
+    fn transfer(&mut self, to: Address, value: U256) -> U256;
+}
 
 sol! {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    function name() external view returns (string);
-    function symbol() external view returns (string);
-    function decimals() external view returns (uint8);
-
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address to, uint256 value) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function approve(address spender, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
-const STORAGE_BALANCES: [u8; 32] =
+#[derive(Default)]
+struct ERC20;
+
+#[router(mode = "solidity")]
+impl ERC20API for ERC20 {
+    fn name<SDK: SharedAPI>(&self) -> Bytes {
+        Bytes::from("Token")
+    }
+    fn symbol<SDK: SharedAPI>(&self) -> Bytes {
+        Bytes::from("TOK")
+    }
+    fn decimals<SDK: SharedAPI>(&self) -> U256 {
+        U256::from(18)
+    }
+
+    fn total_supply<SDK: SharedAPI>(&self) -> U256 {
+        // TODO: d1r1 fix to use storage instead of hardcoded value
+        U256::from_str_radix("1000000000000000000000000", 10).unwrap()
+    }
+
+    fn balance_of<SDK: SharedAPI>(&self, address: Address) -> U256 {
+        let storage_key = storage_mapping_key(&STORAGE_BALANCES, address.abi_encode().as_slice());
+        let storage_key_u256 = U256::from_be_slice(&storage_key);
+        let cr = &fluentbase_sdk::GuestContextReader::DEFAULT;
+        let am = &fluentbase_sdk::GuestAccountManager::DEFAULT;
+        let contract_address = cr.contract_address();
+        let (value, _is_cold) = am.storage(contract_address, storage_key_u256, false);
+        let balance = U256::from_le_slice(value.as_le_slice());
+        balance
+    }
+    fn transfer<SDK: SharedAPI>(&self, to: Address, value: U256) -> U256 {
+        let cr = &fluentbase_sdk::GuestContextReader::DEFAULT;
+        let am = &fluentbase_sdk::GuestAccountManager::DEFAULT;
+
+        let contract_address = cr.contract_address();
+        let from = cr.contract_caller();
+        // check from/to addresses
+        if from.is_zero() {
+            panic!("invalid sender");
+        } else if to.is_zero() {
+            panic!("invalid receiver");
+        }
+
+        // update from balance
+        {
+            let from_balance_key =
+                storage_mapping_key(&STORAGE_BALANCES, from.abi_encode().as_slice());
+            let from_balance_key_u256 = U256::from_be_slice(&from_balance_key);
+            let (from_balance_value, _is_cold) =
+                am.storage(contract_address, from_balance_key_u256, false);
+            let from_balance = U256::from_le_slice(from_balance_value.as_le_slice());
+            if from_balance < value {
+                panic!("insufficient balance");
+            }
+            let from_balance = from_balance - value;
+            let success = am.write_storage(contract_address, from_balance_key_u256, from_balance);
+            if !success {
+                panic!("failed to update from balance");
+            }
+        }
+
+        // update to balance
+        {
+            let to_balance_key = storage_mapping_key(&STORAGE_BALANCES, to.abi_encode().as_slice());
+            let to_balance_key_u256 = U256::from_be_slice(&to_balance_key);
+            let (to_balance_value, _is_cold) =
+                am.storage(contract_address, to_balance_key_u256, false);
+            let to_balance = U256::from_le_slice(to_balance_value.as_le_slice());
+            let to_balance = to_balance + value;
+            let success = am.write_storage(contract_address, to_balance_key_u256, to_balance);
+            if !success {
+                panic!("failed to update to balance");
+            }
+        }
+
+        // emit event
+        let transfer_event = Transfer {
+            from: from.clone(),
+            to,
+            value,
+        };
+
+        let data: Bytes = transfer_event.encode_data().into();
+        let topics: Vec<B256> = transfer_event
+            .encode_topics()
+            .iter()
+            .map(|v| B256::from(v.0))
+            .collect();
+
+        am.log(contract_address, data, &topics);
+        U256::from(1)
+    }
+}
+
+impl ERC20 {
+    pub fn deploy<SDK: SharedAPI>(&self) {
+        let cr = &fluentbase_sdk::GuestContextReader::DEFAULT;
+        let am = &fluentbase_sdk::GuestAccountManager::DEFAULT;
+
+        let owner_address = cr.contract_caller();
+        let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
+
+        // TODO: create macros that would be simplify working with storage
+        // this structure should relay on the evm client
+        // so we need to think about EVM CLIENT before implement the macros
+        let storage_key =
+            storage_mapping_key(&STORAGE_BALANCES, owner_address.abi_encode().as_slice());
+
+        let storage_key_u256 = U256::from_be_slice(&storage_key);
+        let owner_balance_u256 = U256::from_le_slice(owner_balance.as_le_slice());
+
+        let contract_address = cr.contract_address();
+        _ = am.write_storage(contract_address, storage_key_u256, owner_balance_u256);
+    }
+}
+
+basic_entrypoint!(ERC20);
+
+// ------------------------------------
+// THIS IS A WORK IN PROGRESS SOLUTIONS
+// ------------------------------------
+const STORAGE_TOTAL_SUPPLY: [u8; 32] =
     hex!("0000000000000000000000000000000000000000000000000000000000000000");
-const STORAGE_ALLOWANCES: [u8; 32] =
+const STORAGE_BALANCES: [u8; 32] =
     hex!("0000000000000000000000000000000000000000000000000000000000000001");
-
-// macro_rules! derive_solidity_mapping {
-//     ($struct_name:ident, $slot:expr) => {
-//         struct $struct_name {
-//             const SLOT: B256 = $slot.into();
-//         }
-//         impl $struct_name {
-//             fn write(key: U256, value: U256) {
-//                 // .. get EVM client and call sstore
-//             }
-//             fn read(key: U256) -> U256 {
-//                 // .. get EVM client and call sload
-//             }
-//         }
-//     };
-// }
-//
-// derive_solidity_mapping!(
-//     BalanceStorage,
-//     b256!("0000000000000000000000000000000000000000000000000000000000000000")
-// );
-
+const STORAGE_ALLOWANCES: [u8; 32] =
+    hex!("0000000000000000000000000000000000000000000000000000000000000002");
 fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
     let mut raw_storage_key: [u8; 64] = [0; 64];
     raw_storage_key[0..32].copy_from_slice(slot);
@@ -66,146 +161,15 @@ fn storage_mapping_key(slot: &[u8], value: &[u8]) -> [u8; 32] {
     );
     storage_key
 }
-
-pub fn deploy() {
-    let mut ctx = GuestContextReader::default();
-    let owner_address = ctx.contract_caller();
-    let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
-    // mint balance to owner
-    let storage_key = storage_mapping_key(&STORAGE_BALANCES, owner_address.abi_encode().as_slice());
-    // LowLevelSDK::evm_sstore(&storage_key, owner_balance.as_le_slice())
-}
-
-struct ERC20<'a>(&'a mut GuestContextReader);
-
-impl<'a> ERC20<'a> {
-    fn name(&self) -> Bytes {
-        Bytes::from("Token")
-    }
-
-    fn symbol(&self) -> Bytes {
-        Bytes::from("TOK")
-    }
-
-    fn decimals(&self) -> U256 {
-        U256::from(18)
-    }
-
-    fn total_supply(&self) -> U256 {
-        U256::from(0)
-    }
-
-    fn balance_of(&self, address: Address) -> U256 {
-        let mut balance = U256::from(0);
-        let storage_key = storage_mapping_key(&STORAGE_BALANCES, address.abi_encode().as_slice());
-        unsafe {
-            // LowLevelSDK::evm_sload(&storage_key, balance.as_le_slice_mut());
-        }
-        balance
-    }
-
-    fn transfer(&mut self, to: Address, value: U256) -> U256 {
-        // sender is a caller
-        let from = self.0.contract_caller();
-        // check from/to addresses
-        if from.is_zero() {
-            panic!("invalid sender");
-        } else if to.is_zero() {
-            panic!("invalid receiver");
-        }
-        // update from balance
-        {
-            let mut from_balance = U256::from(0);
-            let from_balance_key =
-                storage_mapping_key(&STORAGE_BALANCES, from.abi_encode().as_slice());
-            // unsafe {
-            // LowLevelSDK::evm_sload(&from_balance_key, from_balance.as_le_slice_mut());
-            // }
-            if from_balance < value {
-                panic!("insufficient balance");
-            }
-            let from_balance = from_balance - value;
-            // LowLevelSDK::evm_sstore(&from_balance_key, from_balance.as_le_slice());
-        }
-        // update to balance
-        {
-            let mut to_balance = U256::from(0);
-            let to_balance_key = storage_mapping_key(&STORAGE_BALANCES, to.abi_encode().as_slice());
-            unsafe {
-                // LowLevelSDK::evm_sload(&to_balance_key, to_balance.as_le_slice_mut());
-            }
-            let to_balance = to_balance + value;
-            // LowLevelSDK::evm_sstore(&to_balance_key, to_balance.as_le_slice());
-        }
-        // emit event
-        let transfer_event = Transfer {
-            from: from.clone(),
-            to,
-            value,
-        };
-        // self.0.emit_log(
-        //     transfer_event.encode_topics().iter().map(|v| v.0).collect(),
-        //     transfer_event.encode_data(),
-        // );
-        U256::from(1)
-    }
-}
-
-macro_rules! forward_evm_call {
-    ($func_type:ty, $input:expr, $self:ident, $fn_name:ident, 0) => {{
-        let output = $self.$fn_name();
-        output.abi_encode()
-    }};
-    ($func_type:ty, $input:expr, $self:ident, $fn_name:ident, 1) => {{
-        let input =
-            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input[4..], false)
-                .unwrap();
-        let output = $self.$fn_name(input.0);
-        output.abi_encode()
-    }};
-    ($func_type:ty, $input:expr, $self:ident, $fn_name:ident, 2) => {{
-        let input =
-            <<$func_type as SolCall>::Parameters<'_> as SolType>::abi_decode(&$input[4..], false)
-                .unwrap();
-        let output = $self.$fn_name(input.0, input.1);
-        output.abi_encode()
-    }};
-}
-
-pub fn main() {
-    // let mut ctx = ExecutionContext::default();
-    // let input = ctx.contract_input().clone();
-    // let mut selector: [u8; 4] = [0; 4];
-    // selector.copy_from_slice(&input[0..4]);
-    // // max number of inputs is 3 for ERC20 contract
-    // let mut erc20_handler = ERC20(&mut ctx);
-    // let output = match selector {
-    //     nameCall::SELECTOR => forward_evm_call!(nameCall, input, erc20_handler, name, 0),
-    //     symbolCall::SELECTOR => forward_evm_call!(symbolCall, input, erc20_handler, symbol, 0),
-    //     decimalsCall::SELECTOR => {
-    //         forward_evm_call!(decimalsCall, input, erc20_handler, decimals, 0)
-    //     }
-    //     totalSupplyCall::SELECTOR => {
-    //         forward_evm_call!(totalSupplyCall, input, erc20_handler, total_supply, 0)
-    //     }
-    //     balanceOfCall::SELECTOR => {
-    //         forward_evm_call!(balanceOfCall, input, erc20_handler, balance_of, 1)
-    //     }
-    //     transferCall::SELECTOR => {
-    //         forward_evm_call!(transferCall, input, erc20_handler, transfer, 2)
-    //     }
-    //     _ => panic!("unknown method"),
-    // };
-    // LowLevelSDK::write(&output);
-}
+// ------------------------------------
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{codec::Encoder, Address, Bytes, ContractInput, LowLevelSDK, U256};
-    use hex_literal::hex;
+    use alloy_sol_types::{SolCall, SolType, SolValue};
+    use fluentbase_sdk::codec::Encoder;
+    use fluentbase_sdk::{Address, Bytes, ContractInput, LowLevelSDK, U256};
     use serial_test::serial;
-    use std::{string::ToString, vec};
 
     fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) {
         let mut contract_input = ContractInput::default();
@@ -215,44 +179,97 @@ mod test {
         LowLevelSDK::with_test_input(input.into());
     }
 
-    fn get_output() -> Bytes {
-        LowLevelSDK::get_test_output().into()
+    fn get_output() -> Vec<u8> {
+        LowLevelSDK::get_test_output()
     }
 
     #[serial]
     #[test]
-    pub fn test_total_supply() {
-        with_test_input(vec![], None);
-        deploy();
-        with_test_input(hex!("18160ddd"), None);
-        main();
+    pub fn test_deploy() {
+        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+        let erc20 = ERC20::default();
+        // Set up the test input with the owner's address as the contract caller
+        with_test_input(vec![], Some(owner_address));
+        let cr = &fluentbase_sdk::GuestContextReader::DEFAULT;
+        let am = &fluentbase_sdk::GuestAccountManager::DEFAULT;
+
+        // Call the deploy function to initialize the contract state
+        erc20.deploy::<LowLevelSDK>();
+
+        // Check if the owner's balance was correctly set
+        let balance_key =
+            storage_mapping_key(&STORAGE_BALANCES, owner_address.abi_encode().as_slice());
+        let balance_key_u256 = U256::from_be_slice(&balance_key);
+
+        // Get the balance from the storage
+        let contract_address: Address = cr.contract_address();
+        let (value, _is_cold) = am.storage(contract_address, balance_key_u256, false);
+
+        // Verify the balance
+        assert_eq!(value.to_string(), "1000000000000000000000000");
+    }
+
+    #[serial]
+    #[test]
+    pub fn test_name() {
+        let call_name = nameCall {}.abi_encode();
+        let expected_output = hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000005546f6b656e000000000000000000000000000000000000000000000000000000"); // "Token"
+
+        with_test_input(call_name, None);
+
+        let erc20 = ERC20::default();
+        erc20.deploy::<LowLevelSDK>();
+        erc20.main::<LowLevelSDK>();
+
+        let output = get_output();
+        assert_eq!(output, expected_output);
+    }
+
+    #[serial]
+    #[test]
+    pub fn test_symbol() {
+        let call_symbol = symbolCall {}.abi_encode();
+        let expected_output = hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003544f4b0000000000000000000000000000000000000000000000000000000000"); // "TOK"
+
+        with_test_input(call_symbol, None);
+
+        let erc20 = ERC20::default();
+        erc20.deploy::<LowLevelSDK>();
+        erc20.main::<LowLevelSDK>();
+
+        let output = get_output();
+
+        assert_eq!(output, expected_output);
     }
 
     #[serial]
     #[test]
     pub fn test_balance_of() {
-        with_test_input(
-            vec![],
-            Some(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266").into()),
-        );
-        deploy();
-        with_test_input(
-            hex!("70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-            None,
-        );
-        main();
+        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+        let expected_balance = "1000000000000000000000000";
+
+        with_test_input(vec![], Some(owner_address));
+        let erc20 = ERC20::default();
+        erc20.deploy::<LowLevelSDK>();
+
+        let call_balance_of =
+            hex!("70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        with_test_input(call_balance_of, None);
+        erc20.main::<LowLevelSDK>();
+
         let result = get_output();
-        assert_eq!(
-            U256::from_be_slice(&result).to_string(),
-            "1000000000000000000000000",
-        );
+        let output_balance = U256::from_be_slice(&result);
+        assert_eq!(output_balance.to_string(), expected_balance);
     }
 
     fn get_balance(address: Address) -> U256 {
         let mut input = hex!("70a08231").to_vec();
         input.extend(address.abi_encode());
+        let erc20 = ERC20::default();
+
         with_test_input(input, None);
-        main();
+        erc20.main::<LowLevelSDK>();
+
         let result = get_output();
         U256::abi_decode(&result, false).unwrap()
     }
@@ -263,15 +280,18 @@ mod test {
         let from = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
         let to = Address::from(hex!("390a4CEdBb65be7511D9E1a35b115376F39DbDF3"));
         let value = U256::from_str_radix("100000000000000000000", 10).unwrap();
+        let erc20 = ERC20::default();
+
         // run constructor
         with_test_input(vec![], Some(from));
-        deploy();
+        erc20.deploy::<LowLevelSDK>();
         // check balances
-        assert_eq!(get_balance(from).to_string(), "1000000000000000000000000");
+        let balance_from = get_balance(from).to_string();
+        assert_eq!(balance_from, "1000000000000000000000000");
         assert_eq!(get_balance(to).to_string(), "0");
         // transfer funds (100 tokens)
         with_test_input(transferCall { to, value }.abi_encode(), Some(from));
-        main();
+        erc20.main::<LowLevelSDK>();
         get_output();
         // check balances again
         assert_eq!(get_balance(from).to_string(), "999900000000000000000000");
