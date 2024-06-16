@@ -13,6 +13,7 @@ use syn::{self, parse_macro_input, FnArg, Ident, ImplItemFn, ItemImpl, LitStr};
 pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
     let struct_name = &ast.self_ty;
+    let generics = &ast.generics;
 
     let all_methods = get_all_methods(&ast);
     let public_methods = get_public_methods(&ast);
@@ -36,7 +37,7 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
-        impl #struct_name {
+        impl #generics #struct_name  {
             #( #all_methods )*
             #router_impl
         }
