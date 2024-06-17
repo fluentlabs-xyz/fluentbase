@@ -7,7 +7,7 @@ precompile contracts or just for custom STFs.
 ## Don't use on production
 
 Fluentbase is an experimental development that is still work in progress. All bindings, methods and namings inside
-codebase are not standardized and can be changes significantly. Also the codebase is not audited and not fully tested,
+codebase are not standardized and can be changed significantly. Also, the codebase is not audited and not fully tested,
 that can cause potential vulnerabilities or crashes.
 
 ## Modules
