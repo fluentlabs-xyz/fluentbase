@@ -1573,8 +1573,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.6.4",
  "fluentbase-sdk",
+ "fluentbase-types",
  "hex",
  "hex-literal",
+ "paste",
  "serial_test",
 ]
 

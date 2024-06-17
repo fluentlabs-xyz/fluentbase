@@ -36,7 +36,7 @@ macro_rules! solidity_storage_mapping {
 
             pub fn storage_mapping_key(&self, slot: [u8; 32], value: &[u8]) -> [u8; 32] {
                 let mut raw_storage_key: [u8; 64] = [0; 64];
-                raw_storage_key[0..32].copy_from_slice(&Self::SLOT);
+                raw_storage_key[0..32].copy_from_slice(&slot);
                 raw_storage_key[32..64].copy_from_slice(value);
                 let mut storage_key: [u8; 32] = [0; 32];
                 LowLevelSDK::keccak256(
