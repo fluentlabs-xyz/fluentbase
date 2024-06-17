@@ -270,13 +270,11 @@ impl Account {
         // create new checkpoint (before loading account)
         let checkpoint = am.checkpoint();
         // make sure there is no creation collision
-        let is_empty = callee.is_empty_code_hash() && callee.nonce == 0;
+        let is_empty = callee.is_empty_code_hash() && callee.is_zero_nonce();
         if !is_empty || am.is_precompile(&callee_address) {
             return Err(ExitCode::CreateCollision);
         }
         // tidy hack to make SELFDESTRUCT work for now
-        // TODO stas: this creates incorrect behavior for revm-rwasm test:
-        //  tests/GeneralStateTests/stCreateTest/CreateAddressWarmAfterFail.json
         am.mark_account_created(callee_address);
         // change balance from caller and callee
         if let Err(exit_code) = am.transfer(caller, &mut callee, amount) {
@@ -355,6 +353,11 @@ impl Account {
     #[inline(always)]
     pub fn is_empty_code_hash(&self) -> bool {
         self.source_code_hash == KECCAK_EMPTY && self.rwasm_code_hash == POSEIDON_EMPTY
+    }
+
+    #[inline(always)]
+    pub fn is_zero_nonce(&self) -> bool {
+        self.nonce == 0
     }
 
     #[inline(always)]
