@@ -5,6 +5,7 @@ members = [
     "crates/genesis/bin",
     "crates/revm/e2e",
     "examples/erc20",
+    "examples/cairo",
     "examples/greeting",
     "examples/hashing",
     "examples/panic",
