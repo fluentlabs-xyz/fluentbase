@@ -19,6 +19,7 @@ impl CryptoPoseidon {
 
     pub fn fn_impl(data: &[u8]) -> [u8; 32] {
         use fluentbase_poseidon::poseidon_hash;
+        println!("DEBUG FN_IMPL PREIMAGE {:#?}", &data);
         poseidon_hash(data)
     }
 }

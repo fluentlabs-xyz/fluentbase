@@ -31,19 +31,19 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
         let len = chunk.len();
         let mut buffer_a: [u8; 32] = [0u8; 32];
         let mut buffer_b: [u8; 32] = [0u8; 32];
-        //buffer_a[0..31].copy_from_slice(chunk[0..min(len, 31)].iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
-        buffer_a[0..31].copy_from_slice(chunk[0..min(len, 31)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
+        buffer_a[0..31].copy_from_slice(&chunk[0..min(len, 31)]);
+        //buffer_a[0..31].copy_from_slice(chunk[0..min(len, 31)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
         if len > 31 {
-            //buffer_b[0..31].copy_from_slice(chunk[31..min(len, 62)].iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
-            buffer_b[0..31].copy_from_slice(chunk[31..min(len, 62)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
+            buffer_b[0..31].copy_from_slice(&chunk[31..min(len, 62)])
+            //buffer_b[0..31].copy_from_slice(chunk[31..min(len, 62)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
         }
         state[1] += Fr::from_bytes(&buffer_a).unwrap();
         state[2] += Fr::from_bytes(&buffer_b).unwrap();
         hasher.permute(&mut state);
     }
     let mut out = [0u8; 32];
-    //out.copy_from_slice(state[0].to_bytes().iter().rev().map(|x| *x).collect::<Vec<u8>>().as_slice());
-    out.copy_from_slice(state[0].to_bytes().iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
+    out.copy_from_slice(&state[0].to_bytes());
+    //out.copy_from_slice(state[0].to_bytes().iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
     out
 }
 
