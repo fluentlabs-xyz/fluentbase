@@ -1,4 +1,5 @@
 use fluentbase_sdk::{
+    basic_entrypoint,
     codec::{Codec, Encoder},
     derive::{router, signature, Contract},
     AccountManager,
@@ -34,3 +35,5 @@ impl<'a, CR: ContextReader, AM: AccountManager> PrecompileAPI for PRECOMPILE<'a,
         }
     }
 }
+
+basic_entrypoint!(PRECOMPILE);
