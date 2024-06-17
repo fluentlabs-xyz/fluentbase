@@ -4,6 +4,7 @@ extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
 use alloy_sol_types::SolEvent;
+use core::marker::PhantomData;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, Contract},
@@ -74,9 +75,16 @@ fn emit_approval_event<AM: AccountManager>(
     am.log(contract_address, data, &topics);
 }
 
-struct FieldStorage<V> {}
-struct MappingStorage<K, V> {}
-struct ArrayStorage<V> {}
+struct FieldStorage<V> {
+    _pd: PhantomData<V>,
+}
+struct MappingStorage<K, V> {
+    _pd0: PhantomData<K>,
+    _pd1: PhantomData<V>,
+}
+struct ArrayStorage<V> {
+    _pd: PhantomData<V>,
+}
 
 trait IMappingStorage {
     fn storage_key(slot: U256, key: U256) -> U256;
@@ -110,38 +118,38 @@ impl<V> ArrayStorage<V> {
     }
 }
 
-macro_rules! solidity_storage {
-    ($typ:ty $name:ident) => {
-        pub type $name = FieldStorage<$typ>;
-    };
-    (mapping($key:ty => mapping($key2:ty => $val:ty)) $name:ident) => {
-        paste::paste! {
-            solidity_storage!($key [< $name Key >]);
-            solidity_storage!($key2 [< $name Key2 >]);
-            solidity_storage!($val [< $name Value >]);
-            pub type $name = MappingStorage<
-                [< $name Key >],
-                MappingStorage<
-                    [< $name Key2 >],
-                    [< $name Value >]
-                >
-            >;
-        }
-    };
-    (mapping($key:ty => $val:ty) $name:ident) => {
-        paste::paste! {
-            solidity_storage!($key [< $name Key >]);
-            solidity_storage!($val [< $name Value >]);
-            pub type $name = MappingStorage<
-                [< $name Key >],
-                [< $name Value >]
-            >;
-        }
-    };
-}
-
-solidity_storage! {mapping(Address => U256) BalanceStorage}
-solidity_storage! {mapping(Address => mapping(Address => U256)) AllowanceStorage}
+// macro_rules! solidity_storage {
+//     ($typ:ty $name:ident) => {
+//         pub type $name = FieldStorage<$typ>;
+//     };
+//     (mapping($key:ty => mapping($key2:ty => $val:ty)) $name:ident) => {
+//         paste::paste! {
+//             solidity_storage!($key [< $name Key >]);
+//             solidity_storage!($key2 [< $name Key2 >]);
+//             solidity_storage!($val [< $name Value >]);
+//             pub type $name = MappingStorage<
+//                 [< $name Key >],
+//                 MappingStorage<
+//                     [< $name Key2 >],
+//                     [< $name Value >]
+//                 >
+//             >;
+//         }
+//     };
+//     (mapping($key:ty => $val:ty) $name:ident) => {
+//         paste::paste! {
+//             solidity_storage!($key [< $name Key >]);
+//             solidity_storage!($val [< $name Value >]);
+//             pub type $name = MappingStorage<
+//                 [< $name Key >],
+//                 [< $name Value >]
+//             >;
+//         }
+//     };
+// }
+//
+// solidity_storage! {mapping(Address => U256) BalanceStorage}
+// solidity_storage! {mapping(Address => mapping(Address => U256)) AllowanceStorage}
 
 // solidity_storage_mapping! {
 //     mapping(Address => U256) BalanceStorage;
@@ -231,7 +239,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> AllowancesStorage<'a, CR, AM> {
     }
 }
 
-#[derive(Contract)]
+// #[derive(Contract)]
 struct ERC20<'a, CR: ContextReader, AM: AccountManager> {
     cr: &'a CR,
     am: &'a AM,
