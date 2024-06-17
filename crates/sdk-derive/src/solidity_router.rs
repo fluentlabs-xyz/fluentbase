@@ -1,23 +1,11 @@
 use crate::utils::{
-    calculate_keccak256_bytes,
-    get_all_methods,
-    get_public_methods,
-    get_raw_signature,
-    get_signatures,
-    sol_call_fn_name,
+    calculate_keccak256_bytes, get_all_methods, get_public_methods, get_raw_signature,
+    get_signatures, sol_call_fn_name,
 };
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    self,
-    parse_macro_input,
-    FnArg,
-    Ident,
-    ImplItemFn,
-    ItemImpl,
-    ItemTrait,
-    ReturnType,
-    TraitItem,
+    self, parse_macro_input, FnArg, Ident, ImplItemFn, ItemImpl, ItemTrait, ReturnType, TraitItem,
     TraitItemFn,
 };
 
@@ -48,11 +36,13 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
-        impl #generics #struct_name  {
-            #( #all_methods )*
+        #signatures
+
+        #ast
+
+        impl #generics #struct_name {
             #router_impl
         }
-        #signatures
     };
 
     TokenStream::from(expanded)
@@ -102,6 +92,12 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     let selector_name = quote! { #method_name_call::SELECTOR };
     let abi_decode = quote! { #method_name_call::abi_decode };
 
+    let generics = if func.sig.generics.params.is_empty() {
+        quote!()
+    } else {
+        quote!(::#type_generics)
+    };
+
     let args: Vec<_> = func
         .sig
         .inputs
@@ -124,8 +120,8 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     quote! {
         #selector_name => {
             #args_expr
-            let output = self.#method_name::#type_generics(#(#args),*).abi_encode();
-            SDK::write(output.as_ptr(), output.len() as u32);
+            let output = self.#method_name #generics(#(#args),*).abi_encode();
+            SDK::write(&output);
         }
     }
 }
