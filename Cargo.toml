@@ -4,6 +4,15 @@ members = [
     "crates/*",
     "crates/genesis/bin",
     "crates/revm/e2e",
+    "examples/erc20",
+    "examples/greeting",
+    "examples/hashing",
+    "examples/panic",
+    "examples/precompile",
+    "examples/router",
+    "examples/rwasm",
+    "examples/shakmaty",
+    "examples/tiles",
     "e2e",
 ]
 exclude = [
