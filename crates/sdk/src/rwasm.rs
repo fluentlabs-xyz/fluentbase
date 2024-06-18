@@ -34,8 +34,8 @@ use fluentbase_types::{SharedAPI, SovereignAPI};
 
 impl SharedAPI for LowLevelSDK {
     #[inline(always)]
-    fn read(target: &mut [u8], offset: u32) {
-        unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
+    fn read(target_ptr: *mut u8, target_len: u32, offset: u32) {
+        unsafe { _read(target_ptr, offset, target_len) }
     }
 
     #[inline(always)]
@@ -44,8 +44,8 @@ impl SharedAPI for LowLevelSDK {
     }
 
     #[inline(always)]
-    fn write(value: &[u8]) {
-        unsafe { _write(value.as_ptr(), value.len() as u32) }
+    fn write(value_ptr: *const u8, value_len: u32) {
+        unsafe { _write(value_ptr, value_len) }
     }
 
     #[inline(always)]

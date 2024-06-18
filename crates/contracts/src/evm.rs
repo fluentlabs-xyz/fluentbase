@@ -1,5 +1,4 @@
 use crate::utils::decode_method_input;
-use core::ptr;
 use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
 use fluentbase_sdk::{
     basic_entrypoint,
@@ -46,10 +45,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
     }
 
     fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64) {
-        SDK::read(
-            unsafe { &mut *ptr::slice_from_raw_parts_mut(mem_ptr, len as usize) },
-            data_offset as u32,
-        )
+        SDK::read(mem_ptr, len as u32, data_offset as u32)
     }
 
     fn calldataload<SDK: SharedAPI>(&self, mut offset: u64) -> U256 {
@@ -58,10 +54,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> EvmAPI for EVM<'a, CR, AM> {
             offset = input_size;
         }
         let mut buffer32: [u8; 32] = [0u8; 32];
-        SDK::read(
-            &mut buffer32[..(input_size as usize - offset as usize)],
-            offset as u32,
-        );
+        SDK::read(buffer32.as_mut_ptr(), 32, offset as u32);
         U256::ZERO
     }
 
@@ -100,24 +93,26 @@ impl<'a, CR: ContextReader, AM: AccountManager> EVM<'a, CR, AM> {
             EVM_CREATE_METHOD_ID => {
                 let input = decode_method_input::<EvmCreateMethodInput>(&input[4..]);
                 let output = _evm_create(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
+                let output = output.encode_to_vec(0);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             EVM_CALL_METHOD_ID => {
                 let input = decode_method_input::<EvmCallMethodInput>(&input[4..]);
                 let output = _evm_call(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
+                let output = output.encode_to_vec(0);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             EVM_SLOAD_METHOD_ID => {
                 let input = decode_method_input::<EvmSloadMethodInput>(&input[4..]);
                 let value = self.sload::<SDK>(input.index);
                 let output = EvmSloadMethodOutput { value }.encode_to_vec(0);
-                SDK::write(&output);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             EVM_SSTORE_METHOD_ID => {
                 let input = decode_method_input::<EvmSstoreMethodInput>(&input[4..]);
                 self.sstore::<SDK>(input.index, input.value);
                 let output = EvmSstoreMethodOutput {}.encode_to_vec(0);
-                SDK::write(&output);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             _ => panic!("unknown method: {}", method_id),
         }

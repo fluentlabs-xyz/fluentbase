@@ -90,7 +90,8 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
         #method_id => {
             let input = Self::decode_method_input::<#input_ty>(&input[4..]);
             let output = self.#method_name::<SDK>(input);
-            SDK::write(&output.encode_to_vec(0));
+            let output = output.encode_to_vec(0);
+            SDK::write(output.as_ptr(), output.len() as u32);
         }
     }
 }
@@ -154,12 +155,14 @@ mod tests {
                     895509340u32 => {
                         let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
                         let output = self.evm_create::<SDK>(input);
-                        SDK::write(&output.encode_to_vec(0));
+                        let output = output.encode_to_vec(0);
+                        SDK::write(output.as_ptr(), output.len() as u32);
                     },
                     4246677046u32 => {
                         let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
                         let output = self.evm_call::<SDK>(input);
-                        SDK::write(&output.encode_to_vec(0));
+                        let output = output.encode_to_vec(0);
+                        SDK::write(output.as_ptr(), output.len() as u32);
                     },
                     _ => panic!("unknown method"),
                 }

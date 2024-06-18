@@ -353,7 +353,7 @@ impl GuestContextReader {
     pub fn contract_input<'a>() -> &'a [u8] {
         let input_size = LowLevelSDK::input_size();
         let input = alloc_slice(input_size as usize);
-        LowLevelSDK::read(input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         input
     }
 }

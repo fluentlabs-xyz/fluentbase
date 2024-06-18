@@ -406,7 +406,7 @@ impl InputHelper {
     pub(crate) fn new() -> Self {
         let input_size = LowLevelSDK::input_size();
         let mut input = vec![0u8; input_size as usize];
-        LowLevelSDK::read(&mut input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         Self {
             input: input.into(),
         }

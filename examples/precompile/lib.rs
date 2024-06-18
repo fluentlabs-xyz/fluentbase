@@ -36,4 +36,6 @@ impl<'a, CR: ContextReader, AM: AccountManager> PrecompileAPI for PRECOMPILE<'a,
     }
 }
 
-basic_entrypoint!(PRECOMPILE);
+basic_entrypoint!(
+    PRECOMPILE<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
+);

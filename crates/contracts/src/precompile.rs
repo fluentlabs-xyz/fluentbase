@@ -44,12 +44,12 @@ impl<FN: PrecompileInvokeFunc> PRECOMPILE<FN> {
     pub fn main<SDK: SharedAPI>(&self) {
         let input_size = LowLevelSDK::input_size();
         let input = alloc_slice(input_size as usize);
-        LowLevelSDK::read(input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         let input = Bytes::copy_from_slice(input);
         let (_gas_used, return_bytes) = FN::call(&input, u64::MAX).unwrap_or_else(|err| {
             SDK::exit(map_precompile_error(err).into_i32());
         });
-        LowLevelSDK::write(return_bytes.as_ref());
+        LowLevelSDK::write(return_bytes.as_ptr(), return_bytes.len() as u32);
     }
 }
 
