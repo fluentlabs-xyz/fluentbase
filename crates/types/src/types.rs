@@ -13,7 +13,7 @@ pub type Bytes20 = [u8; 20];
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[repr(i32)]
 pub enum ExitCode {
-    // warning: when adding new codes don't forget to add them to impls below
+    // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
     Panic = -71,

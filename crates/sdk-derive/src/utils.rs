@@ -36,13 +36,17 @@ pub fn get_public_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
         .collect()
 }
 
-pub fn calculate_keccak256_id(signature: &str) -> u32 {
+pub fn calculate_keccak256_bytes(signature: &str) -> [u8; 4] {
     use crypto_hashes::{digest::Digest, sha3::Keccak256};
     let mut hash = Keccak256::new();
     hash.update(signature);
     let mut dst = [0u8; 4];
     dst.copy_from_slice(hash.finalize().as_slice()[0..4].as_ref());
-    u32::from_be_bytes(dst)
+    dst
+}
+
+pub fn calculate_keccak256_id(signature: &str) -> u32 {
+    u32::from_be_bytes(calculate_keccak256_bytes(signature))
 }
 
 pub fn parse_function_inputs(
@@ -59,6 +63,22 @@ pub fn parse_function_inputs(
                 } else {
                     None
                 }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn parse_function_input_types(
+    inputs: &Punctuated<FnArg, Token![,]>,
+) -> Vec<proc_macro2::TokenStream> {
+    inputs
+        .iter()
+        .filter_map(|arg| {
+            if let FnArg::Typed(pat_type) = arg {
+                let sol_type = rust_type_to_sol(&*pat_type.ty);
+                Some(quote! { #sol_type })
             } else {
                 None
             }

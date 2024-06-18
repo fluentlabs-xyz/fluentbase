@@ -9,6 +9,7 @@ use syn::{
     punctuated::Punctuated,
     Expr,
     ExprLit,
+    ItemTrait,
     Lit,
     Meta,
     Token,
@@ -87,6 +88,20 @@ pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = match args.mode {
         RouterMode::Solidity => solidity_router::derive_solidity_router(TokenStream::new(), item),
         RouterMode::Codec => codec_router::derive_codec_router(TokenStream::new(), item),
+    };
+    TokenStream::from(expanded)
+}
+
+#[proc_macro_attribute]
+pub fn client(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as RouterArgs);
+
+    let expanded = match args.mode {
+        RouterMode::Solidity => solidity_router::derive_solidity_client(
+            TokenStream::new(),
+            parse_macro_input!(item as ItemTrait),
+        ),
+        _ => unreachable!("not supported mode yet"),
     };
     TokenStream::from(expanded)
 }

@@ -1686,7 +1686,7 @@ dependencies = [
  "clap 4.5.7",
  "fluentbase-core",
  "fluentbase-poseidon",
- "fluentbase-types",
+ "fluentbase-sdk",
  "hashbrown",
  "hex",
  "revm-primitives",

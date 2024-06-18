@@ -20,6 +20,7 @@ pub use guest::*;
 pub mod macros;
 mod allocator;
 pub use allocator::{alloc_ptr, alloc_slice};
+pub mod contracts;
 #[cfg(feature = "std")]
 mod runtime;
 #[cfg(not(feature = "std"))]

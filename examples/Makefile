@@ -1,4 +1,4 @@
-FILES = allocator cairo erc20 greeting hashing panic precompile router rwasm shakmaty tiles
+FILES = allocator cairo erc20 greeting hashing panic router rwasm shakmaty tiles
 
 all: $(FILES) $(MANUAL)
 

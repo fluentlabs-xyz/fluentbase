@@ -38,6 +38,8 @@ use fluentbase_core::{
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
+    address,
+    contracts::PRECOMPILE_EVM,
     types::{
         CoreInput,
         EvmCallMethodInput,
@@ -54,7 +56,14 @@ use fluentbase_sdk::{
     Account,
     AccountCheckpoint,
     AccountManager,
+    BytecodeType,
+    Bytes,
+    Bytes32,
     ContractInput,
+    ExitCode,
+    IJournaledTrie,
+    JournalEvent,
+    JournalLog,
     LowLevelSDK,
     SharedAPI,
     SovereignAPI,
@@ -64,17 +73,6 @@ use fluentbase_sdk::{
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
     JZKT_STORAGE_COMPRESSION_FLAGS,
     JZKT_STORAGE_FIELDS_COUNT,
-};
-use fluentbase_types::{
-    address,
-    contracts::PRECOMPILE_EVM,
-    BytecodeType,
-    Bytes,
-    Bytes32,
-    ExitCode,
-    IJournaledTrie,
-    JournalEvent,
-    JournalLog,
     NATIVE_TRANSFER_ADDRESS,
     NATIVE_TRANSFER_KECCAK,
     POSEIDON_EMPTY,
