@@ -50,7 +50,7 @@ impl CAIRO {
         let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
         let input_size = SDK::input_size();
         let mut input_buffer = vec![0u8; input_size as usize];
-        SDK::read(&mut input_buffer, 0);
+        SDK::read(input_buffer.as_mut_ptr(), input_buffer.len() as u32, 0);
         assert!(
             self.verify_cairo_proof_wasm(&input_buffer[..], &proof_options),
             "failed to verify cairo proof"

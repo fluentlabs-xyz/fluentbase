@@ -121,7 +121,9 @@ impl SharedAPI for LowLevelSDK {
         output.copy_from_slice(&result);
     }
 
-    fn read(target: &mut [u8], offset: u32) {
+    fn read(target_ptr: *mut u8, target_len: u32, offset: u32) {
+        let target =
+            unsafe { &mut *ptr::slice_from_raw_parts_mut(target_ptr, target_len as usize) };
         let result =
             with_context(|ctx| SyscallRead::fn_impl(ctx, offset, target.len() as u32).unwrap());
         target.copy_from_slice(&result);
@@ -131,7 +133,8 @@ impl SharedAPI for LowLevelSDK {
         with_context(|ctx| SyscallInputSize::fn_impl(ctx))
     }
 
-    fn write(value: &[u8]) {
+    fn write(value_ptr: *const u8, value_len: u32) {
+        let value = unsafe { &*ptr::slice_from_raw_parts(value_ptr, value_len as usize) };
         with_context_mut(|ctx| SyscallWrite::fn_impl(ctx, value))
     }
 

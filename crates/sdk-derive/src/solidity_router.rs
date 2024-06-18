@@ -140,9 +140,9 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
                 panic!("input too short, cannot extract selector");
             }
             let mut selector: [u8; 4] = [0; 4];
-            SDK::read(&mut selector, 0);
+            SDK::read(selector.as_mut_ptr(), selector.len() as u32, 0);
             let input = fluentbase_sdk::alloc_slice(input_size as usize);
-            SDK::read(input, 0);
+            SDK::read(input.as_mut_ptr(), input_size, 0);
             match selector {
                 #match_arms
             }
@@ -180,7 +180,7 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
         #selector_name => {
             #args_expr
             let output = self.#method_name::#type_generics(#(#args),*).abi_encode();
-            SDK::write(&output);
+            SDK::write(output.as_ptr(), output.len() as u32);
         }
     }
 }
