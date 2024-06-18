@@ -4,13 +4,18 @@ use quote::{quote, ToTokens};
 use syn::{
     self,
     punctuated::Punctuated,
+    Attribute,
     Expr,
     FnArg,
     ImplItem,
     ImplItemFn,
     ItemImpl,
     Lit,
+    LitStr,
+    ReturnType,
+    Signature,
     Token,
+    TraitItemFn,
     Type,
     TypePath,
     Visibility,
@@ -184,6 +189,125 @@ fn convert_path_type(type_path: &TypePath) -> proc_macro2::TokenStream {
             }
         }
         _ => panic!("Unsupported type: {}", ident),
+    }
+}
+
+pub(crate) trait GetSignature {
+    fn attrs(&self) -> &Vec<Attribute>;
+    fn sig(&self) -> &Signature;
+}
+
+impl GetSignature for ImplItemFn {
+    fn attrs(&self) -> &Vec<Attribute> {
+        &self.attrs
+    }
+
+    fn sig(&self) -> &Signature {
+        &self.sig
+    }
+}
+
+impl GetSignature for TraitItemFn {
+    fn attrs(&self) -> &Vec<Attribute> {
+        &self.attrs
+    }
+
+    fn sig(&self) -> &Signature {
+        &self.sig
+    }
+}
+
+pub(crate) fn get_raw_signature<S: GetSignature>(func: &S) -> proc_macro2::TokenStream {
+    let sig: Option<LitStr> = func.attrs().iter().find_map(|attr| {
+        if attr.path().is_ident("signature") {
+            attr.parse_args().ok()
+        } else {
+            None
+        }
+    });
+    if let Some(fn_signature) = sig {
+        quote! {
+            #fn_signature
+        }
+    } else {
+        let method_name = &func.sig().ident;
+        let sol_method_name = rust_name_to_sol(method_name);
+        let inputs = parse_function_input_types(&func.sig().inputs);
+        let inputs = inputs
+            .into_iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        quote! {
+            #sol_method_name #inputs
+        }
+    }
+}
+
+pub(crate) fn get_signature<S: GetSignature>(func: &S) -> proc_macro2::TokenStream {
+    let sig: Option<LitStr> = func.attrs().iter().find_map(|attr| {
+        if attr.path().is_ident("signature") {
+            attr.parse_args().ok()
+        } else {
+            None
+        }
+    });
+    if let Some(fn_signature) = sig {
+        let signature_value = fn_signature.value();
+        let full_signature = if signature_value.starts_with("function ") {
+            signature_value + "; "
+        } else {
+            let method_name = &func.sig().ident;
+            let sol_method_name = rust_name_to_sol(method_name);
+
+            let inputs = parse_function_inputs(&func.sig().inputs);
+            let inputs = inputs
+                .into_iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+            if let ReturnType::Type(_, ty) = &func.sig().output {
+                format!(
+                    "function {}({}) external returns ({});",
+                    sol_method_name,
+                    inputs,
+                    rust_type_to_sol(ty).to_string()
+                )
+            } else {
+                format!("function {}({}) external;", sol_method_name, inputs,)
+            }
+        };
+        syn::parse_str::<proc_macro2::TokenStream>(&full_signature)
+            .expect("failed to parse signature")
+    } else {
+        let method_name = &func.sig().ident;
+        let sol_method_name = rust_name_to_sol(method_name);
+
+        let inputs = parse_function_inputs(&func.sig().inputs);
+        let output = if let syn::ReturnType::Type(_, ty) = &func.sig().output {
+            let output = rust_type_to_sol(ty);
+            quote! {
+                function #sol_method_name(#(#inputs),*) external returns (#output);
+            }
+        } else {
+            quote! {
+                function #sol_method_name(#(#inputs),*) external;
+            }
+        };
+        // Generate function signature in Solidity syntax
+        output
+    }
+}
+
+pub(crate) fn get_signatures<S: GetSignature>(methods: &[&S]) -> proc_macro2::TokenStream {
+    let mut signatures: Vec<proc_macro2::TokenStream> = vec![];
+    for func in methods {
+        signatures.push(get_signature(*func));
+    }
+    quote! {
+        sol! {
+            #(#signatures)*
+        }
     }
 }
 

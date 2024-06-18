@@ -101,7 +101,10 @@ pub fn client(attr: TokenStream, item: TokenStream) -> TokenStream {
             TokenStream::new(),
             parse_macro_input!(item as ItemTrait),
         ),
-        _ => unreachable!("not supported mode yet"),
+        RouterMode::Codec => codec_router::derive_codec_client(
+            TokenStream::new(),
+            parse_macro_input!(item as ItemTrait),
+        ),
     };
     TokenStream::from(expanded)
 }
