@@ -4,27 +4,19 @@ use crate::utils::{
     get_public_methods,
     get_raw_signature,
     get_signatures,
-    parse_function_input_types,
-    parse_function_inputs,
-    rust_name_to_sol,
-    rust_type_to_sol,
     sol_call_fn_name,
-    GetSignature,
 };
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     self,
     parse_macro_input,
-    Attribute,
     FnArg,
     Ident,
     ImplItemFn,
     ItemImpl,
     ItemTrait,
-    LitStr,
     ReturnType,
-    Signature,
     TraitItem,
     TraitItemFn,
 };
@@ -250,6 +242,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::rust_name_to_sol;
     use syn::{parse_quote, Ident, ImplItem};
 
     #[test]

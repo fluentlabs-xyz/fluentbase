@@ -1,8 +1,4 @@
-use crate::utils::{
-    calculate_keccak256_bytes,
-    calculate_keccak256_id,
-    get_all_methods,
-};
+use crate::utils::{calculate_keccak256_bytes, calculate_keccak256_id, get_all_methods};
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
