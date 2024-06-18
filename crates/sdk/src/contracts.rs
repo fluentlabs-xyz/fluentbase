@@ -1,5 +1,6 @@
-use crate::{SharedAPI, U256};
-use alloy_primitives::{address, Address, Bytes};
+use crate::{alloc_slice, LowLevelSDK, SharedAPI, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, U256};
+use fluentbase_sdk_derive::client;
+use fluentbase_types::{address, Address, Bytes, SovereignAPI};
 
 pub const PRECOMPILE_EVM: Address = address!("5200000000000000000000000000000000000001");
 pub const PRECOMPILE_WASM: Address = address!("5200000000000000000000000000000000000002");
@@ -56,4 +57,28 @@ pub trait SvmAPI {}
 pub trait BlendedAPI {
     fn exec_evm_tx<SDK: SharedAPI>(&self, raw_evm_tx: Bytes);
     fn exec_svm_tx<SDK: SharedAPI>(&self, raw_svm_tx: Bytes);
+}
+
+pub fn call_system_contract(address: &Address, input: &[u8], mut fuel: u32) -> (Bytes, i32) {
+    let mut address32: [u8; 32] = [0u8; 32];
+    address32[12..].copy_from_slice(address.as_slice());
+    let mut hash32: [u8; 32] = [0u8; 32];
+    _ = LowLevelSDK::get_leaf(
+        address32.as_ptr(),
+        JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+        hash32.as_mut_ptr(),
+        false,
+    );
+    let exit_code = LowLevelSDK::exec(
+        hash32.as_ptr(),
+        input.as_ptr(),
+        input.len() as u32,
+        core::ptr::null_mut(),
+        0,
+        &mut fuel as *mut u32,
+    );
+    let output_size = LowLevelSDK::output_size();
+    let output = alloc_slice(output_size as usize);
+    LowLevelSDK::read_output(output.as_mut_ptr(), 0, output_size);
+    (Bytes::copy_from_slice(output), exit_code)
 }

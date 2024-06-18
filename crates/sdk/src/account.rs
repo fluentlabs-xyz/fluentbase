@@ -1,4 +1,5 @@
 use crate::{
+    alloc_slice,
     types::EvmCallMethodOutput,
     utils::{calc_create2_address, calc_create_address},
     LowLevelSDK,
@@ -11,6 +12,7 @@ use fluentbase_types::{
     Bytes32,
     ExitCode,
     SharedAPI,
+    SovereignAPI,
     B256,
     F254,
     KECCAK_EMPTY,
@@ -34,7 +36,7 @@ pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
 
 /// Compression flags for upper fields.
 ///
-/// We compress following fields:
+/// We compress the following fields:
 /// - balance (0) because of balance overflow
 /// - source code hash (3) because its keccak256
 ///
