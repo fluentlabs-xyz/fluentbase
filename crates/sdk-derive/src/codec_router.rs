@@ -1,5 +1,10 @@
-use crate::utils::{calculate_keccak256_id, get_all_methods};
+use crate::utils::{
+    calculate_keccak256_bytes,
+    calculate_keccak256_id,
+    get_all_methods,
+};
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::quote;
 use syn::{
     self,
@@ -9,8 +14,12 @@ use syn::{
     ImplItem,
     ImplItemFn,
     ItemImpl,
+    ItemTrait,
     LitStr,
+    ReturnType,
     Token,
+    TraitItem,
+    TraitItemFn,
 };
 
 pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -112,6 +121,101 @@ pub fn method_input_ty(inputs: &Punctuated<FnArg, Token![,]>) -> Option<proc_mac
             None
         })
         .next()
+}
+
+pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
+    let items = ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let TraitItem::Fn(func) = item {
+                Some(func)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<&TraitItemFn>>();
+
+    let sdk_crate_name = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
+        quote! { crate }
+    } else {
+        quote! { fluentbase_sdk }
+    };
+
+    let mut methods = Vec::new();
+    for item in items {
+        let sig = &item.sig;
+        let mut inputs = Vec::new();
+        for arg in sig.inputs.iter() {
+            let arg = match arg {
+                FnArg::Receiver(_) => continue,
+                FnArg::Typed(arg) => &arg.pat,
+            };
+            inputs.push(quote! { #arg });
+        }
+        let output_type = match &sig.output {
+            ReturnType::Default => panic!("missing mandatory return type"),
+            ReturnType::Type(_, ty) => ty,
+        };
+
+        let method_sig: Option<LitStr> = item
+            .attrs
+            .iter()
+            .find_map(|attr| {
+                if attr.path().is_ident("signature") {
+                    attr.parse_args().ok()
+                } else {
+                    None
+                }
+            })
+            .expect("missing signature attribute");
+        let method_sig = quote! { #method_sig };
+
+        let sol_sig = calculate_keccak256_bytes(method_sig.to_string().as_str());
+        let method = quote! {
+            #sig {
+                use fluentbase_codec::Encoder;
+                let mut __input = alloc::vec![0u8; 4];
+                __input.copy_from_slice(&[#( #sol_sig, )*]);
+                __input.extend(input.encode_to_vec(0));
+                let (output, exit_code) =
+                    crate::contracts::call_system_contract(&self.address, &__input, self.fuel);
+                if exit_code != 0 {
+                    panic!("system contract call failed with exit code: {}", exit_code);
+                }
+                let mut decoder = BufferDecoder::new(&output);
+                let mut result = GreetingOutput::default();
+                #output_type::decode_body(&mut decoder, 0, &mut result);
+                result
+            }
+        };
+        methods.push(method);
+    }
+
+    let mut ident_name = ast.ident.to_string();
+    if ident_name.ends_with("API") {
+        ident_name = ident_name.trim_end_matches("API").to_string();
+    }
+    let client_name = Ident::new((ident_name + "Client").as_str(), ast.ident.span());
+    let trait_name = &ast.ident;
+
+    let expanded = quote! {
+        #ast
+        struct #client_name {
+            pub address: #sdk_crate_name::Address,
+            pub fuel: u32,
+        }
+        impl #client_name {
+            pub fn new(address: #sdk_crate_name::Address) -> impl #trait_name {
+                Self { address, fuel: u32::MAX }
+            }
+        }
+        impl #trait_name for #client_name {
+            #( #methods )*
+        }
+    };
+
+    TokenStream::from(expanded)
 }
 
 #[cfg(test)]
