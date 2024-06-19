@@ -1,7 +1,4 @@
-use crate::{
-    sdk::{SharedAPI, SovereignAPI},
-    LowLevelSDK,
-};
+use crate::LowLevelSDK;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_runtime::{
     instruction::{
@@ -38,7 +35,15 @@ use fluentbase_runtime::{
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
-use fluentbase_types::{Address, Bytes, ExitCode, JournalCheckpoint, B256};
+use fluentbase_types::{
+    Address,
+    Bytes,
+    ExitCode,
+    JournalCheckpoint,
+    SharedAPI,
+    SovereignAPI,
+    B256,
+};
 use std::ptr;
 
 type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;
@@ -116,7 +121,9 @@ impl SharedAPI for LowLevelSDK {
         output.copy_from_slice(&result);
     }
 
-    fn read(target: &mut [u8], offset: u32) {
+    fn read(target_ptr: *mut u8, target_len: u32, offset: u32) {
+        let target =
+            unsafe { &mut *ptr::slice_from_raw_parts_mut(target_ptr, target_len as usize) };
         let result =
             with_context(|ctx| SyscallRead::fn_impl(ctx, offset, target.len() as u32).unwrap());
         target.copy_from_slice(&result);
@@ -126,7 +133,8 @@ impl SharedAPI for LowLevelSDK {
         with_context(|ctx| SyscallInputSize::fn_impl(ctx))
     }
 
-    fn write(value: &[u8]) {
+    fn write(value_ptr: *const u8, value_len: u32) {
+        let value = unsafe { &*ptr::slice_from_raw_parts(value_ptr, value_len as usize) };
         with_context_mut(|ctx| SyscallWrite::fn_impl(ctx, value))
     }
 
@@ -134,8 +142,9 @@ impl SharedAPI for LowLevelSDK {
         with_context_mut(|ctx| SyscallForwardOutput::fn_impl(ctx, offset, len)).unwrap()
     }
 
-    fn exit(exit_code: i32) {
-        with_context_mut(|ctx| SyscallExit::fn_impl(ctx, exit_code))
+    fn exit(exit_code: i32) -> ! {
+        with_context_mut(|ctx| SyscallExit::fn_impl(ctx, exit_code));
+        unreachable!("exit code: {}", exit_code);
     }
 
     fn output_size() -> u32 {

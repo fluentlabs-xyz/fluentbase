@@ -84,7 +84,7 @@ pub fn calc_create2_address(deployer: &Address, salt: &U256, init_code_hash: &B2
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExecutionContext;
+    use crate::GuestContextReader;
     use fluentbase_types::address;
     use revm_primitives::{b256, hex, Bytecode};
 

@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use fluentbase_codec::Encoder;
 use fluentbase_codec_derive::Codec;
 use fluentbase_sdk_derive::derive_keccak256_id;
-pub use fluentbase_types::*;
+use fluentbase_types::{Address, Bytes, ExitCode, U256};
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct CoreInput<T: Encoder<T> + Default> {
@@ -111,6 +111,29 @@ impl EvmCallMethodOutput {
         self
     }
 }
+
+pub const EVM_SLOAD_METHOD_ID: u32 = derive_keccak256_id!("_evm_sload(uint256)");
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct EvmSloadMethodInput {
+    pub index: U256,
+}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct EvmSloadMethodOutput {
+    pub value: U256,
+}
+
+pub const EVM_SSTORE_METHOD_ID: u32 = derive_keccak256_id!("_evm_sstore(uint256,uint256)");
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct EvmSstoreMethodInput {
+    pub index: U256,
+    pub value: U256,
+}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct EvmSstoreMethodOutput {}
 
 pub const WASM_CREATE_METHOD_ID: u32 =
     derive_keccak256_id!("_wasm_create(bytes,uint256,uint64,bool,uint256)");

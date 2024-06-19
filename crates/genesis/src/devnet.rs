@@ -1,7 +1,6 @@
-use crate::{ChainConfig, Genesis, GenesisAccount, EXAMPLE_GREETING_ADDRESS};
-use fluentbase_core::consts::{ECL_CONTRACT_ADDRESS, WCL_CONTRACT_ADDRESS};
+use crate::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::{address, b256, Address, Bytes, B256, U256};
+use fluentbase_sdk::{address, b256, contracts::PRECOMPILE_EVM, Address, Bytes, B256, U256};
 use revm_primitives::keccak256;
 use std::collections::BTreeMap;
 
@@ -110,13 +109,13 @@ pub fn devnet_genesis() -> Genesis {
         }};
     }
     enable_rwasm_contract!(
-        ECL_CONTRACT_ADDRESS,
-        "../../contracts/assets/ecl_contract.rwasm"
+        PRECOMPILE_EVM,
+        "../../contracts/assets/precompile_evm.rwasm"
     );
-    enable_rwasm_contract!(
-        WCL_CONTRACT_ADDRESS,
-        "../../contracts/assets/wcl_contract.rwasm"
-    );
+    // enable_rwasm_contract!(
+    //     WCL_CONTRACT_ADDRESS,
+    //     "../../contracts/assets/wcl_contract.rwasm"
+    // );
     // enable_rwasm_contract!(
     //     PRECOMPILE_BLAKE2_ADDRESS,
     //     "../../contracts/assets/precompile_blake2.rwasm"
@@ -141,10 +140,10 @@ pub fn devnet_genesis() -> Genesis {
     //     PRECOMPILE_SECP256K1_ADDRESS,
     //     "../../contracts/assets/precompile_secp256k1.rwasm"
     // );
-    enable_rwasm_contract!(
-        EXAMPLE_GREETING_ADDRESS,
-        "../../../examples/bin/greeting.rwasm"
-    );
+    // enable_rwasm_contract!(
+    //     EXAMPLE_GREETING_ADDRESS,
+    //     "../../../examples/greeting/lib.rwasm"
+    // );
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,

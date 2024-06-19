@@ -3,13 +3,14 @@ members = [
     "bin",
     "crates/*",
     "crates/genesis/bin",
+    "examples/*",
     "e2e",
-    "examples",
 ]
 exclude = [
     "crates/evm",
     "crates/evm/evm-rwasm",
     "crates/evm/evm-snippets",
+    "examples/node_modules",
 ]
 resolver = "2"
 
@@ -31,6 +32,7 @@ fluentbase-codec-derive = { path = "./crates/codec-derive", default-features = f
 fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
+fluentbase-contracts = { path = "crates/contracts", default-features = false }
 #fluentbase-revm = { path = "crates/revm", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
@@ -42,9 +44,10 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", def
 #rwasm = { path = "../rwasm/rwasm", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1" }
 byteorder = { version = "1.5.0", default-features = false }
-alloy-primitives = { version = "0.7.4", default-features = false, features = ["rlp"] }
+alloy-primitives = { version = "0.7", default-features = false, features = ["rlp"] }
 alloy-rlp = { version = "0.3.4", default-features = false }
 alloy-genesis = { version = "0.1", default-features = false }
+alloy-sol-types = { version = "0.7", default-features = false }
 hashbrown = { version = "0.14.3" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
@@ -63,7 +66,7 @@ revm-interpreter = { path = "../revm-rwasm/crates/interpreter", default-features
 revm-interpreter-fluent = { path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
-revm = { path = "../revm-rwasm/crates/revm", default-features = false, features = [
+revm = { path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = [
     "ethersdb",
     "std",
     "serde-json",
@@ -77,7 +80,7 @@ hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hex-literal = { version = "0.4.1" }
 strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
-lazy_static = { version = "1.4.0", default-features = false }
+lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 regex = { version = "1.10" }
 
 [profile.bench]
@@ -88,7 +91,7 @@ codegen-units = 1
 panic = "abort"
 lto = true
 opt-level = 3
-strip = true
+strip = false
 debug = false
 debug-assertions = false
 rpath = false

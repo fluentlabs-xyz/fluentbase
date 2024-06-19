@@ -3,13 +3,10 @@ use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
+    types::{CoreInput, EvmCallMethodInput, EvmCreateMethodInput, ICoreInput},
     AccountManager,
     ContextReader,
     ContractInput,
-    CoreInput,
-    EvmCallMethodInput,
-    EvmCreateMethodInput,
-    ICoreInput,
     LowLevelSDK,
     SharedAPI,
 };
@@ -165,7 +162,6 @@ fn contract_context_from_create_inputs<CR: ContextReader>(
     }
 }
 
-#[cfg(feature = "ecl")]
 fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
@@ -199,7 +195,6 @@ fn exec_evm_create<CR: ContextReader, AM: AccountManager>(
     }
 }
 
-#[cfg(feature = "ecl")]
 fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
@@ -258,7 +253,6 @@ fn exec_evm_call<CR: ContextReader, AM: AccountManager>(
     }
 }
 
-#[cfg(feature = "ecl")]
 pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     mut cr: &CR,
     mut am: &AM,
@@ -279,6 +273,7 @@ pub(crate) fn exec_evm_bytecode<CR: ContextReader, AM: AccountManager>(
     if depth >= 1024 {
         debug_log!("depth limit reached: {}", depth);
     }
+    #[cfg(feature = "e2e")]
     let contract_address = contract.target_address;
 
     let instruction_table = make_instruction_table::<FluentHost<CR, AM>, CancunSpec>();
@@ -424,7 +419,7 @@ impl InputHelper {
     pub(crate) fn new() -> Self {
         let input_size = LowLevelSDK::input_size();
         let mut input = vec![0u8; input_size as usize];
-        LowLevelSDK::read(&mut input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         Self {
             input: input.into(),
         }

@@ -1,13 +1,11 @@
 use crate::U256;
-use alloc::format;
 use alloy_primitives::hex;
-use core::{fmt, fmt::Formatter};
 #[cfg(feature = "rwasm")]
 use rwasm::{
     core::{Trap, TrapCode},
     engine::bytecode::FuncIdx,
 };
-use strum_macros::{Display, EnumProperty, FromRepr};
+use strum_macros::{Display, FromRepr};
 
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
@@ -16,7 +14,7 @@ pub type Bytes20 = [u8; 20];
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
 pub enum ExitCode {
-    // warning: when adding new codes don't forget to add them to impls below
+    // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
     Panic = -71,
@@ -242,5 +240,34 @@ impl Into<u32> for SysFuncIdx {
 impl Into<FuncIdx> for SysFuncIdx {
     fn into(self) -> FuncIdx {
         (self as u32).into()
+    }
+}
+
+#[allow(non_camel_case_types)]
+pub enum BytecodeType {
+    EVM,
+    WASM,
+}
+
+/// WebAssembly signature (\0ASM)
+const WASM_SIG: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+
+/// rWASM binary format signature:
+/// - 0xef 0x00 - EIP-3540 compatible prefix
+/// - 0x52 - rWASM version number (equal to 'R')
+const RWASM_SIG: [u8; 3] = [0xef, 0x00, 0x52];
+
+impl BytecodeType {
+    pub fn from_slice(input: &[u8]) -> Self {
+        // default WebAssembly signature (\0ASM)
+        if input.len() >= WASM_SIG.len() && input[0..4] == WASM_SIG {
+            return Self::WASM;
+        }
+        // case for rWASM contracts that are inside genesis
+        if input.len() >= RWASM_SIG.len() && input[0..3] == RWASM_SIG {
+            return Self::WASM;
+        }
+        // all the rest are EVM bytecode
+        Self::EVM
     }
 }
