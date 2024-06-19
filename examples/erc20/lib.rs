@@ -26,7 +26,7 @@ pub trait ERC20API {
     fn decimals(&self) -> U256;
     fn total_supply(&self) -> U256;
     fn balance_of(&self, address: Address) -> U256;
-    fn transfer(&mut self, to: Address, value: U256) -> U256;
+    fn transfer(&self, to: Address, value: U256) -> U256;
     fn allowance(&self, owner: Address, spender: Address) -> U256;
     fn approve(&self, spender: Address, value: U256) -> U256;
     fn transfer_from(&self, from: Address, to: Address, value: U256) -> U256;
@@ -262,24 +262,25 @@ impl Default
 
 #[router(mode = "solidity")]
 impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
-    fn name<SDK: SharedAPI>(&self) -> Bytes {
+    fn name(&self) -> Bytes {
         Bytes::from("Token")
     }
-    fn symbol<SDK: SharedAPI>(&self) -> Bytes {
+    fn symbol(&self) -> Bytes {
         Bytes::from("TOK")
     }
-    fn decimals<SDK: SharedAPI>(&self) -> U256 {
+    fn decimals(&self) -> U256 {
         U256::from(18)
     }
 
-    fn total_supply<SDK: SharedAPI>(&self) -> U256 {
+    fn total_supply(&self) -> U256 {
         U256::from_str_radix("1000000000000000000000000", 10).unwrap()
     }
 
-    fn balance_of<SDK: SharedAPI>(&self, address: Address) -> U256 {
+    fn balance_of(&self, address: Address) -> U256 {
         self.balances.get(address)
     }
-    fn transfer<SDK: SharedAPI>(&self, to: Address, value: U256) -> U256 {
+
+    fn transfer(&self, to: Address, value: U256) -> U256 {
         let contract_address = self.cr.contract_address();
         let from = self.cr.contract_caller();
 
@@ -299,10 +300,10 @@ impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
         emit_transfer_event(self.am, contract_address, from, to, value);
         U256::from(1)
     }
-    fn allowance<SDK: SharedAPI>(&self, owner: Address, spender: Address) -> U256 {
+    fn allowance(&self, owner: Address, spender: Address) -> U256 {
         self.allowances.get(owner, spender)
     }
-    fn approve<SDK: SharedAPI>(&self, spender: Address, value: U256) -> U256 {
+    fn approve(&self, spender: Address, value: U256) -> U256 {
         let owner = self.cr.contract_caller();
         self.allowances.set(owner, spender, value);
 
@@ -310,7 +311,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
         U256::from(1)
     }
 
-    fn transfer_from<SDK: SharedAPI>(&self, from: Address, to: Address, value: U256) -> U256 {
+    fn transfer_from(&self, from: Address, to: Address, value: U256) -> U256 {
         let spender = self.cr.contract_caller();
         let current_allowance = self.allowances.get(from, spender);
 
