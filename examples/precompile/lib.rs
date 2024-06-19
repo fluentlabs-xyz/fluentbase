@@ -1,7 +1,11 @@
+#![cfg_attr(target_arch = "wasm32", no_std)]
+extern crate alloc;
+extern crate fluentbase_sdk;
+
 use fluentbase_sdk::{
     basic_entrypoint,
     codec::{Codec, Encoder},
-    derive::{router, signature, Contract},
+    derive::{client, router, signature, Contract},
     AccountManager,
     Bytes,
     ContextReader,
@@ -16,8 +20,10 @@ pub struct HelloWorldOutput {
     message: Bytes,
 }
 
+#[client(mode = "codec")]
 pub trait PrecompileAPI {
-    fn hello_world<SDK: SharedAPI>(&self, input: HelloWorldInput) -> HelloWorldOutput;
+    #[signature("hello_world()")]
+    fn hello_world(&self, input: HelloWorldInput) -> HelloWorldOutput;
 }
 
 #[derive(Contract)]
@@ -29,7 +35,7 @@ pub struct PRECOMPILE<'a, CR: ContextReader, AM: AccountManager> {
 #[router(mode = "codec")]
 impl<'a, CR: ContextReader, AM: AccountManager> PrecompileAPI for PRECOMPILE<'a, CR, AM> {
     #[signature("hello_world()")]
-    fn hello_world<SDK: SharedAPI>(&self, _input: HelloWorldInput) -> HelloWorldOutput {
+    fn hello_world(&self, _input: HelloWorldInput) -> HelloWorldOutput {
         HelloWorldOutput {
             message: "Hello, World".into(),
         }
