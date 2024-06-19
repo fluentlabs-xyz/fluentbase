@@ -13,7 +13,6 @@ use halo2_proofs::halo2curves::ff::FromUniformBytes;
 use poseidon_circuit::{hash::Hashable, poseidon::primitives::{Hash, Domain}, HASHABLE_DOMAIN_SPEC};
 use halo2_proofs::arithmetic::Field;
 use halo2_proofs::halo2curves::ff::PrimeField;
-//use halo2curves::bn256::Fr;
 use halo2_proofs::halo2curves::bn256::Fr;
 use std::cmp::{min, max};
 
@@ -32,19 +31,14 @@ pub fn poseidon_hash(data: &[u8]) -> [u8; 32] {
         let mut buffer_a: [u8; 32] = [0u8; 32];
         let mut buffer_b: [u8; 32] = [0u8; 32];
         buffer_a[0..31].copy_from_slice(&chunk[0..min(len, 31)]);
-        //buffer_a[0..31].copy_from_slice(chunk[0..min(len, 31)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
         if len > 31 {
             buffer_b[0..31].copy_from_slice(&chunk[31..min(len, 62)])
-            //buffer_b[0..31].copy_from_slice(chunk[31..min(len, 62)].iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
         }
         state[1] += Fr::from_bytes(&buffer_a).unwrap();
         state[2] += Fr::from_bytes(&buffer_b).unwrap();
         hasher.permute(&mut state);
     }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&state[0].to_bytes());
-    //out.copy_from_slice(state[0].to_bytes().iter().map(|x| *x).collect::<Vec<u8>>().as_slice());
-    out
+    state[0].to_bytes()
 }
 
 pub fn poseidon_hash_fr(data: &[u8]) -> Fr {
@@ -109,9 +103,9 @@ pub fn hash_msg_with_domain(msg: &[Fr], domain: Fr) -> Fr {
         let len = chunk.len();
         state[1] += chunk[0];
         state[2] += chunk[1];
-        println!("DEBUG HWD pre state {:#?}", &state);
+        //println!("DEBUG HWD pre state {:#?}", &state);
         hasher.permute(&mut state);
-        println!("DEBUG HWD post state {:#?}", &state);
+        //println!("DEBUG HWD post state {:#?}", &state);
     }
     state[0]
 }
