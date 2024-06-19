@@ -43,5 +43,4 @@ std = [
     "alloy-rlp/std",
 ]
 e2e = ["fluentbase-sdk/e2e"]
-revm-rwasm = []
 
