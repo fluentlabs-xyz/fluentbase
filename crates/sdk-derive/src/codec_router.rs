@@ -41,8 +41,8 @@ pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream
 
 fn deploy_fn_impl() -> ImplItem {
     syn::parse_quote! {
-        pub fn deploy<SDK: SharedAPI>(&self) {
-            // precompiles can't be deployed, it exists since a genesis state :(
+        pub fn deploy<SDK: fluentbase_sdk::SharedAPI>(&self) {
+            unreachable!("precompiles can't be deployed, it exists since a genesis state")
         }
     }
 }
@@ -60,7 +60,7 @@ fn decode_method_input_fn_impl() -> ImplItem {
 fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
-        pub fn main<SDK: SharedAPI>(&self) {
+        pub fn main<SDK: fluentbase_sdk::SharedAPI>(&self) {
             let input = fluentbase_sdk::GuestContextReader::contract_input();
             if input.len() < 4 {
                 panic!("not well-formed input");
@@ -94,9 +94,9 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
     quote! {
         #method_id => {
             let input = Self::decode_method_input::<#input_ty>(&input[4..]);
-            let output = self.#method_name::<SDK>(input);
+            let output = self.#method_name(input);
             let output = output.encode_to_vec(0);
-            SDK::write(output.as_ptr(), output.len() as u32);
+            fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
         }
     }
 }
@@ -137,6 +137,11 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
     } else {
         quote! { fluentbase_sdk }
     };
+    let codec_crate_name = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
+        quote! { crate::codec }
+    } else {
+        quote! { fluentbase_sdk::codec }
+    };
 
     let mut methods = Vec::new();
     for item in items {
@@ -170,17 +175,17 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
         let sol_sig = calculate_keccak256_bytes(method_sig.to_string().as_str());
         let method = quote! {
             #sig {
-                use fluentbase_codec::Encoder;
+                use #codec_crate_name::Encoder;
                 let mut __input = alloc::vec![0u8; 4];
                 __input.copy_from_slice(&[#( #sol_sig, )*]);
                 __input.extend(input.encode_to_vec(0));
                 let (output, exit_code) =
-                    crate::contracts::call_system_contract(&self.address, &__input, self.fuel);
+                    #sdk_crate_name::contracts::call_system_contract(&self.address, &__input, self.fuel);
                 if exit_code != 0 {
                     panic!("system contract call failed with exit code: {}", exit_code);
                 }
-                let mut decoder = BufferDecoder::new(&output);
-                let mut result = GreetingOutput::default();
+                let mut decoder = #codec_crate_name::BufferDecoder::new(&output);
+                let mut result = #output_type::default();
                 #output_type::decode_body(&mut decoder, 0, &mut result);
                 result
             }
@@ -225,13 +230,13 @@ mod tests {
         let methods: Vec<ImplItemFn> = vec![
             parse_quote! {
                 #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
-                fn evm_create<SDK: SharedAPI>(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput {
+                fn evm_create(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput {
                     _evm_create(self.cr, self.am, input)
                 }
             },
             parse_quote! {
                 #[signature("_evm_call(address,uint256,bytes,uint64)")]
-                fn evm_call<SDK: SharedAPI>(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput {
+                fn evm_call(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput {
                     _evm_call(self.cr, self.am, input)
                 }
             },
@@ -241,7 +246,7 @@ mod tests {
         let dispatch = main_fn_impl(&method_refs);
 
         let expected_dispatch: ImplItem = parse_quote! {
-            pub fn main<SDK: SharedAPI>(&self) {
+            pub fn main(&self) {
                 let input = fluentbase_sdk::GuestContextReader::contract_input();
                 if input.len() < 4 {
                     panic!("not well-formed input");
@@ -256,13 +261,13 @@ mod tests {
                         let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
                         let output = self.evm_create::<SDK>(input);
                         let output = output.encode_to_vec(0);
-                        SDK::write(output.as_ptr(), output.len() as u32);
+                        fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
                     },
                     4246677046u32 => {
                         let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
                         let output = self.evm_call::<SDK>(input);
                         let output = output.encode_to_vec(0);
-                        SDK::write(output.as_ptr(), output.len() as u32);
+                        fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
                     },
                     _ => panic!("unknown method"),
                 }

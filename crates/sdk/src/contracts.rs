@@ -1,5 +1,13 @@
-use crate::{alloc_slice, LowLevelSDK, SharedAPI, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, U256};
-use fluentbase_sdk_derive::client;
+use crate::{
+    alloc_slice,
+    types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
+    LowLevelSDK,
+    SharedAPI,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    U256,
+};
+use fluentbase_codec_derive::Codec;
+use fluentbase_sdk_derive::{client, signature};
 use fluentbase_types::{address, Address, Bytes, SovereignAPI};
 
 pub const PRECOMPILE_EVM: Address = address!("5200000000000000000000000000000000000001");
@@ -40,14 +48,36 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
 pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
 
+#[derive(Default, Codec)]
+pub struct EvmSloadInput {
+    pub index: U256,
+}
+#[derive(Default, Codec)]
+pub struct EvmSloadOutput {
+    pub value: U256,
+}
+
+#[derive(Default, Codec)]
+pub struct EvmSstoreInput {
+    pub index: U256,
+    pub value: U256,
+}
+#[derive(Default, Codec)]
+pub struct EvmSstoreOutput {}
+
+#[client(mode = "codec")]
 pub trait EvmAPI {
-    fn address<SDK: SharedAPI>(&self) -> Address;
-    fn balance<SDK: SharedAPI>(&self, address: Address) -> U256;
-    fn calldatacopy<SDK: SharedAPI>(&self, mem_ptr: *mut u8, data_offset: u64, len: u64);
-    fn calldataload<SDK: SharedAPI>(&self, offset: u64) -> U256;
-    fn calldatasize<SDK: SharedAPI>(&self) -> u64;
-    fn sload<SDK: SharedAPI>(&self, index: U256) -> U256;
-    fn sstore<SDK: SharedAPI>(&self, index: U256, value: U256);
+    #[signature("_evm_call(address,uint256,bytes,uint64)")]
+    fn call(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput;
+
+    #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
+    fn create(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput;
+
+    #[signature("sload(u256)")]
+    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
+
+    #[signature("sstore(u256,u256)")]
+    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
 }
 
 pub trait WasmAPI {}
@@ -55,8 +85,8 @@ pub trait WasmAPI {}
 pub trait SvmAPI {}
 
 pub trait BlendedAPI {
-    fn exec_evm_tx<SDK: SharedAPI>(&self, raw_evm_tx: Bytes);
-    fn exec_svm_tx<SDK: SharedAPI>(&self, raw_svm_tx: Bytes);
+    fn exec_evm_tx(&self, raw_evm_tx: Bytes);
+    fn exec_svm_tx(&self, raw_svm_tx: Bytes);
 }
 
 pub fn call_system_contract(address: &Address, input: &[u8], mut fuel: u32) -> (Bytes, i32) {
