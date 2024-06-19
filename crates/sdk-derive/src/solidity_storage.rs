@@ -112,6 +112,7 @@ impl Parse for StorageItem {
     }
 }
 
+// WIP:
 fn mapping_impl(
     mapping: &ExtendedTypeMapping,
     index: usize,
@@ -120,24 +121,81 @@ fn mapping_impl(
     let args = process_mapping(&mapping.type_mapping);
     eprintln!(">>>>args: {:#?}", args);
 
+    let slot = derive_slot(index);
+
+    let key_fn = mapping_key_fn_impl(&args);
+
     let ident = &mapping.ident;
 
     let expanded = quote! {
-        struct #ident {
-            slot: U256,
-        }
+        struct #ident {}
         impl #ident {
-            const SLOT: U256 = U256::from(#index);
-            fn new(slot: U256) -> Self {
-                Self { slot: U256::from(#index) }
-            }
-            fn key(&self, #(#args),*) -> U256 {
-                U256::from(0)
-            }
+            #slot
+
+            #key_fn
         }
     };
     Ok(expanded)
 }
+
+fn derive_slot(slot: usize) -> proc_macro2::TokenStream {
+    quote! {
+        const SLOT: fluentbase_sdk::U256 = Self::u256_from_usize(#slot);
+        const fn u256_from_usize(value: usize) -> fluentbase_sdk::U256 {
+        let mut bytes = [0u8; 32];
+        let mut v = value;
+        let mut i = 0;
+        while v != 0 {
+            bytes[31 - i] = (v & 0xff) as u8;
+            v >>= 8;
+            i += 1;
+        };
+
+        fluentbase_sdk::U256::from_be_bytes(bytes)
+    }
+    }
+}
+
+fn mapping_key_fn_impl(args: &[Arg]) -> proc_macro2::TokenStream {
+    let mut arg_tokens = proc_macro2::TokenStream::new();
+    for arg in args {
+        arg_tokens.extend(quote! { #arg, });
+    }
+
+    let arg_names: Vec<_> = args.iter().map(|arg| &arg.name).collect();
+    let arg_len = arg_names.len();
+    let calculate_keys_fn = quote! {
+        fn calculate_keys(&self, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
+            let mut key = slot;
+            for arg in args {
+                key = mapping_key(key, arg);
+            }
+            key
+        }
+    };
+
+    quote! {
+        fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+            let args = [
+                #(
+                    fluentbase_sdk::U256::from_be_bytes({
+                        let bytes = &#arg_names.abi_encode();
+                        let mut array = [0u8; 32];
+                        array.copy_from_slice(&bytes);
+                        array
+                    }),
+                )*
+            ];
+
+             self.calculate_keys(Self::SLOT, args)
+        }
+
+        #calculate_keys_fn
+        // #storage_key_fn
+
+    }
+}
+
 #[derive(Debug)]
 struct Arg {
     name: Ident,
@@ -168,7 +226,7 @@ fn process_mapping(mapping: &TypeMapping) -> Vec<Arg> {
             is_output: false,
         };
         if let Some(key_name) = &current_mapping.key_name {
-            arg.name = key_name.0.clone(); // Извлечение идентификатора из SolIdent
+            arg.name = key_name.0.clone();
         }
         args.push(arg);
         i += 1;
@@ -196,17 +254,19 @@ fn process_mapping(mapping: &TypeMapping) -> Vec<Arg> {
 fn array_impl(array: &ExtendedTypeArray, index: usize) -> SynResult<proc_macro2::TokenStream> {
     eprintln!(">>>>array_impl");
     let ident = &array.ident;
+    let slot = derive_slot(index);
 
     let expanded = quote! {
         struct #ident {
             slot: U256,
         }
         impl #ident {
-            const SLOT: U256 = U256::from(#index);
+            #slot
+            // const SLOT: U256 = U256::from(#index);
 
-            fn new(slot: U256) -> Self {
-                Self { slot: U256::from(#index) }
-            }
+            // fn new(slot: U256) -> Self {
+            //     Self { slot: U256::from(#index) }
+            // }
         }
     };
     Ok(expanded)
@@ -247,5 +307,12 @@ mod tests {
 
         assert_eq!(args[2].name.to_string(), "balances");
         assert_eq!(args[2].ty.to_string(), "Address");
+    }
+    #[test]
+    fn test_u256() {
+        assert_eq!(
+            format!("{:064x}", 1),
+            "0000000000000000000000000000000000000000000000000000000000000001"
+        )
     }
 }
