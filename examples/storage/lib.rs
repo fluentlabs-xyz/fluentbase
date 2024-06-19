@@ -8,7 +8,7 @@ use fluentbase_sdk::{LowLevelSDK, derive::solidity_storage, Address, SharedAPI, 
 
 
 solidity_storage! {
-    U256[] Arr;
+    U256[][] Arr;
     mapping(Address => mapping(Address => U256)) AllowanceStorage;
     mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct))) BalancesStorage;
 }
