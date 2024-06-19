@@ -2,7 +2,7 @@ extern crate fluentbase_sdk;
 
 use core::marker::PhantomData;
 use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, LowLevelSDK, SharedAPI};
-use revm_precompile::{PrecompileError, PrecompileResult};
+use revm_precompile::{PrecompileError, PrecompileErrors, PrecompileResult};
 
 pub trait PrecompileInvokeFunc {
     fn call(input: &Bytes, gas: u64) -> PrecompileResult;
@@ -44,30 +44,34 @@ impl<FN: PrecompileInvokeFunc> PRECOMPILE<FN> {
     pub fn main<SDK: SharedAPI>(&self) {
         let input_size = LowLevelSDK::input_size();
         let input = alloc_slice(input_size as usize);
-        LowLevelSDK::read(input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         let input = Bytes::copy_from_slice(input);
-        let (_gas_used, return_bytes) = FN::call(&input, u64::MAX).unwrap_or_else(|err| {
+        let call_output = FN::call(&input, u64::MAX).unwrap_or_else(|err| {
             SDK::exit(map_precompile_error(err).into_i32());
         });
-        LowLevelSDK::write(return_bytes.as_ref());
+        let return_bytes = call_output.bytes;
+        LowLevelSDK::write(return_bytes.as_ptr(), return_bytes.len() as u32);
     }
 }
 
-pub(crate) fn map_precompile_error(err: PrecompileError) -> ExitCode {
+pub(crate) fn map_precompile_error(err: PrecompileErrors) -> ExitCode {
     match err {
-        PrecompileError::OutOfGas => ExitCode::OutOfFuel,
-        PrecompileError::Blake2WrongLength => ExitCode::PrecompileError,
-        PrecompileError::Blake2WrongFinalIndicatorFlag => ExitCode::PrecompileError,
-        PrecompileError::ModexpExpOverflow => ExitCode::PrecompileError,
-        PrecompileError::ModexpBaseOverflow => ExitCode::PrecompileError,
-        PrecompileError::ModexpModOverflow => ExitCode::PrecompileError,
-        PrecompileError::Bn128FieldPointNotAMember => ExitCode::PrecompileError,
-        PrecompileError::Bn128AffineGFailedToCreate => ExitCode::PrecompileError,
-        PrecompileError::Bn128PairLength => ExitCode::PrecompileError,
-        PrecompileError::BlobInvalidInputLength => ExitCode::PrecompileError,
-        PrecompileError::BlobMismatchedVersion => ExitCode::PrecompileError,
-        PrecompileError::BlobVerifyKzgProofFailed => ExitCode::PrecompileError,
-        PrecompileError::Other(_) => ExitCode::PrecompileError,
+        PrecompileErrors::Error(err2) => match err2 {
+            PrecompileError::OutOfGas => ExitCode::OutOfGas,
+            PrecompileError::Blake2WrongLength => ExitCode::PrecompileError,
+            PrecompileError::Blake2WrongFinalIndicatorFlag => ExitCode::PrecompileError,
+            PrecompileError::ModexpExpOverflow => ExitCode::PrecompileError,
+            PrecompileError::ModexpBaseOverflow => ExitCode::PrecompileError,
+            PrecompileError::ModexpModOverflow => ExitCode::PrecompileError,
+            PrecompileError::Bn128FieldPointNotAMember => ExitCode::PrecompileError,
+            PrecompileError::Bn128AffineGFailedToCreate => ExitCode::PrecompileError,
+            PrecompileError::Bn128PairLength => ExitCode::PrecompileError,
+            PrecompileError::BlobInvalidInputLength => ExitCode::PrecompileError,
+            PrecompileError::BlobMismatchedVersion => ExitCode::PrecompileError,
+            PrecompileError::BlobVerifyKzgProofFailed => ExitCode::PrecompileError,
+            PrecompileError::Other(_) => ExitCode::PrecompileError,
+        },
+        PrecompileErrors::Fatal { .. } => ExitCode::FatalExternalError,
     }
 }
 

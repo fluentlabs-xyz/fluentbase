@@ -5,7 +5,7 @@
 extern crate alloc;
 extern crate core;
 
-pub mod contracts;
+pub mod consts;
 mod journal;
 mod linker;
 mod sdk;

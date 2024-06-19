@@ -9,9 +9,9 @@ pub trait SharedAPI {
     );
     fn ecrecover(digest32_ptr: *const u8, sig65_ptr: *const u8, output65_ptr: *mut u8, rec_id: u8);
 
-    fn read(target: &mut [u8], offset: u32);
+    fn read(target_ptr: *mut u8, target_len: u32, offset: u32);
     fn input_size() -> u32;
-    fn write(value: &[u8]);
+    fn write(value_ptr: *const u8, value_len: u32);
     fn forward_output(offset: u32, len: u32);
     fn exit(exit_code: i32) -> !;
     fn output_size() -> u32;

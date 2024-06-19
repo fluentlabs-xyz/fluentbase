@@ -13,25 +13,26 @@ use fluentbase_sdk::{
 struct ROUTER;
 
 pub trait RouterAPI {
-    fn deploy<SDK: SharedAPI>(&self);
-    fn greeting(&self, message: String) -> String;
-    fn custom_greeting(&self, message: String) -> String;
+    fn greeting<SDK: SharedAPI>(&self, message: String) -> String;
+    fn custom_greeting<SDK: SharedAPI>(&self, message: String) -> String;
 }
 
 #[router(mode = "solidity")]
 impl RouterAPI for ROUTER {
-    fn deploy<SDK: SharedAPI>(&self) {
-        // any custom deployment logic here
-    }
-
     #[signature("function greeting(string message) external returns (string)")]
-    fn greeting(&self, message: String) -> String {
+    fn greeting<SDK: SharedAPI>(&self, message: String) -> String {
         message
     }
 
     #[signature("customGreeting(string)")]
-    fn custom_greeting(&self, message: String) -> String {
+    fn custom_greeting<SDK: SharedAPI>(&self, message: String) -> String {
         message
+    }
+}
+
+impl ROUTER {
+    fn deploy<SDK: SharedAPI>(&self) {
+        // any custom deployment logic here
     }
 }
 
@@ -40,6 +41,7 @@ basic_entrypoint!(ROUTER);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_sol_types::SolCall;
     use fluentbase_sdk::LowLevelSDK;
     use hex_literal::hex;
 

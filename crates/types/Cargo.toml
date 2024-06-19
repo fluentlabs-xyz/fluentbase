@@ -10,12 +10,19 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+# optional
+serde = { version = "1.0", default-features = false, features = [
+    "derive",
+    "rc",
+], optional = true }
+
 rwasm = { workspace = true, default-features = false, optional = true }
 alloy-primitives = { workspace = true }
 strum_macros = { workspace = true }
 
 [features]
 default = ["std", "rwasm"]
+serde = ["dep:serde"]
 std = [
     "rwasm?/std",
     "alloy-primitives/std",

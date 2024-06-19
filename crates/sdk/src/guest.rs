@@ -330,6 +330,7 @@ impl ContextReader for GuestContextReader {
     impl_reader_func!(fn block_timestamp() -> u64, BlockTimestamp);
     impl_reader_func!(fn block_number() -> u64, BlockNumber);
     impl_reader_func!(fn block_difficulty() -> u64, BlockDifficulty);
+    impl_reader_func!(fn block_prevrandao() -> B256, BlockPrevrandao);
     impl_reader_func!(fn block_gas_limit() -> u64, BlockGasLimit);
     impl_reader_func!(fn block_base_fee() -> U256, BlockBaseFee);
     // tx info
@@ -353,7 +354,7 @@ impl GuestContextReader {
     pub fn contract_input<'a>() -> &'a [u8] {
         let input_size = LowLevelSDK::input_size();
         let input = alloc_slice(input_size as usize);
-        LowLevelSDK::read(input, 0);
+        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
         input
     }
 }

@@ -12,7 +12,6 @@ use revm_interpreter::{
     analysis::to_analysed,
     primitives::Bytecode,
     return_ok,
-    BytecodeLocked,
     Contract,
     InstructionResult,
 };
@@ -61,8 +60,9 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     } else {
         // what if self-transfer amount exceeds our balance?
         if input.value > caller_account.balance {
-            return EvmCallMethodOutput::from_exit_code(ExitCode::InsufficientBalance)
+            let res = EvmCallMethodOutput::from_exit_code(ExitCode::InsufficientBalance)
                 .with_gas(input.gas_limit, 0);
+            return res;
         }
         // write only one account's state since caller equals callee
         am.write_account(&caller_account);
@@ -91,9 +91,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
             am.preimage(&callee_account.source_code_hash),
         )
     };
+    debug_log!(
+        "ecl(_evm_call): source_bytecode: {}",
+        hex::encode(&source_bytecode)
+    );
     // load bytecode and convert it to analysed (we can safely unwrap here)
-    let bytecode =
-        BytecodeLocked::try_from(to_analysed(Bytecode::new_raw(source_bytecode))).unwrap();
+    let bytecode = to_analysed(Bytecode::new_raw(source_bytecode));
 
     // if bytecode is empty then commit result and return empty buffer
     if bytecode.is_empty() {
@@ -105,12 +108,12 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     // initiate contract instance and pass it to interpreter for and EVM transition
     let contract = Contract {
         input: input.input,
-        hash: source_hash,
+        hash: Some(source_hash),
         bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
-        address: cr.contract_address(),
+        target_address: cr.contract_address(),
+        call_value: cr.contract_value(),
         caller: caller_account.address,
-        value: cr.contract_value(),
     };
     let result = exec_evm_bytecode(
         cr,
@@ -130,9 +133,10 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     let exit_code = exit_code_from_evm_error(result.result);
 
     debug_log!(
-        "ecl(_evm_call): return exit_code={} gas_remaining={} gas_refund={}",
+        "ecl(_evm_call): return exit_code={} gas_remaining={} spent={} gas_refund={}",
         exit_code,
         result.gas.remaining(),
+        result.gas.spent(),
         result.gas.refunded()
     );
     EvmCallMethodOutput {

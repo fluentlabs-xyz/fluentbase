@@ -12,7 +12,7 @@ impl GREETING {
     }
     fn main<SDK: SharedAPI>(&self) {
         // write "Hello, World" message into output
-        SDK::write("Hello, World".as_bytes());
+        SDK::write("Hello, World".as_ptr(), 12);
     }
 }
 

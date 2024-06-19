@@ -1,18 +1,30 @@
 use crate::utils::{
+    calculate_keccak256_bytes,
     get_all_methods,
     get_public_methods,
-    parse_function_inputs,
-    rust_name_to_sol,
-    rust_type_to_sol,
+    get_raw_signature,
+    get_signatures,
     sol_call_fn_name,
 };
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{self, parse_macro_input, FnArg, Ident, ImplItemFn, ItemImpl, LitStr};
+use syn::{
+    self,
+    parse_macro_input,
+    FnArg,
+    Ident,
+    ImplItemFn,
+    ItemImpl,
+    ItemTrait,
+    ReturnType,
+    TraitItem,
+    TraitItemFn,
+};
 
 pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemImpl = parse_macro_input!(item as ItemImpl);
     let struct_name = &ast.self_ty;
+    let generics = &ast.generics;
 
     let all_methods = get_all_methods(&ast);
     let public_methods = get_public_methods(&ast);
@@ -36,13 +48,7 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
 
     let expanded = quote! {
         use alloy_sol_types::{sol, SolCall, SolValue};
-        use fluentbase_sdk::{
-            Address,
-            Bytes,
-            U256,
-        };
-
-        impl #struct_name {
+        impl #generics #struct_name  {
             #( #all_methods )*
             #router_impl
         }
@@ -50,70 +56,6 @@ pub fn derive_solidity_router(_attr: TokenStream, item: TokenStream) -> TokenStr
     };
 
     TokenStream::from(expanded)
-}
-
-fn get_signatures(methods: &[&ImplItemFn]) -> proc_macro2::TokenStream {
-    let mut signatures: Vec<proc_macro2::TokenStream> = vec![];
-    for func in methods {
-        let sig: Option<LitStr> = func.attrs.iter().find_map(|attr| {
-            if attr.path().is_ident("signature") {
-                attr.parse_args().ok()
-            } else {
-                None
-            }
-        });
-
-        if let Some(fn_signature) = sig {
-            let signature_value = fn_signature.value();
-            let full_signature = if signature_value.starts_with("function ") {
-                signature_value + "; "
-            } else {
-                let method_name = &func.sig.ident;
-                let sol_method_name = rust_name_to_sol(method_name);
-
-                let inputs = parse_function_inputs(&func.sig.inputs);
-                let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
-                    rust_type_to_sol(ty)
-                } else {
-                    quote! { void }
-                };
-
-                format!(
-                    "function {}({}) external returns ({});",
-                    sol_method_name,
-                    inputs
-                        .into_iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    output.to_string()
-                )
-            };
-
-            let fn_signature = syn::parse_str::<proc_macro2::TokenStream>(&full_signature)
-                .expect("Failed to parse signature");
-            signatures.push(fn_signature);
-        } else {
-            let method_name = &func.sig.ident;
-            let sol_method_name = rust_name_to_sol(method_name);
-
-            let inputs = parse_function_inputs(&func.sig.inputs);
-            let output = if let syn::ReturnType::Type(_, ty) = &func.sig.output {
-                rust_type_to_sol(ty)
-            } else {
-                quote! { void }
-            };
-            // Generate function signature in Solidity syntax
-            signatures.push(quote! {
-                function #sol_method_name(#(#inputs),*) external returns (#output);
-            });
-        }
-    }
-    quote! {
-        sol! {
-            #(#signatures)*
-        }
-    }
 }
 
 fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
@@ -143,9 +85,9 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
                 panic!("input too short, cannot extract selector");
             }
             let mut selector: [u8; 4] = [0; 4];
-            SDK::read(&mut selector, 0);
+            SDK::read(selector.as_mut_ptr(), selector.len() as u32, 0);
             let input = fluentbase_sdk::alloc_slice(input_size as usize);
-            SDK::read(input, 0);
+            SDK::read(input.as_mut_ptr(), input_size, 0);
             match selector {
                 #match_arms
             }
@@ -155,6 +97,7 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
 
 fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     let method_name = &func.sig.ident;
+    let (_impl_generics, type_generics, _where_clause) = func.sig.generics.split_for_impl();
     let method_name_call = sol_call_fn_name(method_name);
     let selector_name = quote! { #method_name_call::SELECTOR };
     let abi_decode = quote! { #method_name_call::abi_decode };
@@ -181,8 +124,8 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
     quote! {
         #selector_name => {
             #args_expr
-            let output = self.#method_name(#(#args),*).abi_encode();
-            SDK::write(&output);
+            let output = self.#method_name::#type_generics(#(#args),*).abi_encode();
+            SDK::write(output.as_ptr(), output.len() as u32);
         }
     }
 }
@@ -196,28 +139,110 @@ fn derive_route_selector_args(
         quote! {
             let #arg = match #abi_decode_fn(&input, true) {
                 Ok(decoded) => decoded.#arg,
-                Err(e) => {
-                    panic!("Failed to decode input {:?}", e);
-                }
+                Err(_) => panic!("failed to decode input"),
             };
         }
-    } else {
+    } else if args.len() > 0 {
         let fields: Vec<proc_macro2::TokenStream> =
             args.iter().map(|arg| quote! { decoded.#arg }).collect();
         quote! {
             let (#(#args),*) = match #abi_decode_fn(&input, true) {
                 Ok(decoded) => (#(#fields),*),
-                Err(e) => {
-                    panic!("Failed to decode input {:?}", e);
-                }
+                Err(_) => panic!("failed to decode input"),
             };
         }
+    } else {
+        quote! {}
     }
+}
+
+pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
+    let items = ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let TraitItem::Fn(func) = item {
+                Some(func)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<&TraitItemFn>>();
+
+    let sdk_crate_name = if std::env::var("CARGO_PKG_NAME").unwrap() == "fluentbase-sdk" {
+        quote! { crate }
+    } else {
+        quote! { fluentbase_sdk }
+    };
+
+    let mut methods = Vec::new();
+    for item in items {
+        let sig = &item.sig;
+        let mut inputs = Vec::new();
+        for arg in sig.inputs.iter() {
+            let arg = match arg {
+                FnArg::Receiver(_) => continue,
+                FnArg::Typed(arg) => &arg.pat,
+            };
+            inputs.push(quote! { #arg });
+        }
+        let outputs = match &sig.output {
+            ReturnType::Default => {
+                quote! {}
+            }
+            ReturnType::Type(_, ty) => {
+                quote! { #ty::abi_decode(&result, false).expect("failed to decode result") }
+            }
+        };
+        let sol_sig = get_raw_signature(item);
+        let sol_sig = calculate_keccak256_bytes(sol_sig.to_string().as_str());
+        let method = quote! {
+            #sig {
+                use alloy_sol_types::{SolValue};
+                let mut input = alloc::vec![0u8; 4];
+                input.copy_from_slice(&[#( #sol_sig, )*]);
+                let input_args = (#( #inputs, )*).abi_encode();
+                input.extend(input_args);
+                let (result, exit_code) = #sdk_crate_name::contracts::call_system_contract(&self.address, &input, self.fuel);
+                if exit_code != 0 {
+                    panic!("call failed with exit code: {}", exit_code)
+                }
+                #outputs
+            }
+        };
+        methods.push(method);
+    }
+
+    let mut ident_name = ast.ident.to_string();
+    if ident_name.ends_with("API") {
+        ident_name = ident_name.trim_end_matches("API").to_string();
+    }
+    let client_name = Ident::new((ident_name + "Client").as_str(), ast.ident.span());
+    let trait_name = &ast.ident;
+
+    let expanded = quote! {
+        #ast
+        struct #client_name {
+            pub address: #sdk_crate_name::Address,
+            pub fuel: u32,
+        }
+        impl #client_name {
+            pub fn new(address: #sdk_crate_name::Address) -> impl #trait_name {
+                Self { address, fuel: u32::MAX }
+            }
+        }
+        impl #trait_name for #client_name {
+            #( #methods )*
+        }
+    };
+
+    TokenStream::from(expanded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::rust_name_to_sol;
     use syn::{parse_quote, Ident, ImplItem};
 
     #[test]

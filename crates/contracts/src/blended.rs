@@ -15,11 +15,11 @@ pub struct BLENDED<'a, CR: ContextReader, AM: AccountManager> {
 }
 
 impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, AM> {
-    fn exec_evm_tx<SDK: SharedAPI>(&self, raw_evm_tx: Bytes) {
+    fn exec_evm_tx(&self, raw_evm_tx: Bytes) {
         todo!("implement evm tx")
     }
 
-    fn exec_svm_tx<SDK: SharedAPI>(&self, raw_svm_tx: Bytes) {
+    fn exec_svm_tx(&self, raw_svm_tx: Bytes) {
         todo!("implement svm tx")
     }
 }

@@ -12,9 +12,9 @@ impl RWASM {
         // any custom deployment logic here
     }
     fn main<SDK: SharedAPI>(&self) {
-        let size = SDK::input_size() as usize;
-        let wasm_binary = alloc_slice(size);
-        SDK::read(wasm_binary, 0);
+        let input_size = SDK::input_size() as usize;
+        let wasm_binary = alloc_slice(input_size);
+        SDK::read(wasm_binary.as_mut_ptr(), input_size as u32, 0);
         let import_linker = create_sovereign_import_linker();
         let rwasm_module =
             RwasmModule::compile(wasm_binary, Some(import_linker)).expect("failed to compile");
@@ -25,7 +25,7 @@ impl RWASM {
             .write_binary(&mut binary_format_writer)
             .expect("failed to encode rWASM");
         assert_eq!(n_bytes, encoded_length, "encoded bytes mismatch");
-        SDK::write(rwasm_bytecode);
+        SDK::write(rwasm_bytecode.as_ptr(), rwasm_bytecode.len() as u32);
     }
 }
 

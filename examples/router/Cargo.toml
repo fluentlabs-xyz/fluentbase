@@ -5,7 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 #fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
-alloy-sol-types = { version = "0.7.4", default-features = false }
+alloy-sol-types = { workspace = true }
 fluentbase-sdk = { workspace = true, default-features = false }
 
 [dev-dependencies]

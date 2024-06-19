@@ -47,12 +47,14 @@ impl<'a, CR: ContextReader, AM: AccountManager> WASM<'a, CR, AM> {
             WASM_CREATE_METHOD_ID => {
                 let input = decode_method_input::<WasmCreateMethodInput>(&input[4..]);
                 let output = _wasm_create(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
+                let output = output.encode_to_vec(0);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             WASM_CALL_METHOD_ID => {
                 let input = decode_method_input::<WasmCallMethodInput>(&input[4..]);
                 let output = _wasm_call(self.cr, self.am, input);
-                SDK::write(&output.encode_to_vec(0));
+                let output = output.encode_to_vec(0);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
             _ => panic!("unknown method: {}", method_id),
         }

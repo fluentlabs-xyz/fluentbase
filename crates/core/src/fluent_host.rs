@@ -1,6 +1,6 @@
 use crate::debug_log;
 use core::mem::take;
-use fluentbase_sdk::{AccountManager, ContextReader};
+use fluentbase_sdk::{AccountManager, Bytes, ContextReader};
 use revm_interpreter::{
     primitives::{
         Address,
@@ -16,6 +16,7 @@ use revm_interpreter::{
         U256,
     },
     Host,
+    LoadAccountResult,
     SStoreResult,
     SelfDestructResult,
 };
@@ -43,7 +44,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, A
                     gas_limit: U256::from(cr.block_gas_limit()),
                     basefee: cr.block_base_fee(),
                     difficulty: U256::from(cr.block_difficulty()),
-                    prevrandao: Some(B256::from(U256::from(cr.block_difficulty()))),
+                    prevrandao: Some(cr.block_prevrandao()),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
@@ -79,9 +80,13 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn load_account(&mut self, address: Address) -> Option<(bool, bool)> {
+    fn load_account(&mut self, address: Address) -> Option<LoadAccountResult> {
         let (account, is_cold) = self.am.unwrap().account(address);
-        Some((is_cold, account.is_not_empty()))
+        // Some((is_cold, account.is_not_empty()))
+        Some(LoadAccountResult {
+            is_cold,
+            is_empty: account.is_empty(),
+        })
     }
 
     #[inline]
@@ -97,10 +102,10 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
+    fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
         let (account, is_cold) = self.am.unwrap().account(address);
         let bytecode = self.am.unwrap().preimage(&account.source_code_hash);
-        Some((Bytecode::new_raw(bytecode), is_cold))
+        Some((bytecode, is_cold))
     }
 
     #[inline]

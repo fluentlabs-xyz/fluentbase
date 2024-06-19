@@ -11,11 +11,11 @@ impl HASHING {
         // any custom deployment logic here
     }
     fn main<SDK: SharedAPI>(&self) {
-        // get size of the input and allocate memory for input
+        // get the size of the input and allocate memory for input
         let input_size = SDK::input_size();
         let input = alloc_slice(input_size as usize);
         // copy input to the allocated memory
-        SDK::read(input, 0);
+        SDK::read(input.as_mut_ptr(), input_size, 0);
         // calculate keccak256 & poseidon hashes
         let mut keccak256_hash: [u8; 32] = [0u8; 32];
         SDK::keccak256(
@@ -30,8 +30,8 @@ impl HASHING {
             poseidon_hash.as_mut_ptr(),
         );
         // write both hashes to output (multiple writes do append)
-        SDK::write(&keccak256_hash);
-        SDK::write(&poseidon_hash);
+        SDK::write(keccak256_hash.as_ptr(), 32);
+        SDK::write(poseidon_hash.as_ptr(), 32);
     }
 }
 

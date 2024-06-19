@@ -14,7 +14,6 @@ byteorder = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
 paste = { workspace = true }
-lol_alloc = { version = "0.4.0" }
 
 [dev-dependencies]
 

@@ -7,7 +7,6 @@ extern crate fluentbase_sdk;
 extern crate paste;
 
 pub use fluentbase_types::ExitCode;
-
 pub mod evm;
 
 pub mod fluent_host;
