@@ -1,4 +1,4 @@
-use crate::utils::{calculate_keccak256_bytes, calculate_keccak256_id, get_all_methods};
+use crate::utils::{calculate_keccak256_id, get_all_methods};
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
@@ -172,15 +172,17 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
             .expect("missing signature attribute");
         let method_sig = quote! { #method_sig };
 
-        let sol_sig = calculate_keccak256_bytes(method_sig.to_string().as_str());
+        let sol_sig = calculate_keccak256_id(method_sig.to_string().as_str());
         let method = quote! {
             #sig {
                 use #codec_crate_name::Encoder;
-                let mut __input = alloc::vec![0u8; 4];
-                __input.copy_from_slice(&[#( #sol_sig, )*]);
-                __input.extend(input.encode_to_vec(0));
+                use #sdk_crate_name::types::CoreInput;
+                let core_input = CoreInput {
+                    method_id: #sol_sig,
+                    method_data: input,
+                }.encode_to_vec(0);
                 let (output, exit_code) =
-                    #sdk_crate_name::contracts::call_system_contract(&self.address, &__input, self.fuel);
+                    #sdk_crate_name::contracts::call_system_contract(&self.address, &core_input, self.fuel);
                 if exit_code != 0 {
                     panic!("system contract call failed with exit code: {}", exit_code);
                 }
