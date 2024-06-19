@@ -14,7 +14,7 @@ fluentbase-types = { workspace = true, default-features = false, features = ["rw
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-codec = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true }
+revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
 revm-precompile = { workspace = true, default-features = false, optional = true }
 revm-primitives = { workspace = true, default-features = false }
 

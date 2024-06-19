@@ -132,7 +132,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
             .with_gas(result.gas.remaining(), result.gas.refunded());
     }
 
-    // write callee changes to database (lets keep rWASM part empty for now since universal loader
+    // write callee changes to a database (lets keep rWASM part empty for now since universal loader
     // is not ready yet)
     let (mut contract_account, _) = am.account(contract_account.address);
     contract_account.update_bytecode(am, &result.output, None, &Bytes::new(), None);

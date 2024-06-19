@@ -255,7 +255,7 @@ impl Account {
         amount: U256,
         salt_hash: Option<(U256, B256)>,
     ) -> Result<(Account, AccountCheckpoint), ExitCode> {
-        // check if caller have enough balance
+        // check if caller has enough balances
         if caller.balance < amount {
             return Err(ExitCode::InsufficientBalance);
         }
@@ -269,7 +269,7 @@ impl Account {
         };
         // load account before checkpoint to keep it warm even in case of revert
         let (mut callee, _) = am.account(callee_address);
-        // create new checkpoint (before loading account)
+        // create new checkpoint (before a loading account)
         let checkpoint = am.checkpoint();
         // make sure there is no creation collision
         let is_empty = callee.is_empty_code_hash() && callee.is_zero_nonce();
