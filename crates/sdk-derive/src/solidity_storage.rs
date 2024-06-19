@@ -117,18 +117,10 @@ fn mapping_impl(
     index: usize,
 ) -> SynResult<proc_macro2::TokenStream> {
     eprintln!(">>>>mapping_impl: {:#?}", mapping.type_mapping);
-    process_mapping(&mapping.type_mapping);
+    let args = process_mapping(&mapping.type_mapping);
+    eprintln!(">>>>args: {:#?}", args);
 
-    // let ty_mapping = &mapping.type_mapping;
-    // let key = &ty_mapping.key;
-    // let value = &ty_mapping.value;
-    // eprintln!("key: {:#?}", key);
-    // eprintln!("value: {:#?}", value);
-    //
     let ident = &mapping.ident;
-    //
-    // let key = &mapping.type_mapping.key;
-    // let value = &mapping.type_mapping.value;
 
     let expanded = quote! {
         struct #ident {
@@ -139,35 +131,65 @@ fn mapping_impl(
             fn new(slot: U256) -> Self {
                 Self { slot: U256::from(#index) }
             }
+            fn key(&self, #(#args),*) -> U256 {
+                U256::from(0)
+            }
         }
     };
     Ok(expanded)
 }
+#[derive(Debug)]
+struct Arg {
+    name: Ident,
+    ty: Ident,
+    is_output: bool,
+}
 
-fn process_mapping(mapping: &TypeMapping) {
-    if let Some(key_name) = &mapping.key_name {
-        println!("Key: {:?}", key_name);
+impl ToTokens for Arg {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let name = &self.name;
+        let ty = &self.ty;
+        tokens.extend(quote! { #name: #ty });
     }
+}
 
-    match &*mapping.key {
-        Type::Custom(custom_key) => {
-            println!("Key type: {:?}", custom_key);
-        }
-        _ => (),
-    }
+fn process_mapping(mapping: &TypeMapping) -> Vec<Arg> {
+    let mut args = Vec::new();
+    let mut current_mapping = mapping;
+    let mut i = 0;
 
-    if let Some(value_name) = &mapping.value_name {
-        println!("Value: {:?}", value_name);
-    }
+    loop {
+        let mut arg = Arg {
+            name: Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site()),
+            ty: Ident::new(
+                &current_mapping.key.to_string(),
+                proc_macro2::Span::call_site(),
+            ),
+            is_output: false,
+        };
+        if let Some(key_name) = &current_mapping.key_name {
+            arg.name = key_name.0.clone(); // Извлечение идентификатора из SolIdent
+        }
+        args.push(arg);
+        i += 1;
 
-    match &*mapping.value {
-        Type::Custom(custom_value) => {
-            println!("Value type: {:?}", custom_value);
+        match &*current_mapping.value {
+            Type::Custom(custom_value) => {
+                // let value_arg = Arg {
+                //     name: Ident::new("output", proc_macro2::Span::call_site()),
+                //     ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
+                //     is_output: true,
+                // };
+                // args.push(value_arg);
+                return args;
+            }
+            Type::Mapping(inner_mapping) => {
+                current_mapping = inner_mapping;
+            }
+            _ => {
+                return args;
+            }
         }
-        Type::Mapping(inner_mapping) => {
-            process_mapping(inner_mapping);
-        }
-        _ => (),
     }
 }
 
@@ -188,4 +210,42 @@ fn array_impl(array: &ExtendedTypeArray, index: usize) -> SynResult<proc_macro2:
         }
     };
     Ok(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_process_mapping_single_level() {
+        let mapping: TypeMapping = parse_quote! {
+            mapping(Address => MyStruct)
+        };
+
+        let args = process_mapping(&mapping);
+
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name.to_string(), "arg0");
+        assert_eq!(args[0].ty.to_string(), "Address");
+    }
+
+    #[test]
+    fn test_process_mapping_nested() {
+        let mapping: TypeMapping = parse_quote! {
+            mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct)))
+        };
+
+        let args = process_mapping(&mapping);
+
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].name.to_string(), "owner");
+        assert_eq!(args[0].ty.to_string(), "Address");
+
+        assert_eq!(args[1].name.to_string(), "users");
+        assert_eq!(args[1].ty.to_string(), "Address");
+
+        assert_eq!(args[2].name.to_string(), "balances");
+        assert_eq!(args[2].ty.to_string(), "Address");
+    }
 }
