@@ -1,20 +1,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(dead_code, unreachable_patterns, unused_macros, unused_imports)]
+#![allow(dead_code)]
 #![warn(unused_crate_dependencies)]
 
 extern crate alloc;
 extern crate core;
 
-mod bytecode;
-pub use bytecode::*;
-mod journal;
-pub use journal::*;
-mod linker;
-pub use linker::*;
 pub mod consts;
+mod journal;
+mod linker;
+mod sdk;
 mod types;
 
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use journal::*;
+pub use linker::*;
+pub use sdk::*;
 pub use types::*;
 
 pub const KECCAK_EMPTY: B256 =

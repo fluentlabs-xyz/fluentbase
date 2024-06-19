@@ -1,12 +1,10 @@
 use crate::debug_log;
 use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
+    types::{EvmCallMethodOutput, WasmCallMethodInput, WasmCallMethodOutput},
     AccountManager,
     ContextReader,
     ContractInput,
-    EvmCallMethodOutput,
-    WasmCallMethodInput,
-    WasmCallMethodOutput,
 };
 use fluentbase_types::{ExitCode, STATE_MAIN, U256};
 
