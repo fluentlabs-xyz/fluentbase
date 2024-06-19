@@ -19,7 +19,6 @@ fluentbase-core = { workspace = true, default-features = false }
 
 [features]
 default = ["std"]
-revm-rwasm = ["fluentbase-core/revm-rwasm"]
 std = [
     "fluentbase-sdk/std",
     "revm-precompile/std",
