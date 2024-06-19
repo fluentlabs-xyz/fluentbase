@@ -1,6 +1,6 @@
 use crate::debug_log;
 use core::mem::take;
-use fluentbase_sdk::{AccountManager, ContextReader};
+use fluentbase_sdk::{AccountManager, Bytes, ContextReader};
 use revm_interpreter::{
     primitives::{
         Address,
@@ -102,10 +102,10 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
     }
 
     #[inline]
-    fn code(&mut self, address: Address) -> Option<(Bytecode, bool)> {
+    fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
         let (account, is_cold) = self.am.unwrap().account(address);
         let bytecode = self.am.unwrap().preimage(&account.source_code_hash);
-        Some((Bytecode::new_raw(bytecode), is_cold))
+        Some((bytecode, is_cold))
     }
 
     #[inline]
