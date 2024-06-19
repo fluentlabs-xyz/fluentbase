@@ -1125,7 +1125,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "paste",
- "revm-interpreter",
+ "revm-interpreter-fluent",
  "revm-precompile",
  "revm-primitives",
  "rwasm",
@@ -1157,7 +1157,7 @@ dependencies = [
  "hex-literal",
  "keccak-hash",
  "paste",
- "revm-interpreter",
+ "revm-interpreter-fluent",
  "rwasm",
  "serde_json",
  "wasmi",
@@ -2324,9 +2324,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
 
 [[package]]
-name = "revm-interpreter"
+name = "revm-interpreter-fluent"
 version = "5.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4f5dfeb72a2530f6896ed1473e9cbde90403c838"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ce928591eb72b6e517f51f6485295343d1028f79"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2335,7 +2335,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "7.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4f5dfeb72a2530f6896ed1473e9cbde90403c838"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ce928591eb72b6e517f51f6485295343d1028f79"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -2351,7 +2351,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#4f5dfeb72a2530f6896ed1473e9cbde90403c838"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#ce928591eb72b6e517f51f6485295343d1028f79"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
