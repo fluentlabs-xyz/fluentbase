@@ -7,19 +7,23 @@ use alloy_sol_types::SolEvent;
 use core::marker::PhantomData;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, Contract},
-    solidity_storage_mapping,
-    AccountManager,
-    Address,
-    Bytes,
-    ContextReader,
-    LowLevelSDK,
-    SharedAPI,
-    B256,
-    U256,
+    contracts::{EvmSloadInput, EvmSloadOutput, EvmSstoreInput, EvmSstoreOutput},
+    derive::{client, router, signature, solidity_storage, Contract},
+    solidity_storage_mapping, AccountManager, Address, Bytes, ContextReader, LowLevelSDK,
+    SharedAPI, B256, U256,
 };
 use hex_literal::hex;
 
+#[client(mode = "codec")]
+pub trait EvmStorageAPI {
+    #[signature("sload(u256)")]
+    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
+
+    #[signature("sstore(u256,u256)")]
+    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
+}
+
+#[client(mode = "solidity")]
 pub trait ERC20API {
     fn name(&self) -> Bytes;
     fn symbol(&self) -> Bytes;
@@ -75,190 +79,109 @@ fn emit_approval_event<AM: AccountManager>(
     am.log(contract_address, data, &topics);
 }
 
-struct FieldStorage<V> {
-    _pd: PhantomData<V>,
-}
-struct MappingStorage<K, V> {
-    _pd0: PhantomData<K>,
-    _pd1: PhantomData<V>,
-}
-struct ArrayStorage<V> {
-    _pd: PhantomData<V>,
+solidity_storage! {
+    mapping(Address => U256) Balances;
+    mapping(Address => mapping(Address => U256)) Allowances;
 }
 
-trait IMappingStorage {
-    fn storage_key(slot: U256, key: U256) -> U256;
-}
+// impl<'a, CR: ContextReader, AM: AccountManager> Balances<'a, CR, AM> {
+//     pub fn key(&self, address: Address) -> U256 {
+//         U256::from_le_slice(
+//             &self.storage_mapping_key(self.get_slot(), address.abi_encode().as_slice()),
+//         )
+//     }
 
-impl<V> FieldStorage<V> {
-    pub fn storage_key(slot: U256) -> U256 {
-        slot
-    }
-}
-impl<K, V> MappingStorage<K, V> {
-    pub fn storage_key(slot: U256, key: U256) -> U256 {
-        let mut raw_storage_key: [u8; 64] = [0; 64];
-        raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
-        raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-        let mut storage_key: [u8; 32] = [0; 32];
-        LowLevelSDK::keccak256(
-            raw_storage_key.as_ptr(),
-            raw_storage_key.len() as u32,
-            storage_key.as_mut_ptr(),
-        );
-        U256::from_be_bytes(storage_key)
-    }
-}
-impl<V> ArrayStorage<V> {
-    pub fn storage_key(slot: U256, index: U256) -> U256 {
-        let mut storage_key: [u8; 32] = [0; 32];
-        LowLevelSDK::keccak256(slot.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
-        let storage_key = U256::from_be_bytes(storage_key);
-        storage_key + index
-    }
-}
+//     pub fn get(&self, address: Address) -> U256 {
+//         let key = self.key(address);
+//         self.read(key)
+//     }
 
-// macro_rules! solidity_storage {
-//     ($typ:ty $name:ident) => {
-//         pub type $name = FieldStorage<$typ>;
-//     };
-//     (mapping($key:ty => mapping($key2:ty => $val:ty)) $name:ident) => {
-//         paste::paste! {
-//             solidity_storage!($key [< $name Key >]);
-//             solidity_storage!($key2 [< $name Key2 >]);
-//             solidity_storage!($val [< $name Value >]);
-//             pub type $name = MappingStorage<
-//                 [< $name Key >],
-//                 MappingStorage<
-//                     [< $name Key2 >],
-//                     [< $name Value >]
-//                 >
-//             >;
+//     pub fn set(&self, address: Address, value: U256) {
+//         let key = self.key(address);
+//         self.write(key, value);
+//     }
+
+//     pub fn add(&self, address: Address, amount: U256) -> Result<(), &'static str> {
+//         let current_balance = self.get(address);
+//         let new_balance = current_balance + amount;
+//         self.set(address, new_balance);
+//         Ok(())
+//     }
+
+//     pub fn subtract(&self, address: Address, amount: U256) -> Result<(), &'static str> {
+//         let current_balance = self.get(address);
+//         if current_balance < amount {
+//             return Err("insufficient balance");
 //         }
-//     };
-//     (mapping($key:ty => $val:ty) $name:ident) => {
-//         paste::paste! {
-//             solidity_storage!($key [< $name Key >]);
-//             solidity_storage!($val [< $name Value >]);
-//             pub type $name = MappingStorage<
-//                 [< $name Key >],
-//                 [< $name Value >]
-//             >;
-//         }
-//     };
+//         let new_balance = current_balance - amount;
+//         self.set(address, new_balance);
+//         Ok(())
+//     }
 // }
-//
-// solidity_storage! {mapping(Address => U256) BalanceStorage}
-// solidity_storage! {mapping(Address => mapping(Address => U256)) AllowanceStorage}
 
-// solidity_storage_mapping! {
-//     mapping(Address => U256) BalanceStorage;
-//     mapping(Address => mapping(Address => Uint256)) AllowancesStorage;
-// };
+// solidity_storage_mapping!(
+//     AllowancesStorage,
+//     hex!("0000000000000000000000000000000000000000000000000000000000000002")
+// );
+// impl<'a, CR: ContextReader, AM: AccountManager> AllowancesStorage<'a, CR, AM> {
+//     pub fn key(&self, owner: Address, spender: Address) -> U256 {
+//         let owner_key = self.storage_mapping_key(self.get_slot(), owner.abi_encode().as_slice());
+//         let spender_key = self.storage_mapping_key(owner_key, spender.abi_encode().as_slice());
+//         U256::from_le_slice(&spender_key)
+//     }
+//     pub fn get(&self, owner: Address, spender: Address) -> U256 {
+//         let key = self.key(owner, spender);
+//         self.read(key)
+//     }
 
-solidity_storage_mapping!(
-    BalancesStorage,
-    hex!("0000000000000000000000000000000000000000000000000000000000000001")
-);
+//     pub fn set(&self, owner: Address, spender: Address, value: U256) {
+//         let key = self.key(owner, spender);
+//         self.write(key, value);
+//     }
 
-impl<'a, CR: ContextReader, AM: AccountManager> BalancesStorage<'a, CR, AM> {
-    pub fn key(&self, address: Address) -> U256 {
-        U256::from_le_slice(
-            &self.storage_mapping_key(self.get_slot(), address.abi_encode().as_slice()),
-        )
-    }
+//     pub fn add(&self, owner: Address, spender: Address, amount: U256) -> Result<(), &'static str> {
+//         let current_allowance = self.get(owner, spender);
+//         let new_allowance = current_allowance + amount;
+//         self.set(owner, spender, new_allowance);
+//         Ok(())
+//     }
 
-    pub fn get(&self, address: Address) -> U256 {
-        let key = self.key(address);
-        self.read(key)
-    }
+//     pub fn subtract(
+//         &self,
+//         owner: Address,
+//         spender: Address,
+//         amount: U256,
+//     ) -> Result<(), &'static str> {
+//         let current_allowance = self.get(owner, spender);
+//         if current_allowance < amount {
+//             return Err("insufficient allowance");
+//         }
+//         let new_allowance = current_allowance - amount;
+//         self.set(owner, spender, new_allowance);
+//         Ok(())
+//     }
+// }
 
-    pub fn set(&self, address: Address, value: U256) {
-        let key = self.key(address);
-        self.write(key, value);
-    }
-
-    pub fn add(&self, address: Address, amount: U256) -> Result<(), &'static str> {
-        let current_balance = self.get(address);
-        let new_balance = current_balance + amount;
-        self.set(address, new_balance);
-        Ok(())
-    }
-
-    pub fn subtract(&self, address: Address, amount: U256) -> Result<(), &'static str> {
-        let current_balance = self.get(address);
-        if current_balance < amount {
-            return Err("insufficient balance");
-        }
-        let new_balance = current_balance - amount;
-        self.set(address, new_balance);
-        Ok(())
-    }
-}
-
-solidity_storage_mapping!(
-    AllowancesStorage,
-    hex!("0000000000000000000000000000000000000000000000000000000000000002")
-);
-impl<'a, CR: ContextReader, AM: AccountManager> AllowancesStorage<'a, CR, AM> {
-    pub fn key(&self, owner: Address, spender: Address) -> U256 {
-        let owner_key = self.storage_mapping_key(self.get_slot(), owner.abi_encode().as_slice());
-        let spender_key = self.storage_mapping_key(owner_key, spender.abi_encode().as_slice());
-        U256::from_le_slice(&spender_key)
-    }
-    pub fn get(&self, owner: Address, spender: Address) -> U256 {
-        let key = self.key(owner, spender);
-        self.read(key)
-    }
-
-    pub fn set(&self, owner: Address, spender: Address, value: U256) {
-        let key = self.key(owner, spender);
-        self.write(key, value);
-    }
-
-    pub fn add(&self, owner: Address, spender: Address, amount: U256) -> Result<(), &'static str> {
-        let current_allowance = self.get(owner, spender);
-        let new_allowance = current_allowance + amount;
-        self.set(owner, spender, new_allowance);
-        Ok(())
-    }
-
-    pub fn subtract(
-        &self,
-        owner: Address,
-        spender: Address,
-        amount: U256,
-    ) -> Result<(), &'static str> {
-        let current_allowance = self.get(owner, spender);
-        if current_allowance < amount {
-            return Err("insufficient allowance");
-        }
-        let new_allowance = current_allowance - amount;
-        self.set(owner, spender, new_allowance);
-        Ok(())
-    }
-}
-
-// #[derive(Contract)]
+#[derive(Contract)]
 struct ERC20<'a, CR: ContextReader, AM: AccountManager> {
     cr: &'a CR,
     am: &'a AM,
-    balances: BalancesStorage<'a, CR, AM>,
-    allowances: AllowancesStorage<'a, CR, AM>,
+    // balances: BalancesStorage<'a, CR, AM>,
+    // allowances: AllowancesStorage<'a, CR, AM>,
 }
 
-impl Default
-    for ERC20<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
-{
-    fn default() -> Self {
-        ERC20 {
-            cr: &fluentbase_sdk::GuestContextReader::DEFAULT,
-            am: &fluentbase_sdk::GuestAccountManager::DEFAULT,
-            balances: BalancesStorage::default(),
-            allowances: AllowancesStorage::default(),
-        }
-    }
-}
+// impl Default
+//     for ERC20<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
+// {
+//     fn default() -> Self {
+//         ERC20 {
+//             cr: &fluentbase_sdk::GuestContextReader::DEFAULT,
+//             am: &fluentbase_sdk::GuestAccountManager::DEFAULT,
+//             // balances: BalancesStorage::default(),
+//             // allowances: AllowancesStorage::default(),
+//         }
+//     }
+// }
 
 #[router(mode = "solidity")]
 impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
@@ -277,7 +200,8 @@ impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
     }
 
     fn balance_of(&self, address: Address) -> U256 {
-        self.balances.get(address)
+        // self.balances.get(address)
+        U256::from(1)
     }
 
     fn transfer(&self, to: Address, value: U256) -> U256 {
@@ -290,44 +214,48 @@ impl<'a, CR: ContextReader, AM: AccountManager> ERC20API for ERC20<'a, CR, AM> {
         } else if to.is_zero() {
             panic!("invalid receiver");
         }
-        self.balances
-            .subtract(from, value)
-            .unwrap_or_else(|err| panic!("{}", err));
-        self.balances
-            .add(to, value)
-            .unwrap_or_else(|err| panic!("{}", err));
+        // TODO: use new storage mapping instead
+        // self.balances
+        //     .subtract(from, value)
+        //     .unwrap_or_else(|err| panic!("{}", err));
+        // self.balances
+        //     .add(to, value)
+        //     .unwrap_or_else(|err| panic!("{}", err));
 
-        emit_transfer_event(self.am, contract_address, from, to, value);
+        // emit_transfer_event(self.am, contract_address, from, to, value);
         U256::from(1)
     }
     fn allowance(&self, owner: Address, spender: Address) -> U256 {
-        self.allowances.get(owner, spender)
+        // self.allowances.get(owner, spender)
+        unimplemented!()
     }
     fn approve(&self, spender: Address, value: U256) -> U256 {
         let owner = self.cr.contract_caller();
-        self.allowances.set(owner, spender, value);
+        unimplemented!();
+        // self.allowances.set(owner, spender, value);
 
-        emit_approval_event(self.am, self.cr.contract_address(), owner, spender, value);
+        // emit_approval_event(self.am, self.cr.contract_address(), owner, spender, value);
         U256::from(1)
     }
 
     fn transfer_from(&self, from: Address, to: Address, value: U256) -> U256 {
         let spender = self.cr.contract_caller();
-        let current_allowance = self.allowances.get(from, spender);
+        unimplemented!();
+        // let current_allowance = self.allowances.get(from, spender);
 
-        if current_allowance < value {
-            panic!("insufficient allowance");
-        }
+        // if current_allowance < value {
+        //     panic!("insufficient allowance");
+        // }
 
-        self.allowances
-            .subtract(from, spender, value)
-            .unwrap_or_else(|err| panic!("{}", err));
-        self.balances
-            .subtract(from, value)
-            .unwrap_or_else(|err| panic!("{}", err));
-        self.balances
-            .add(to, value)
-            .unwrap_or_else(|err| panic!("{}", err));
+        // self.allowances
+        //     .subtract(from, spender, value)
+        //     .unwrap_or_else(|err| panic!("{}", err));
+        // self.balances
+        //     .subtract(from, value)
+        //     .unwrap_or_else(|err| panic!("{}", err));
+        // self.balances
+        //     .add(to, value)
+        //     .unwrap_or_else(|err| panic!("{}", err));
 
         emit_transfer_event(self.am, self.cr.contract_address(), from, to, value);
         U256::from(1)
@@ -338,8 +266,8 @@ impl<'a, CR: ContextReader, AM: AccountManager> ERC20<'a, CR, AM> {
     pub fn deploy<SDK: SharedAPI>(&self) {
         let owner_address = self.cr.contract_caller();
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
-
-        let _ = self.balances.add(owner_address, owner_balance);
+        unimplemented!()
+        // let _ = self.balances.add(owner_address, owner_balance);
     }
 }
 
