@@ -214,12 +214,23 @@ struct WrappedTypeArray {
     pub ident: Ident,
 }
 
-impl WrappedTypeArray {}
+impl WrappedTypeArray {
+    fn expand_array_key_fn() -> proc_macro2::TokenStream {
+        // TODO: d1r1 fix key function for nested arrays [][]
+        quote! {
+            fn key(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+                array_key(Self::SLOT, index)
+            }
+        }
+    }
+}
 
 impl Expandable for WrappedTypeArray {
     fn expand(&self, index: usize) -> SynResult<proc_macro2::TokenStream> {
         let ident = &self.ident;
         let slot = slot_from_index(index);
+
+        let key_fn = WrappedTypeArray::expand_array_key_fn();
 
         let expanded = quote! {
             struct #ident {
@@ -228,6 +239,7 @@ impl Expandable for WrappedTypeArray {
             impl #ident {
                 #slot
 
+                #key_fn
 
             }
         };
@@ -249,6 +261,7 @@ impl Parse for WrappedTypeArray {
     }
 }
 
+// TODO: move it somewhere else
 fn slot_from_index(index: usize) -> proc_macro2::TokenStream {
     quote! {
         const SLOT: fluentbase_sdk::U256 = Self::u256_from_usize(#index);
