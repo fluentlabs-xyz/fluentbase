@@ -3,9 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloy_sol_types::{sol, SolValue};
-use fluentbase_sdk::{LowLevelSDK, derive::solidity_storage, Address, SharedAPI, U256};
-
-
+use fluentbase_sdk::{derive::solidity_storage, Address, LowLevelSDK, SharedAPI, U256};
 
 solidity_storage! {
     U256[][] Arr;
@@ -43,7 +41,27 @@ pub fn field_key(slot: U256) -> U256 {
     slot
 }
 
+// Trait for saving data to storage:
+pub trait Mapping {
+    fn get(&self, key: fluentbase_sdk::U256) -> Self;
+    fn set(&self, key: fluentbase_sdk::U256, value: Self);
+}
 
+pub trait Array {
+    fn get(&self, index: fluentbase_sdk::U256) -> Self;
+    fn set(&self, index: fluentbase_sdk::U256, value: Self);
+    fn length(&self) -> fluentbase_sdk::U256;
+}
+
+pub trait DynamicArray: Array {
+    fn push(&self, value: Self);
+    fn pop(&self) -> Self;
+}
+
+pub trait Field {
+    fn get(&self) -> Self;
+    fn set(&self, value: Self);
+}
 
 #[cfg(test)]
 mod tests {
@@ -56,15 +74,17 @@ mod tests {
         let spender = Address::default();
         let _amount = U256::from(100);
 
-        let allowance_storage = AllowanceStorage{};
+        let allowance_storage = AllowanceStorage {};
         print!("{:?}", AllowanceStorage::SLOT);
 
         let key = allowance_storage.key(owner, spender);
         println!("{:?}", key);
 
-        let expected_key = U256::from_str_radix("45674214084458039979679588399856379396083966111810618268439781217138252554320",10)
+        let expected_key = U256::from_str_radix(
+            "45674214084458039979679588399856379396083966111810618268439781217138252554320",
+            10,
+        )
         .expect("failed to parse U256 from string");
-    assert_eq!(key, expected_key);
-
+        assert_eq!(key, expected_key);
     }
 }
