@@ -1,11 +1,23 @@
 use crate::utils::{
-    calculate_keccak256_bytes, get_all_methods, get_public_methods, get_raw_signature,
-    get_signatures, sol_call_fn_name,
+    calculate_keccak256_bytes,
+    get_all_methods,
+    get_public_methods,
+    get_raw_signature,
+    get_signatures,
+    sol_call_fn_name,
 };
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    self, parse_macro_input, FnArg, Ident, ImplItemFn, ItemImpl, ItemTrait, ReturnType, TraitItem,
+    self,
+    parse_macro_input,
+    FnArg,
+    Ident,
+    ImplItemFn,
+    ItemImpl,
+    ItemTrait,
+    ReturnType,
+    TraitItem,
     TraitItemFn,
 };
 
@@ -121,7 +133,7 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
         #selector_name => {
             #args_expr
             let output = self.#method_name #generics(#(#args),*).abi_encode();
-            SDK::write(&output);
+            SDK::write(output.as_ptr(), output.len() as u32);
         }
     }
 }
@@ -326,7 +338,7 @@ mod tests {
                     }
                 };
                 let output = self.greet(msg).abi_encode();
-                SDK::write(&output);
+                SDK::write(output.as_ptr(), output.len() as u32);
             }
         };
 
