@@ -31,14 +31,13 @@ checksum = "5c6cb57a04249c6480766f7f7cef5467412af1490f8d1e243141daddada3264f"
 
 [[package]]
 name = "alloy-genesis"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e10a047066076b32d52b3228e95a4f7793db7a204f648aa1a1ea675085bffd8"
+checksum = "894f33a7822abb018db56b10ab90398e63273ce1b5a33282afd186c132d764a6"
 dependencies = [
  "alloy-primitives",
  "alloy-serde",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -75,9 +74,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-serde"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c224916316519558d8c2b6a60dc7626688c08f1b8951774702562dbcb8666ee"
+checksum = "d94da1c0c4e27cc344b05626fe22a89dc6b8b531b9475f3b7691dbf6913e4109"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -2326,7 +2325,7 @@ checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
 [[package]]
 name = "revm-interpreter-fluent"
 version = "5.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#820faf7e15edcb88b1b98a84bb72f751b793e99e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#8b81e3734683380b909e5efdc7aee9665ab5aff4"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -2335,7 +2334,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "7.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#820faf7e15edcb88b1b98a84bb72f751b793e99e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#8b81e3734683380b909e5efdc7aee9665ab5aff4"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -2351,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#820faf7e15edcb88b1b98a84bb72f751b793e99e"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#8b81e3734683380b909e5efdc7aee9665ab5aff4"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -2886,9 +2885,9 @@ dependencies = [
 
 [[package]]
 name = "subtle"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
+checksum = "0d0208408ba0c3df17ed26eb06992cb1a1268d41b2c0e12e65203fbe3972cee5"
 
 [[package]]
 name = "syn"
