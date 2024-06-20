@@ -15,7 +15,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
 revm-precompile = { workspace = true, default-features = false }
+revm = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false }
+
+zeth-primitives = { workspace = true }
+alloy-rlp = { workspace = true }
 
 [features]
 default = ["std"]
