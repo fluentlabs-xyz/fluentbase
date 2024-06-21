@@ -23,7 +23,7 @@ mod all_tests {
         ts::{ts_get, ts_set},
     };
     use alloc::vec;
-    use fluentbase_sdk::{evm::U256, LowLevelSDK};
+    use fluentbase_sdk::{LowLevelSDK, U256};
     use log::debug;
 
     extern crate fluentbase_sdk;

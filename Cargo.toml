@@ -3,13 +3,13 @@ members = [
     "bin",
     "crates/*",
     "crates/genesis/bin",
+    "crates/evm/evm-snippets",
     "examples/*",
     "e2e",
 ]
 exclude = [
-    "crates/evm",
-    "crates/evm/evm-rwasm",
-    "crates/evm/evm-snippets",
+    #    "crates/evm/evm-rwasm",
+    #    "crates/evm/evm-snippets",
     "examples/node_modules",
 ]
 resolver = "2"

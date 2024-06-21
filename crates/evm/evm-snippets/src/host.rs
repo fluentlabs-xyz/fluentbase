@@ -4,15 +4,12 @@ use crate::{
         stack_peek_u256,
         stack_pop_u256,
         stack_push_u256,
-        u256_one,
         u256_zero,
         SP_BASE_MEM_OFFSET_DEFAULT,
     },
-    consts::{GAS_LIMIT_HARDCODED, U256_BYTES_COUNT},
+    consts::U256_BYTES_COUNT,
 };
 use core::slice;
-use fluentbase_core::ExitCode;
-use fluentbase_sdk::{LowLevelAPI, LowLevelSDK};
 
 #[cfg(feature = "host_balance")]
 mod balance;
@@ -142,19 +139,19 @@ pub fn host_call_impl_v2<const IS_DELEGATE: bool, const IS_STATIC: bool>() {
     let ret_offset = u256_be_to_u64tuple_le(ret_offset);
     let ret_size = u256_be_to_u64tuple_le(ret_size);
 
-    let exit_code = fluentbase_core::evm::call::_evm_call(
-        fuel,
-        address[U256_BYTES_COUNT as usize - 20..].as_ptr(),
-        value.as_ptr(),
-        args_offset.0 as *const u8,
-        args_size.0 as u32,
-        ret_offset.0 as *mut u8,
-        ret_size.0 as u32,
-    );
-    if exit_code == ExitCode::Ok {
-        stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, u256_one());
-        return;
-    }
+    // let exit_code = fluentbase_core::evm::call::_evm_call(
+    //     fuel,
+    //     address[U256_BYTES_COUNT as usize - 20..].as_ptr(),
+    //     value.as_ptr(),
+    //     args_offset.0 as *const u8,
+    //     args_size.0 as u32,
+    //     ret_offset.0 as *mut u8,
+    //     ret_size.0 as u32,
+    // );
+    // if exit_code == ExitCode::Ok {
+    //     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, u256_one());
+    //     return;
+    // }
     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, u256_zero());
 }
 
@@ -235,28 +232,28 @@ pub fn host_create_impl_v2<const IS_CREATE2: bool>() {
     let deployed_contract_address20_out =
         unsafe { slice::from_raw_parts_mut(deployed_contract_address20_out_offset as *mut u8, 20) };
 
-    let exit_code = if IS_CREATE2 {
-        fluentbase_core::evm::create2::_evm_create2(
-            value.as_ptr(),
-            init_bytecode_offset as *const u8,
-            init_bytecode_size as u32,
-            salt.0 as *const u8,
-            deployed_contract_address20_out.as_mut_ptr(),
-            GAS_LIMIT_HARDCODED,
-        )
-    } else {
-        fluentbase_core::evm::create::_evm_create(
-            value.as_ptr(),
-            init_bytecode_offset as *const u8,
-            init_bytecode_size as u32,
-            deployed_contract_address20_out.as_mut_ptr(),
-            GAS_LIMIT_HARDCODED,
-        )
-    };
-    if !exit_code.is_ok() {
-        stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, [0u8; U256_BYTES_COUNT as usize]);
-        return;
-    }
+    // let exit_code = if IS_CREATE2 {
+    //     fluentbase_core::evm::create2::_evm_create2(
+    //         value.as_ptr(),
+    //         init_bytecode_offset as *const u8,
+    //         init_bytecode_size as u32,
+    //         salt.0 as *const u8,
+    //         deployed_contract_address20_out.as_mut_ptr(),
+    //         GAS_LIMIT_HARDCODED,
+    //     )
+    // } else {
+    //     fluentbase_core::evm::create::_evm_create(
+    //         value.as_ptr(),
+    //         init_bytecode_offset as *const u8,
+    //         init_bytecode_size as u32,
+    //         deployed_contract_address20_out.as_mut_ptr(),
+    //         GAS_LIMIT_HARDCODED,
+    //     )
+    // };
+    // if !exit_code.is_ok() {
+    //     stack_push_u256(SP_BASE_MEM_OFFSET_DEFAULT, [0u8; U256_BYTES_COUNT as usize]);
+    //     return;
+    // }
     stack_push_u256(
         SP_BASE_MEM_OFFSET_DEFAULT,
         u256_from_be_slice(deployed_contract_address20_out),
@@ -276,35 +273,35 @@ pub fn host_log<const TOPIC_COUNT: usize>() {
 
     let data = unsafe { slice::from_raw_parts(offset.0 as *const u8, size.0 as usize) };
 
-    match TOPIC_COUNT {
-        0 => {
-            LowLevelSDK::statedb_emit_log(&[], data);
-        }
-        1 => LowLevelSDK::statedb_emit_log(&[stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT)], data),
-        2 => LowLevelSDK::statedb_emit_log(
-            &[
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-            ],
-            data,
-        ),
-        3 => LowLevelSDK::statedb_emit_log(
-            &[
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-            ],
-            data,
-        ),
-        4 => LowLevelSDK::statedb_emit_log(
-            &[
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-                stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
-            ],
-            data,
-        ),
-        _ => {}
-    };
+    // match TOPIC_COUNT {
+    //     0 => {
+    //         LowLevelSDK::statedb_emit_log(&[], data);
+    //     }
+    //     1 => LowLevelSDK::statedb_emit_log(&[stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT)], data),
+    //     2 => LowLevelSDK::statedb_emit_log(
+    //         &[
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //         ],
+    //         data,
+    //     ),
+    //     3 => LowLevelSDK::statedb_emit_log(
+    //         &[
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //         ],
+    //         data,
+    //     ),
+    //     4 => LowLevelSDK::emit_log(
+    //         &[
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //             stack_pop_u256(SP_BASE_MEM_OFFSET_DEFAULT),
+    //         ],
+    //         data,
+    //     ),
+    //     _ => {}
+    // };
 }

@@ -1,11 +1,5 @@
 use crate::{
-    common_sp::{
-        stack_peek_u256,
-        stack_pop_u256,
-        stack_push_u256,
-        stack_write_u256,
-        SP_BASE_MEM_OFFSET_DEFAULT,
-    },
+    common_sp::{stack_peek_u256, stack_push_u256, stack_write_u256, SP_BASE_MEM_OFFSET_DEFAULT},
     consts::{
         BYTE_MAX_VAL,
         U256_BYTES_COUNT,
@@ -285,6 +279,7 @@ pub(crate) fn try_divide_close_numbers(
     res
 }
 
+#[inline(always)]
 pub(crate) fn add(a: U256AsU64TupleLE, b: U256AsU64TupleLE) -> U256AsU64TupleLE {
     let mut a_part: u64 = 0;
     let mut b_part: u64 = 0;
@@ -924,6 +919,7 @@ pub(crate) fn convert_sign_le(v: U256AsU64TupleLE) -> U256AsU64TupleLE {
     r
 }
 
+#[inline(always)]
 pub(crate) fn u256_be_to_u64tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U256AsU64TupleLE {
     let mut r = (0, 0, 0, 0);
     let mut v = [0u8; 8];
@@ -939,6 +935,7 @@ pub(crate) fn u256_be_to_u64tuple_le(val: [u8; U256_BYTES_COUNT as usize]) -> U2
     r
 }
 
+#[inline(always)]
 pub(crate) fn u256_u64tuple_le_to_be(val: U256AsU64TupleLE) -> [u8; U256_BYTES_COUNT as usize] {
     let mut r = [0u8; U256_BYTES_COUNT as usize];
     r[0..8].copy_from_slice(&val.3.to_be_bytes());

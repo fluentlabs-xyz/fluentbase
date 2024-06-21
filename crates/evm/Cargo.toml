@@ -10,3 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-sdk = { workspace = true }
+rwasm = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std",
+    "rwasm/std"
+]

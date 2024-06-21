@@ -12,8 +12,10 @@ host_create host_create2 host_extcodesize host_extcodecopy host_extcodehash host
 control_return control_revert control_pc
 
 .PHONY: all
-all: solid_file
+all: $(FILES)
 
+CUR_DIR="$(shell pwd)"
+OUT_DIR="${CUR_DIR}/bin"
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 CODE_SNIPPETS_PROJECT_NAME=fluentbase_rwasm_code_snippets
@@ -22,20 +24,32 @@ CODE_SNIPPETS_PROJECT_NAME=fluentbase_rwasm_code_snippets
 $(FILES):
 	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
 	mkdir -p bin
-	wasm2wat ../../target/${TARGET}/${PROFILE}/${CODE_SNIPPETS_PROJECT_NAME}.wasm > ./bin/$@.wat
+	cp ../../../target/${TARGET}/${PROFILE}/${CODE_SNIPPETS_PROJECT_NAME}.wasm ./bin/$@.wasm
+	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
 	du -sh ./bin/$@.wat
+	cd ../../../bin; $(MAKE) custom_file FILE_IN="$(OUT_DIR)/$@.wasm" FILE_OUT="$(OUT_DIR)/$@.rwasm"
 
-.PHONY: solid_file
-solid_file:
-	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}"
-	mkdir -p bin
-	wasm2wat ../../target/${TARGET}/${PROFILE}/${CODE_SNIPPETS_PROJECT_NAME}.wasm > ./bin/$@.wat
-	(cd ../../bin; make $@)
+#.PHONY: $(FILES)
+#$(FILES):
+#	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --profile ${PROFILE} --target=${TARGET} --features=$@
+#	clang stack.s -c --target=wasm32-unknown-unknown
+#	mkdir -p bin
+#	wasm-ld --allow-undefined --no-entry --export=$@ --export=__heap_base --export=__heap_end --stack-first --initial-memory=1048576 ../../../target/${TARGET}/${PROFILE}/libfluentbase_rwasm_code_snippets.a ./stack.o -o ./bin/$@.wasm
+#	wasm2wat ./bin/$@.wasm > ./bin/$@.wat
+#	cd ../../../bin; $(MAKE) custom_file FILE_IN="$(OUT_DIR)/$@.wasm" FILE_OUT="$(OUT_DIR)/$@.rwasm"
+#	rm stack.o
 
-.PHONY: with_rwasm_translation
-with_rwasm_translation:
-	make $(FILE)
-	(cd ../../bin; make $(FILE) ENTRY_FN_NAME=$(ENTRY_FN_NAME) OPTIONS="--print-bytes")
+#.PHONY: solid_file
+#solid_file:
+#	RUSTFLAGS='-C target-feature=+bulk-memory' cargo b --profile ${PROFILE} --target=${TARGET} --features="${FILES}"
+#	mkdir -p bin
+#	wasm2wat ../../target/${TARGET}/${PROFILE}/${CODE_SNIPPETS_PROJECT_NAME}.wasm > ./bin/$@.wat
+#	(cd ../../bin; make $@)
+#
+#.PHONY: with_rwasm_translation
+#with_rwasm_translation:
+#	make $(FILE)
+#	(cd ../../bin; make $(FILE) ENTRY_FN_NAME=$(ENTRY_FN_NAME) OPTIONS="--print-bytes")
 
 .PHONY: clean
 clean:

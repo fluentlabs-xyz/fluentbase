@@ -1,5 +1,5 @@
 use core::cell::OnceCell;
-use fluentbase_sdk::evm::U256;
+use fluentbase_sdk::U256;
 use hashbrown::HashMap;
 
 static mut TS: OnceCell<HashMap<U256, U256>> = OnceCell::new();

@@ -1,6 +1,6 @@
 use crate::{
     common_sp::{stack_pop_u256, stack_push_u256, SP_BASE_MEM_OFFSET_DEFAULT},
-    consts::{U256_BYTES_COUNT, U64_MSBIT_IS_1, U8_MSBIT_IS_1},
+    consts::{U256_BYTES_COUNT, U8_MSBIT_IS_1},
 };
 
 #[no_mangle]
