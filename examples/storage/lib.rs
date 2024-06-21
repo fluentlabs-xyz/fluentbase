@@ -3,19 +3,27 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use alloy_sol_types::{sol, SolValue};
-use fluentbase_sdk::{derive::solidity_storage, Address, LowLevelSDK, SharedAPI, U256};
+use fluentbase_sdk::{
+    contracts::{EvmSloadInput, EvmSloadOutput, EvmSstoreInput, EvmSstoreOutput},
+    derive::{client, signature, solidity_storage},
+    Address, LowLevelSDK, SharedAPI, U256,
+};
+
+#[client(mode = "codec")]
+pub trait EvmStorageAPI {
+    #[signature("sload(u256)")]
+    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
+
+    #[signature("sstore(u256,u256)")]
+    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
+}
 
 solidity_storage! {
-    U256[][] Arr;
-    mapping(Address => mapping(Address => U256)) AllowanceStorage;
-    mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct))) BalancesStorage;
+    mapping(Address => U256) BalancesStorage<EvmStorageAPI>;
+    mapping(Address => mapping(Address => U256)) AllowanceStorage<EvmStorageAPI>;
 }
-
-sol! {
-    contract HelloWorld {
-        U256[] arr;
-    }
-}
+// U256[][] Arr;
+// mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct))) BalancesStorage;
 
 pub fn mapping_key(slot: U256, key: U256) -> U256 {
     let mut raw_storage_key: [u8; 64] = [0; 64];
@@ -66,16 +74,16 @@ pub trait Field {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::U256;
+    use fluentbase_sdk::{contracts::PRECOMPILE_EVM, U256};
 
     #[test]
     fn test_mapping_storage() {
         let owner = Address::default();
         let spender = Address::default();
         let _amount = U256::from(100);
+        let client = EvmStorageClient::new(PRECOMPILE_EVM);
 
-        let allowance_storage = AllowanceStorage {};
-        print!("{:?}", AllowanceStorage::SLOT);
+        let allowance_storage = AllowanceStorage::new(Box::new(client));
 
         let key = allowance_storage.key(owner, spender);
         println!("{:?}", key);
@@ -86,5 +94,11 @@ mod tests {
         )
         .expect("failed to parse U256 from string");
         assert_eq!(key, expected_key);
+
+        let value = U256::from(100);
+
+        allowance_storage.set(owner, spender, value);
+        let stored_value = allowance_storage.get(owner, spender);
+        assert_eq!(stored_value, value);
     }
 }
