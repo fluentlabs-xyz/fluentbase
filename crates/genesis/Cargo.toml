@@ -19,8 +19,8 @@ fluentbase-sdk = { workspace = true, default-features = false }
 clap = { version = "4.4.11", features = ["derive"] }
 serde = { workspace = true, default-features = false, features = [] }
 serde_json = { version = "1.0.114" }
-alloy-genesis = { workspace = true }
-revm-primitives = { workspace = true }
+alloy-genesis = { workspace = true, default-features = false }
+revm-primitives = { workspace = true, default-features = false }
 
 byteorder = { workspace = true }
 bytes = { workspace = true }
