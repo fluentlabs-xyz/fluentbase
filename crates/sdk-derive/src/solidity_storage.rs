@@ -7,6 +7,7 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     token::Semi,
+    Path,
     Result as SynResult,
 };
 use syn_solidity::{Type, TypeArray, TypeMapping};
@@ -89,6 +90,7 @@ impl Expandable for StorageItem {
 struct WrappedTypeMapping {
     pub type_mapping: TypeMapping,
     pub ident: Ident,
+    pub client: Path,
 }
 
 impl WrappedTypeMapping {
@@ -132,11 +134,11 @@ impl WrappedTypeMapping {
             }
         }
     }
-    fn expand_key_fn(args: &[Arg]) -> proc_macro2::TokenStream {
-        let mut arg_tokens = proc_macro2::TokenStream::new();
-        for arg in args {
-            arg_tokens.extend(quote! { #arg, });
-        }
+    fn expand_funcs(args: &[Arg]) -> proc_macro2::TokenStream {
+        let arg_tokens = args.iter().map(|arg| quote! { #arg }).collect::<Vec<_>>();
+        let arg_tokens = quote! {
+            #( #arg_tokens ),*
+        };
 
         let arg_names: Vec<_> = args.iter().map(|arg| &arg.name).collect();
         let arg_len = arg_names.len();
@@ -144,14 +146,29 @@ impl WrappedTypeMapping {
             fn calculate_keys(&self, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
                 let mut key = slot;
                 for arg in args {
-                    key = mapping_key(key, arg);
+                    key = self.mapping_key(key, arg);
                 }
                 key
             }
         };
 
-        quote! {
-            fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+        let mapping_key_fn = quote! {
+            fn mapping_key(&self, slot: fluentbase_sdk::U256, key: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+                let mut raw_storage_key: [u8; 64] = [0; 64];
+                raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
+                raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
+                let mut storage_key: [u8; 32] = [0; 32];
+                LowLevelSDK::keccak256(
+                    raw_storage_key.as_ptr(),
+                    raw_storage_key.len() as u32,
+                    storage_key.as_mut_ptr(),
+                );
+                fluentbase_sdk::U256::from_be_bytes(storage_key)
+            }
+        };
+
+        let key_fn = quote! {
+          fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
                 let args = [
                     #(
                         fluentbase_sdk::U256::from_be_bytes({
@@ -165,9 +182,30 @@ impl WrappedTypeMapping {
 
                  self.calculate_keys(Self::SLOT, args)
             }
+        };
 
+        let get_fn = quote! {
+            fn get(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+                let key = self.key(#(#arg_names),*);
+                let input = EvmSloadInput { index: key };
+                let output = self.client.sload(input);
+                output.value
+            }
+        };
+        let set_fn = quote! {
+            fn set(&self, #arg_tokens, value: fluentbase_sdk::U256) {
+                let key = self.key(#(#arg_names),*);
+                let input = EvmSstoreInput { index: key, value };
+                self.client.sstore(input);
+            }
+        };
+
+        quote! {
+            #key_fn
             #calculate_keys_fn
-
+            #mapping_key_fn
+            #get_fn
+            #set_fn
         }
     }
 }
@@ -176,14 +214,19 @@ impl Parse for WrappedTypeMapping {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let type_mapping: TypeMapping = input
             .parse()
-            .unwrap_or_else(|err| abort!(err.span(), err.to_string()));
+            .unwrap_or_else(|err| abort!(err.span(), "type mapping expected"));
         let ident: Ident = input
             .parse()
-            .unwrap_or_else(|err| abort!(err.span(), err.to_string()));
+            .unwrap_or_else(|err| abort!(err.span(), "ident expected"));
+
+        input.parse::<syn::token::Lt>()?;
+        let client: Path = input.parse()?;
+        input.parse::<syn::token::Gt>()?;
 
         Ok(Self {
             type_mapping,
             ident,
+            client,
         })
     }
 }
@@ -193,15 +236,26 @@ impl Expandable for WrappedTypeMapping {
         let args = WrappedTypeMapping::parse_args(&self.type_mapping);
 
         let slot = slot_from_index(slot);
-        let key_fn = WrappedTypeMapping::expand_key_fn(&args);
+        let funcs = WrappedTypeMapping::expand_funcs(&args);
         let ident = &self.ident;
+        let client_trait = &self.client;
+
+        let new_fn = quote! {
+            pub fn new(client: Box<dyn #client_trait>) -> Self {
+                Self { client }
+            }
+        };
 
         let expanded = quote! {
-            struct #ident {}
-            impl #ident {
+            struct #ident
+            {
+                client: Box<dyn #client_trait>,
+            }
+            impl #ident
+            {
                 #slot
-
-                #key_fn
+                #new_fn
+                #funcs
             }
         };
         Ok(expanded)
