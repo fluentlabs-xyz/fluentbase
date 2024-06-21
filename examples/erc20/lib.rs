@@ -82,6 +82,8 @@ pub trait EvmStorageAPI {
     fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
 }
 
+// TODO хранить просто указать на EvmStorageClient;
+
 solidity_storage! {
     mapping(Address => U256) Balances<EvmStorageAPI>;
     mapping(Address => mapping(Address => U256)) Allowances<EvmStorageAPI>;
