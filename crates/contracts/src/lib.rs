@@ -4,6 +4,8 @@
 mod blended;
 #[cfg(feature = "evm")]
 mod evm;
+#[cfg(feature = "loader")]
+mod loader;
 #[cfg(any(
     feature = "blake2",
     feature = "sha256",

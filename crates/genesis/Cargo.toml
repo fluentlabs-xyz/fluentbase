@@ -13,9 +13,8 @@ categories.workspace = true
 crate-type = ["cdylib", "rlib", "staticlib"]
 
 [dependencies]
-fluentbase-core = { workspace = true, default-features = false }
 fluentbase-poseidon = { workspace = true, default-features = false }
-fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
 clap = { version = "4.4.11", features = ["derive"] }
 serde = { workspace = true, default-features = false, features = [] }
 serde_json = { version = "1.0.114" }
@@ -30,6 +29,5 @@ hex = "0.4.3"
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std",
-    "fluentbase-core/std",
+    "fluentbase-types/std",
 ]
