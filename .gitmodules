@@ -1,0 +1,3 @@
+[submodule "revm"]
+	path = revm
+	url = git@github.com:fluentlabs-xyz/revm-rwasm.git
