@@ -2,6 +2,7 @@
 members = [
     "bin",
     "crates/*",
+    "revm/crates/*",
     "crates/genesis/bin",
     "examples/*",
     "e2e",
@@ -52,10 +53,10 @@ hashbrown = { version = "0.14" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
-revm-interpreter = { package = "revm-interpreter-fluent", git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-revm-primitives = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", default-features = false, features = ["rwasm"] }
-revm = { package = "revm-fluent", git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", default-features = false, branch = "devel", features = [
+revm-interpreter = { package = "revm-interpreter-fluent", path = "revm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
+revm-primitives = { path = "revm/crates/primitives", default-features = false, features = ["rwasm"] }
+revm-precompile = { path = "revm/crates/precompile", default-features = false, features = ["rwasm"] }
+revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-features = false, features = [
     "hashbrown",
     "blst",
     "rwasm",
