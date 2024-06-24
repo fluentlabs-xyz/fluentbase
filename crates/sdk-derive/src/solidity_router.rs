@@ -230,7 +230,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
 
     let expanded = quote! {
         #ast
-        struct #client_name {
+        pub struct #client_name {
             pub address: #sdk_crate_name::Address,
             pub fuel: u32,
         }

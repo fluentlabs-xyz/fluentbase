@@ -19,7 +19,7 @@ fluentbase-core = { workspace = true }
 
 [dev-dependencies]
 wat = "1.0.77"
-ethereum-types = "0.14.1"
+ethereum-types = { version = "0.14.1" }
 log = "0.4.20"
 ctor = "0.2.5"
 env_logger = "0.10.1"

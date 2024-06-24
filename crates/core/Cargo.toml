@@ -18,7 +18,7 @@ revm-interpreter = { workspace = true, default-features = false, features = ["rw
 revm-precompile = { workspace = true, default-features = false, optional = true }
 revm-primitives = { workspace = true, default-features = false }
 
-byteorder = { workspace = true }
+byteorder = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
 paste = { workspace = true }
