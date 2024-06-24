@@ -1,6 +1,6 @@
 use crate::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_sdk::{address, b256, contracts::PRECOMPILE_EVM, Address, Bytes, B256, U256};
+use fluentbase_types::{address, b256, contracts::PRECOMPILE_EVM, Address, Bytes, B256, U256};
 use revm_primitives::keccak256;
 use std::collections::BTreeMap;
 
@@ -46,6 +46,11 @@ pub const KECCAK_HASH_KEY: B256 =
 
 pub fn devnet_genesis_from_file() -> Genesis {
     let json_file = include_str!("../assets/genesis-devnet.json");
+    serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
+}
+
+pub fn devnet_genesis_v0_1_0_dev1_from_file() -> Genesis {
+    let json_file = include_str!("../assets/genesis-devnet-v0.1.0-dev.1.json");
     serde_json::from_str::<Genesis>(json_file).expect("failed to parse genesis json file")
 }
 

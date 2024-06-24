@@ -1,5 +1,5 @@
 pub use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
-use fluentbase_sdk::{address, Address};
+use fluentbase_types::{address, Address};
 
 pub mod devnet;
 

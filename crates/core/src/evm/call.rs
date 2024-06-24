@@ -33,7 +33,7 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     let (mut caller_account, _) = am.account(cr.contract_caller());
     let (mut callee_account, _) = am.account(cr.contract_address());
 
-    // create new checkpoint position in the journal
+    // create a new checkpoint position in the journal
     let checkpoint = am.checkpoint();
 
     // transfer funds from caller to callee

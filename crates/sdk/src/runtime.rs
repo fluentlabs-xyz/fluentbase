@@ -1,5 +1,13 @@
-use crate::LowLevelSDK;
+use crate::{
+    Account,
+    LowLevelSDK,
+    JZKT_ACCOUNT_COMPRESSION_FLAGS,
+    JZKT_ACCOUNT_FIELDS_COUNT,
+    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+};
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_genesis::devnet::{devnet_genesis, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
@@ -43,6 +51,8 @@ use fluentbase_types::{
     SharedAPI,
     SovereignAPI,
     B256,
+    KECCAK_EMPTY,
+    POSEIDON_EMPTY,
 };
 use std::ptr;
 
@@ -369,5 +379,59 @@ impl LowLevelSDK {
 
     pub fn with_default_jzkt() -> DefaultEmptyRuntimeDatabase {
         with_context_mut(|ctx| ctx.jzkt().clone())
+    }
+
+    pub fn init_with_devnet_genesis() {
+        let devnet_genesis = devnet_genesis();
+        for (address, account) in devnet_genesis.alloc.iter() {
+            let source_code_hash = account
+                .storage
+                .as_ref()
+                .and_then(|storage| storage.get(&KECCAK_HASH_KEY))
+                .cloned()
+                .unwrap_or(KECCAK_EMPTY);
+            let rwasm_code_hash = account
+                .storage
+                .as_ref()
+                .and_then(|storage| storage.get(&POSEIDON_HASH_KEY))
+                .cloned()
+                .unwrap_or(POSEIDON_EMPTY);
+            let mut account2 = Account::new(*address);
+            account2.balance = account.balance;
+            account2.nonce = account.nonce.unwrap_or_default();
+            account2.source_code_size = account
+                .code
+                .as_ref()
+                .map(|v| v.len() as u64)
+                .unwrap_or_default();
+            account2.source_code_hash = source_code_hash;
+            account2.rwasm_code_size = account
+                .code
+                .as_ref()
+                .map(|v| v.len() as u64)
+                .unwrap_or_default();
+            account2.rwasm_code_hash = rwasm_code_hash;
+            let fields = account2.get_fields();
+            let address32 = address.into_word();
+            Self::update_leaf(
+                address32.as_ptr(),
+                JZKT_ACCOUNT_COMPRESSION_FLAGS,
+                fields.as_ptr(),
+                JZKT_ACCOUNT_FIELDS_COUNT * 32,
+            );
+            let bytecode = account.code.clone().unwrap_or_default();
+            Self::update_preimage(
+                account2.source_code_hash.as_ptr(),
+                JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
+                bytecode.as_ptr(),
+                bytecode.len() as u32,
+            );
+            Self::update_preimage(
+                account2.rwasm_code_hash.as_ptr(),
+                JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
+                bytecode.as_ptr(),
+                bytecode.len() as u32,
+            );
+        }
     }
 }

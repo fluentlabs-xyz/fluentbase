@@ -6,7 +6,6 @@ use revm_interpreter::{
         Address,
         AnalysisKind,
         BlockEnv,
-        Bytecode,
         CfgEnv,
         Env,
         Log,
