@@ -209,7 +209,7 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
             pub fuel: u32,
         }
         impl #client_name {
-            pub fn new(address: #sdk_crate_name::Address) -> Self {
+            pub fn new(address: #sdk_crate_name::Address) -> impl #trait_name {
                 Self { address, fuel: u32::MAX }
             }
         }

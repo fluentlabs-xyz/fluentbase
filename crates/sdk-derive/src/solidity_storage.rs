@@ -116,7 +116,8 @@ impl WrappedTypeMapping {
 
             match &*current_mapping.value {
                 Type::Custom(custom_value) => {
-                    // TODO: should we handle return values differently?
+                    // TODO: d1r1 should we parse return value from U256 or we can use U256 for all
+                    // types?
                     let _output = Arg {
                         name: Ident::new("output", proc_macro2::Span::call_site()),
                         ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
@@ -146,14 +147,14 @@ impl WrappedTypeMapping {
             fn calculate_keys(&self, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
                 let mut key = slot;
                 for arg in args {
-                    key = self.mapping_key(key, arg);
+                    key = self.key_hash(key, arg);
                 }
                 key
             }
         };
 
-        let mapping_key_fn = quote! {
-            fn mapping_key(&self, slot: fluentbase_sdk::U256, key: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+        let key_hash_fn = quote! {
+            fn key_hash(&self, slot: fluentbase_sdk::U256, key: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
                 let mut raw_storage_key: [u8; 64] = [0; 64];
                 raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
                 raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
@@ -167,20 +168,31 @@ impl WrappedTypeMapping {
             }
         };
 
+        let padding_fn = quote! {
+            fn pad_to_32_bytes(&self, bytes: &[u8]) -> [u8; 32] {
+                let mut array = [0u8; 32];
+                let start = 32 - bytes.len();
+                array[start..].copy_from_slice(bytes);
+                array
+            }
+        };
+
         let key_fn = quote! {
-          fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+            pub fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+                use alloy_sol_types::SolValue;
                 let args = [
                     #(
                         fluentbase_sdk::U256::from_be_bytes({
-                            let bytes = &#arg_names.abi_encode();
+                            let bytes = &#arg_names.abi_encode_packed();
                             let mut array = [0u8; 32];
-                            array.copy_from_slice(&bytes);
+                            let start = 32 - bytes.len();
+                            array[start..].copy_from_slice(bytes);
                             array
                         }),
                     )*
                 ];
 
-                 self.calculate_keys(Self::SLOT, args)
+                self.calculate_keys(Self::SLOT, args)
             }
         };
 
@@ -201,15 +213,53 @@ impl WrappedTypeMapping {
         };
 
         quote! {
-            #key_fn
             #calculate_keys_fn
-            #mapping_key_fn
+            #key_hash_fn
+            #padding_fn
+            #key_fn
+
             #get_fn
             #set_fn
         }
     }
 }
 
+impl Expandable for WrappedTypeMapping {
+    fn expand(&self, slot: usize) -> SynResult<proc_macro2::TokenStream> {
+        let args = WrappedTypeMapping::parse_args(&self.type_mapping);
+
+        let slot = slot_from_index(slot);
+        let funcs = WrappedTypeMapping::expand_funcs(&args);
+        let ident = &self.ident;
+        let client_trait = &self.client;
+
+        let new_fn = quote! {
+            pub fn new(client: &'a T) -> Self {
+                Self { client }
+            }
+        };
+
+        let set_client_fn = quote! {
+            pub fn set_client(&mut self, client: &'a T) {
+                self.client = Some(client);
+            }
+        };
+
+        let expanded = quote! {
+            struct #ident<'a, T: #client_trait>
+            {
+                client:  &'a T,
+            }
+            impl <'a, T: #client_trait> #ident <'a, T>
+            {
+                #slot
+                #new_fn
+                #funcs
+            }
+        };
+        Ok(expanded)
+    }
+}
 impl Parse for WrappedTypeMapping {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let type_mapping: TypeMapping = input
@@ -231,69 +281,68 @@ impl Parse for WrappedTypeMapping {
     }
 }
 
-impl Expandable for WrappedTypeMapping {
-    fn expand(&self, slot: usize) -> SynResult<proc_macro2::TokenStream> {
-        let args = WrappedTypeMapping::parse_args(&self.type_mapping);
-
-        let slot = slot_from_index(slot);
-        let funcs = WrappedTypeMapping::expand_funcs(&args);
-        let ident = &self.ident;
-        let client_trait = &self.client;
-
-        let new_fn = quote! {
-            pub fn new(client: Box<dyn #client_trait>) -> Self {
-                Self { client }
-            }
-        };
-
-        let expanded = quote! {
-            struct #ident
-            {
-                client: Box<dyn #client_trait>,
-            }
-            impl #ident
-            {
-                #slot
-                #new_fn
-                #funcs
-            }
-        };
-        Ok(expanded)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct WrappedTypeArray {
     pub type_array: TypeArray,
     pub ident: Ident,
-}
-
-impl WrappedTypeArray {
-    fn expand_array_key_fn() -> proc_macro2::TokenStream {
-        // TODO: d1r1 fix key function for nested arrays [][]
-        quote! {
-            fn key(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                array_key(Self::SLOT, index)
-            }
-        }
-    }
+    pub client: Path,
 }
 
 impl Expandable for WrappedTypeArray {
     fn expand(&self, index: usize) -> SynResult<proc_macro2::TokenStream> {
         let ident = &self.ident;
         let slot = slot_from_index(index);
+        let client_trait = &self.client;
 
-        let key_fn = WrappedTypeArray::expand_array_key_fn();
+        let new_fn = quote! {
+            pub fn new(client: &'a T) -> Self {
+                Self { client }
+            }
+        };
+
+        let key_hash_fn = quote! {
+            fn key_hash(&self, slot: fluentbase_sdk::U256, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+                let mut storage_key: [u8; 32] = [0; 32];
+                LowLevelSDK::keccak256(slot.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
+                let storage_key = U256::from_be_bytes(storage_key);
+                storage_key + index
+            }
+        };
+        // TODO: d1r1 fix key function for nested arrays [][]
+        let key_fn = quote! {
+            fn key(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+                self.key_hash(Self::SLOT, index)
+            }
+        };
+
+        let get_fn = quote! {
+            fn get(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
+                let key = self.key(index);
+                let input = EvmSloadInput { index: key };
+                let output = self.client.sload(input);
+                output.value
+            }
+        };
+        let set_fn = quote! {
+            fn set(&self, index: fluentbase_sdk::U256, value: fluentbase_sdk::U256) {
+                let key = self.key(index);
+                let input = EvmSstoreInput { index: key, value };
+                self.client.sstore(input);
+            }
+        };
 
         let expanded = quote! {
-            struct #ident {
-                slot: U256,
+            struct #ident<'a, T: #client_trait>
+            {
+                client:  &'a T,
             }
-            impl #ident {
+            impl <'a, T: #client_trait> #ident <'a, T> {
                 #slot
-
+                #new_fn
                 #key_fn
+                #key_hash_fn
+                #get_fn
+                #set_fn
 
             }
         };
@@ -310,12 +359,18 @@ impl Parse for WrappedTypeArray {
         };
 
         let ident: Ident = input.parse()?;
+        input.parse::<syn::token::Lt>()?;
+        let client: Path = input.parse()?;
+        input.parse::<syn::token::Gt>()?;
 
-        Ok(Self { type_array, ident })
+        Ok(Self {
+            type_array,
+            ident,
+            client,
+        })
     }
 }
 
-// TODO: move it somewhere else
 fn slot_from_index(index: usize) -> proc_macro2::TokenStream {
     quote! {
         const SLOT: fluentbase_sdk::U256 = Self::u256_from_usize(#index);
