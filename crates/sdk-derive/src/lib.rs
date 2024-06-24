@@ -1,6 +1,7 @@
-use proc_macro::TokenStream;
-mod contract;
 use crate::contract::impl_derive_contract;
+use proc_macro::TokenStream;
+use proc_macro2;
+use proc_macro_error::proc_macro_error;
 use quote::quote;
 use syn::{
     self,
@@ -16,7 +17,10 @@ use syn::{
 };
 
 mod codec_router;
+mod contract;
 mod solidity_router;
+mod solidity_storage;
+
 mod utils;
 
 #[proc_macro]
@@ -26,6 +30,12 @@ pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
     TokenStream::from(quote! {
         #method_id
     })
+}
+
+#[proc_macro_error]
+#[proc_macro]
+pub fn solidity_storage(token: TokenStream) -> TokenStream {
+    solidity_storage::SolidityStorage::expand(token)
 }
 
 #[derive(Debug, PartialEq)]

@@ -135,6 +135,22 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "600d34d8de81e23b6d909c094e23b3d357e01ca36b78a8c5424c501eedbe86f0"
+dependencies = [
+ "bytes",
+ "cfg-if",
+ "const-hex",
+ "derive_more",
+ "hex-literal",
+ "itoa",
+ "ruint",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-primitives"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f783611babedbbe90db3478c120fb5f5daacceffc210b39adc0af4fe0da70bad"
@@ -280,7 +296,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d94da1c0c4e27cc344b05626fe22a89dc6b8b531b9475f3b7691dbf6913e4109"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.7.6",
  "serde",
  "serde_json",
 ]
@@ -300,6 +316,24 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e86ec0a47740b20bc5613b8712d0d321d031c4efc58e9645af96085d5cccfc27"
+dependencies = [
+ "const-hex",
+ "dunce",
+ "heck 0.4.1",
+ "indexmap",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.66",
+ "syn-solidity 0.6.4",
+ "tiny-keccak",
+]
+
+[[package]]
+name = "alloy-sol-macro"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4bad41a7c19498e3f6079f7744656328699f8ea3e783bdd10d85788cd439f572"
@@ -309,7 +343,7 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -320,13 +354,13 @@ checksum = "fd9899da7d011b4fe4c406a524ed3e3f963797dbc93b45479d60341d3a27b252"
 dependencies = [
  "alloy-sol-macro-input",
  "const-hex",
- "heck",
+ "heck 0.5.0",
  "indexmap",
  "proc-macro-error",
  "proc-macro2",
  "quote",
- "syn 2.0.68",
- "syn-solidity",
+ "syn 2.0.66",
+ "syn-solidity 0.7.6",
  "tiny-keccak",
 ]
 
@@ -338,11 +372,22 @@ checksum = "d32d595768fdc61331a132b6f65db41afae41b9b97d36c21eb1b955c422a7e60"
 dependencies = [
  "const-hex",
  "dunce",
- "heck",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.68",
- "syn-solidity",
+ "syn 2.0.66",
+ "syn-solidity 0.7.6",
+]
+
+[[package]]
+name = "alloy-sol-types"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad09ec5853fa700d12d778ad224dcdec636af424d29fad84fb9a2f16a5b0ef09"
+dependencies = [
+ "alloy-primitives 0.6.4",
+ "alloy-sol-macro 0.6.4",
+ "const-hex",
 ]
 
 [[package]]
@@ -351,8 +396,8 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a49042c6d3b66a9fe6b2b5a8bf0d39fc2ae1ee0310a2a26ffedd79fb097878dd"
 dependencies = [
- "alloy-primitives",
- "alloy-sol-macro",
+ "alloy-primitives 0.7.6",
+ "alloy-sol-macro 0.7.6",
  "const-hex",
  "serde",
 ]
@@ -675,7 +720,7 @@ checksum = "3c87f3f15e7794432337fc718554eaa4dc8f04c9677a950ffe366f20a162ae42"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -976,9 +1021,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.0.100"
+version = "1.0.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c891175c3fb232128f48de6590095e59198bbeb8620c310be349bfc3afd12c7b"
+checksum = "96c51067fd44124faa7f870b4b1c969379ad32b2ba805aa959430ceaa384f695"
 
 [[package]]
 name = "cfg-if"
@@ -1055,10 +1100,10 @@ version = "4.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c780290ccf4fb26629baa7a1081e68ced113f1d3ec302fa5948f1c381ebf06c6"
 dependencies = [
- "heck",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -1341,7 +1386,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version 0.4.0",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -1463,7 +1508,7 @@ checksum = "6fd000fd6988e73bbe993ea3db9b1aa64906ab88766d654973924340c8cddb42"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -1717,8 +1762,8 @@ dependencies = [
  "clap",
  "ctor",
  "env_logger",
- "fluentbase-core 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-core",
+ "fluentbase-types",
  "log",
  "rwasm",
  "wat",
@@ -1728,10 +1773,10 @@ dependencies = [
 name = "fluentbase-codec"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.7.6",
  "byteorder",
  "casey",
- "fluentbase-codec-derive 0.1.0",
+ "fluentbase-codec-derive",
  "hashbrown",
  "hex",
  "hex-literal",
@@ -1832,8 +1877,8 @@ name = "fluentbase-core-macros"
 version = "0.1.0"
 dependencies = [
  "crypto-hashes",
- "fluentbase-codec 0.1.0",
- "syn 2.0.68",
+ "fluentbase-codec",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -1863,7 +1908,7 @@ dependencies = [
 name = "fluentbase-example-allocator"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1874,7 +1919,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.0-rc.2",
  "cairo-platinum-prover",
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "lambdaworks-math",
@@ -1885,9 +1930,9 @@ dependencies = [
 name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "alloy-sol-types 0.7.6",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "hex",
  "hex-literal",
  "paste",
@@ -1898,7 +1943,7 @@ dependencies = [
 name = "fluentbase-example-greeting"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1907,7 +1952,7 @@ dependencies = [
 name = "fluentbase-example-hashing"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1916,7 +1961,7 @@ dependencies = [
 name = "fluentbase-example-panic"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1925,7 +1970,7 @@ dependencies = [
 name = "fluentbase-example-precompile"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1934,8 +1979,8 @@ dependencies = [
 name = "fluentbase-example-router"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
- "fluentbase-sdk 0.1.0",
+ "alloy-sol-types 0.7.6",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1944,7 +1989,7 @@ dependencies = [
 name = "fluentbase-example-rwasm"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "rwasm",
@@ -1954,18 +1999,31 @@ dependencies = [
 name = "fluentbase-example-shakmaty"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "shakmaty",
 ]
 
 [[package]]
+name = "fluentbase-example-storage"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types 0.6.4",
+ "fluentbase-sdk",
+ "fluentbase-types",
+ "hex",
+ "hex-literal",
+ "paste",
+ "serial_test",
+]
+
+[[package]]
 name = "fluentbase-example-tiles"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types",
- "fluentbase-sdk 0.1.0",
+ "alloy-sol-types 0.7.6",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2117,6 +2175,8 @@ version = "0.1.0"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
+ "hex",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "serde",
@@ -2140,7 +2200,7 @@ dependencies = [
 name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
+ "alloy-primitives 0.7.6",
  "rwasm",
  "serde",
  "strum_macros",
@@ -2524,6 +2584,12 @@ checksum = "b2bca93b15ea5a746f220e56587f71e73c6165eab783df9e26590069953e3c30"
 dependencies = [
  "fxhash",
 ]
+
+[[package]]
+name = "heck"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
 name = "heck"
@@ -3006,9 +3072,9 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "1.5.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 dependencies = [
  "spin 0.9.8",
 ]
@@ -3694,18 +3760,18 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.86"
+version = "1.0.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e719e8df665df0d1c8fbfd238015744736151d4445ec0836b8e628aae103b77"
+checksum = "22244ce15aa966053a896d1accb3a6e68469b97c7f33f284b99f0d576879fc23"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "proptest"
-version = "1.5.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4c2511913b88df1637da85cc8d96ec8e43a3f8bb8ccb71ee1ac240d6f3df58d"
+checksum = "31b476131c3c86cb68032fdc5cb6d5a1045e3e42d96b69fa599fd77701e1f5bf"
 dependencies = [
  "bit-set",
  "bit-vec",
@@ -4650,7 +4716,7 @@ checksum = "500cbc0ebeb6f46627f50f3f5811ccf6bf00643be300b4c3eabc0ef55dc5b5ba"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -4699,7 +4765,7 @@ checksum = "82fe9db325bcef1fbcde82e078a5cc4efdf787e96b3b9cf45b50b529f2083d67"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -4826,6 +4892,12 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
+
+[[package]]
+name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
@@ -4890,7 +4962,7 @@ checksum = "bbc159a1934c7be9761c237333a57febe060ace2bc9e3b337a59a37af206d19f"
 dependencies = [
  "starknet-curve",
  "starknet-ff",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -4937,7 +5009,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.26.3"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
@@ -4950,11 +5022,11 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
 dependencies = [
- "heck",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -4989,13 +5061,25 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.68"
+version = "2.0.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "901fa70d88b9d6c98022e23b4136f9f3e54e4662c3bc1bd1d84a42a9a0f0c1e9"
+checksum = "c42f3f41a2de00b01c0aaad383c5a45241efc8b2d1eda5661812fda5f3cdcff5"
 dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syn-solidity"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb3d0961cd53c23ea94eeec56ba940f636f6394788976e9f16ca5ee0aca7464a"
+dependencies = [
+ "paste",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -5078,7 +5162,7 @@ checksum = "46c3384250002a6d5af4d114f2845d37b57521033f30d5c3f46c4d70e1197533"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -5571,7 +5655,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
  "wasm-bindgen-shared",
 ]
 
@@ -5605,7 +5689,7 @@ checksum = "e94f17b526d0a461a191c78ea52bbce64071ed5c04c9ffe424dcb38f74171bb7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -5965,7 +6049,7 @@ checksum = "15e934569e47891f7d9411f1a451d947a60e000ab3bd24fbb970f000387d1b3b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]
 
 [[package]]
@@ -5985,5 +6069,5 @@ checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.68",
+ "syn 2.0.66",
 ]

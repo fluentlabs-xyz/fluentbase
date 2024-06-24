@@ -7,7 +7,12 @@ use crate::{
     JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
 };
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_genesis::devnet::{devnet_genesis, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
+use fluentbase_genesis::devnet::{
+    devnet_genesis,
+    devnet_genesis_from_file,
+    KECCAK_HASH_KEY,
+    POSEIDON_HASH_KEY,
+};
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
@@ -44,6 +49,7 @@ use fluentbase_runtime::{
     RuntimeContext,
 };
 use fluentbase_types::{
+    address,
     Address,
     Bytes,
     ExitCode,
@@ -382,7 +388,7 @@ impl LowLevelSDK {
     }
 
     pub fn init_with_devnet_genesis() {
-        let devnet_genesis = devnet_genesis();
+        let devnet_genesis = devnet_genesis_from_file();
         for (address, account) in devnet_genesis.alloc.iter() {
             let source_code_hash = account
                 .storage
@@ -421,13 +427,13 @@ impl LowLevelSDK {
             );
             let bytecode = account.code.clone().unwrap_or_default();
             Self::update_preimage(
-                account2.source_code_hash.as_ptr(),
+                address32.as_ptr(),
                 JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
                 bytecode.as_ptr(),
                 bytecode.len() as u32,
             );
             Self::update_preimage(
-                account2.rwasm_code_hash.as_ptr(),
+                address32.as_ptr(),
                 JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
                 bytecode.as_ptr(),
                 bytecode.len() as u32,
