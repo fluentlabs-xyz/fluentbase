@@ -67,7 +67,6 @@ revm-interpreter = { package = "revm-interpreter-fluent", path = "../revm-rwasm/
 revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
 revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = [
-    #    "std",
     "hashbrown",
     #    "secp256k1",
     "blst",
