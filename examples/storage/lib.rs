@@ -4,101 +4,125 @@ extern crate fluentbase_sdk;
 
 use alloy_sol_types::{sol, SolValue};
 use fluentbase_sdk::{
-    contracts::{EvmSloadInput, EvmSloadOutput, EvmSstoreInput, EvmSstoreOutput},
+    contracts::{
+        EvmAPI, EvmSloadInput, EvmSloadOutput, EvmSstoreInput, EvmSstoreOutput, PRECOMPILE_EVM,
+    },
     derive::{client, signature, solidity_storage},
     Address, LowLevelSDK, SharedAPI, U256,
 };
+use hex_literal::hex;
 
-#[client(mode = "codec")]
-pub trait EvmStorageAPI {
-    #[signature("sload(u256)")]
-    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
+// #[client(mode = "codec")]
+// pub trait EvmStorageAPI {
+//     #[signature("sload(u256)")]
+//     fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
 
-    #[signature("sstore(u256,u256)")]
-    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
+//     #[signature("sstore(u256,u256)")]
+//     fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
+// }
+
+// solidity_storage! {
+//     mapping(Address => U256) BalancesStorage<EvmStorageAPI>;
+//     mapping(Address => mapping(Address => U256)) AllowanceStorage<EvmStorageAPI>;
+// }
+
+struct EvmStorageClient {
+    pub address: fluentbase_sdk::Address,
+    pub fuel: u32,
 }
-
-solidity_storage! {
-    mapping(Address => U256) BalancesStorage<EvmStorageAPI>;
-    mapping(Address => mapping(Address => U256)) AllowanceStorage<EvmStorageAPI>;
+impl EvmStorageClient {
+    pub fn new(address: fluentbase_sdk::Address) -> EvmStorageClient {
+        Self {
+            address,
+            fuel: u32::MAX,
+        }
+    }
 }
-// U256[][] Arr;
-// mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct))) BalancesStorage;
-
-pub fn mapping_key(slot: U256, key: U256) -> U256 {
-    let mut raw_storage_key: [u8; 64] = [0; 64];
-    raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
-    raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-    let mut storage_key: [u8; 32] = [0; 32];
-    LowLevelSDK::keccak256(
-        raw_storage_key.as_ptr(),
-        raw_storage_key.len() as u32,
-        storage_key.as_mut_ptr(),
-    );
-    U256::from_be_bytes(storage_key)
+impl EvmStorageClient {
+    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput {
+        use fluentbase_sdk::codec::Encoder;
+        use fluentbase_sdk::types::CoreInput;
+        let core_input = CoreInput {
+            method_id: 308662670u32,
+            method_data: input,
+        }
+        .encode_to_vec(0);
+        let (output, exit_code) =
+            fluentbase_sdk::contracts::call_system_contract(&self.address, &core_input, self.fuel);
+        if exit_code != 0 {
+            {
+                panic!("system contract call failed with exit code: {}", exit_code,);
+            };
+        }
+        let mut decoder = fluentbase_sdk::codec::BufferDecoder::new(&output);
+        let mut result = EvmSloadOutput::default();
+        EvmSloadOutput::decode_body(&mut decoder, 0, &mut result);
+        result
+    }
+    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput {
+        use fluentbase_sdk::codec::Encoder;
+        use fluentbase_sdk::types::CoreInput;
+        let core_input = CoreInput {
+            method_id: 3249940432u32,
+            method_data: input,
+        }
+        .encode_to_vec(0);
+        let (output, exit_code) =
+            fluentbase_sdk::contracts::call_system_contract(&self.address, &core_input, self.fuel);
+        if exit_code != 0 {
+            {
+                panic!("system contract call failed with exit code: {}", exit_code,);
+            };
+        }
+        let mut decoder = fluentbase_sdk::codec::BufferDecoder::new(&output);
+        let mut result = EvmSstoreOutput::default();
+        EvmSstoreOutput::decode_body(&mut decoder, 0, &mut result);
+        result
+    }
 }
-
-pub fn array_key(slot: U256, index: U256) -> U256 {
-    let mut storage_key: [u8; 32] = [0; 32];
-    LowLevelSDK::keccak256(slot.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
-    let storage_key = U256::from_be_bytes(storage_key);
-    storage_key + index
-}
-
-pub fn field_key(slot: U256) -> U256 {
-    slot
-}
-
-// Trait for saving data to storage:
-pub trait Mapping {
-    fn get(&self, key: fluentbase_sdk::U256) -> Self;
-    fn set(&self, key: fluentbase_sdk::U256, value: Self);
-}
-
-pub trait Array {
-    fn get(&self, index: fluentbase_sdk::U256) -> Self;
-    fn set(&self, index: fluentbase_sdk::U256, value: Self);
-    fn length(&self) -> fluentbase_sdk::U256;
-}
-
-pub trait DynamicArray: Array {
-    fn push(&self, value: Self);
-    fn pop(&self) -> Self;
-}
-
-pub trait Field {
-    fn get(&self) -> Self;
-    fn set(&self, value: Self);
-}
-
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
-    use fluentbase_sdk::{contracts::PRECOMPILE_EVM, U256};
+    use alloc::boxed::Box;
+    use alloy_sol_types::SolCall;
+    use fluentbase_sdk::{codec::Encoder, Address, Bytes, ContractInput, LowLevelSDK, U256};
+    use serial_test::serial;
 
+    fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) {
+        let mut contract_input = ContractInput::default();
+        contract_input.contract_caller = caller.unwrap_or_default();
+
+        LowLevelSDK::with_test_context(contract_input.encode_to_vec(0));
+        let input: Bytes = input.into();
+        LowLevelSDK::with_test_input(input.into());
+    }
+
+    fn get_output() -> Vec<u8> {
+        LowLevelSDK::get_test_output()
+    }
+
+    // TODO: current
+    #[serial]
     #[test]
-    fn test_mapping_storage() {
-        let owner = Address::default();
-        let spender = Address::default();
-        let _amount = U256::from(100);
+    pub fn test_storage() {
+        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], Some(owner_address));
+        let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
+
+        let slot = U256::from_str_radix("1", 10).unwrap();
+        let input = EvmSstoreInput {
+            index: slot,
+            value: owner_balance,
+        };
+
         let client = EvmStorageClient::new(PRECOMPILE_EVM);
+        client.sstore(input);
 
-        let allowance_storage = AllowanceStorage::new(Box::new(client));
+        let sload_input = EvmSloadInput { index: slot };
 
-        let key = allowance_storage.key(owner, spender);
-        println!("{:?}", key);
+        let balance = client.sload(sload_input);
 
-        let expected_key = U256::from_str_radix(
-            "45674214084458039979679588399856379396083966111810618268439781217138252554320",
-            10,
-        )
-        .expect("failed to parse U256 from string");
-        assert_eq!(key, expected_key);
-
-        let value = U256::from(100);
-
-        allowance_storage.set(owner, spender, value);
-        let stored_value = allowance_storage.get(owner, spender);
-        assert_eq!(stored_value, value);
+        assert_eq!(balance.value, owner_balance);
     }
 }
