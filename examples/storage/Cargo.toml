@@ -1,0 +1,43 @@
+[package]
+name = "fluentbase-example-storage"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+#fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false }
+
+# for Solidity ABI
+alloy-sol-types = { version = "=0.6.4", default-features = false }
+
+# for hex macro
+hex-literal = { version = "0.4.1", default-features = false }
+
+paste = { workspace = true }
+
+[dev-dependencies]
+hex = "0.4.3"
+serial_test = "3.0.0"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "lib.rs"
+
+#[profile.release]
+#lto = true
+#opt-level = 'z'
+#panic = "abort"
+#strip = true
+
+[features]
+default = ["std"]
+std = [
+    "fluentbase-sdk/std"
+]
