@@ -4,7 +4,7 @@ OUT_DIR=assets
 SOURCE_NAME=fluentbase_genesis
 SOURCE_LIB_NAME=lib${SOURCE_NAME}
 
-all: #generate_devnet_genesis
+all: generate_devnet_genesis
 
 PROFILE=release
 
