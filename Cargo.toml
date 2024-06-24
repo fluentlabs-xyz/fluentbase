@@ -68,9 +68,9 @@ zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", br
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
 #revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = [
 #    "hashbrown",
-#    #    "secp256k1",
 #    "blst",
 #    "rwasm",
+#    #    "secp256k1",
 #    #    "debug_print",
 #] }
 #zeth-primitives = { path = "../zeth-rwasm/primitives", default-features = false }
