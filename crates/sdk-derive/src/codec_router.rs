@@ -93,7 +93,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
 
     quote! {
         #method_id => {
-            let input = Self::decode_method_input::<#input_ty>(&input[4..]);
+            let input = Self::decode_method_input::<#input_ty>(&input);
             let output = self.#method_name(input);
             let output = output.encode_to_vec(0);
             fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
@@ -204,7 +204,7 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
 
     let expanded = quote! {
         #ast
-        struct #client_name {
+        pub struct #client_name {
             pub address: #sdk_crate_name::Address,
             pub fuel: u32,
         }
