@@ -30,7 +30,7 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
         return EvmCallMethodOutput::from_exit_code(ExitCode::CallDepthOverflow);
     }
 
-    // create new checkpoint position in the journal
+    // create a new checkpoint position in the journal
     let checkpoint = am.checkpoint();
 
     // parse callee address

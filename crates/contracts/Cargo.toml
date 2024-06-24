@@ -16,9 +16,16 @@ crate-type = ["cdylib", "rlib"]
 fluentbase-sdk = { workspace = true, default-features = false }
 revm-precompile = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false }
+revm = { workspace = true, default-features = false }
+
+#zeth-primitives = { workspace = true, default-features = false, features = ["revm"] }
+#zeth-lib = { workspace = true, default-features = false }
+alloy-rlp = { workspace = true, default-features = false }
 
 [features]
-default = ["std"]
+default = [
+    "std"
+]
 std = [
     "fluentbase-sdk/std",
     "revm-precompile/std",
@@ -30,7 +37,10 @@ identity = []
 modexp = []
 ecrecover = []
 evm = []
-loader = []
+evm_deployer = []
+evm_loader = []
 wasm = []
+wasm_deployer = []
+wasm_loader = []
 svm = []
 blended = []
