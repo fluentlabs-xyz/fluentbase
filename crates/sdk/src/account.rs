@@ -68,6 +68,7 @@ pub trait AccountManager {
         fuel_offset: *mut u32,
         state: u32,
     ) -> (Bytes, i32);
+
     fn inc_nonce(&self, account: &mut Account) -> Option<u64>;
     fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
     fn precompile(&self, address: &Address, input: &Bytes, gas: u64)
@@ -305,7 +306,7 @@ impl Account {
             to.into_word(),
             B256::from(amount.to_be_bytes::<32>()),
         ];
-        am.log(Address::ZERO, Bytes::new(), &topics);
+        am.log(NATIVE_TRANSFER_ADDRESS, Bytes::new(), &topics);
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {
