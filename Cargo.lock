@@ -1789,7 +1789,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "byteorder",
@@ -1814,7 +1814,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2088,7 +2088,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-rlp",
  "byteorder",
@@ -2118,7 +2118,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2144,7 +2144,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-types"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "strum_macros",
@@ -4066,23 +4066,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#0ae291b5204d948e1dcfe788feff5f24010edffe"
-dependencies = [
- "alloy-primitives 0.7.6",
- "auto_impl",
- "bitflags 2.6.0",
- "bitvec",
- "cfg-if",
- "dyn-clone",
- "enumn",
- "hashbrown",
- "hex",
-]
-
-[[package]]
-name = "revm-primitives"
-version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#89b2d705631caef68163fe1c62b39f9418a5853f"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "auto_impl",
@@ -5966,7 +5950,7 @@ dependencies = [
 [[package]]
 name = "zeth-primitives"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/zeth-rwasm.git?branch=rwasm#191c56b07c2d92eaca300026d57de08b01da1b34"
+source = "git+https://github.com/fluentlabs-xyz/zeth-rwasm.git?branch=rwasm#e90b526c6a7045c49a82049454f0d35b80c3817e"
 dependencies = [
  "alloy-primitives 0.7.6",
  "alloy-rlp",
@@ -5977,7 +5961,7 @@ dependencies = [
  "hashbrown",
  "k256",
  "log",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel)",
+ "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
  "rlp",
  "serde",
  "sha2",
