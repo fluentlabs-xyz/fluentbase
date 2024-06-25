@@ -246,11 +246,11 @@ impl Expandable for WrappedTypeMapping {
         };
 
         let expanded = quote! {
-            struct #ident<'a, T: #client_trait>
+            pub struct #ident<'a, T: #client_trait + 'a>
             {
                 client:  &'a T,
             }
-            impl <'a, T: #client_trait> #ident <'a, T>
+            impl <'a, T: #client_trait + 'a> #ident <'a, T>
             {
                 #slot
                 #new_fn
