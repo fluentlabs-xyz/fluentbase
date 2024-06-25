@@ -51,7 +51,7 @@ pub fn calculate_keccak256_bytes(signature: &str) -> [u8; 4] {
 }
 
 pub fn calculate_keccak256_id(signature: &str) -> u32 {
-    u32::from_be_bytes(calculate_keccak256_bytes(signature))
+    u32::from_be_bytes(calculate_keccak256_bytes(signature.trim_matches('"')))
 }
 
 pub fn parse_function_inputs(

@@ -36,10 +36,10 @@ pub trait EvmAPI {
     #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
     fn create(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput;
 
-    #[signature("sload(u256)")]
+    #[signature("_evm_sload(uint256)")]
     fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
 
-    #[signature("sstore(u256,u256)")]
+    #[signature("_evm_sstore(uint256,uint256)")]
     fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
 }
 
