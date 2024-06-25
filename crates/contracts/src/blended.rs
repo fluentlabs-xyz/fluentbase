@@ -9,6 +9,7 @@ use fluentbase_sdk::{
     ContextReader,
     LowLevelSDK,
     SharedAPI,
+    U256,
 };
 use revm::{interpreter::Host, primitives::ResultAndState, Evm};
 use zeth_primitives::{
@@ -25,27 +26,16 @@ pub struct BLENDED<'a, CR: ContextReader, AM: AccountManager> {
 impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, AM> {
     fn exec_evm_tx(&self, raw_evm_tx: Bytes) {
         let mut raw_evm_tx = raw_evm_tx.clone();
-        let tx = <Transaction<EthereumTxEssence> as Decodable>::decode(&mut raw_evm_tx.as_ref());
-        let Ok(tx) = tx else {
-            panic!("failed to decode transaction")
-        };
-        let tx_from = tx.recover_from();
-        let Ok(tx_from) = tx_from else {
-            panic!("failed to recover tx_from")
-        };
+        let tx = <Transaction<EthereumTxEssence> as Decodable>::decode(&mut raw_evm_tx.as_ref())
+            .expect("failed to decode transaction");
+        let tx_from = tx.recover_from().expect("failed to recover tx_from");
         let mut evm = evm_builder_apply_envs(Evm::builder(), self.cr).build();
         fill_eth_tx_env(&mut evm.context.env_mut().tx, &tx.essence, tx_from);
-        let result_and_state = evm.transact();
-        let Ok(result_and_state) = result_and_state else {
-            panic!("failed to exec transaction");
-        };
-        let ResultAndState { result, state } = result_and_state;
-        let gas_used = result.gas_used().try_into().unwrap();
-
+        let ResultAndState { result, .. } = evm.transact().expect("failed to exec transaction");
         let receipt = Receipt::new(
             tx.essence.tx_type(),
             result.is_success(),
-            gas_used,
+            U256::from(result.gas_used()),
             result
                 .logs()
                 .into_iter()

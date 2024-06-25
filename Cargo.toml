@@ -11,8 +11,8 @@ exclude = [
     "crates/evm",
     "crates/evm/evm-rwasm",
     "crates/evm/evm-snippets",
+    "revm/e2e",
     "examples/node_modules",
-    "examples/bin",
 ]
 resolver = "2"
 
