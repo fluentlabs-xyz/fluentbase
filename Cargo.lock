@@ -1789,12 +1789,12 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "byteorder",
  "casey",
- "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
+ "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
  "hashbrown",
  "paste",
  "serde",
@@ -1814,7 +1814,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2088,16 +2088,16 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-rlp",
  "byteorder",
- "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
- "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
- "fluentbase-sdk-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
- "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
+ "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
+ "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
+ "fluentbase-sdk-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
+ "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
  "paste",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
+ "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
 ]
 
 [[package]]
@@ -2118,7 +2118,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2144,7 +2144,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-types"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "strum_macros",
@@ -4066,7 +4066,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "alloy-primitives 0.7.6",
  "auto_impl",
@@ -5957,11 +5957,11 @@ dependencies = [
  "alloy-rlp-derive",
  "anyhow",
  "bytes",
- "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
+ "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
  "hashbrown",
  "k256",
  "log",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
+ "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
  "rlp",
  "serde",
  "sha2",
