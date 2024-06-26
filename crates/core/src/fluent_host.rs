@@ -2,6 +2,7 @@ use crate::debug_log;
 use core::mem::take;
 use fluentbase_sdk::{AccountManager, Bytes, ContextReader};
 use revm_interpreter::{
+    as_usize_saturated,
     primitives::{
         Address,
         AnalysisKind,
@@ -19,6 +20,7 @@ use revm_interpreter::{
     SStoreResult,
     SelfDestructResult,
 };
+use revm_primitives::BLOCK_HASH_HISTORY;
 
 pub struct FluentHost<'cr, 'am, CR: ContextReader, AM: AccountManager> {
     pub(crate) env: Env,
@@ -90,8 +92,16 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn block_hash(&mut self, number: U256) -> Option<B256> {
-        let block_hash = self.am.unwrap().block_hash(number);
-        Some(block_hash)
+        let block_number = as_usize_saturated!(self.env().block.number);
+        let requested_number = as_usize_saturated!(number);
+        let Some(diff) = block_number.checked_sub(requested_number) else {
+            return Some(B256::ZERO);
+        };
+        if diff > 0 && diff <= BLOCK_HASH_HISTORY {
+            Some(self.am.unwrap().block_hash(number))
+        } else {
+            Some(B256::ZERO)
+        }
     }
 
     #[inline]
