@@ -50,7 +50,7 @@ pub fn _evm_create<CR: ContextReader, AM: AccountManager>(
             .with_gas(input.gas_limit, 0);
     }
 
-    // check init max code size for EIP-3860 and charge 2 gas per word
+    // check init max code size for EIP-3860
     if input.bytecode.len() > MAX_INITCODE_SIZE {
         return EvmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit)
             .with_gas(input.gas_limit, 0);
