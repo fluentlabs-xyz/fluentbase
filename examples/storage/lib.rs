@@ -16,13 +16,13 @@ use fluentbase_sdk::{
 };
 use hex_literal::hex;
 
-sol! {
-    struct Book {
-        string title;
-        string author;
-        uint book_id;
-     }
-}
+// sol! {
+//     struct Book {
+//         string title;
+//         string author;
+//         uint book_id;
+//      }
+// }
 
 // fn string_to_u256(input: &str) -> Vec<U256> {
 //     // Convert string to bytes
@@ -49,90 +49,75 @@ sol! {
 // }
 
 solidity_storage! {
-    // U256[] Arr<EvmAPI>;
-    // U256 Counter;
+    U256[] Arr;
+    U256 Counter;
     mapping(Address => U256) Balance;
     mapping(Address => mapping(Address => U256)) Allowance;
 }
 // mapping(Address => Book) BookStorage;
 
-pub struct Counter<'a, T: EvmAPI + 'a> {
-    client: &'a T,
-}
-impl<'a, T: EvmAPI + 'a> Counter<'a, T> {
-    const SLOT: fluentbase_sdk::U256 = Self::u256_from_usize(0usize);
-    const fn u256_from_usize(value: usize) -> fluentbase_sdk::U256 {
-        let mut bytes = [0u8; 32];
-        let mut v = value;
-        let mut i = 0;
-        while v != 0 {
-            bytes[31 - i] = (v & 0xff) as u8;
-            v >>= 8;
-            i += 1;
-        }
-        fluentbase_sdk::U256::from_be_bytes(bytes)
-    }
-    pub fn new(client: &'a T) -> Self {
-        Self { client }
-    }
-    pub fn key(&self) -> fluentbase_sdk::U256 {
-        Self::SLOT
-    }
-    pub fn get<V: Encoder<V> + Default + Debug>(&self) -> V {
-        let key = self.key();
-        let input = EvmSloadInput { index: key };
-        let output = self.client.sload(input);
+// pub struct Counter<'a, T: EvmAPI + 'a> {
+//     client: &'a T,
+// }
+// impl<'a, T: EvmAPI + 'a> Counter<'a, T> {
+//     const SLOT: fluentbase_sdk::U256 = U256::from_limbs([0u64, 0u64, 0u64, 0u64]);
+//     pub fn new(client: &'a T) -> Self {
+//         Self { client }
+//     }
+//     pub fn key(&self) -> fluentbase_sdk::U256 {
+//         Self::SLOT
+//     }
+//     pub fn get<V: Encoder<V> + Default + Debug>(&self) -> V {
+//         let key = self.key();
+//         let input = EvmSloadInput { index: key };
+//         let output = self.client.sload(input);
 
-        let buffer = output.value.to_be_bytes::<32>();
+//         let buffer = output.value.to_be_bytes::<32>();
 
-        let trimmed = match V::HEADER_SIZE {
-            32 => &buffer[..],   // U256
-            20 => &buffer[12..], // Address
-            1 => &buffer[31..],  // bool
-            _ => {
-                // dynamic
-                let leading_zeroes_len = 32
-                    - buffer
-                        .iter()
-                        .skip_while(|&&x| x == 0)
-                        .copied()
-                        .collect::<Vec<u8>>()
-                        .len();
-                &buffer[leading_zeroes_len..]
-            }
-        };
+//         let trimmed = match V::HEADER_SIZE {
+//             32 => &buffer[..],   // U256
+//             20 => &buffer[12..], // Address
+//             1 => &buffer[31..],  // bool
+//             _ => {
+//                 // dynamic
+//                 let leading_zeroes_len = 32
+//                     - buffer .iter() .skip_while(|&&x| x == 0) .copied() .collect::<Vec<u8>>()
+//                       .len();
+//                 &buffer[leading_zeroes_len..]
+//             }
+//         };
 
-        let mut decoder = BufferDecoder::new(&trimmed);
-        let mut body = V::default();
-        V::decode_body(&mut decoder, 0, &mut body);
+//         let mut decoder = BufferDecoder::new(&trimmed);
+//         let mut body = V::default();
+//         V::decode_body(&mut decoder, 0, &mut body);
 
-        body
-    }
+//         body
+//     }
 
-    pub fn set<V: Encoder<V> + Debug>(&self, value: V) {
-        let key = self.key();
-        let encoded_buffer = value.encode_to_vec(0);
+//     pub fn set<V: Encoder<V> + Debug>(&self, value: V) {
+//         let key = self.key();
+//         let encoded_buffer = value.encode_to_vec(0);
 
-        let value_u256 = U256::from_be_slice(&encoded_buffer);
+//         let value_u256 = U256::from_be_slice(&encoded_buffer);
 
-        let input = EvmSstoreInput {
-            index: key,
-            value: value_u256,
-        };
-        self.client.sstore(input);
-    }
-}
+//         let input = EvmSstoreInput {
+//             index: key,
+//             value: value_u256,
+//         };
+//         self.client.sstore(input);
+//     }
+// }
 
-impl<'a> Default for Counter<'a, EvmClient> {
-    fn default() -> Self {
-        Self {
-            client: &EvmClient {
-                address: PRECOMPILE_EVM,
-                fuel: u32::MAX,
-            },
-        }
-    }
-}
+// impl<'a> Default for Counter<'a, EvmClient> {
+//     fn default() -> Self {
+//         Self {
+//             client: &EvmClient {
+//                 address: PRECOMPILE_EVM,
+//                 fuel: u32::MAX,
+//             },
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod test {
@@ -216,6 +201,12 @@ mod test {
 
         let result: fluentbase_sdk::Bytes = storage.get();
         assert_eq!(result, b);
+    }
+    #[test]
+    pub fn test_tmp() {
+        let u1 = U256::from_limbs([1u64, 0u64, 0u64, 0u64]);
+        let u2 = U256::from(1);
+        assert_eq!(u1, u2)
     }
 }
 
