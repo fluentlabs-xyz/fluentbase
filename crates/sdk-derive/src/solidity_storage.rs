@@ -362,7 +362,6 @@ impl Expandable for MappingStorage {
 impl Parse for MappingStorage {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let ty: TypeMapping = input.parse()?;
-        eprintln!("ty: {:?}", ty);
 
         Ok(Self { ty })
     }
@@ -440,49 +439,111 @@ impl Expandable for PrimitiveStorage {
         };
 
         let get_fn = quote! {
-            pub fn get<V: fluentbase_sdk::codec::Encoder<V> + Default + Debug>(&self) -> V {
+            pub fn get<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
+                if V::HEADER_SIZE == 32
+                    || V::HEADER_SIZE == 20
+                    || V::HEADER_SIZE == 16
+                    // || V::HEADER_SIZE == 8 // TODO: d1r1 we need to create more generic way to derrive is it dynamic or static. Now we are using it like a hack
+                    || V::HEADER_SIZE == 4
+                    || V::HEADER_SIZE == 2
+                    || V::HEADER_SIZE == 1
+                {
+                    self.get_static::<V>()
+                } else {
+                    self.get_dynamic::<V>()
+                }
+            }
+
+            pub fn get_static<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
                 let key = self.key();
                 let input = EvmSloadInput { index: key };
                 let output = self.client.sload(input);
-
-                let buffer = output.value.to_be_bytes::<32>();
-
-                let trimmed = match V::HEADER_SIZE {
-                    32 => &buffer[..],   // U256
-                    20 => &buffer[12..], // Address
-                    1 => &buffer[31..],  // bool
-                    _ => {
-                        // dynamic
-                        let leading_zeroes_len = 32
-                            - buffer
-                                .iter()
-                                .skip_while(|&&x| x == 0)
-                                .copied()
-                                .collect::<Vec<u8>>()
-                                .len();
-                        &buffer[leading_zeroes_len..]
-                    }
+                let chunk = output.value.to_be_bytes::<32>();
+                let size = match V::HEADER_SIZE {
+                    32 => 0,  // uint256, int256, fixed256, ufixed256
+                    20 => 12, // address
+                    16 => 16, // uint128, int128, fixed128, ufixed128
+                    8 => 24,  // uint64, int64, fixed64, ufixed64
+                    4 => 28,  // uint32, int32, fixed32, ufixed32
+                    2 => 30,  // uint16, int16, fixed16, ufixed16
+                    1 => 31,  // uint8, int8, fixed8, ufixed8
+                    _ => return Err("Unsupported static type".to_string()),
                 };
-                // TODO: d1r1 handle huge types (bigger than 32 bytes)
-                let mut decoder = BufferDecoder::new(&trimmed);
+
+                let chunk = &chunk[..32 - size];
+
+                let mut decoder = BufferDecoder::new(&chunk);
                 let mut body = V::default();
                 V::decode_body(&mut decoder, 0, &mut body);
 
-                body
+                Ok(body)
+            }
+
+            pub fn get_dynamic<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
+                let key = self.key();
+
+                // Load the header
+                let output = self.client.sload(EvmSloadInput { index: key });
+                let header_chunk = output.value.to_be_bytes::<32>();
+
+                let mut decoder = BufferDecoder::new(&header_chunk);
+
+                // Decode the header to get offset and length of the data
+                let (header_offset, data_len) = V::decode_header(&mut decoder, 0, &mut V::default());
+
+                // Calculate the number of chunks to load
+                let chunk_size = 32;
+                let num_chunks = (data_len + chunk_size - 1) / chunk_size;
+
+                let mut buffer = Vec::with_capacity(num_chunks * chunk_size);
+
+                // Load all chunks of data
+                for i in 0..num_chunks {
+                    let input = EvmSloadInput {
+                        index: key + U256::from(i + (header_offset / chunk_size)),
+                    };
+                    let output = self.client.sload(input);
+                    let chunk = output.value.to_be_bytes::<32>();
+
+                    buffer.extend_from_slice(&chunk);
+                }
+
+                // Trim the buffer to the actual length of the data
+                buffer.truncate(header_offset + data_len);
+
+                let mut decoder = BufferDecoder::new(&buffer);
+                let mut body = V::default();
+                V::decode_body(&mut decoder, 0, &mut body);
+
+                Ok(body)
             }
         };
         let set_fn = quote! {
-            pub fn set<V: fluentbase_sdk::codec::Encoder<V> + Debug>(&self, value: V) {
+            pub fn set<V: Encoder<V> + Debug>(&self, value: V) -> Result<(), String> {
                 let key = self.key();
                 let encoded_buffer = value.encode_to_vec(0);
 
-                let value_u256 = fluentbase_sdk::U256::from_be_slice(&encoded_buffer);
+                let chunk_size = 32;
+                let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
 
-                let input = EvmSstoreInput {
-                    index: key,
-                    value: value_u256,
-                };
-                self.client.sstore(input);
+                for i in 0..num_chunks {
+                    let start = i * chunk_size;
+                    let end = (start + chunk_size).min(encoded_buffer.len());
+                    let chunk = &encoded_buffer[start..end];
+
+                    let mut chunk_padded = [0u8; 32];
+                    chunk_padded[..chunk.len()].copy_from_slice(chunk);
+
+                    let value_u256 = U256::from_be_bytes(chunk_padded);
+
+                    let input = EvmSstoreInput {
+                        index: key + U256::from(i),
+                        value: value_u256,
+                    };
+                    self.client.sstore(input);
+                }
+
+                Ok(())
             }
         };
 
