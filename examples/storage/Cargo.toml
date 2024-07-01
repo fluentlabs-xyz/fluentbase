@@ -16,6 +16,7 @@ fluentbase-types = { workspace = true, default-features = false }
 
 # for Solidity ABI
 alloy-sol-types = { version = "=0.6.4", default-features = false }
+alloy-primitives ={ version = "0.6.4", default-features = false}
 
 # for hex macro
 hex-literal = { version = "0.4.1", default-features = false }
