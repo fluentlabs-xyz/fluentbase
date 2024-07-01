@@ -1,148 +1,150 @@
+use alloy_primitives::{FixedBytes, Uint};
 use alloy_sol_types::{sol, SolValue};
-use fluentbase_sdk::{Address, LowLevelSDK, SharedAPI, U256};
+use core::{borrow::Borrow, fmt::Debug};
+use fluentbase_sdk::{
+    bytes::buf,
+    codec::{BufferDecoder, Encoder, WritableBuffer},
+    contracts::{
+        EvmAPI,
+        EvmClient,
+        EvmSloadInput,
+        EvmSloadOutput,
+        EvmSstoreInput,
+        EvmSstoreOutput,
+        PRECOMPILE_EVM,
+    },
+    derive::solidity_storage,
+    Address,
+    Bytes,
+    LowLevelSDK,
+    SharedAPI,
+    U256,
+};
 
-use crate::AllowanceStorage;
-
-pub trait IMappingStorage {
-    fn storage_key(slot: U256, key: U256) -> U256;
+pub trait StorageValue<Client: EvmAPI, V: Encoder<V>> {
+    fn get(&self, client: &Client, key: U256) -> Result<V, String>;
+    fn set(&self, client: &Client, key: U256, value: V) -> Result<(), String>;
 }
 
-struct MappingStorage {
-    slot: U256,
-}
+impl<Client: EvmAPI> StorageValue<Client, Address> for Address {
+    fn get(&self, client: &Client, key: U256) -> Result<Address, String> {
+        let input = EvmSloadInput { index: key };
+        let output = client.sload(input);
+        let chunk = output.value.to_be_bytes::<32>();
 
-impl IMappingStorage for MappingStorage {
-    fn storage_key(slot: U256, key: U256) -> U256 {
-        let mut raw_storage_key: [u8; 64] = [0; 64];
-        raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
-        raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-        let mut storage_key: [u8; 32] = [0; 32];
-        LowLevelSDK::keccak256(
-            raw_storage_key.as_ptr(),
-            raw_storage_key.len() as u32,
-            storage_key.as_mut_ptr(),
-        );
-        U256::from_be_bytes(storage_key)
+        let mut decoder = BufferDecoder::new(&chunk);
+        let mut body = <Address>::default();
+        <Address as Encoder<Address>>::decode_body(&mut decoder, 0, &mut body);
+        Ok(body)
+    }
+    fn set(&self, client: &Client, key: U256, value: Address) -> Result<(), String> {
+        let encoded_buffer = value.encode_to_vec(0);
+        let chunk_size = 32;
+        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(encoded_buffer.len());
+            let chunk = &encoded_buffer[start..end];
+            let mut chunk_padded = [0u8; 32];
+            chunk_padded[..chunk.len()].copy_from_slice(chunk);
+            let value_u256 = U256::from_be_bytes(chunk_padded);
+            let input = EvmSstoreInput {
+                index: key + U256::from(i),
+                value: value_u256,
+            };
+            client.sstore(input);
+        }
+        Ok(())
     }
 }
 
-impl MappingStorage {
-    fn key(&self, arg1: Address, arg2: Address) -> U256 {
-        let arg1_key = <MappingStorage as IMappingStorage>::storage_key(
-            self.slot,
-            U256::from_be_slice(arg1.abi_encode().as_slice()),
-        );
-        let arg2_key = <MappingStorage as IMappingStorage>::storage_key(
-            arg1_key,
-            U256::from_be_slice(arg2.abi_encode().as_slice()),
-        );
+impl<const BITS: usize, const LIMBS: usize, Client: EvmAPI> StorageValue<Client, Uint<BITS, LIMBS>>
+    for Uint<BITS, LIMBS>
+{
+    fn get(&self, client: &Client, key: U256) -> Result<Uint<BITS, LIMBS>, String> {
+        let input = EvmSloadInput { index: key };
+        let output = client.sload(input);
+        let chunk = output.value.to_be_bytes::<32>();
 
-        arg2_key
+        let mut decoder = BufferDecoder::new(&chunk);
+        let mut body = Uint::<BITS, LIMBS>::default();
+        Uint::<BITS, LIMBS>::decode_body(&mut decoder, 0, &mut body);
+
+        Ok(body)
+    }
+
+    fn set(&self, client: &Client, key: U256, value: Uint<BITS, LIMBS>) -> Result<(), String> {
+        let encoded_buffer = value.encode_to_vec(0);
+        let chunk_size = 32;
+        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(encoded_buffer.len());
+            let chunk = &encoded_buffer[start..end];
+
+            let mut chunk_padded = [0u8; 32];
+            chunk_padded[..chunk.len()].copy_from_slice(chunk);
+
+            let value_u256 = U256::from_be_bytes(chunk_padded);
+            let input = EvmSstoreInput {
+                index: key + U256::from(i),
+                value: value_u256,
+            };
+
+            client.sstore(input);
+        }
+
+        Ok(())
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use quote::quote;
-// }
+impl<Client: EvmAPI> StorageValue<Client, Bytes> for Bytes {
+    fn get(&self, client: &Client, key: U256) -> Result<Bytes, String> {
+        let output = client.sload(EvmSloadInput { index: key });
+        let header_chunk = output.value.to_be_bytes::<32>();
+        let mut decoder = BufferDecoder::new(&header_chunk);
+        let (header_offset, data_len) =
+            Bytes::decode_header(&mut decoder, 0, &mut Bytes::default());
+        let chunk_size = 32;
+        let num_chunks = (data_len + chunk_size - 1) / chunk_size;
+        let mut buffer = Vec::with_capacity(num_chunks * chunk_size);
+        for i in 0..num_chunks {
+            let input = EvmSloadInput {
+                index: key + U256::from(i + (header_offset / chunk_size)),
+            };
+            let output = client.sload(input);
+            let chunk = output.value.to_be_bytes::<32>();
+            buffer.extend_from_slice(&chunk);
+        }
+        buffer.truncate(header_offset + data_len);
+        let mut decoder = BufferDecoder::new(&buffer);
+        let mut body = Bytes::default();
+        Bytes::decode_body(&mut decoder, 0, &mut body);
+        Ok(body)
+    }
+    fn set(&self, client: &Client, key: U256, value: Bytes) -> Result<(), String> {
+        let encoded_buffer = value.encode_to_vec(0);
+        let chunk_size = 32;
+        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
 
-// // solidity_storage! {mapping(Address => mapping(Address => U256)) AllowanceStorage}
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(encoded_buffer.len());
+            let chunk = &encoded_buffer[start..end];
 
-pub fn mapping_storage_key(slot: U256, key: U256) -> U256 {
-    let mut raw_storage_key: [u8; 64] = [0; 64];
-    raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
-    raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-    let mut storage_key: [u8; 32] = [0; 32];
-    LowLevelSDK::keccak256(
-        raw_storage_key.as_ptr(),
-        raw_storage_key.len() as u32,
-        storage_key.as_mut_ptr(),
-    );
-    U256::from_be_bytes(storage_key)
-}
+            let mut chunk_padded = [0u8; 32];
+            chunk_padded[..chunk.len()].copy_from_slice(chunk);
 
-pub trait StorageKey {
-    fn key(&self, args: Vec<U256>) -> U256;
-}
-#[macro_export]
-macro_rules! solidity_storage_mapping {
-    // Базовый случай: один уровень вложенности
-    (mapping($key1:ty => $value:ty) $name:ident;) => {
-        pub struct $name {
-            slot: U256,
+            let value_u256 = U256::from_be_bytes(chunk_padded);
+            let input = EvmSstoreInput {
+                index: key + U256::from(i),
+                value: value_u256,
+            };
+
+            client.sstore(input);
         }
 
-        impl $name {
-            pub fn new(slot: U256) -> Self {
-                Self { slot }
-            }
-        }
-
-        impl StorageKey for $name {
-            fn key(&self, arg1: $key1) -> U256 {
-                mapping_storage_key(self.slot, U256::from_be_slice(arg1.abi_encode().as_slice()))
-            }
-        }
-    };
-
-    // Рекурсивный случай: вложенный маппинг
-    (mapping($key1:ty => mapping($key2:ty => $value:ty)) $name:ident;) => {
-        pub struct $name {
-            slot: U256,
-        }
-
-        impl $name {
-            pub fn new(slot: U256) -> Self {
-                Self { slot }
-            }
-        }
-
-        impl StorageKey for $name {
-            fn key(&self, arg1: $key1, arg2: $key2) -> U256 {
-                let arg1_key = mapping_storage_key(
-                    self.slot,
-                    U256::from_be_slice(arg1.abi_encode().as_slice()),
-                );
-                mapping_storage_key(
-                    arg1_key,
-                    U256::from_be_slice(arg2.abi_encode().as_slice()),
-                )
-            }
-        }
-    };
-
-    // Множественная вложенность: больше двух уровней вложенности
-    (mapping($key1:ty => mapping($($key:ty =>)+ $value:ty)) $name:ident;) => {
-        pub struct $name {
-            slot: U256,
-        }
-
-        impl $name {
-            pub fn new(slot: U256) -> Self {
-                Self { slot }
-            }
-        }
-
-        impl StorageKey for $name {
-            fn key(&self, arg1: $key1, $($arg: $key),+) -> U256 {
-                let mut current_key = mapping_storage_key(
-                    self.slot,
-                    U256::from_be_slice(arg1.abi_encode().as_slice()),
-                );
-
-                $(
-                    current_key = mapping_storage_key(
-                        current_key,
-                        U256::from_be_slice($arg.abi_encode().as_slice()),
-                    );
-                )+
-
-                current_key
-            }
-        }
-    };
-}
-
-solidity_storage_mapping! {
-    mapping(Address => mapping(Address => mapping(Address => U256))) AllowancesStorage;
+        Ok(())
+    }
 }

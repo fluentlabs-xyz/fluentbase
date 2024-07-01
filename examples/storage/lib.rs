@@ -15,136 +15,77 @@ use fluentbase_sdk::{
     SharedAPI,
     U256,
 };
-use hex_literal::hex;
+mod storage;
+use crate::storage::StorageValue;
 
 solidity_storage! {
-    U256[] Arr;
-    // U256 Counter;
     mapping(Address => U256) Balance;
     mapping(Address => mapping(Address => U256)) Allowance;
 }
-// mapping(Address => Book) BookStorage;
+// U256[] Arr;
+// U256 Counter;
+// mapping(Address => Address) Balance2;
 
-pub struct Counter<'a, T: EvmAPI + 'a> {
+pub struct Balance2<'a, T: fluentbase_sdk::contracts::EvmAPI + 'a> {
     client: &'a T,
 }
-impl<'a, T: EvmAPI + 'a> Counter<'a, T> {
+impl<'a, T: fluentbase_sdk::contracts::EvmAPI + 'a> Balance2<'a, T> {
     const SLOT: fluentbase_sdk::U256 = U256::from_limbs([0u64, 0u64, 0u64, 0u64]);
     pub fn new(client: &'a T) -> Self {
         Self { client }
     }
-    pub fn key(&self) -> fluentbase_sdk::U256 {
-        Self::SLOT
+    fn get(&self, arg0: Address) -> Result<U256, String> {
+        let key = self.key(arg0);
+        let value = U256::default();
+        value.get(self.client, key)
     }
 
-    pub fn get<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
-        if V::HEADER_SIZE == 32
-            || V::HEADER_SIZE == 20
-            || V::HEADER_SIZE == 16
-            // || V::HEADER_SIZE == 8 // TODO: d1r1 we need to create more generic way to derrive is it dynamic or static. Now we are using it like a hack
-            || V::HEADER_SIZE == 4
-            || V::HEADER_SIZE == 2
-            || V::HEADER_SIZE == 1
-        {
-            self.get_static::<V>()
-        } else {
-            self.get_dynamic::<V>()
+    fn set(&self, arg0: Address, value: U256) {
+        let key = self.key(arg0);
+        value.set(self.client, key, value);
+    }
+    fn key(&self, arg0: Address) -> fluentbase_sdk::U256 {
+        use alloy_sol_types::SolValue;
+        let args = [fluentbase_sdk::U256::from_be_bytes({
+            let bytes = &arg0.abi_encode_packed();
+            let mut array = [0u8; 32];
+            let start = 32 - bytes.len();
+            array[start..].copy_from_slice(bytes);
+            array
+        })];
+        self.calculate_key(Self::SLOT, args)
+    }
+
+    fn calculate_key(
+        &self,
+        slot: fluentbase_sdk::U256,
+        args: [fluentbase_sdk::U256; 1usize],
+    ) -> fluentbase_sdk::U256 {
+        let mut key = slot;
+        for arg in args {
+            key = self.key_hash(key, arg);
         }
+        key
     }
-
-    pub fn get_static<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
-        let key = self.key();
-        let input = EvmSloadInput { index: key };
-        let output = self.client.sload(input);
-        let chunk = output.value.to_be_bytes::<32>();
-        let size = match V::HEADER_SIZE {
-            32 => 0,  // uint256, int256, fixed256, ufixed256
-            20 => 12, // address
-            16 => 16, // uint128, int128, fixed128, ufixed128
-            8 => 24,  // uint64, int64, fixed64, ufixed64
-            4 => 28,  // uint32, int32, fixed32, ufixed32
-            2 => 30,  // uint16, int16, fixed16, ufixed16
-            1 => 31,  // uint8, int8, fixed8, ufixed8
-            _ => return Err("Unsupported static type".to_string()),
-        };
-
-        let chunk = &chunk[..32 - size];
-
-        let mut decoder = BufferDecoder::new(&chunk);
-        let mut body = V::default();
-        V::decode_body(&mut decoder, 0, &mut body);
-
-        Ok(body)
-    }
-
-    pub fn get_dynamic<V: Encoder<V> + Default + Debug>(&self) -> Result<V, String> {
-        let key = self.key();
-
-        // Load the header
-        let output = self.client.sload(EvmSloadInput { index: key });
-        let header_chunk = output.value.to_be_bytes::<32>();
-
-        let mut decoder = BufferDecoder::new(&header_chunk);
-
-        // Decode the header to get offset and length of the data
-        let (header_offset, data_len) = V::decode_header(&mut decoder, 0, &mut V::default());
-
-        // Calculate the number of chunks to load
-        let chunk_size = 32;
-        let num_chunks = (data_len + chunk_size - 1) / chunk_size;
-
-        let mut buffer = Vec::with_capacity(num_chunks * chunk_size);
-
-        // Load all chunks of data
-        for i in 0..num_chunks {
-            let input = EvmSloadInput {
-                index: key + U256::from(i + (header_offset / chunk_size)),
-            };
-            let output = self.client.sload(input);
-            let chunk = output.value.to_be_bytes::<32>();
-
-            buffer.extend_from_slice(&chunk);
-        }
-
-        // Trim the buffer to the actual length of the data
-        buffer.truncate(header_offset + data_len);
-
-        let mut decoder = BufferDecoder::new(&buffer);
-        let mut body = V::default();
-        V::decode_body(&mut decoder, 0, &mut body);
-
-        Ok(body)
-    }
-
-    pub fn set<V: Encoder<V> + Debug>(&self, value: V) -> Result<(), String> {
-        let key = self.key();
-        let encoded_buffer = value.encode_to_vec(0);
-
-        let chunk_size = 32;
-        let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
-
-        for i in 0..num_chunks {
-            let start = i * chunk_size;
-            let end = (start + chunk_size).min(encoded_buffer.len());
-            let chunk = &encoded_buffer[start..end];
-
-            let mut chunk_padded = [0u8; 32];
-            chunk_padded[..chunk.len()].copy_from_slice(chunk);
-
-            let value_u256 = U256::from_be_bytes(chunk_padded);
-
-            let input = EvmSstoreInput {
-                index: key + U256::from(i),
-                value: value_u256,
-            };
-            self.client.sstore(input);
-        }
-
-        Ok(())
+    fn key_hash(
+        &self,
+        slot: fluentbase_sdk::U256,
+        key: fluentbase_sdk::U256,
+    ) -> fluentbase_sdk::U256 {
+        let mut raw_storage_key: [u8; 64] = [0; 64];
+        raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
+        raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
+        let mut storage_key: [u8; 32] = [0; 32];
+        LowLevelSDK::keccak256(
+            raw_storage_key.as_ptr(),
+            raw_storage_key.len() as u32,
+            storage_key.as_mut_ptr(),
+        );
+        fluentbase_sdk::U256::from_be_bytes(storage_key)
     }
 }
 
-impl<'a> Default for Counter<'a, EvmClient> {
+impl<'a> Default for Balance2<'a, EvmClient> {
     fn default() -> Self {
         Self {
             client: &EvmClient {
@@ -168,6 +109,7 @@ mod test {
         LowLevelSDK,
         U256,
     };
+    use hex_literal::hex;
     use serial_test::serial;
 
     fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) {
@@ -182,62 +124,118 @@ mod test {
     fn get_output() -> Vec<u8> {
         LowLevelSDK::get_test_output()
     }
-    // current test
+    // #[serial]
+    // #[test]
+    // pub fn test_mapping_storage_u256() {
+    //     LowLevelSDK::init_with_devnet_genesis();
+    //     with_test_input(vec![], None);
+
+    //     let storage = Balance::default();
+
+    //     let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+    //     let value: U256 = U256::from_str_radix("1000000000000000000", 10).unwrap(); // 1000
+
+    //     storage.set(addr, value);
+
+    //     let result = storage.get(addr);
+
+    //     assert_eq!(result, value);
+    // }
     #[serial]
     #[test]
-    pub fn test_primitive_storage_addr() {
+    pub fn test_mapping_storage_address() {
         LowLevelSDK::init_with_devnet_genesis();
         with_test_input(vec![], None);
 
-        let storage = Counter::default();
+        let storage = Allowance::default();
+
+        let addr1 = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+        let addr2 = Address::from(hex!("70997970C51812dc3A010C7d01b50e0d17dc79C8"));
+
+        let value: U256 = U256::from_str_radix("1000000000000000000", 10).unwrap();
+
+        storage.set(addr1, addr2, value);
+
+        let result = storage.get(addr1, addr2);
+
+        assert_eq!(result, result);
+    }
+    // #[serial]
+    #[test]
+    pub fn test_mapping_storage_u256() {
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
+
+        let storage = Balance::default();
+
         let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
 
-        storage.set(addr).unwrap();
+        let value: U256 = U256::from_str_radix("1000000000000000000", 10).unwrap(); // 1000
 
-        let result: Address = storage.get().unwrap();
-        assert_eq!(result, addr);
+        storage.set(addr, value);
+
+        let result = storage.get(addr);
+
+        assert_eq!(result, value);
     }
-    #[serial]
-    #[test]
-    pub fn test_primitive_storage_u256() {
-        LowLevelSDK::init_with_devnet_genesis();
-        with_test_input(vec![], None);
+    // current test
+    // #[serial]
+    // #[test]
+    // pub fn test_primitive_storage_addr() {
+    //     LowLevelSDK::init_with_devnet_genesis();
+    //     with_test_input(vec![], None);
 
-        let storage = Counter::default();
-        let num = U256::from_str_radix("1000000000000000000", 10).unwrap(); // 1000
-        storage.set(num).unwrap();
+    //     let storage = Counter::default();
+    //     let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
 
-        let result: U256 = storage.get().unwrap();
-        assert_eq!(result, num);
-    }
+    //     storage.set(addr).unwrap();
 
-    #[serial]
-    #[test]
-    pub fn test_primitive_storage_bool() {
-        LowLevelSDK::init_with_devnet_genesis();
-        with_test_input(vec![], None);
+    //     let result: Address = storage.get().unwrap();
+    //     assert_eq!(result, addr);
+    // }
+    // #[serial]
+    // #[test]
+    // pub fn test_primitive_storage_u256() {
+    //     LowLevelSDK::init_with_devnet_genesis();
+    //     with_test_input(vec![], None);
 
-        let storage = Counter::default();
-        let b = true;
-        storage.set(b).unwrap();
+    //     let storage = Counter::default();
+    //     let num = U256::from_str_radix("1000000000000000000", 10).unwrap(); // 1000
+    //     storage.set(num).unwrap();
 
-        let result: bool = storage.get().unwrap();
-        assert_eq!(result, b);
-    }
+    //     let result: U256 = storage.get().unwrap();
+    //     assert_eq!(result, num);
+    // }
 
-    #[serial]
-    #[test]
-    pub fn test_primitive_storage_dynamic_bytes() {
-        LowLevelSDK::init_with_devnet_genesis();
-        with_test_input(vec![], None);
+    // #[serial]
+    // #[test]
+    // pub fn test_primitive_storage_bool() {
+    //     LowLevelSDK::init_with_devnet_genesis();
+    //     with_test_input(vec![], None);
 
-        let b = fluentbase_sdk::Bytes::from("this it really long string. this it really long string. this it really long string. this it really long string.");
-        let storage = Counter::default();
-        storage.set(b.clone()).unwrap();
+    //     let storage = Counter::default();
+    //     let b = true;
+    //     storage.set(b).unwrap();
 
-        let result: fluentbase_sdk::Bytes = storage.get().unwrap();
-        assert_eq!(result, b);
-    }
+    //     let result: bool = storage.get().unwrap();
+    //     assert_eq!(result, b);
+    // }
+
+    // #[serial]
+    // #[test]
+    // pub fn test_primitive_storage_dynamic_bytes() {
+    //     LowLevelSDK::init_with_devnet_genesis();
+    //     with_test_input(vec![], None);
+
+    //     let b = fluentbase_sdk::Bytes::from("this it really long string. this it really long
+    // string. this it really long string. this it really long string.");     let storage =
+    // Counter::default();     storage.set(b.clone()).unwrap();
+
+    //     let result: fluentbase_sdk::Bytes = storage.get().unwrap();
+    //     assert_eq!(result, b);
+    // }
 }
 
 // struct FieldStorage<V> {

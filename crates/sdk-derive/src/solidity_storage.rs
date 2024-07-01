@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use proc_macro_error::abort;
 use quote::{quote, ToTokens};
+use std::process::Output;
 use syn::{
     parse::{discouraged::Speculative, Parse, ParseStream},
     parse_macro_input,
@@ -96,6 +97,8 @@ struct StorageItem {
     kind: StorageKind,
     name: Ident,
     slot: usize,
+    // args: [Arg],
+    // value: V,
 }
 
 impl IStorageItem for StorageItem {}
@@ -203,7 +206,7 @@ struct MappingStorage {
 }
 
 impl MappingStorage {
-    fn parse_args(mapping: &TypeMapping) -> Vec<Arg> {
+    fn parse_args(mapping: &TypeMapping) -> (Vec<Arg>, Option<Arg>) {
         let mut args = Vec::new();
         let mut current_mapping = mapping;
         let mut i = 0;
@@ -225,51 +228,59 @@ impl MappingStorage {
 
             match &*current_mapping.value {
                 Type::Custom(custom_value) => {
-                    // TODO: d1r1 should we parse return value from U256 or we can use U256 for all
-                    // types?
-                    let _output = Arg {
+                    let output = Arg {
                         name: Ident::new("output", proc_macro2::Span::call_site()),
                         ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
                         is_output: true,
                     };
 
-                    return args;
+                    return (args, Some(output));
                 }
                 Type::Mapping(inner_mapping) => {
                     current_mapping = inner_mapping;
                 }
                 _ => {
-                    return args;
+                    return (args, None);
                 }
             }
         }
     }
 
-    fn expand_get_fn(
-        arg_tokens: &Vec<proc_macro2::TokenStream>,
-        arg_names: &Vec<&Ident>,
-    ) -> proc_macro2::TokenStream {
+    fn expand_get_fn(args: &Vec<Arg>, output: &Option<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+
+        let output = match output {
+            Some(output) => output.ty.to_token_stream(),
+            None => quote! { () },
+        };
+
         quote! {
-            fn get(&self, #(#arg_tokens),*) -> fluentbase_sdk::U256 {
-                use fluentbase_sdk::contracts::EvmSloadInput;
+            fn get(&self, #(#arguments),*) -> #output {
                 let key = self.key(#(#arg_names),*);
-                let input = EvmSloadInput { index: key };
-                let output = self.client.sload(input);
-                output.value
+                let value = #output::default();
+
+                value.get(self.client, key).unwrap()
             }
         }
     }
 
-    fn expand_set_fn(
-        arg_tokens: &Vec<proc_macro2::TokenStream>,
-        arg_names: &Vec<&Ident>,
-    ) -> proc_macro2::TokenStream {
+    fn expand_set_fn(args: &Vec<Arg>, output: &Option<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+
+        let output = match output {
+            Some(output) => output.ty.to_token_stream(),
+            None => quote! { () },
+        };
         quote! {
-            fn set(&self, #(#arg_tokens),*, value: fluentbase_sdk::U256) {
-                use fluentbase_sdk::contracts::EvmSstoreInput;
+            fn set(&self, #(#arguments),*, value: #output) {
                 let key = self.key(#(#arg_names),*);
-                let input = EvmSstoreInput { index: key, value };
-                self.client.sstore(input);
+                value.set(self.client, key, value).unwrap();
             }
         }
     }
@@ -314,7 +325,7 @@ impl MappingStorage {
         };
 
         let key_fn = quote! {
-            pub fn key(&self, #(#arg_tokens),*) -> fluentbase_sdk::U256 {
+            fn key(&self, #(#arg_tokens),*) -> fluentbase_sdk::U256 {
                 use alloy_sol_types::SolValue;
                 let args = [
                     #(
@@ -342,13 +353,13 @@ impl MappingStorage {
 
 impl Expandable for MappingStorage {
     fn expand(&self) -> SynResult<proc_macro2::TokenStream> {
-        let args = MappingStorage::parse_args(&self.ty);
+        let (args, output) = MappingStorage::parse_args(&self.ty);
         let arg_tokens: Vec<proc_macro2::TokenStream> =
             args.iter().map(|arg| arg.to_token_stream()).collect();
         let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
 
-        let get_fn = MappingStorage::expand_get_fn(&arg_tokens, &arg_names);
-        let set_fn = MappingStorage::expand_set_fn(&arg_tokens, &arg_names);
+        let get_fn = MappingStorage::expand_get_fn(&args, &output);
+        let set_fn = MappingStorage::expand_set_fn(&args, &output);
         let utils_fn = MappingStorage::expand_utils_fn(&arg_tokens, &arg_names);
 
         Ok(quote! {
