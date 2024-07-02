@@ -1,23 +1,10 @@
-use alloy_primitives::{FixedBytes, Uint};
-use alloy_sol_types::{sol, SolValue};
+use alloy_primitives::Uint;
 use core::{borrow::Borrow, fmt::Debug};
 use fluentbase_sdk::{
-    bytes::buf,
-    codec::{BufferDecoder, Encoder, WritableBuffer},
-    contracts::{
-        EvmAPI,
-        EvmClient,
-        EvmSloadInput,
-        EvmSloadOutput,
-        EvmSstoreInput,
-        EvmSstoreOutput,
-        PRECOMPILE_EVM,
-    },
-    derive::solidity_storage,
+    codec::{BufferDecoder, Encoder},
+    contracts::{EvmAPI, EvmSloadInput, EvmSstoreInput},
     Address,
     Bytes,
-    LowLevelSDK,
-    SharedAPI,
     U256,
 };
 
