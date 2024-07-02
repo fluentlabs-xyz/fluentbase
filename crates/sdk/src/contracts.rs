@@ -49,6 +49,7 @@ pub trait SvmAPI {}
 
 pub trait BlendedAPI {
     fn exec_evm_tx(&self, raw_evm_tx: Bytes);
+    fn exec_fuel_tx(&self, raw_fuel_tx: Bytes);
     fn exec_svm_tx(&self, raw_svm_tx: Bytes);
 }
 
