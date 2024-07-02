@@ -87,7 +87,6 @@ impl Parse for StorageItem {
     }
 }
 
-// Move Trait to storage item methods
 impl StorageItem {
     fn expand_slot(index: u64) -> proc_macro2::TokenStream {
         quote! {
@@ -498,47 +497,43 @@ impl Parse for PrimitiveStorage {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use syn::parse_quote;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
 
-//     #[test]
-//     fn test_parse_args_single_level() {
-//         let mapping: TypeMapping = parse_quote! {
-//             mapping(Address => MyStruct)
-//         };
+    #[test]
+    fn test_mapping_parse_args_single_level() {
+        let mapping: TypeMapping = parse_quote! {
+            mapping(Address => MyStruct)
+        };
 
-//         let args = MappingStorage::parse_args(&mapping);
+        let (args, output) = MappingStorage::parse_args(&mapping);
 
-//         assert_eq!(args.len(), 1);
-//         assert_eq!(args[0].name.to_string(), "arg0");
-//         assert_eq!(args[0].ty.to_string(), "Address");
-//     }
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name.to_string(), "arg0");
+        assert_eq!(args[0].ty.to_string(), "Address");
+    }
 
-//     #[test]
-//     fn test_parse_args_nested() {
-//         let mapping: TypeMapping = parse_quote! {
-//             mapping(Address owner => mapping(Address users => mapping(Address balances =>
-// MyStruct)))         };
+    #[test]
+    fn test_mapping_parse_args_nested() {
+        let mapping: TypeMapping = parse_quote! {
+                    mapping(Address owner => mapping(Address => mapping(Address balances =>
+        MyStruct)))         };
 
-//         let args = MappingStorage::parse_args(&mapping);
+        let (args, output) = MappingStorage::parse_args(&mapping);
 
-//         assert_eq!(args.len(), 3);
-//         assert_eq!(args[0].name.to_string(), "owner");
-//         assert_eq!(args[0].ty.to_string(), "Address");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].name.to_string(), "owner");
+        assert_eq!(args[0].ty.to_string(), "Address");
 
-//         assert_eq!(args[1].name.to_string(), "users");
-//         assert_eq!(args[1].ty.to_string(), "Address");
+        assert_eq!(args[1].name.to_string(), "arg1");
+        assert_eq!(args[1].ty.to_string(), "Address");
 
-//         assert_eq!(args[2].name.to_string(), "balances");
-//         assert_eq!(args[2].ty.to_string(), "Address");
-//     }
-//     #[test]
-//     fn test_u256() {
-//         assert_eq!(
-//             format!("{:064x}", 1),
-//             "0000000000000000000000000000000000000000000000000000000000000001"
-//         )
-//     }
-// }
+        assert_eq!(args[2].name.to_string(), "balances");
+        assert_eq!(args[2].ty.to_string(), "Address");
+
+        assert_eq!(output.clone().unwrap().name.to_string(), "output");
+        assert_eq!(output.unwrap().ty.to_string(), "MyStruct");
+    }
+}
