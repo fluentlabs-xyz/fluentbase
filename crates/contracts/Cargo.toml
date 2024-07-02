@@ -18,6 +18,9 @@ revm-precompile = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false }
 revm = { workspace = true, default-features = false }
 
+fuel-vm = { workspace = true, default-features = false }
+fuel-tx = { workspace = true, default-features = false }
+
 zeth-primitives = { workspace = true, default-features = false, features = [
     "revm"
 ] }
