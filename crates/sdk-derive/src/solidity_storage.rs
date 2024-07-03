@@ -37,8 +37,78 @@ impl SolidityStorage {
                     .unwrap_or_else(|err| abort!(err.span(), err.to_string())),
             );
         }
+        let trait_definition = trait_definition();
+        let expanded = quote! {
+            #trait_definition
+            #expanded
+        };
 
         TokenStream::from(expanded)
+    }
+}
+fn trait_definition() -> proc_macro2::TokenStream {
+    quote! {
+        pub trait StorageValue<Client, T> {
+            fn get(client: &Client, key: fluentbase_sdk::U256) -> Result<T, String>;
+            fn set(client: &Client, key: fluentbase_sdk::U256, value: T) -> Result<(), String>;
+        }
+
+        impl<Client, T> StorageValue<Client, T> for T
+        where
+            Client: fluentbase_sdk::contracts::EvmAPI,
+            T: fluentbase_sdk::codec::Encoder<T> + Default,
+        {
+            fn get(client: &Client, key: fluentbase_sdk::U256) -> Result<T, String> {
+                let header_size = T::HEADER_SIZE;
+
+                let mut buffer = vec![];
+
+                for i in 0.. {
+                    let key = key + fluentbase_sdk::U256::from(i);
+                    let input = fluentbase_sdk::contracts::EvmSloadInput { index: key };
+                    let output = client.sload(input);
+
+                    let chunk = output.value.to_be_bytes::<32>();
+
+                    if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk);
+                }
+
+                let mut decoder = fluentbase_sdk::codec::BufferDecoder::new(&buffer);
+                let mut body = T::default();
+                T::decode_body(&mut decoder, 0, &mut body);
+                Ok(body)
+            }
+
+            fn set(client: &Client, key: fluentbase_sdk::U256, value: T) -> Result<(), String> {
+                let encoded_buffer = value.encode_to_vec(0);
+
+                let chunk_size = 32;
+                let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+
+                for i in 0..num_chunks {
+                    let start = i * chunk_size;
+                    let end = (start + chunk_size).min(encoded_buffer.len());
+                    let chunk = &encoded_buffer[start..end];
+
+                    let mut chunk_padded = [0u8; 32];
+                    chunk_padded[..chunk.len()].copy_from_slice(chunk);
+
+                    let value_u256 = fluentbase_sdk::U256::from_be_bytes(chunk_padded);
+                    let input = fluentbase_sdk::contracts::EvmSstoreInput {
+                        index: key + U256::from(i),
+                        value: value_u256,
+                    };
+
+                    client.sstore(input);
+                }
+
+                Ok(())
+            }
+        }
+
     }
 }
 
@@ -90,7 +160,7 @@ impl Parse for StorageItem {
 impl StorageItem {
     fn expand_slot(index: u64) -> proc_macro2::TokenStream {
         quote! {
-            const SLOT: fluentbase_sdk::U256 = U256::from_limbs([#index, 0u64, 0u64, 0u64]);
+            const SLOT: fluentbase_sdk::U256 = fluentbase_sdk::U256::from_limbs([#index, 0u64, 0u64, 0u64]);
         }
     }
 
@@ -104,11 +174,11 @@ impl StorageItem {
 
     fn expand_default_trait(ident: &Ident) -> proc_macro2::TokenStream {
         quote! {
-            impl<'a> Default for #ident<'a, EvmClient> {
+            impl<'a> Default for #ident<'a, fluentbase_sdk::contracts::EvmClient> {
                 fn default() -> Self {
                     Self {
-                        client: &EvmClient {
-                            address: PRECOMPILE_EVM,
+                        client: &fluentbase_sdk::contracts::EvmClient {
+                            address: fluentbase_sdk::contracts::PRECOMPILE_EVM,
                             fuel: u32::MAX,
                         },
                     }
@@ -145,7 +215,7 @@ impl StorageItem {
                 let key = #key;
                 let value = #output::default();
 
-                value.get(self.client, key).unwrap()
+                #output::get(self.client, key).unwrap()
             }
         }
     }
@@ -170,7 +240,7 @@ impl StorageItem {
         quote! {
             fn set(#set_args) {
                 let key = self.key(#(#arg_names),*);
-                value.set(self.client, key, value.clone()).unwrap();
+                #output::set(self.client, key, value.clone()).unwrap();
             }
         }
     }

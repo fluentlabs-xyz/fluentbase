@@ -1,6 +1,5 @@
 use crate::contract::impl_derive_contract;
 use proc_macro::TokenStream;
-use proc_macro2;
 use proc_macro_error::proc_macro_error;
 use quote::quote;
 use syn::{
