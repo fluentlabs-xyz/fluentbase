@@ -2286,7 +2286,6 @@ version = "0.54.1"
 dependencies = [
  "bitflags 2.6.0",
  "fuel-types",
- "serde",
  "strum 0.24.1",
 ]
 
@@ -2299,7 +2298,6 @@ dependencies = [
  "fuel-types",
  "k256",
  "p256",
- "serde",
  "sha2",
  "zeroize",
 ]
@@ -2323,7 +2321,6 @@ dependencies = [
  "fuel-storage",
  "hashbrown 0.13.2",
  "hex",
- "serde",
  "sha2",
 ]
 
@@ -2346,7 +2343,6 @@ dependencies = [
  "itertools 0.10.5",
  "postcard",
  "serde",
- "serde_json",
  "strum 0.24.1",
  "strum_macros 0.24.3",
 ]
