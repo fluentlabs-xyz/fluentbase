@@ -5,6 +5,23 @@ use fluentbase_sdk::{
     ContextReader,
     U256,
 };
+use fuel_tx::{
+    consensus_parameters::{
+        ConsensusParametersV1,
+        ContractParametersV1,
+        FeeParametersV1,
+        PredicateParametersV1,
+        ScriptParametersV1,
+        TxParametersV1,
+    },
+    ConsensusParameters,
+    ContractParameters,
+    FeeParameters,
+    GasCosts,
+    PredicateParameters,
+    ScriptParameters,
+    TxParameters,
+};
 use fuel_vm::{
     checked_transaction::IntoChecked,
     interpreter::CheckedMetadata,
@@ -45,39 +62,75 @@ pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Data
         })
 }
 
-pub fn fuel_exec_tx<CR: ContextReader, Tx: ExecutableTransaction + IntoChecked>(
-    cr: &CR,
-    tx: Tx,
-    interpreter_params: fuel_vm::interpreter::InterpreterParams,
-    consensus_params: &fuel_tx::ConsensusParameters,
-) -> fuel_vm::state::StateTransition<Tx>
-where
-    <Tx as IntoChecked>::Metadata: CheckedMetadata,
-{
-    let tx_gas_price = cr.tx_gas_price().as_limbs()[0];
-    let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
-        fuel_vm::interpreter::Interpreter::with_storage(
-            fuel_vm::interpreter::MemoryInstance::new(),
-            fuel_vm::storage::MemoryStorage::default(),
-            interpreter_params,
-        );
-    let ready_tx = tx
-        .into_checked_basic(
-            fuel_vm::fuel_types::BlockHeight::new(cr.block_number() as u32),
-            consensus_params,
-        )
-        .expect("failed to convert tx into checked tx")
-        .into_ready(
-            tx_gas_price,
-            consensus_params.gas_costs(),
-            consensus_params.fee_params(),
-        )
-        .expect("failed to make tx ready");
-    let vm_result: fuel_vm::state::StateTransition<_> = vm
-        .transact(ready_tx)
-        .expect("failed to exec transaction")
-        .into();
-    vm_result
+// pub fn fuel_exec_tx<CR: ContextReader, Tx: ExecutableTransaction + IntoChecked>(
+//     cr: &CR,
+//     tx: Tx,
+//     interpreter_params: fuel_vm::interpreter::InterpreterParams,
+//     consensus_params: &fuel_tx::ConsensusParameters,
+// ) -> fuel_vm::state::StateTransition<Tx>
+// where
+//     <Tx as IntoChecked>::Metadata: CheckedMetadata,
+// {
+//     let tx_gas_price = cr.tx_gas_price().as_limbs()[0];
+//     let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
+//         fuel_vm::interpreter::Interpreter::with_storage(
+//             fuel_vm::interpreter::MemoryInstance::new(),
+//             fuel_vm::storage::MemoryStorage::default(),
+//             interpreter_params,
+//         );
+//     let ready_tx = tx
+//         .into_checked(
+//             fuel_vm::fuel_types::BlockHeight::new(cr.block_number() as u32),
+//             consensus_params,
+//         )
+//         .expect("failed to convert tx into checked tx")
+//         .into_ready(
+//             tx_gas_price,
+//             consensus_params.gas_costs(),
+//             consensus_params.fee_params(),
+//         )
+//         .expect("failed to make tx ready");
+//     let vm_result: fuel_vm::state::StateTransition<_> = vm
+//         .transact(ready_tx)
+//         .expect("failed to exec transaction")
+//         .into();
+//     vm_result
+// }
+
+pub fn fuel_prepare_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+    ConsensusParameters::V1(ConsensusParametersV1 {
+        tx_params: TxParameters::V1(TxParametersV1 {
+            max_inputs: 255,
+            max_outputs: 255,
+            max_witnesses: 255,
+            max_gas_per_tx: cr.tx_gas_limit(),
+            max_size: 110 * 1024,
+            max_bytecode_subsections: 255,
+        }),
+        predicate_params: PredicateParameters::V1(PredicateParametersV1 {
+            max_predicate_length: 1024 * 1024,
+            max_predicate_data_length: 1024 * 1024,
+            max_message_data_length: 1024 * 1024,
+            max_gas_per_predicate: cr.tx_gas_limit(),
+        }),
+        script_params: ScriptParameters::V1(ScriptParametersV1 {
+            max_script_length: 1024 * 1024,
+            max_script_data_length: 1024 * 1024,
+        }),
+        contract_params: ContractParameters::V1(ContractParametersV1 {
+            contract_max_size: 100 * 1024,
+            max_storage_slots: 1760,
+        }),
+        fee_params: FeeParameters::V1(FeeParametersV1 {
+            gas_price_factor: 92,
+            gas_per_byte: 62,
+        }),
+        chain_id: fuel_vm::fuel_types::ChainId::new(cr.block_chain_id()),
+        gas_costs: GasCosts::default(),
+        base_asset_id: Default::default(), // TODO
+        block_gas_limit: cr.block_gas_limit(),
+        privileged_address: Default::default(), // TODO
+    })
 }
 
 pub fn fill_eth_tx_env(tx_env: &mut TxEnv, essence: &EthereumTxEssence, caller: Address) {
