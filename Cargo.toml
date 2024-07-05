@@ -42,10 +42,10 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
-#fuel-vm = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
-#fuel-tx = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
-fuel-vm = { path = "../../other/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
-fuel-tx = { path = "../../other/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
+fuel-vm = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
+fuel-tx = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
+#fuel-vm = { path = "../../other/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
+#fuel-tx = { path = "../../other/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm/rwasm", default-features = false }

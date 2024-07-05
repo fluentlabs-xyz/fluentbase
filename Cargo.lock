@@ -2283,6 +2283,7 @@ dependencies = [
 [[package]]
 name = "fuel-asm"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "bitflags 2.6.0",
  "fuel-types",
@@ -2292,6 +2293,7 @@ dependencies = [
 [[package]]
 name = "fuel-crypto"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "ecdsa",
  "ed25519-dalek",
@@ -2305,6 +2307,7 @@ dependencies = [
 [[package]]
 name = "fuel-derive"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2315,6 +2318,7 @@ dependencies = [
 [[package]]
 name = "fuel-merkle"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "derive_more",
  "digest 0.10.7",
@@ -2327,10 +2331,12 @@ dependencies = [
 [[package]]
 name = "fuel-storage"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 
 [[package]]
 name = "fuel-tx"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "bitflags 2.6.0",
  "derivative",
@@ -2350,6 +2356,7 @@ dependencies = [
 [[package]]
 name = "fuel-types"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "fuel-derive",
  "hex",
@@ -2359,6 +2366,7 @@ dependencies = [
 [[package]]
 name = "fuel-vm"
 version = "0.54.1"
+source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
 dependencies = [
  "async-trait",
  "bitflags 2.6.0",
