@@ -86,7 +86,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
             fuel_vm::interpreter::InterpreterParams::new(tx_gas_price, &consensus_params);
 
         // let v = exec_fuel_tx_with_vm(self.cr, tx, interpreter_params, &consensus_params);
-        let receipt = match tx {
+        let receipts = match tx {
             fuel_tx::Transaction::Script(etx) => {
                 // let vm_result = fuel_exec_tx(self.cr, etx, interpreter_params,
                 // &consensus_params); vm_result.receipts().first().cloned().
@@ -113,7 +113,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     .transact(ready_tx)
                     .expect("failed to exec transaction")
                     .into();
-                vm_result.receipts().first().cloned().expect("no receipts")
+                vm_result.receipts().clone().to_vec()
             }
             fuel_tx::Transaction::Create(etx) => {
                 // let vm_result = fuel_exec_tx(self.cr, etx, interpreter_params,
@@ -141,7 +141,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     .transact(ready_tx)
                     .expect("failed to exec transaction")
                     .into();
-                vm_result.receipts().first().cloned().expect("no receipts")
+                vm_result.receipts().clone().to_vec()
             }
             fuel_tx::Transaction::Upgrade(etx) => {
                 // let vm_result = fuel_exec_tx(self.cr, etx, interpreter_params,
@@ -169,7 +169,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     .transact(ready_tx)
                     .expect("failed to exec transaction")
                     .into();
-                vm_result.receipts().first().cloned().expect("no receipts")
+                vm_result.receipts().clone().to_vec()
             }
             fuel_tx::Transaction::Upload(etx) => {
                 // let vm_result = fuel_exec_tx(self.cr, etx, interpreter_params,
@@ -197,14 +197,14 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     .transact(ready_tx)
                     .expect("failed to exec transaction")
                     .into();
-                vm_result.receipts().first().cloned().expect("no receipts")
+                vm_result.receipts().clone().to_vec()
             }
             fuel_tx::Transaction::Mint(_) => {
                 panic!("mint transaction is not supported")
             }
         };
         let mut receipt_encoded = Vec::<u8>::new();
-        receipt
+        receipts
             .encode(&mut receipt_encoded)
             .expect("failed to encode receipt");
         LowLevelSDK::write(receipt_encoded.as_ptr(), receipt_encoded.len() as u32);
