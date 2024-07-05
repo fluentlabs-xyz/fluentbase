@@ -1,6 +1,6 @@
 use crate::{
     alloc::vec::Vec,
-    utils::{evm_builder_apply_envs, fill_eth_tx_env, fuel_prepare_consensus_params},
+    utils::{evm_builder_apply_envs, fill_eth_tx_env, fuel_testnet_consensus_params},
 };
 use alloy_rlp::{Decodable, Encodable};
 use fluentbase_sdk::{
@@ -80,7 +80,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
     fn exec_fuel_tx(&self, raw_fuel_tx: Bytes) {
         let tx = fuel_tx::Transaction::from_bytes(&raw_fuel_tx.as_ref())
             .expect("failed to decode transaction");
-        let consensus_params = fuel_prepare_consensus_params(self.cr);
+        let consensus_params = fuel_testnet_consensus_params(self.cr);
         let tx_gas_price = self.cr.tx_gas_price().as_limbs()[0];
         let interpreter_params =
             fuel_vm::interpreter::InterpreterParams::new(tx_gas_price, &consensus_params);

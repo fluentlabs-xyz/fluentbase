@@ -1,3 +1,4 @@
+use core::str::FromStr;
 use fluentbase_sdk::{
     codec::Encoder,
     types::{CoreInput, ICoreInput},
@@ -24,11 +25,13 @@ use fuel_tx::{
 };
 use fuel_vm::{
     checked_transaction::IntoChecked,
+    fuel_types,
+    fuel_types::AssetId,
     interpreter::CheckedMetadata,
     prelude::ExecutableTransaction,
 };
 use revm::{
-    primitives::{SpecId, TransactTo, TxEnv},
+    primitives::{hex::FromHex, SpecId, TransactTo, TxEnv},
     Database,
     EvmBuilder,
 };
@@ -97,7 +100,7 @@ pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Data
 //     vm_result
 // }
 
-pub fn fuel_prepare_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+pub fn fuel_testnet_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
     ConsensusParameters::V1(ConsensusParametersV1 {
         tx_params: TxParameters::V1(TxParametersV1 {
             max_inputs: 255,
@@ -125,11 +128,17 @@ pub fn fuel_prepare_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusPar
             gas_price_factor: 92,
             gas_per_byte: 62,
         }),
-        chain_id: fuel_vm::fuel_types::ChainId::new(cr.block_chain_id()),
+        chain_id: fuel_types::ChainId::new(cr.block_chain_id()),
         gas_costs: GasCosts::default(),
-        base_asset_id: Default::default(), // TODO
+        base_asset_id: AssetId::from_str(
+            "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+        )
+        .expect("invalid asset id format"),
         block_gas_limit: cr.block_gas_limit(),
-        privileged_address: Default::default(), // TODO
+        privileged_address: fuel_types::Address::from_str(
+            "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9",
+        )
+        .expect("invalid privileged address format"),
     })
 }
 
