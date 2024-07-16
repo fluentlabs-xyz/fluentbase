@@ -10,6 +10,21 @@ use strum_macros::{Display, FromRepr};
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
+pub struct Fuel(pub u64);
+
+impl From<u64> for Fuel {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+impl Into<u64> for Fuel {
+    #[inline]
+    fn into(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
@@ -90,6 +105,19 @@ pub enum ExitCode {
     UnknownError = -2017,
     UnresolvedFunction = -2018,
     StackUnderflow = -2019,
+}
+
+pub trait UnwrapExitCode<T> {
+    fn unwrap_exit_code(self) -> T;
+}
+
+impl<T> UnwrapExitCode<T> for Result<T, ExitCode> {
+    fn unwrap_exit_code(self) -> T {
+        match self {
+            Ok(res) => res,
+            Err(err) => panic!("exit code: {} ({})", err, err.into_i32()),
+        }
+    }
 }
 
 impl From<i32> for ExitCode {

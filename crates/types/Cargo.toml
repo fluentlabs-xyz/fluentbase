@@ -15,10 +15,12 @@ serde = { version = "1.0", default-features = false, features = [
     "derive",
     "rc",
 ], optional = true }
-
+byteorder = { workspace = true }
 rwasm = { workspace = true, default-features = false, optional = true }
 alloy-primitives = { workspace = true }
+alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
+revm-primitives = { workspace = true, default-features = false }
 
 [features]
 default = ["std", "rwasm"]

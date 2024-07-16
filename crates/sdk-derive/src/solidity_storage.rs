@@ -17,11 +17,8 @@ trait Expandable {
 }
 
 pub struct SolidityStorage;
-impl SolidityStorage {
-    fn new() -> Self {
-        Self
-    }
 
+impl SolidityStorage {
     pub fn expand(input: TokenStream) -> TokenStream {
         let input = parse_macro_input!(input as StorageItems);
 
@@ -106,7 +103,6 @@ impl WrappedTypeMapping {
                     &current_mapping.key.to_string(),
                     proc_macro2::Span::call_site(),
                 ),
-                is_output: false,
             };
             if let Some(key_name) = &current_mapping.key_name {
                 arg.name = key_name.0.clone();
@@ -121,7 +117,6 @@ impl WrappedTypeMapping {
                     let _output = Arg {
                         name: Ident::new("output", proc_macro2::Span::call_site()),
                         ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
-                        is_output: true,
                     };
 
                     return args;
@@ -158,13 +153,8 @@ impl WrappedTypeMapping {
                 let mut raw_storage_key: [u8; 64] = [0; 64];
                 raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
                 raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-                let mut storage_key: [u8; 32] = [0; 32];
-                LowLevelSDK::keccak256(
-                    raw_storage_key.as_ptr(),
-                    raw_storage_key.len() as u32,
-                    storage_key.as_mut_ptr(),
-                );
-                fluentbase_sdk::U256::from_be_bytes(storage_key)
+                let storage_key = SDK::keccak256(&raw_storage_key[..]);
+                fluentbase_sdk::U256::from_be_bytes(storage_key.0)
             }
         };
 
@@ -235,22 +225,17 @@ impl Expandable for WrappedTypeMapping {
 
         let new_fn = quote! {
             pub fn new(client: &'a T) -> Self {
-                Self { client }
-            }
-        };
-
-        let set_client_fn = quote! {
-            pub fn set_client(&mut self, client: &'a T) {
-                self.client = Some(client);
+                Self { client, _pd: Default::default() }
             }
         };
 
         let expanded = quote! {
-            pub struct #ident<'a, T: #client_trait + 'a>
+            pub struct #ident<'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait + 'a>
             {
                 client:  &'a T,
+                _pd: core::marker::PhantomData<SDK>,
             }
-            impl <'a, T: #client_trait + 'a> #ident <'a, T>
+            impl <'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait + 'a> #ident <'a, SDK, T>
             {
                 #slot
                 #new_fn
@@ -296,15 +281,14 @@ impl Expandable for WrappedTypeArray {
 
         let new_fn = quote! {
             pub fn new(client: &'a T) -> Self {
-                Self { client }
+                Self { client, _pd: Default::default() }
             }
         };
 
         let key_hash_fn = quote! {
             fn key_hash(&self, slot: fluentbase_sdk::U256, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                let mut storage_key: [u8; 32] = [0; 32];
-                LowLevelSDK::keccak256(slot.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
-                let storage_key = U256::from_be_bytes(storage_key);
+                let storage_key = SDK::keccak256(slot.as_le_slice());
+                let storage_key = U256::from_be_bytes(storage_key.0);
                 storage_key + index
             }
         };
@@ -332,11 +316,12 @@ impl Expandable for WrappedTypeArray {
         };
 
         let expanded = quote! {
-            struct #ident<'a, T: #client_trait>
+            struct #ident<'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait>
             {
                 client:  &'a T,
+                _pd: core::marker::PhantomData<SDK>,
             }
-            impl <'a, T: #client_trait> #ident <'a, T> {
+            impl <'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait> #ident <'a, SDK, T> {
                 #slot
                 #new_fn
                 #key_fn
@@ -393,7 +378,6 @@ fn slot_from_index(index: usize) -> proc_macro2::TokenStream {
 struct Arg {
     name: Ident,
     ty: Ident,
-    is_output: bool,
 }
 
 impl ToTokens for Arg {

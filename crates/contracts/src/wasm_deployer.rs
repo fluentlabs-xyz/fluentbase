@@ -4,43 +4,36 @@ use fluentbase_sdk::{
     basic_entrypoint,
     derive::Contract,
     types::WasmCreateMethodInput,
-    AccountManager,
     Bytes,
     ContextReader,
     SovereignAPI,
 };
 
 #[derive(Contract)]
-pub struct WasmDeployerImpl<'a, CR: ContextReader, AM: AccountManager> {
-    cr: &'a CR,
-    am: &'a AM,
+pub struct WasmDeployerImpl<CTX: ContextReader, SDK: SovereignAPI> {
+    ctx: CTX,
+    sdk: SDK,
 }
 
-impl<'a, CR: ContextReader, AM: AccountManager> WasmDeployerImpl<'a, CR, AM> {
-    pub fn deploy<SDK: SovereignAPI>(&self) {
+impl<CTX: ContextReader, SDK: SovereignAPI> WasmDeployerImpl<CTX, SDK> {
+    pub fn deploy(&self) {
         unreachable!("deploy is not supported for loader")
     }
-    pub fn main<SDK: SovereignAPI>(&self) {
-        let input_size = SDK::input_size();
+    pub fn main(&self) {
+        let input_size = self.sdk.input_size();
         let input = alloc_slice(input_size as usize);
-        SDK::read(input.as_mut_ptr(), input_size, 0);
+        self.sdk.read(input, 0);
         let input = WasmCreateMethodInput {
             bytecode: Bytes::copy_from_slice(input),
-            value: self.cr.contract_value(),
-            gas_limit: self.cr.contract_gas_limit(),
+            value: self.ctx.contract_value(),
+            gas_limit: self.ctx.contract_gas_limit(),
             salt: None,
             depth: 0,
         };
-        let output = _wasm_create(self.cr, self.am, input);
-        SDK::write(output.output.as_ptr(), output.output.len() as u32);
-        SDK::exit(output.exit_code);
+        let output = _wasm_create(&self.ctx, &self.sdk, input);
+        self.sdk.write(&output.output);
+        self.sdk.exit(output.exit_code);
     }
 }
 
-basic_entrypoint!(
-    WasmDeployerImpl<
-        'static,
-        fluentbase_sdk::GuestContextReader,
-        fluentbase_sdk::GuestAccountManager,
-    >
-);
+basic_entrypoint!(WasmDeployerImpl);

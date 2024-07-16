@@ -3,28 +3,29 @@ use fluentbase_codec::Encoder;
 use fluentbase_sdk::{
     types::{WasmCreateMethodInput, WasmCreateMethodOutput},
     Account,
-    AccountManager,
+    AccountStatus,
     ContextReader,
     ContractInput,
-    LowLevelSDK,
     SharedAPI,
+    SovereignAPI,
 };
-use fluentbase_types::{Bytes, ExitCode, B256, STATE_DEPLOY};
+use fluentbase_types::{Bytes, ExitCode, Fuel, STATE_DEPLOY};
 use revm_primitives::WASM_MAX_CODE_SIZE;
 
-pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _wasm_create<CTX: ContextReader, SDK: SovereignAPI>(
+    ctx: &CTX,
+    sdk: &SDK,
     input: WasmCreateMethodInput,
 ) -> WasmCreateMethodOutput {
-    debug_log!("_wasm_create start");
+    debug_log!(sdk, "_wasm_create start");
 
     // TODO: "gas calculations"
     // TODO: "call depth stack check >= 1024"
 
     // check write protection
-    if cr.contract_is_static() {
+    if ctx.contract_is_static() {
         debug_log!(
+            sdk,
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::WriteProtection
         );
@@ -34,27 +35,23 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     // code length can't exceed max constructor limit
     if input.bytecode.len() > WASM_MAX_CODE_SIZE {
         debug_log!(
+            sdk,
             "_wasm_create return: Err: exit_code: {}",
             ExitCode::ContractSizeLimit
         );
         return WasmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit);
     }
 
-    let mut source_code_hash: B256 = B256::ZERO;
-    LowLevelSDK::keccak256(
-        input.bytecode.as_ptr(),
-        input.bytecode.len() as u32,
-        source_code_hash.as_mut_ptr(),
-    );
+    let source_code_hash = SDK::keccak256(input.bytecode.as_ref());
 
     // read value input and contract address
-    let caller_address = cr.contract_caller();
+    let caller_address = ctx.contract_caller();
     // load deployer and contract accounts
-    let (mut deployer_account, _) = am.account(caller_address);
+    let (mut deployer_account, _) = sdk.account(&caller_address);
 
     // create an account
     let (mut contract_account, checkpoint) = match Account::create_account_checkpoint(
-        am,
+        sdk,
         &mut deployer_account,
         input.value,
         input.salt.map(|salt| (salt, source_code_hash)),
@@ -66,6 +63,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     };
     if !input.value.is_zero() {
         debug_log!(
+            sdk,
             "ecm(_wasm_create): transfer from={} to={} value={}",
             contract_account.address,
             contract_account.address,
@@ -74,6 +72,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     }
 
     debug_log!(
+        sdk,
         "ecl(_wasm_create): creating account={} balance={}",
         contract_account.address,
         hex::encode(contract_account.balance.to_be_bytes::<32>())
@@ -83,8 +82,8 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     let rwasm_bytecode = match wasm2rwasm(&input.bytecode) {
         Ok(result) => result,
         Err(exit_code) => {
-            am.rollback(checkpoint);
-            debug_log!("_wasm_create return: panic: exit_code: {}", exit_code);
+            sdk.rollback(checkpoint);
+            debug_log!(sdk, "_wasm_create return: panic: exit_code: {}", exit_code);
             return WasmCreateMethodOutput::from_exit_code(exit_code);
         }
     };
@@ -106,45 +105,46 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
     // LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
 
     // write deployer to the trie
-    am.write_account(&deployer_account);
+    sdk.write_account(&deployer_account, AccountStatus::Modified);
 
     // write contract to the trie
-    contract_account.update_bytecode(am, &input.bytecode, None, &rwasm_bytecode.into(), None);
+    contract_account.update_bytecode(sdk, &input.bytecode, None, &rwasm_bytecode.into(), None);
 
-    let mut context = ContractInput::clone_from_cr(cr);
+    let mut context = ContractInput::clone_from_ctx(ctx);
     context.contract_value = input.value;
     context.contract_gas_limit = input.gas_limit;
     context.contract_address = contract_account.address;
     let contract_context = context.encode_to_vec(0);
 
-    let mut gas_limit = input.gas_limit as u32;
-    let (_, exit_code) = am.exec_hash(
-        contract_account.rwasm_code_hash.as_ptr(),
-        &contract_context,
+    let mut fuel = Fuel::from(input.gas_limit);
+    let (_, exit_code) = sdk.context_call(
+        &contract_account.address,
         &[],
-        &mut gas_limit as *mut u32,
+        &contract_context,
+        &mut fuel,
         STATE_DEPLOY,
     );
     // if call is not success set deployed address to zero
-    if exit_code != ExitCode::Ok.into_i32() {
-        am.rollback(checkpoint);
-        debug_log!("_wasm_create return: Err: ExitCode::TransactError");
+    if exit_code != ExitCode::Ok {
+        sdk.rollback(checkpoint);
+        debug_log!(sdk, "_wasm_create return: Err: ExitCode::TransactError");
         return WasmCreateMethodOutput::from_exit_code(ExitCode::from(exit_code));
     }
 
     debug_log!(
+        sdk,
         "_wasm_create return: Ok: contract_account.address {}",
         contract_account.address
     );
 
     // commit all changes made
-    am.commit();
+    sdk.commit();
 
     WasmCreateMethodOutput {
         output: Bytes::new(),
         address: Some(contract_account.address),
-        exit_code,
-        gas: gas_limit as u64,
+        exit_code: exit_code.into_i32(),
+        gas: fuel.into(),
         gas_refund: 0,
     }
 }

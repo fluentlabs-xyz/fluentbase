@@ -42,7 +42,7 @@ fn test_example_panic() {
     let output = run_rwasm_with_raw_input(input_data.to_vec(), &[], false);
     assert_eq!(
         from_utf8(&output.output).unwrap(),
-        "panicked at examples/panic/lib.rs:15:9: it is panic time"
+        "panicked at examples/panic/lib.rs:18:9: it is panic time"
     );
     assert_eq!(output.exit_code, -71);
 }

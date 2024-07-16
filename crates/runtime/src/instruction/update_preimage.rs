@@ -20,7 +20,7 @@ impl SyscallUpdatePreimage {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+        ctx: &RuntimeContext<DB>,
         key: &[u8],
         field: u32,
         preimage: &[u8],

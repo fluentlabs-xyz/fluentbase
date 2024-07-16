@@ -4,11 +4,10 @@ use fluentbase_sdk::{
     basic_entrypoint,
     contracts::BlendedAPI,
     derive::Contract,
-    AccountManager,
     Bytes,
     ContextReader,
-    LowLevelSDK,
     SharedAPI,
+    SovereignAPI,
     U256,
 };
 use revm::{interpreter::Host, primitives::ResultAndState, Evm};
@@ -18,18 +17,18 @@ use zeth_primitives::{
 };
 
 #[derive(Contract)]
-pub struct BLENDED<'a, CR: ContextReader, AM: AccountManager> {
-    cr: &'a CR,
-    am: &'a AM,
+pub struct BLENDED<CTX: ContextReader, SDK: SovereignAPI> {
+    ctx: CTX,
+    sdk: SDK,
 }
 
-impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, AM> {
+impl<CTX: ContextReader, SDK: SovereignAPI> BlendedAPI for BLENDED<CTX, SDK> {
     fn exec_evm_tx(&self, raw_evm_tx: Bytes) {
         let mut raw_evm_tx = raw_evm_tx.clone();
         let tx = <Transaction<EthereumTxEssence> as Decodable>::decode(&mut raw_evm_tx.as_ref())
             .expect("failed to decode transaction");
         let tx_from = tx.recover_from().expect("failed to recover tx_from");
-        let mut evm = evm_builder_apply_envs(Evm::builder(), self.cr).build();
+        let mut evm = evm_builder_apply_envs(Evm::builder(), &self.ctx).build();
         fill_eth_tx_env(&mut evm.context.env_mut().tx, &tx.essence, tx_from);
         let ResultAndState { result, .. } = evm.transact().expect("failed to exec transaction");
         let receipt = Receipt::new(
@@ -42,8 +41,8 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                 .map(|log| log.clone().into())
                 .collect(),
         );
-        let mut receipt_encoded = alloy_rlp::encode(receipt);
-        LowLevelSDK::write(receipt_encoded.as_ptr(), receipt_encoded.len() as u32);
+        let receipt_encoded = alloy_rlp::encode(receipt);
+        self.sdk.write(&receipt_encoded);
     }
 
     fn exec_svm_tx(&self, raw_svm_tx: Bytes) {
@@ -51,14 +50,12 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
     }
 }
 
-impl<'a, CR: ContextReader, AM: AccountManager> BLENDED<'a, CR, AM> {
-    pub fn deploy<SDK: SharedAPI>(&self) {
+impl<CTX: ContextReader, SDK: SovereignAPI> BLENDED<CTX, SDK> {
+    pub fn deploy(&self) {
         unreachable!("precompiles can't be deployed, it exists since a genesis state")
     }
 
-    pub fn main<SDK: SharedAPI>(&self) {}
+    pub fn main(&self) {}
 }
 
-basic_entrypoint!(
-    BLENDED<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
-);
+basic_entrypoint!(BLENDED);

@@ -435,21 +435,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "android-tzdata"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e999941b234f3131b00bc13c22d06e8c5ff726d1b6318ac7eb276997bbb4fef0"
-
-[[package]]
-name = "android_system_properties"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1037,12 +1022,7 @@ version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
 dependencies = [
- "android-tzdata",
- "iana-time-zone",
- "js-sys",
  "num-traits",
- "wasm-bindgen",
- "windows-targets 0.52.5",
 ]
 
 [[package]]
@@ -1849,7 +1829,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "paste",
- "revm-interpreter-fluent",
+ "revm-interpreter",
  "revm-precompile",
  "revm-primitives 4.0.0",
  "rwasm",
@@ -1881,7 +1861,7 @@ dependencies = [
  "hex-literal",
  "keccak-hash",
  "paste",
- "revm-interpreter-fluent",
+ "revm-interpreter",
  "rwasm",
  "serde_json",
  "wasmi",
@@ -2053,7 +2033,6 @@ name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "chrono",
  "eth_trie",
  "fluentbase-poseidon",
  "fluentbase-types 0.1.0",
@@ -2073,7 +2052,6 @@ dependencies = [
 name = "fluentbase-sdk"
 version = "0.1.0"
 dependencies = [
- "alloy-rlp",
  "byteorder",
  "fluentbase-codec 0.1.0",
  "fluentbase-codec-derive 0.1.0",
@@ -2082,7 +2060,6 @@ dependencies = [
  "fluentbase-sdk-derive 0.1.0",
  "fluentbase-types 0.1.0",
  "paste",
- "revm-primitives 4.0.0",
 ]
 
 [[package]]
@@ -2136,6 +2113,9 @@ name = "fluentbase-types"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives 0.7.6",
+ "alloy-rlp",
+ "byteorder",
+ "revm-primitives 4.0.0",
  "rwasm",
  "serde",
  "strum_macros",
@@ -2731,29 +2711,6 @@ dependencies = [
  "tower",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "iana-time-zone"
-version = "0.1.60"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7ffbb5a1b541ea2561f8c41c087286cc091e21e556a4f09a8f6cbf17b69b141"
-dependencies = [
- "android_system_properties",
- "core-foundation-sys",
- "iana-time-zone-haiku",
- "js-sys",
- "wasm-bindgen",
- "windows-core",
-]
-
-[[package]]
-name = "iana-time-zone-haiku"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3952,7 +3909,6 @@ dependencies = [
  "lazy_static",
  "reqwest 0.12.5",
  "revm-interpreter",
- "revm-interpreter-fluent",
  "revm-precompile",
  "rstest 0.21.0",
  "rwasm",
@@ -3985,7 +3941,6 @@ dependencies = [
  "lazy_static",
  "reqwest 0.12.5",
  "revm-interpreter",
- "revm-interpreter-fluent",
  "revm-precompile",
  "rstest 0.19.0",
  "rwasm",
@@ -3996,19 +3951,6 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
-version = "5.0.0"
-dependencies = [
- "bincode 1.3.3",
- "paste",
- "phf",
- "revm-primitives 4.0.0",
- "serde",
- "serde_json",
- "walkdir",
-]
-
-[[package]]
-name = "revm-interpreter-fluent"
 version = "5.0.0"
 dependencies = [
  "bincode 1.3.3",
@@ -4429,9 +4371,9 @@ dependencies = [
 
 [[package]]
 name = "scc"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76ad2bbb0ae5100a07b7a6f2ed7ab5fd0045551a4c507989b7a620046ea3efdc"
+checksum = "af947d0ca10a2f3e00c7ec1b515b7c83e5cb3fa62d4c11a64301d9eec54440e9"
 dependencies = [
  "sdd",
 ]
@@ -5701,15 +5643,6 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
-
-[[package]]
-name = "windows-core"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
-dependencies = [
- "windows-targets 0.52.5",
-]
 
 [[package]]
 name = "windows-sys"

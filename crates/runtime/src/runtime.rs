@@ -175,7 +175,7 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self
     }
 
-    pub fn jzkt(&mut self) -> &DB {
+    pub fn jzkt(&self) -> &DB {
         self.jzkt.as_ref().expect("jzkt is not initialized")
     }
 
@@ -191,12 +191,16 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         self.input.as_ref()
     }
 
-    pub fn input_count(&self) -> u32 {
+    pub fn input_size(&self) -> u32 {
         self.input.len() as u32
     }
 
-    pub fn input_size(&self) -> u32 {
-        self.input.len() as u32
+    pub fn context(&self) -> &Vec<u8> {
+        self.context.as_ref()
+    }
+
+    pub fn context_size(&self) -> u32 {
+        self.context.len() as u32
     }
 
     pub fn argv_buffer(&self) -> Vec<u8> {
@@ -465,7 +469,8 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             .unwrap_or_else(|exit_code| {
                                 exit_code
                                     .i32_exit_status()
-                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                                    .map(ExitCode::from)
+                                    .unwrap_or(ExitCode::UnknownError)
                             })
                         } else if let Some(delayed_state) =
                             state.host_error().downcast_ref::<SysContextCallResumable>()
@@ -478,7 +483,8 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             .unwrap_or_else(|exit_code| {
                                 exit_code
                                     .i32_exit_status()
-                                    .unwrap_or(ExitCode::UnknownError.into_i32())
+                                    .map(ExitCode::from)
+                                    .unwrap_or(ExitCode::UnknownError)
                             })
                         } else {
                             return Err(RuntimeError::Rwasm(
@@ -486,7 +492,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                             ));
                         };
                         // resume call with exit code
-                        let exit_code = Value::I32(exit_code);
+                        let exit_code = Value::I32(exit_code.into_i32());
                         next_result = state
                             .resume(self.store.as_context_mut(), &[exit_code], &mut [])
                             .map_err(Into::<RuntimeError>::into);

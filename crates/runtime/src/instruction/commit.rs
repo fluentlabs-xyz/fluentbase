@@ -14,7 +14,7 @@ impl SyscallCommit {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>) -> Result<[u8; 32], ExitCode> {
+    pub fn fn_impl<DB: IJournaledTrie>(ctx: &RuntimeContext<DB>) -> Result<[u8; 32], ExitCode> {
         let (root, _logs) = ctx.jzkt().commit()?;
         Ok(root)
     }

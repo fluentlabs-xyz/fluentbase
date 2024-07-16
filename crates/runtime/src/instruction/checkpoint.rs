@@ -13,7 +13,7 @@ impl SyscallCheckpoint {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        context: &mut RuntimeContext<DB>,
+        context: &RuntimeContext<DB>,
     ) -> Result<JournalCheckpoint, ExitCode> {
         let checkpoint = context.jzkt().checkpoint();
         Ok(checkpoint)

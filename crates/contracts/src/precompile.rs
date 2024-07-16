@@ -1,7 +1,7 @@
 extern crate fluentbase_sdk;
 
 use core::marker::PhantomData;
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, LowLevelSDK, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, SharedAPI};
 use revm_precompile::{PrecompileError, PrecompileErrors, PrecompileResult};
 
 pub trait PrecompileInvokeFunc {
@@ -34,23 +34,24 @@ define_precompile_func!(
 );
 
 #[derive(Default)]
-pub struct PRECOMPILE<FN: PrecompileInvokeFunc> {
+pub struct PRECOMPILE<SDK: SharedAPI, FN: PrecompileInvokeFunc> {
+    sdk: SDK,
     _pd: PhantomData<FN>,
 }
 
-impl<FN: PrecompileInvokeFunc> PRECOMPILE<FN> {
-    pub fn deploy<SDK: SharedAPI>(&self) {}
+impl<SDK: SharedAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
+    pub fn deploy(&self) {}
 
-    pub fn main<SDK: SharedAPI>(&self) {
-        let input_size = LowLevelSDK::input_size();
+    pub fn main(&self) {
+        let input_size = self.sdk.input_size();
         let input = alloc_slice(input_size as usize);
-        LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
+        self.sdk.read(input, 0);
         let input = Bytes::copy_from_slice(input);
         let call_output = FN::call(&input, u64::MAX).unwrap_or_else(|err| {
-            SDK::exit(map_precompile_error(err).into_i32());
+            self.sdk.exit(map_precompile_error(err).into_i32());
         });
         let return_bytes = call_output.bytes;
-        LowLevelSDK::write(return_bytes.as_ptr(), return_bytes.len() as u32);
+        self.sdk.write(&return_bytes);
     }
 }
 
@@ -75,15 +76,15 @@ pub(crate) fn map_precompile_error(err: PrecompileErrors) -> ExitCode {
     }
 }
 
-#[cfg(feature = "blake2")]
-basic_entrypoint!(PRECOMPILE<BlakeInvokeFunc>);
-#[cfg(feature = "sha256")]
-basic_entrypoint!(PRECOMPILE<Sha256InvokeFunc>);
-#[cfg(feature = "ripemd160")]
-basic_entrypoint!(PRECOMPILE<Ripemd160InvokeFunc>);
-#[cfg(feature = "identity")]
-basic_entrypoint!(PRECOMPILE<IdentityInvokeFunc>);
-#[cfg(feature = "modexp")]
-basic_entrypoint!(PRECOMPILE<ModexpInvokeFunc>);
-#[cfg(feature = "ecrecover")]
-basic_entrypoint!(PRECOMPILE<EcrecoverInvokeFunc>);
+// #[cfg(feature = "blake2")]
+// basic_entrypoint!(PRECOMPILE<BlakeInvokeFunc>);
+// #[cfg(feature = "sha256")]
+// basic_entrypoint!(PRECOMPILE<Sha256InvokeFunc>);
+// #[cfg(feature = "ripemd160")]
+// basic_entrypoint!(PRECOMPILE<Ripemd160InvokeFunc>);
+// #[cfg(feature = "identity")]
+// basic_entrypoint!(PRECOMPILE<IdentityInvokeFunc>);
+// #[cfg(feature = "modexp")]
+// basic_entrypoint!(PRECOMPILE<ModexpInvokeFunc>);
+// #[cfg(feature = "ecrecover")]
+// basic_entrypoint!(PRECOMPILE<EcrecoverInvokeFunc>);

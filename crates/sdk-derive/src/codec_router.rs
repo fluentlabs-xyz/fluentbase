@@ -3,7 +3,6 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
 use syn::{
-    self,
     parse_macro_input,
     punctuated::Punctuated,
     FnArg,
@@ -41,7 +40,7 @@ pub fn derive_codec_router(_attr: TokenStream, item: TokenStream) -> TokenStream
 
 fn deploy_fn_impl() -> ImplItem {
     syn::parse_quote! {
-        pub fn deploy<SDK: fluentbase_sdk::SharedAPI>(&self) {
+        pub fn deploy(&self) {
             unreachable!("precompiles can't be deployed, it exists since a genesis state")
         }
     }
@@ -60,8 +59,12 @@ fn decode_method_input_fn_impl() -> ImplItem {
 fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
-        pub fn main<SDK: fluentbase_sdk::SharedAPI>(&self) {
-            let input = fluentbase_sdk::GuestContextReader::contract_input();
+        pub fn main(&self) {
+            let input = {
+                let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
+                self.sdk.read(input, 0);
+                input
+            };
             if input.len() < 4 {
                 panic!("not well-formed input");
             }
@@ -96,7 +99,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
             let input = Self::decode_method_input::<#input_ty>(&input);
             let output = self.#method_name(input);
             let output = output.encode_to_vec(0);
-            fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
+            self.sdk.write(&output);
         }
     }
 }
@@ -181,9 +184,10 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
                     method_id: #sol_sig,
                     method_data: input,
                 }.encode_to_vec(0);
+                let mut fuel = #sdk_crate_name::Fuel::from(self.fuel);
                 let (output, exit_code) =
-                    #sdk_crate_name::contracts::call_system_contract(&self.address, &core_input, self.fuel);
-                if exit_code != 0 {
+                    self.sdk.system_call(&self.address, &core_input, &mut fuel);
+                if exit_code != #sdk_crate_name::ExitCode::Ok {
                     panic!("system contract call failed with exit code: {}", exit_code);
                 }
                 let mut decoder = #codec_crate_name::BufferDecoder::new(&output);
@@ -204,16 +208,17 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
 
     let expanded = quote! {
         #ast
-        pub struct #client_name {
+        pub struct #client_name<SDK> {
+            pub sdk: SDK,
             pub address: #sdk_crate_name::Address,
-            pub fuel: u32,
+            pub fuel: u64,
         }
-        impl #client_name {
-            pub fn new(address: #sdk_crate_name::Address) -> impl #trait_name {
-                Self { address, fuel: u32::MAX }
+        impl<SDK: #sdk_crate_name::SharedAPI> #client_name<SDK> {
+            pub fn new(sdk: SDK, address: #sdk_crate_name::Address) -> impl #trait_name {
+                Self { sdk, address, fuel: u64::MAX }
             }
         }
-        impl #trait_name for #client_name {
+        impl<SDK: #sdk_crate_name::SharedAPI> #trait_name for #client_name<SDK> {
             #( #methods )*
         }
     };
@@ -225,7 +230,7 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
 mod tests {
     use super::*;
     use quote::ToTokens;
-    use syn::{parse_quote, ImplItemFn};
+    use syn::parse_quote;
 
     #[test]
     fn test_dispatch_impl() {
@@ -249,7 +254,11 @@ mod tests {
 
         let expected_dispatch: ImplItem = parse_quote! {
             pub fn main(&self) {
-                let input = fluentbase_sdk::GuestContextReader::contract_input();
+                let input = {
+                    let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
+                    self.sdk.read(input, 0);
+                    input
+                };
                 if input.len() < 4 {
                     panic!("not well-formed input");
                 }
@@ -260,16 +269,16 @@ mod tests {
                 );
                 match method_id {
                     895509340u32 => {
-                        let input = Self::decode_method_input::<EvmCreateMethodInput>(&input[4..]);
-                        let output = self.evm_create::<SDK>(input);
+                        let input = Self::decode_method_input::<EvmCreateMethodInput>(&input);
+                        let output = self.evm_create(input);
                         let output = output.encode_to_vec(0);
-                        fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
+                        self.sdk.write(&output);
                     },
                     4246677046u32 => {
-                        let input = Self::decode_method_input::<EvmCallMethodInput>(&input[4..]);
-                        let output = self.evm_call::<SDK>(input);
+                        let input = Self::decode_method_input::<EvmCallMethodInput>(&input);
+                        let output = self.evm_call(input);
                         let output = output.encode_to_vec(0);
-                        fluentbase_sdk::LowLevelSDK::write(output.as_ptr(), output.len() as u32);
+                        self.sdk.write(&output);
                     },
                     _ => panic!("unknown method"),
                 }

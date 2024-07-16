@@ -4,8 +4,9 @@ use crate::{
 };
 use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCallMethodOutput},
-    AccountManager,
+    AccountStatus,
     ContextReader,
+    SovereignAPI,
 };
 use fluentbase_types::ExitCode;
 use revm_interpreter::{
@@ -16,12 +17,12 @@ use revm_interpreter::{
     InstructionResult,
 };
 
-pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
+    ctx: &CTX,
+    sdk: &SDK,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    debug_log!("ecl(_evm_call): start. gas_limit {}", input.gas_limit);
+    debug_log!(sdk, "ecl(_evm_call): start. gas_limit {}", input.gas_limit);
 
     // call depth check
     if input.depth > 1024 {
@@ -30,15 +31,16 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
     }
 
     // read caller and callee
-    let (mut caller_account, _) = am.account(cr.contract_caller());
-    let (mut callee_account, _) = am.account(cr.contract_address());
+    let (mut caller_account, _) = sdk.account(&ctx.contract_caller());
+    let (mut callee_account, _) = sdk.account(&ctx.contract_address());
 
     // create a new checkpoint position in the journal
-    let checkpoint = am.checkpoint();
+    let checkpoint = sdk.checkpoint();
 
     // transfer funds from caller to callee
     if !input.value.is_zero() {
         debug_log!(
+            sdk,
             "ecm(_evm_call): transfer from={} to={} value={}",
             caller_account.address,
             callee_account.address,
@@ -48,15 +50,15 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
 
     if caller_account.address != callee_account.address {
         // do transfer from caller to callee
-        match am.transfer(&mut caller_account, &mut callee_account, input.value) {
+        match sdk.transfer(&mut caller_account, &mut callee_account, input.value) {
             Ok(_) => {}
             Err(exit_code) => {
                 return EvmCallMethodOutput::from_exit_code(exit_code).with_gas(input.gas_limit, 0);
             }
         }
         // write current account state before doing nested calls
-        am.write_account(&caller_account);
-        am.write_account(&callee_account);
+        sdk.write_account(&caller_account, AccountStatus::Modified);
+        sdk.write_account(&callee_account, AccountStatus::Modified);
     } else {
         // what if self-transfer amount exceeds our balance?
         if input.value > caller_account.balance {
@@ -65,43 +67,50 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
             return res;
         }
         // write only one account's state since caller equals callee
-        am.write_account(&caller_account);
+        sdk.write_account(&caller_account, AccountStatus::Modified);
     }
 
     // check is it precompile
-    if let Some(result) = am.precompile(&input.callee, &input.input, input.gas_limit) {
+    if let Some(result) = sdk.precompile(&input.callee, &input.input, input.gas_limit) {
+        let result = EvmCallMethodOutput {
+            output: result.0,
+            exit_code: result.1.into_i32(),
+            gas_remaining: result.2,
+            gas_refund: result.3,
+        };
         if ExitCode::from(result.exit_code).is_ok() {
-            am.commit();
+            sdk.commit();
         } else {
-            am.rollback(checkpoint);
+            sdk.rollback(checkpoint);
         }
         return result;
     }
 
     // take right bytecode depending on context params
     let (source_hash, source_bytecode) = if input.callee != callee_account.address {
-        let (code_account, _) = am.account(input.callee);
+        let (code_account, _) = sdk.account(&input.callee);
         (
             code_account.source_code_hash,
-            am.preimage(&code_account.source_code_hash),
+            sdk.preimage(&code_account.source_code_hash),
         )
     } else {
         (
             callee_account.source_code_hash,
-            am.preimage(&callee_account.source_code_hash),
+            sdk.preimage(&callee_account.source_code_hash),
         )
     };
     debug_log!(
+        sdk,
         "ecl(_evm_call): source_bytecode: {}",
         hex::encode(&source_bytecode)
     );
     // load bytecode and convert it to analysed (we can safely unwrap here)
     let bytecode = to_analysed(Bytecode::new_raw(source_bytecode));
 
-    // if bytecode is empty then commit result and return empty buffer
+    // if bytecode is empty, then commit result and return empty buffer
     if bytecode.is_empty() {
-        am.commit();
-        debug_log!("ecl(_evm_call): empty bytecode exit_code=Ok");
+        sdk.commit();
+        debug_log!(sdk, "ecl(_evm_call): empty bytecode exit_code=Ok");
         return EvmCallMethodOutput::from_exit_code(ExitCode::Ok).with_gas(input.gas_limit, 0);
     }
 
@@ -111,28 +120,29 @@ pub fn _evm_call<CR: ContextReader, AM: AccountManager>(
         hash: Some(source_hash),
         bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
-        target_address: cr.contract_address(),
-        call_value: cr.contract_value(),
+        target_address: ctx.contract_address(),
+        call_value: ctx.contract_value(),
         caller: caller_account.address,
     };
     let result = exec_evm_bytecode(
-        cr,
-        am,
+        ctx,
+        sdk,
         contract,
         input.gas_limit,
-        cr.contract_is_static(),
+        ctx.contract_is_static(),
         input.depth,
     );
 
     if matches!(result.result, return_ok!()) {
-        am.commit();
+        sdk.commit();
     } else {
-        am.rollback(checkpoint);
+        sdk.rollback(checkpoint);
     }
 
     let exit_code = exit_code_from_evm_error(result.result);
 
     debug_log!(
+        sdk,
         "ecl(_evm_call): return exit_code={} gas_remaining={} spent={} gas_refund={}",
         exit_code,
         result.gas.remaining(),

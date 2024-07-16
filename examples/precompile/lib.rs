@@ -6,10 +6,9 @@ use fluentbase_sdk::{
     basic_entrypoint,
     codec::{Codec, Encoder},
     derive::{client, router, signature, Contract},
-    AccountManager,
     Bytes,
     ContextReader,
-    SharedAPI,
+    SovereignAPI,
 };
 
 #[derive(Default, Codec)]
@@ -27,13 +26,13 @@ pub trait PrecompileAPI {
 }
 
 #[derive(Contract)]
-pub struct PRECOMPILE<'a, CR: ContextReader, AM: AccountManager> {
-    cr: &'a CR,
-    am: &'a AM,
+pub struct PRECOMPILE<CTX, SDK> {
+    ctx: CTX,
+    sdk: SDK,
 }
 
 #[router(mode = "codec")]
-impl<'a, CR: ContextReader, AM: AccountManager> PrecompileAPI for PRECOMPILE<'a, CR, AM> {
+impl<CTX: ContextReader, SDK: SovereignAPI> PrecompileAPI for PRECOMPILE<CTX, SDK> {
     #[signature("hello_world()")]
     fn hello_world(&self, _input: HelloWorldInput) -> HelloWorldOutput {
         HelloWorldOutput {
@@ -42,6 +41,4 @@ impl<'a, CR: ContextReader, AM: AccountManager> PrecompileAPI for PRECOMPILE<'a,
     }
 }
 
-basic_entrypoint!(
-    PRECOMPILE<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager>
-);
+basic_entrypoint!(PRECOMPILE);

@@ -2,20 +2,22 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
-use alloc::vec;
 use cairo_platinum_prover::air::CairoAIR;
-use fluentbase_sdk::{basic_entrypoint, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, ContextReader, SharedAPI};
 use stark_platinum_prover::{
     proof::options::{ProofOptions, SecurityLevel},
     transcript::StoneProverTranscript,
     verifier::{IsStarkVerifier, Verifier},
 };
 
-#[derive(Default)]
-struct CAIRO;
+#[derive(Contract)]
+struct CAIRO<CTX, SDK> {
+    ctx: CTX,
+    sdk: SDK,
+}
 
-impl CAIRO {
-    fn deploy<SDK: SharedAPI>(&self) {
+impl<CTX: ContextReader, SDK: SharedAPI> CAIRO<CTX, SDK> {
+    fn deploy(&self) {
         // any custom deployment logic here
     }
     fn verify_cairo_proof_wasm(&self, proof_bytes: &[u8], proof_options: &ProofOptions) -> bool {
@@ -46,13 +48,13 @@ impl CAIRO {
             StoneProverTranscript::new(&[]),
         )
     }
-    fn main<SDK: SharedAPI>(&self) {
+    fn main(&self) {
         let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
-        let input_size = SDK::input_size();
-        let mut input_buffer = vec![0u8; input_size as usize];
-        SDK::read(input_buffer.as_mut_ptr(), input_buffer.len() as u32, 0);
+        let input_size = self.sdk.input_size();
+        let input = alloc_slice(input_size as usize);
+        self.sdk.read(input, 0);
         assert!(
-            self.verify_cairo_proof_wasm(&input_buffer[..], &proof_options),
+            self.verify_cairo_proof_wasm(input, &proof_options),
             "failed to verify cairo proof"
         );
     }
@@ -63,14 +65,15 @@ basic_entrypoint!(CAIRO);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::LowLevelSDK;
+    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
 
     #[test]
     fn test_contract_works() {
         let cairo_proof = include_bytes!("./fib100.proof");
-        LowLevelSDK::with_test_input(cairo_proof.to_vec());
-        let cairo = CAIRO::default();
-        cairo.deploy::<LowLevelSDK>();
-        cairo.main::<LowLevelSDK>();
+        let ctx = ContractInput::default();
+        let sdk = TestingContext::new().with_input(cairo_proof);
+        let cairo = CAIRO::new(ctx, sdk);
+        cairo.deploy();
+        cairo.main();
     }
 }

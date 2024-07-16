@@ -66,7 +66,7 @@ impl SyscallContextCall {
     pub fn fn_continue<DB: IJournaledTrie>(
         mut caller: Caller<'_, RuntimeContext<DB>>,
         state: &SysContextCallResumable,
-    ) -> Result<i32, Trap> {
+    ) -> Result<ExitCode, Trap> {
         let bytecode_hash32: [u8; 32] = caller
             .read_memory(state.code_hash32_ptr, 32)?
             .try_into()
@@ -96,7 +96,7 @@ impl SyscallContextCall {
                 let mut fuel_buffer = [0u8; 4];
                 LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
                 caller.write_memory(state.fuel_ptr, &fuel_buffer)?;
-                ExitCode::Ok.into_i32()
+                ExitCode::Ok
             }
             Err(err) => err,
         };
@@ -111,7 +111,7 @@ impl SyscallContextCall {
         return_len: u32,
         fuel_limit: u64,
         state: u32,
-    ) -> Result<u64, i32> {
+    ) -> Result<u64, ExitCode> {
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -119,7 +119,7 @@ impl SyscallContextCall {
 
         // check call depth overflow
         if ctx.depth >= CALL_STACK_LIMIT {
-            return Err(ExitCode::CallDepthOverflow.into_i32());
+            return Err(ExitCode::CallDepthOverflow);
         }
 
         // take jzkt from the existing context (we will return it back soon)
@@ -144,7 +144,7 @@ impl SyscallContextCall {
 
         // make sure there is no return overflow
         if return_len > 0 && execution_result.output.len() > return_len as usize {
-            return Err(ExitCode::OutputOverflow.into_i32());
+            return Err(ExitCode::OutputOverflow);
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
@@ -167,7 +167,7 @@ impl SyscallContextCall {
         );
 
         if execution_result.exit_code != ExitCode::Ok.into_i32() {
-            return Err(execution_result.exit_code);
+            return Err(execution_result.exit_code.into());
         }
 
         Ok(fuel_limit - execution_result.fuel_consumed)

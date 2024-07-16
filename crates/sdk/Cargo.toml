@@ -12,8 +12,6 @@ fluentbase-runtime = { workspace = true, default-features = false, optional = tr
 fluentbase-genesis = { workspace = true, default-features = false, optional = true }
 fluentbase-sdk-derive = { workspace = true }
 byteorder = { workspace = true }
-revm-primitives = { workspace = true, default-features = false }
-alloy-rlp = { workspace = true }
 paste = { workspace = true }
 
 [dev-dependencies]

@@ -54,7 +54,7 @@ hashbrown = { version = "0.14" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
-revm-interpreter = { package = "revm-interpreter-fluent", path = "revm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
+revm-interpreter = { path = "revm/crates/interpreter", default-features = false, features = ["rwasm"] }
 revm-primitives = { path = "revm/crates/primitives", default-features = false, features = ["rwasm"] }
 revm-precompile = { path = "revm/crates/precompile", default-features = false, features = ["rwasm"] }
 revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-features = false, features = [
@@ -62,7 +62,7 @@ revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-feat
     "blst",
     "rwasm",
     #    "secp256k1",
-    #    "debug_print",
+    #    "debug-print",
 ] }
 zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
 #revm-interpreter = { package = "revm-interpreter-fluent", path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
@@ -73,7 +73,7 @@ zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", br
 #    "blst",
 #    "rwasm",
 #    #    "secp256k1",
-#    #    "debug_print",
+#    #    "debug-print",
 #] }
 #zeth-primitives = { path = "../zeth-rwasm/primitives", default-features = false }
 bytes = { version = "1.5" }

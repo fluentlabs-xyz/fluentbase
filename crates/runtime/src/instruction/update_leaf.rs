@@ -27,7 +27,7 @@ impl SyscallUpdateLeaf {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+        ctx: &RuntimeContext<DB>,
         key: &[u8],
         value_flags: u32,
         vals: Vec<[u8; 32]>,

@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::IJournaledTrie;
+use fluentbase_types::{IJournaledTrie, F254};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPoseidon;
@@ -12,12 +12,12 @@ impl SyscallPoseidon {
         output_offset: u32,
     ) -> Result<(), Trap> {
         let data = caller.read_memory(f32s_offset, f32s_len)?;
-        caller.write_memory(output_offset, &Self::fn_impl(data))?;
+        caller.write_memory(output_offset, Self::fn_impl(data).as_slice())?;
         Ok(())
     }
 
-    pub fn fn_impl(data: &[u8]) -> [u8; 32] {
+    pub fn fn_impl(data: &[u8]) -> F254 {
         use fluentbase_poseidon::poseidon_hash;
-        poseidon_hash(data)
+        poseidon_hash(data).into()
     }
 }

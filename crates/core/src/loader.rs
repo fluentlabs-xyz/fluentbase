@@ -4,31 +4,30 @@ use crate::{
 };
 use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
-    AccountManager,
-    ContextReader,
+    SovereignAPI,
 };
-use fluentbase_types::BytecodeType;
+use fluentbase_types::{BytecodeType, ContextReader};
 
-pub fn _loader_call<CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _loader_call<CTX: ContextReader, SDK: SovereignAPI>(
+    ctx: &CTX,
+    sdk: &SDK,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    let (account, _) = am.account(input.callee);
-    let source_code = am.preimage(&account.source_code_hash);
+    let (account, _) = sdk.account(&input.callee);
+    let source_code = sdk.preimage(&account.source_code_hash);
     match BytecodeType::from_slice(source_code.as_ref()) {
-        BytecodeType::EVM => _evm_call(cr, am, input),
-        BytecodeType::WASM => _wasm_call(cr, am, input),
+        BytecodeType::EVM => _evm_call(ctx, sdk, input),
+        BytecodeType::WASM => _wasm_call(ctx, sdk, input),
     }
 }
 
-pub fn _loader_create<CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _loader_create<CTX: ContextReader, SDK: SovereignAPI>(
+    ctx: &CTX,
+    sdk: &SDK,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     match BytecodeType::from_slice(input.bytecode.as_ref()) {
-        BytecodeType::EVM => _evm_create(cr, am, input),
-        BytecodeType::WASM => _wasm_create(cr, am, input),
+        BytecodeType::EVM => _evm_create(ctx, sdk, input),
+        BytecodeType::WASM => _wasm_create(ctx, sdk, input),
     }
 }

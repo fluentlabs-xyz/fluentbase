@@ -14,7 +14,7 @@ impl SyscallPreimageSize {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+        ctx: &RuntimeContext<DB>,
         hash: &[u8],
     ) -> Result<u32, ExitCode> {
         let preimage_size = ctx.jzkt().preimage_size(hash.try_into().unwrap());
