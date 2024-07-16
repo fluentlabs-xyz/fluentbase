@@ -17,7 +17,7 @@ impl SyscallPreimageCopy {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+        ctx: &RuntimeContext<DB>,
         hash: &[u8],
     ) -> Result<Vec<u8>, ExitCode> {
         let preimage = ctx.jzkt().preimage(hash.try_into().unwrap());

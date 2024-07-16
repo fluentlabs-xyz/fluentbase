@@ -1,6 +1,6 @@
-use fluentbase_sdk::{AccountManager, ContextReader};
+use fluentbase_sdk::{ContextReader, SovereignAPI};
 
-pub fn _evm_log3<CR: ContextReader, AM: AccountManager>(
+pub fn _evm_log3<CR: ContextReader, AM: SovereignAPI>(
     _cr: &CR,
     _am: &AM,
     _data_offset: *const u8,

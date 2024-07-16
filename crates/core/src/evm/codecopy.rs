@@ -1,6 +1,6 @@
-use fluentbase_sdk::{AccountManager, ContextReader};
+use fluentbase_sdk::{ContextReader, SovereignAPI};
 
-pub fn _evm_codecopy<CR: ContextReader, AM: AccountManager>(
+pub fn _evm_codecopy<CR: ContextReader, AM: SovereignAPI>(
     _cr: &CR,
     _am: &AM,
     _output_offset: *mut u8,

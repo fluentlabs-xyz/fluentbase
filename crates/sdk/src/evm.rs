@@ -1,46 +1,9 @@
-use crate::{
-    alloc_slice,
-    Account,
-    AccountCheckpoint,
-    LowLevelSDK,
-    JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS,
-    JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-};
+use crate::alloc_slice;
 use alloc::{vec, vec::Vec};
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_codec_derive::Codec;
-use fluentbase_types::{Address, Bytes, Bytes32, B256, U256};
-
-pub trait ContextReader {
-    fn block_chain_id(&self) -> u64;
-    fn block_coinbase(&self) -> Address;
-    fn block_timestamp(&self) -> u64;
-    fn block_number(&self) -> u64;
-    fn block_difficulty(&self) -> u64;
-    fn block_prevrandao(&self) -> B256;
-    fn block_gas_limit(&self) -> u64;
-    fn block_base_fee(&self) -> U256;
-    fn tx_gas_limit(&self) -> u64;
-    fn tx_nonce(&self) -> u64;
-    fn tx_gas_price(&self) -> U256;
-    fn tx_caller(&self) -> Address;
-    fn tx_access_list(&self) -> Vec<(Address, Vec<U256>)>;
-    fn tx_gas_priority_fee(&self) -> Option<U256>;
-    fn tx_blob_hashes(&self) -> Vec<B256>;
-    fn tx_blob_hashes_size(&self) -> (u32, u32);
-    fn tx_max_fee_per_blob_gas(&self) -> Option<U256>;
-    fn contract_gas_limit(&self) -> u64;
-    fn contract_address(&self) -> Address;
-    fn contract_caller(&self) -> Address;
-    fn contract_value(&self) -> U256;
-    fn contract_is_static(&self) -> bool;
-}
+use fluentbase_types::{Address, Bytes, Bytes32, ContextReader, B256, U256};
 
 #[derive(Clone, Debug, Default, Codec)]
 pub struct ContractInput {
@@ -71,7 +34,7 @@ pub struct ContractInput {
 }
 
 impl ContractInput {
-    pub fn clone_from_cr<CR: ContextReader>(cr: &CR) -> ContractInput {
+    pub fn clone_from_ctx<CR: ContextReader>(cr: &CR) -> ContractInput {
         ContractInput {
             block_chain_id: cr.block_chain_id(),
             block_coinbase: cr.block_coinbase(),

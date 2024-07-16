@@ -2,7 +2,6 @@ use convert_case::{Case, Casing};
 use proc_macro2::Ident;
 use quote::{quote, ToTokens};
 use syn::{
-    self,
     punctuated::Punctuated,
     Attribute,
     Expr,
@@ -314,7 +313,7 @@ pub(crate) fn get_signatures<S: GetSignature>(methods: &[&S]) -> proc_macro2::To
 #[cfg(test)]
 mod tests {
     use super::*;
-    use syn::{parse_quote, TypeArray, TypeParen, TypePath, TypeSlice, TypeTuple};
+    use syn::{parse_quote, TypeArray, TypeParen, TypeSlice, TypeTuple};
 
     #[test]
     fn test_convert_array_type() {

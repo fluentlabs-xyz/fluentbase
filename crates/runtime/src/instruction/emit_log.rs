@@ -45,7 +45,7 @@ impl SyscallEmitLog {
     }
 
     pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+        ctx: &RuntimeContext<DB>,
         address: Address,
         topics: Vec<B256>,
         data: Bytes,

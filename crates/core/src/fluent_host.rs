@@ -1,6 +1,5 @@
 use crate::debug_log;
-use core::mem::take;
-use fluentbase_sdk::{AccountManager, Bytes, ContextReader};
+use fluentbase_sdk::{Bytes, ContextReader, SovereignAPI};
 use revm_interpreter::{
     as_usize_saturated,
     primitives::{
@@ -20,58 +19,61 @@ use revm_interpreter::{
     SStoreResult,
     SelfDestructResult,
 };
-use revm_primitives::BLOCK_HASH_HISTORY;
+use revm_primitives::{TransientStorage, BLOCK_HASH_HISTORY};
 
-pub struct FluentHost<'cr, 'am, CR: ContextReader, AM: AccountManager> {
+pub struct FluentHost<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> {
     pub(crate) env: Env,
-    pub(crate) cr: Option<&'cr CR>,
-    pub(crate) am: Option<&'am AM>,
+    pub(crate) ctx: Option<&'ctx CTX>,
+    pub(crate) sdk: Option<&'sdk SDK>,
+    // transient storage
+    transient_storage: TransientStorage,
 }
 
-impl<'cr, 'am, CR: ContextReader, AM: AccountManager> FluentHost<'cr, 'am, CR, AM> {
-    pub fn new(cr: &'cr CR, am: &'am AM) -> Self {
+impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> FluentHost<'ctx, 'sdk, CTX, SDK> {
+    pub fn new(ctx: &'ctx CTX, sdk: &'sdk SDK) -> Self {
         Self {
             env: Env {
                 cfg: {
                     let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = cr.block_chain_id();
+                    cfg_env.chain_id = ctx.block_chain_id();
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
                     cfg_env
                 },
                 block: BlockEnv {
-                    number: U256::from(cr.block_number()),
-                    coinbase: cr.block_coinbase(),
-                    timestamp: U256::from(cr.block_timestamp()),
-                    gas_limit: U256::from(cr.block_gas_limit()),
-                    basefee: cr.block_base_fee(),
-                    difficulty: U256::from(cr.block_difficulty()),
-                    prevrandao: Some(cr.block_prevrandao()),
+                    number: U256::from(ctx.block_number()),
+                    coinbase: ctx.block_coinbase(),
+                    timestamp: U256::from(ctx.block_timestamp()),
+                    gas_limit: U256::from(ctx.block_gas_limit()),
+                    basefee: ctx.block_base_fee(),
+                    difficulty: U256::from(ctx.block_difficulty()),
+                    prevrandao: Some(ctx.block_prevrandao()),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
-                    caller: cr.tx_caller(),
-                    gas_limit: cr.tx_gas_limit(),
-                    gas_price: cr.tx_gas_price(),
+                    caller: ctx.tx_caller(),
+                    gas_limit: ctx.tx_gas_limit(),
+                    gas_price: ctx.tx_gas_price(),
                     transact_to: TransactTo::Call(Address::ZERO), // will do nothing
-                    value: cr.contract_value(),
+                    value: ctx.contract_value(),
                     data: Default::default(), // not used because we already pass all validations
-                    nonce: Some(cr.tx_nonce()),
+                    nonce: Some(ctx.tx_nonce()),
                     chain_id: None, // no checks
-                    access_list: cr.tx_access_list(),
-                    gas_priority_fee: cr.tx_gas_priority_fee(),
-                    blob_hashes: cr.tx_blob_hashes(),
-                    max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
+                    access_list: ctx.tx_access_list(),
+                    gas_priority_fee: ctx.tx_gas_priority_fee(),
+                    blob_hashes: ctx.tx_blob_hashes(),
+                    max_fee_per_blob_gas: ctx.tx_max_fee_per_blob_gas(),
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
             },
-            cr: Some(cr),
-            am: Some(am),
+            ctx: Some(ctx),
+            sdk: Some(sdk),
+            transient_storage: TransientStorage::new(),
         }
     }
 }
 
-impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, 'am, CR, AM> {
+impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx, 'sdk, CTX, SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -82,7 +84,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn load_account(&mut self, address: Address) -> Option<LoadAccountResult> {
-        let (account, is_cold) = self.am.unwrap().account(address);
+        let (account, is_cold) = self.sdk.as_ref().unwrap().account(&address);
         // Some((is_cold, account.is_not_empty()))
         Some(LoadAccountResult {
             is_cold,
@@ -98,7 +100,7 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
             return Some(B256::ZERO);
         };
         if diff > 0 && diff <= BLOCK_HASH_HISTORY {
-            Some(self.am.unwrap().block_hash(number))
+            Some(self.sdk.as_ref().unwrap().block_hash(number))
         } else {
             Some(B256::ZERO)
         }
@@ -106,20 +108,20 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
-        let (account, is_cold) = self.am.unwrap().account(address);
+        let (account, is_cold) = self.sdk.as_ref().unwrap().account(&address);
         Some((account.balance, is_cold))
     }
 
     #[inline]
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
-        let (account, is_cold) = self.am.unwrap().account(address);
-        let bytecode = self.am.unwrap().preimage(&account.source_code_hash);
-        Some((bytecode, is_cold))
+        let sdk = self.sdk.as_ref().unwrap();
+        let (account, is_cold) = sdk.account(&address);
+        Some((sdk.preimage(&account.source_code_hash), is_cold))
     }
 
     #[inline]
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        let (account, is_cold) = self.am.unwrap().account(address);
+        let (account, is_cold) = self.sdk.as_ref().unwrap().account(&address);
         if !account.is_not_empty() {
             return Some((B256::ZERO, is_cold));
         }
@@ -128,8 +130,9 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        let (value, is_cold) = self.am.unwrap().storage(address, index, false);
+        let (value, is_cold) = self.sdk.as_ref().unwrap().storage(&address, &index, false);
         debug_log!(
+            self.sdk.as_ref().unwrap(),
             "ecl(sload): address={}, index={}, value={}",
             address,
             hex::encode(index.to_be_bytes::<32>().as_slice()),
@@ -140,15 +143,17 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
+        let sdk = self.sdk.unwrap();
         debug_log!(
+            sdk,
             "ecl(sstore): address={}, index={}, value={}",
             address,
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         );
-        let (original_value, _) = self.am.unwrap().storage(address, index, true);
-        let (present_value, is_cold) = self.am.unwrap().storage(address, index, false);
-        self.am.unwrap().write_storage(address, index, value);
+        let (original_value, _) = sdk.storage(&address, &index, true);
+        let (present_value, is_cold) = sdk.storage(&address, &index, false);
+        sdk.write_storage(&address, &index, &value);
         return Some(SStoreResult {
             original_value,
             present_value,
@@ -159,27 +164,32 @@ impl<'cr, 'am, CR: ContextReader, AM: AccountManager> Host for FluentHost<'cr, '
 
     #[inline]
     fn tload(&mut self, address: Address, index: U256) -> U256 {
-        self.am.unwrap().transient_storage(address, index)
+        // self.transient_storage
+        //     .get(&(address, index))
+        //     .copied()
+        //     .unwrap_or_default()
+        self.sdk.unwrap().transient_storage(address, index)
     }
 
     #[inline]
     fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        self.am
+        // self.transient_storage.insert((address, index), value);
+        self.sdk
             .unwrap()
             .write_transient_storage(address, index, value)
     }
 
     #[inline]
     fn log(&mut self, mut log: Log) {
-        self.am
+        self.sdk
             .unwrap()
-            .log(log.address, take(&mut log.data.data), log.data.topics());
+            .write_log(&log.address, &log.data.data, log.data.topics());
     }
 
     #[inline]
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
         let [had_value, target_exists, is_cold, previously_destroyed] =
-            self.am.unwrap().self_destruct(address, target);
+            self.sdk.unwrap().self_destruct(address, target);
         Some(SelfDestructResult {
             had_value,
             target_exists,

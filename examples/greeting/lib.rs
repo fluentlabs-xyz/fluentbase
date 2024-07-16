@@ -1,18 +1,21 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, SharedAPI};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, ContextReader, SharedAPI};
 
-#[derive(Default)]
-struct GREETING;
+#[derive(Contract)]
+struct GREETING<CTX, SDK> {
+    ctx: CTX,
+    sdk: SDK,
+}
 
-impl GREETING {
-    fn deploy<SDK: SharedAPI>(&self) {
+impl<CTX: ContextReader, SDK: SharedAPI> GREETING<CTX, SDK> {
+    fn deploy(&self) {
         // any custom deployment logic here
     }
-    fn main<SDK: SharedAPI>(&self) {
+    fn main(&self) {
         // write "Hello, World" message into output
-        SDK::write("Hello, World".as_ptr(), 12);
+        self.sdk.write("Hello, World".as_bytes());
     }
 }
 
@@ -21,14 +24,16 @@ basic_entrypoint!(GREETING);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::LowLevelSDK;
+    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
 
     #[test]
     fn test_contract_works() {
-        let greeting = GREETING::default();
-        greeting.deploy::<LowLevelSDK>();
-        greeting.main::<LowLevelSDK>();
-        let test_output = LowLevelSDK::get_test_output();
-        assert_eq!(&test_output, "Hello, World".as_bytes());
+        let ctx = ContractInput::default();
+        let sdk = TestingContext::new();
+        let greeting = GREETING::new(ctx, sdk.clone());
+        greeting.deploy();
+        greeting.main();
+        let output = sdk.output();
+        assert_eq!(&output, "Hello, World".as_bytes());
     }
 }

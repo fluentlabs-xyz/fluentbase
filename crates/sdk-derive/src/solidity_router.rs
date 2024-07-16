@@ -9,7 +9,6 @@ use crate::utils::{
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    self,
     parse_macro_input,
     FnArg,
     Ident,
@@ -81,15 +80,15 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
     };
 
     quote! {
-        pub fn main<SDK: SharedAPI>(&self) {
-            let input_size = SDK::input_size();
+        pub fn main(&self) {
+            let input_size = self.sdk.input_size();
             if input_size < 4 {
                 panic!("input too short, cannot extract selector");
             }
             let mut selector: [u8; 4] = [0; 4];
-            SDK::read(selector.as_mut_ptr(), selector.len() as u32, 0);
+            self.sdk.read(&mut selector, 0);
             let input = fluentbase_sdk::alloc_slice(input_size as usize);
-            SDK::read(input.as_mut_ptr(), input_size, 0);
+            self.sdk.read(input, 0);
             match selector {
                 #match_arms
             }
@@ -133,7 +132,7 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
         #selector_name => {
             #args_expr
             let output = self.#method_name #generics(#(#args),*).abi_encode();
-            SDK::write(output.as_ptr(), output.len() as u32);
+            self.sdk.write(&output);
         }
     }
 }
@@ -251,7 +250,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
 mod tests {
     use super::*;
     use crate::utils::rust_name_to_sol;
-    use syn::{parse_quote, Ident, ImplItem};
+    use syn::{parse_quote, ImplItem};
 
     #[test]
     fn test_get_signatures_full_signature() {
@@ -333,12 +332,10 @@ mod tests {
             greetCall::SELECTOR => {
                 let msg = match greetCall::abi_decode(&input, true) {
                     Ok(decoded) => decoded.msg,
-                    Err(e) => {
-                        panic!("Failed to decode input {:?}", e);
-                    }
+                    Err(_) => panic!("failed to decode input"),
                 };
                 let output = self.greet(msg).abi_encode();
-                SDK::write(output.as_ptr(), output.len() as u32);
+                self.sdk.write(&output);
             }
         };
 

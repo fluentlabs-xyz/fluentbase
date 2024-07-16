@@ -21,7 +21,8 @@ impl SyscallDebugLog {
     }
 
     pub fn fn_impl(_msg: &[u8]) {
-        // let now = time::Instant::now();
+        // use std::time::Instant;
+        // let now = Instant::now();
         // let last_time = LAST_LOG_TIME.get();
         // let curr_time = now.elapsed().as_millis() as i64;
         // let time_diff = if last_time > 0 {

@@ -4,19 +4,21 @@ extern crate fluentbase_sdk;
 use fluentbase_sdk::{basic_entrypoint, derive::router, SharedAPI};
 
 pub trait TilesAPI {
-    fn check<SDK: SharedAPI>(&self);
+    fn check(&self);
 }
 
 #[derive(Default)]
-struct TILES;
-
-#[router(mode = "solidity")]
-impl TilesAPI for TILES {
-    fn check<SDK: SharedAPI>(&self) {}
+struct TILES<SDK> {
+    sdk: SDK,
 }
 
-impl TILES {
-    fn deploy<SDK: SharedAPI>(&self) {
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> TilesAPI for TILES<SDK> {
+    fn check(&self) {}
+}
+
+impl<SDK: SharedAPI> TILES<SDK> {
+    fn deploy(&self) {
         // any custom deployment logic here
     }
 }

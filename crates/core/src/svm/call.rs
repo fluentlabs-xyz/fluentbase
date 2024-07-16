@@ -1,10 +1,10 @@
 use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
-    AccountManager,
     ContextReader,
+    SovereignAPI,
 };
 
-pub fn _svm_call<CR: ContextReader, AM: AccountManager>(
+pub fn _svm_call<CR: ContextReader, AM: SovereignAPI>(
     cr: &CR,
     am: &AM,
     input: EvmCallMethodInput,
@@ -12,7 +12,7 @@ pub fn _svm_call<CR: ContextReader, AM: AccountManager>(
     todo!("implement me")
 }
 
-pub fn _svm_create<CR: ContextReader, AM: AccountManager>(
+pub fn _svm_create<CR: ContextReader, AM: SovereignAPI>(
     cr: &CR,
     am: &AM,
     input: EvmCreateMethodInput,

@@ -1,4 +1,5 @@
-use core::alloc::{GlobalAlloc, Layout};
+#[cfg(target_arch = "wasm32")]
+use core::alloc::GlobalAlloc;
 
 #[cfg(target_arch = "wasm32")]
 fn _sys_alloc_aligned(bytes: usize, align: usize) -> *mut u8 {
@@ -22,8 +23,7 @@ fn _sys_alloc_aligned(bytes: usize, align: usize) -> *mut u8 {
 
 #[inline(always)]
 pub fn alloc_ptr(len: usize) -> *mut u8 {
-    use alloc::alloc::{alloc, Layout};
-    unsafe { alloc(Layout::from_size_align_unchecked(len, 8)) }
+    unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(len, 8)) }
 }
 
 #[inline(always)]
@@ -38,12 +38,12 @@ pub struct HeapBaseAllocator {}
 #[cfg(target_arch = "wasm32")]
 unsafe impl GlobalAlloc for HeapBaseAllocator {
     #[inline(always)]
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         _sys_alloc_aligned(layout.size(), layout.align())
     }
 
     #[inline(always)]
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         // ops, no dealoc
     }
 }
