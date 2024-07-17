@@ -250,15 +250,11 @@ extern "C" fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
-    use alloy_sol_types::SolCall;
     use fluentbase_sdk::{
         codec::Encoder,
         contracts::EvmClient,
         runtime::TestingContext,
-        Address,
-        Bytes,
         ContractInput,
-        U256,
     };
     use fluentbase_types::{address, contracts::PRECOMPILE_EVM};
     use hex_literal::hex;
