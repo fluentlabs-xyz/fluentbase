@@ -1,13 +1,4 @@
-use crate::{
-    alloc_slice,
-    Account,
-    AccountStatus,
-    ExitCode,
-    Fuel,
-    JournalCheckpoint,
-    SharedAPI,
-    U256,
-};
+use crate::{Account, AccountStatus, ExitCode, Fuel, JournalCheckpoint, SharedAPI, U256};
 use alloy_primitives::{Address, Bytes, B256};
 use hashbrown::HashMap;
 
@@ -28,6 +19,7 @@ pub struct TxContext {
     nonce: u64,
     gas_price: U256,
     origin: Address,
+    data: Bytes,
 }
 
 pub struct ContractContext {
@@ -38,13 +30,22 @@ pub struct ContractContext {
     value: U256,
 }
 
-pub struct SovereignInput {
+pub struct TransitStateInput {
     accounts: HashMap<Address, Account>,
-    precompiles: HashMap<B256, Bytes>,
+    preimages: HashMap<B256, Bytes>,
     block: BlockContext,
     transaction: TxContext,
 }
-pub struct SovereignOutput {}
+pub struct TransitStateOutput {
+    new_accounts: Vec<(Address, Account)>,
+    new_preimages: Vec<(B256, Bytes)>,
+    status: bool,
+    gas_consumed: u64,
+}
+
+// 1. Finish SovereignJournalAPI
+// 2. Finalize Inputs/Outputs for state transition (EVM, SVM, FVM - upper structs)
+// 3. Adapt EVM to the new API
 
 pub trait SovereignJournalAPI {
     fn new<SDK: SharedAPI>(sdk: &SDK) -> Self;
@@ -54,10 +55,11 @@ pub trait SovereignJournalAPI {
 
     fn write_account(&mut self, account: Account, status: AccountStatus);
     fn account(&self, address: &Address) -> (&Account, IsColdAccess);
+    fn account_committed(&self, address: &Address) -> (&Account, IsColdAccess);
 
     fn write_preimage(&mut self, hash: B256, preimage: Bytes);
-    fn preimage_size(&self, hash: &B256) -> u32;
     fn preimage(&self, hash: &B256) -> Option<&[u8]>;
+    fn preimage_size(&self, hash: &B256) -> u32;
 
     fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess;
     fn storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess);
