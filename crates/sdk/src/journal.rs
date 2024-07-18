@@ -151,8 +151,17 @@ impl SovereignJournalAPI for JournalStateWrapper {
     fn account(&self, address: &Address) -> (&Account, IsColdAccess) {
         match self.state.get(address) {
             Some(index) => (self.journal.get(*index).unwrap().unwrap_account(), false),
-            None => unreachable!("missing account: {}", address),
+            None => self.account_committed(address),
         }
+    }
+
+    fn account_committed(&self, address: &Address) -> (&Account, IsColdAccess) {
+        (
+            self.accounts
+                .get(address)
+                .unwrap_or_else(|| unreachable!("missing account: {}", address)),
+            false,
+        )
     }
 
     fn write_preimage(&mut self, hash: B256, preimage: Bytes) {
@@ -169,15 +178,15 @@ impl SovereignJournalAPI for JournalStateWrapper {
             .push(JournalStateEvent::PreimageChanged { hash })
     }
 
+    fn preimage(&self, hash: &B256) -> Option<&[u8]> {
+        self.preimages.get(hash).map(|v| v.0.as_ref())
+    }
+
     fn preimage_size(&self, hash: &B256) -> u32 {
         self.preimages
             .get(hash)
             .map(|v| v.0.len() as u32)
             .unwrap_or(0)
-    }
-
-    fn preimage(&self, hash: &B256) -> Option<&[u8]> {
-        self.preimages.get(hash).map(|v| v.0.as_ref())
     }
 
     fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess {

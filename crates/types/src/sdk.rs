@@ -12,6 +12,7 @@ use crate::{
 use alloc::vec::Vec;
 
 /// A trait for reading context information.
+#[deprecated(note = "new SDK is coming soon!")]
 pub trait ContextReader {
     fn block_chain_id(&self) -> u64;
     fn block_coinbase(&self) -> Address;
@@ -38,6 +39,7 @@ pub trait ContextReader {
 }
 
 /// A trait for providing shared API functionality.
+#[deprecated(note = "new SDK is coming soon!")]
 pub trait SharedAPI {
     fn keccak256(data: &[u8]) -> B256;
     fn sha256(_data: &[u8]) -> B256 {
@@ -76,6 +78,7 @@ pub trait SharedAPI {
 ///
 /// This trait extends the `SharedAPI` trait and provides additional methods for
 /// managing the blockchain state and executing transactions.
+#[deprecated(note = "new SDK is coming soon!")]
 pub trait SovereignAPI: SharedAPI {
     fn checkpoint(&self) -> AccountCheckpoint;
     fn commit(&self);
