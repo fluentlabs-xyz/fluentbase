@@ -21,6 +21,7 @@ alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
 strum_macros = { workspace = true }
 revm-primitives = { workspace = true, default-features = false }
+hashbrown = { workspace = true }
 
 [features]
 default = ["std", "rwasm"]

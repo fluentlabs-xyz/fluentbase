@@ -13,6 +13,7 @@ mod bindings;
 #[macro_use]
 pub mod macros;
 pub mod contracts;
+mod journal;
 #[cfg(feature = "std")]
 pub mod runtime;
 #[cfg(not(feature = "std"))]

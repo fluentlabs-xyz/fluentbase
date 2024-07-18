@@ -55,7 +55,6 @@ use fluentbase_runtime::{
 use fluentbase_types::{
     address,
     calc_storage_key,
-    AccountAPI,
     AccountCheckpoint,
     AccountStatus,
     Address,
@@ -261,9 +260,7 @@ impl<DB: IJournaledTrie> SharedAPI for RuntimeContextWrapper<DB> {
     fn charge_fuel(&self, fuel: &mut Fuel) {
         fuel.0 = SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel.0);
     }
-}
 
-impl<DB: IJournaledTrie> AccountAPI for RuntimeContextWrapper<DB> {
     fn account(&self, address: &Address) -> (Account, bool) {
         let mut result = Account::new(*address);
         let address_word = address.into_word();

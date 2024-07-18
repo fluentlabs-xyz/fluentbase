@@ -37,24 +37,8 @@ pub trait ContextReader {
     fn contract_is_static(&self) -> bool;
 }
 
-/// A trait for accessing account-related functionality.
-pub trait AccountAPI {
-    fn account(&self, address: &Address) -> (Account, bool);
-    fn preimage_size(&self, hash: &B256) -> u32;
-    fn preimage_copy(&self, target: &mut [u8], hash: &B256);
-    fn preimage(&self, hash: &B256) -> Bytes {
-        let preimage_size = self.preimage_size(hash) as usize;
-        let preimage = alloc_slice(preimage_size);
-        self.preimage_copy(preimage, hash);
-        Bytes::copy_from_slice(preimage)
-    }
-    fn log(&self, address: &Address, data: Bytes, topics: &[B256]);
-    fn system_call(&self, address: &Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
-    fn debug(&self, msg: &[u8]);
-}
-
 /// A trait for providing shared API functionality.
-pub trait SharedAPI: AccountAPI {
+pub trait SharedAPI {
     fn keccak256(data: &[u8]) -> B256;
     fn sha256(_data: &[u8]) -> B256 {
         unreachable!("sha256 is not supported yet")
@@ -73,6 +57,19 @@ pub trait SharedAPI: AccountAPI {
     fn state(&self) -> u32;
     fn read_context(&self, target: &mut [u8], offset: u32);
     fn charge_fuel(&self, fuel: &mut Fuel);
+
+    fn account(&self, address: &Address) -> (Account, bool);
+    fn preimage_size(&self, hash: &B256) -> u32;
+    fn preimage_copy(&self, target: &mut [u8], hash: &B256);
+    fn preimage(&self, hash: &B256) -> Bytes {
+        let preimage_size = self.preimage_size(hash) as usize;
+        let preimage = alloc_slice(preimage_size);
+        self.preimage_copy(preimage, hash);
+        Bytes::copy_from_slice(preimage)
+    }
+    fn log(&self, address: &Address, data: Bytes, topics: &[B256]);
+    fn system_call(&self, address: &Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
+    fn debug(&self, msg: &[u8]);
 }
 
 /// A trait for interacting with the sovereign blockchain.
