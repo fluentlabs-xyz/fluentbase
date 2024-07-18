@@ -21,7 +21,7 @@ pub(crate) fn impl_derive_contract(ast: &syn::DeriveInput) -> TokenStream {
             }
         }
         #[cfg(not(feature = "std"))]
-        impl Default for #struct_name <fluentbase_sdk::rwasm::RwasmContext> {
+        impl Default for #struct_name <fluentbase_sdk::rwasm::RwasmContextReader, fluentbase_sdk::rwasm::RwasmContext> {
             fn default() -> Self {
                 return #struct_name::new(fluentbase_sdk::rwasm::RwasmContextReader {}, fluentbase_sdk::rwasm::RwasmContext {});
             }

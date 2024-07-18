@@ -1982,16 +1982,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-tiles"
-version = "0.1.0"
-dependencies = [
- "alloy-sol-types 0.7.6",
- "fluentbase-sdk 0.1.0",
- "hex",
- "hex-literal",
-]
-
-[[package]]
 name = "fluentbase-genesis"
 version = "0.1.0"
 dependencies = [
@@ -2059,6 +2049,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk-derive 0.1.0",
  "fluentbase-types 0.1.0",
+ "hashbrown",
  "paste",
 ]
 
@@ -2115,6 +2106,7 @@ dependencies = [
  "alloy-primitives 0.7.6",
  "alloy-rlp",
  "byteorder",
+ "hashbrown",
  "revm-primitives 4.0.0",
  "rwasm",
  "serde",
