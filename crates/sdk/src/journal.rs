@@ -202,19 +202,30 @@ impl SovereignJournalAPI for JournalStateWrapper {
             slot,
             had_value,
         });
+        // we don't support cold storage right now
         false
     }
 
     fn storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess) {
-        todo!()
+        let value = self
+            .storage
+            .get(&(address, slot))
+            .copied()
+            .unwrap_or(U256::ZERO);
+        // we don't support cold storage
+        (value, false)
     }
 
     fn committed_storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess) {
-        todo!()
+        todo!("not supported yet")
     }
 
     fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]) {
-        todo!()
+        self.logs.push(JournalStateLog {
+            address,
+            topics: topics.to_vec(),
+            data,
+        });
     }
 
     fn system_call(
