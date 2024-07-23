@@ -15,9 +15,9 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 [dependencies]
 fluentbase-poseidon = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, default-features = false }
-clap = { version = "4.4.11", features = ["derive"] }
-serde = { workspace = true, default-features = false, features = [] }
-serde_json = { version = "1.0.114" }
+clap = { version = "4.4.11", default-features = false, features = ["derive"] }
+serde = { workspace = true, default-features = false }
+serde_json = { version = "1.0", default-features = false }
 alloy-genesis = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 

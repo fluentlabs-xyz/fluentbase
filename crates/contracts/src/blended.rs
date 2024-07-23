@@ -14,34 +14,33 @@ use fluentbase_sdk::{
     SharedAPI,
     U256,
 };
-use fuel_tx::{
-    consensus_parameters::{
-        ConsensusParametersV1,
-        ContractParametersV1,
-        FeeParametersV1,
-        PredicateParametersV1,
-        ScriptParametersV1,
-        TxParametersV1,
-    },
-    ChargeableTransaction,
-    ConsensusParameters,
-    ContractParameters,
-    FeeParameters,
-    GasCosts,
-    PredicateParameters,
-    ScriptParameters,
-    TxParameters,
-};
-use fuel_vm::{
-    checked_transaction::IntoChecked,
-    fuel_types::{
-        canonical::{Deserialize, Serialize},
-        BlockHeight,
-    },
-    interpreter::ExecutableTransaction,
-    prelude::{MemoryStorage, StateTransitionRef},
-    transactor::Transactor,
-};
+// use fuel_tx::{
+//     consensus_parameters::{
+//         ConsensusParametersV1,
+//         ContractParametersV1,
+//         FeeParametersV1,
+//         PredicateParametersV1,
+//         ScriptParametersV1,
+//         TxParametersV1,
+//     },
+//     ChargeableTransaction,
+//     ConsensusParameters,
+//     ContractParameters,
+//     FeeParameters,
+//     GasCosts,
+//     PredicateParameters,
+//     ScriptParameters,
+//     TxParameters,
+// };
+// use fuel_vm::{
+//     checked_transaction::IntoChecked,
+//     fuel_types::{
+//         canonical::{Deserialize, Serialize},
+//         BlockHeight,
+//     },
+//     interpreter::ExecutableTransaction,
+//     transactor::Transactor,
+// };
 use revm::{interpreter::Host, primitives::ResultAndState, Evm};
 use zeth_primitives::{
     receipt::Receipt,
@@ -78,124 +77,124 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
     }
 
     fn exec_fuel_tx(&self, raw_fuel_tx: Bytes) {
-        let tx: fuel_tx::Transaction = fuel_tx::Transaction::from_bytes(&raw_fuel_tx.as_ref())
-            .expect("failed to decode transaction");
-        let consensus_params = fuel_testnet_consensus_params(self.cr);
-        let tx_gas_price = self.cr.tx_gas_price().as_limbs()[0];
-        let interpreter_params =
-            fuel_vm::interpreter::InterpreterParams::new(tx_gas_price, &consensus_params);
-
-        // let v = exec_fuel_tx_with_vm(self.cr, tx, interpreter_params, &consensus_params);
-        let receipts = match tx {
-            fuel_tx::Transaction::Script(etx) => {
-                let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
-                    fuel_vm::interpreter::Interpreter::with_storage(
-                        fuel_vm::interpreter::MemoryInstance::new(),
-                        MemoryStorage::default(),
-                        interpreter_params,
-                    );
-                let ready_tx = etx
-                    .into_checked(
-                        BlockHeight::new(self.cr.block_number() as u32),
-                        &consensus_params,
-                    )
-                    .expect("failed to convert tx into checked tx")
-                    .into_ready(
-                        tx_gas_price,
-                        consensus_params.gas_costs(),
-                        consensus_params.fee_params(),
-                    )
-                    .expect("failed to make tx ready");
-                let vm_result: fuel_vm::state::StateTransition<_> = vm
-                    .transact(ready_tx)
-                    .expect("failed to exec transaction")
-                    .into();
-                vm_result.receipts().clone().to_vec()
-            }
-            fuel_tx::Transaction::Create(etx) => {
-                let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
-                    fuel_vm::interpreter::Interpreter::with_storage(
-                        fuel_vm::interpreter::MemoryInstance::new(),
-                        MemoryStorage::default(),
-                        interpreter_params,
-                    );
-                let ready_tx = etx
-                    .into_checked(
-                        BlockHeight::new(self.cr.block_number() as u32),
-                        &consensus_params,
-                    )
-                    .expect("failed to convert tx into checked tx")
-                    .into_ready(
-                        tx_gas_price,
-                        consensus_params.gas_costs(),
-                        consensus_params.fee_params(),
-                    )
-                    .expect("failed to make tx ready");
-                let vm_result: fuel_vm::state::StateTransition<_> = vm
-                    .transact(ready_tx)
-                    .expect("failed to exec transaction")
-                    .into();
-                vm_result.receipts().clone().to_vec()
-            }
-            fuel_tx::Transaction::Upgrade(etx) => {
-                let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
-                    fuel_vm::interpreter::Interpreter::with_storage(
-                        fuel_vm::interpreter::MemoryInstance::new(),
-                        MemoryStorage::default(),
-                        interpreter_params,
-                    );
-                let ready_tx = etx
-                    .into_checked(
-                        BlockHeight::new(self.cr.block_number() as u32),
-                        &consensus_params,
-                    )
-                    .expect("failed to convert tx into checked tx")
-                    .into_ready(
-                        tx_gas_price,
-                        consensus_params.gas_costs(),
-                        consensus_params.fee_params(),
-                    )
-                    .expect("failed to make tx ready");
-                let vm_result: fuel_vm::state::StateTransition<_> = vm
-                    .transact(ready_tx)
-                    .expect("failed to exec transaction")
-                    .into();
-                vm_result.receipts().clone().to_vec()
-            }
-            fuel_tx::Transaction::Upload(etx) => {
-                let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
-                    fuel_vm::interpreter::Interpreter::with_storage(
-                        fuel_vm::interpreter::MemoryInstance::new(),
-                        MemoryStorage::default(),
-                        interpreter_params,
-                    );
-                let ready_tx = etx
-                    .into_checked(
-                        BlockHeight::new(self.cr.block_number() as u32),
-                        &consensus_params,
-                    )
-                    .expect("failed to convert tx into checked tx")
-                    .into_ready(
-                        tx_gas_price,
-                        consensus_params.gas_costs(),
-                        consensus_params.fee_params(),
-                    )
-                    .expect("failed to make tx ready");
-                let vm_result: fuel_vm::state::StateTransition<_> = vm
-                    .transact(ready_tx)
-                    .expect("failed to exec transaction")
-                    .into();
-                vm_result.receipts().clone().to_vec()
-            }
-            fuel_tx::Transaction::Mint(_) => {
-                panic!("mint transaction not supported")
-            }
-        };
-        let mut receipts_encoded = Vec::<u8>::new();
-        receipts
-            .encode(&mut receipts_encoded)
-            .expect("failed to encode receipts");
-        LowLevelSDK::write(receipts_encoded.as_ptr(), receipts_encoded.len() as u32);
+        // let tx: fuel_tx::Transaction = fuel_tx::Transaction::from_bytes(&raw_fuel_tx.as_ref())
+        //     .expect("failed to decode transaction");
+        // let consensus_params = fuel_testnet_consensus_params(self.cr);
+        // let tx_gas_price = self.cr.tx_gas_price().as_limbs()[0];
+        // let interpreter_params =
+        //     fuel_vm::interpreter::InterpreterParams::new(tx_gas_price, &consensus_params);
+        //
+        // // let v = exec_fuel_tx_with_vm(self.cr, tx, interpreter_params, &consensus_params);
+        // let receipts = match tx {
+        //     fuel_tx::Transaction::Script(etx) => {
+        //         let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
+        //             fuel_vm::interpreter::Interpreter::with_storage(
+        //                 fuel_vm::interpreter::MemoryInstance::new(),
+        //                 MemoryStorage::default(),
+        //                 interpreter_params,
+        //             );
+        //         let ready_tx = etx
+        //             .into_checked(
+        //                 BlockHeight::new(self.cr.block_number() as u32),
+        //                 &consensus_params,
+        //             )
+        //             .expect("failed to convert tx into checked tx")
+        //             .into_ready(
+        //                 tx_gas_price,
+        //                 consensus_params.gas_costs(),
+        //                 consensus_params.fee_params(),
+        //             )
+        //             .expect("failed to make tx ready");
+        //         let vm_result: fuel_vm::state::StateTransition<_> = vm
+        //             .transact(ready_tx)
+        //             .expect("failed to exec transaction")
+        //             .into();
+        //         vm_result.receipts().clone().to_vec()
+        //     }
+        //     fuel_tx::Transaction::Create(etx) => {
+        //         let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
+        //             fuel_vm::interpreter::Interpreter::with_storage(
+        //                 fuel_vm::interpreter::MemoryInstance::new(),
+        //                 MemoryStorage::default(),
+        //                 interpreter_params,
+        //             );
+        //         let ready_tx = etx
+        //             .into_checked(
+        //                 BlockHeight::new(self.cr.block_number() as u32),
+        //                 &consensus_params,
+        //             )
+        //             .expect("failed to convert tx into checked tx")
+        //             .into_ready(
+        //                 tx_gas_price,
+        //                 consensus_params.gas_costs(),
+        //                 consensus_params.fee_params(),
+        //             )
+        //             .expect("failed to make tx ready");
+        //         let vm_result: fuel_vm::state::StateTransition<_> = vm
+        //             .transact(ready_tx)
+        //             .expect("failed to exec transaction")
+        //             .into();
+        //         vm_result.receipts().clone().to_vec()
+        //     }
+        //     fuel_tx::Transaction::Upgrade(etx) => {
+        //         let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
+        //             fuel_vm::interpreter::Interpreter::with_storage(
+        //                 fuel_vm::interpreter::MemoryInstance::new(),
+        //                 MemoryStorage::default(),
+        //                 interpreter_params,
+        //             );
+        //         let ready_tx = etx
+        //             .into_checked(
+        //                 BlockHeight::new(self.cr.block_number() as u32),
+        //                 &consensus_params,
+        //             )
+        //             .expect("failed to convert tx into checked tx")
+        //             .into_ready(
+        //                 tx_gas_price,
+        //                 consensus_params.gas_costs(),
+        //                 consensus_params.fee_params(),
+        //             )
+        //             .expect("failed to make tx ready");
+        //         let vm_result: fuel_vm::state::StateTransition<_> = vm
+        //             .transact(ready_tx)
+        //             .expect("failed to exec transaction")
+        //             .into();
+        //         vm_result.receipts().clone().to_vec()
+        //     }
+        //     fuel_tx::Transaction::Upload(etx) => {
+        //         let mut vm: fuel_vm::interpreter::Interpreter<_, _, _> =
+        //             fuel_vm::interpreter::Interpreter::with_storage(
+        //                 fuel_vm::interpreter::MemoryInstance::new(),
+        //                 MemoryStorage::default(),
+        //                 interpreter_params,
+        //             );
+        //         let ready_tx = etx
+        //             .into_checked(
+        //                 BlockHeight::new(self.cr.block_number() as u32),
+        //                 &consensus_params,
+        //             )
+        //             .expect("failed to convert tx into checked tx")
+        //             .into_ready(
+        //                 tx_gas_price,
+        //                 consensus_params.gas_costs(),
+        //                 consensus_params.fee_params(),
+        //             )
+        //             .expect("failed to make tx ready");
+        //         let vm_result: fuel_vm::state::StateTransition<_> = vm
+        //             .transact(ready_tx)
+        //             .expect("failed to exec transaction")
+        //             .into();
+        //         vm_result.receipts().clone().to_vec()
+        //     }
+        //     fuel_tx::Transaction::Mint(_) => {
+        //         panic!("mint transaction not supported")
+        //     }
+        // };
+        // let mut receipts_encoded = Vec::<u8>::new();
+        // receipts
+        //     .encode(&mut receipts_encoded)
+        //     .expect("failed to encode receipts");
+        // LowLevelSDK::write(receipts_encoded.as_ptr(), receipts_encoded.len() as u32);
     }
 
     fn exec_svm_tx(&self, raw_svm_tx: Bytes) {
