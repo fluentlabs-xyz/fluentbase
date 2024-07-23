@@ -42,10 +42,17 @@ fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
 fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
-fuel-vm = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
-fuel-tx = { git = "https://github.com/FuelLabs/fuel-vm", tag = "v0.54.1", default-features = false, features = ["alloc"] }
-#fuel-vm = { path = "../../other/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
-#fuel-tx = { path = "../../other/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
+#fuel-core-types = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false }
+#fuel-core-executor = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false }
+#fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false }
+#fuel-vm = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
+#fuel-tx = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
+#fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
+#fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
+#fuel-core = { path = "../fuel-core/crates/fuel-core", default-features = false }
+fuel-core-types = { path = "../fuel-core/crates/types", default-features = false, features = ["serde"] }
+fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false }
+fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm/rwasm", default-features = false }
@@ -56,8 +63,8 @@ alloy-rlp = { version = "0.3", default-features = false }
 alloy-genesis = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
 hashbrown = { version = "0.14" }
-serde = { version = "1.0.193", default-features = false }
-casey = { version = "0.4.0" }
+serde = { version = "1.0.203", default-features = false }
+casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
 revm-interpreter = { package = "revm-interpreter-fluent", path = "revm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 revm-primitives = { path = "revm/crates/primitives", default-features = false, features = ["rwasm"] }
@@ -69,7 +76,7 @@ revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-feat
     #    "secp256k1",
     #    "debug_print",
 ] }
-zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
+#zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
 #revm-interpreter = { package = "revm-interpreter-fluent", path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
@@ -80,7 +87,7 @@ zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", br
 #    #    "secp256k1",
 #    #    "debug_print",
 #] }
-#zeth-primitives = { path = "../zeth-rwasm/primitives", default-features = false }
+zeth-primitives = { path = "../zeth-rwasm/primitives", default-features = false }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
@@ -89,6 +96,8 @@ strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 regex = { version = "1.10" }
+anyhow = { version = "1.0.86", default-features = false }
+syn = "2.0"
 
 [profile.bench]
 lto = "fat"

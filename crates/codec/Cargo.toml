@@ -15,7 +15,7 @@ alloy-primitives = { workspace = true }
 hashbrown = { workspace = true }
 strum = { workspace = true, optional = true }
 strum_macros = { workspace = true, optional = true }
-serde = { workspace = true }
+serde = { workspace = true, default-features = false }
 casey = { workspace = true }
 paste = { workspace = true }
 fluentbase-codec-derive = { workspace = true }

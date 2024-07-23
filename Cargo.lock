@@ -751,6 +751,7 @@ dependencies = [
  "miniz_oxide",
  "object",
  "rustc-demangle",
+ "serde",
 ]
 
 [[package]]
@@ -901,6 +902,15 @@ dependencies = [
  "glob",
  "threadpool",
  "zeroize",
+]
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
@@ -1575,6 +1585,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum-iterator"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd242f399be1da0a5354aa462d57b4ab2b4ee0683cc552f7c007d2d12d36e94"
+dependencies = [
+ "enum-iterator-derive",
+]
+
+[[package]]
+name = "enum-iterator-derive"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1ab991c1362ac86c61ab6f556cff143daa22e5a15e4e189df818b2fd19fe65b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.68",
+]
+
+[[package]]
 name = "enumn"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1849,7 +1879,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "fluentbase-core",
- "fluentbase-types 0.1.0",
+ "fluentbase-types",
  "log",
  "rwasm",
  "wat",
@@ -1862,7 +1892,7 @@ dependencies = [
  "alloy-primitives 0.7.6",
  "byteorder",
  "casey",
- "fluentbase-codec-derive 0.1.0",
+ "fluentbase-codec-derive",
  "hashbrown 0.14.5",
  "hex",
  "hex-literal",
@@ -1873,34 +1903,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-codec"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
-dependencies = [
- "alloy-primitives 0.7.6",
- "byteorder",
- "casey",
- "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
- "hashbrown 0.14.5",
- "paste",
- "serde",
-]
-
-[[package]]
 name = "fluentbase-codec-derive"
 version = "0.1.0"
-dependencies = [
- "convert_case 0.6.0",
- "crypto-hashes",
- "quote",
- "serde",
- "syn 2.0.68",
-]
-
-[[package]]
-name = "fluentbase-codec-derive"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1915,9 +1919,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-rlp",
  "fluentbase-core",
- "fluentbase-sdk 0.1.0",
- "fuel-tx",
- "fuel-vm",
+ "fluentbase-sdk",
+ "fuel-core-executor",
+ "fuel-core-storage",
+ "fuel-core-types",
  "revm-fluent",
  "revm-precompile",
  "zeth-primitives",
@@ -1928,11 +1933,15 @@ name = "fluentbase-core"
 version = "0.1.0"
 dependencies = [
  "alloy-rlp",
+ "anyhow",
  "byteorder",
- "fluentbase-codec 0.1.0",
+ "fluentbase-codec",
  "fluentbase-runtime",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
+ "fuel-core-executor",
+ "fuel-core-storage",
+ "fuel-core-types",
  "hashbrown 0.14.5",
  "hex",
  "keccak-hash",
@@ -1948,7 +1957,7 @@ name = "fluentbase-core-macros"
 version = "0.1.0"
 dependencies = [
  "crypto-hashes",
- "fluentbase-codec 0.1.0",
+ "fluentbase-codec",
  "syn 2.0.68",
 ]
 
@@ -1958,12 +1967,12 @@ version = "0.1.0"
 dependencies = [
  "alloy-rlp",
  "byteorder",
- "fluentbase-codec 0.1.0",
+ "fluentbase-codec",
  "fluentbase-core",
  "fluentbase-poseidon",
  "fluentbase-runtime",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "hashbrown 0.14.5",
  "hex",
  "hex-literal",
@@ -1979,7 +1988,7 @@ dependencies = [
 name = "fluentbase-example-allocator"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -1990,7 +1999,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.0-rc.2",
  "cairo-platinum-prover",
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "lambdaworks-math",
@@ -2002,8 +2011,8 @@ name = "fluentbase-example-erc20"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.7.6",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "hex",
  "hex-literal",
  "paste",
@@ -2014,7 +2023,7 @@ dependencies = [
 name = "fluentbase-example-greeting"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2023,7 +2032,7 @@ dependencies = [
 name = "fluentbase-example-hashing"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2032,7 +2041,7 @@ dependencies = [
 name = "fluentbase-example-panic"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2041,7 +2050,7 @@ dependencies = [
 name = "fluentbase-example-precompile"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2051,7 +2060,7 @@ name = "fluentbase-example-router"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.7.6",
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2060,7 +2069,7 @@ dependencies = [
 name = "fluentbase-example-rwasm"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "rwasm",
@@ -2070,7 +2079,7 @@ dependencies = [
 name = "fluentbase-example-shakmaty"
 version = "0.1.0"
 dependencies = [
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
  "shakmaty",
@@ -2081,8 +2090,8 @@ name = "fluentbase-example-storage"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.6.4",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "hex",
  "hex-literal",
  "paste",
@@ -2094,7 +2103,7 @@ name = "fluentbase-example-tiles"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types 0.7.6",
- "fluentbase-sdk 0.1.0",
+ "fluentbase-sdk",
  "hex",
  "hex-literal",
 ]
@@ -2108,7 +2117,7 @@ dependencies = [
  "bytes",
  "clap",
  "fluentbase-poseidon",
- "fluentbase-types 0.1.0",
+ "fluentbase-types",
  "hashbrown 0.14.5",
  "hex",
  "revm-primitives 4.0.0",
@@ -2144,7 +2153,7 @@ dependencies = [
  "chrono",
  "eth_trie",
  "fluentbase-poseidon",
- "fluentbase-types 0.1.0",
+ "fluentbase-types",
  "fluentbase-zktrie",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.14.5",
@@ -2163,50 +2172,19 @@ version = "0.1.0"
 dependencies = [
  "alloy-rlp",
  "byteorder",
- "fluentbase-codec 0.1.0",
- "fluentbase-codec-derive 0.1.0",
+ "fluentbase-codec",
+ "fluentbase-codec-derive",
  "fluentbase-genesis",
  "fluentbase-runtime",
- "fluentbase-sdk-derive 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk-derive",
+ "fluentbase-types",
  "paste",
  "revm-primitives 4.0.0",
 ]
 
 [[package]]
-name = "fluentbase-sdk"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
-dependencies = [
- "alloy-rlp",
- "byteorder",
- "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
- "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
- "fluentbase-sdk-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
- "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
- "paste",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
-]
-
-[[package]]
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
-dependencies = [
- "convert_case 0.6.0",
- "crypto-hashes",
- "hex",
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "serde",
- "syn 2.0.68",
- "syn-solidity 0.7.6",
-]
-
-[[package]]
-name = "fluentbase-sdk-derive"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2226,15 +2204,6 @@ dependencies = [
  "alloy-primitives 0.7.6",
  "rwasm",
  "serde",
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "fluentbase-types"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
-dependencies = [
- "alloy-primitives 0.7.6",
  "strum_macros 0.26.4",
 ]
 
@@ -2282,32 +2251,82 @@ dependencies = [
 
 [[package]]
 name = "fuel-asm"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "bitflags 2.6.0",
  "fuel-types",
+ "serde",
  "strum 0.24.1",
 ]
 
 [[package]]
+name = "fuel-core-executor"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "fuel-core-storage",
+ "fuel-core-types",
+ "hex",
+ "serde",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "fuel-core-storage"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "enum-iterator",
+ "fuel-core-types",
+ "fuel-vm",
+ "hashbrown 0.14.5",
+ "impl-tools",
+ "itertools 0.12.1",
+ "num_enum",
+ "paste",
+ "postcard",
+ "primitive-types",
+ "serde",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "fuel-core-types"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "bs58",
+ "derivative",
+ "derive_more",
+ "fuel-vm",
+ "hashbrown 0.14.5",
+ "secrecy",
+ "serde",
+ "tai64",
+ "thiserror",
+ "thiserror-no-std",
+ "zeroize",
+]
+
+[[package]]
 name = "fuel-crypto"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "ecdsa",
  "ed25519-dalek",
  "fuel-types",
  "k256",
  "p256",
+ "serde",
  "sha2",
  "zeroize",
 ]
 
 [[package]]
 name = "fuel-derive"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2317,26 +2336,24 @@ dependencies = [
 
 [[package]]
 name = "fuel-merkle"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "derive_more",
  "digest 0.10.7",
  "fuel-storage",
  "hashbrown 0.13.2",
  "hex",
+ "serde",
  "sha2",
 ]
 
 [[package]]
 name = "fuel-storage"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 
 [[package]]
 name = "fuel-tx"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "bitflags 2.6.0",
  "derivative",
@@ -2349,14 +2366,14 @@ dependencies = [
  "itertools 0.10.5",
  "postcard",
  "serde",
- "strum 0.24.1",
- "strum_macros 0.24.3",
+ "serde_json",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
 ]
 
 [[package]]
 name = "fuel-types"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "fuel-derive",
  "hex",
@@ -2365,10 +2382,10 @@ dependencies = [
 
 [[package]]
 name = "fuel-vm"
-version = "0.54.1"
-source = "git+https://github.com/FuelLabs/fuel-vm?tag=v0.54.1#0e46d324da460f2db8bcef51920fb9246ac2143b"
+version = "0.55.0"
 dependencies = [
  "async-trait",
+ "backtrace",
  "bitflags 2.6.0",
  "derivative",
  "derive_more",
@@ -2385,10 +2402,11 @@ dependencies = [
  "paste",
  "percent-encoding",
  "primitive-types",
+ "serde",
+ "serde_with",
  "sha3",
  "static_assertions",
  "strum 0.24.1",
- "tai64",
 ]
 
 [[package]]
@@ -3022,6 +3040,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "impl-tools"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d82c305b1081f1a99fda262883c788e50ab57d36c00830bdd7e0a82894ad965c"
+dependencies = [
+ "autocfg",
+ "impl-tools-lib",
+ "proc-macro-error",
+ "syn 2.0.68",
+]
+
+[[package]]
+name = "impl-tools-lib"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85d3946d886eaab0702fa0c6585adcced581513223fa9df7ccfabbd9fa331a88"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.68",
 ]
 
 [[package]]
@@ -4184,13 +4226,13 @@ dependencies = [
  "ethers-contract",
  "ethers-core",
  "ethers-providers",
- "fluentbase-codec 0.1.0",
+ "fluentbase-codec",
  "fluentbase-core",
  "fluentbase-genesis",
  "fluentbase-poseidon",
  "fluentbase-runtime",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "indicatif",
  "lazy_static",
  "reqwest 0.12.5",
@@ -4222,8 +4264,8 @@ dependencies = [
  "fluentbase-core",
  "fluentbase-genesis",
  "fluentbase-runtime",
- "fluentbase-sdk 0.1.0",
- "fluentbase-types 0.1.0",
+ "fluentbase-sdk",
+ "fluentbase-types",
  "indicatif",
  "lazy_static",
  "reqwest 0.12.5",
@@ -4309,7 +4351,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel#02461e6a8577a03c7b2bcf5c5ee1fb9163e27014"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel#a5e176f9cdf7ee0af95cdf773e63e8963805a1a9"
 dependencies = [
  "alloy-primitives 0.7.6",
  "auto_impl",
@@ -4744,6 +4786,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secrecy"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bd1c54ea06cfd2f6b63219704de0b9b4f72dcc2b8fdef820be6cd799780e91e"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4865,6 +4916,16 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_with"
+version = "3.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cecfa94848272156ea67b2b1a53f20fc7bc638c4a46d2f8abde08f05f4b857"
+dependencies = [
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -5292,6 +5353,9 @@ name = "tai64"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed7401421025f4132e6c1f7af5e7f8287383969f36e6628016cd509b8d3da9dc"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "tap"
@@ -6241,18 +6305,17 @@ dependencies = [
 [[package]]
 name = "zeth-primitives"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/zeth-rwasm.git?branch=rwasm#e90b526c6a7045c49a82049454f0d35b80c3817e"
 dependencies = [
  "alloy-primitives 0.7.6",
  "alloy-rlp",
  "alloy-rlp-derive",
  "anyhow",
  "bytes",
- "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
+ "fluentbase-sdk",
  "hashbrown 0.14.5",
  "k256",
  "log",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase.git?branch=devel)",
+ "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=devel)",
  "rlp",
  "serde",
  "sha2",

@@ -6,30 +6,51 @@ use fluentbase_sdk::{
     ContextReader,
     U256,
 };
-use fuel_tx::{
-    consensus_parameters::{
-        ConsensusParametersV1,
-        ContractParametersV1,
-        FeeParametersV1,
-        PredicateParametersV1,
-        ScriptParametersV1,
-        TxParametersV1,
+use fuel_core_types::{
+    fuel_tx::{
+        consensus_parameters::{
+            ConsensusParametersV1,
+            ContractParametersV1,
+            FeeParametersV1,
+            PredicateParametersV1,
+            ScriptParametersV1,
+            TxParametersV1,
+        },
+        AssetId,
+        ConsensusParameters,
+        ContractParameters,
+        FeeParameters,
+        GasCosts,
+        PredicateParameters,
+        ScriptParameters,
+        TxParameters,
     },
-    ConsensusParameters,
-    ContractParameters,
-    FeeParameters,
-    GasCosts,
-    PredicateParameters,
-    ScriptParameters,
-    TxParameters,
-};
-use fuel_vm::{
-    checked_transaction::IntoChecked,
     fuel_types,
-    fuel_types::AssetId,
-    interpreter::CheckedMetadata,
-    prelude::ExecutableTransaction,
 };
+// use fuel_tx::{
+//     consensus_parameters::{
+//         ConsensusParametersV1,
+//         ContractParametersV1,
+//         FeeParametersV1,
+//         PredicateParametersV1,
+//         ScriptParametersV1,
+//         TxParametersV1,
+//     },
+//     ConsensusParameters,
+//     ContractParameters,
+//     FeeParameters,
+//     GasCosts,
+//     PredicateParameters,
+//     ScriptParameters,
+//     TxParameters,
+// };
+// use fuel_vm::{
+//     checked_transaction::IntoChecked,
+//     fuel_types,
+//     fuel_types::AssetId,
+//     interpreter::CheckedMetadata,
+//     prelude::ExecutableTransaction,
+// };
 use revm::{
     primitives::{hex::FromHex, SpecId, TransactTo, TxEnv},
     Database,
@@ -103,9 +124,9 @@ pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Data
 pub fn fuel_testnet_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
     ConsensusParameters::V1(ConsensusParametersV1 {
         tx_params: TxParameters::V1(TxParametersV1 {
-            max_inputs: 255,
-            max_outputs: 255,
-            max_witnesses: 255,
+            max_inputs: 8,
+            max_outputs: 8,
+            max_witnesses: 8,
             max_gas_per_tx: cr.tx_gas_limit(),
             max_size: 110 * 1024,
             max_bytecode_subsections: 255,

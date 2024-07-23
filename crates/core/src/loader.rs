@@ -3,7 +3,16 @@ use crate::{
     wasm::{call::_wasm_call, create::_wasm_create},
 };
 use fluentbase_sdk::{
-    types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
+    types::{
+        EvmCallMethodInput,
+        EvmCallMethodOutput,
+        EvmCreateMethodInput,
+        EvmCreateMethodOutput,
+        FvmCallMethodInput,
+        FvmCallMethodOutput,
+        FvmCreateMethodInput,
+        FvmCreateMethodOutput,
+    },
     AccountManager,
     ContextReader,
 };
@@ -19,6 +28,7 @@ pub fn _loader_call<CR: ContextReader, AM: AccountManager>(
     match BytecodeType::from_slice(source_code.as_ref()) {
         BytecodeType::EVM => _evm_call(cr, am, input),
         BytecodeType::WASM => _wasm_call(cr, am, input),
+        t => panic!("unsupported bytecode type {:?} for evm call loader", &t),
     }
 }
 
@@ -30,5 +40,6 @@ pub fn _loader_create<CR: ContextReader, AM: AccountManager>(
     match BytecodeType::from_slice(input.bytecode.as_ref()) {
         BytecodeType::EVM => _evm_create(cr, am, input),
         BytecodeType::WASM => _wasm_create(cr, am, input),
+        t => panic!("unsupported bytecode type {:?} for evm create loader", &t),
     }
 }

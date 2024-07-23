@@ -10,7 +10,9 @@ pub use fluentbase_types::ExitCode;
 pub mod evm;
 
 pub mod fluent_host;
+pub mod fvm;
 pub mod helpers;
+pub mod helpers_fvm;
 pub mod loader;
 pub mod svm;
 pub mod wasm;
