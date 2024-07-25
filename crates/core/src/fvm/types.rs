@@ -1,30 +1,30 @@
 use crate::fvm::helpers::{
-    ContractsAssetKeyWrapper,
-    ContractsStateKeyWrapper,
-    FuelAddressWrapper,
-    Hashable,
-    IndexedHash,
-    OwnerBalanceWrapper,
-    UtxoIdWrapper,
+    CoinsHelper,
+    CoinsOwnerWithBalanceHelper,
+    ContractsAssetsHelper,
+    ContractsLatestUtxoHelper,
+    ContractsRawCodeHelper,
+    ContractsStateHelper,
+    FuelAddress,
+    MetadataHelper,
 };
 use alloc::{vec, vec::Vec};
 use core::hash::Hash;
 use fluentbase_sdk::{AccountManager, Address, ContextReader, U256};
-use fluentbase_types::Bytes32;
+use fluentbase_types::{Bytes32, Bytes34, Bytes64};
 use fuel_core_executor::ports::RelayerPort;
 use fuel_core_storage::{
     self,
     codec::Encoder,
     column::Column,
-    kv_store::{KeyValueInspect, Value},
-    ContractsStateData,
+    kv_store::{KeyValueInspect, KeyValueMutate, Value},
     Result as StorageResult,
 };
 use fuel_core_types::{
     blockchain::primitives::DaBlockHeight,
     entities::coins::coin::{CompressedCoin, CompressedCoinV1},
-    fuel_tx::AssetId,
-    fuel_types::canonical::{Deserialize, Serialize},
+    fuel_tx::{AssetId, ContractId},
+    fuel_types::canonical::Serialize,
     services::relayer::Event,
 };
 use revm_primitives::hex;
@@ -43,7 +43,7 @@ impl RelayerPort for WasmRelayer {
 
 pub const UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS: Address =
     Address::new(hex!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"));
-pub const CONTRACT_ASSET_KEY_TO_VALUE: Address =
+pub const CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS: Address =
     Address::new(hex!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc"));
 
 pub struct WasmStorage<'a, CR: ContextReader, AM: AccountManager> {
@@ -52,65 +52,121 @@ pub struct WasmStorage<'a, CR: ContextReader, AM: AccountManager> {
 }
 
 impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
-    pub(crate) fn owner_balance_wrapper(
-        &self,
-        utxo_id_wrapper: &UtxoIdWrapper,
-    ) -> OwnerBalanceWrapper {
-        let (storage_value, _is_cold) = self.am.storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            U256::from_be_bytes(utxo_id_wrapper.hash()),
-            false,
+    pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<fluentbase_types::Bytes> {
+        let preimage = self
+            .am
+            .preimage(&MetadataHelper::new(raw_key).value_preimage_key());
+        if preimage.len() > 0 {
+            return Some(preimage);
+        }
+        None
+    }
+
+    pub(crate) fn metadata_update(&self, raw_key: &[u8], data: &[u8]) {
+        self.am
+            .update_preimage(&MetadataHelper::new(raw_key).value_preimage_key(), 0, data);
+    }
+    pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<fluentbase_types::Bytes> {
+        let preimage = self.am.preimage(
+            &ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key)).value_preimage_key(),
         );
-        OwnerBalanceWrapper::decode_from_u256(&storage_value)
+        if preimage.len() > 0 {
+            return Some(preimage);
+        }
+        None
     }
 
-    pub(crate) fn utxo_id_wrapper(&self, key: &Bytes32) -> UtxoIdWrapper {
-        let preimage = self.am.preimage(key);
-        UtxoIdWrapper::decode(&preimage)
+    pub(crate) fn contracts_raw_code_update(&self, raw_key: &Bytes32, data: &[u8]) {
+        self.am.update_preimage(
+            &ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key)).value_preimage_key(),
+            0,
+            data,
+        );
     }
 
-    pub(crate) fn contract_state_key_wrapper(&self, key: &Bytes32) -> ContractsStateKeyWrapper {
-        let preimage = self.am.preimage(key);
-        ContractsStateKeyWrapper::new_from_slice(&preimage)
-    }
-
-    pub(crate) fn contracts_latest_utxo(&self, key: &Bytes32) -> fluentbase_types::Bytes {
-        self.preimage_by_hash_column(&key, Column::ContractsLatestUtxo)
-    }
-
-    pub(crate) fn contracts_raw_code(&self, key: &Bytes32) -> fluentbase_types::Bytes {
-        self.preimage_by_hash_column(&key, Column::ContractsRawCode)
-    }
-
-    pub(crate) fn contract_state_data(
+    pub(crate) fn contracts_latest_utxo(
         &self,
-        cskw: &ContractsStateKeyWrapper,
-    ) -> ContractsStateData {
-        let preimage = self.preimage_by_hash_column(&cskw.hash(), Column::ContractsState);
-        ContractsStateData::from(preimage.to_vec())
+        raw_key: &Bytes32,
+    ) -> Option<fluentbase_types::Bytes> {
+        let preimage = self.am.preimage(
+            &ContractsLatestUtxoHelper::new(&ContractId::new(*raw_key)).value_preimage_key(),
+        );
+        if preimage.len() > 0 {
+            return Some(preimage);
+        }
+        None
     }
 
-    pub(crate) fn contract_asset_key_wrapper(&self, key: &Bytes32) -> ContractsAssetKeyWrapper {
-        let preimage = self.preimage_by_hash_column(key, Column::ContractsAssets);
-        ContractsAssetKeyWrapper::new_from_slice(&preimage)
+    pub(crate) fn contracts_latest_utxo_update(&self, raw_key: &Bytes32, data: &[u8]) {
+        self.am.update_preimage(
+            &ContractsLatestUtxoHelper::new(&ContractId::new(*raw_key)).value_preimage_key(),
+            0,
+            data,
+        );
     }
 
-    pub(crate) fn contract_asset_value(&self, cakw: &ContractsAssetKeyWrapper) -> u64 {
+    pub(crate) fn contracts_state_data(
+        &self,
+        raw_key: &Bytes64,
+    ) -> Option<fluentbase_types::Bytes> {
+        let preimage = self
+            .am
+            .preimage(&ContractsStateHelper::new(raw_key).value_preimage_key());
+        if preimage.len() > 0 {
+            return Some(preimage);
+        }
+        None
+    }
+
+    pub(crate) fn contracts_state_data_update(&self, raw_key: &Bytes64, data: &[u8]) {
+        self.am.update_preimage(
+            &ContractsStateHelper::new(raw_key).value_preimage_key(),
+            0,
+            data,
+        );
+    }
+
+    pub(crate) fn contracts_assets_value(&self, raw_key: &Bytes64) -> fluentbase_types::Bytes {
         let (val, _is_cold) = self.am.storage(
-            CONTRACT_ASSET_KEY_TO_VALUE,
-            U256::from_be_bytes(cakw.hash()),
+            CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS,
+            ContractsAssetsHelper::new(raw_key).value_storage_slot(),
             false,
         );
-        val.as_limbs()[0]
+        fluentbase_types::Bytes::copy_from_slice(
+            ContractsAssetsHelper::u256_to_value(&val).as_slice(),
+        )
     }
 
-    pub(crate) fn preimage_by_hash_column(
+    pub(crate) fn contracts_assets_value_update(&self, raw_key: &Bytes64, value: &[u8]) {
+        self.am.write_storage(
+            CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS,
+            ContractsAssetsHelper::new(raw_key).value_storage_slot(),
+            ContractsAssetsHelper::value_to_u256(value.try_into().expect("encoded value is valid")),
+        );
+    }
+
+    pub(crate) fn coins_owner_with_balance(
         &self,
-        hash: &Bytes32,
-        column: Column,
-    ) -> fluentbase_types::Bytes {
-        let indexed_hash = IndexedHash::new(hash).update_with_index(column.as_u32());
-        self.am.preimage(&indexed_hash)
+        raw_key: &Bytes34,
+    ) -> CoinsOwnerWithBalanceHelper {
+        let (val, _is_cold) = self.am.storage(
+            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            CoinsHelper::new(raw_key).owner_with_balance_storage_slot(),
+            false,
+        );
+        CoinsOwnerWithBalanceHelper::from_u256(&val)
+    }
+
+    pub(crate) fn coins_owner_with_balance_update(
+        &self,
+        raw_key: &Bytes34,
+        v: &CoinsOwnerWithBalanceHelper,
+    ) {
+        self.am.write_storage(
+            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            CoinsHelper::new(raw_key).owner_with_balance_storage_slot(),
+            v.to_u256(),
+        );
     }
 }
 
@@ -122,76 +178,212 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
     }
 
     fn get(&self, key: &[u8], column: Self::Column) -> StorageResult<Option<Value>> {
-        let size = self.size_of_value(key, column)?;
-        let key: Bytes32 = key.try_into().expect("32 bytes key");
+        assert!(key.len() > 0, "key len greater 0");
 
-        if let Some(size) = size {
-            let mut value = vec![0u8; size];
-            match column {
-                Column::Metadata => {
-                    // TODO hardcode it or compute?
-                }
-                Column::ContractsRawCode => {
-                    let contract_id = key;
-                    let raw_code = self.contracts_raw_code(&contract_id);
-                    return Ok(Some(raw_code.to_vec()));
-                }
-                Column::ContractsState => {
-                    let contract_state_key_hash = key;
-                    let cskw = self.contract_state_key_wrapper(&contract_state_key_hash);
-                    let data = self.contract_state_data(&cskw);
+        match column {
+            Column::Metadata => {
+                // key -> [u8]
+                // value -> [u8]
 
-                    return Ok(Some(data.0));
-                }
-                Column::ContractsLatestUtxo => {
-                    let contract_id = key;
-                    let preimage = self.contracts_latest_utxo(&contract_id);
+                let raw_metadata = self.metadata(key);
 
-                    return Ok(Some(preimage.to_vec()));
-                }
-                Column::ContractsAssets => {
-                    let cakw = self.contract_asset_key_wrapper(&key);
-                    let cav = self.contract_asset_value(&cakw);
-
-                    return Ok(Some(cav.to_bytes()));
-                }
-                Column::Coins => {
-                    let utxo_id = self.utxo_id_wrapper(&key);
-                    let owner_with_balance = self.owner_balance_wrapper(&utxo_id);
-                    let (account, _is_cold) = self.am.account(owner_with_balance.owner().clone());
-                    let mut fuel_address_wrapper: FuelAddressWrapper = (&account.address).into();
-                    let mut compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
-                        owner: fuel_address_wrapper.get(),
-                        amount: account.balance.as_limbs()[0],
-                        asset_id: AssetId::BASE,
-                        tx_pointer: Default::default(),
-                    });
-
-                    // let res = CompressedCoin::serialize(&compressed_coin);
-                    return Ok(None);
-                }
-
-                Column::Transactions
-                | Column::FuelBlocks
-                | Column::FuelBlockMerkleData
-                | Column::FuelBlockMerkleMetadata
-                | Column::ContractsAssetsMerkleData
-                | Column::ContractsAssetsMerkleMetadata
-                | Column::ContractsStateMerkleData
-                | Column::ContractsStateMerkleMetadata
-                | Column::Messages
-                | Column::ProcessedTransactions
-                | Column::FuelBlockConsensus
-                | Column::ConsensusParametersVersions
-                | Column::StateTransitionBytecodeVersions
-                | Column::UploadedBytecodes
-                | Column::GenesisMetadata => {
-                    panic!("not supported column: {:?}", &column)
-                }
+                return Ok(raw_metadata.map(|v| v.to_vec()));
             }
-            Ok(None)
-        } else {
-            Ok(None)
+            Column::ContractsRawCode => {
+                // key -> ContractId
+                // value -> [u8]
+
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                let raw_code = self.contracts_raw_code(&key);
+
+                return Ok(raw_code.map(|v| v.to_vec()));
+            }
+            Column::ContractsState => {
+                // key -> ContractsStateKey
+                // value -> [u8]
+
+                let contract_state_key: Bytes64 = key.try_into().expect("64 bytes key");
+                let contracts_state_data = self.contracts_state_data(&contract_state_key);
+
+                return Ok(contracts_state_data.map(|v| v.to_vec()));
+            }
+            Column::ContractsLatestUtxo => {
+                // key -> ContractId
+                // value -> ContractUtxoInfo
+
+                let contract_id: Bytes32 = key.try_into().expect("32 bytes key");
+                let contracts_latest_utxo_data = self.contracts_latest_utxo(&contract_id);
+
+                return Ok(contracts_latest_utxo_data.map(|v| v.to_vec()));
+            }
+            Column::ContractsAssets => {
+                // key -> ContractsAssetKey
+                // value -> u64
+
+                let contracts_assets_key: Bytes64 = key.try_into().expect("64 bytes key");
+                let value_data = self.contracts_assets_value(&contracts_assets_key);
+
+                return Ok(Some(value_data.to_vec()));
+            }
+            Column::Coins => {
+                // key -> UtxoId
+                // value -> CompressedCoin
+
+                let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
+                let owner_with_balance = self.coins_owner_with_balance(&utxo_id_key);
+                let (account, _is_cold) = self.am.account(owner_with_balance.address().clone());
+                let mut fuel_address_helper: FuelAddress = account.address.into();
+                let amount = account.balance / U256::from(1_000_000_000);
+                let compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
+                    owner: fuel_address_helper.address(),
+                    amount: amount.as_limbs()[0], // gwei ?
+                    asset_id: AssetId::BASE,
+                    tx_pointer: Default::default(),
+                });
+
+                let r =
+                    postcard::to_allocvec(&compressed_coin).expect("compressed coin serialized");
+                return Ok(Some(r));
+            }
+
+            Column::Transactions
+            | Column::FuelBlocks
+            | Column::FuelBlockMerkleData
+            | Column::FuelBlockMerkleMetadata
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata
+            | Column::Messages
+            | Column::ProcessedTransactions
+            | Column::FuelBlockConsensus
+            | Column::ConsensusParametersVersions
+            | Column::StateTransitionBytecodeVersions
+            | Column::UploadedBytecodes
+            | Column::GenesisMetadata => {
+                panic!(
+                    "unsupported column referenced '{:?}' while getting data from storage",
+                    &column
+                )
+            }
         }
+    }
+}
+
+impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'a, CR, AM> {
+    fn write(&mut self, key: &[u8], column: Self::Column, buf: &[u8]) -> StorageResult<usize> {
+        match column {
+            Column::Metadata => {
+                // key -> [u8]
+                // value -> [u8]
+
+                self.metadata_update(&key, buf);
+            }
+            Column::ContractsRawCode => {
+                // key -> ContractId
+                // value -> [u8]
+
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_raw_code_update(&key, buf);
+            }
+            Column::ContractsState => {
+                // key -> ContractsStateKey
+                // value -> [u8]
+
+                let key: Bytes64 = key.try_into().expect("64 bytes key");
+                self.contracts_state_data_update(&key, buf);
+            }
+            Column::ContractsLatestUtxo => {
+                // key -> ContractId
+                // value -> ContractUtxoInfo
+
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_latest_utxo_update(&key, buf);
+            }
+            Column::ContractsAssets => {
+                // key -> ContractsAssetKey
+                // value -> u64
+
+                let key: Bytes64 = key.try_into().expect("64 bytes key");
+                self.contracts_assets_value_update(&key, buf);
+            }
+            Column::Coins => {
+                // key -> UtxoId
+                // value -> CompressedCoin
+
+                let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
+                let compressed_coin: CompressedCoin =
+                    postcard::from_bytes(buf).expect("compressed coin");
+                assert_eq!(compressed_coin.asset_id(), &AssetId::BASE);
+                let coins_owner_with_balance = CoinsOwnerWithBalanceHelper::from_owner(
+                    compressed_coin.owner(),
+                    *compressed_coin.amount(),
+                );
+                self.coins_owner_with_balance_update(&utxo_id_key, &coins_owner_with_balance);
+
+                let (mut account, _) = self.am.account(*coins_owner_with_balance.address());
+                let mut coin_amount = U256::from(1_000_000_000);
+                coin_amount = coin_amount * U256::from(coins_owner_with_balance.balance());
+                account.balance += U256::from(coins_owner_with_balance.balance());
+                self.am.write_account(&account);
+            }
+
+            Column::Transactions
+            | Column::FuelBlocks
+            | Column::FuelBlockMerkleData
+            | Column::FuelBlockMerkleMetadata
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata
+            | Column::Messages
+            | Column::ProcessedTransactions
+            | Column::FuelBlockConsensus
+            | Column::ConsensusParametersVersions
+            | Column::StateTransitionBytecodeVersions
+            | Column::UploadedBytecodes
+            | Column::GenesisMetadata => {
+                panic!(
+                    "unsupported column referenced '{:?}' while writing data",
+                    &column
+                )
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn delete(&mut self, key: &[u8], column: Self::Column) -> StorageResult<()> {
+        match column {
+            Column::Metadata
+            | Column::ContractsRawCode
+            | Column::ContractsState
+            | Column::ContractsLatestUtxo
+            | Column::ContractsAssets
+            | Column::Coins => {
+                self.write(key, column, &[])?;
+            }
+
+            Column::Transactions
+            | Column::FuelBlocks
+            | Column::FuelBlockMerkleData
+            | Column::FuelBlockMerkleMetadata
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata
+            | Column::Messages
+            | Column::ProcessedTransactions
+            | Column::FuelBlockConsensus
+            | Column::ConsensusParametersVersions
+            | Column::StateTransitionBytecodeVersions
+            | Column::UploadedBytecodes
+            | Column::GenesisMetadata => {
+                panic!(
+                    "unsupported column referenced '{:?}' while deleting data",
+                    &column
+                )
+            }
+        }
+        Ok(())
     }
 }

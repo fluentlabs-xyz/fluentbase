@@ -158,17 +158,17 @@ impl<DB: TrieStorage> JournalTrieInner<DB> {
 
     fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
         // find and decode value and hash
-        let value_hash = match self
-            .get(key)
-            .and_then(|(values, _flags, _is_cold)| values.get(field as usize).copied())
-        {
-            Some(value) => value,
-            None => return false,
-        };
+        // let value_hash = match self
+        //     .get(key)
+        //     .and_then(|(values, _flags, _is_cold)| values.get(field as usize).copied())
+        // {
+        //     Some(value) => value,
+        //     None => return false,
+        // };
         // value hash stored inside trie must be equal to the provided value hash
         // TODO(dmitry123): "we can't do this check here because hash can also be keccak256"
         // write new preimage value into database
-        self.preimages.insert(value_hash, preimage.to_vec());
+        self.preimages.insert(key.clone(), preimage.to_vec());
         true
     }
 

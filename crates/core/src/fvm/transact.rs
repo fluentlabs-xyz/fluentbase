@@ -1,45 +1,131 @@
-use crate::debug_log;
+use crate::{debug_log, fvm::types::WasmStorage, helpers_fvm::fvm_transact};
+use alloc::vec::Vec;
 use fluentbase_sdk::{types::FvmCreateMethodOutput, AccountManager, ContextReader};
-use fuel_core_executor::executor::TxStorageTransaction;
-use fuel_core_storage::column::Column;
+use fuel_core_storage::{
+    column::Column,
+    kv_store::{KeyValueMutate, WriteOperation},
+    transactional::Changes,
+};
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
-    fuel_tx::{Cacheable, ConsensusParameters, ContractId, Word},
+    fuel_tx::{Cacheable, ConsensusParameters, ContractId, Input, Receipt, Word},
     fuel_vm::{
         checked_transaction::{Checked, IntoChecked},
         interpreter::{CheckedMetadata, ExecutableTransaction, MemoryInstance},
+        ProgramState,
     },
+    services::executor::Result,
 };
 
-pub fn _fvm_transact<'a, Tx, T, CR: ContextReader, AM: AccountManager>(
+pub fn _fvm_transact_inner<'a, Tx, CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
     checked_tx: Checked<Tx>,
     header: &'a PartialBlockHeader,
     coinbase_contract_id: ContractId,
     gas_price: Word,
-    storage_tx: &'a mut TxStorageTransaction<'a, T>,
-    memory: &'a mut MemoryInstance,
+    consensus_params: ConsensusParameters,
+) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
+where
+    Tx: ExecutableTransaction + Cacheable,
+    <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
+{
+    debug_log!("ecl(_fvm_transact_inner): start");
+
+    let mut storage = WasmStorage { cr, am };
+
+    // TODO warmup storage from state based on tx inputs?
+    // let inputs = checked_tx.transaction().inputs();
+    // for input in inputs {
+    //     match input {
+    //         Input::CoinSigned(v) => {}
+    //         Input::CoinPredicate(v) => {}
+    //         Input::Contract(v) => {}
+    //         Input::MessageCoinSigned(v) => {}
+    //         Input::MessageCoinPredicate(v) => {}
+    //         Input::MessageDataSigned(v) => {}
+    //         Input::MessageDataPredicate(v) => {}
+    //     }
+    // }
+
+    let mut memory = MemoryInstance::new();
+    let res = fvm_transact(
+        &mut storage,
+        checked_tx,
+        header,
+        coinbase_contract_id,
+        gas_price,
+        &mut memory,
+        consensus_params,
+    )?;
+
+    for (col_num, changes) in &res.4 {
+        let column: Column = col_num.clone().try_into().expect("valid column number");
+        match column {
+            Column::Metadata
+            | Column::ContractsRawCode
+            | Column::ContractsState
+            | Column::ContractsLatestUtxo
+            | Column::ContractsAssets
+            | Column::Coins => {
+                for (key, op) in changes {
+                    match op {
+                        WriteOperation::Insert(v) => {
+                            storage.write(key, column, v)?;
+                        }
+                        WriteOperation::Remove => {
+                            storage.delete(key, column)?;
+                        }
+                    }
+                }
+            }
+
+            Column::Transactions => {}
+            Column::FuelBlocks => {}
+            Column::FuelBlockMerkleData => {}
+            Column::FuelBlockMerkleMetadata => {}
+            Column::ContractsAssetsMerkleData => {}
+            Column::ContractsAssetsMerkleMetadata => {}
+            Column::ContractsStateMerkleData => {}
+            Column::ContractsStateMerkleMetadata => {}
+            Column::Messages => {}
+            Column::ProcessedTransactions => {}
+            Column::FuelBlockConsensus => {}
+            Column::ConsensusParametersVersions => {}
+            Column::StateTransitionBytecodeVersions => {}
+            Column::UploadedBytecodes => {}
+            Column::GenesisMetadata => {}
+        }
+    }
+
+    Ok(res)
+}
+
+pub fn _fvm_transact<'a, Tx, CR: ContextReader, AM: AccountManager>(
+    cr: &CR,
+    am: &AM,
+    checked_tx: Checked<Tx>,
+    header: &'a PartialBlockHeader,
+    coinbase_contract_id: ContractId,
+    gas_price: Word,
     consensus_params: ConsensusParameters,
 ) -> FvmCreateMethodOutput
 where
     Tx: ExecutableTransaction + Cacheable,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-    T: fuel_core_storage::kv_store::KeyValueInspect<Column = Column>,
 {
-    debug_log!("ecl(_fvm_create): start");
+    debug_log!("ecl(_fvm_transact): start");
 
-    // let (reverted, ps, tx, receipts, changes) = fvm_transact(
-    //     cr,
-    //     am,
-    //     checked_tx,
-    //     header,
-    //     coinbase_contract_id,
-    //     gas_price,
-    //     storage_tx,
-    //     memory,
-    //     consensus_params,
-    // );
+    let res = _fvm_transact_inner(
+        cr,
+        am,
+        checked_tx,
+        header,
+        coinbase_contract_id,
+        gas_price,
+        consensus_params,
+    )
+    .expect("fvm transact inner success");
 
     FvmCreateMethodOutput {}
 }

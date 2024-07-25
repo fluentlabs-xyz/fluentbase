@@ -47,8 +47,8 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 #fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false }
 #fuel-vm = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
 #fuel-tx = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
-#fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
-#fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
+fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
+fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
 #fuel-core = { path = "../fuel-core/crates/fuel-core", default-features = false }
 fuel-core-types = { path = "../fuel-core/crates/types", default-features = false, features = ["serde"] }
 fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false }
@@ -63,7 +63,8 @@ alloy-rlp = { version = "0.3", default-features = false }
 alloy-genesis = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
 hashbrown = { version = "0.14" }
-serde = { version = "1.0.203", default-features = false }
+serde = { version = "1.0.203", default-features = false, features = ["derive"] }
+postcard = { version = "1.0", default-features = false }
 casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
 revm-interpreter = { package = "revm-interpreter-fluent", path = "revm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
