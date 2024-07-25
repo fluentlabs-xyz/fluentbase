@@ -1,21 +1,9 @@
-use fluentbase_sdk::{
-    types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
-    ContextReader,
-    SovereignAPI,
-};
+use fluentbase_sdk::{types::EvmCallMethodOutput, Bytes, ContextReader, SovereignAPI};
 
-pub fn _svm_call<CR: ContextReader, AM: SovereignAPI>(
+pub fn _svm_exec_tx<CR: ContextReader, AM: SovereignAPI>(
     cr: &CR,
     am: &AM,
-    input: EvmCallMethodInput,
-) -> EvmCallMethodOutput {
-    todo!("implement me")
-}
-
-pub fn _svm_create<CR: ContextReader, AM: SovereignAPI>(
-    cr: &CR,
-    am: &AM,
-    input: EvmCreateMethodInput,
-) -> EvmCreateMethodOutput {
+    solana_raw_tx: Bytes,
+) -> () {
     todo!("implement me")
 }

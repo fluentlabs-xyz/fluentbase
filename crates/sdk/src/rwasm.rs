@@ -5,7 +5,6 @@ use crate::{
         _checkpoint,
         _commit,
         _compute_root,
-        _context_call,
         _debug_log,
         _ecrecover,
         _emit_log,
@@ -41,7 +40,6 @@ use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_types::{
     calc_storage_key,
     Account,
-    AccountAPI,
     AccountCheckpoint,
     AccountStatus,
     Bytes32,
@@ -284,9 +282,7 @@ impl SharedAPI for RwasmContext {
     fn charge_fuel(&self, fuel: &mut Fuel) {
         fuel.0 = unsafe { _charge_fuel(fuel.0) }
     }
-}
 
-impl AccountAPI for RwasmContext {
     #[inline(always)]
     fn account(&self, address: &Address) -> (Account, bool) {
         let mut result = Account::new(*address);
@@ -388,8 +384,11 @@ impl AccountAPI for RwasmContext {
         let exit_code = unsafe {
             _exec(
                 hash32.as_ptr(),
+                core::ptr::null(),
                 input.as_ptr(),
                 input.len() as u32,
+                core::ptr::null_mut(),
+                0,
                 core::ptr::null_mut(),
                 0,
                 &mut fuel_value as *mut u32,
@@ -475,8 +474,9 @@ impl SovereignAPI for RwasmContext {
         };
         let mut fuel_value = fuel.0 as u32;
         let exit_code = unsafe {
-            _context_call(
+            _exec(
                 hash32.as_ptr(),
+                address.as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
                 context.as_ptr(),
@@ -484,7 +484,6 @@ impl SovereignAPI for RwasmContext {
                 core::ptr::null_mut(),
                 0,
                 &mut fuel_value as *mut u32,
-                state,
             )
         };
         fuel.0 = fuel_value as u64;

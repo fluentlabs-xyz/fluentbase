@@ -2,7 +2,6 @@ pub mod charge_fuel;
 pub mod checkpoint;
 pub mod commit;
 pub mod compute_root;
-pub mod context_call;
 pub mod debug_log;
 pub mod ecrecover;
 pub mod emit_log;
@@ -33,7 +32,6 @@ use crate::{
         checkpoint::SyscallCheckpoint,
         commit::SyscallCommit,
         compute_root::SyscallComputeRoot,
-        context_call::SyscallContextCall,
         debug_log::SyscallDebugLog,
         ecrecover::SyscallEcrecover,
         emit_log::SyscallEmitLog,
@@ -84,11 +82,10 @@ impl_runtime_handler!(SyscallRead, READ, fn fluentbase_v1preview::_read(target: 
 impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_output_size() -> u32);
 impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
-impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32) -> i32);
+impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, address32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32) -> i32);
 impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);
 impl_runtime_handler!(SyscallReadContext, READ_CONTEXT, fn fluentbase_v1preview::_read_context(target_ptr: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SyscallContextCall, CONTEXT_CALL, fn fluentbase_v1preview::_context_call(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
 impl_runtime_handler!(SyscallCheckpoint, CHECKPOINT, fn fluentbase_v1preview::_checkpoint() -> u64);
 impl_runtime_handler!(SyscallGetLeaf, GET_LEAF, fn fluentbase_v1preview::_get_leaf(key32_ptr: u32, field: u32, output32_ptr: u32, committed: u32) -> u32);
 impl_runtime_handler!(SyscallUpdateLeaf, UPDATE_LEAF, fn fluentbase_v1preview::_update_leaf(key32_ptr: u32, flags: u32, vals32_ptr: u32, vals32_len: u32) -> ());
@@ -121,7 +118,6 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SyscallChargeFuel::register_handler(linker, store);
     SyscallReadContext::register_handler(linker, store);
     if IS_SOVEREIGN {
-        SyscallContextCall::register_handler(linker, store);
         SyscallCheckpoint::register_handler(linker, store);
         SyscallUpdateLeaf::register_handler(linker, store);
         SyscallComputeRoot::register_handler(linker, store);

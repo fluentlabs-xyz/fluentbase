@@ -57,12 +57,12 @@ impl TrieDb for eth_trie::MemoryDB {
 
 #[derive(Debug)]
 pub enum RuntimeError {
-    ExecutionFailed(i32),
     BinaryFormatError(BinaryFormatError),
     Rwasm(RwasmError),
     StorageError(String),
     MissingEntrypoint,
     UnloadedModule(F254),
+    ExitCode(i32),
 }
 
 impl From<BinaryFormatError> for RuntimeError {

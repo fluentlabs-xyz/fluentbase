@@ -46,7 +46,7 @@ pub fn create_shared_import_linker<
     F::from(SHARED_IMPORT_LINKER)
 }
 
-const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 27] = [
+const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 26] = [
     import_func!("_keccak256", KECCAK256),
     import_func!("_poseidon", KECCAK256),
     import_func!("_poseidon_hash", POSEIDON_HASH),
@@ -60,7 +60,6 @@ const SOVEREIGN_IMPORT_LINKER: [(&'static str, &'static str, u32, u32); 27] = [
     import_func!("_forward_output", FORWARD_OUTPUT),
     import_func!("_state", STATE),
     import_func!("_exec", EXEC),
-    import_func!("_context_call", CONTEXT_CALL),
     import_func!("_charge_fuel", CHARGE_FUEL),
     import_func!("_read_context", READ_CONTEXT),
     import_func!("_checkpoint", CHECKPOINT),
