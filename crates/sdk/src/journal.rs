@@ -1,4 +1,5 @@
 use crate::{Address, Bytes, B256, U256};
+use alloc::vec::Vec;
 use fluentbase_types::{
     Account,
     AccountCheckpoint,
@@ -228,22 +229,14 @@ impl SovereignJournalAPI for JournalStateWrapper {
         });
     }
 
-    fn system_call(
+    fn context_call<SDK: SharedAPI>(
         &mut self,
+        sdk: &SDK,
+        caller: Address,
         address: Address,
-        input: &[u8],
+        value: U256,
         fuel: &mut Fuel,
-    ) -> (Bytes, ExitCode) {
-        todo!()
-    }
-
-    fn context_call(
-        &mut self,
-        address: Address,
         input: &[u8],
-        context: &[u8],
-        fuel: &mut Fuel,
-        state: u32,
     ) -> (Bytes, ExitCode) {
         todo!()
     }

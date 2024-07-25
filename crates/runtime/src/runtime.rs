@@ -1,6 +1,5 @@
 use crate::{
     instruction::{
-        context_call::{SysContextCallResumable, SyscallContextCall},
         exec::{SysExecResumable, SyscallExec},
         runtime_register_shared_handlers,
         runtime_register_sovereign_handlers,
@@ -14,6 +13,7 @@ use fluentbase_types::{
     create_shared_import_linker,
     create_sovereign_import_linker,
     Bytes,
+    DelegatedExecution,
     EmptyJournalTrie,
     ExitCode,
     IJournaledTrie,
@@ -37,6 +37,7 @@ use rwasm::{
     Linker,
     Module,
     ResumableCall,
+    ResumableInvocation,
     Store,
     Value,
 };
@@ -44,6 +45,7 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
@@ -211,8 +213,16 @@ impl<DB: IJournaledTrie> RuntimeContext<DB> {
         &self.execution_result.output
     }
 
+    pub fn output_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.execution_result.output
+    }
+
     pub fn return_data(&self) -> &Vec<u8> {
         &self.execution_result.return_data
+    }
+
+    pub fn return_data_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.execution_result.return_data
     }
 
     pub fn state(&self) -> u32 {
@@ -241,21 +251,39 @@ impl ExecutionResult {
     }
 }
 
+static mut GLOBAL_RUNTIME_INDEX: AtomicU64 = AtomicU64::new(0);
+
+struct RecoverableRuntime {
+    runtime: Runtime<DefaultEmptyRuntimeDatabase>,
+    resumable_invocation: ResumableInvocation,
+}
+
+impl RecoverableRuntime {
+    fn state(&self) -> &SysExecResumable {
+        self.resumable_invocation
+            .host_error()
+            .downcast_ref::<SysExecResumable>()
+            .expect("can't downcast resumable invocation")
+    }
+}
+
 pub struct CachingRuntime {
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
     modules: HashMap<F254, Module>,
+    recoverable_runtimes: HashMap<u64, RecoverableRuntime>,
 }
 
 impl CachingRuntime {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
+            recoverable_runtimes: HashMap::new(),
         }
     }
 
     fn new_engine() -> Engine {
         // we can safely use sovereign import linker because all protected are filtered out during
-        // translation process
+        // a translation process
         let import_linker = Runtime::new_sovereign_linker();
         let mut config = RwasmModule::default_config(None);
         config.rwasm_config(RwasmConfig {
@@ -287,7 +315,7 @@ impl CachingRuntime {
             Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
             Entry::Vacant(entry) => entry,
         };
-        // empty bytecode we can't execute so just return Ok exit code
+        // empty bytecode we can't execute, so return Ok exit code
         let reduced_module = if !rwasm_bytecode.is_empty() {
             RwasmModule::new(rwasm_bytecode).map_err(Into::<RuntimeError>::into)?
         } else {
@@ -295,7 +323,6 @@ impl CachingRuntime {
                 Return(DropKeep::none())
             })
         };
-        // let engine = Self::new_engine();
         let module_builder = reduced_module.to_module_builder(engine);
         let module = module_builder.finish();
         Ok(entry.insert(module))
@@ -311,6 +338,7 @@ thread_local! {
 }
 
 pub struct Runtime<DB: IJournaledTrie> {
+    // store and linker
     pub(crate) store: Store<RuntimeContext<DB>>,
     pub(crate) linker: Linker<RuntimeContext<DB>>,
 }
@@ -326,6 +354,7 @@ impl Runtime<EmptyJournalTrie> {
     pub fn catch_trap(err: &RuntimeError) -> i32 {
         let err = match err {
             RuntimeError::Rwasm(err) => err,
+            RuntimeError::ExitCode(exit_code) => return *exit_code,
             _ => return ExitCode::UnknownError as i32,
         };
         let err = match err {
@@ -368,7 +397,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                 .unwrap_or_else(|| CachingRuntime::new_engine())
         });
 
-        // create new linker and store (it shares same engine resources)
+        // create new linker and store (it shares the same engine resources)
         let mut store = Store::<RuntimeContext<DB>>::new(&engine, runtime_context);
         let mut linker = Linker::<RuntimeContext<DB>>::new(&engine);
 
@@ -387,15 +416,15 @@ impl<DB: IJournaledTrie> Runtime<DB> {
         Self { store, linker }
     }
 
-    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
-        let instance = CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+    fn get_instance(&mut self) -> Result<Instance, RuntimeError> {
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut self.store.data_mut().bytecode);
 
             // resolve cached module or init it
             let module = match &bytecode_repr {
                 BytecodeOrHash::Bytecode(bytecode, hash) => {
                     let hash = hash.unwrap_or_else(|| F254::from(poseidon_hash(&bytecode)));
-                    // if we have cached module then use it, otherwise create new one and cache
+                    // if we have a cached module then use it, otherwise create a new one and cache
                     if let Some(module) = caching_runtime.resolve_module(&hash) {
                         Ok(module)
                     } else {
@@ -403,7 +432,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                     }
                 }
                 BytecodeOrHash::Hash(hash) => {
-                    // if we have only hash then try to load module or fail fast
+                    // if we have only hash, then try to load module or fail fast
                     match caching_runtime.resolve_module(hash) {
                         Some(module) => Ok(module),
                         None => {
@@ -420,7 +449,7 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                 }
             }?;
 
-            // return bytecode back
+            // return bytecode
             self.store.data_mut().bytecode = bytecode_repr;
 
             // init instance
@@ -432,7 +461,11 @@ impl<DB: IJournaledTrie> Runtime<DB> {
                 .map_err(Into::<RuntimeError>::into)?;
 
             Ok::<Instance, RuntimeError>(instance)
-        })?;
+        })
+    }
+
+    pub fn call(&mut self) -> Result<ExecutionResult, RuntimeError> {
+        let instance = self.get_instance()?;
 
         let mut next_result = instance
             .get_func(&mut self.store, "main")
@@ -440,72 +473,98 @@ impl<DB: IJournaledTrie> Runtime<DB> {
             .call_resumable(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
         loop {
-            match next_result {
+            let resumable_invocation = match next_result {
                 Ok(resumable) => match resumable {
-                    ResumableCall::Finished => {
-                        let mut execution_result = self.store.data().execution_result.clone();
-                        execution_result.fuel_consumed =
-                            self.store.fuel_consumed().unwrap_or_default();
-                        return Ok(execution_result);
-                    }
-                    ResumableCall::Resumable(state) => {
-                        // check i32 exit code
-                        let exit_code = if let Some(exit_code) =
-                            state.host_error().i32_exit_status()
-                        {
-                            // if we have exit code then just return it, somehow execution failed,
-                            // maybe if was out of fuel
-                            let mut execution_result = self.store.data().execution_result.clone();
-                            execution_result.exit_code = exit_code;
-                            return Ok(execution_result);
-                        } else if let Some(delayed_state) =
-                            state.host_error().downcast_ref::<SysExecResumable>()
-                        {
-                            // execute `_sys_exec_hash` function
-                            SyscallExec::fn_continue(
-                                Caller::new(&mut self.store, Some(&instance)),
-                                delayed_state,
-                            )
-                            .unwrap_or_else(|exit_code| {
-                                exit_code
-                                    .i32_exit_status()
-                                    .map(ExitCode::from)
-                                    .unwrap_or(ExitCode::UnknownError)
-                            })
-                        } else if let Some(delayed_state) =
-                            state.host_error().downcast_ref::<SysContextCallResumable>()
-                        {
-                            // execute `_sys_exec_hash` function
-                            SyscallContextCall::fn_continue(
-                                Caller::new(&mut self.store, Some(&instance)),
-                                delayed_state,
-                            )
-                            .unwrap_or_else(|exit_code| {
-                                exit_code
-                                    .i32_exit_status()
-                                    .map(ExitCode::from)
-                                    .unwrap_or(ExitCode::UnknownError)
-                            })
-                        } else {
-                            return Err(RuntimeError::Rwasm(
-                                Trap::i32_exit(ExitCode::TransactError.into_i32()).into(),
-                            ));
-                        };
-                        // resume call with exit code
-                        let exit_code = Value::I32(exit_code.into_i32());
-                        next_result = state
-                            .resume(self.store.as_context_mut(), &[exit_code], &mut [])
-                            .map_err(Into::<RuntimeError>::into);
-                    }
+                    ResumableCall::Finished => return self.handle_execution_result(None),
+                    ResumableCall::Resumable(state) => state,
                 },
-                Err(err) => {
-                    let mut execution_result = self.store.data().execution_result.clone();
-                    execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
-                    execution_result.exit_code = Runtime::catch_trap(&err);
-                    return Ok(execution_result);
-                }
+                Err(err) => return self.handle_execution_result(Some(err)),
+            };
+
+            // if we have an exit code then return it, somehow execution failed, maybe if was out of
+            // fuel, memory out of bounds or stack overflow/underflow
+            if let Some(exit_code) = resumable_invocation.host_error().i32_exit_status() {
+                return self.handle_execution_result(Some(RuntimeError::ExitCode(exit_code)));
             }
+
+            // if we can't downcast our resumable invocation state, then something unexpected
+            // happened, and we can only return an error,
+            // but maybe the crash is safer
+            if let Some(delayed_state) = resumable_invocation
+                .host_error()
+                .downcast_ref::<SysExecResumable>()
+            {
+                if delayed_state.depth_level > 0 {
+                    return self.handle_resumable_state(resumable_invocation);
+                }
+                // if we're at zero depth level, then we can safely execute function
+                // since this call is initiated on the root level and it is trusted
+                let exit_code = SyscallExec::fn_continue(
+                    Caller::new(&mut self.store, Some(&instance)),
+                    delayed_state,
+                )
+                .unwrap_or_else(|exit_code| exit_code.into());
+                let exit_code = Value::I32(exit_code.into_i32());
+                next_result = resumable_invocation
+                    .resume(self.store.as_context_mut(), &[exit_code], &mut [])
+                    .map_err(Into::<RuntimeError>::into);
+            } else {
+                // TODO(dmitry123): maybe crash is safer?
+                return Err(RuntimeError::Rwasm(
+                    ExitCode::TransactError.into_trap().into(),
+                ));
+            };
         }
+    }
+
+    fn handle_resumable_state(
+        &mut self,
+        resumable_invocation: ResumableInvocation,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let delayed_state = resumable_invocation
+            .host_error()
+            .downcast_ref::<SysExecResumable>()
+            .unwrap();
+        // we disallow nested calls at non-root levels
+        // so we must save the current state
+        // to interrupt execution and delegate decision-making
+        // to the root execution
+        let return_data = self.store.data_mut().return_data_mut();
+        assert!(return_data.is_empty(), "return data must be empty");
+        // serialize delegated execution state,
+        // but we don't serialize registers and stack state,
+        // instead we remember it inside the internal structure
+        // and assign a special identifier for recovery
+        let encoded_state = delayed_state.delegated_execution.to_bytes();
+        return_data.extend(encoded_state.as_ref());
+        // save the current runtime state for future recovery
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            let call_id = unsafe { GLOBAL_RUNTIME_INDEX.fetch_add(1u64, Ordering::AcqRel) };
+            // let recoverable_runtime = RecoverableRuntime {
+            //     runtime: self,
+            //     resumable_invocation,
+            // };
+            // caching_runtime
+            //     .recoverable_runtimes
+            //     .insert(call_id, recoverable_runtime);
+        });
+        // interruption is a special exit code that indicates to the root what happened inside
+        // the call
+        self.handle_execution_result(Some(RuntimeError::ExitCode(
+            ExitCode::Interruption.into_i32(),
+        )))
+    }
+
+    fn handle_execution_result(
+        &self,
+        err: Option<RuntimeError>,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let mut execution_result = self.store.data().execution_result.clone();
+        execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
+        if let Some(err) = err {
+            execution_result.exit_code = Runtime::catch_trap(&err);
+        }
+        return Ok(execution_result);
     }
 
     pub fn store(&self) -> &Store<RuntimeContext<DB>> {

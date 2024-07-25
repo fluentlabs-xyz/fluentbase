@@ -1,29 +1,51 @@
 use crate::{ExecutionResult, Runtime, RuntimeContext};
 use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
+use fluentbase_types::{
+    Address,
+    Bytes,
+    DelegatedExecution,
+    ExitCode,
+    IJournaledTrie,
+    F254,
+    STATE_MAIN,
+};
 use rwasm::{
     core::{HostError, Trap},
     Caller,
 };
 use std::{
-    fmt::{Display, Formatter},
+    fmt::{Debug, Display, Formatter},
     mem::take,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 pub struct SyscallExec;
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct SysExecResumable {
-    pub code_hash32_ptr: u32,
+    pub hash32_ptr: u32,
+    pub address20_ptr: u32,
     pub input_ptr: u32,
     pub input_len: u32,
+    pub context_ptr: u32,
+    pub context_len: u32,
     pub return_ptr: u32,
     pub return_len: u32,
     pub fuel_ptr: u32,
+
+    pub delegated_execution: DelegatedExecution,
+
+    /// A depth level of the current call, for root it's always zero
+    pub depth_level: u32,
 }
 
 pub const CALL_STACK_LIMIT: u32 = 1024;
+
+impl Debug for SysExecResumable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime resume error")
+    }
+}
 
 impl Display for SysExecResumable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -35,21 +57,39 @@ impl HostError for SysExecResumable {}
 
 impl SyscallExec {
     pub fn fn_handler<DB: IJournaledTrie>(
-        _caller: Caller<'_, RuntimeContext<DB>>,
-        code_hash32_ptr: u32,
+        caller: Caller<'_, RuntimeContext<DB>>,
+        hash32_ptr: u32,
+        address20_ptr: u32,
         input_ptr: u32,
         input_len: u32,
+        context_ptr: u32,
+        context_len: u32,
         return_ptr: u32,
         return_len: u32,
         fuel_ptr: u32,
     ) -> Result<i32, Trap> {
+        // it's impossible to interrupt execution on the root level if there is a context
+        if caller.data().depth > 0 && context_len > 0 {
+            return Err(ExitCode::ContextWriteProtection.into_trap());
+        }
+        let delegated_execution = DelegatedExecution {
+            address: Address::from_slice(caller.read_memory(hash32_ptr, 20)?),
+            hash: F254::from_slice(caller.read_memory(hash32_ptr, 32)?),
+            input: Bytes::copy_from_slice(caller.read_memory(input_ptr, input_len)?),
+            fuel: LittleEndian::read_u32(caller.read_memory(fuel_ptr, 4)?),
+        };
         return Err(SysExecResumable {
-            code_hash32_ptr,
+            hash32_ptr,
+            address20_ptr,
             input_ptr,
             input_len,
+            context_ptr,
+            context_len,
             return_ptr,
             return_len,
             fuel_ptr,
+            delegated_execution,
+            depth_level: caller.data().depth,
         }
         .into());
     }
@@ -59,7 +99,7 @@ impl SyscallExec {
         state: &SysExecResumable,
     ) -> Result<ExitCode, Trap> {
         let bytecode_hash32: [u8; 32] = caller
-            .read_memory(state.code_hash32_ptr, 32)?
+            .read_memory(state.hash32_ptr, 32)?
             .try_into()
             .unwrap();
         let input = caller
@@ -110,7 +150,7 @@ impl SyscallExec {
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
         let context = take(&mut ctx.context);
 
-        // create new runtime instance with the context
+        // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input.to_vec())
             .with_context(context)

@@ -32,6 +32,7 @@ pub enum ExitCode {
     // warning: when adding new codes doesn't forget to add them to impls below
     #[default]
     Ok = 0,
+    Interruption = -10,
     Panic = -71,
     // fluentbase error codes
     ExecutionHalted = -1001,
@@ -67,6 +68,7 @@ pub enum ExitCode {
     InvalidJump = -1032,
     NotActivatedEIP = -1033,
     ImmutableContext = -1034,
+    ContextWriteProtection = -1035,
     // NotActivated = -1033,
     // ReturnContract = -1034,
     // ReturnContractInNotInitEOF = -1035,
@@ -187,6 +189,15 @@ impl Into<Trap> for ExitCode {
         self.into_trap()
     }
 }
+#[cfg(feature = "rwasm")]
+impl From<Trap> for ExitCode {
+    fn from(value: Trap) -> Self {
+        value
+            .i32_exit_status()
+            .map(ExitCode::from)
+            .unwrap_or(ExitCode::UnknownError)
+    }
+}
 
 impl Into<i32> for ExitCode {
     fn into(self) -> i32 {
@@ -219,7 +230,6 @@ pub enum SysFuncIdx {
     FORWARD_OUTPUT = 0x000a,
     CHARGE_FUEL = 0x000b,
     READ_CONTEXT = 0x000d,
-    CONTEXT_CALL = 0x000e,
 
     // jzkt
     CHECKPOINT = 0x0702,

@@ -30,7 +30,8 @@ extern "C" {
     pub fn _state() -> u32;
 
     /// Executes nested call with specified bytecode poseidon hash:
-    /// - `code_hash32_ptr` - a 254-bit poseidon hash of a contract to be called
+    /// - `hash32_ptr` - a 254-bit poseidon hash of a contract to be called
+    /// - `address20_ptr` - a 160-bit callee address (must matches account's code hash)
     /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
     /// - `input_len` - length of input (can be zero)
     /// - `context_ptr` - pointer to the context (must be `ptr::null()` for shared env)
@@ -39,15 +40,8 @@ extern "C" {
     /// - `return_len` - length of return data buffer (might be zero)
     /// - `fuel_ptr` - pointer to the fuel memory field (modifiable)
     pub fn _exec(
-        code_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-    ) -> i32;
-    pub fn _context_call(
-        code_hash32_ptr: *const u8,
+        hash32_ptr: *const u8,
+        address20_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
         context_ptr: *const u8,
@@ -55,7 +49,6 @@ extern "C" {
         return_ptr: *mut u8,
         return_len: u32,
         fuel_ptr: *mut u32,
-        state: u32,
     ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
