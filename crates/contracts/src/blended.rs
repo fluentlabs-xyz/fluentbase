@@ -3,11 +3,12 @@ use crate::{
     utils::{evm_builder_apply_envs, fill_eth_tx_env, fuel_testnet_consensus_params},
 };
 use alloy_rlp::{Decodable, Encodable};
+use alloy_sol_types::SolValue;
 use fluentbase_core::fvm::transact::_fvm_transact_inner;
 use fluentbase_sdk::{
     basic_entrypoint,
     contracts::BlendedAPI,
-    derive::{derive_keccak256_id, Contract},
+    derive::{derive_keccak256, derive_keccak256_id, Contract},
     AccountManager,
     Bytes,
     ContextReader,
@@ -205,10 +206,19 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     pc,
                     is,
                 } => {
-                    let id = derive_keccak256_id!(
+                    let sig = derive_keccak256!(
                         "Call(bytes32,uint64,bytes32,uint64,uint64,uint64,uint64,uint64)"
                     );
-                    // LowLevelSDK::emit_log(id.to_be_bytes()[12..].as_ptr(), [id,] as )
+                    let mut data =
+                        (to.0, amount, asset_id.0, gas, param1, param2, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        data.as_ptr(),
+                        data.len() as u32,
+                    )
                 }
                 fuel_tx::Receipt::Return { .. } => {}
                 fuel_tx::Receipt::ReturnData { .. } => {}
