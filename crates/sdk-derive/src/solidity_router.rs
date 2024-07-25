@@ -203,7 +203,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
             }
         };
         let sol_sig = get_raw_signature(item);
-        let sol_sig = calculate_keccak256_bytes(sol_sig.to_string().as_str());
+        let sol_sig = calculate_keccak256_bytes::<4>(sol_sig.to_string().as_str());
         let method = quote! {
             #sig {
                 use alloy_sol_types::{SolValue};
