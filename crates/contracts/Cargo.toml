@@ -19,8 +19,8 @@ fluentbase-core = { workspace = true, default-features = false }
 revm = { workspace = true, default-features = false }
 
 # fuel
-#fuel-vm = { workspace = true, default-features = false, features = ["alloc"] }
-#fuel-tx = { workspace = true, default-features = false, features = ["alloc"] }
+fuel-vm = { workspace = true, default-features = false, features = ["alloc"] }
+fuel-tx = { workspace = true, default-features = false, features = ["alloc"] }
 fuel-core-types = { workspace = true, default-features = false }
 fuel-core-storage = { workspace = true, default-features = false }
 fuel-core-executor = { workspace = true, default-features = false }

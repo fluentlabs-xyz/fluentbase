@@ -25,6 +25,7 @@ paste = { workspace = true }
 hex.workspace = true
 
 anyhow = { workspace = true, default-features = false }
+postcard = { workspace = true, default-features = false, features = ["alloc"] }
 
 #fuel-tx = { workspace = true, default-features = false }
 #fuel-vm = { workspace = true, default-features = false }
