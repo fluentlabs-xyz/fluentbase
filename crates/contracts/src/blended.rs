@@ -8,9 +8,10 @@ use fluentbase_core::fvm::transact::_fvm_transact_inner;
 use fluentbase_sdk::{
     basic_entrypoint,
     contracts::BlendedAPI,
-    derive::{derive_keccak256, derive_keccak256_id, Contract},
+    derive::{derive_keccak256, Contract},
     AccountManager,
     Bytes,
+    Bytes32,
     ContextReader,
     LowLevelSDK,
     SharedAPI,
@@ -27,17 +28,23 @@ use fuel_core_types::{
 };
 use fuel_vm::{
     checked_transaction::IntoChecked,
-    fuel_types,
     fuel_types::{
         canonical::{Deserialize, Serialize},
         BlockHeight,
     },
 };
-use revm::{interpreter::Host, primitives::ResultAndState, Evm};
+use revm::{
+    interpreter::Host,
+    primitives::{hex, ResultAndState},
+    Evm,
+};
 use zeth_primitives::{
     receipt::Receipt,
     transactions::{ethereum::EthereumTxEssence, Transaction, TxEssence},
 };
+
+const FUEL_VM_NON_CONTRACT_ADDRESS: Bytes32 =
+    hex!("00000000000000000000000000000000000000000000000000004675656C564D"); // ANSI: FuelVM
 
 #[derive(Contract)]
 pub struct BLENDED<'a, CR: ContextReader, AM: AccountManager> {
@@ -209,29 +216,263 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     let sig = derive_keccak256!(
                         "Call(bytes32,uint64,bytes32,uint64,uint64,uint64,uint64,uint64)"
                     );
-                    let mut data =
+                    let log_data =
                         (to.0, amount, asset_id.0, gas, param1, param2, pc, is).abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
                         id[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
-                        data.as_ptr(),
-                        data.len() as u32,
-                    )
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
                 }
-                fuel_tx::Receipt::Return { .. } => {}
-                fuel_tx::Receipt::ReturnData { .. } => {}
-                fuel_tx::Receipt::Panic { .. } => {}
-                fuel_tx::Receipt::Revert { .. } => {}
-                fuel_tx::Receipt::Log { .. } => {}
-                fuel_tx::Receipt::LogData { .. } => {}
-                fuel_tx::Receipt::Transfer { .. } => {}
-                fuel_tx::Receipt::TransferOut { .. } => {}
-                fuel_tx::Receipt::ScriptResult { .. } => {}
-                fuel_tx::Receipt::MessageOut { .. } => {}
-                fuel_tx::Receipt::Mint { .. } => {}
-                fuel_tx::Receipt::Burn { .. } => {}
+                fuel_tx::Receipt::Return { id, val, pc, is } => {
+                    let sig = derive_keccak256!("Return(uint64,uint64,uint64,uint64)");
+                    let log_data = (val, pc, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::ReturnData {
+                    id,
+                    ptr,
+                    len,
+                    digest,
+                    pc,
+                    is,
+                    data,
+                } => {
+                    let sig =
+                        derive_keccak256!("ReturnData(uint64,uint64,bytes32,uint64,uint64,bytes)");
+                    // TODO what todo with `data` field
+                    let log_data =
+                        (ptr, len, digest.0, pc, is, data.clone().unwrap_or_default()).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Panic {
+                    id,
+                    reason,
+                    pc,
+                    is,
+                    contract_id,
+                } => {
+                    // reason has 2 fields: PanicReason, RawInstruction both can be represented as
+                    // (uint8,uint64)
+                    let sig = derive_keccak256!("Panic(uint64,uint64,uint64,uint64,bytes32)");
+                    let log_data = (
+                        *reason.reason() as u64,
+                        *reason.instruction() as u64,
+                        pc,
+                        is,
+                        contract_id.unwrap_or_default().0,
+                    )
+                        .abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Revert { id, ra, pc, is } => {
+                    let sig = derive_keccak256!("Revert(uint64,uint64,uint64)");
+                    let log_data = (ra, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Log {
+                    id,
+                    ra,
+                    rb,
+                    rc,
+                    rd,
+                    pc,
+                    is,
+                } => {
+                    let sig = derive_keccak256!("Log(uint64,uint64,uint64,uint64,uint64,uint64)");
+                    let log_data = (ra, rb, rc, rd, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::LogData {
+                    id,
+                    ra,
+                    rb,
+                    ptr,
+                    len,
+                    digest,
+                    pc,
+                    is,
+                    data,
+                } => {
+                    let sig = derive_keccak256!(
+                        "Log(uint64,uint64,uint64,uint64,bytes32,uint64,uint64,bytes)"
+                    );
+                    let log_data = (
+                        ra,
+                        rb,
+                        ptr,
+                        len,
+                        digest.0,
+                        pc,
+                        is,
+                        data.clone().unwrap_or_default(),
+                    )
+                        .abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Transfer {
+                    id,
+                    to,
+                    amount,
+                    asset_id,
+                    pc,
+                    is,
+                } => {
+                    let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
+                    let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        id[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::TransferOut {
+                    id,
+                    to,
+                    amount,
+                    asset_id,
+                    pc,
+                    is,
+                } => {
+                    let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
+                    let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::ScriptResult { result, gas_used } => {
+                    let sig = derive_keccak256!("ScriptResult(uint64,uint64)");
+                    let result_u64: u64 = (*result).into();
+                    let log_data = (result_u64, gas_used).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::MessageOut {
+                    sender,
+                    recipient,
+                    amount,
+                    nonce,
+                    len,
+                    digest,
+                    data,
+                } => {
+                    let sig = derive_keccak256!(
+                        "MessageOut(bytes32,bytes32,uint64,bytes32,uint64,bytes32,bytes)"
+                    );
+                    let log_data = (
+                        sender.0,
+                        recipient.0,
+                        amount,
+                        nonce.0,
+                        len,
+                        digest.0,
+                        data.clone().unwrap_or_default(),
+                    )
+                        .abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Mint {
+                    sub_id,
+                    contract_id,
+                    val,
+                    pc,
+                    is,
+                } => {
+                    let sig = derive_keccak256!("Mint(bytes32,bytes32,uint64,uint64,uint64)");
+                    let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
+                fuel_tx::Receipt::Burn {
+                    sub_id,
+                    contract_id,
+                    val,
+                    pc,
+                    is,
+                } => {
+                    let sig = derive_keccak256!("Burn(bytes32,bytes32,uint64,uint64,uint64)");
+                    let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
+                    let topics = [sig];
+                    LowLevelSDK::emit_log(
+                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        topics.as_ptr(),
+                        topics.len() as u32 * 32,
+                        log_data.as_ptr(),
+                        log_data.len() as u32,
+                    );
+                }
             }
         }
         let mut receipts_encoded = Vec::<u8>::new();
