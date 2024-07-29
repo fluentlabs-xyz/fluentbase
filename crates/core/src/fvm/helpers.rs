@@ -1,5 +1,5 @@
 use alloc::vec;
-use core::ops::Deref;
+use core::{mem::size_of, ops::Deref};
 use fluentbase_sdk::{Address, LowLevelSDK, U256};
 use fluentbase_types::{Bytes32, Bytes34, Bytes64, SharedAPI};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
