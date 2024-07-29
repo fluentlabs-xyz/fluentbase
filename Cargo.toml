@@ -99,6 +99,7 @@ lazy_static = { version = "1.4.0", default-features = false, features = ["spin_n
 regex = { version = "1.10" }
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
+clap = { version = "4.5", features = ["derive"] }
 
 [profile.bench]
 lto = "fat"

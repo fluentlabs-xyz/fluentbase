@@ -43,7 +43,7 @@ use zeth_primitives::{
     transactions::{ethereum::EthereumTxEssence, Transaction, TxEssence},
 };
 
-const FUEL_VM_NON_CONTRACT_ADDRESS: Bytes32 =
+const FUEL_VM_NON_CONTRACT_LOGS_ADDRESS: Bytes32 =
     hex!("00000000000000000000000000000000000000000000000000004675656C564D"); // ANSI: FuelVM
 
 #[derive(Contract)]
@@ -386,7 +386,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
-                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
                         log_data.as_ptr(),
@@ -399,7 +399,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     let log_data = (result_u64, gas_used).abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
-                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
                         log_data.as_ptr(),
@@ -430,7 +430,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                         .abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
-                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
                         log_data.as_ptr(),
@@ -448,7 +448,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
-                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
                         log_data.as_ptr(),
@@ -466,7 +466,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                     let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
                     let topics = [sig];
                     LowLevelSDK::emit_log(
-                        FUEL_VM_NON_CONTRACT_ADDRESS[12..].as_ptr(),
+                        FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
                         topics.as_ptr(),
                         topics.len() as u32 * 32,
                         log_data.as_ptr(),

@@ -80,52 +80,23 @@ where
                 }
             }
 
-            Column::Transactions => {}
-            Column::FuelBlocks => {}
-            Column::FuelBlockMerkleData => {}
-            Column::FuelBlockMerkleMetadata => {}
-            Column::ContractsAssetsMerkleData => {}
-            Column::ContractsAssetsMerkleMetadata => {}
-            Column::ContractsStateMerkleData => {}
-            Column::ContractsStateMerkleMetadata => {}
-            Column::Messages => {}
-            Column::ProcessedTransactions => {}
-            Column::FuelBlockConsensus => {}
-            Column::ConsensusParametersVersions => {}
-            Column::StateTransitionBytecodeVersions => {}
-            Column::UploadedBytecodes => {}
-            Column::GenesisMetadata => {}
+            Column::Transactions
+            | Column::FuelBlocks
+            | Column::FuelBlockMerkleData
+            | Column::FuelBlockMerkleMetadata
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata
+            | Column::Messages
+            | Column::ProcessedTransactions
+            | Column::FuelBlockConsensus
+            | Column::ConsensusParametersVersions
+            | Column::StateTransitionBytecodeVersions
+            | Column::UploadedBytecodes
+            | Column::GenesisMetadata => {}
         }
     }
 
     Ok(res)
-}
-
-pub fn _fvm_transact<'a, Tx, CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
-    checked_tx: Checked<Tx>,
-    header: &'a PartialBlockHeader,
-    coinbase_contract_id: ContractId,
-    gas_price: Word,
-    consensus_params: ConsensusParameters,
-) -> FvmCreateMethodOutput
-where
-    Tx: ExecutableTransaction + Cacheable,
-    <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-{
-    debug_log!("ecl(_fvm_transact): start");
-
-    let res = _fvm_transact_inner(
-        cr,
-        am,
-        checked_tx,
-        header,
-        coinbase_contract_id,
-        gas_price,
-        consensus_params,
-    )
-    .expect("fvm transact inner success");
-
-    FvmCreateMethodOutput {}
 }
