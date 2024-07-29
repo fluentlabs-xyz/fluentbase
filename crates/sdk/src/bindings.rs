@@ -50,6 +50,7 @@ extern "C" {
         return_len: u32,
         fuel_ptr: *mut u32,
     ) -> i32;
+    pub fn _resume(call_id: i32, exit_code: i32) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
 

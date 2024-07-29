@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPreimageCopy;
 
 impl SyscallPreimageCopy {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         hash32_ptr: u32,
         preimage_ptr: u32,
     ) -> Result<(), Trap> {
@@ -16,11 +16,8 @@ impl SyscallPreimageCopy {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &RuntimeContext<DB>,
-        hash: &[u8],
-    ) -> Result<Vec<u8>, ExitCode> {
-        let preimage = ctx.jzkt().preimage(hash.try_into().unwrap());
+    pub fn fn_impl(ctx: &RuntimeContext, hash: &[u8]) -> Result<Vec<u8>, ExitCode> {
+        let preimage = ctx.jzkt().borrow().preimage(hash.try_into().unwrap());
         Ok(preimage)
     }
 }

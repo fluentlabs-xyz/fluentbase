@@ -59,10 +59,10 @@ impl TrieDb for eth_trie::MemoryDB {
 pub enum RuntimeError {
     BinaryFormatError(BinaryFormatError),
     Rwasm(RwasmError),
-    StorageError(String),
     MissingEntrypoint,
     UnloadedModule(F254),
     ExitCode(i32),
+    ExecutionInterrupted,
 }
 
 impl From<BinaryFormatError> for RuntimeError {

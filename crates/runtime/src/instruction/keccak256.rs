@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{IJournaledTrie, B256};
+use fluentbase_types::B256;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallKeccak256;
 
 impl SyscallKeccak256 {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         data_offset: u32,
         data_len: u32,
         output_offset: u32,

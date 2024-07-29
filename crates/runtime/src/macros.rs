@@ -109,14 +109,14 @@ macro_rules! impl_runtime_handler {
 
                 const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
 
-                fn register_handler<DB: IJournaledTrie>(
-                    linker: &mut rwasm::Linker<RuntimeContext<DB>>,
-                    store: &mut rwasm::Store<RuntimeContext<DB>>,
+                fn register_handler(
+                    linker: &mut rwasm::Linker<RuntimeContext>,
+                    store: &mut rwasm::Store<RuntimeContext>,
                 ) {
                     use rwasm::AsContextMut;
                     let func = rwasm::Func::wrap(
                         store.as_context_mut(),
-                        |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
+                        |caller: Caller<'_, RuntimeContext>, $($t)*| -> Result<$out, rwasm::core::Trap> {
                             return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
                         });
                     let wrapped_index = store.inner.wrap_stored(rwasm::engine::bytecode::FuncIdx::from(Self::FUNC_INDEX as u32));

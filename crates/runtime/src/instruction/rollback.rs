@@ -1,24 +1,18 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie, JournalCheckpoint};
+use fluentbase_types::{ExitCode, JournalCheckpoint};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallRollback;
 
 impl SyscallRollback {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
-        checkpoint: u64,
-    ) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, checkpoint: u64) -> Result<(), Trap> {
         Self::fn_impl(caller.data_mut(), JournalCheckpoint::from_u64(checkpoint))
             .map_err(|err| err.into_trap())?;
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &RuntimeContext<DB>,
-        checkpoint: JournalCheckpoint,
-    ) -> Result<(), ExitCode> {
-        ctx.jzkt().rollback(checkpoint);
+    pub fn fn_impl(ctx: &RuntimeContext, checkpoint: JournalCheckpoint) -> Result<(), ExitCode> {
+        ctx.jzkt().borrow().rollback(checkpoint);
         Ok(())
     }
 }
