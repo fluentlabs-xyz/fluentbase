@@ -905,15 +905,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bs58"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
-dependencies = [
- "tinyvec",
-]
-
-[[package]]
 name = "btoi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2273,6 +2264,7 @@ dependencies = [
  "hex",
  "serde",
  "spin 0.9.8",
+ "tracing",
 ]
 
 [[package]]
@@ -2284,7 +2276,6 @@ dependencies = [
  "enum-iterator",
  "fuel-core-types",
  "fuel-vm",
- "hashbrown 0.14.5",
  "impl-tools",
  "itertools 0.12.1",
  "num_enum",
@@ -2301,7 +2292,6 @@ name = "fuel-core-types"
 version = "0.31.0"
 dependencies = [
  "anyhow",
- "bs58",
  "derivative",
  "derive_more",
  "fuel-vm",
@@ -2309,7 +2299,6 @@ dependencies = [
  "secrecy",
  "serde",
  "tai64",
- "thiserror",
  "thiserror-no-std",
  "zeroize",
 ]

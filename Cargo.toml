@@ -50,9 +50,9 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
 fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
 #fuel-core = { path = "../fuel-core/crates/fuel-core", default-features = false }
-fuel-core-types = { path = "../fuel-core/crates/types", default-features = false, features = ["serde"] }
-fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false }
-fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false }
+fuel-core-types = { path = "../fuel-core/crates/types", default-features = false, features = ["serde", "alloc"] }
+fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false, features = ["alloc"] }
+fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false, features = ["alloc"] }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm/rwasm", default-features = false }
