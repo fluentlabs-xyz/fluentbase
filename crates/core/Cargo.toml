@@ -29,9 +29,9 @@ postcard = { workspace = true, default-features = false, features = ["alloc"] }
 
 #fuel-tx = { workspace = true, default-features = false }
 #fuel-vm = { workspace = true, default-features = false }
-fuel-core-types = { workspace = true, default-features = false, features = ["serde"] }
-fuel-core-storage = { workspace = true, default-features = false }
-fuel-core-executor = { workspace = true, default-features = false }
+fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }
+fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }
+fuel-core-executor = { workspace = true, default-features = false, features = ["alloc"] }
 
 
 [dev-dependencies]
