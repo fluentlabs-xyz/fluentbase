@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallReadContext;
 
 impl SyscallReadContext {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         target: u32,
         offset: u32,
         length: u32,
@@ -16,11 +16,7 @@ impl SyscallReadContext {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &RuntimeContext<DB>,
-        offset: u32,
-        length: u32,
-    ) -> Result<Vec<u8>, ExitCode> {
+    pub fn fn_impl(ctx: &RuntimeContext, offset: u32, length: u32) -> Result<Vec<u8>, ExitCode> {
         if offset + length <= ctx.context.len() as u32 {
             Ok(ctx.context[(offset as usize)..(offset as usize + length as usize)].to_vec())
         } else {

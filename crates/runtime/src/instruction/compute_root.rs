@@ -1,12 +1,11 @@
 use crate::RuntimeContext;
-use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallComputeRoot;
 
 impl SyscallComputeRoot {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         output32_offset: u32,
     ) -> Result<(), Trap> {
         let root = Self::fn_impl(caller.data_mut());
@@ -14,8 +13,8 @@ impl SyscallComputeRoot {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>) -> [u8; 32] {
-        let result = ctx.jzkt().compute_root();
+    pub fn fn_impl(ctx: &mut RuntimeContext) -> [u8; 32] {
+        let result = ctx.jzkt().borrow().compute_root();
         result
     }
 }

@@ -1,7 +1,6 @@
 use crate::RuntimeContext;
-use fluentbase_types::IJournaledTrie;
+use core::cell::Cell;
 use rwasm::{core::Trap, Caller};
-use std::cell::Cell;
 
 pub struct SyscallDebugLog;
 
@@ -10,8 +9,8 @@ thread_local! {
 }
 
 impl SyscallDebugLog {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        caller: Caller<'_, RuntimeContext>,
         msg_offset: u32,
         msg_len: u32,
     ) -> Result<(), Trap> {

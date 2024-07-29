@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{IJournaledTrie, F254};
+use fluentbase_types::F254;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPoseidon;
 
 impl SyscallPoseidon {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         f32s_offset: u32,
         f32s_len: u32,
         output_offset: u32,

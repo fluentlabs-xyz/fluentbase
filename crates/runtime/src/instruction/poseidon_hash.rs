@@ -1,14 +1,14 @@
 use crate::RuntimeContext;
 use fluentbase_poseidon::hash_with_domain;
-use fluentbase_types::{ExitCode, IJournaledTrie, F254};
+use fluentbase_types::{ExitCode, F254};
 use halo2curves::{bn256::Fr, group::ff::PrimeField};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallPoseidonHash;
 
 impl SyscallPoseidonHash {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         fa_offset: u32,
         fb_offset: u32,
         fd_offset: u32,

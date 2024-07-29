@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallUpdateLeaf;
 
 impl SyscallUpdateLeaf {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         key32_offset: u32,
         flags: u32,
         vals32_offset: u32,
@@ -26,13 +26,14 @@ impl SyscallUpdateLeaf {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &RuntimeContext<DB>,
+    pub fn fn_impl(
+        ctx: &RuntimeContext,
         key: &[u8],
         value_flags: u32,
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
         ctx.jzkt()
+            .borrow()
             .update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())
     }

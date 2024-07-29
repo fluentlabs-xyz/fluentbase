@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie, B256};
+use fluentbase_types::{ExitCode, B256};
 use k256::{
     ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
@@ -11,8 +11,8 @@ use rwasm::{core::Trap, Caller};
 pub struct SyscallEcrecover;
 
 impl SyscallEcrecover {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         digest32_offset: u32,
         sig64_offset: u32,
         output65_offset: u32,

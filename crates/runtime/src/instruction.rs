@@ -19,6 +19,7 @@ pub mod preimage_size;
 pub mod read;
 pub mod read_context;
 pub mod read_output;
+pub mod resume;
 pub mod rollback;
 pub mod state;
 pub mod update_leaf;
@@ -49,6 +50,7 @@ use crate::{
         read::SyscallRead,
         read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
+        resume::SyscallResume,
         rollback::SyscallRollback,
         state::SyscallState,
         update_leaf::SyscallUpdateLeaf,
@@ -57,7 +59,7 @@ use crate::{
     },
     RuntimeContext,
 };
-use fluentbase_types::{IJournaledTrie, SysFuncIdx};
+use fluentbase_types::SysFuncIdx;
 use rwasm::{Caller, Linker, Store};
 
 pub trait RuntimeHandler {
@@ -65,10 +67,7 @@ pub trait RuntimeHandler {
     const FUNC_NAME: &'static str;
     const FUNC_INDEX: SysFuncIdx;
 
-    fn register_handler<DB: IJournaledTrie>(
-        linker: &mut Linker<RuntimeContext<DB>>,
-        store: &mut Store<RuntimeContext<DB>>,
-    );
+    fn register_handler(linker: &mut Linker<RuntimeContext>, store: &mut Store<RuntimeContext>);
 }
 
 impl_runtime_handler!(SyscallKeccak256, KECCAK256, fn fluentbase_v1preview::_keccak256(data_ptr: u32, data_len: u32, output_ptr: u32) -> ());
@@ -83,6 +82,7 @@ impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_
 impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
 impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, address32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32) -> i32);
+impl_runtime_handler!(SyscallResume, RESUME, fn fluentbase_v1preview::_resume(call_id: u32, exit_code: i32) -> i32);
 impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);
 impl_runtime_handler!(SyscallReadContext, READ_CONTEXT, fn fluentbase_v1preview::_read_context(target_ptr: u32, offset: u32, length: u32) -> ());
@@ -98,9 +98,9 @@ impl_runtime_handler!(SyscallPreimageCopy, PREIMAGE_COPY, fn fluentbase_v1previe
 impl_runtime_handler!(SyscallUpdatePreimage, UPDATE_PREIMAGE, fn fluentbase_v1preview::_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
 impl_runtime_handler!(SyscallDebugLog, DEBUG_LOG, fn fluentbase_v1preview::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
-fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
-    linker: &mut Linker<RuntimeContext<DB>>,
-    store: &mut Store<RuntimeContext<DB>>,
+fn runtime_register_handlers<const IS_SOVEREIGN: bool>(
+    linker: &mut Linker<RuntimeContext>,
+    store: &mut Store<RuntimeContext>,
 ) {
     SyscallKeccak256::register_handler(linker, store);
     SyscallPoseidon::register_handler(linker, store);
@@ -136,16 +136,16 @@ fn runtime_register_handlers<DB: IJournaledTrie, const IS_SOVEREIGN: bool>(
     SyscallDebugLog::register_handler(linker, store);
 }
 
-pub fn runtime_register_sovereign_handlers<DB: IJournaledTrie>(
-    linker: &mut Linker<RuntimeContext<DB>>,
-    store: &mut Store<RuntimeContext<DB>>,
+pub fn runtime_register_sovereign_handlers(
+    linker: &mut Linker<RuntimeContext>,
+    store: &mut Store<RuntimeContext>,
 ) {
-    runtime_register_handlers::<DB, true>(linker, store);
+    runtime_register_handlers::<true>(linker, store);
 }
 
-pub fn runtime_register_shared_handlers<DB: IJournaledTrie>(
-    linker: &mut Linker<RuntimeContext<DB>>,
-    store: &mut Store<RuntimeContext<DB>>,
+pub fn runtime_register_shared_handlers(
+    linker: &mut Linker<RuntimeContext>,
+    store: &mut Store<RuntimeContext>,
 ) {
-    runtime_register_handlers::<DB, false>(linker, store);
+    runtime_register_handlers::<false>(linker, store);
 }
