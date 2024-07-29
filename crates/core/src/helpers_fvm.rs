@@ -34,11 +34,11 @@ where
 {
     let execution_options = ExecutionOptions {
         extra_tx_checks: true,
-        ..Default::default()
+        backtrace: false,
     };
 
     let mut block_executor =
-        BlockExecutor::new(WasmRelayer {}, execution_options.clone(), consensus_params)
+        BlockExecutor::new(WasmRelayer {}, execution_options, consensus_params)
             .expect("failed to create block executor");
 
     let structured_storage = StructuredStorage::new(storage);
@@ -49,7 +49,7 @@ where
         &mut structured_storage,
     );
     let mut storage_transaction = TxStorageTransaction::new(in_memory_transaction);
-    let exec_result = block_executor.attempt_tx_execution_with_vm(
+    let er = block_executor.attempt_tx_execution_with_vm(
         checked_tx,
         header,
         coinbase_contract_id,
@@ -58,10 +58,10 @@ where
         memory,
     )?;
     Ok((
-        exec_result.0,
-        exec_result.1,
-        exec_result.2,
-        exec_result.3,
+        er.0,
+        er.1,
+        er.2,
+        er.3,
         storage_transaction.changes().clone(),
     ))
 }
