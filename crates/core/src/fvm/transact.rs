@@ -1,4 +1,8 @@
-use crate::{debug_log, fvm::types::WasmStorage, helpers_fvm::fvm_transact};
+use crate::{
+    debug_log,
+    fvm::types::WasmStorage,
+    helpers_fvm::{fvm_transact, fvm_transact_commit},
+};
 use alloc::vec::Vec;
 use fluentbase_sdk::{types::FvmCreateMethodOutput, AccountManager, ContextReader};
 use fuel_core_storage::{
@@ -27,7 +31,7 @@ pub fn _fvm_transact_inner<'a, Tx, CR: ContextReader, AM: AccountManager>(
     consensus_params: ConsensusParameters,
 ) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
 where
-    Tx: ExecutableTransaction + Cacheable,
+    Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
 {
     debug_log!("ecl(_fvm_transact_inner): start");
@@ -48,15 +52,26 @@ where
     //     }
     // }
 
-    let mut memory = MemoryInstance::new();
-    let res = fvm_transact(
+    // let mut memory = MemoryInstance::new();
+    // let res = fvm_transact(
+    //     &mut storage,
+    //     checked_tx,
+    //     header,
+    //     coinbase_contract_id,
+    //     gas_price,
+    //     &mut memory,
+    //     consensus_params,
+    //     true,
+    // )?;
+
+    let res = fvm_transact_commit(
         &mut storage,
         checked_tx,
         header,
         coinbase_contract_id,
         gas_price,
-        &mut memory,
         consensus_params,
+        true,
     )?;
 
     for (col_num, changes) in &res.4 {

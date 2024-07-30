@@ -116,7 +116,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                 res.3.to_vec()
             }
             fuel_tx::Transaction::Create(etx) => {
-                let checked_tx = etx
+                let mut checked_tx = etx
                     .into_checked(
                         BlockHeight::new(self.cr.block_number() as u32),
                         &consensus_params,
