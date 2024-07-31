@@ -65,17 +65,13 @@ where
         ConflictPolicy::Overwrite,
         &mut structured_storage,
     );
-    let storage_tx = &mut TxStorageTransaction::new(in_memory_transaction);
-    let tx_st_transaction = &mut storage_tx
-        .write_transaction()
-        .with_policy(ConflictPolicy::Overwrite);
+    let tx_transaction = &mut TxStorageTransaction::new(in_memory_transaction);
 
     let tx_id = checked_tx.id();
 
     let mut checked_tx = checked_tx;
     if execution_options.extra_tx_checks {
-        checked_tx =
-            block_executor.extra_tx_checks(checked_tx, header, tx_st_transaction, memory)?;
+        checked_tx = block_executor.extra_tx_checks(checked_tx, header, tx_transaction, memory)?;
     }
 
     let (reverted, state, tx, receipts) = block_executor.attempt_tx_execution_with_vm(
@@ -83,17 +79,17 @@ where
         header,
         coinbase_contract_id,
         gas_price,
-        tx_st_transaction,
+        tx_transaction,
         memory,
     )?;
 
-    block_executor.spend_input_utxos(tx.inputs(), tx_st_transaction, reverted, execution_data)?;
+    block_executor.spend_input_utxos(tx.inputs(), tx_transaction, reverted, execution_data)?;
 
     block_executor.persist_output_utxos(
         *header.height(),
         execution_data,
         &tx_id,
-        tx_st_transaction,
+        tx_transaction,
         tx.inputs(),
         tx.outputs(),
     )?;
@@ -117,7 +113,7 @@ where
         state,
         tx,
         receipts,
-        tx_st_transaction.changes().clone(),
+        tx_transaction.changes().clone(),
     ))
 }
 
