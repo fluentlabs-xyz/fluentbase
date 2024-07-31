@@ -5,6 +5,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{types::FvmCreateMethodOutput, AccountManager, ContextReader};
+use fuel_core_executor::executor::ExecutionData;
 use fuel_core_storage::{
     column::Column,
     kv_store::{KeyValueMutate, WriteOperation},
@@ -64,6 +65,8 @@ where
     //     true,
     // )?;
 
+    let mut execution_data = ExecutionData::new();
+
     let res = fvm_transact_commit(
         &mut storage,
         checked_tx,
@@ -72,6 +75,7 @@ where
         gas_price,
         consensus_params,
         true,
+        &mut execution_data,
     )?;
 
     for (col_num, changes) in &res.4 {
