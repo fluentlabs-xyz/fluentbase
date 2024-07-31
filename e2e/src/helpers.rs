@@ -7,7 +7,6 @@ use fluentbase_runtime::{
     Runtime,
     RuntimeContext,
 };
-use fluentbase_sdk::ContractInput;
 use fluentbase_types::{
     create_sovereign_import_linker,
     ExitCode,
@@ -31,11 +30,10 @@ pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) 
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
         .with_fuel_limit(100_000)
-        .with_context(ContractInput::default().encode_to_vec(0))
         .with_input(input_data.into());
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
+    let mut runtime = Runtime::new(ctx);
     runtime.data_mut().clean_output();
-    runtime.call().unwrap()
+    runtime.call()
 }
 
 #[allow(dead_code)]
@@ -93,7 +91,7 @@ pub(crate) fn run_rwasm_with_raw_input(
         let config = Config::default();
         let engine = Engine::new(&config);
         let module = Module::new(&engine, wasm_binary.as_slice()).unwrap();
-        let ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::new(vec![])
+        let ctx = RuntimeContext::new(vec![])
             .with_state(STATE_MAIN)
             .with_fuel_limit(10_000_000)
             .with_input(input_data.to_vec());
@@ -138,9 +136,9 @@ pub(crate) fn run_rwasm_with_raw_input(
         .with_state(STATE_MAIN)
         .with_fuel_limit(3_000_000)
         .with_input(input_data.to_vec());
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
+    let mut runtime = Runtime::new(ctx);
     runtime.data_mut().clean_output();
-    let execution_result = runtime.call().unwrap();
+    let execution_result = runtime.call();
     if let Some(wasm_exit_code) = wasm_exit_code {
         assert_eq!(execution_result.exit_code, wasm_exit_code);
     }

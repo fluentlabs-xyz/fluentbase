@@ -1,7 +1,7 @@
 extern crate fluentbase_sdk;
 
 use core::marker::PhantomData;
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, NativeAPI};
 use revm_precompile::{PrecompileError, PrecompileErrors, PrecompileResult};
 
 pub trait PrecompileInvokeFunc {
@@ -34,12 +34,12 @@ define_precompile_func!(
 );
 
 #[derive(Default)]
-pub struct PRECOMPILE<SDK: SharedAPI, FN: PrecompileInvokeFunc> {
+pub struct PRECOMPILE<SDK: NativeAPI, FN: PrecompileInvokeFunc> {
     sdk: SDK,
     _pd: PhantomData<FN>,
 }
 
-impl<SDK: SharedAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
+impl<SDK: NativeAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
     pub fn deploy(&self) {}
 
     pub fn main(&self) {

@@ -28,6 +28,7 @@ extern "C" {
     pub fn _read_output(target: *mut u8, offset: u32, length: u32);
     pub fn _forward_output(offset: u32, len: u32);
     pub fn _state() -> u32;
+    pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
 
     /// Executes nested call with specified bytecode poseidon hash:
     /// - `hash32_ptr` - a 254-bit poseidon hash of a contract to be called
@@ -54,39 +55,7 @@ extern "C" {
 
     pub fn _charge_fuel(delta: u64) -> u64;
 
-    /// Read context and write into specified target with offset and length.
-    pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
-
     /// Journaled ZK Trie methods to work with blockchain state
-    pub fn _checkpoint() -> u64;
-    pub fn _get_leaf(
-        key32_ptr: *const u8,
-        field: u32,
-        output32_ptr: *mut u8,
-        committed: bool,
-    ) -> bool;
-    pub fn _update_leaf(
-        key32_ptr: *const u8,
-        flags: u32,
-        vals32_offset: *const [u8; 32],
-        vals32_len: u32,
-    );
-    pub fn _update_preimage(
-        key32_ptr: *const u8,
-        field: u32,
-        preimage_ptr: *const u8,
-        preimage_len: u32,
-    ) -> bool;
-    pub fn _compute_root(output32_ptr: *mut u8);
-    pub fn _emit_log(
-        address20_ptr: *const u8,
-        topics32s_ptr: *const [u8; 32],
-        topics32s_len: u32,
-        data_ptr: *const u8,
-        data_len: u32,
-    );
-    pub fn _commit(root32_ptr: *mut u8);
-    pub fn _rollback(checkpoint: u64);
     pub fn _preimage_size(hash32_ptr: *const u8) -> u32;
     pub fn _preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
 

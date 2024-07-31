@@ -1,53 +1,20 @@
-use crate::{
-    account::{Account, AccountCheckpoint, AccountStatus},
-    alloc_slice,
-    Address,
-    Bytes,
-    ExitCode,
-    Fuel,
-    B256,
-    F254,
-    U256,
-};
+use crate::{Account, AccountStatus, Address, ExitCode, Fuel, JournalCheckpoint, B256, F254, U256};
 use alloc::vec::Vec;
-
-/// A trait for reading context information.
-// #[deprecated(note = "new SDK is coming soon!")]
-pub trait ContextReader {
-    fn block_chain_id(&self) -> u64;
-    fn block_coinbase(&self) -> Address;
-    fn block_timestamp(&self) -> u64;
-    fn block_number(&self) -> u64;
-    fn block_difficulty(&self) -> u64;
-    fn block_prevrandao(&self) -> B256;
-    fn block_gas_limit(&self) -> u64;
-    fn block_base_fee(&self) -> U256;
-    fn tx_gas_limit(&self) -> u64;
-    fn tx_nonce(&self) -> u64;
-    fn tx_gas_price(&self) -> U256;
-    fn tx_caller(&self) -> Address;
-    fn tx_access_list(&self) -> Vec<(Address, Vec<U256>)>;
-    fn tx_gas_priority_fee(&self) -> Option<U256>;
-    fn tx_blob_hashes(&self) -> Vec<B256>;
-    fn tx_blob_hashes_size(&self) -> (u32, u32);
-    fn tx_max_fee_per_blob_gas(&self) -> Option<U256>;
-    fn contract_gas_limit(&self) -> u64;
-    fn contract_address(&self) -> Address;
-    fn contract_caller(&self) -> Address;
-    fn contract_value(&self) -> U256;
-    fn contract_is_static(&self) -> bool;
-}
+use alloy_primitives::Bytes;
+use alloy_rlp::{RlpDecodable, RlpEncodable};
+use hashbrown::HashMap;
+use revm_primitives::Env;
 
 /// A trait for providing shared API functionality.
-// #[deprecated(note = "new SDK is coming soon!")]
-pub trait SharedAPI {
-    fn keccak256(data: &[u8]) -> B256;
-    fn sha256(_data: &[u8]) -> B256 {
+pub trait NativeAPI {
+    fn keccak256(&self, data: &[u8]) -> B256;
+    fn sha256(&self, _data: &[u8]) -> B256 {
         unreachable!("sha256 is not supported yet")
     }
-    fn poseidon(data: &[u8]) -> F254;
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254;
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65];
+    fn poseidon(&self, data: &[u8]) -> F254;
+    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254;
+    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65];
+    fn debug_log(&self, message: &str);
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
@@ -59,54 +26,175 @@ pub trait SharedAPI {
     fn state(&self) -> u32;
     fn read_context(&self, target: &mut [u8], offset: u32);
     fn charge_fuel(&self, fuel: &mut Fuel);
-
-    fn account(&self, address: &Address) -> (Account, bool);
-    fn preimage_size(&self, hash: &B256) -> u32;
-    fn preimage_copy(&self, target: &mut [u8], hash: &B256);
-    fn preimage(&self, hash: &B256) -> Bytes {
-        let preimage_size = self.preimage_size(hash) as usize;
-        let preimage = alloc_slice(preimage_size);
-        self.preimage_copy(preimage, hash);
-        Bytes::copy_from_slice(preimage)
-    }
-    fn log(&self, address: &Address, data: Bytes, topics: &[B256]);
-    fn system_call(&self, address: &Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
-    fn debug(&self, msg: &[u8]);
-}
-
-/// A trait for interacting with the sovereign blockchain.
-///
-/// This trait extends the `SharedAPI` trait and provides additional methods for
-/// managing the blockchain state and executing transactions.
-// #[deprecated(note = "new SDK is coming soon!")]
-pub trait SovereignAPI: SharedAPI {
-    fn checkpoint(&self) -> AccountCheckpoint;
-    fn commit(&self);
-    fn rollback(&self, checkpoint: AccountCheckpoint);
-    fn write_account(&self, account: &Account, status: AccountStatus);
-    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]);
-    fn context_call(
+    fn exec(
         &self,
-        address: &Address,
+        code_hash: F254,
+        address: Address,
         input: &[u8],
         context: &[u8],
         fuel: &mut Fuel,
+    ) -> i32;
+    fn resume(&self, call_id: i32, exit_code: i32) -> i32;
+}
+
+pub type IsColdAccess = bool;
+
+#[derive(Default)]
+pub struct BlockContext {
+    pub chain_id: u64,
+    pub coinbase: Address,
+    pub timestamp: u64,
+    pub number: u64,
+    pub difficulty: U256,
+    pub prev_randao: B256,
+    pub gas_limit: u64,
+    pub base_fee: U256,
+}
+
+impl From<&Env> for BlockContext {
+    fn from(value: &Env) -> Self {
+        Self {
+            chain_id: value.cfg.chain_id,
+            coinbase: value.block.coinbase,
+            timestamp: value.block.timestamp.as_limbs()[0],
+            number: value.block.number.as_limbs()[0],
+            difficulty: value.block.difficulty,
+            prev_randao: value.block.prevrandao.unwrap_or_default(),
+            gas_limit: value.block.gas_limit.as_limbs()[0],
+            base_fee: value.block.basefee,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct TxContext {
+    pub gas_limit: u64,
+    pub nonce: u64,
+    pub gas_price: U256,
+    pub origin: Address,
+    pub data: Bytes,
+    pub value: U256,
+}
+
+impl From<&Env> for TxContext {
+    fn from(value: &Env) -> Self {
+        Self {
+            gas_limit: value.tx.gas_limit,
+            nonce: value.tx.nonce.unwrap_or_default(),
+            gas_price: value.tx.gas_price,
+            origin: value.tx.caller,
+            data: value.tx.data.clone(),
+            value: value.tx.value,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ContractContext {
+    pub gas_limit: u64,
+    pub address: Address,
+    pub caller: Address,
+    pub is_static: bool,
+    pub value: U256,
+}
+
+pub struct TransitStateInput {
+    pub accounts: HashMap<Address, Account>,
+    pub preimages: HashMap<B256, Bytes>,
+    pub block: BlockContext,
+    pub transaction: TxContext,
+}
+pub struct TransitStateOutput {
+    pub new_accounts: Vec<(Address, Account)>,
+    pub new_preimages: Vec<(B256, Bytes)>,
+    pub status: bool,
+    pub gas_consumed: u64,
+}
+
+pub struct ContractCallInput {}
+pub struct ContractCallOutput {}
+
+#[derive(Clone, RlpEncodable, RlpDecodable)]
+pub struct DelegatedExecution {
+    pub address: Address,
+    pub hash: F254,
+    pub input: Bytes,
+    pub fuel: u32,
+}
+
+impl DelegatedExecution {
+    pub fn to_bytes(&self) -> Bytes {
+        // TODO(dmitry123): "RLP encoding here is temporary solution"
+        use alloy_rlp::Encodable;
+        let mut buffer = Vec::new();
+        self.encode(&mut buffer);
+        buffer.into()
+    }
+    pub fn from_bytes(buffer: Bytes) -> Self {
+        // TODO(dmitry123): "RLP encoding here is temporary solution"
+        use alloy_rlp::Decodable;
+        let mut buffer_slice = buffer.as_ref();
+        Self::decode(&mut buffer_slice).expect("failed to decode delegated execution")
+    }
+}
+
+pub trait SovereignAPI {
+    fn native_sdk(&self) -> &impl NativeAPI;
+
+    fn block_context(&self) -> &BlockContext;
+    fn tx_context(&self) -> &TxContext;
+
+    fn checkpoint(&self) -> JournalCheckpoint;
+    fn commit(&mut self);
+    fn rollback(&mut self, checkpoint: JournalCheckpoint);
+
+    fn write_account(&mut self, account: Account, status: AccountStatus);
+    fn account(&self, address: &Address) -> (Account, IsColdAccess);
+    fn account_committed(&self, address: &Address) -> (Account, IsColdAccess);
+
+    fn write_preimage(&mut self, hash: B256, preimage: Bytes);
+    fn preimage(&self, hash: &B256) -> Option<&[u8]>;
+    fn preimage_size(&self, hash: &B256) -> u32;
+
+    fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess;
+    fn storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess);
+    fn committed_storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess);
+
+    fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]);
+
+    fn context_call(
+        &mut self,
+        caller: Address,
+        address: Address,
+        value: U256,
+        fuel: &mut Fuel,
+        input: &[u8],
         state: u32,
     ) -> (Bytes, ExitCode);
-    fn storage(&self, address: &Address, slot: &U256, committed: bool) -> (U256, bool);
-    fn write_storage(&self, address: &Address, slot: &U256, value: &U256) -> bool;
-    fn write_log(&self, address: &Address, data: &Bytes, topics: &[B256]);
 
-    fn precompile(
-        &self,
-        address: &Address,
-        input: &Bytes,
-        gas: u64,
-    ) -> Option<(Bytes, ExitCode, u64, i64)>;
     fn is_precompile(&self, address: &Address) -> bool;
-    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode>;
-    fn self_destruct(&self, address: Address, target: Address) -> [bool; 4];
-    fn block_hash(&self, number: U256) -> B256;
-    fn write_transient_storage(&self, address: Address, index: U256, value: U256);
-    fn transient_storage(&self, address: Address, index: U256) -> U256;
+    fn transfer(
+        &mut self,
+        from: &mut Account,
+        to: &mut Account,
+        value: U256,
+    ) -> Result<(), ExitCode>;
+}
+
+pub trait SharedAPI {
+    fn native_sdk(&self) -> &impl NativeAPI;
+
+    fn block_context(&self) -> &BlockContext;
+    fn tx_context(&self) -> &TxContext;
+    fn contract_context(&self) -> &ContractContext;
+
+    fn account(&self, address: &Address) -> (Account, IsColdAccess);
+    fn transfer(&mut self, from: &mut Account, to: &mut Account, amount: U256);
+    fn write_storage(&mut self, slot: U256, value: U256);
+    fn storage(&self, slot: U256) -> U256;
+
+    fn write_log(&mut self, data: Bytes, topics: &[B256]);
+
+    fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
+    fn delegate(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
 }

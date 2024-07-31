@@ -1,6 +1,5 @@
 use crate::{
     Account,
-    ContractInput,
     JZKT_ACCOUNT_COMPRESSION_FLAGS,
     JZKT_ACCOUNT_FIELDS_COUNT,
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
@@ -23,7 +22,6 @@ use fluentbase_runtime::{
         checkpoint::SyscallCheckpoint,
         commit::SyscallCommit,
         compute_root::SyscallComputeRoot,
-        context_call::SyscallContextCall,
         debug_log::SyscallDebugLog,
         ecrecover::SyscallEcrecover,
         emit_log::SyscallEmitLog,
@@ -59,12 +57,11 @@ use fluentbase_types::{
     AccountStatus,
     Address,
     Bytes,
-    ContextReader,
     ExitCode,
     Fuel,
     IJournaledTrie,
     JournalCheckpoint,
-    SharedAPI,
+    NativeAPI,
     SovereignAPI,
     UnwrapExitCode,
     B256,
@@ -79,117 +76,11 @@ use fluentbase_types::{
 };
 use std::{cell::RefCell, mem::take, ops::Deref};
 
-#[derive(Clone, Default)]
-pub struct ContextReaderWrapper(Rc<RefCell<ContractInput>>);
-
-impl ContextReaderWrapper {
-    pub fn new_from_input(contract_input: ContractInput) -> Self {
-        Self(Rc::new(RefCell::new(contract_input)))
-    }
-
-    pub fn new(input: &[u8]) -> Self {
-        let mut contract_input = ContractInput::default();
-        let mut buffer_decoder = BufferDecoder::new(input);
-        ContractInput::decode_body(&mut buffer_decoder, 0, &mut contract_input);
-        Self::new_from_input(contract_input)
-    }
+pub struct RuntimeContextWrapper {
+    ctx: Rc<RefCell<RuntimeContext>>,
 }
 
-impl ContextReader for ContextReaderWrapper {
-    fn block_chain_id(&self) -> u64 {
-        self.0.borrow().block_chain_id()
-    }
-
-    fn block_coinbase(&self) -> Address {
-        self.0.borrow().block_coinbase()
-    }
-
-    fn block_timestamp(&self) -> u64 {
-        self.0.borrow().block_timestamp()
-    }
-
-    fn block_number(&self) -> u64 {
-        self.0.borrow().block_number()
-    }
-
-    fn block_difficulty(&self) -> u64 {
-        self.0.borrow().block_difficulty()
-    }
-
-    fn block_prevrandao(&self) -> B256 {
-        self.0.borrow().block_prevrandao()
-    }
-
-    fn block_gas_limit(&self) -> u64 {
-        self.0.borrow().block_gas_limit()
-    }
-
-    fn block_base_fee(&self) -> U256 {
-        self.0.borrow().block_base_fee()
-    }
-
-    fn tx_gas_limit(&self) -> u64 {
-        self.0.borrow().tx_gas_limit()
-    }
-
-    fn tx_nonce(&self) -> u64 {
-        self.0.borrow().tx_nonce()
-    }
-
-    fn tx_gas_price(&self) -> U256 {
-        self.0.borrow().tx_gas_price()
-    }
-
-    fn tx_caller(&self) -> Address {
-        self.0.borrow().tx_caller()
-    }
-
-    fn tx_access_list(&self) -> Vec<(Address, Vec<U256>)> {
-        self.0.borrow().tx_access_list()
-    }
-
-    fn tx_gas_priority_fee(&self) -> Option<U256> {
-        self.0.borrow().tx_gas_priority_fee()
-    }
-
-    fn tx_blob_hashes(&self) -> Vec<B256> {
-        self.0.borrow().tx_blob_hashes()
-    }
-
-    fn tx_blob_hashes_size(&self) -> (u32, u32) {
-        self.0.borrow().tx_blob_hashes_size()
-    }
-
-    fn tx_max_fee_per_blob_gas(&self) -> Option<U256> {
-        self.0.borrow().tx_max_fee_per_blob_gas()
-    }
-
-    fn contract_gas_limit(&self) -> u64 {
-        self.0.borrow().contract_gas_limit()
-    }
-
-    fn contract_address(&self) -> Address {
-        self.0.borrow().contract_address()
-    }
-
-    fn contract_caller(&self) -> Address {
-        self.0.borrow().contract_caller()
-    }
-
-    fn contract_value(&self) -> U256 {
-        self.0.borrow().contract_value()
-    }
-
-    fn contract_is_static(&self) -> bool {
-        self.0.borrow().contract_is_static()
-    }
-}
-
-pub struct RuntimeContextWrapper<DB: IJournaledTrie> {
-    ctx: Rc<RefCell<RuntimeContext<DB>>>,
-}
-
-impl<DB: IJournaledTrie> Clone for RuntimeContextWrapper<DB> {
+impl Clone for RuntimeContextWrapper {
     fn clone(&self) -> Self {
         Self {
             ctx: self.ctx.clone(),
@@ -197,21 +88,25 @@ impl<DB: IJournaledTrie> Clone for RuntimeContextWrapper<DB> {
     }
 }
 
-impl<DB: IJournaledTrie> SharedAPI for RuntimeContextWrapper<DB> {
-    fn keccak256(data: &[u8]) -> B256 {
+impl NativeAPI for RuntimeContextWrapper {
+    fn keccak256(&self, data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn poseidon(data: &[u8]) -> F254 {
+    fn poseidon(&self, data: &[u8]) -> F254 {
         SyscallPoseidon::fn_impl(data)
     }
 
-    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
+    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
         SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
-    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
         SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
+    }
+
+    fn debug_log(&self, message: &str) {
+        SyscallDebugLog::fn_impl(message.as_bytes())
     }
 
     fn read(&self, target: &mut [u8], offset: u32) {
@@ -234,7 +129,7 @@ impl<DB: IJournaledTrie> SharedAPI for RuntimeContextWrapper<DB> {
 
     fn exit(&self, exit_code: i32) -> ! {
         SyscallExit::fn_impl(&mut self.ctx.borrow_mut(), exit_code).unwrap_exit_code();
-        loop {}
+        unreachable!("exit code: {}", exit_code)
     }
 
     fn output_size(&self) -> u32 {
@@ -261,216 +156,29 @@ impl<DB: IJournaledTrie> SharedAPI for RuntimeContextWrapper<DB> {
         fuel.0 = SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel.0);
     }
 
-    fn account(&self, address: &Address) -> (Account, bool) {
-        let mut result = Account::new(*address);
-        let address_word = address.into_word();
-        // code size and nonce
-        let (buffer32, is_cold) = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_NONCE_FIELD,
-            false,
-        )
-        .unwrap_or_default();
-        result.nonce = LittleEndian::read_u64(&buffer32);
-        result.balance = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_BALANCE_FIELD,
-            false,
-        )
-        .map_or(U256::ZERO, |v| U256::from_le_slice(&v.0[..]));
-        result.rwasm_code_size = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-            false,
-        )
-        .map(|v| LittleEndian::read_u64(&v.0))
-        .unwrap_or_default();
-        result.rwasm_code_hash = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-            false,
-        )
-        .map_or(F254::ZERO, |v| F254::from_slice(&v.0[..]));
-        result.source_code_size = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-            false,
-        )
-        .map(|v| LittleEndian::read_u64(&v.0))
-        .unwrap_or_default();
-        result.source_code_hash = SyscallGetLeaf::fn_impl(
-            &self.ctx.borrow(),
-            address_word.as_slice(),
-            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-            false,
-        )
-        .map_or(B256::ZERO, |v| B256::from_slice(&v.0[..]));
-        (result, is_cold)
-    }
-
-    fn preimage_size(&self, hash: &B256) -> u32 {
-        return SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap();
-    }
-
-    fn preimage_copy(&self, target: &mut [u8], hash: &B256) {
-        let result = SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap();
-        target.copy_from_slice(&result);
-    }
-
-    fn log(&self, address: &Address, data: Bytes, topics: &[B256]) {
-        SyscallEmitLog::fn_impl(&self.ctx.borrow(), *address, topics.to_vec(), data)
-    }
-
-    fn system_call(&self, address: &Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode) {
-        let (callee, _) = self.account(address);
-        let exit_code = match SyscallExec::fn_impl(
-            &mut self.ctx.borrow_mut(),
-            &callee.rwasm_code_hash.0,
-            input,
-            0,
-            fuel.0,
-        ) {
-            Ok(remaining_fuel) => {
-                fuel.0 = remaining_fuel;
-                ExitCode::Ok
-            }
-            Err(err) => err,
-        };
-        (self.ctx.borrow().return_data().clone().into(), exit_code)
-    }
-
-    fn debug(&self, msg: &[u8]) {
-        SyscallDebugLog::fn_impl(msg)
-    }
-}
-
-impl<DB: IJournaledTrie> SovereignAPI for RuntimeContextWrapper<DB> {
-    fn checkpoint(&self) -> u64 {
-        let result = SyscallCheckpoint::fn_impl(&self.ctx.borrow()).unwrap();
-        result.to_u64()
-    }
-
-    fn commit(&self) {
-        let _root = SyscallCommit::fn_impl(&self.ctx.borrow()).unwrap();
-    }
-
-    fn rollback(&self, checkpoint: AccountCheckpoint) {
-        SyscallRollback::fn_impl(&self.ctx.borrow(), JournalCheckpoint::from_u64(checkpoint))
-            .unwrap_exit_code();
-    }
-
-    fn write_account(&self, account: &Account, _status: AccountStatus) {
-        let account_address = account.address.into_word();
-        let account_fields = account.get_fields();
-        SyscallUpdateLeaf::fn_impl(
-            &mut self.ctx.borrow_mut(),
-            account_address.as_slice(),
-            JZKT_ACCOUNT_COMPRESSION_FLAGS,
-            account_fields.to_vec(),
-        )
-        .unwrap_exit_code();
-    }
-
-    fn update_preimage(&self, key: &[u8; 32], field: u32, preimage: &[u8]) {
-        SyscallUpdatePreimage::fn_impl(&self.ctx.borrow(), key, field, preimage).unwrap_exit_code();
-    }
-
-    fn context_call(
+    fn exec(
         &self,
-        address: &Address,
+        code_hash: F254,
+        address: Address,
         input: &[u8],
         context: &[u8],
         fuel: &mut Fuel,
-        state: u32,
-    ) -> (Bytes, ExitCode) {
-        let (callee, _) = self.account(address);
-        let exit_code = match SyscallContextCall::fn_impl(
-            &mut self.ctx.borrow_mut(),
-            &callee.rwasm_code_hash.0,
-            input.to_vec(),
-            context.to_vec(),
-            0,
-            fuel.0,
-            state,
-        ) {
-            Ok(remaining_fuel) => {
-                fuel.0 = remaining_fuel;
-                ExitCode::Ok
-            }
-            Err(err) => err,
-        };
-        (self.ctx.borrow().return_data().clone().into(), exit_code)
+    ) -> i32 {
+        todo!()
     }
 
-    fn storage(&self, address: &Address, slot: &U256, committed: bool) -> (U256, bool) {
-        // TODO(dmitry123): "what if account is newly created? then result value must be zero"
-        let storage_key = calc_storage_key::<Self>(&address, slot.as_le_slice().as_ptr());
-        SyscallGetLeaf::fn_impl(&self.ctx.borrow(), storage_key.as_slice(), 0, committed)
-            .map_or((U256::ZERO, true), |v| (U256::from_le_slice(&v.0[..]), v.1))
-    }
-
-    fn write_storage(&self, address: &Address, slot: &U256, value: &U256) -> bool {
-        let storage_key = calc_storage_key::<Self>(&address, slot.as_le_slice().as_ptr());
-        let value32 = value.to_le_bytes::<32>();
-        SyscallUpdateLeaf::fn_impl(
-            &self.ctx.borrow(),
-            storage_key.as_slice(),
-            JZKT_STORAGE_COMPRESSION_FLAGS,
-            vec![value32],
-        )
-        .unwrap_exit_code();
-        true
-    }
-
-    fn write_log(&self, address: &Address, data: &Bytes, topics: &[B256]) {
-        SyscallEmitLog::fn_impl(&self.ctx.borrow(), *address, topics.to_vec(), data.clone())
-    }
-
-    fn precompile(
-        &self,
-        _address: &Address,
-        _input: &Bytes,
-        _gas: u64,
-    ) -> Option<(Bytes, ExitCode, u64, i64)> {
-        None
-    }
-
-    fn is_precompile(&self, _address: &Address) -> bool {
-        false
-    }
-
-    fn transfer(&self, from: &mut Account, to: &mut Account, value: U256) -> Result<(), ExitCode> {
-        Account::transfer(from, to, value)
-    }
-
-    fn self_destruct(&self, _address: Address, _target: Address) -> [bool; 4] {
-        todo!("not supported")
-    }
-
-    fn block_hash(&self, _number: U256) -> B256 {
-        B256::ZERO
-    }
-
-    fn write_transient_storage(&self, _address: Address, _index: U256, _value: U256) {
-        todo!("not supported")
-    }
-
-    fn transient_storage(&self, _address: Address, _index: U256) -> U256 {
-        todo!("not supported")
+    fn resume(&self, call_id: i32, exit_code: i32) -> i32 {
+        todo!()
     }
 }
 
-pub type TestingContext = RuntimeContextWrapper<DefaultEmptyRuntimeDatabase>;
+pub type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn new() -> Self {
-        let ctx = RuntimeContext::<DefaultEmptyRuntimeDatabase>::default()
-            .with_jzkt(DefaultEmptyRuntimeDatabase::default());
+        let ctx = RuntimeContext::default().with_jzkt(Rc::new(RefCell::new(
+            DefaultEmptyRuntimeDatabase::default(),
+        )));
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
         }
@@ -523,11 +231,11 @@ impl TestingContext {
                 .unwrap_or_default();
             account2.rwasm_code_hash = rwasm_code_hash;
             let address32 = address.into_word();
-            self.write_account(&account2, AccountStatus::NewlyCreated);
+            // self.write_account(&account2, AccountStatus::NewlyCreated);
             let bytecode = account.code.clone().unwrap_or_default();
             // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
-            self.update_preimage(&address32.0, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, &bytecode);
-            self.update_preimage(&address32.0, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, &bytecode);
+            // self.update_preimage(&address32.0, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, &bytecode);
+            // self.update_preimage(&address32.0, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, &bytecode);
         }
         self
     }

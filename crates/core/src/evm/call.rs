@@ -5,10 +5,10 @@ use crate::{
 use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCallMethodOutput},
     AccountStatus,
-    ContextReader,
+    Bytes,
     SovereignAPI,
 };
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, NativeAPI};
 use revm_interpreter::{
     analysis::to_analysed,
     primitives::Bytecode,
@@ -17,9 +17,8 @@ use revm_interpreter::{
     InstructionResult,
 };
 
-pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+pub fn _evm_call<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
     debug_log!(sdk, "ecl(_evm_call): start. gas_limit {}", input.gas_limit);
@@ -31,8 +30,8 @@ pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
     }
 
     // read caller and callee
-    let (mut caller_account, _) = sdk.account(&ctx.contract_caller());
-    let (mut callee_account, _) = sdk.account(&ctx.contract_address());
+    let (mut caller_account, _) = sdk.account(&input.caller);
+    let (mut callee_account, _) = sdk.account(&input.address);
 
     // create a new checkpoint position in the journal
     let checkpoint = sdk.checkpoint();
@@ -57,8 +56,8 @@ pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
             }
         }
         // write current account state before doing nested calls
-        sdk.write_account(&caller_account, AccountStatus::Modified);
-        sdk.write_account(&callee_account, AccountStatus::Modified);
+        sdk.write_account(caller_account.clone(), AccountStatus::Modified);
+        sdk.write_account(callee_account.clone(), AccountStatus::Modified);
     } else {
         // what if self-transfer amount exceeds our balance?
         if input.value > caller_account.balance {
@@ -67,36 +66,40 @@ pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
             return res;
         }
         // write only one account's state since caller equals callee
-        sdk.write_account(&caller_account, AccountStatus::Modified);
+        sdk.write_account(caller_account.clone(), AccountStatus::Modified);
     }
 
     // check is it precompile
-    if let Some(result) = sdk.precompile(&input.callee, &input.input, input.gas_limit) {
-        let result = EvmCallMethodOutput {
-            output: result.0,
-            exit_code: result.1.into_i32(),
-            gas_remaining: result.2,
-            gas_refund: result.3,
-        };
-        if ExitCode::from(result.exit_code).is_ok() {
-            sdk.commit();
-        } else {
-            sdk.rollback(checkpoint);
-        }
-        return result;
-    }
+    // if let Some(result) = sdk.precompile(&input.bytecode_address, &input.input, input.gas_limit)
+    // {     let result = EvmCallMethodOutput {
+    //         output: result.0,
+    //         exit_code: result.1.into_i32(),
+    //         gas_remaining: result.2,
+    //         gas_refund: result.3,
+    //     };
+    //     if ExitCode::from(result.exit_code).is_ok() {
+    //         sdk.commit();
+    //     } else {
+    //         sdk.rollback(checkpoint);
+    //     }
+    //     return result;
+    // }
 
     // take right bytecode depending on context params
-    let (source_hash, source_bytecode) = if input.callee != callee_account.address {
-        let (code_account, _) = sdk.account(&input.callee);
+    let (source_hash, source_bytecode) = if input.bytecode_address != callee_account.address {
+        let (code_account, _) = sdk.account(&input.bytecode_address);
         (
             code_account.source_code_hash,
-            sdk.preimage(&code_account.source_code_hash),
+            sdk.preimage(&code_account.source_code_hash)
+                .map(Bytes::copy_from_slice)
+                .unwrap_or_default(),
         )
     } else {
         (
             callee_account.source_code_hash,
-            sdk.preimage(&callee_account.source_code_hash),
+            sdk.preimage(&callee_account.source_code_hash)
+                .map(Bytes::copy_from_slice)
+                .unwrap_or_default(),
         )
     };
     debug_log!(
@@ -120,18 +123,11 @@ pub fn _evm_call<CTX: ContextReader, SDK: SovereignAPI>(
         hash: Some(source_hash),
         bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
-        target_address: ctx.contract_address(),
-        call_value: ctx.contract_value(),
+        target_address: input.address,
+        call_value: input.value,
         caller: caller_account.address,
     };
-    let result = exec_evm_bytecode(
-        ctx,
-        sdk,
-        contract,
-        input.gas_limit,
-        ctx.contract_is_static(),
-        input.depth,
-    );
+    let result = exec_evm_bytecode(sdk, contract, input.gas_limit, input.is_static, input.depth);
 
     if matches!(result.result, return_ok!()) {
         sdk.commit();

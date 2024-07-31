@@ -6,28 +6,29 @@ use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
     SovereignAPI,
 };
-use fluentbase_types::{BytecodeType, ContextReader};
+use fluentbase_types::BytecodeType;
 
-pub fn _loader_call<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+pub fn _loader_call<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     input: EvmCallMethodInput,
 ) -> EvmCallMethodOutput {
-    let (account, _) = sdk.account(&input.callee);
-    let source_code = sdk.preimage(&account.source_code_hash);
-    match BytecodeType::from_slice(source_code.as_ref()) {
-        BytecodeType::EVM => _evm_call(ctx, sdk, input),
-        BytecodeType::WASM => _wasm_call(ctx, sdk, input),
+    let (account, _) = sdk.account(&input.bytecode_address);
+    let bytecode_type = sdk
+        .preimage(&account.source_code_hash)
+        .map(BytecodeType::from_slice)
+        .unwrap_or(BytecodeType::EVM);
+    match bytecode_type {
+        BytecodeType::EVM => _evm_call(sdk, input),
+        BytecodeType::WASM => _wasm_call(sdk, input),
     }
 }
 
-pub fn _loader_create<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+pub fn _loader_create<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     match BytecodeType::from_slice(input.bytecode.as_ref()) {
-        BytecodeType::EVM => _evm_create(ctx, sdk, input),
-        BytecodeType::WASM => _wasm_create(ctx, sdk, input),
+        BytecodeType::EVM => _evm_create(sdk, input),
+        BytecodeType::WASM => _wasm_create(sdk, input),
     }
 }

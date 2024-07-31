@@ -16,7 +16,7 @@ use fluentbase_sdk::{
     },
     Bytes,
     ContextReader,
-    SharedAPI,
+    NativeAPI,
     SovereignAPI,
 };
 

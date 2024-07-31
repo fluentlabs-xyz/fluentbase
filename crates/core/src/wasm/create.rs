@@ -4,17 +4,14 @@ use fluentbase_sdk::{
     types::{WasmCreateMethodInput, WasmCreateMethodOutput},
     Account,
     AccountStatus,
-    ContextReader,
-    ContractInput,
-    SharedAPI,
+    NativeAPI,
     SovereignAPI,
 };
 use fluentbase_types::{Bytes, ExitCode, Fuel, STATE_DEPLOY};
 use revm_primitives::WASM_MAX_CODE_SIZE;
 
-pub fn _wasm_create<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+pub fn _wasm_create<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     input: WasmCreateMethodInput,
 ) -> WasmCreateMethodOutput {
     debug_log!(sdk, "_wasm_create start");
@@ -23,7 +20,7 @@ pub fn _wasm_create<CTX: ContextReader, SDK: SovereignAPI>(
     // TODO: "call depth stack check >= 1024"
 
     // check write protection
-    if ctx.contract_is_static() {
+    if input.is_static {
         debug_log!(
             sdk,
             "_wasm_create return: Err: exit_code: {}",
@@ -42,12 +39,10 @@ pub fn _wasm_create<CTX: ContextReader, SDK: SovereignAPI>(
         return WasmCreateMethodOutput::from_exit_code(ExitCode::ContractSizeLimit);
     }
 
-    let source_code_hash = SDK::keccak256(input.bytecode.as_ref());
+    let source_code_hash = sdk.native_sdk().keccak256(input.bytecode.as_ref());
 
-    // read value input and contract address
-    let caller_address = ctx.contract_caller();
     // load deployer and contract accounts
-    let (mut deployer_account, _) = sdk.account(&caller_address);
+    let (mut deployer_account, _) = sdk.account(&input.caller);
 
     // create an account
     let (mut contract_account, checkpoint) = match Account::create_account_checkpoint(
@@ -105,23 +100,18 @@ pub fn _wasm_create<CTX: ContextReader, SDK: SovereignAPI>(
     // LowLevelSDK::sys_read_output(rwasm_bytecode.as_mut_ptr(), 0, rwasm_bytecode_len);
 
     // write deployer to the trie
-    sdk.write_account(&deployer_account, AccountStatus::Modified);
+    sdk.write_account(deployer_account, AccountStatus::Modified);
 
     // write contract to the trie
-    contract_account.update_bytecode(sdk, &input.bytecode, None, &rwasm_bytecode.into(), None);
-
-    let mut context = ContractInput::clone_from_ctx(ctx);
-    context.contract_value = input.value;
-    context.contract_gas_limit = input.gas_limit;
-    context.contract_address = contract_account.address;
-    let contract_context = context.encode_to_vec(0);
+    contract_account.update_bytecode(sdk, input.bytecode, None, rwasm_bytecode.into(), None);
 
     let mut fuel = Fuel::from(input.gas_limit);
     let (_, exit_code) = sdk.context_call(
-        &contract_account.address,
-        &[],
-        &contract_context,
+        input.caller,
+        contract_account.address,
+        input.value,
         &mut fuel,
+        &[],
         STATE_DEPLOY,
     );
     // if call is not success set deployed address to zero

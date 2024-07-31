@@ -1,7 +1,7 @@
 use crate::{
     alloc_slice,
     types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
-    SharedAPI,
+    NativeAPI,
     JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
     U256,
 };
@@ -30,16 +30,16 @@ pub struct EvmSstoreOutput {}
 #[client(mode = "codec")]
 pub trait EvmAPI {
     #[signature("_evm_call(address,uint256,bytes,uint64)")]
-    fn call(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput;
+    fn call(&mut self, input: EvmCallMethodInput) -> EvmCallMethodOutput;
 
     #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
-    fn create(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput;
+    fn create(&mut self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput;
 
     #[signature("_evm_sload(uint256)")]
-    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput;
+    fn sload(&mut self, input: EvmSloadInput) -> EvmSloadOutput;
 
     #[signature("_evm_sstore(uint256,uint256)")]
-    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput;
+    fn sstore(&mut self, input: EvmSstoreInput) -> EvmSstoreOutput;
 }
 
 pub trait WasmAPI {}

@@ -1,9 +1,5 @@
-use fluentbase_sdk::{types::EvmCallMethodOutput, Bytes, ContextReader, SovereignAPI};
+use fluentbase_types::{Bytes, SovereignAPI};
 
-pub fn _svm_exec_tx<CR: ContextReader, AM: SovereignAPI>(
-    cr: &CR,
-    am: &AM,
-    solana_raw_tx: Bytes,
-) -> () {
+pub fn _svm_exec_tx<SDK: SovereignAPI>(_sdk: &SDK, _solana_raw_tx: Bytes) -> () {
     todo!("implement me")
 }

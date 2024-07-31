@@ -5,7 +5,7 @@ extern crate fluentbase_sdk;
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 extern "C" fn main() {
-    use fluentbase_sdk::{alloc_slice, rwasm::RwasmContext, SharedAPI};
+    use fluentbase_sdk::{alloc_slice, rwasm::RwasmContext, NativeAPI};
     let sdk = RwasmContext::default();
     let input_size = sdk.input_size();
     let buffer = alloc_slice(input_size as usize);

@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate fluentbase_sdk;
 
 use cairo_platinum_prover::air::CairoAIR;
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, ContextReader, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
 use stark_platinum_prover::{
     proof::options::{ProofOptions, SecurityLevel},
     transcript::StoneProverTranscript,
@@ -11,18 +11,17 @@ use stark_platinum_prover::{
 };
 
 #[derive(Contract)]
-struct CAIRO<CTX, SDK> {
-    ctx: CTX,
+struct CAIRO<SDK> {
     sdk: SDK,
 }
 
-impl<CTX: ContextReader, SDK: SharedAPI> CAIRO<CTX, SDK> {
+impl<SDK: SharedAPI> CAIRO<SDK> {
     fn deploy(&self) {
         // any custom deployment logic here
     }
     fn verify_cairo_proof_wasm(&self, proof_bytes: &[u8], proof_options: &ProofOptions) -> bool {
         let bytes = proof_bytes;
-        // This logic is the same as main verify, with only error handling changing. In wasm, we
+        // This logic is the same as main verifying, with only error handling changing. In wasm, we
         // simply return a false if the proof is invalid, instead of rising an error.
         // Proof len was stored as an u32, 4u8 needs to be read
         let proof_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
@@ -50,9 +49,9 @@ impl<CTX: ContextReader, SDK: SharedAPI> CAIRO<CTX, SDK> {
     }
     fn main(&self) {
         let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
-        let input_size = self.sdk.input_size();
+        let input_size = self.sdk.native_sdk().input_size();
         let input = alloc_slice(input_size as usize);
-        self.sdk.read(input, 0);
+        self.sdk.native_sdk().read(input, 0);
         assert!(
             self.verify_cairo_proof_wasm(input, &proof_options),
             "failed to verify cairo proof"
@@ -65,14 +64,13 @@ basic_entrypoint!(CAIRO);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
 
     #[test]
     fn test_contract_works() {
         let cairo_proof = include_bytes!("./fib100.proof");
-        let ctx = ContractInput::default();
         let sdk = TestingContext::new().with_input(cairo_proof);
-        let cairo = CAIRO::new(ctx, sdk);
+        let cairo = CAIRO::new(JournalState::empty(sdk));
         cairo.deploy();
         cairo.main();
     }

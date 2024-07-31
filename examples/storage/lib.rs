@@ -19,32 +19,36 @@ solidity_storage! {
 mod test {
     use super::*;
     use fluentbase_sdk::{
-        codec::Encoder,
         contracts::EvmClient,
+        journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,
-        ContractInput,
         U256,
     };
-    use fluentbase_types::address;
+    use fluentbase_types::{address, ContractContext};
     use serial_test::serial;
 
-    fn with_test_input<T: Into<Vec<u8>>>(input: T, caller: Option<Address>) -> TestingContext {
-        let ctx = TestingContext::new().with_input(input);
-        let mut contract_input = ContractInput::default();
-        contract_input.contract_caller = caller.unwrap_or_default();
-        ctx.with_context(contract_input.encode_to_vec(0))
+    fn with_test_input<T: Into<Vec<u8>>>(
+        input: T,
+        caller: Option<Address>,
+    ) -> JournalState<TestingContext> {
+        JournalStateBuilder::default()
+            .with_contract_context(ContractContext {
+                caller: caller.unwrap_or_default(),
+                ..Default::default()
+            })
+            .with_devnet_genesis()
+            .build(TestingContext::new().with_input(input))
     }
 
     #[serial]
     #[test]
     pub fn test_client() {
-        let ctx = with_test_input(
+        let sdk = with_test_input(
             vec![],
             Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
-        )
-        .with_devnet_genesis();
-        let client = EvmClient::new(ctx.clone(), PRECOMPILE_EVM);
+        );
+        let client = EvmClient::new(sdk, PRECOMPILE_EVM);
         let b: Balance<TestingContext, _> = Balance::new(&client);
 
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
@@ -66,12 +70,11 @@ mod test {
     #[serial]
     #[test]
     pub fn test_arr() {
-        let ctx = with_test_input(
+        let sdk = with_test_input(
             vec![],
             Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
-        )
-        .with_devnet_genesis();
-        let client = EvmClient::new(ctx, PRECOMPILE_EVM);
+        );
+        let client = EvmClient::new(sdk, PRECOMPILE_EVM);
         let arr: Arr<TestingContext, _> = Arr::new(&client);
 
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
@@ -88,11 +91,10 @@ mod test {
     #[serial]
     #[test]
     pub fn test_storage() {
-        let ctx = with_test_input(
+        let sdk = with_test_input(
             vec![],
             Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
-        )
-        .with_devnet_genesis();
+        );
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
 
         let slot = U256::from_str_radix("1", 10).unwrap();
@@ -101,7 +103,7 @@ mod test {
             value: owner_balance,
         };
 
-        let client = EvmClient::new(ctx, PRECOMPILE_EVM);
+        let client = EvmClient::new(sdk, PRECOMPILE_EVM);
         client.sstore(input);
 
         let sload_input = EvmSloadInput { index: slot };

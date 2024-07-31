@@ -4,6 +4,8 @@ use crate::{
     Bytes,
     Bytes32,
     ExitCode,
+    JournalCheckpoint,
+    NativeAPI,
     SovereignAPI,
     B256,
     F254,
@@ -178,53 +180,45 @@ impl Account {
 
     pub fn update_bytecode<SDK: SovereignAPI>(
         &mut self,
-        sdk: &SDK,
-        source_bytecode: &Bytes,
+        sdk: &mut SDK,
+        source_bytecode: Bytes,
         source_hash: Option<B256>,
-        rwasm_bytecode: &Bytes,
+        rwasm_bytecode: Bytes,
         rwasm_hash: Option<F254>,
     ) {
-        let address_word = self.address.into_word();
         // calc source code hash (we use keccak256 for backward compatibility)
         self.source_code_hash =
-            source_hash.unwrap_or_else(|| SDK::keccak256(source_bytecode.as_ref()));
+            source_hash.unwrap_or_else(|| sdk.native_sdk().keccak256(source_bytecode.as_ref()));
         self.source_code_size = source_bytecode.len() as u64;
         // calc rwasm code hash (we use poseidon function for rWASM bytecode)
-        self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| SDK::poseidon(rwasm_bytecode.as_ref()));
+        self.rwasm_code_hash =
+            rwasm_hash.unwrap_or_else(|| sdk.native_sdk().poseidon(rwasm_bytecode.as_ref()));
         self.rwasm_code_size = rwasm_bytecode.len() as u64;
         // write all changes to database
-        sdk.write_account(self, AccountStatus::Modified);
+        sdk.write_account(self.clone(), AccountStatus::Modified);
         // make sure preimage of this hash is stored
-        sdk.update_preimage(
-            &address_word.0,
-            JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-            source_bytecode.as_ref(),
-        );
-        sdk.update_preimage(
-            &address_word.0,
-            JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-            rwasm_bytecode.as_ref(),
-        );
+        sdk.write_preimage(self.source_code_hash, source_bytecode);
+        sdk.write_preimage(self.rwasm_code_hash, rwasm_bytecode);
     }
 
     pub fn create_account_checkpoint<SDK: SovereignAPI>(
-        sdk: &SDK,
+        sdk: &mut SDK,
         caller: &mut Account,
         amount: U256,
         salt_hash: Option<(U256, B256)>,
-    ) -> Result<(Account, AccountCheckpoint), ExitCode> {
+    ) -> Result<(Account, JournalCheckpoint), ExitCode> {
         // check if caller has enough balances
         if caller.balance < amount {
             return Err(ExitCode::InsufficientBalance);
         }
         // try to increment nonce
         let old_nonce = caller.inc_nonce()?;
-        sdk.write_account(&caller, AccountStatus::Modified);
+        sdk.write_account(caller.clone(), AccountStatus::Modified);
         // calc address
         let callee_address = if let Some((salt, hash)) = salt_hash {
-            calc_create2_address::<SDK>(&caller.address, &salt, &hash)
+            calc_create2_address(sdk.native_sdk(), &caller.address, &salt, &hash)
         } else {
-            calc_create_address::<SDK>(&caller.address, old_nonce)
+            calc_create_address(sdk.native_sdk(), &caller.address, old_nonce)
         };
         // load account before checkpoint to keep it warm even in case of revert
         let (mut callee, _) = sdk.account(&callee_address);
@@ -236,25 +230,24 @@ impl Account {
             return Err(ExitCode::CreateCollision);
         }
         // change balance from caller and callee
-        if let Err(exit_code) = sdk.transfer(caller, &mut callee, amount) {
-            return Err(exit_code);
-        }
+        sdk.transfer(caller, &mut callee, amount)?;
         // tidy hack to make SELFDESTRUCT work for now
         // am.mark_account_created(callee_address);
         // println!("mark account created: {callee_address}");
         // emit transfer log (do we want to have native transfer events or native wrapper?)
         // Self::emit_transfer_log(am, &caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)
+        let mut callee = callee.clone();
         callee.nonce = 1;
         // write account changes
-        sdk.write_account(&caller, AccountStatus::Modified);
-        sdk.write_account(&callee, AccountStatus::NewlyCreated);
+        sdk.write_account(caller.clone(), AccountStatus::Modified);
+        sdk.write_account(callee.clone(), AccountStatus::NewlyCreated);
         // return callee and checkpoint
         Ok((callee, checkpoint))
     }
 
     pub fn emit_transfer_log<SDK: SovereignAPI>(
-        sdk: &SDK,
+        sdk: &mut SDK,
         from: &Address,
         to: &Address,
         amount: &U256,
@@ -265,7 +258,7 @@ impl Account {
             to.into_word(),
             B256::from(amount.to_be_bytes::<32>()),
         ];
-        sdk.write_log(&NATIVE_TRANSFER_ADDRESS, &Bytes::new(), &topics);
+        sdk.write_log(NATIVE_TRANSFER_ADDRESS, Bytes::new(), &topics);
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

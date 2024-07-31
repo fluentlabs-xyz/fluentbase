@@ -16,14 +16,14 @@ pub(crate) fn impl_derive_contract(ast: &syn::DeriveInput) -> TokenStream {
     let (impl_generics, type_generics, _where_clause) = ast.generics.split_for_impl();
     let output = quote! {
         impl #impl_generics #struct_name #type_generics {
-            pub fn new(ctx: CTX, sdk: SDK) -> Self {
-                #struct_name { ctx, sdk }
+            pub fn new(sdk: SDK) -> Self {
+                #struct_name { sdk }
             }
         }
         #[cfg(not(feature = "std"))]
-        impl Default for #struct_name <fluentbase_sdk::rwasm::RwasmContextReader, fluentbase_sdk::rwasm::RwasmContext> {
+        impl Default for #struct_name <fluentbase_sdk::rwasm::RwasmContext> {
             fn default() -> Self {
-                return #struct_name::new(fluentbase_sdk::rwasm::RwasmContextReader {}, fluentbase_sdk::rwasm::RwasmContext {});
+                return #struct_name::new(fluentbase_sdk::rwasm::RwasmContext {});
             }
         }
     };

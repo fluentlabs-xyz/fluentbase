@@ -1,10 +1,14 @@
-use crate::{b256, Address, SharedAPI, B256, F254, U256};
+use crate::{b256, Address, NativeAPI, B256, F254, U256};
 
 const POSEIDON_DOMAIN: F254 =
     b256!("0000000000000000000000000000000000000000000000010000000000000000");
 
 #[inline(always)]
-pub fn calc_storage_key<SDK: SharedAPI>(address: &Address, slot32_le_ptr: *const u8) -> B256 {
+pub fn calc_storage_key<API: NativeAPI>(
+    api: &API,
+    address: &Address,
+    slot32_le_ptr: *const u8,
+) -> B256 {
     let mut slot0 = B256::ZERO;
     let mut slot1 = B256::ZERO;
     // split slot32 into two 16 byte values (slot is always 32 bytes)
@@ -22,17 +26,17 @@ pub fn calc_storage_key<SDK: SharedAPI>(address: &Address, slot32_le_ptr: *const
             core::ptr::copy(slot32_le_ptr, hashing_data.as_mut_ptr(), 32);
             core::ptr::copy(address.as_ptr(), hashing_data.as_mut_ptr().offset(32), 20);
         }
-        SDK::keccak256(&hashing_data)
+        api.keccak256(&hashing_data)
     } else {
         // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
-        let storage_key = SDK::poseidon_hash(&slot0, &slot1, &POSEIDON_DOMAIN);
-        SDK::poseidon_hash(&address32, &storage_key, &POSEIDON_DOMAIN)
+        let storage_key = api.poseidon_hash(&slot0, &slot1, &POSEIDON_DOMAIN);
+        api.poseidon_hash(&address32, &storage_key, &POSEIDON_DOMAIN)
     };
     storage_key
 }
 
 #[inline(always)]
-pub fn calc_create_address<SDK: SharedAPI>(deployer: &Address, nonce: u64) -> Address {
+pub fn calc_create_address<API: NativeAPI>(api: &API, deployer: &Address, nonce: u64) -> Address {
     use alloy_rlp::{Encodable, EMPTY_LIST_CODE, EMPTY_STRING_CODE};
     const MAX_LEN: usize = 1 + (1 + 20) + 9;
     let len = 22 + nonce.length();
@@ -43,11 +47,12 @@ pub fn calc_create_address<SDK: SharedAPI>(deployer: &Address, nonce: u64) -> Ad
     out[2..22].copy_from_slice(deployer.as_slice());
     Encodable::encode(&nonce, &mut &mut out[22..]);
     let out = &out[..len];
-    Address::from_word(SDK::keccak256(&out))
+    Address::from_word(api.keccak256(&out))
 }
 
 #[inline(always)]
-pub fn calc_create2_address<SDK: SharedAPI>(
+pub fn calc_create2_address<API: NativeAPI>(
+    api: &API,
     deployer: &Address,
     salt: &U256,
     init_code_hash: &B256,
@@ -57,7 +62,7 @@ pub fn calc_create2_address<SDK: SharedAPI>(
     bytes[1..21].copy_from_slice(deployer.as_slice());
     bytes[21..53].copy_from_slice(&salt.to_be_bytes::<32>());
     bytes[53..85].copy_from_slice(init_code_hash.as_slice());
-    let hash = SDK::keccak256(&bytes);
+    let hash = api.keccak256(&bytes);
     Address::from_word(hash)
 }
 
