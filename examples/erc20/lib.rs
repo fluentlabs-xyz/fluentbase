@@ -43,8 +43,8 @@ fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
 }
 
 solidity_storage! {
-    mapping(Address => U256) Balance<EvmAPI>;
-    mapping(Address => mapping(Address => U256)) Allowance<EvmAPI>;
+    mapping(Address => U256) Balance;
+    mapping(Address => mapping(Address => U256)) Allowance;
 }
 
 impl<'a, SDK: SharedAPI, T: EvmAPI> Balance<'a, SDK, T> {

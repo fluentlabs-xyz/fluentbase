@@ -30,8 +30,8 @@ pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
     })
 }
 
-#[proc_macro_error]
 #[proc_macro]
+#[proc_macro_error]
 pub fn solidity_storage(token: TokenStream) -> TokenStream {
     solidity_storage::SolidityStorage::expand(token)
 }

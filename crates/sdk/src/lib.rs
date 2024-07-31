@@ -14,6 +14,7 @@ pub mod journal;
 pub mod runtime;
 #[cfg(not(feature = "std"))]
 pub mod rwasm;
+pub mod storage;
 pub mod types;
 
 #[cfg(not(feature = "std"))]
