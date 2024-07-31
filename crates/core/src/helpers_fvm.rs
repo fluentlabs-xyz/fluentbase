@@ -1,18 +1,29 @@
-use crate::{
-    debug_log,
-    fvm::types::{WasmRelayer, WasmStorage},
+use crate::{debug_log, fvm::types::WasmRelayer};
+use alloc::vec::Vec;
+use fluentbase_sdk::AccountManager;
+use fuel_core_executor::executor::{
+    BlockExecutor,
+    ExecutionData,
+    ExecutionOptions,
+    TxStorageTransaction,
 };
-use alloc::{borrow::ToOwned, vec::Vec};
-use fluentbase_sdk::{AccountManager, ContextReader};
-use fuel_core_executor::executor::{BlockExecutor, ExecutionOptions, TxStorageTransaction};
 use fuel_core_storage::{
     column::Column,
     kv_store::{KeyValueInspect, KeyValueMutate, WriteOperation},
     structured_storage::StructuredStorage,
-    transactional::{Changes, ConflictPolicy, InMemoryTransaction, IntoTransaction},
+    tables::ProcessedTransactions,
+    transactional::{
+        Changes,
+        ConflictPolicy,
+        InMemoryTransaction,
+        IntoTransaction,
+        WriteTransaction,
+    },
+    StorageAsRef,
 };
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
+    fuel_merkle::storage::StorageMutateInfallible,
     fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
     fuel_vm::{
         checked_transaction::{Checked, IntoChecked},
@@ -31,6 +42,7 @@ pub fn fvm_transact<'a, Tx, T>(
     memory: &'a mut MemoryInstance,
     consensus_params: ConsensusParameters,
     extra_tx_checks: bool,
+    execution_data: &mut ExecutionData,
 ) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
@@ -53,27 +65,59 @@ where
         ConflictPolicy::Overwrite,
         &mut structured_storage,
     );
-    let mut storage_tx = TxStorageTransaction::new(in_memory_transaction);
+    let storage_tx = &mut TxStorageTransaction::new(in_memory_transaction);
+    let tx_st_transaction = &mut storage_tx
+        .write_transaction()
+        .with_policy(ConflictPolicy::Overwrite);
+
+    let tx_id = checked_tx.id();
 
     let mut checked_tx = checked_tx;
     if execution_options.extra_tx_checks {
-        checked_tx = block_executor.extra_tx_checks(checked_tx, header, &mut storage_tx, memory)?;
+        checked_tx =
+            block_executor.extra_tx_checks(checked_tx, header, tx_st_transaction, memory)?;
     }
 
-    let exec_result = block_executor.attempt_tx_execution_with_vm(
+    let (reverted, state, tx, receipts) = block_executor.attempt_tx_execution_with_vm(
         checked_tx,
         header,
         coinbase_contract_id,
         gas_price,
-        &mut storage_tx,
+        tx_st_transaction,
         memory,
     )?;
+
+    block_executor.spend_input_utxos(tx.inputs(), tx_st_transaction, reverted, execution_data)?;
+
+    block_executor.persist_output_utxos(
+        *header.height(),
+        execution_data,
+        &tx_id,
+        tx_st_transaction,
+        tx.inputs(),
+        tx.outputs(),
+    )?;
+
+    // tx_st_transaction
+    //     .storage::<ProcessedTransactions>()
+    //     .insert(&tx_id, &());
+
+    block_executor.update_execution_data(
+        &tx,
+        execution_data,
+        receipts.clone(),
+        gas_price,
+        reverted,
+        state,
+        tx_id,
+    )?;
+
     Ok((
-        exec_result.0,
-        exec_result.1,
-        exec_result.2,
-        exec_result.3,
-        storage_tx.changes().clone(),
+        reverted,
+        state,
+        tx,
+        receipts,
+        tx_st_transaction.changes().clone(),
     ))
 }
 
@@ -85,6 +129,7 @@ pub fn fvm_transact_commit<Tx, T>(
     gas_price: Word,
     consensus_params: ConsensusParameters,
     extra_tx_checks: bool,
+    execution_data: &mut ExecutionData,
 ) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
@@ -108,6 +153,7 @@ where
     // }
 
     let mut memory = MemoryInstance::new();
+
     let res = fvm_transact(
         storage,
         checked_tx,
@@ -117,6 +163,7 @@ where
         &mut memory,
         consensus_params,
         extra_tx_checks,
+        execution_data,
     )?;
 
     for (col_num, changes) in &res.4 {
@@ -154,7 +201,9 @@ where
             | Column::ConsensusParametersVersions
             | Column::StateTransitionBytecodeVersions
             | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {}
+            | Column::GenesisMetadata => {
+                // panic!("unsupported column {:?} operation")
+            }
         }
     }
 
