@@ -7,7 +7,6 @@ use fluentbase_sdk::{
     codec::{Codec, Encoder},
     derive::{client, router, signature, Contract},
     Bytes,
-    ContextReader,
     SovereignAPI,
 };
 
@@ -19,20 +18,19 @@ pub struct HelloWorldOutput {
     message: Bytes,
 }
 
-#[client(mode = "codec")]
+// #[client(mode = "codec")]
 pub trait PrecompileAPI {
     #[signature("hello_world()")]
     fn hello_world(&self, input: HelloWorldInput) -> HelloWorldOutput;
 }
 
 #[derive(Contract)]
-pub struct PRECOMPILE<CTX, SDK> {
-    ctx: CTX,
+pub struct PRECOMPILE<SDK> {
     sdk: SDK,
 }
 
 #[router(mode = "codec")]
-impl<CTX: ContextReader, SDK: SovereignAPI> PrecompileAPI for PRECOMPILE<CTX, SDK> {
+impl<SDK: SovereignAPI> PrecompileAPI for PRECOMPILE<SDK> {
     #[signature("hello_world()")]
     fn hello_world(&self, _input: HelloWorldInput) -> HelloWorldOutput {
         HelloWorldOutput {

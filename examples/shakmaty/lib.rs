@@ -1,16 +1,15 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, ContextReader, SharedAPI};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
 use shakmaty::{Chess, Position};
 
 #[derive(Contract)]
-struct SHAKMATY<CTX, SDK> {
-    ctx: CTX,
+struct SHAKMATY<SDK: SharedAPI> {
     sdk: SDK,
 }
 
-impl<CTX: ContextReader, SDK: SharedAPI> SHAKMATY<CTX, SDK> {
+impl<SDK: SharedAPI> SHAKMATY<SDK> {
     fn deploy(&self) {
         // any custom deployment logic here
     }
@@ -26,13 +25,12 @@ basic_entrypoint!(SHAKMATY);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
 
     #[test]
     fn test_contract_works() {
-        let ctx = ContractInput::default();
-        let sdk = TestingContext::new();
-        let shakmaty = SHAKMATY::new(ctx, sdk);
+        let sdk = JournalState::empty(TestingContext::new());
+        let shakmaty = SHAKMATY::new(sdk);
         shakmaty.deploy();
         shakmaty.main();
     }

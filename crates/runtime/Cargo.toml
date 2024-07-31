@@ -38,3 +38,4 @@ std = [
     "rwasm/std",
 ]
 rwasm = []
+debug = []

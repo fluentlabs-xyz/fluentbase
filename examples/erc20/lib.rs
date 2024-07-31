@@ -9,11 +9,10 @@ use fluentbase_sdk::{
     derive::{router, solidity_storage},
     Address,
     Bytes,
-    SharedAPI,
     B256,
     U256,
 };
-use fluentbase_types::ContextReader;
+use fluentbase_types::SharedAPI;
 
 pub trait ERC20API {
     fn name(&self) -> Bytes;
@@ -24,7 +23,7 @@ pub trait ERC20API {
     fn transfer(&self, to: Address, value: U256) -> U256;
     fn allowance(&self, owner: Address, spender: Address) -> U256;
     fn approve(&self, spender: Address, value: U256) -> U256;
-    fn transfer_from(&self, from: Address, to: Address, value: U256) -> U256;
+    fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256;
 }
 
 // Define the Transfer and Approval events
@@ -33,42 +32,14 @@ sol! {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
-fn emit_transfer_event<SDK: SharedAPI>(
-    am: &SDK,
-    contract_address: Address,
-    from: Address,
-    to: Address,
-    value: U256,
-) {
-    let transfer_event = Transfer { from, to, value };
-    let data: Bytes = transfer_event.encode_data().into();
-    let topics: Vec<B256> = transfer_event
+fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
+    let data: Bytes = event.encode_data().into();
+    let topics: Vec<B256> = event
         .encode_topics()
         .iter()
         .map(|v| B256::from(v.0))
         .collect();
-    am.log(&contract_address, data, &topics);
-}
-
-fn emit_approval_event<SDK: SharedAPI>(
-    am: &SDK,
-    contract_address: Address,
-    owner: Address,
-    spender: Address,
-    value: U256,
-) {
-    let approval_event = Approval {
-        owner,
-        spender,
-        value,
-    };
-    let data: Bytes = approval_event.encode_data().into();
-    let topics: Vec<B256> = approval_event
-        .encode_topics()
-        .iter()
-        .map(|v| B256::from(v.0))
-        .collect();
-    am.log(&contract_address, data, &topics);
+    sdk.write_log(data, &topics);
 }
 
 solidity_storage! {
@@ -112,17 +83,15 @@ impl<'a, SDK: SharedAPI, T: EvmAPI> Allowance<'a, SDK, T> {
     }
 }
 
-struct ERC20<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> {
-    ctx: CTX,
+struct ERC20<'a, SDK: SharedAPI, C: EvmAPI> {
     sdk: SDK,
     balances: Balance<'a, SDK, C>,
     allowances: Allowance<'a, SDK, C>,
 }
 
-impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20<'a, CTX, SDK, C> {
-    pub fn new(ctx: CTX, sdk: SDK, client: &'a C) -> Self {
+impl<'a, SDK: SharedAPI, C: EvmAPI> ERC20<'a, SDK, C> {
+    pub fn new(sdk: SDK, client: &'a C) -> Self {
         ERC20 {
-            ctx,
             sdk,
             balances: Balance::new(client),
             allowances: Allowance::new(client),
@@ -131,7 +100,7 @@ impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20<'a, CTX, SDK, C> {
 }
 
 #[router(mode = "solidity")]
-impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, CTX, SDK, C> {
+impl<'a, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, SDK, C> {
     fn name(&self) -> Bytes {
         Bytes::from("Token")
     }
@@ -151,7 +120,7 @@ impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, C
     }
 
     fn transfer(&self, to: Address, value: U256) -> U256 {
-        let contract_address = self.ctx.contract_address();
+        let contract_address = self.sdk.contract_address();
         let from = self.ctx.contract_caller();
 
         // check if the sender and receiver are valid
@@ -168,7 +137,7 @@ impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, C
             .add(to, value)
             .unwrap_or_else(|err| panic!("{}", err));
 
-        emit_transfer_event(&self.sdk, contract_address, from, to, value);
+        emit_event(&self.sdk, Transfer { from, to, value });
         U256::from(1)
     }
 
@@ -180,18 +149,19 @@ impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, C
 
         self.allowances.set(owner, spender, value);
 
-        emit_approval_event(
+        emit_event(
             &self.sdk,
-            self.ctx.contract_address(),
-            owner,
-            spender,
-            value,
+            Approval {
+                owner,
+                spender,
+                value,
+            },
         );
         U256::from(1)
     }
 
-    fn transfer_from(&self, from: Address, to: Address, value: U256) -> U256 {
-        let spender = self.ctx.contract_caller();
+    fn transfer_from(&mut self, from: Address, to: Address, value: U256) -> U256 {
+        let spender = self.sdk.contract_context().caller;
 
         let current_allowance = self.allowances.get(from, spender);
 
@@ -209,14 +179,14 @@ impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20API for ERC20<'a, C
             .add(to, value)
             .unwrap_or_else(|err| panic!("{}", err));
 
-        emit_transfer_event(&self.sdk, self.ctx.contract_address(), from, to, value);
+        emit_event(&mut self.sdk, Transfer { from, to, value });
         U256::from(1)
     }
 }
 
-impl<'a, CTX: ContextReader, SDK: SharedAPI, C: EvmAPI> ERC20<'a, CTX, SDK, C> {
+impl<'a, SDK: SharedAPI, C: EvmAPI> ERC20<'a, SDK, C> {
     pub fn deploy(&self) {
-        let owner_address = self.ctx.contract_caller();
+        let owner_address = self.sdk.contract_context().caller;
         let owner_balance: U256 = U256::from_str_radix("1000000000000000000000000", 10).unwrap();
 
         let _ = self.balances.add(owner_address, owner_balance);
@@ -250,20 +220,12 @@ extern "C" fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
-    use fluentbase_sdk::{
-        codec::Encoder,
-        contracts::EvmClient,
-        runtime::TestingContext,
-        ContractInput,
-    };
+    use fluentbase_sdk::{codec::Encoder, contracts::EvmClient, runtime::TestingContext};
     use fluentbase_types::{address, contracts::PRECOMPILE_EVM};
     use hex_literal::hex;
     use serial_test::serial;
 
-    fn with_test_input<T: Into<Bytes>>(
-        input: T,
-        caller: Option<Address>,
-    ) -> (TestingContext, impl ContextReader) {
+    fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) -> (TestingContext) {
         let input: Bytes = input.into();
         let ctx = TestingContext::new().with_input(input.to_vec());
         // Initialize genesis to be able to call system contracts (evm precompile)

@@ -5,8 +5,8 @@ macro_rules! basic_entrypoint {
         #[no_mangle]
         extern "C" fn deploy() {
             let typ = <$struct_typ<
-                fluentbase_sdk::rwasm::RwasmContextReader,
                 fluentbase_sdk::rwasm::RwasmContext,
+                { fluentbase_sdk::JournalState::empty(fluentbase_sdk::rwasm::RwasmContext {}) },
             > as Default>::default();
             typ.deploy();
         }
@@ -14,8 +14,8 @@ macro_rules! basic_entrypoint {
         #[no_mangle]
         extern "C" fn main() {
             let typ = <$struct_typ<
-                fluentbase_sdk::rwasm::RwasmContextReader,
                 fluentbase_sdk::rwasm::RwasmContext,
+                { fluentbase_sdk::JournalState::empty(fluentbase_sdk::rwasm::RwasmContext {}) },
             > as Default>::default();
             typ.main();
         }

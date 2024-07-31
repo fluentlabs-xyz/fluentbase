@@ -6,25 +6,24 @@ use fluentbase_sdk::{
     basic_entrypoint,
     create_sovereign_import_linker,
     derive::Contract,
-    ContextReader,
+    NativeAPI,
     SharedAPI,
 };
 use rwasm::rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule};
 
 #[derive(Contract)]
-struct RWASM<CTX, SDK> {
-    ctx: CTX,
+struct RWASM<SDK> {
     sdk: SDK,
 }
 
-impl<CTX: ContextReader, SDK: SharedAPI> RWASM<CTX, SDK> {
+impl<SDK: SharedAPI> RWASM<SDK> {
     fn deploy(&self) {
         // any custom deployment logic here
     }
     fn main(&self) {
-        let input_size = self.sdk.input_size() as usize;
+        let input_size = self.sdk.native_sdk().input_size() as usize;
         let wasm_binary = alloc_slice(input_size);
-        self.sdk.read(wasm_binary, 0);
+        self.sdk.native_sdk().read(wasm_binary, 0);
         let import_linker = create_sovereign_import_linker();
         let rwasm_module =
             RwasmModule::compile(wasm_binary, Some(import_linker)).expect("failed to compile");
@@ -35,7 +34,7 @@ impl<CTX: ContextReader, SDK: SharedAPI> RWASM<CTX, SDK> {
             .write_binary(&mut binary_format_writer)
             .expect("failed to encode rWASM");
         assert_eq!(n_bytes, encoded_length, "encoded bytes mismatch");
-        self.sdk.write(rwasm_bytecode);
+        self.sdk.native_sdk().write(rwasm_bytecode);
     }
 }
 
@@ -44,17 +43,17 @@ basic_entrypoint!(RWASM);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
 
     #[test]
     fn test_contract_works() {
         let greeting_bytecode = include_bytes!("./greeting.wasm");
-        let ctx = ContractInput::default();
-        let sdk = TestingContext::new().with_input(greeting_bytecode);
-        let rwasm = RWASM::new(ctx, sdk.clone());
+        let native_sdk = TestingContext::new().with_input(greeting_bytecode);
+        let sdk = JournalState::empty(native_sdk.clone());
+        let rwasm = RWASM::new(sdk);
         rwasm.deploy();
         rwasm.main();
-        let output = sdk.output();
+        let output = native_sdk.output();
         let module = RwasmModule::new(&output).unwrap();
         assert!(module.code_section.len() > 0);
         assert_eq!(&module.memory_section, "Hello, World".as_bytes());

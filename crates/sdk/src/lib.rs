@@ -4,16 +4,12 @@
 extern crate alloc;
 extern crate core;
 
-mod evm;
-
-pub use evm::*;
-
 #[cfg(not(feature = "std"))]
 mod bindings;
 #[macro_use]
 pub mod macros;
 pub mod contracts;
-mod journal;
+pub mod journal;
 #[cfg(feature = "std")]
 pub mod runtime;
 #[cfg(not(feature = "std"))]

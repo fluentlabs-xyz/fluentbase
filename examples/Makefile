@@ -1,4 +1,4 @@
-FILES = allocator erc20 greeting hashing panic router rwasm shakmaty
+FILES = allocator greeting hashing panic router rwasm shakmaty
 
 all: $(FILES) $(MANUAL)
 

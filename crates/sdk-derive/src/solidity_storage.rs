@@ -87,7 +87,6 @@ impl Expandable for StorageItem {
 struct WrappedTypeMapping {
     pub type_mapping: TypeMapping,
     pub ident: Ident,
-    pub client: Path,
 }
 
 impl WrappedTypeMapping {
@@ -153,7 +152,7 @@ impl WrappedTypeMapping {
                 let mut raw_storage_key: [u8; 64] = [0; 64];
                 raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
                 raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-                let storage_key = SDK::keccak256(&raw_storage_key[..]);
+                let storage_key = self.sdk.native_sdk().keccak256(&raw_storage_key[..]);
                 fluentbase_sdk::U256::from_be_bytes(storage_key.0)
             }
         };
@@ -221,22 +220,18 @@ impl Expandable for WrappedTypeMapping {
         let slot = slot_from_index(slot);
         let funcs = WrappedTypeMapping::expand_funcs(&args);
         let ident = &self.ident;
-        let client_trait = &self.client;
 
         let new_fn = quote! {
-            pub fn new(client: &'a T) -> Self {
-                Self { client, _pd: Default::default() }
+            pub fn new(sdk: &'a SDK) -> Self {
+                Self { sdk }
             }
         };
 
         let expanded = quote! {
-            pub struct #ident<'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait + 'a>
-            {
-                client:  &'a T,
-                _pd: core::marker::PhantomData<SDK>,
+            pub struct #ident<'a, SDK: fluentbase_sdk::SharedAPI> {
+                sdk: &'a SDK,
             }
-            impl <'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait + 'a> #ident <'a, SDK, T>
-            {
+            impl <'a, SDK: fluentbase_sdk::SharedAPI> #ident<'a, SDK> {
                 #slot
                 #new_fn
                 #funcs
@@ -254,14 +249,9 @@ impl Parse for WrappedTypeMapping {
             .parse()
             .unwrap_or_else(|err| abort!(err.span(), "ident expected"));
 
-        input.parse::<syn::token::Lt>()?;
-        let client: Path = input.parse()?;
-        input.parse::<syn::token::Gt>()?;
-
         Ok(Self {
             type_mapping,
             ident,
-            client,
         })
     }
 }
@@ -270,24 +260,22 @@ impl Parse for WrappedTypeMapping {
 struct WrappedTypeArray {
     pub type_array: TypeArray,
     pub ident: Ident,
-    pub client: Path,
 }
 
 impl Expandable for WrappedTypeArray {
     fn expand(&self, index: usize) -> SynResult<proc_macro2::TokenStream> {
         let ident = &self.ident;
         let slot = slot_from_index(index);
-        let client_trait = &self.client;
 
         let new_fn = quote! {
-            pub fn new(client: &'a T) -> Self {
-                Self { client, _pd: Default::default() }
+            pub fn new(sdk: &'a SDK) -> Self {
+                Self { sdk }
             }
         };
 
         let key_hash_fn = quote! {
             fn key_hash(&self, slot: fluentbase_sdk::U256, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                let storage_key = SDK::keccak256(slot.as_le_slice());
+                let storage_key = self.sdk.native_sdk().keccak256(slot.as_le_slice());
                 let storage_key = U256::from_be_bytes(storage_key.0);
                 storage_key + index
             }
@@ -316,12 +304,10 @@ impl Expandable for WrappedTypeArray {
         };
 
         let expanded = quote! {
-            struct #ident<'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait>
-            {
-                client:  &'a T,
-                _pd: core::marker::PhantomData<SDK>,
+            struct #ident<'a, SDK: fluentbase_sdk::SharedAPI> {
+                sdk: &'a SDK,
             }
-            impl <'a, SDK: fluentbase_sdk::SharedAPI, T: #client_trait> #ident <'a, SDK, T> {
+            impl <'a, SDK: fluentbase_sdk::SharedAPI> #ident<'a, SDK> {
                 #slot
                 #new_fn
                 #key_fn

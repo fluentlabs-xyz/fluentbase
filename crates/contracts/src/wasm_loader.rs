@@ -24,7 +24,7 @@ impl<CTX: ContextReader, SDK: SovereignAPI> WasmLoaderImpl<CTX, SDK> {
         let input = alloc_slice(input_size as usize);
         self.sdk.read(input, 0);
         let input = WasmCallMethodInput {
-            callee: self.ctx.contract_address(),
+            bytecode_address: self.ctx.contract_address(),
             value: self.ctx.contract_value(),
             input: Bytes::copy_from_slice(input),
             gas_limit: self.ctx.contract_gas_limit(),

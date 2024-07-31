@@ -5,38 +5,37 @@ use fluentbase_sdk::{
     contracts::{EvmAPI, EvmSloadInput, EvmSloadOutput, EvmSstoreInput, EvmSstoreOutput},
     derive::{router, signature, Contract},
     types::{EvmCallMethodInput, EvmCallMethodOutput, EvmCreateMethodInput, EvmCreateMethodOutput},
-    ContextReader,
+    NativeAPI,
     SharedAPI,
     SovereignAPI,
 };
 
 #[derive(Contract)]
-pub struct EVM<CTX: ContextReader, SDK: SovereignAPI> {
-    ctx: CTX,
+pub struct EVM<SDK> {
     sdk: SDK,
 }
 
 #[router(mode = "codec")]
-impl<CTX: ContextReader, SDK: SovereignAPI> EvmAPI for EVM<CTX, SDK> {
+impl<SDK: SharedAPI> EvmAPI for EVM<SDK> {
     #[signature("_evm_call(address,uint256,bytes,uint64)")]
-    fn call(&self, input: EvmCallMethodInput) -> EvmCallMethodOutput {
-        _evm_call(&self.ctx, &self.sdk, input)
+    fn call(&mut self, input: EvmCallMethodInput) -> EvmCallMethodOutput {
+        _evm_call(&mut self.sdk, input)
     }
 
     #[signature("_evm_create(bytes,uint256,u64,bool,uint256)")]
-    fn create(&self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput {
-        _evm_create(&self.ctx, &self.sdk, input)
+    fn create(&mut self, input: EvmCreateMethodInput) -> EvmCreateMethodOutput {
+        _evm_create(&mut self.sdk, input)
     }
 
     #[signature("_evm_sload(uint256)")]
-    fn sload(&self, input: EvmSloadInput) -> EvmSloadOutput {
-        let contract_address = self.ctx.contract_address();
-        let (value, _is_cold) = self.sdk.storage(&contract_address, &input.index, false);
+    fn sload(&mut self, input: EvmSloadInput) -> EvmSloadOutput {
+        let contract_address = self.sdk.contract_address();
+        let (value, _is_cold) = self.sdk.storage(input.index);
         EvmSloadOutput { value }
     }
 
     #[signature("_evm_sstore(uint256,uint256)")]
-    fn sstore(&self, input: EvmSstoreInput) -> EvmSstoreOutput {
+    fn sstore(&mut self, input: EvmSstoreInput) -> EvmSstoreOutput {
         let contract_address = self.ctx.contract_address();
         _ = self
             .sdk

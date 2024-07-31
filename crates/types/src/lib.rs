@@ -14,7 +14,6 @@ pub mod contracts;
 mod journal;
 mod linker;
 mod sdk;
-mod sdk2;
 mod types;
 mod utils;
 
@@ -22,7 +21,6 @@ pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, By
 pub use journal::*;
 pub use linker::*;
 pub use sdk::*;
-pub use sdk2::*;
 pub use types::*;
 pub use utils::*;
 

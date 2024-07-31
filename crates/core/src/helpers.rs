@@ -3,14 +3,14 @@ use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_sdk::{
     types::{EvmCallMethodInput, EvmCreateMethodInput},
-    ContextReader,
-    ContractInput,
     SovereignAPI,
 };
 use fluentbase_types::{
     create_sovereign_import_linker,
     Address,
     ExitCode,
+    NativeAPI,
+    SharedAPI,
     SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
@@ -85,7 +85,7 @@ macro_rules! result_value {
 #[macro_export]
 macro_rules! debug_log {
     ($sdk:expr, $msg:tt) => {{
-        $sdk.debug($msg.as_bytes());
+        $sdk.native_sdk().debug_log(&$msg);
     }};
     ($sdk:expr, $($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
@@ -99,73 +99,13 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {{}};
 }
 
-fn contract_context_from_call_inputs<CR: ContextReader>(
-    cr: &CR,
-    call_inputs: &Box<CallInputs>,
-) -> ContractInput {
-    ContractInput {
-        contract_gas_limit: call_inputs.gas_limit,
-        contract_address: call_inputs.target_address,
-        contract_caller: call_inputs.caller,
-        contract_value: call_inputs.value.get(),
-        contract_is_static: call_inputs.is_static,
-        block_chain_id: cr.block_chain_id(),
-        block_coinbase: cr.block_coinbase(),
-        block_timestamp: cr.block_timestamp(),
-        block_number: cr.block_number(),
-        block_difficulty: cr.block_difficulty(),
-        block_prevrandao: cr.block_prevrandao(),
-        block_gas_limit: cr.block_gas_limit(),
-        block_base_fee: cr.block_base_fee(),
-        tx_gas_limit: cr.tx_gas_limit(),
-        tx_nonce: cr.tx_nonce(),
-        tx_gas_price: cr.tx_gas_price(),
-        tx_gas_priority_fee: cr.tx_gas_priority_fee(),
-        tx_caller: cr.tx_caller(),
-        tx_access_list: cr.tx_access_list(),
-        tx_blob_hashes: cr.tx_blob_hashes(),
-        tx_max_fee_per_blob_gas: cr.tx_max_fee_per_blob_gas(),
-    }
-}
-
-fn contract_context_from_create_inputs<CTX: ContextReader>(
-    ctx: &CTX,
-    create_inputs: &Box<CreateInputs>,
-) -> ContractInput {
-    ContractInput {
-        contract_gas_limit: create_inputs.gas_limit,
-        contract_address: Address::ZERO,
-        contract_caller: create_inputs.caller,
-        contract_value: create_inputs.value,
-        contract_is_static: false,
-        block_chain_id: ctx.block_chain_id(),
-        block_coinbase: ctx.block_coinbase(),
-        block_timestamp: ctx.block_timestamp(),
-        block_number: ctx.block_number(),
-        block_difficulty: ctx.block_difficulty(),
-        block_prevrandao: ctx.block_prevrandao(),
-        block_gas_limit: ctx.block_gas_limit(),
-        block_base_fee: ctx.block_base_fee(),
-        tx_gas_limit: ctx.tx_gas_limit(),
-        tx_nonce: ctx.tx_nonce(),
-        tx_gas_price: ctx.tx_gas_price(),
-        tx_gas_priority_fee: ctx.tx_gas_priority_fee(),
-        tx_caller: ctx.tx_caller(),
-        tx_access_list: ctx.tx_access_list(),
-        tx_blob_hashes: ctx.tx_blob_hashes(),
-        tx_max_fee_per_blob_gas: ctx.tx_max_fee_per_blob_gas(),
-    }
-}
-
-fn exec_evm_create<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+fn exec_evm_create<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     inputs: Box<CreateInputs>,
     depth: u32,
 ) -> CreateOutcome {
-    // calc create input
-    let contract_input = contract_context_from_create_inputs(ctx, &inputs);
-    let method_data = EvmCreateMethodInput {
+    let input = EvmCreateMethodInput {
+        caller: inputs.caller,
         value: inputs.value,
         bytecode: inputs.init_code,
         gas_limit: inputs.gas_limit,
@@ -174,8 +114,9 @@ fn exec_evm_create<CTX: ContextReader, SDK: SovereignAPI>(
             CreateScheme::Create => None,
         },
         depth,
+        is_static: false,
     };
-    let create_output = crate::loader::_loader_create(&contract_input, sdk, method_data);
+    let create_output = crate::loader::_loader_create(sdk, input);
 
     let mut gas = Gas::new(create_output.gas);
     gas.record_refund(create_output.gas_refund);
@@ -190,24 +131,26 @@ fn exec_evm_create<CTX: ContextReader, SDK: SovereignAPI>(
     }
 }
 
-fn exec_evm_call<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+fn exec_evm_call<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     mut inputs: Box<CallInputs>,
     depth: u32,
 ) -> CallOutcome {
     let return_memory_offset = inputs.return_memory_offset.clone();
 
-    let contract_input = contract_context_from_call_inputs(ctx, &inputs);
     let method_data = EvmCallMethodInput {
-        callee: inputs.bytecode_address,
+        caller: inputs.caller,
+        address: inputs.target_address,
+        bytecode_address: inputs.bytecode_address,
         // here we take transfer value, because for DELEGATECALL it's not apparent
         value: inputs.value.transfer().unwrap_or_default(),
+        apparent_value: inputs.value.get(),
         input: take(&mut inputs.input),
         gas_limit: inputs.gas_limit,
         depth,
+        is_static: inputs.is_static,
     };
-    let call_output = crate::loader::_loader_call(&contract_input, sdk, method_data);
+    let call_output = crate::loader::_loader_call(sdk, method_data);
 
     // let core_input = CoreInput {
     //     method_id: EVM_CALL_METHOD_ID,
@@ -248,9 +191,8 @@ fn exec_evm_call<CTX: ContextReader, SDK: SovereignAPI>(
     }
 }
 
-pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
-    mut ctx: &CTX,
-    mut sdk: &SDK,
+pub(crate) fn exec_evm_bytecode<SDK: SovereignAPI>(
+    mut sdk: &mut SDK,
     contract: Contract,
     gas_limit: u64,
     is_static: bool,
@@ -272,10 +214,10 @@ pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
     #[cfg(feature = "e2e")]
     let contract_address = contract.target_address;
 
-    let instruction_table = make_instruction_table::<FluentHost<CTX, SDK>, CancunSpec>();
+    let instruction_table = make_instruction_table::<FluentHost<SDK>, CancunSpec>();
 
     let mut interpreter = Interpreter::new(contract, gas_limit, is_static);
-    let mut host = FluentHost::new(ctx, sdk);
+    let mut host = FluentHost::new(sdk);
     let mut shared_memory = SharedMemory::new();
 
     loop {
@@ -286,7 +228,6 @@ pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
         shared_memory = interpreter.take_memory();
 
         // take cr/am
-        ctx = host.ctx.take().unwrap();
         sdk = host.sdk.take().unwrap();
 
         match next_action {
@@ -303,7 +244,7 @@ pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
                     hex::encode(inputs.value.transfer().unwrap_or_default().to_be_bytes::<32>()),
                     hex::encode(inputs.value.apparent().unwrap_or_default().to_be_bytes::<32>()),
                 );
-                let call_outcome = exec_evm_call(ctx, sdk, inputs, depth + 1);
+                let call_outcome = exec_evm_call(sdk, inputs, depth + 1);
                 interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
             }
             InterpreterAction::Create { inputs } => {
@@ -313,7 +254,7 @@ pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
                     inputs.caller,
                     hex::encode(inputs.value.to_be_bytes::<32>())
                 );
-                let create_outcome = exec_evm_create(ctx, sdk, inputs, depth + 1);
+                let create_outcome = exec_evm_create(sdk, inputs, depth + 1);
                 interpreter.insert_create_outcome(create_outcome);
             }
             InterpreterAction::Return { result } => {
@@ -333,7 +274,6 @@ pub(crate) fn exec_evm_bytecode<CTX: ContextReader, SDK: SovereignAPI>(
         }
 
         // move cr/am back
-        host.ctx = Some(ctx);
         host.sdk = Some(sdk);
     }
 }

@@ -60,9 +60,10 @@ fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
         pub fn main(&self) {
+            use fluentbase_sdk::NativeAPI;
             let input = {
-                let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
-                self.sdk.read(input, 0);
+                let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
+                self.sdk.native_sdk().read(input, 0);
                 input
             };
             if input.len() < 4 {
@@ -99,7 +100,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
             let input = Self::decode_method_input::<#input_ty>(&input);
             let output = self.#method_name(input);
             let output = output.encode_to_vec(0);
-            self.sdk.write(&output);
+            self.sdk.native_sdk().write(&output);
         }
     }
 }
@@ -186,7 +187,7 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
                 }.encode_to_vec(0);
                 let mut fuel = #sdk_crate_name::Fuel::from(self.fuel);
                 let (output, exit_code) =
-                    self.sdk.system_call(&self.address, &core_input, &mut fuel);
+                    self.sdk.borrow_mut().call(self.address, &core_input, &mut fuel);
                 if exit_code != #sdk_crate_name::ExitCode::Ok {
                     panic!("system contract call failed with exit code: {}", exit_code);
                 }
@@ -209,13 +210,13 @@ pub fn derive_codec_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream {
     let expanded = quote! {
         #ast
         pub struct #client_name<SDK> {
-            pub sdk: SDK,
+            pub sdk: core::cell::RefCell<SDK>,
             pub address: #sdk_crate_name::Address,
             pub fuel: u64,
         }
         impl<SDK: #sdk_crate_name::SharedAPI> #client_name<SDK> {
             pub fn new(sdk: SDK, address: #sdk_crate_name::Address) -> impl #trait_name {
-                Self { sdk, address, fuel: u64::MAX }
+                Self { sdk: core::cell::RefCell::new(sdk), address, fuel: u64::MAX }
             }
         }
         impl<SDK: #sdk_crate_name::SharedAPI> #trait_name for #client_name<SDK> {
@@ -255,8 +256,8 @@ mod tests {
         let expected_dispatch: ImplItem = parse_quote! {
             pub fn main(&self) {
                 let input = {
-                    let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
-                    self.sdk.read(input, 0);
+                    let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
+                    self.sdk.native_sdk().read(input, 0);
                     input
                 };
                 if input.len() < 4 {
@@ -272,13 +273,13 @@ mod tests {
                         let input = Self::decode_method_input::<EvmCreateMethodInput>(&input);
                         let output = self.evm_create(input);
                         let output = output.encode_to_vec(0);
-                        self.sdk.write(&output);
+                        self.sdk.native_sdk().write(&output);
                     },
                     4246677046u32 => {
                         let input = Self::decode_method_input::<EvmCallMethodInput>(&input);
                         let output = self.evm_call(input);
                         let output = output.encode_to_vec(0);
-                        self.sdk.write(&output);
+                        self.sdk.native_sdk().write(&output);
                     },
                     _ => panic!("unknown method"),
                 }

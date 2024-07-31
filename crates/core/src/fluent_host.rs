@@ -1,5 +1,7 @@
 use crate::debug_log;
-use fluentbase_sdk::{Bytes, ContextReader, SovereignAPI};
+use core::mem::take;
+use fluentbase_sdk::{Bytes, SovereignAPI};
+use fluentbase_types::{NativeAPI, SharedAPI};
 use revm_interpreter::{
     as_usize_saturated,
     primitives::{
@@ -21,59 +23,57 @@ use revm_interpreter::{
 };
 use revm_primitives::{TransientStorage, BLOCK_HASH_HISTORY};
 
-pub struct FluentHost<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> {
+pub struct FluentHost<'sdk, SDK: SovereignAPI> {
     pub(crate) env: Env,
-    pub(crate) ctx: Option<&'ctx CTX>,
-    pub(crate) sdk: Option<&'sdk SDK>,
+    pub(crate) sdk: Option<&'sdk mut SDK>,
     // transient storage
     transient_storage: TransientStorage,
 }
 
-impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> FluentHost<'ctx, 'sdk, CTX, SDK> {
-    pub fn new(ctx: &'ctx CTX, sdk: &'sdk SDK) -> Self {
+impl<'sdk, SDK: SovereignAPI> FluentHost<'sdk, SDK> {
+    pub fn new(sdk: &'sdk mut SDK) -> Self {
         Self {
             env: Env {
                 cfg: {
                     let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = ctx.block_chain_id();
+                    cfg_env.chain_id = sdk.block_context().chain_id;
                     cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
                     cfg_env
                 },
                 block: BlockEnv {
-                    number: U256::from(ctx.block_number()),
-                    coinbase: ctx.block_coinbase(),
-                    timestamp: U256::from(ctx.block_timestamp()),
-                    gas_limit: U256::from(ctx.block_gas_limit()),
-                    basefee: ctx.block_base_fee(),
-                    difficulty: U256::from(ctx.block_difficulty()),
-                    prevrandao: Some(ctx.block_prevrandao()),
+                    number: U256::from(sdk.block_context().number),
+                    coinbase: sdk.block_context().coinbase,
+                    timestamp: U256::from(sdk.block_context().timestamp),
+                    gas_limit: U256::from(sdk.block_context().gas_limit),
+                    basefee: sdk.block_context().base_fee,
+                    difficulty: sdk.block_context().difficulty,
+                    prevrandao: Some(sdk.block_context().prev_randao),
                     blob_excess_gas_and_price: None,
                 },
                 tx: TxEnv {
-                    caller: ctx.tx_caller(),
-                    gas_limit: ctx.tx_gas_limit(),
-                    gas_price: ctx.tx_gas_price(),
+                    caller: sdk.tx_context().origin,
+                    gas_limit: sdk.tx_context().gas_limit,
+                    gas_price: sdk.tx_context().gas_price,
                     transact_to: TransactTo::Call(Address::ZERO), // will do nothing
-                    value: ctx.contract_value(),
+                    value: sdk.tx_context().value,
                     data: Default::default(), // not used because we already pass all validations
-                    nonce: Some(ctx.tx_nonce()),
+                    nonce: Some(sdk.tx_context().nonce),
                     chain_id: None, // no checks
-                    access_list: ctx.tx_access_list(),
-                    gas_priority_fee: ctx.tx_gas_priority_fee(),
-                    blob_hashes: ctx.tx_blob_hashes(),
-                    max_fee_per_blob_gas: ctx.tx_max_fee_per_blob_gas(),
+                    access_list: Default::default(),
+                    gas_priority_fee: Default::default(),
+                    blob_hashes: Default::default(),
+                    max_fee_per_blob_gas: Default::default(),
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
             },
-            ctx: Some(ctx),
             sdk: Some(sdk),
             transient_storage: TransientStorage::new(),
         }
     }
 }
 
-impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx, 'sdk, CTX, SDK> {
+impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -100,7 +100,7 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
             return Some(B256::ZERO);
         };
         if diff > 0 && diff <= BLOCK_HASH_HISTORY {
-            Some(self.sdk.as_ref().unwrap().block_hash(number))
+            todo!("implement block hash history")
         } else {
             Some(B256::ZERO)
         }
@@ -116,7 +116,12 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
         let sdk = self.sdk.as_ref().unwrap();
         let (account, is_cold) = sdk.account(&address);
-        Some((sdk.preimage(&account.source_code_hash), is_cold))
+        Some((
+            sdk.preimage(&account.source_code_hash)
+                .map(Bytes::copy_from_slice)
+                .unwrap_or_default(),
+            is_cold,
+        ))
     }
 
     #[inline]
@@ -130,7 +135,7 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
 
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        let (value, is_cold) = self.sdk.as_ref().unwrap().storage(&address, &index, false);
+        let (value, is_cold) = self.sdk.as_ref().unwrap().storage(address, index);
         debug_log!(
             self.sdk.as_ref().unwrap(),
             "ecl(sload): address={}, index={}, value={}",
@@ -143,7 +148,7 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
 
     #[inline]
     fn sstore(&mut self, address: Address, index: U256, value: U256) -> Option<SStoreResult> {
-        let sdk = self.sdk.unwrap();
+        let sdk = self.sdk.as_mut().unwrap();
         debug_log!(
             sdk,
             "ecl(sstore): address={}, index={}, value={}",
@@ -151,9 +156,9 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         );
-        let (original_value, _) = sdk.storage(&address, &index, true);
-        let (present_value, is_cold) = sdk.storage(&address, &index, false);
-        sdk.write_storage(&address, &index, &value);
+        let (original_value, _) = sdk.committed_storage(address, index);
+        let (present_value, is_cold) = sdk.storage(address, index);
+        sdk.write_storage(address, index, value);
         return Some(SStoreResult {
             original_value,
             present_value,
@@ -164,37 +169,40 @@ impl<'ctx, 'sdk, CTX: ContextReader, SDK: SovereignAPI> Host for FluentHost<'ctx
 
     #[inline]
     fn tload(&mut self, address: Address, index: U256) -> U256 {
-        // self.transient_storage
-        //     .get(&(address, index))
-        //     .copied()
-        //     .unwrap_or_default()
-        self.sdk.unwrap().transient_storage(address, index)
+        self.transient_storage
+            .get(&(address, index))
+            .copied()
+            .unwrap_or_default()
+        // self.sdk.unwrap().transient_storage(address, index)
     }
 
     #[inline]
     fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        // self.transient_storage.insert((address, index), value);
-        self.sdk
-            .unwrap()
-            .write_transient_storage(address, index, value)
+        self.transient_storage.insert((address, index), value);
+        // self.sdk
+        //     .unwrap()
+        //     .write_transient_storage(address, index, value)
     }
 
     #[inline]
     fn log(&mut self, mut log: Log) {
-        self.sdk
-            .unwrap()
-            .write_log(&log.address, &log.data.data, log.data.topics());
+        self.sdk.as_mut().unwrap().write_log(
+            log.address,
+            take(&mut log.data.data),
+            log.data.topics(),
+        );
     }
 
     #[inline]
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-        let [had_value, target_exists, is_cold, previously_destroyed] =
-            self.sdk.unwrap().self_destruct(address, target);
-        Some(SelfDestructResult {
-            had_value,
-            target_exists,
-            is_cold,
-            previously_destroyed,
-        })
+        todo!("not supported yet");
+        // let [had_value, target_exists, is_cold, previously_destroyed] =
+        //     self.sdk.as_mut().unwrap().self_destruct(address, target);
+        // Some(SelfDestructResult {
+        //     had_value,
+        //     target_exists,
+        //     is_cold,
+        //     previously_destroyed,
+        // })
     }
 }

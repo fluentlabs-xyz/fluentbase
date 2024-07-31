@@ -6,13 +6,12 @@ use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{router, signature, Contract},
-    ContextReader,
+    NativeAPI,
     SharedAPI,
 };
 
 #[derive(Contract)]
-struct ROUTER<CTX, SDK> {
-    ctx: CTX,
+struct ROUTER<SDK> {
     sdk: SDK,
 }
 
@@ -22,7 +21,7 @@ pub trait RouterAPI {
 }
 
 #[router(mode = "solidity")]
-impl<CTX: ContextReader, SDK: SharedAPI> RouterAPI for ROUTER<CTX, SDK> {
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
     #[signature("function greeting(string message) external returns (string)")]
     fn greeting(&self, message: String) -> String {
         message
@@ -34,7 +33,7 @@ impl<CTX: ContextReader, SDK: SharedAPI> RouterAPI for ROUTER<CTX, SDK> {
     }
 }
 
-impl<CTX: ContextReader, SDK: SharedAPI> ROUTER<CTX, SDK> {
+impl<SDK: SharedAPI> ROUTER<SDK> {
     fn deploy(&self) {
         // any custom deployment logic here
     }
@@ -46,7 +45,7 @@ basic_entrypoint!(ROUTER);
 mod tests {
     use super::*;
     use alloy_sol_types::SolCall;
-    use fluentbase_sdk::{runtime::TestingContext, ContractInput};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
     use hex_literal::hex;
 
     #[test]
@@ -56,10 +55,9 @@ mod tests {
         let msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
             panic!("Failed to decode input {:?} {:?}", "msg", e,);
         });
-        let ctx = ContractInput::default();
         let sdk = TestingContext::new().with_input(input);
         // run router
-        let greeting = ROUTER::new(ctx, sdk.clone());
+        let greeting = ROUTER::new(JournalState::empty(sdk.clone()));
         greeting.deploy();
         greeting.main();
         // check result

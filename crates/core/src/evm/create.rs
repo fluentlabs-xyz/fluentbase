@@ -5,11 +5,10 @@ use crate::{
 use fluentbase_sdk::{
     types::{EvmCreateMethodInput, EvmCreateMethodOutput},
     Account,
-    ContextReader,
-    SharedAPI,
+    NativeAPI,
     SovereignAPI,
 };
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, SharedAPI};
 use revm_interpreter::{
     analysis::to_analysed,
     gas,
@@ -21,9 +20,8 @@ use revm_interpreter::{
 };
 use revm_primitives::MAX_INITCODE_SIZE;
 
-pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
-    ctx: &CTX,
-    sdk: &SDK,
+pub fn _evm_create<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     input: EvmCreateMethodInput,
 ) -> EvmCreateMethodOutput {
     debug_log!(
@@ -33,8 +31,7 @@ pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
     );
 
     // check write protection
-    let is_static = ctx.contract_is_static();
-    if is_static {
+    if input.is_static {
         debug_log!(
             sdk,
             "ecl(_evm_create): return: Err: exit_code: {}",
@@ -45,8 +42,7 @@ pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
     }
 
     // load deployer and contract accounts
-    let caller_address = ctx.contract_caller();
-    let (mut caller_account, _) = sdk.account(&caller_address);
+    let (mut caller_account, _) = sdk.account(&input.caller);
 
     // call depth check
     if input.depth > 1024 {
@@ -61,7 +57,7 @@ pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
     }
 
     // calc source code hash
-    let mut source_code_hash = SDK::keccak256(input.bytecode.as_ref());
+    let mut source_code_hash = sdk.native_sdk().keccak256(input.bytecode.as_ref());
 
     // create an account
     let salt_hash = input.salt.map(|salt| (salt, source_code_hash));
@@ -100,11 +96,12 @@ pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
         bytecode: analyzed_bytecode,
         hash: Some(source_code_hash),
         target_address: contract_account.address,
-        caller: caller_address,
+        caller: input.caller,
         call_value: input.value,
     };
 
-    let mut result = exec_evm_bytecode(ctx, sdk, contract, input.gas_limit, is_static, input.depth);
+    let mut result =
+        exec_evm_bytecode(sdk, contract, input.gas_limit, input.is_static, input.depth);
 
     if !matches!(result.result, return_ok!()) {
         sdk.rollback(checkpoint);
@@ -140,7 +137,7 @@ pub fn _evm_create<CTX: ContextReader, SDK: SovereignAPI>(
     // write callee changes to a database (lets keep rWASM part empty for now since universal loader
     // is not ready yet)
     let (mut contract_account, _) = sdk.account(&contract_account.address);
-    contract_account.update_bytecode(sdk, &result.output, None, &Bytes::new(), None);
+    contract_account.update_bytecode(sdk, result.output.clone(), None, Bytes::new(), None);
 
     debug_log!(
         sdk,
