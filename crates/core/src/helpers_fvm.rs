@@ -1,6 +1,5 @@
 use crate::{debug_log, fvm::types::WasmRelayer};
 use alloc::vec::Vec;
-use fluentbase_sdk::AccountManager;
 use fuel_core_executor::executor::{
     BlockExecutor,
     ExecutionData,
@@ -11,19 +10,10 @@ use fuel_core_storage::{
     column::Column,
     kv_store::{KeyValueInspect, KeyValueMutate, WriteOperation},
     structured_storage::StructuredStorage,
-    tables::ProcessedTransactions,
-    transactional::{
-        Changes,
-        ConflictPolicy,
-        InMemoryTransaction,
-        IntoTransaction,
-        WriteTransaction,
-    },
-    StorageAsRef,
+    transactional::{Changes, ConflictPolicy, InMemoryTransaction, IntoTransaction},
 };
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
-    fuel_merkle::storage::StorageMutateInfallible,
     fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
     fuel_vm::{
         checked_transaction::{Checked, IntoChecked},
