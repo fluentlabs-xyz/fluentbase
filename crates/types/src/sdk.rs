@@ -1,5 +1,5 @@
 use crate::{Account, AccountStatus, Address, ExitCode, Fuel, JournalCheckpoint, B256, F254, U256};
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use alloy_primitives::Bytes;
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use hashbrown::HashMap;
@@ -138,6 +138,17 @@ impl DelegatedExecution {
     }
 }
 
+#[derive(Default)]
+pub struct SovereignStateResult {
+    pub accounts: Vec<Account>,
+    pub storages: Vec<(Address, U256, U256)>,
+    pub preimages: Vec<(B256, Bytes)>,
+    pub logs: Vec<(Address, Bytes, Vec<B256>)>,
+}
+
+#[derive(Default)]
+pub struct SharedStateResult {}
+
 pub trait SovereignAPI {
     fn native_sdk(&self) -> &impl NativeAPI;
 
@@ -145,7 +156,7 @@ pub trait SovereignAPI {
     fn tx_context(&self) -> &TxContext;
 
     fn checkpoint(&self) -> JournalCheckpoint;
-    fn commit(&mut self);
+    fn commit(&mut self) -> SovereignStateResult;
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
 
     fn write_account(&mut self, account: Account, status: AccountStatus);
@@ -188,6 +199,8 @@ pub trait SharedAPI {
     fn tx_context(&self) -> &TxContext;
     fn contract_context(&self) -> &ContractContext;
 
+    fn commit(&mut self) -> SharedStateResult;
+
     fn account(&self, address: &Address) -> (Account, IsColdAccess);
     fn transfer(&mut self, from: &mut Account, to: &mut Account, amount: U256);
     fn write_storage(&mut self, slot: U256, value: U256);
@@ -197,4 +210,11 @@ pub trait SharedAPI {
 
     fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
     fn delegate(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
+
+    fn return_data(&self) -> Bytes {
+        let output_size = self.native_sdk().output_size();
+        let mut buffer = vec![0u8; output_size as usize];
+        self.native_sdk().read_output(&mut buffer, 0);
+        buffer.into()
+    }
 }

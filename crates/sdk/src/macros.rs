@@ -4,19 +4,15 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn deploy() {
-            let typ = <$struct_typ<
-                fluentbase_sdk::rwasm::RwasmContext,
-                { fluentbase_sdk::JournalState::empty(fluentbase_sdk::rwasm::RwasmContext {}) },
-            > as Default>::default();
+            use fluentbase_sdk::{journal::JournalState, rwasm::RwasmContext};
+            let mut typ = $struct_typ::new(JournalState::empty(RwasmContext {}));
             typ.deploy();
         }
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn main() {
-            let typ = <$struct_typ<
-                fluentbase_sdk::rwasm::RwasmContext,
-                { fluentbase_sdk::JournalState::empty(fluentbase_sdk::rwasm::RwasmContext {}) },
-            > as Default>::default();
+            use fluentbase_sdk::{journal::JournalState, rwasm::RwasmContext};
+            let mut typ = $struct_typ::new(JournalState::empty(RwasmContext {}));
             typ.main();
         }
     };

@@ -32,7 +32,7 @@ mod tests {
         let greeting = GREETING::new(sdk);
         greeting.deploy();
         greeting.main();
-        let output = native_sdk.output();
+        let output = native_sdk.take_output();
         assert_eq!(&output, "Hello, World".as_bytes());
     }
 }

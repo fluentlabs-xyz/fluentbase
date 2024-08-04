@@ -184,10 +184,14 @@ impl TestingContext {
         }
     }
 
-    pub fn with_input<I: Into<Vec<u8>>>(self, input: I) -> Self {
+    pub fn with_input<I: Into<Vec<u8>>>(mut self, input: I) -> Self {
+        self.set_input(input);
+        self
+    }
+
+    pub fn set_input<I: Into<Vec<u8>>>(&mut self, input: I) {
         self.ctx
             .replace_with(|ctx| take(ctx).with_input(input.into()));
-        self
     }
 
     pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
@@ -196,8 +200,8 @@ impl TestingContext {
         self
     }
 
-    pub fn output(&self) -> Vec<u8> {
-        self.ctx.borrow().output().clone()
+    pub fn take_output(&self) -> Vec<u8> {
+        take(self.ctx.borrow_mut().output_mut())
     }
 
     pub fn with_devnet_genesis(self) -> Self {

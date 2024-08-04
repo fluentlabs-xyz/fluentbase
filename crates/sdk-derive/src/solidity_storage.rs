@@ -61,7 +61,7 @@ impl Parse for SolidityStorage {
 #[derive(Clone, Debug)]
 struct StorageItem {
     slot: usize,
-    kind: StorageKind,
+    _kind: StorageKind,
     name: Ident,
     args: Vec<Arg>,
     output: Option<Arg>,
@@ -77,7 +77,7 @@ impl Parse for StorageItem {
 
         Ok(StorageItem {
             slot: 0,
-            kind,
+            _kind: kind,
             name,
             args,
             output,
@@ -93,14 +93,6 @@ impl StorageItem {
         }
     }
 
-    fn expand_new_fn() -> proc_macro2::TokenStream {
-        quote! {
-            pub fn new(sdk: &'a mut SDK) -> Self {
-                Self { sdk }
-            }
-        }
-    }
-
     fn expand_get_fn(args: &Vec<Arg>, output: &Option<Arg>) -> proc_macro2::TokenStream {
         let arguments: Vec<proc_macro2::TokenStream> =
             args.iter().map(|arg| arg.to_token_stream()).collect();
@@ -112,25 +104,19 @@ impl StorageItem {
             None => quote! { () },
         };
 
-        let key = if arg_names.is_empty() {
-            quote! { self.key() }
-        } else {
-            quote! { self.key(#(#arg_names),*) }
-        };
-
         let get_args = if arguments.len() == 0 {
-            quote! { &self }
+            quote! { sdk: &SDK }
         } else {
-            quote! { &self, #(#arguments),* }
+            quote! { sdk: &SDK, #(#arguments),* }
         };
 
         quote! {
-            fn get(#get_args) -> #output {
+            fn get<SDK: fluentbase_sdk::SharedAPI>(#get_args) -> #output {
                 use fluentbase_sdk::storage::StorageValue;
-                let key = #key;
+                let key = Self::key(sdk, #(#arg_names),*);
                 let value = #output::default();
 
-                #output::get(self.sdk, key).unwrap()
+                #output::get(sdk, key)
             }
         }
     }
@@ -147,16 +133,16 @@ impl StorageItem {
         };
 
         let set_args = if arguments.len() == 0 {
-            quote! { &mut self, value: #output }
+            quote! { sdk: &mut SDK, value: #output }
         } else {
-            quote! { &mut self, #(#arguments),*, value: #output }
+            quote! { sdk: &mut SDK, #(#arguments),*, value: #output }
         };
 
         quote! {
-            fn set(#set_args) {
+            fn set<SDK: fluentbase_sdk::SharedAPI>(#set_args) {
                 use fluentbase_sdk::storage::StorageValue;
-                let key = self.key(#(#arg_names),*);
-                #output::set(self.sdk, key, value.clone()).unwrap();
+                let key = Self::key(sdk, #(#arg_names),*);
+                #output::set(sdk, key, value.clone());
             }
         }
     }
@@ -166,19 +152,15 @@ impl Expandable for StorageItem {
     fn expand(&self) -> SynResult<proc_macro2::TokenStream> {
         let name = &self.name;
         let slot = StorageItem::expand_slot(self.slot as u64);
-        let new_fn = StorageItem::expand_new_fn();
 
         let get_fn = StorageItem::expand_get_fn(&self.args, &self.output);
         let set_fn = StorageItem::expand_set_fn(&self.args, &self.output);
         let key_fn = &self.key_calculation;
 
         Ok(quote! {
-            pub struct #name<'a, SDK> {
-                sdk: &'a mut SDK,
-            }
-            impl <'a, SDK: fluentbase_sdk::SharedAPI> #name <'a, SDK> {
+            pub struct #name {}
+            impl #name {
                 #slot
-                #new_fn
                 #get_fn
                 #set_fn
                 #key_fn
@@ -308,28 +290,28 @@ impl MappingStorage {
         let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
         let arg_len = args.len();
         let calculate_keys_fn = quote! {
-            fn calculate_keys(&self, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
+            fn calculate_keys<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
                 let mut key = slot;
                 for arg in args {
-                    key = self.key_hash(key, arg);
+                    key = Self::key_hash(sdk, key, arg);
                 }
                 key
             }
         };
 
         let key_hash_fn = quote! {
-            fn key_hash(&self, slot: fluentbase_sdk::U256, key: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                use fluentbase_sdk::NativeAPI;
+            fn key_hash<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, slot: fluentbase_sdk::U256, key: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
                 let mut raw_storage_key: [u8; 64] = [0; 64];
                 raw_storage_key[0..32].copy_from_slice(slot.as_le_slice());
                 raw_storage_key[32..64].copy_from_slice(key.as_le_slice());
-                let storage_key = self.sdk.native_sdk().keccak256(&raw_storage_key[..]);
+                use fluentbase_sdk::NativeAPI;
+                let storage_key = sdk.native_sdk().keccak256(&raw_storage_key[..]);
                 fluentbase_sdk::U256::from_be_bytes(storage_key.0)
             }
         };
 
         let key_fn = quote! {
-            fn key(&self, #(#arguments),*) -> fluentbase_sdk::U256 {
+            fn key<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, #(#arguments),*) -> fluentbase_sdk::U256 {
                 use alloy_sol_types::SolValue;
                 let args = [
                     #(
@@ -343,7 +325,7 @@ impl MappingStorage {
                     )*
                 ];
 
-                self.calculate_keys(Self::SLOT, args)
+                Self::calculate_keys(sdk, Self::SLOT, args)
             }
         };
         quote! {
@@ -404,13 +386,13 @@ impl ArrayStorage {
         let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
 
         let key_fn = quote! {
-            fn key(&self, #(#arguments),*) -> fluentbase_sdk::U256 {
+            fn key<SDK: fluentbase_sdk::SharedAPI>(sdk: &SDK, #(#arguments),*) -> fluentbase_sdk::U256 {
                 use fluentbase_sdk::NativeAPI;
                 let mut key = Self::SLOT;
 
                 #(
                     let storage_key = {
-                        let storage_key = self.sdk.native_sdk().keccak256(key.as_le_slice());
+                        let storage_key = sdk.native_sdk().keccak256(key.as_le_slice());
                         U256::from_be_bytes(storage_key.0)
                     };
                     key = storage_key + #arg_names;
@@ -452,7 +434,7 @@ impl PrimitiveStorage {
     }
     fn key_calculation_fn(&self) -> proc_macro2::TokenStream {
         quote! {
-            fn key(&self) -> fluentbase_sdk::U256 {
+            fn key<SDK: fluentbase_sdk::SharedAPI>(_sdk: &SDK) -> fluentbase_sdk::U256 {
                 Self::SLOT
             }
         }

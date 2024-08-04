@@ -1,16 +1,17 @@
+use alloc::vec;
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_types::{SharedAPI, U256};
 
 pub trait StorageValue<SDK: SharedAPI, T> {
-    fn get(sdk: &SDK, key: U256) -> Result<T, String>;
-    fn set(sdk: &mut SDK, key: U256, value: T) -> Result<(), String>;
+    fn get(sdk: &SDK, key: U256) -> T;
+    fn set(sdk: &mut SDK, key: U256, value: T);
 }
 
 impl<SDK: SharedAPI, T> StorageValue<SDK, T> for T
 where
     T: Encoder<T> + Default,
 {
-    fn get(sdk: &SDK, key: U256) -> Result<T, String> {
+    fn get(sdk: &SDK, key: U256) -> T {
         let header_size = T::HEADER_SIZE;
 
         let mut buffer = vec![];
@@ -28,10 +29,10 @@ where
         let mut decoder = BufferDecoder::new(&buffer);
         let mut body = T::default();
         T::decode_body(&mut decoder, 0, &mut body);
-        Ok(body)
+        body
     }
 
-    fn set(sdk: &mut SDK, key: U256, value: T) -> Result<(), String> {
+    fn set(sdk: &mut SDK, key: U256, value: T) {
         let encoded_buffer = value.encode_to_vec(0);
 
         let chunk_size = 32;
@@ -48,7 +49,5 @@ where
             let value_u256 = U256::from_be_bytes(chunk_padded);
             sdk.write_storage(key + U256::from(i), value_u256);
         }
-
-        Ok(())
     }
 }

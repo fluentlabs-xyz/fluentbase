@@ -1853,6 +1853,7 @@ dependencies = [
  "fluentbase-types 0.1.0",
  "hex",
  "hex-literal",
+ "lazy_static",
  "paste",
  "serial_test",
 ]

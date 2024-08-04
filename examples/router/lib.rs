@@ -57,11 +57,11 @@ mod tests {
         });
         let sdk = TestingContext::new().with_input(input);
         // run router
-        let greeting = ROUTER::new(JournalState::empty(sdk.clone()));
+        let mut greeting = ROUTER::new(JournalState::empty(sdk.clone()));
         greeting.deploy();
         greeting.main();
         // check result
-        let test_output = sdk.output();
+        let test_output = sdk.take_output();
         assert_eq!(test_output,
     hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000"
     ));

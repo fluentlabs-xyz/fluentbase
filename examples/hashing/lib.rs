@@ -42,7 +42,7 @@ mod tests {
         let hashing = HASHING::new(sdk);
         hashing.deploy();
         hashing.main();
-        let output = native_sdk.output();
+        let output = native_sdk.take_output();
         assert_eq!(
             &output[0..32],
             hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529")
