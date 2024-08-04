@@ -80,7 +80,7 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
     };
 
     quote! {
-        pub fn main(&self) {
+        pub fn main(&mut self) {
             use crate::fluentbase_sdk::NativeAPI;
             let input_size = self.sdk.native_sdk().input_size();
             if input_size < 4 {

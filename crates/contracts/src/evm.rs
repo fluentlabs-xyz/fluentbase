@@ -91,7 +91,7 @@ mod tests {
         .encode_to_vec(0);
         let evm = EVM::new(ctx.clone(), sdk.clone().with_input(core_input));
         evm.main();
-        let output = sdk.output();
+        let output = sdk.take_output();
         assert!(!output.is_empty());
         let mut decoder = BufferDecoder::new(&output);
         let mut result = EvmSloadMethodOutput::default();
@@ -126,7 +126,7 @@ mod tests {
         .encode_to_vec(0);
         let evm = EVM::new(ctx.clone(), sdk.clone().with_input(core_input));
         evm.main();
-        let output = sdk.output();
+        let output = sdk.take_output();
         assert!(!output.is_empty());
         let mut decoder = BufferDecoder::new(&output);
         let mut result = EvmSloadMethodOutput::default();

@@ -59,7 +59,7 @@ fn decode_method_input_fn_impl() -> ImplItem {
 fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
     let selectors: Vec<_> = methods.iter().map(|method| selector_impl(method)).collect();
     syn::parse_quote! {
-        pub fn main(&self) {
+        pub fn main(&mut self) {
             use fluentbase_sdk::NativeAPI;
             let input = {
                 let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
@@ -254,7 +254,8 @@ mod tests {
         let dispatch = main_fn_impl(&method_refs);
 
         let expected_dispatch: ImplItem = parse_quote! {
-            pub fn main(&self) {
+            pub fn main(&mut self) {
+                use fluentbase_sdk::NativeAPI;
                 let input = {
                     let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
                     self.sdk.native_sdk().read(input, 0);

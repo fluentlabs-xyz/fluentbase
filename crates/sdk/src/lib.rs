@@ -8,7 +8,6 @@ extern crate core;
 mod bindings;
 #[macro_use]
 pub mod macros;
-pub mod contracts;
 pub mod journal;
 #[cfg(feature = "std")]
 pub mod runtime;

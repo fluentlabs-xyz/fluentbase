@@ -1,11 +1,12 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
 use shakmaty::{Chess, Position};
 
 #[derive(Contract)]
-struct SHAKMATY<SDK: SharedAPI> {
+struct SHAKMATY<SDK> {
+    #[allow(unused)]
     sdk: SDK,
 }
 

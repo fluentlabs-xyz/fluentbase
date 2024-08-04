@@ -53,7 +53,7 @@ mod tests {
         let rwasm = RWASM::new(sdk);
         rwasm.deploy();
         rwasm.main();
-        let output = native_sdk.output();
+        let output = native_sdk.take_output();
         let module = RwasmModule::new(&output).unwrap();
         assert!(module.code_section.len() > 0);
         assert_eq!(&module.memory_section, "Hello, World".as_bytes());

@@ -1,5 +1,6 @@
 use crate::{Address, Bytes, B256, U256};
 use alloc::{vec, vec::Vec};
+use core::mem::take;
 #[cfg(feature = "std")]
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY},
@@ -17,7 +18,9 @@ use fluentbase_types::{
     JournalCheckpoint,
     NativeAPI,
     SharedAPI,
+    SharedStateResult,
     SovereignAPI,
+    SovereignStateResult,
     TxContext,
     F254,
     KECCAK_EMPTY,
@@ -59,8 +62,8 @@ impl JournalStateEvent {
 
 #[derive(Default)]
 pub struct JournalStateBuilder {
-    storage: Option<HashMap<(Address, U256), U256>>,
     accounts: Option<HashMap<Address, Account>>,
+    storage: Option<HashMap<(Address, U256), U256>>,
     preimages: Option<HashMap<B256, (Bytes, u32)>>,
     block_context: Option<BlockContext>,
     tx_context: Option<TxContext>,
@@ -72,7 +75,7 @@ impl JournalStateBuilder {
         JournalState::<API> {
             storage: self.storage.unwrap_or_default(),
             accounts: self.accounts.unwrap_or_default(),
-            state: Default::default(),
+            dirty_state: Default::default(),
             preimages: self.preimages.unwrap(),
             logs: vec![],
             journal: vec![],
@@ -200,13 +203,16 @@ impl JournalStateBuilder {
 }
 
 pub struct JournalState<API: NativeAPI> {
+    // committed state
     storage: HashMap<(Address, U256), U256>,
-    accounts: HashMap<Address, Account>,
-    state: HashMap<Address, usize>,
     preimages: HashMap<B256, (Bytes, u32)>,
+    accounts: HashMap<Address, Account>,
+    // dirty state
+    dirty_state: HashMap<Address, usize>,
     logs: Vec<JournalStateLog>,
     journal: Vec<JournalStateEvent>,
     native_sdk: API,
+    // block/tx/contract contexts
     block_context: Option<BlockContext>,
     tx_context: Option<TxContext>,
     contract_context: Option<ContractContext>,
@@ -217,7 +223,7 @@ impl<API: NativeAPI> JournalState<API> {
         Self {
             storage: Default::default(),
             accounts: Default::default(),
-            state: Default::default(),
+            dirty_state: Default::default(),
             preimages: Default::default(),
             logs: Default::default(),
             journal: Default::default(),
@@ -230,6 +236,18 @@ impl<API: NativeAPI> JournalState<API> {
 
     pub fn builder(native_sdk: API, builder: JournalStateBuilder) -> Self {
         builder.build(native_sdk)
+    }
+
+    pub fn native_sdk_mut(&mut self) -> &mut API {
+        &mut self.native_sdk
+    }
+
+    pub fn rewrite_tx_context(&mut self, tx_context: TxContext) {
+        self.tx_context = Some(tx_context);
+    }
+
+    pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
+        self.contract_context = Some(contract_context);
     }
 }
 
@@ -250,33 +268,29 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         JournalCheckpoint(self.journal.len() as u32, self.logs.len() as u32)
     }
 
-    fn commit(&mut self) {
-        // for (key, value) in self
-        //     .journal
-        //     .iter()
-        //     .map(|v| (*v.key(), v.preimage()))
-        //     .collect::<HashMap<_, _>>()
-        //     .into_iter()
-        // {
-        //     match value {
-        //         Some((value, flags)) => {
-        //             self.storage.update(&key[..], flags, &value)?;
-        //         }
-        //         None => {
-        //             self.storage.remove(&key[..])?;
-        //         }
-        //     }
-        // }
-        // for (hash, preimage) in self.preimages.iter() {
-        //     self.storage
-        //         .update_preimage(hash, Bytes::from(preimage.clone()));
-        // }
-        // self.journal.clear();
-        // self.preimages.clear();
-        // self.state.clear();
-        // let logs = take(&mut self.logs);
-        // self.root = self.storage.compute_root();
-        // Ok((self.root, logs))
+    fn commit(&mut self) -> SovereignStateResult {
+        let mut result = SovereignStateResult::default();
+        for event in take(&mut self.journal).into_iter() {
+            match event {
+                JournalStateEvent::AccountChanged { account, .. } => {
+                    result.accounts.push(account);
+                }
+                JournalStateEvent::StorageChanged {
+                    address,
+                    slot,
+                    had_value,
+                } => {
+                    result.storages.push((address, slot, had_value));
+                }
+                JournalStateEvent::PreimageChanged { hash } => {
+                    let preimage = self.preimages.get(&hash).cloned().map(|v| v.0).unwrap();
+                    result.preimages.push((hash, preimage));
+                }
+            }
+        }
+        self.journal.clear();
+        self.dirty_state.clear();
+        result
     }
 
     fn rollback(&mut self, checkpoint: JournalCheckpoint) {
@@ -298,10 +312,10 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
                     ..
                 } => match prev_state {
                     Some(prev_state) => {
-                        self.state.insert(*address, *prev_state);
+                        self.dirty_state.insert(*address, *prev_state);
                     }
                     None => {
-                        self.state.remove(address);
+                        self.dirty_state.remove(address);
                     }
                 },
                 JournalStateEvent::StorageChanged {
@@ -324,8 +338,8 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn write_account(&mut self, account: Account, status: AccountStatus) {
-        let prev_state = self.state.get(&account.address).copied();
-        self.state.insert(account.address, self.journal.len());
+        let prev_state = self.dirty_state.get(&account.address).copied();
+        self.dirty_state.insert(account.address, self.journal.len());
         self.journal.push(JournalStateEvent::AccountChanged {
             address: account.address,
             account_status: status,
@@ -335,7 +349,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn account(&self, address: &Address) -> (Account, IsColdAccess) {
-        match self.state.get(address) {
+        match self.dirty_state.get(address) {
             Some(index) => (
                 self.journal.get(*index).unwrap().unwrap_account().clone(),
                 false,
@@ -461,6 +475,10 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         self.contract_context.as_ref().unwrap()
     }
 
+    fn commit(&mut self) -> SharedStateResult {
+        todo!()
+    }
+
     fn account(&self, address: &Address) -> (Account, IsColdAccess) {
         SovereignAPI::account(self, address)
     }
@@ -470,18 +488,19 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {
-        let caller = self.contract_context.as_ref().map(|v| v.caller).unwrap();
+        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
         SovereignAPI::write_storage(self, caller, slot, value);
     }
 
     fn storage(&self, slot: U256) -> U256 {
-        let caller = self.contract_context.as_ref().map(|v| v.caller).unwrap();
+        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
         let (value, _) = SovereignAPI::storage(self, caller, slot);
         value
     }
 
     fn write_log(&mut self, data: Bytes, topics: &[B256]) {
-        todo!()
+        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        SovereignAPI::write_log(self, caller, data, topics);
     }
 
     fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode) {
