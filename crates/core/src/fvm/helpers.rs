@@ -9,6 +9,7 @@ use fuel_core_types::{
     fuel_types::canonical::Deserialize,
     fuel_vm::ContractsStateKey,
 };
+use revm_interpreter::instructions::arithmetic::add;
 
 fn keccak256(data: &[u8], target: &mut Bytes32) {
     LowLevelSDK::keccak256(data.as_ptr(), data.len() as u32, target.as_mut_ptr());
@@ -158,7 +159,14 @@ impl PreimageKey for ContractsStateHelper {
     const COLUMN: Column = Column::ContractsState;
 }
 
+impl StorageSlot for ContractsStateHelper {
+    const COLUMN: Column = Column::ContractsState;
+}
+
 impl ContractsStateHelper {
+    const MERKLE_DATA_STORAGE_SLOT: u32 = 0;
+    const MERKLE_METADATA_STORAGE_SLOT: u32 = 1;
+
     pub(crate) fn new(key: &Bytes64) -> Self {
         return Self {
             original_key: ContractsStateKey::from_array(*key),
@@ -178,6 +186,17 @@ impl ContractsStateHelper {
     pub(crate) fn value_preimage_key(&self) -> IndexedHash {
         Self::preimage_key_raw(self.original_key.as_ref())
     }
+
+    pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
+        Self::storage_slot_raw(self.original_key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT)
+    }
+
+    pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
+        Self::storage_slot_raw(
+            self.original_key.as_ref(),
+            Self::MERKLE_METADATA_STORAGE_SLOT,
+        )
+    }
 }
 
 pub(crate) struct ContractsAssetsHelper {
@@ -190,6 +209,8 @@ impl StorageSlot for ContractsAssetsHelper {
 
 impl ContractsAssetsHelper {
     const VALUE_STORAGE_SLOT: u32 = 0;
+    const MERKLE_DATA_STORAGE_SLOT: u32 = 1;
+    const MERKLE_METADATA_STORAGE_SLOT: u32 = 2;
     pub(crate) fn new(key: &Bytes64) -> Self {
         return Self {
             original_key: ContractsAssetKey::from_array(*key),
@@ -198,7 +219,7 @@ impl ContractsAssetsHelper {
 
     pub(crate) fn from_slice(v: &[u8]) -> Self {
         return Self {
-            original_key: ContractsAssetKey::from_slice(v).expect("valid contracts assets key"),
+            original_key: ContractsAssetKey::from_slice(v).expect("contracts assets key 64 bytes"),
         };
     }
 
@@ -214,14 +235,25 @@ impl ContractsAssetsHelper {
         )
     }
 
-    pub(crate) fn value_to_u256(v: &[u8; 4]) -> U256 {
+    pub(crate) fn value_to_u256(v: &[u8; 8]) -> U256 {
         U256::from_be_slice(v)
     }
 
-    pub(crate) fn u256_to_value(v: &U256) -> [u8; 4] {
-        let mut res = [0u8; 4];
+    pub(crate) fn u256_to_value(v: &U256) -> [u8; 8] {
+        let mut res = [0u8; 8];
         res.copy_from_slice(&v.to_be_bytes::<32>()[24..]);
         res
+    }
+
+    pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
+        Self::storage_slot_raw(self.original_key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT)
+    }
+
+    pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
+        Self::storage_slot_raw(
+            self.original_key.as_ref(),
+            Self::MERKLE_METADATA_STORAGE_SLOT,
+        )
     }
 }
 
@@ -235,6 +267,8 @@ impl StorageSlot for CoinsHelper {
 
 impl CoinsHelper {
     const OWNER_WITH_BALANCE_SLOT: u32 = 0;
+    const OWNER_SLOT: u32 = 1;
+    const BALANCE_SLOT: u32 = 2;
     pub(crate) fn new(key: &Bytes34) -> Self {
         return Self { original_key: *key };
     }
@@ -248,9 +282,25 @@ impl CoinsHelper {
         self.original_key
     }
 
-    pub(crate) fn owner_with_balance_storage_slot(&self) -> U256 {
+    // pub(crate) fn owner_with_balance_storage_slot(&self) -> U256 {
+    //     U256::from_be_bytes(
+    //         Self::storage_slot_raw(self.original_key.as_ref(), Self::OWNER_WITH_BALANCE_SLOT)
+    //             .inner()
+    //             .clone(),
+    //     )
+    // }
+
+    pub(crate) fn owner_storage_slot(&self) -> U256 {
         U256::from_be_bytes(
-            Self::storage_slot_raw(self.original_key.as_ref(), Self::OWNER_WITH_BALANCE_SLOT)
+            Self::storage_slot_raw(self.original_key.as_ref(), Self::OWNER_SLOT)
+                .inner()
+                .clone(),
+        )
+    }
+
+    pub(crate) fn balance_storage_slot(&self) -> U256 {
+        U256::from_be_bytes(
+            Self::storage_slot_raw(self.original_key.as_ref(), Self::BALANCE_SLOT)
                 .inner()
                 .clone(),
         )
@@ -266,13 +316,16 @@ impl FuelAddress {
         Self { address }
     }
 
-    pub(crate) fn address(&self) -> fuel_types::Address {
+    pub(crate) fn get(&self) -> fuel_types::Address {
         self.address
+    }
+    pub(crate) fn fluent_address(&self) -> Address {
+        Address::from_slice(&self.address[12..])
     }
 }
 
-impl From<Address> for FuelAddress {
-    fn from(value: Address) -> Self {
+impl From<&Address> for FuelAddress {
+    fn from(value: &Address) -> Self {
         let mut address = fuel_types::Address::default();
         address[12..].copy_from_slice(&value.0 .0);
         Self { address }
@@ -285,26 +338,27 @@ impl AsRef<fuel_types::Address> for FuelAddress {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct CoinsOwnerWithBalanceHelper {
-    address: Address,
+    address: fuel_types::Address,
     balance: u64,
 }
 
 impl CoinsOwnerWithBalanceHelper {
     pub const ENCODED_LEN: usize = size_of::<Address>() + size_of::<u64>();
 
-    pub(crate) fn new(address: Address, balance: u64) -> Self {
+    pub(crate) fn new(address: fuel_types::Address, balance: u64) -> Self {
         Self { address, balance }
     }
 
     pub(crate) fn from_owner(owner: &fuel_types::Address, balance: u64) -> Self {
         Self {
-            address: Address::from_slice(&owner[12..]),
+            address: owner.clone(),
             balance,
         }
     }
 
-    pub(crate) fn address(&self) -> &Address {
+    pub(crate) fn address(&self) -> &fuel_types::Address {
         return &self.address;
     }
 
@@ -312,22 +366,20 @@ impl CoinsOwnerWithBalanceHelper {
         return self.balance;
     }
 
-    pub(crate) fn to_u256(&self) -> U256 {
-        let mut res = Bytes32::default();
-        res.copy_from_slice(self.address.as_slice());
-        res[size_of::<Address>()..].copy_from_slice(&self.balance.to_be_bytes());
-        U256::from_be_slice(&res)
+    pub(crate) fn to_u256_address_balance(&self) -> (U256, U256) {
+        (
+            U256::from_be_slice(self.address.as_slice()),
+            U256::from_limbs_slice(&[self.balance]),
+        )
     }
 
-    pub(crate) fn from_u256(v: &U256) -> Self {
-        let v = v.to_be_bytes::<32>();
-        let mut address = Address::from_slice(&v[..size_of::<Address>()]);
-        let mut balance_arr = [0u8; size_of::<u64>()];
-        balance_arr
-            .copy_from_slice(&v[size_of::<Address>()..size_of::<Address>() + size_of::<u64>()]);
+    pub(crate) fn from_u256_address_balance(v: &(U256, U256)) -> Self {
+        let address = &v.0.to_be_bytes::<32>();
+        let balance = &v.1.as_limbs()[0];
+        let address = fuel_types::Address::from_bytes_ref(address);
         CoinsOwnerWithBalanceHelper {
-            address,
-            balance: u64::from_be_bytes(balance_arr),
+            address: *address,
+            balance: *balance,
         }
     }
 }
