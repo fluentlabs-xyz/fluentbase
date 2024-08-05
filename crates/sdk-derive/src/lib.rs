@@ -32,6 +32,15 @@ pub fn derive_keccak256_id(token: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
+pub fn derive_keccak256(token: TokenStream) -> TokenStream {
+    let signature = token.to_string();
+    let method_id = utils::calculate_keccak256(&signature);
+    TokenStream::from(quote! {
+        [#(#method_id,)*]
+    })
+}
+
+#[proc_macro]
 #[proc_macro_error]
 pub fn solidity_storage(token: TokenStream) -> TokenStream {
     solidity_storage::SolidityStorage::expand(token)
