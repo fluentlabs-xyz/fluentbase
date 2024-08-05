@@ -8,39 +8,24 @@ use crate::fvm::helpers::{
     FuelAddress,
     MetadataHelper,
 };
-use alloc::{borrow::Cow, format, vec, vec::Vec};
-use core::{hash::Hash, ops::Deref};
-use fluentbase_sdk::{
-    AccountManager,
-    Address,
-    Bytes,
-    ContextReader,
-    GuestAccountManager,
-    GuestContextReader,
-    U256,
-};
+use alloc::{vec, vec::Vec};
+use core::hash::Hash;
+use fluentbase_sdk::{AccountManager, Address, Bytes, ContextReader, U256};
 use fluentbase_types::{Bytes32, Bytes34, Bytes64};
-// use fuel_core::state::generic_database::GenericDatabase;
 use fuel_core_executor::ports::RelayerPort;
 use fuel_core_storage::{
     self,
     codec::Encoder,
     column::Column,
-    kv_store::KeyValueInspect,
-    kv_store::KeyValueMutate,
-    kv_store::Value,
-    kv_store::WriteOperation,
+    kv_store::{KeyValueInspect, KeyValueMutate, Value, WriteOperation},
     transactional::{Changes, Modifiable},
     Mappable,
     Result as StorageResult,
-    // StorageInspect,
-    // StorageMutate
 };
 use fuel_core_types::{
     blockchain::primitives::DaBlockHeight,
     entities::coins::coin::{CompressedCoin, CompressedCoinV1},
     fuel_tx::{AssetId, ContractId},
-    fuel_types::canonical::Serialize,
     services::relayer::Event,
 };
 use revm_primitives::{bitvec::macros::internal::funty::Fundamental, hex};

@@ -9,7 +9,6 @@ use fuel_core_types::{
     fuel_types::canonical::Deserialize,
     fuel_vm::ContractsStateKey,
 };
-use revm_interpreter::instructions::arithmetic::add;
 
 fn keccak256(data: &[u8], target: &mut Bytes32) {
     LowLevelSDK::keccak256(data.as_ptr(), data.len() as u32, target.as_mut_ptr());
