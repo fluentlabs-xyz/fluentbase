@@ -8,7 +8,7 @@ use fluentbase_core::fvm::transact::_fvm_transact_inner;
 use fluentbase_sdk::{
     basic_entrypoint,
     contracts::BlendedAPI,
-    derive::{derive_keccak256, derive_keccak256_id, Contract},
+    derive::{derive_keccak256, Contract},
     AccountManager,
     Bytes,
     Bytes32,
