@@ -122,7 +122,7 @@ where
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
     T: KeyValueMutate<Column = Column>,
 {
-    debug_log!("ecl(_fvm_transact_inner): start");
+    debug_log!("ecl(fvm_transact_commit): start");
 
     // TODO warmup storage from state based on tx inputs?
     // let inputs = checked_tx.transaction().inputs();
@@ -160,6 +160,10 @@ where
             | Column::ContractsState
             | Column::ContractsLatestUtxo
             | Column::ContractsAssets
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata
             | Column::Coins => {
                 for (key, op) in changes {
                     match op {
@@ -177,10 +181,6 @@ where
             | Column::FuelBlocks
             | Column::FuelBlockMerkleData
             | Column::FuelBlockMerkleMetadata
-            | Column::ContractsAssetsMerkleData
-            | Column::ContractsAssetsMerkleMetadata
-            | Column::ContractsStateMerkleData
-            | Column::ContractsStateMerkleMetadata
             | Column::Messages
             | Column::ProcessedTransactions
             | Column::FuelBlockConsensus
@@ -188,7 +188,7 @@ where
             | Column::StateTransitionBytecodeVersions
             | Column::UploadedBytecodes
             | Column::GenesisMetadata => {
-                // panic!("unsupported column {:?} operation")
+                panic!("unsupported column {:?} operation", column)
             }
         }
     }
