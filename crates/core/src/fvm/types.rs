@@ -135,12 +135,12 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     }
 
     pub(crate) fn contracts_state_merkle_data_update(&self, raw_key: &Bytes32, data: &[u8]) {
-        let key = ContractsStateHelper::from_slice(raw_key).merkle_data_preimage_key();
+        let key = ContractsStateHelper::new_transformed(raw_key).merkle_data_preimage_key();
         self.am.update_preimage(&key, 0, data);
     }
 
     pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key = ContractsStateHelper::from_slice(raw_key).merkle_data_preimage_key();
+        let key = ContractsStateHelper::new_transformed(raw_key).merkle_data_preimage_key();
         let preimage = self.am.preimage(&key);
         if preimage.len() > 0 {
             return Some(preimage);
@@ -149,12 +149,12 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     }
 
     pub(crate) fn contracts_state_merkle_metadata_update(&self, raw_key: &Bytes32, data: &[u8]) {
-        let key = ContractsStateHelper::from_slice(raw_key).merkle_metadata_preimage_key();
+        let key = ContractsStateHelper::new_transformed(raw_key).merkle_metadata_preimage_key();
         self.am.update_preimage(&key, 0, data);
     }
 
     pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key = ContractsStateHelper::from_slice(raw_key).merkle_metadata_preimage_key();
+        let key = ContractsStateHelper::new_transformed(raw_key).merkle_metadata_preimage_key();
         let preimage = self.am.preimage(&key);
         if preimage.len() > 0 {
             return Some(preimage);
@@ -184,12 +184,12 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     }
 
     pub(crate) fn contracts_assets_merkle_data_update(&self, raw_key: &Bytes32, value: &[u8]) {
-        let key = ContractsAssetsHelper::from_slice(raw_key).merkle_data_preimage_key();
+        let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_data_preimage_key();
         self.am.update_preimage(&key, 0, value);
     }
 
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key = ContractsAssetsHelper::from_slice(raw_key).merkle_data_preimage_key();
+        let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_data_preimage_key();
         let preimage = self.am.preimage(&key);
         if preimage.len() > 0 {
             return Some(preimage);
@@ -198,12 +198,12 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     }
 
     pub(crate) fn contracts_assets_merkle_metadata_update(&self, raw_key: &Bytes32, value: &[u8]) {
-        let key = ContractsAssetsHelper::from_slice(raw_key).merkle_metadata_preimage_key();
+        let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_metadata_preimage_key();
         self.am.update_preimage(&key, 0, value);
     }
 
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key = ContractsAssetsHelper::from_slice(raw_key).merkle_metadata_preimage_key();
+        let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_metadata_preimage_key();
         let preimage = self.am.preimage(&key);
         if preimage.len() > 0 {
             return Some(preimage);
@@ -333,35 +333,35 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
             Column::ContractsStateMerkleData => {
                 // key - 32 bytes
                 // value - 66 bytes
-                // let key: Bytes32 = key.try_into().expect("32 bytes key");
-                // let data = self.contracts_state_merkle_data(&key);
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                let data = self.contracts_state_merkle_data(&key);
 
-                // return Ok(data.map(|v| v.to_vec()));
+                return Ok(data.map(|v| v.to_vec()));
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
-                // let key: Bytes32 = key.try_into().expect("32 bytes key");
-                // let data = self.contracts_state_merkle_metadata(&key);
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                let data = self.contracts_state_merkle_metadata(&key);
 
-                // return Ok(data.map(|v| v.to_vec()));
+                return Ok(data.map(|v| v.to_vec()));
             }
 
             Column::ContractsAssetsMerkleData => {
                 // key - 32 bytes
                 // value - 66 bytes
-                // let key: Bytes32 = key.try_into().expect("32 bytes key");
-                // let data = self.contracts_assets_merkle_data(&key);
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                let data = self.contracts_assets_merkle_data(&key);
 
-                // return Ok(data.map(|v| v.to_vec()));
+                return Ok(data.map(|v| v.to_vec()));
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
-                // let key: Bytes32 = key.try_into().expect("32 bytes key");
-                // let data = self.contracts_assets_merkle_metadata(&key);
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                let data = self.contracts_assets_merkle_metadata(&key);
 
-                // return Ok(data.map(|v| v.to_vec()));
+                return Ok(data.map(|v| v.to_vec()));
             }
 
             Column::Transactions
@@ -472,26 +472,30 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
                 // key - 32 bytes
                 // value - 66 bytes
                 assert!(buf.len() == 66, "buf len invalid: {}", buf.len());
-                // TODO
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_state_merkle_data_update(&key, buf);
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
                 assert!(buf.len() == 33, "buf len invalid: {}", buf.len());
-                // TODO
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_state_merkle_metadata_update(&key, buf);
             }
 
             Column::ContractsAssetsMerkleData => {
                 // key - 32 bytes
                 // value - 66 bytes
                 assert!(buf.len() == 66, "buf len invalid: {}", buf.len());
-                // TODO
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_assets_merkle_data_update(&key, buf);
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
                 assert!(buf.len() == 33, "buf len invalid: {}", buf.len());
-                // TODO
+                let key: Bytes32 = key.try_into().expect("32 bytes key");
+                self.contracts_assets_merkle_metadata_update(&key, buf);
             }
 
             Column::Transactions

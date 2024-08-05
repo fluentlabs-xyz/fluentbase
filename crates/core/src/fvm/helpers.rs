@@ -151,8 +151,13 @@ impl ContractsLatestUtxoHelper {
     }
 }
 
+pub(crate) enum ContractsStateKeyWrapper {
+    Original(ContractsStateKey),
+    Transformed(Bytes32),
+}
+
 pub(crate) struct ContractsStateHelper {
-    original_key: ContractsStateKey,
+    key: ContractsStateKeyWrapper,
 }
 
 impl PreimageKey for ContractsStateHelper {
@@ -169,38 +174,56 @@ impl ContractsStateHelper {
 
     pub(crate) fn new(key: &Bytes64) -> Self {
         return Self {
-            original_key: ContractsStateKey::from_array(*key),
+            key: ContractsStateKeyWrapper::Original(ContractsStateKey::from_array(*key)),
         };
     }
 
-    pub(crate) fn from_slice(v: &[u8]) -> Self {
+    pub(crate) fn new_transformed(key: &Bytes32) -> Self {
         return Self {
-            original_key: ContractsStateKey::from_slice(v).expect("valid contract state key"),
+            key: ContractsStateKeyWrapper::Transformed(*key),
         };
     }
 
-    pub(crate) fn get(&self) -> ContractsStateKey {
-        self.original_key
+    // pub(crate) fn from_slice(v: &[u8]) -> Self {
+    //     return Self {
+    //         key: ContractsStateKey::from_slice(v)
+    //             .expect("valid contract state key 64 bytes"),
+    //     };
+    // }
+
+    pub(crate) fn get(&self) -> &ContractsStateKeyWrapper {
+        &self.key
     }
 
     pub(crate) fn value_preimage_key(&self) -> IndexedHash {
-        Self::preimage_key_raw(self.original_key.as_ref())
+        if let ContractsStateKeyWrapper::Original(key) = self.key {
+            return Self::preimage_key_raw(key.as_ref());
+        }
+        panic!("original key expected")
     }
 
     pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
-        Self::storage_slot_raw(self.original_key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT)
+        if let ContractsStateKeyWrapper::Transformed(key) = self.key {
+            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT);
+        }
+        panic!("transformed key expected")
     }
 
     pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
-        Self::storage_slot_raw(
-            self.original_key.as_ref(),
-            Self::MERKLE_METADATA_STORAGE_SLOT,
-        )
+        if let ContractsStateKeyWrapper::Transformed(key) = self.key {
+            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_METADATA_STORAGE_SLOT);
+        }
+        panic!("transformed key expected")
     }
 }
 
+pub(crate) enum ContractsAssetKeyWrapper {
+    Original(ContractsAssetKey),
+    Transformed(Bytes32),
+}
+
 pub(crate) struct ContractsAssetsHelper {
-    original_key: ContractsAssetKey,
+    key: ContractsAssetKeyWrapper,
 }
 
 impl StorageSlot for ContractsAssetsHelper {
@@ -211,28 +234,36 @@ impl ContractsAssetsHelper {
     const VALUE_STORAGE_SLOT: u32 = 0;
     const MERKLE_DATA_STORAGE_SLOT: u32 = 1;
     const MERKLE_METADATA_STORAGE_SLOT: u32 = 2;
-    pub(crate) fn new(key: &Bytes64) -> Self {
+    pub(crate) fn new(original_key: &Bytes64) -> Self {
         return Self {
-            original_key: ContractsAssetKey::from_array(*key),
+            key: ContractsAssetKeyWrapper::Original(ContractsAssetKey::from_array(*original_key)),
+        };
+    }
+    pub(crate) fn from_transformed(key: &Bytes32) -> Self {
+        return Self {
+            key: ContractsAssetKeyWrapper::Transformed(*key),
         };
     }
 
-    pub(crate) fn from_slice(v: &[u8]) -> Self {
-        return Self {
-            original_key: ContractsAssetKey::from_slice(v).expect("contracts assets key 64 bytes"),
-        };
-    }
+    // pub(crate) fn from_slice(v: &[u8]) -> Self {
+    //     return Self {
+    //         original_key: ContractsAssetKey::from_slice(v).expect("contracts assets key 64
+    // bytes"),     };
+    // }
 
-    pub(crate) fn get(&self) -> ContractsAssetKey {
-        self.original_key
+    pub(crate) fn get(&self) -> &ContractsAssetKeyWrapper {
+        &self.key
     }
 
     pub(crate) fn value_storage_slot(&self) -> U256 {
-        U256::from_be_bytes(
-            Self::storage_slot_raw(self.original_key.as_ref(), Self::VALUE_STORAGE_SLOT)
-                .inner()
-                .clone(),
-        )
+        if let ContractsAssetKeyWrapper::Original(key) = self.key {
+            return U256::from_be_bytes(
+                Self::storage_slot_raw(key.as_ref(), Self::VALUE_STORAGE_SLOT)
+                    .inner()
+                    .clone(),
+            );
+        }
+        panic!("original key expected")
     }
 
     pub(crate) fn value_to_u256(v: &[u8; 8]) -> U256 {
@@ -246,14 +277,17 @@ impl ContractsAssetsHelper {
     }
 
     pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
-        Self::storage_slot_raw(self.original_key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT)
+        if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
+            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT);
+        }
+        panic!("transformed key expected")
     }
 
     pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
-        Self::storage_slot_raw(
-            self.original_key.as_ref(),
-            Self::MERKLE_METADATA_STORAGE_SLOT,
-        )
+        if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
+            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_METADATA_STORAGE_SLOT);
+        }
+        panic!("transformed key expected")
     }
 }
 
