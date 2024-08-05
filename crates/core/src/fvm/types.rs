@@ -375,10 +375,10 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
             | Column::StateTransitionBytecodeVersions
             | Column::UploadedBytecodes
             | Column::GenesisMetadata => {
-                // panic!(
-                //     "unsupported column referenced '{:?}' while getting data from storage",
-                //     &column
-                // )
+                panic!(
+                    "unsupported column referenced '{:?}' while getting data from storage",
+                    &column
+                )
             }
         }
         Ok(None)
@@ -471,14 +471,22 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
             Column::ContractsStateMerkleData => {
                 // key - 32 bytes
                 // value - 66 bytes
-                assert!(buf.len() == 66, "buf len invalid: {}", buf.len());
+                assert!(
+                    buf.len() == 66 || buf.len() == 0,
+                    "buf len invalid: {}",
+                    buf.len()
+                );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 self.contracts_state_merkle_data_update(&key, buf);
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
-                assert!(buf.len() == 33, "buf len invalid: {}", buf.len());
+                assert!(
+                    buf.len() == 33 || buf.len() == 0,
+                    "buf len invalid: {}",
+                    buf.len()
+                );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 self.contracts_state_merkle_metadata_update(&key, buf);
             }
@@ -486,14 +494,22 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
             Column::ContractsAssetsMerkleData => {
                 // key - 32 bytes
                 // value - 66 bytes
-                assert!(buf.len() == 66, "buf len invalid: {}", buf.len());
+                assert!(
+                    buf.len() == 66 || buf.len() == 0,
+                    "buf len invalid: {}",
+                    buf.len()
+                );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 self.contracts_assets_merkle_data_update(&key, buf);
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
                 // value - 33 bytes
-                assert!(buf.len() == 33, "buf len invalid: {}", buf.len());
+                assert!(
+                    buf.len() == 33 || buf.len() == 0,
+                    "buf len invalid: {}",
+                    buf.len()
+                );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 self.contracts_assets_merkle_metadata_update(&key, buf);
             }
@@ -526,7 +542,11 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
             | Column::ContractsState
             | Column::ContractsLatestUtxo
             | Column::ContractsAssets
-            | Column::Coins => {
+            | Column::Coins
+            | Column::ContractsAssetsMerkleData
+            | Column::ContractsAssetsMerkleMetadata
+            | Column::ContractsStateMerkleData
+            | Column::ContractsStateMerkleMetadata => {
                 self.write(key, column, &[])?;
             }
 
@@ -534,10 +554,6 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
             | Column::FuelBlocks
             | Column::FuelBlockMerkleData
             | Column::FuelBlockMerkleMetadata
-            | Column::ContractsAssetsMerkleData
-            | Column::ContractsAssetsMerkleMetadata
-            | Column::ContractsStateMerkleData
-            | Column::ContractsStateMerkleMetadata
             | Column::Messages
             | Column::ProcessedTransactions
             | Column::FuelBlockConsensus
@@ -545,10 +561,10 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueMutate for WasmStorage<'
             | Column::StateTransitionBytecodeVersions
             | Column::UploadedBytecodes
             | Column::GenesisMetadata => {
-                // panic!(
-                //     "unsupported column referenced '{:?}' while deleting data",
-                //     &column
-                // )
+                panic!(
+                    "unsupported column referenced '{:?}' while deleting data",
+                    &column
+                )
             }
         }
         Ok(())
