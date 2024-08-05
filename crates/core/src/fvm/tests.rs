@@ -8,23 +8,14 @@ mod tests {
     use fluentbase_sdk::{GuestAccountManager, GuestContextReader};
     use fuel_core::{
         database::{database_description::on_chain::OnChain, Database, RegularStage},
-        executor::test_helpers::{
-            create_contract,
-            create_executor,
-            make_tx_and_message,
-            message_from_input,
-            setup_executable_script,
-            Config,
-        },
+        executor::test_helpers::{create_contract, setup_executable_script},
     };
     use fuel_core_executor::{executor::ExecutionData, refs::ContractRef};
     use fuel_core_storage::{
         rand::rngs::StdRng,
         structured_storage::StructuredStorage,
-        tables::{Coins, Messages},
-        transactional::{AtomicView, Modifiable, WriteTransaction},
-        MerkleRoot,
-        MerkleRootStorage,
+        tables::Coins,
+        transactional::{Modifiable, WriteTransaction},
         StorageAsMut,
         StorageInspect,
         StorageMutate,
@@ -37,17 +28,15 @@ mod tests {
         entities::coins::coin::CompressedCoin,
         fuel_asm::{op, RegId},
         fuel_crypto::rand::{Rng, SeedableRng},
-        fuel_merkle::{sparse, storage::StorageMutateInfallible},
+        fuel_merkle::sparse,
         fuel_tx::{
             field::{Inputs, Outputs, Script},
             Address,
             AssetId,
             Cacheable,
             ConsensusParameters,
-            Finalizable,
             Output,
             Transaction,
-            TransactionBuilder,
             TxParameters,
             UniqueIdentifier,
             UtxoId,
@@ -60,7 +49,6 @@ mod tests {
             util::test_helpers::TestBuilder,
             Call,
             ProgramState,
-            SecretKey,
         },
         services::executor::{Error, TransactionValidityError},
     };
