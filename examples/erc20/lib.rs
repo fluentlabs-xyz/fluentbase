@@ -76,8 +76,8 @@ fn emit_approval_event<AM: AccountManager>(
 }
 
 solidity_storage! {
-    mapping(Address => U256) Balance<EvmAPI>;
-    mapping(Address => mapping(Address => U256)) Allowance<EvmAPI>;
+    mapping(Address => U256) Balance;
+    mapping(Address => mapping(Address => U256)) Allowance;
 }
 
 impl<'a, T: EvmAPI> Balance<'a, T> {
