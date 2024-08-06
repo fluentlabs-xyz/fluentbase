@@ -2,11 +2,7 @@ use crate::{debug_log, fvm::types::WasmStorage, helpers_fvm::fvm_transact_commit
 use alloc::vec::Vec;
 use fluentbase_sdk::{AccountManager, ContextReader};
 use fuel_core_executor::executor::ExecutionData;
-use fuel_core_storage::{
-    column::Column,
-    kv_store::{KeyValueMutate, WriteOperation},
-    transactional::Changes,
-};
+use fuel_core_storage::transactional::Changes;
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
     fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
