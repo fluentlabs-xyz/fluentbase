@@ -84,6 +84,8 @@ strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 regex = { version = "1.10" }
+#borsh = { version = "1.5.1", default-features = false, features = ["bytes", "derive", "hashbrown"] }
+#borsh-derive = { version = "1.5.1" }
 
 [profile.bench]
 lto = "fat"

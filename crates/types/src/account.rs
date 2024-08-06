@@ -16,6 +16,7 @@ use crate::{
     U256,
 };
 use byteorder::{ByteOrder, LittleEndian};
+use fluentbase_codec::Codec;
 use revm_primitives::AccountInfo;
 
 /// Number of fields
@@ -52,7 +53,7 @@ pub enum AccountStatus {
     Transfer,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Codec, Debug, Clone)]
 pub struct Account {
     pub address: Address,
     pub balance: U256,

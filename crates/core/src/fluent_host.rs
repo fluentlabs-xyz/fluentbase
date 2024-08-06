@@ -24,8 +24,8 @@ use revm_interpreter::{
 use revm_primitives::{TransientStorage, BLOCK_HASH_HISTORY};
 
 pub struct FluentHost<'sdk, SDK: SovereignAPI> {
-    pub(crate) env: Env,
-    pub(crate) sdk: Option<&'sdk mut SDK>,
+    pub env: Env,
+    pub sdk: Option<&'sdk mut SDK>,
     // transient storage
     transient_storage: TransientStorage,
 }
@@ -70,6 +70,10 @@ impl<'sdk, SDK: SovereignAPI> FluentHost<'sdk, SDK> {
             sdk: Some(sdk),
             transient_storage: TransientStorage::new(),
         }
+    }
+
+    pub fn take_sdk(&mut self) -> &mut SDK {
+        self.sdk.take().unwrap()
     }
 }
 
