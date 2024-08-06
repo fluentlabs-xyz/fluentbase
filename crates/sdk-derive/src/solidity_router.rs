@@ -203,7 +203,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
             }
         };
         let sol_sig = get_raw_signature(item);
-        let sol_sig = calculate_keccak256_bytes(sol_sig.to_string().as_str());
+        let sol_sig = calculate_keccak256_bytes::<4>(sol_sig.to_string().as_str());
         let method = quote! {
             #sig {
                 use alloy_sol_types::{SolValue};
@@ -251,7 +251,7 @@ pub fn derive_solidity_client(_attr: TokenStream, ast: ItemTrait) -> TokenStream
 mod tests {
     use super::*;
     use crate::utils::rust_name_to_sol;
-    use syn::{parse_quote, Ident, ImplItem};
+    use syn::{parse_quote, Ident};
 
     #[test]
     fn test_get_signatures_full_signature() {
@@ -264,18 +264,7 @@ mod tests {
             }
         };
 
-        let methods = item_impl
-            .items
-            .iter()
-            .filter_map(|item| {
-                if let ImplItem::Fn(func) = item {
-                    Some(func)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<&ImplItemFn>>();
-
+        let methods = get_all_methods(&item_impl);
         let signatures = get_signatures(&methods);
 
         let expected = quote! {
@@ -298,18 +287,7 @@ mod tests {
             }
         };
 
-        let methods = item_impl
-            .items
-            .iter()
-            .filter_map(|item| {
-                if let ImplItem::Fn(func) = item {
-                    Some(func)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<&ImplItemFn>>();
-
+        let methods = get_all_methods(&item_impl);
         let signatures = get_signatures(&methods);
 
         let expected = quote! {
@@ -333,9 +311,7 @@ mod tests {
             greetCall::SELECTOR => {
                 let msg = match greetCall::abi_decode(&input, true) {
                     Ok(decoded) => decoded.msg,
-                    Err(e) => {
-                        panic!("Failed to decode input {:?}", e);
-                    }
+                    Err(_) => panic!("failed to decode input"),
                 };
                 let output = self.greet(msg).abi_encode();
                 SDK::write(output.as_ptr(), output.len() as u32);

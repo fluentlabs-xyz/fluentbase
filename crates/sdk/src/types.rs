@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use fluentbase_codec::Encoder;
 use fluentbase_codec_derive::Codec;
 use fluentbase_sdk_derive::derive_keccak256_id;
-use fluentbase_types::{Address, Bytes, ExitCode, U256};
+use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, U256};
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct CoreInput<T: Encoder<T> + Default> {
@@ -146,3 +146,22 @@ pub const WASM_CALL_METHOD_ID: u32 =
 
 pub type WasmCallMethodInput = EvmCallMethodInput;
 pub type WasmCallMethodOutput = EvmCallMethodOutput;
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmCreateMethodInput {
+    // checked_tx: Checked<Tx>,
+    // header: &'a PartialBlockHeader,
+    // coinbase_contract_id: ContractId,
+    // gas_price: Word,
+    // storage_tx: &'a mut TxStorageTransaction<'a, T>,
+    // memory: &'a mut MemoryInstance,
+}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmCreateMethodOutput {}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmCallMethodInput {}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmCallMethodOutput {}

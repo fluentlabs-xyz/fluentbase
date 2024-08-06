@@ -7,96 +7,360 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
     token::Semi,
-    Path,
     Result as SynResult,
 };
 use syn_solidity::{Type, TypeArray, TypeMapping};
 
 trait Expandable {
-    fn expand(&self, slot: usize) -> SynResult<proc_macro2::TokenStream>;
+    fn expand(&self) -> SynResult<proc_macro2::TokenStream>;
 }
 
-pub struct SolidityStorage;
+#[derive(Clone, Debug)]
+pub struct SolidityStorage {
+    items: Vec<StorageItem>,
+}
+
 impl SolidityStorage {
     fn new() -> Self {
-        Self
+        Self { items: Vec::new() }
     }
 
     pub fn expand(input: TokenStream) -> TokenStream {
-        let input = parse_macro_input!(input as StorageItems);
+        // Call Parse method for storageItems
+        let storage = parse_macro_input!(input as SolidityStorage);
 
-        let output = SolidityStorage::expand_storage_input(&input)
-            .unwrap_or_else(|err| abort!(err.span(), err.to_string()));
-
-        TokenStream::from(output)
-    }
-
-    fn expand_storage_input(input: &StorageItems) -> SynResult<proc_macro2::TokenStream> {
         let mut expanded = proc_macro2::TokenStream::new();
 
-        for (index, item) in input.items.iter().enumerate() {
-            expanded.extend(item.expand(index)?);
+        for item in storage.items.iter() {
+            expanded.extend(
+                item.expand()
+                    .unwrap_or_else(|err| abort!(err.span(), err.to_string())),
+            );
+        }
+        let trait_definition = trait_definition();
+        let expanded = quote! {
+            #trait_definition
+            #expanded
+        };
+
+        TokenStream::from(expanded)
+    }
+}
+fn trait_definition() -> proc_macro2::TokenStream {
+    quote! {
+        pub trait StorageValue<Client, T> {
+            fn get(client: &Client, key: fluentbase_sdk::U256) -> Result<T, String>;
+            fn set(client: &Client, key: fluentbase_sdk::U256, value: T) -> Result<(), String>;
         }
 
-        Ok(expanded)
+        impl<Client, T> StorageValue<Client, T> for T
+        where
+            Client: fluentbase_sdk::contracts::EvmAPI,
+            T: fluentbase_sdk::codec::Encoder<T> + Default,
+        {
+            fn get(client: &Client, key: fluentbase_sdk::U256) -> Result<T, String> {
+                let header_size = T::HEADER_SIZE;
+
+                let mut buffer = vec![];
+
+                for i in 0.. {
+                    let key = key + fluentbase_sdk::U256::from(i);
+                    let input = fluentbase_sdk::contracts::EvmSloadInput { index: key };
+                    let output = client.sload(input);
+
+                    let chunk = output.value.to_be_bytes::<32>();
+
+                    if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk);
+                }
+
+                let mut decoder = fluentbase_sdk::codec::BufferDecoder::new(&buffer);
+                let mut body = T::default();
+                T::decode_body(&mut decoder, 0, &mut body);
+                Ok(body)
+            }
+
+            fn set(client: &Client, key: fluentbase_sdk::U256, value: T) -> Result<(), String> {
+                let encoded_buffer = value.encode_to_vec(0);
+
+                let chunk_size = 32;
+                let num_chunks = (encoded_buffer.len() + chunk_size - 1) / chunk_size;
+
+                for i in 0..num_chunks {
+                    let start = i * chunk_size;
+                    let end = (start + chunk_size).min(encoded_buffer.len());
+                    let chunk = &encoded_buffer[start..end];
+
+                    let mut chunk_padded = [0u8; 32];
+                    chunk_padded[..chunk.len()].copy_from_slice(chunk);
+
+                    let value_u256 = fluentbase_sdk::U256::from_be_bytes(chunk_padded);
+                    let input = fluentbase_sdk::contracts::EvmSstoreInput {
+                        index: key + U256::from(i),
+                        value: value_u256,
+                    };
+
+                    client.sstore(input);
+                }
+
+                Ok(())
+            }
+        }
+
     }
 }
 
-#[derive(Clone, Debug)]
-struct StorageItems {
-    items: Punctuated<StorageItem, Semi>,
-}
-
-impl Parse for StorageItems {
+impl Parse for SolidityStorage {
     fn parse(input: ParseStream) -> SynResult<Self> {
-        let items = input.parse_terminated(StorageItem::parse, Semi)?;
-        Ok(StorageItems { items })
+        let items: Punctuated<StorageItem, Semi> =
+            input.parse_terminated(StorageItem::parse, Semi)?;
+        let items = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut item)| {
+                item.slot = index;
+                item
+            })
+            .collect();
+
+        Ok(SolidityStorage { items })
     }
 }
 
 #[derive(Clone, Debug)]
-enum StorageItem {
-    Mapping(WrappedTypeMapping),
-    Array(WrappedTypeArray),
+struct StorageItem {
+    slot: usize,
+    kind: StorageKind,
+    name: Ident,
+    args: Vec<Arg>,
+    output: Option<Arg>,
+    key_calculation: proc_macro2::TokenStream,
 }
 
 impl Parse for StorageItem {
     fn parse(input: ParseStream) -> SynResult<Self> {
-        let fork = input.fork();
-        if let Ok(parsed) = fork.parse::<WrappedTypeArray>() {
-            input.advance_to(&fork);
-            return Ok(StorageItem::Array(parsed));
-        }
-        let fork = input.fork();
-        if let Ok(parsed) = fork.parse::<WrappedTypeMapping>() {
-            input.advance_to(&fork);
-            return Ok(StorageItem::Mapping(parsed));
-        }
+        let kind: StorageKind = input.parse()?;
+        let name: Ident = input.parse()?;
+        let (args, output) = kind.parse_args();
+        let key_calculation = kind.key_calculation_fn(&args);
 
-        Err(input.error("Failed to parse input as WrappedTypeMapping or WrappedTypeArray"))
+        Ok(StorageItem {
+            slot: 0,
+            kind,
+            name,
+            args,
+            output,
+            key_calculation,
+        })
+    }
+}
+
+impl StorageItem {
+    fn expand_slot(index: u64) -> proc_macro2::TokenStream {
+        quote! {
+            const SLOT: fluentbase_sdk::U256 = fluentbase_sdk::U256::from_limbs([#index, 0u64, 0u64, 0u64]);
+        }
+    }
+
+    fn expand_new_fn() -> proc_macro2::TokenStream {
+        quote! {
+            pub fn new(client: &'a T) -> Self {
+                Self { client }
+            }
+        }
+    }
+
+    fn expand_default_trait(ident: &Ident) -> proc_macro2::TokenStream {
+        quote! {
+            impl<'a> Default for #ident<'a, fluentbase_sdk::contracts::EvmClient> {
+                fn default() -> Self {
+                    Self {
+                        client: &fluentbase_sdk::contracts::EvmClient {
+                            address: fluentbase_sdk::contracts::PRECOMPILE_EVM,
+                            fuel: u32::MAX,
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    fn expand_get_fn(args: &Vec<Arg>, output: &Option<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+
+        let output = match output {
+            Some(output) => output.ty.to_token_stream(),
+            None => quote! { () },
+        };
+
+        let key = if arg_names.is_empty() {
+            quote! { self.key() }
+        } else {
+            quote! { self.key(#(#arg_names),*) }
+        };
+
+        let get_args = if arguments.len() == 0 {
+            quote! { &self }
+        } else {
+            quote! { &self, #(#arguments),* }
+        };
+
+        quote! {
+            fn get(#get_args) -> #output {
+                let key = #key;
+                let value = #output::default();
+
+                #output::get(self.client, key).unwrap()
+            }
+        }
+    }
+
+    fn expand_set_fn(args: &Vec<Arg>, output: &Option<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+
+        let output = match output {
+            Some(output) => output.ty.to_token_stream(),
+            None => quote! { () },
+        };
+
+        let set_args = if arguments.len() == 0 {
+            quote! { &self, value: #output }
+        } else {
+            quote! { &self, #(#arguments),*, value: #output }
+        };
+
+        quote! {
+            fn set(#set_args) {
+                let key = self.key(#(#arg_names),*);
+                #output::set(self.client, key, value.clone()).unwrap();
+            }
+        }
     }
 }
 
 impl Expandable for StorageItem {
-    fn expand(&self, slot: usize) -> SynResult<proc_macro2::TokenStream> {
+    fn expand(&self) -> SynResult<proc_macro2::TokenStream> {
+        let name = &self.name;
+        let slot = StorageItem::expand_slot(self.slot as u64);
+        let client_trait = quote! {
+            fluentbase_sdk::contracts::EvmAPI
+        };
+        let new_fn = StorageItem::expand_new_fn();
+
+        let get_fn = StorageItem::expand_get_fn(&self.args, &self.output);
+        let set_fn = StorageItem::expand_set_fn(&self.args, &self.output);
+        let key_fn = &self.key_calculation;
+
+        let default_impl = StorageItem::expand_default_trait(&self.name);
+
+        Ok(quote! {
+            pub struct #name<'a, T: #client_trait + 'a>
+                {
+                    client:  &'a T,
+                }
+                impl <'a, T: #client_trait + 'a> #name <'a, T>
+                {
+                    #slot
+                    #new_fn
+                    #get_fn
+                    #set_fn
+                    #key_fn
+                }
+
+                #default_impl
+
+        })
+    }
+}
+
+trait ParseArgs {
+    fn parse_args(&self) -> (Vec<Arg>, Option<Arg>);
+}
+
+#[derive(Clone, Debug)]
+enum StorageKind {
+    Mapping(MappingStorage),
+    Array(ArrayStorage),
+    Primitive(PrimitiveStorage),
+}
+
+impl Parse for StorageKind {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let fork = input.fork();
+        if let Ok(parsed) = fork.parse::<MappingStorage>() {
+            input.advance_to(&fork);
+            return Ok(StorageKind::Mapping(parsed));
+        }
+        let fork = input.fork();
+        if let Ok(parsed) = fork.parse::<ArrayStorage>() {
+            input.advance_to(&fork);
+            return Ok(StorageKind::Array(parsed));
+        }
+        let fork = input.fork();
+        if let Ok(parsed) = fork.parse::<PrimitiveStorage>() {
+            input.advance_to(&fork);
+            return Ok(StorageKind::Primitive(parsed));
+        }
+
+        Err(input.error("Failed to parse StorageKind"))
+    }
+}
+
+impl ParseArgs for StorageKind {
+    fn parse_args(&self) -> (Vec<Arg>, Option<Arg>) {
         match self {
-            StorageItem::Mapping(mapping) => mapping.expand(slot),
-            StorageItem::Array(array) => array.expand(slot),
+            StorageKind::Mapping(mapping) => MappingStorage::parse_args(&mapping.ty),
+            StorageKind::Array(array) => ArrayStorage::parse_args(&array.ty),
+            StorageKind::Primitive(primitive) => PrimitiveStorage::parse_args(&primitive.ty),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct WrappedTypeMapping {
-    pub type_mapping: TypeMapping,
-    pub ident: Ident,
-    pub client: Path,
+trait KeyCalculation {
+    fn key_calculation_fn(&self, args: &Vec<Arg>) -> proc_macro2::TokenStream;
 }
 
-impl WrappedTypeMapping {
-    fn parse_args(mapping: &TypeMapping) -> Vec<Arg> {
+impl KeyCalculation for StorageKind {
+    fn key_calculation_fn(&self, args: &Vec<Arg>) -> proc_macro2::TokenStream {
+        match self {
+            StorageKind::Mapping(mapping) => mapping.key_calculation_fn(args),
+            StorageKind::Array(array) => array.key_calculation_fn(args),
+            StorageKind::Primitive(primitive) => primitive.key_calculation_fn(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Arg {
+    name: Ident,
+    ty: Ident,
+}
+
+impl ToTokens for Arg {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let name = &self.name;
+        let ty = &self.ty;
+        tokens.extend(quote! { #name: #ty });
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MappingStorage {
+    ty: TypeMapping,
+}
+
+impl MappingStorage {
+    fn parse_args(input: &TypeMapping) -> (Vec<Arg>, Option<Arg>) {
         let mut args = Vec::new();
-        let mut current_mapping = mapping;
+        let mut current_mapping = input;
         let mut i = 0;
 
         loop {
@@ -106,7 +370,6 @@ impl WrappedTypeMapping {
                     &current_mapping.key.to_string(),
                     proc_macro2::Span::call_site(),
                 ),
-                is_output: false,
             };
             if let Some(key_name) = &current_mapping.key_name {
                 arg.name = key_name.0.clone();
@@ -116,33 +379,28 @@ impl WrappedTypeMapping {
 
             match &*current_mapping.value {
                 Type::Custom(custom_value) => {
-                    // TODO: d1r1 should we parse return value from U256 or we can use U256 for all
-                    // types?
-                    let _output = Arg {
+                    let output = Arg {
                         name: Ident::new("output", proc_macro2::Span::call_site()),
                         ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
-                        is_output: true,
                     };
 
-                    return args;
+                    return (args, Some(output));
                 }
                 Type::Mapping(inner_mapping) => {
                     current_mapping = inner_mapping;
                 }
                 _ => {
-                    return args;
+                    return (args, None);
                 }
             }
         }
     }
-    fn expand_funcs(args: &[Arg]) -> proc_macro2::TokenStream {
-        let arg_tokens = args.iter().map(|arg| quote! { #arg }).collect::<Vec<_>>();
-        let arg_tokens = quote! {
-            #( #arg_tokens ),*
-        };
 
-        let arg_names: Vec<_> = args.iter().map(|arg| &arg.name).collect();
-        let arg_len = arg_names.len();
+    fn key_calculation_fn(&self, args: &Vec<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+        let arg_len = args.len();
         let calculate_keys_fn = quote! {
             fn calculate_keys(&self, slot: fluentbase_sdk::U256, args: [fluentbase_sdk::U256; #arg_len]) -> fluentbase_sdk::U256 {
                 let mut key = slot;
@@ -168,17 +426,8 @@ impl WrappedTypeMapping {
             }
         };
 
-        let padding_fn = quote! {
-            fn pad_to_32_bytes(&self, bytes: &[u8]) -> [u8; 32] {
-                let mut array = [0u8; 32];
-                let start = 32 - bytes.len();
-                array[start..].copy_from_slice(bytes);
-                array
-            }
-        };
-
         let key_fn = quote! {
-            pub fn key(&self, #arg_tokens) -> fluentbase_sdk::U256 {
+            fn key(&self, #(#arguments),*) -> fluentbase_sdk::U256 {
                 use alloy_sol_types::SolValue;
                 let args = [
                     #(
@@ -195,212 +444,126 @@ impl WrappedTypeMapping {
                 self.calculate_keys(Self::SLOT, args)
             }
         };
-
-        let get_fn = quote! {
-            fn get(&self, #arg_tokens) -> fluentbase_sdk::U256 {
-                let key = self.key(#(#arg_names),*);
-                let input = EvmSloadInput { index: key };
-                let output = self.client.sload(input);
-                output.value
-            }
-        };
-        let set_fn = quote! {
-            fn set(&self, #arg_tokens, value: fluentbase_sdk::U256) {
-                let key = self.key(#(#arg_names),*);
-                let input = EvmSstoreInput { index: key, value };
-                self.client.sstore(input);
-            }
-        };
-
         quote! {
             #calculate_keys_fn
             #key_hash_fn
-            #padding_fn
             #key_fn
-
-            #get_fn
-            #set_fn
         }
     }
 }
 
-impl Expandable for WrappedTypeMapping {
-    fn expand(&self, slot: usize) -> SynResult<proc_macro2::TokenStream> {
-        let args = WrappedTypeMapping::parse_args(&self.type_mapping);
-
-        let slot = slot_from_index(slot);
-        let funcs = WrappedTypeMapping::expand_funcs(&args);
-        let ident = &self.ident;
-        let client_trait = &self.client;
-
-        let new_fn = quote! {
-            pub fn new(client: &'a T) -> Self {
-                Self { client }
-            }
-        };
-
-        let set_client_fn = quote! {
-            pub fn set_client(&mut self, client: &'a T) {
-                self.client = Some(client);
-            }
-        };
-
-        let expanded = quote! {
-            pub struct #ident<'a, T: #client_trait + 'a>
-            {
-                client:  &'a T,
-            }
-            impl <'a, T: #client_trait + 'a> #ident <'a, T>
-            {
-                #slot
-                #new_fn
-                #funcs
-            }
-        };
-        Ok(expanded)
-    }
-}
-impl Parse for WrappedTypeMapping {
+impl Parse for MappingStorage {
     fn parse(input: ParseStream) -> SynResult<Self> {
-        let type_mapping: TypeMapping = input
-            .parse()
-            .unwrap_or_else(|err| abort!(err.span(), "type mapping expected"));
-        let ident: Ident = input
-            .parse()
-            .unwrap_or_else(|err| abort!(err.span(), "ident expected"));
+        let ty: TypeMapping = input.parse()?;
 
-        input.parse::<syn::token::Lt>()?;
-        let client: Path = input.parse()?;
-        input.parse::<syn::token::Gt>()?;
-
-        Ok(Self {
-            type_mapping,
-            ident,
-            client,
-        })
+        Ok(Self { ty })
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct WrappedTypeArray {
-    pub type_array: TypeArray,
-    pub ident: Ident,
-    pub client: Path,
+struct ArrayStorage {
+    pub ty: TypeArray,
 }
 
-impl Expandable for WrappedTypeArray {
-    fn expand(&self, index: usize) -> SynResult<proc_macro2::TokenStream> {
-        let ident = &self.ident;
-        let slot = slot_from_index(index);
-        let client_trait = &self.client;
+impl ArrayStorage {
+    fn parse_args(array: &TypeArray) -> (Vec<Arg>, Option<Arg>) {
+        let mut args = Vec::new();
+        let mut current_array = array;
+        let mut i = 0;
 
-        let new_fn = quote! {
-            pub fn new(client: &'a T) -> Self {
-                Self { client }
-            }
-        };
+        loop {
+            let arg = Arg {
+                name: Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site()),
+                ty: Ident::new("U256", proc_macro2::Span::call_site()),
+            };
 
-        let key_hash_fn = quote! {
-            fn key_hash(&self, slot: fluentbase_sdk::U256, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                let mut storage_key: [u8; 32] = [0; 32];
-                LowLevelSDK::keccak256(slot.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
-                let storage_key = U256::from_be_bytes(storage_key);
-                storage_key + index
+            args.push(arg);
+            i += 1;
+
+            match &*current_array.ty {
+                Type::Array(inner_array) => {
+                    current_array = inner_array;
+                }
+                Type::Custom(ref custom_value) => {
+                    let output = Arg {
+                        name: Ident::new("output", proc_macro2::Span::call_site()),
+                        ty: Ident::new(&custom_value.to_string(), proc_macro2::Span::call_site()),
+                    };
+                    return (args, Some(output));
+                }
+
+                _ => return (args, None),
             }
-        };
-        // TODO: d1r1 fix key function for nested arrays [][]
+        }
+    }
+    fn key_calculation_fn(&self, args: &Vec<Arg>) -> proc_macro2::TokenStream {
+        let arguments: Vec<proc_macro2::TokenStream> =
+            args.iter().map(|arg| arg.to_token_stream()).collect();
+        let arg_names: Vec<&Ident> = args.iter().map(|arg| &arg.name).collect();
+
         let key_fn = quote! {
-            fn key(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                self.key_hash(Self::SLOT, index)
-            }
-        };
+            fn key(&self, #(#arguments),*) -> fluentbase_sdk::U256 {
+                let mut key = Self::SLOT;
 
-        let get_fn = quote! {
-            fn get(&self, index: fluentbase_sdk::U256) -> fluentbase_sdk::U256 {
-                let key = self.key(index);
-                let input = EvmSloadInput { index: key };
-                let output = self.client.sload(input);
-                output.value
-            }
-        };
-        let set_fn = quote! {
-            fn set(&self, index: fluentbase_sdk::U256, value: fluentbase_sdk::U256) {
-                let key = self.key(index);
-                let input = EvmSstoreInput { index: key, value };
-                self.client.sstore(input);
-            }
-        };
+                #(
+                    let storage_key = {
+                        let mut storage_key: [u8; 32] = [0; 32];
+                        LowLevelSDK::keccak256(key.as_le_slice().as_ptr(), 32, storage_key.as_mut_ptr());
+                        U256::from_be_bytes(storage_key)
+                    };
+                    key = storage_key + #arg_names;
+                )*
 
-        let expanded = quote! {
-            struct #ident<'a, T: #client_trait>
-            {
-                client:  &'a T,
-            }
-            impl <'a, T: #client_trait> #ident <'a, T> {
-                #slot
-                #new_fn
-                #key_fn
-                #key_hash_fn
-                #get_fn
-                #set_fn
-
+                key
             }
         };
-        Ok(expanded)
+        key_fn
     }
 }
-impl Parse for WrappedTypeArray {
+
+impl Parse for ArrayStorage {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let ty: Type = input.parse()?;
 
-        let type_array: TypeArray = match ty {
+        let ty: TypeArray = match ty {
             Type::Array(array) => array,
             _ => return Err(input.error("Expected an array type")),
         };
 
-        let ident: Ident = input.parse()?;
-        input.parse::<syn::token::Lt>()?;
-        let client: Path = input.parse()?;
-        input.parse::<syn::token::Gt>()?;
+        Ok(Self { ty })
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
+struct PrimitiveStorage {
+    ty: Type,
+}
 
-        Ok(Self {
-            type_array,
-            ident,
-            client,
-        })
+impl PrimitiveStorage {
+    fn parse_args(ty: &Type) -> (Vec<Arg>, Option<Arg>) {
+        (
+            vec![],
+            Some(Arg {
+                name: Ident::new("output", proc_macro2::Span::call_site()),
+                ty: Ident::new(&ty.to_string(), proc_macro2::Span::call_site()),
+            }),
+        )
+    }
+    fn key_calculation_fn(&self) -> proc_macro2::TokenStream {
+        quote! {
+            fn key(&self) -> fluentbase_sdk::U256 {
+                Self::SLOT
+            }
+        }
     }
 }
 
-fn slot_from_index(index: usize) -> proc_macro2::TokenStream {
-    quote! {
-        const SLOT: fluentbase_sdk::U256 = Self::u256_from_usize(#index);
-        const fn u256_from_usize(value: usize) -> fluentbase_sdk::U256 {
-        let mut bytes = [0u8; 32];
-        let mut v = value;
-        let mut i = 0;
-        while v != 0 {
-            bytes[31 - i] = (v & 0xff) as u8;
-            v >>= 8;
-            i += 1;
-        };
+impl Parse for PrimitiveStorage {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let ty: Type = input
+            .parse()
+            .unwrap_or_else(|err| abort!(err.span(), "type expected"));
 
-        fluentbase_sdk::U256::from_be_bytes(bytes)
-    }
-    }
-}
-
-#[derive(Debug)]
-struct Arg {
-    name: Ident,
-    ty: Ident,
-    is_output: bool,
-}
-
-impl ToTokens for Arg {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let name = &self.name;
-        let ty = &self.ty;
-        tokens.extend(quote! { #name: #ty });
+        Ok(Self { ty })
     }
 }
 
@@ -410,12 +573,12 @@ mod tests {
     use syn::parse_quote;
 
     #[test]
-    fn test_parse_args_single_level() {
+    fn test_mapping_parse_args_single_level() {
         let mapping: TypeMapping = parse_quote! {
             mapping(Address => MyStruct)
         };
 
-        let args = WrappedTypeMapping::parse_args(&mapping);
+        let (args, output) = MappingStorage::parse_args(&mapping);
 
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].name.to_string(), "arg0");
@@ -423,28 +586,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_args_nested() {
+    fn test_mapping_parse_args_nested() {
         let mapping: TypeMapping = parse_quote! {
-            mapping(Address owner => mapping(Address users => mapping(Address balances => MyStruct)))
-        };
+                    mapping(Address owner => mapping(Address => mapping(Address balances =>
+        MyStruct)))         };
 
-        let args = WrappedTypeMapping::parse_args(&mapping);
+        let (args, output) = MappingStorage::parse_args(&mapping);
 
         assert_eq!(args.len(), 3);
         assert_eq!(args[0].name.to_string(), "owner");
         assert_eq!(args[0].ty.to_string(), "Address");
 
-        assert_eq!(args[1].name.to_string(), "users");
+        assert_eq!(args[1].name.to_string(), "arg1");
         assert_eq!(args[1].ty.to_string(), "Address");
 
         assert_eq!(args[2].name.to_string(), "balances");
         assert_eq!(args[2].ty.to_string(), "Address");
-    }
-    #[test]
-    fn test_u256() {
-        assert_eq!(
-            format!("{:064x}", 1),
-            "0000000000000000000000000000000000000000000000000000000000000001"
-        )
+
+        assert_eq!(output.clone().unwrap().name.to_string(), "output");
+        assert_eq!(output.unwrap().ty.to_string(), "MyStruct");
     }
 }

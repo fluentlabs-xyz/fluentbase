@@ -16,9 +16,9 @@ crypto-hashes = { version = "0.10.0", default-features = false, features = ["inc
 proc-macro-error = { version = "1", default-features = false }
 proc-macro2 = "1.0"
 quote = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-syn = { version = "2.0.60", features = ["full"] }
-syn-solidity = { version = "0.7.6", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+syn = { workspace = true, features = ["full"] }
+syn-solidity = { version = "0.7", default-features = false }
 hex = "0.4.3"
 
 [lib]

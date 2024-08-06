@@ -18,7 +18,7 @@ pub struct EvmDeployerImpl<'a, CR: ContextReader, AM: AccountManager> {
 
 impl<'a, CR: ContextReader, AM: AccountManager> EvmDeployerImpl<'a, CR, AM> {
     pub fn deploy<SDK: SovereignAPI>(&self) {
-        unreachable!("deploy is not supported for loader")
+        unreachable!("deploy is not supported for deployer")
     }
     pub fn main<SDK: SovereignAPI>(&self) {
         let input_size = SDK::input_size();
