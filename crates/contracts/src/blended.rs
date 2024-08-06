@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_rlp::{Decodable, Encodable};
 use alloy_sol_types::SolValue;
-use fluentbase_core::fvm::transact::_fvm_transact_inner;
+use fluentbase_core::fvm::transact::_fvm_transact_commit_inner;
 use fluentbase_sdk::{
     basic_entrypoint,
     contracts::BlendedAPI,
@@ -103,7 +103,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                         &consensus_params,
                     )
                     .expect("convert into checked");
-                let res = _fvm_transact_inner(
+                let res = _fvm_transact_commit_inner(
                     self.cr,
                     self.am,
                     checked_tx,
@@ -122,7 +122,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                         &consensus_params,
                     )
                     .expect("failed to convert tx into checked tx");
-                let res = _fvm_transact_inner(
+                let res = _fvm_transact_commit_inner(
                     self.cr,
                     self.am,
                     checked_tx,
@@ -141,7 +141,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                         &consensus_params,
                     )
                     .expect("failed to convert tx into checked tx");
-                let res = _fvm_transact_inner(
+                let res = _fvm_transact_commit_inner(
                     self.cr,
                     self.am,
                     checked_tx,
@@ -160,7 +160,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                         &consensus_params,
                     )
                     .expect("failed to convert tx into checked tx");
-                let res = _fvm_transact_inner(
+                let res = _fvm_transact_commit_inner(
                     self.cr,
                     self.am,
                     checked_tx,
@@ -475,11 +475,11 @@ impl<'a, CR: ContextReader, AM: AccountManager> BlendedAPI for BLENDED<'a, CR, A
                 }
             }
         }
-        let mut receipts_encoded = Vec::<u8>::new();
-        receipts
-            .encode(&mut receipts_encoded)
-            .expect("failed to encode receipts");
-        LowLevelSDK::write(receipts_encoded.as_ptr(), receipts_encoded.len() as u32);
+        // let mut receipts_encoded = Vec::<u8>::new();
+        // receipts
+        //     .encode(&mut receipts_encoded)
+        //     .expect("failed to encode receipts");
+        // LowLevelSDK::write(receipts_encoded.as_ptr(), receipts_encoded.len() as u32);
     }
 
     fn exec_svm_tx(&self, raw_svm_tx: Bytes) {

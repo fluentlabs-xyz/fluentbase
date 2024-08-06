@@ -18,7 +18,7 @@ use fuel_core_types::{
     services::executor::Result,
 };
 
-pub fn _fvm_transact_inner<'a, Tx, CR: ContextReader, AM: AccountManager>(
+pub fn _fvm_transact_commit_inner<'a, Tx, CR: ContextReader, AM: AccountManager>(
     cr: &CR,
     am: &AM,
     checked_tx: Checked<Tx>,
@@ -73,45 +73,6 @@ where
         true,
         &mut execution_data,
     )?;
-
-    for (col_num, changes) in &res.4 {
-        let column: Column = col_num.clone().try_into().expect("valid column number");
-        match column {
-            Column::Metadata
-            | Column::ContractsRawCode
-            | Column::ContractsState
-            | Column::ContractsLatestUtxo
-            | Column::ContractsAssets
-            | Column::Coins => {
-                for (key, op) in changes {
-                    match op {
-                        WriteOperation::Insert(v) => {
-                            storage.write(key, column, v)?;
-                        }
-                        WriteOperation::Remove => {
-                            storage.delete(key, column)?;
-                        }
-                    }
-                }
-            }
-
-            Column::Transactions
-            | Column::FuelBlocks
-            | Column::FuelBlockMerkleData
-            | Column::FuelBlockMerkleMetadata
-            | Column::ContractsAssetsMerkleData
-            | Column::ContractsAssetsMerkleMetadata
-            | Column::ContractsStateMerkleData
-            | Column::ContractsStateMerkleMetadata
-            | Column::Messages
-            | Column::ProcessedTransactions
-            | Column::FuelBlockConsensus
-            | Column::ConsensusParametersVersions
-            | Column::StateTransitionBytecodeVersions
-            | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {}
-        }
-    }
 
     Ok(res)
 }

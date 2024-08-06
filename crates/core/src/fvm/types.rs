@@ -54,7 +54,7 @@ pub struct WasmStorage<'a, CR: ContextReader, AM: AccountManager> {
 }
 
 impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
-    pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<fluentbase_types::Bytes> {
+    pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<Bytes> {
         let preimage = self
             .am
             .preimage(&MetadataHelper::new(raw_key).value_preimage_key());
@@ -366,7 +366,6 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 )
             }
         }
-        Ok(None)
     }
 }
 
