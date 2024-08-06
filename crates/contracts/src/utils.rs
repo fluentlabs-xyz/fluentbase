@@ -1,4 +1,5 @@
 use core::str::FromStr;
+use fluentbase_core::fvm::helpers::fuel_testnet_consensus_params_from;
 use fluentbase_sdk::{
     codec::Encoder,
     types::{CoreInput, ICoreInput},
@@ -61,46 +62,14 @@ pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Data
         })
 }
 
-pub fn fuel_testnet_consensus_params<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
-    ConsensusParameters::V1(ConsensusParametersV1 {
-        tx_params: TxParameters::V1(TxParametersV1 {
-            max_inputs: 8,
-            max_outputs: 8,
-            max_witnesses: 8,
-            max_gas_per_tx: cr.tx_gas_limit(),
-            max_size: 110 * 1024,
-            max_bytecode_subsections: 255,
-        }),
-        predicate_params: PredicateParameters::V1(PredicateParametersV1 {
-            max_predicate_length: 1024 * 1024,
-            max_predicate_data_length: 1024 * 1024,
-            max_message_data_length: 1024 * 1024,
-            max_gas_per_predicate: cr.tx_gas_limit(),
-        }),
-        script_params: ScriptParameters::V1(ScriptParametersV1 {
-            max_script_length: 1024 * 1024,
-            max_script_data_length: 1024 * 1024,
-        }),
-        contract_params: ContractParameters::V1(ContractParametersV1 {
-            contract_max_size: 100 * 1024,
-            max_storage_slots: 1760,
-        }),
-        fee_params: FeeParameters::V1(FeeParametersV1 {
-            gas_price_factor: 92,
-            gas_per_byte: 62,
-        }),
-        chain_id: fuel_types::ChainId::new(cr.block_chain_id()),
-        gas_costs: GasCosts::default(),
-        base_asset_id: AssetId::from_str(
-            "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-        )
-        .expect("invalid asset id format"),
-        block_gas_limit: cr.block_gas_limit(),
-        privileged_address: fuel_types::Address::from_str(
-            "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9",
-        )
-        .expect("invalid privileged address format"),
-    })
+pub fn fuel_testnet_consensus_params_from_cr<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+    fuel_testnet_consensus_params_from(
+        cr.tx_gas_limit(),
+        cr.tx_gas_limit(),
+        cr.block_gas_limit(),
+        fuel_types::ChainId::new(cr.block_chain_id()),
+        None,
+    )
 }
 
 pub fn fill_eth_tx_env(tx_env: &mut TxEnv, essence: &EthereumTxEssence, caller: Address) {
