@@ -9,6 +9,7 @@ extern crate paste;
 pub use fluentbase_types::ExitCode;
 pub mod evm;
 
+pub mod evm2;
 pub mod fluent_host;
 pub mod helpers;
 pub mod loader;

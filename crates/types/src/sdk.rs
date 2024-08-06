@@ -2,6 +2,7 @@ use crate::{Account, AccountStatus, Address, ExitCode, Fuel, JournalCheckpoint, 
 use alloc::{vec, vec::Vec};
 use alloy_primitives::Bytes;
 use alloy_rlp::{RlpDecodable, RlpEncodable};
+use fluentbase_codec::Codec;
 use hashbrown::HashMap;
 use revm_primitives::Env;
 
@@ -39,7 +40,7 @@ pub trait NativeAPI {
 
 pub type IsColdAccess = bool;
 
-#[derive(Default)]
+#[derive(Codec, Default)]
 pub struct BlockContext {
     pub chain_id: u64,
     pub coinbase: Address,
@@ -66,7 +67,7 @@ impl From<&Env> for BlockContext {
     }
 }
 
-#[derive(Default)]
+#[derive(Codec, Default)]
 pub struct TxContext {
     pub gas_limit: u64,
     pub nonce: u64,
@@ -93,17 +94,22 @@ impl From<&Env> for TxContext {
 pub struct ContractContext {
     pub gas_limit: u64,
     pub address: Address,
+    pub bytecode_address: Address,
     pub caller: Address,
     pub is_static: bool,
     pub value: U256,
+    pub input: Bytes,
 }
 
+#[derive(Codec, Default)]
 pub struct TransitStateInput {
     pub accounts: HashMap<Address, Account>,
     pub preimages: HashMap<B256, Bytes>,
     pub block: BlockContext,
     pub transaction: TxContext,
 }
+
+#[derive(Codec, Default)]
 pub struct TransitStateOutput {
     pub new_accounts: Vec<(Address, Account)>,
     pub new_preimages: Vec<(B256, Bytes)>,
@@ -154,6 +160,7 @@ pub trait SovereignAPI {
 
     fn block_context(&self) -> &BlockContext;
     fn tx_context(&self) -> &TxContext;
+    fn contract_context(&self) -> Option<&ContractContext>;
 
     fn checkpoint(&self) -> JournalCheckpoint;
     fn commit(&mut self) -> SovereignStateResult;
@@ -216,5 +223,10 @@ pub trait SharedAPI {
         let mut buffer = vec![0u8; output_size as usize];
         self.native_sdk().read_output(&mut buffer, 0);
         buffer.into()
+    }
+
+    fn exit(&mut self, exit_code: ExitCode) -> ! {
+        self.commit();
+        self.native_sdk().exit(exit_code.into_i32());
     }
 }

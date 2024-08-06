@@ -1765,6 +1765,7 @@ dependencies = [
  "alloy-rlp",
  "fluentbase-core",
  "fluentbase-sdk 0.1.0",
+ "hex",
  "revm-fluent",
  "revm-precompile",
  "zeth-primitives",
@@ -2000,7 +2001,6 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "fluentbase-codec 0.1.0",
- "fluentbase-codec-derive 0.1.0",
  "fluentbase-genesis",
  "fluentbase-runtime",
  "fluentbase-sdk-derive 0.1.0",
@@ -2062,6 +2062,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "byteorder",
+ "fluentbase-codec 0.1.0",
  "hashbrown",
  "revm-primitives 4.0.0",
  "rwasm",

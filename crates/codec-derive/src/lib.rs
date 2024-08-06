@@ -7,7 +7,7 @@ fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let crate_name = if crate_name == "fluentbase-codec" {
         quote! { crate }
-    } else if crate_name == "fluentbase-sdk" {
+    } else if crate_name == "fluentbase-sdk" || crate_name == "fluentbase-types" {
         quote! { fluentbase_codec }
     } else {
         quote! { fluentbase_sdk::codec }

@@ -1,13 +1,6 @@
 use crate::utils::{evm_builder_apply_envs, fill_eth_tx_env};
 use alloy_rlp::{Decodable, Encodable};
-use fluentbase_sdk::{
-    basic_entrypoint,
-    contracts::BlendedAPI,
-    derive::Contract,
-    Bytes,
-    SovereignAPI,
-    U256,
-};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, Bytes, NativeAPI, SovereignAPI, U256};
 use revm::{interpreter::Host, primitives::ResultAndState, Evm};
 use zeth_primitives::{
     receipt::Receipt,
@@ -15,11 +8,11 @@ use zeth_primitives::{
 };
 
 #[derive(Contract)]
-pub struct BLENDED<SDK: SovereignAPI> {
+pub struct BLENDED<SDK> {
     sdk: SDK,
 }
 
-impl<SDK: SovereignAPI> BlendedAPI for BLENDED<SDK> {
+impl<SDK: SovereignAPI> BLENDED<SDK> {
     fn exec_evm_tx(&self, raw_evm_tx: Bytes) {
         let mut raw_evm_tx = raw_evm_tx.clone();
         let tx = <Transaction<EthereumTxEssence> as Decodable>::decode(&mut raw_evm_tx.as_ref())

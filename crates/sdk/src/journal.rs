@@ -264,6 +264,10 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         self.tx_context.as_ref().unwrap()
     }
 
+    fn contract_context(&self) -> Option<&ContractContext> {
+        self.contract_context.as_ref()
+    }
+
     fn checkpoint(&self) -> JournalCheckpoint {
         JournalCheckpoint(self.journal.len() as u32, self.logs.len() as u32)
     }
