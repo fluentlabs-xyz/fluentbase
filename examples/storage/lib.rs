@@ -3,40 +3,41 @@ extern crate alloc;
 extern crate core;
 extern crate fluentbase_sdk;
 
-use alloy_sol_types::SolValue;
-use hex_literal::hex;
-
 use fluentbase_sdk::{
-    Address,
-    codec::Encoder,
-    contracts::{EvmAPI, EvmClient, EvmSloadInput, EvmSstoreInput, PRECOMPILE_EVM},
+    codec::Codec,
     derive::solidity_storage,
+    Address,
+    Bytes,
     LowLevelSDK,
     SharedAPI,
     U256,
 };
 
+#[derive(Codec, Debug, Default, Clone, PartialEq)]
+pub struct MyStruct {
+    pub a: U256,
+    pub b: U256,
+    pub c: Bytes,
+    pub d: Bytes,
+}
+
 solidity_storage! {
-    U256[] Arr<EvmAPI>;
-    mapping(Address => U256) Balance<EvmAPI>;
+    mapping(Address => U256) Balance;
+    mapping(Address => mapping(Address => U256)) Allowance;
+    U256[] Arr;
+    Address[][][] NestedArr;
+    Address Owner;
+    Bytes Data;
+    MyStruct SomeStruct;
+    mapping(Address => MyStruct) MyStructMap;
 }
 
 #[cfg(test)]
 mod test {
-    use alloy_sol_types::SolCall;
-    use serial_test::serial;
-
-    use fluentbase_sdk::{
-        Address,
-        Bytes,
-        codec::Encoder,
-        ContractInput,
-        contracts::EvmClient,
-        LowLevelSDK,
-        U256,
-    };
-
     use super::*;
+    use fluentbase_sdk::{codec::Encoder, Address, Bytes, ContractInput, LowLevelSDK, U256};
+    use hex_literal::hex;
+    use serial_test::serial;
 
     fn with_test_input<T: Into<Bytes>>(input: T, caller: Option<Address>) {
         let mut contract_input = ContractInput::default();
@@ -47,75 +48,142 @@ mod test {
         LowLevelSDK::with_test_input(input.into());
     }
 
-    fn get_output() -> Vec<u8> {
-        LowLevelSDK::get_test_output()
+    #[serial]
+    #[test]
+    pub fn test_primitive_storage_dynamic_bytes() {
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
+
+        let b = fluentbase_sdk::Bytes::from(
+            "this is a really long string. this is a really long
+    string. this is a really long string. this it really long string.",
+        );
+        let storage = Data::default();
+        storage.set(b.clone());
+
+        let result = storage.get();
+        assert_eq!(result, b);
     }
     #[serial]
     #[test]
-    pub fn test_client() {
-        let client = EvmClient::new(PRECOMPILE_EVM);
-        let b = Balance::new(&client);
-
-        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    pub fn test_nested_arr() {
         LowLevelSDK::init_with_devnet_genesis();
-        with_test_input(vec![], Some(owner_address));
-        let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
+        with_test_input(vec![], None);
 
-        let slot = U256::from_str_radix("1", 10).unwrap();
-        let input = EvmSstoreInput {
-            index: slot,
-            value: owner_balance,
-        };
+        let storage = NestedArr::default();
 
-        b.client.sstore(input);
+        let idx1 = U256::from(0);
+        let idx2 = U256::from(0);
+        let idx3 = U256::from(0);
+        let value = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+        storage.set(idx1, idx2, idx3, value);
 
-        let sload_input = EvmSloadInput { index: slot };
-
-        let balance = b.client.sload(sload_input);
-
-        assert_eq!(balance.value, owner_balance);
+        let result = storage.get(idx1, idx2, idx3);
+        assert_eq!(result, value);
     }
     #[serial]
     #[test]
-    pub fn test_arr() {
-        let client = EvmClient::new(PRECOMPILE_EVM);
-        let arr = Arr::new(&client);
-        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    pub fn test_storage_mapping() {
         LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
 
-        with_test_input(vec![], Some(owner_address));
-        let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
+        let storage = Balance::default();
 
-        let index = U256::from_str_radix("0", 10).unwrap();
+        let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
 
-        arr.set(index, owner_balance);
+        let value: U256 = U256::from_str_radix("1000000000000000000", 10).unwrap(); // 1000
 
-        let output = arr.get(index);
+        storage.set(addr, value);
 
-        assert_eq!(output, owner_balance);
+        let result = storage.get(addr);
+
+        assert_eq!(result, value);
+    }
+    #[serial]
+    #[test]
+    pub fn test_storage_mapping_nested() {
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
+
+        let storage = Allowance::default();
+
+        let addr1 = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+        let addr2 = Address::from(hex!("70997970C51812dc3A010C7d01b50e0d17dc79C8"));
+
+        let value: U256 = U256::from_str_radix("1000000000000000000", 10).unwrap();
+
+        storage.set(addr1, addr2, value);
+
+        let result = storage.get(addr1, addr2);
+
+        assert_eq!(result, result);
+    }
+    #[serial]
+    #[test]
+    pub fn test_storage_primitive_address() {
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
+
+        let storage = Owner::default();
+
+        let addr1 = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+
+        storage.set(addr1);
+
+        let result = storage.get();
+
+        assert_eq!(result, result);
+    }
+    #[serial]
+    #[test]
+    pub fn test_storage_primitive_struct() {
+        LowLevelSDK::init_with_devnet_genesis();
+        with_test_input(vec![], None);
+
+        let storage = SomeStruct::default();
+
+        let a = U256::from(1);
+        let b = U256::from(2);
+        let c = fluentbase_sdk::Bytes::from(
+            "this it really long string. this it really long
+    string. this it really long string. this it really long string.",
+        );
+        let d = fluentbase_sdk::Bytes::from("short");
+
+        let my_struct = MyStruct { a, b, c, d };
+
+        storage.set(my_struct.clone());
+
+        let result = storage.get();
+
+        assert_eq!(result, my_struct);
     }
 
     #[serial]
     #[test]
-    pub fn test_storage() {
-        let owner_address = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    pub fn test_storage_mapping_struct() {
         LowLevelSDK::init_with_devnet_genesis();
-        with_test_input(vec![], Some(owner_address));
-        let owner_balance: U256 = U256::from_str_radix("1000000000000000000000", 10).unwrap(); // 1000
+        with_test_input(vec![], None);
 
-        let slot = U256::from_str_radix("1", 10).unwrap();
-        let input = EvmSstoreInput {
-            index: slot,
-            value: owner_balance,
-        };
+        let storage = MyStructMap::default();
 
-        let client = EvmClient::new(PRECOMPILE_EVM);
-        client.sstore(input);
+        let addr = Address::from(hex!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
 
-        let sload_input = EvmSloadInput { index: slot };
+        let a = U256::from(1);
+        let b = U256::from(2);
+        let c = fluentbase_sdk::Bytes::from(
+            "this it really long string. this it really long
+    string. this it really long string. this it really long string.",
+        );
+        let d = fluentbase_sdk::Bytes::from("short");
 
-        let balance = client.sload(sload_input);
+        let my_struct = MyStruct { a, b, c, d };
 
-        assert_eq!(balance.value, owner_balance);
+        storage.set(addr, my_struct.clone());
+
+        let result = storage.get(addr);
+
+        assert_eq!(result, my_struct.clone());
     }
 }
