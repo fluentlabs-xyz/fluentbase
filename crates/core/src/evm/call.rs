@@ -124,7 +124,7 @@ pub fn _evm_call<SDK: SovereignAPI>(
         target_address: input.address,
         // inside the contract context we pass apparent value that can be different to transfer
         // value (it can happen for DELEGATECALL or CALLCODE opcodes)
-        call_value: input.apparent_value,
+        call_value: input.value.max(input.apparent_value),
         caller: caller_account.address,
     };
     let result = exec_evm_bytecode(sdk, contract, input.gas_limit, input.is_static, input.depth);
