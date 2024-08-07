@@ -18,7 +18,7 @@ where
 
         for i in 0.. {
             let key = key + U256::from(i);
-            let value = sdk.storage(key);
+            let value = sdk.storage(&key);
             let chunk = value.to_be_bytes::<32>();
             if i * 32 > header_size && chunk.iter().all(|&x| x == 0) {
                 break;

@@ -21,13 +21,11 @@ use revm_interpreter::{
     SStoreResult,
     SelfDestructResult,
 };
-use revm_primitives::{TransientStorage, BLOCK_HASH_HISTORY};
+use revm_primitives::BLOCK_HASH_HISTORY;
 
 pub struct FluentHost<'sdk, SDK: SovereignAPI> {
     pub env: Env,
     pub sdk: Option<&'sdk mut SDK>,
-    // transient storage
-    transient_storage: TransientStorage,
 }
 
 impl<'sdk, SDK: SovereignAPI> FluentHost<'sdk, SDK> {
@@ -54,21 +52,25 @@ impl<'sdk, SDK: SovereignAPI> FluentHost<'sdk, SDK> {
                     caller: sdk.tx_context().origin,
                     gas_limit: sdk.tx_context().gas_limit,
                     gas_price: sdk.tx_context().gas_price,
-                    transact_to: TransactTo::Call(Address::ZERO), // will do nothing
+                    // we don't check this field, and we honestly don't know what type of transact
+                    // we execute right now, so can safely skp the field
+                    transact_to: TransactTo::Call(Address::ZERO),
                     value: sdk.tx_context().value,
-                    data: Default::default(), // not used because we already pass all validations
+                    // we don't use this field, so there is no need to do redundant copy operation
+                    data: Default::default(),
                     nonce: Some(sdk.tx_context().nonce),
-                    chain_id: None, // no checks
+                    chain_id: Some(sdk.block_context().chain_id),
+                    // we check access lists in advance before executing smart contract, it doesn't
+                    // affect gas price or something else, can skip
                     access_list: Default::default(),
-                    gas_priority_fee: Default::default(),
-                    blob_hashes: Default::default(),
-                    max_fee_per_blob_gas: Default::default(),
+                    gas_priority_fee: sdk.tx_context().gas_priority_fee,
+                    blob_hashes: sdk.tx_context().blob_hashes.clone(),
+                    max_fee_per_blob_gas: sdk.tx_context().max_fee_per_blob_gas,
                     #[cfg(feature = "optimism")]
                     optimism: Default::default(),
                 },
             },
             sdk: Some(sdk),
-            transient_storage: TransientStorage::new(),
         }
     }
 
@@ -121,9 +123,7 @@ impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
         let sdk = self.sdk.as_ref().unwrap();
         let (account, is_cold) = sdk.account(&address);
         Some((
-            sdk.preimage(&account.source_code_hash)
-                .map(Bytes::copy_from_slice)
-                .unwrap_or_default(),
+            sdk.preimage(&account.source_code_hash).unwrap_or_default(),
             is_cold,
         ))
     }
@@ -139,7 +139,7 @@ impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
 
     #[inline]
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        let (value, is_cold) = self.sdk.as_ref().unwrap().storage(address, index);
+        let (value, is_cold) = self.sdk.as_ref().unwrap().storage(&address, &index);
         debug_log!(
             self.sdk.as_ref().unwrap(),
             "ecl(sload): address={}, index={}, value={}",
@@ -160,8 +160,8 @@ impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         );
-        let (original_value, _) = sdk.committed_storage(address, index);
-        let (present_value, is_cold) = sdk.storage(address, index);
+        let (original_value, _) = sdk.committed_storage(&address, &index);
+        let (present_value, is_cold) = sdk.storage(&address, &index);
         sdk.write_storage(address, index, value);
         return Some(SStoreResult {
             original_value,
@@ -173,19 +173,15 @@ impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
 
     #[inline]
     fn tload(&mut self, address: Address, index: U256) -> U256 {
-        self.transient_storage
-            .get(&(address, index))
-            .copied()
-            .unwrap_or_default()
-        // self.sdk.unwrap().transient_storage(address, index)
+        self.sdk.as_mut().unwrap().transient_storage(address, index)
     }
 
     #[inline]
     fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        self.transient_storage.insert((address, index), value);
-        // self.sdk
-        //     .unwrap()
-        //     .write_transient_storage(address, index, value)
+        self.sdk
+            .as_mut()
+            .unwrap()
+            .write_transient_storage(address, index, value)
     }
 
     #[inline]
@@ -199,14 +195,16 @@ impl<'sdk, SDK: SovereignAPI> Host for FluentHost<'sdk, SDK> {
 
     #[inline]
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-        todo!("not supported yet");
-        // let [had_value, target_exists, is_cold, previously_destroyed] =
-        //     self.sdk.as_mut().unwrap().self_destruct(address, target);
-        // Some(SelfDestructResult {
-        //     had_value,
-        //     target_exists,
-        //     is_cold,
-        //     previously_destroyed,
-        // })
+        let result = self
+            .sdk
+            .as_mut()
+            .unwrap()
+            .destroy_account(&address, &target);
+        Some(SelfDestructResult {
+            had_value: result.had_value,
+            target_exists: result.target_exists,
+            is_cold: result.is_cold,
+            previously_destroyed: result.previously_destroyed,
+        })
     }
 }

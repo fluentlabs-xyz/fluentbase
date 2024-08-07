@@ -39,6 +39,7 @@ use fluentbase_runtime::{
         read::SyscallRead,
         read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
+        resume::SyscallResume,
         rollback::SyscallRollback,
         state::SyscallState,
         update_leaf::SyscallUpdateLeaf,
@@ -47,6 +48,7 @@ use fluentbase_runtime::{
     },
     types::InMemoryTrieDb,
     zktrie::ZkTrieStateDb,
+    BytecodeOrHash::Bytecode,
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
@@ -74,10 +76,19 @@ use fluentbase_types::{
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
 };
+use hashbrown::HashMap;
 use std::{cell::RefCell, mem::take, ops::Deref};
 
 pub struct RuntimeContextWrapper {
-    ctx: Rc<RefCell<RuntimeContext>>,
+    pub ctx: Rc<RefCell<RuntimeContext>>,
+}
+
+impl RuntimeContextWrapper {
+    pub fn new(ctx: RuntimeContext) -> Self {
+        Self {
+            ctx: Rc::new(RefCell::new(ctx)),
+        }
+    }
 }
 
 impl Clone for RuntimeContextWrapper {
@@ -158,27 +169,41 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn exec(
         &self,
-        code_hash: F254,
-        address: Address,
+        code_hash: &F254,
+        _address: &Address,
         input: &[u8],
-        context: &[u8],
         fuel: &mut Fuel,
+        state: u32,
     ) -> i32 {
-        todo!()
+        let (remaining_fuel, exit_code) = SyscallExec::fn_impl(
+            &mut self.ctx.borrow_mut(),
+            &code_hash.0,
+            input,
+            0,
+            fuel.0,
+            state,
+        );
+        fuel.0 = remaining_fuel;
+        exit_code
     }
 
-    fn resume(&self, call_id: i32, exit_code: i32) -> i32 {
-        todo!()
+    fn resume(&self, call_id: u32, exit_code: i32) -> i32 {
+        let (_fuel_remaining, exit_code) =
+            SyscallResume::fn_impl(&mut self.ctx.borrow_mut(), call_id, exit_code);
+        exit_code
+    }
+
+    fn return_data(&self) -> Bytes {
+        self.ctx.borrow_mut().return_data().clone().into()
     }
 }
 
 pub type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
-    pub fn new() -> Self {
-        let ctx = RuntimeContext::default().with_jzkt(Rc::new(RefCell::new(
-            DefaultEmptyRuntimeDatabase::default(),
-        )));
+    pub fn empty() -> Self {
+        let ctx =
+            RuntimeContext::default().with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
         }
@@ -243,4 +268,47 @@ impl TestingContext {
         }
         self
     }
+
+    // pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
+    //     &mut self,
+    //     address: Address,
+    //     rwasm_module: I,
+    // ) -> AccountInfo {
+    //     let rwasm_binary = {
+    //         let rwasm_module: RwasmModule = rwasm_module.into();
+    //         let mut result = Vec::new();
+    //         rwasm_module.write_binary_to_vec(&mut result).unwrap();
+    //         result
+    //     };
+    //     let account = Account {
+    //         address,
+    //         balance: U256::ZERO,
+    //         nonce: 0,
+    //         // it makes not much sense to fill these fields, but it optimizes hash calculation a
+    // bit         source_code_size: 0,
+    //         source_code_hash: KECCAK_EMPTY,
+    //         rwasm_code_size: rwasm_binary.len() as u64,
+    //         rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+    //     };
+    //     let mut info: AccountInfo = account.into();
+    //     info.code = None;
+    //     if !rwasm_binary.is_empty() {
+    //         info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+    //     }
+    //     self.db.insert_account_info(address, info.clone());
+    //     info
+    // }
+    //
+    // pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
+    //     let account = self.db.load_account(address).unwrap();
+    //     account.info.balance
+    // }
+    //
+    // pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
+    //     let account = self.db.load_account(address).unwrap();
+    //     account.info.balance += value;
+    //     let mut revm_account = crate::primitives::Account::from(account.info.clone());
+    //     revm_account.mark_touch();
+    //     self.db.commit(HashMap::from([(address, revm_account)]));
+    // }
 }

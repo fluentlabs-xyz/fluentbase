@@ -45,6 +45,6 @@ impl SyscallEmitLog {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext, address: Address, topics: Vec<B256>, data: Bytes) {
-        ctx.jzkt().borrow().emit_log(address, topics.clone(), data);
+        ctx.jzkt().emit_log(address, topics.clone(), data);
     }
 }

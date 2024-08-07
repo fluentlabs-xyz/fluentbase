@@ -12,6 +12,7 @@ use fluentbase_types::{
     AccountStatus,
     BlockContext,
     ContractContext,
+    DestroyedAccountResult,
     ExitCode,
     Fuel,
     IsColdAccess,
@@ -80,6 +81,7 @@ impl JournalStateBuilder {
             logs: vec![],
             journal: vec![],
             native_sdk,
+            transient_storage: Default::default(),
             block_context: self.block_context,
             tx_context: self.tx_context,
             contract_context: self.contract_context,
@@ -212,6 +214,7 @@ pub struct JournalState<API: NativeAPI> {
     logs: Vec<JournalStateLog>,
     journal: Vec<JournalStateEvent>,
     native_sdk: API,
+    transient_storage: HashMap<(Address, U256), U256>,
     // block/tx/contract contexts
     block_context: Option<BlockContext>,
     tx_context: Option<TxContext>,
@@ -228,6 +231,7 @@ impl<API: NativeAPI> JournalState<API> {
             logs: Default::default(),
             journal: Default::default(),
             native_sdk,
+            transient_storage: Default::default(),
             block_context: Default::default(),
             tx_context: Default::default(),
             contract_context: Default::default(),
@@ -352,6 +356,10 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         });
     }
 
+    fn destroy_account(&mut self, address: &Address, target: &Address) -> DestroyedAccountResult {
+        todo!()
+    }
+
     fn account(&self, address: &Address) -> (Account, IsColdAccess) {
         match self.dirty_state.get(address) {
             Some(index) => (
@@ -372,7 +380,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         )
     }
 
-    fn write_preimage(&mut self, hash: B256, preimage: Bytes) {
+    fn write_preimage(&mut self, _address: Address, hash: B256, preimage: Bytes) {
         match self.preimages.entry(hash) {
             Entry::Occupied(mut entry) => {
                 // increment ref count
@@ -386,8 +394,8 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
             .push(JournalStateEvent::PreimageChanged { hash })
     }
 
-    fn preimage(&self, hash: &B256) -> Option<&[u8]> {
-        self.preimages.get(hash).map(|v| v.0.as_ref())
+    fn preimage(&self, hash: &B256) -> Option<Bytes> {
+        self.preimages.get(hash).map(|v| v.0.clone())
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
@@ -414,18 +422,29 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         false
     }
 
-    fn storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess) {
+    fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess) {
         let value = self
             .storage
-            .get(&(address, slot))
+            .get(&(*address, *slot))
             .copied()
             .unwrap_or(U256::ZERO);
         // we don't support cold storage
         (value, false)
     }
 
-    fn committed_storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess) {
+    fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess) {
         todo!("not supported yet")
+    }
+
+    fn write_transient_storage(&mut self, address: Address, index: U256, value: U256) {
+        self.transient_storage.insert((address, index), value);
+    }
+
+    fn transient_storage(&self, address: Address, index: U256) -> U256 {
+        self.transient_storage
+            .get(&(address, index))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]) {
@@ -438,13 +457,22 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 
     fn context_call(
         &mut self,
-        caller: Address,
-        address: Address,
-        value: U256,
+        caller: &Address,
+        address: &Address,
+        value: &U256,
         fuel: &mut Fuel,
         input: &[u8],
         state: u32,
     ) -> (Bytes, ExitCode) {
+        todo!()
+    }
+
+    fn precompile(
+        &self,
+        address: &Address,
+        input: &Bytes,
+        gas: u64,
+    ) -> Option<(Bytes, ExitCode, u64, i64)> {
         todo!()
     }
 
@@ -496,9 +524,9 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::write_storage(self, caller, slot, value);
     }
 
-    fn storage(&self, slot: U256) -> U256 {
+    fn storage(&self, slot: &U256) -> U256 {
         let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
-        let (value, _) = SovereignAPI::storage(self, caller, slot);
+        let (value, _) = SovereignAPI::storage(self, &caller, slot);
         value
     }
 

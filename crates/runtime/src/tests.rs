@@ -87,7 +87,9 @@ fn test_wrong_indirect_type() {
     let ctx = RuntimeContext::new(rwasm_bytecode)
         .with_fuel_limit(1_000_000)
         .with_state(STATE_DEPLOY);
-    let res = Runtime::run_with_context(ctx.clone());
+    let mut runtime = Runtime::new(ctx);
+    let res = runtime.call();
+    let ctx = runtime.take_context();
     assert_eq!(res.exit_code, 0);
     let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
     assert_eq!(res.exit_code, -2008);

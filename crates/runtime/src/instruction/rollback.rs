@@ -12,7 +12,7 @@ impl SyscallRollback {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext, checkpoint: JournalCheckpoint) -> Result<(), ExitCode> {
-        ctx.jzkt().borrow().rollback(checkpoint);
+        ctx.jzkt().rollback(checkpoint);
         Ok(())
     }
 }

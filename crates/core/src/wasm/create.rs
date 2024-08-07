@@ -107,9 +107,9 @@ pub fn _wasm_create<SDK: SovereignAPI>(
 
     let mut fuel = Fuel::from(input.gas_limit);
     let (_, exit_code) = sdk.context_call(
-        input.caller,
-        contract_account.address,
-        input.value,
+        &input.caller,
+        &contract_account.address,
+        &input.value,
         &mut fuel,
         &[],
         STATE_DEPLOY,

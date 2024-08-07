@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_contract_works() {
         let greeting_bytecode = include_bytes!("./greeting.wasm");
-        let native_sdk = TestingContext::new().with_input(greeting_bytecode);
+        let native_sdk = TestingContext::empty().with_input(greeting_bytecode);
         let sdk = JournalState::empty(native_sdk.clone());
         let rwasm = RWASM::new(sdk);
         rwasm.deploy();

@@ -198,8 +198,8 @@ impl Account {
         // write all changes to database
         sdk.write_account(self.clone(), AccountStatus::Modified);
         // make sure preimage of this hash is stored
-        sdk.write_preimage(self.source_code_hash, source_bytecode);
-        sdk.write_preimage(self.rwasm_code_hash, rwasm_bytecode);
+        sdk.write_preimage(self.address, self.source_code_hash, source_bytecode);
+        sdk.write_preimage(self.address, self.rwasm_code_hash, rwasm_bytecode);
     }
 
     pub fn create_account_checkpoint<SDK: SovereignAPI>(

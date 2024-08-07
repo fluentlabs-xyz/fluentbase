@@ -70,20 +70,20 @@ pub fn _evm_call<SDK: SovereignAPI>(
     }
 
     // check is it precompile
-    // if let Some(result) = sdk.precompile(&input.bytecode_address, &input.input, input.gas_limit)
-    // {     let result = EvmCallMethodOutput {
-    //         output: result.0,
-    //         exit_code: result.1.into_i32(),
-    //         gas_remaining: result.2,
-    //         gas_refund: result.3,
-    //     };
-    //     if ExitCode::from(result.exit_code).is_ok() {
-    //         sdk.commit();
-    //     } else {
-    //         sdk.rollback(checkpoint);
-    //     }
-    //     return result;
-    // }
+    if let Some(result) = sdk.precompile(&input.bytecode_address, &input.input, input.gas_limit) {
+        let result = EvmCallMethodOutput {
+            output: result.0,
+            exit_code: result.1.into_i32(),
+            gas_remaining: result.2,
+            gas_refund: result.3,
+        };
+        if ExitCode::from(result.exit_code).is_ok() {
+            sdk.commit();
+        } else {
+            sdk.rollback(checkpoint);
+        }
+        return result;
+    }
 
     // take right bytecode depending on context params
     let (source_hash, source_bytecode) = if input.bytecode_address != callee_account.address {
@@ -91,14 +91,12 @@ pub fn _evm_call<SDK: SovereignAPI>(
         (
             code_account.source_code_hash,
             sdk.preimage(&code_account.source_code_hash)
-                .map(Bytes::copy_from_slice)
                 .unwrap_or_default(),
         )
     } else {
         (
             callee_account.source_code_hash,
             sdk.preimage(&callee_account.source_code_hash)
-                .map(Bytes::copy_from_slice)
                 .unwrap_or_default(),
         )
     };
@@ -124,7 +122,9 @@ pub fn _evm_call<SDK: SovereignAPI>(
         bytecode,
         // we don't take contract callee, because callee refers to address with bytecode
         target_address: input.address,
-        call_value: input.value,
+        // inside the contract context we pass apparent value that can be different to transfer
+        // value (it can happen for DELEGATECALL or CALLCODE opcodes)
+        call_value: input.apparent_value,
         caller: caller_account.address,
     };
     let result = exec_evm_bytecode(sdk, contract, input.gas_limit, input.is_static, input.depth);

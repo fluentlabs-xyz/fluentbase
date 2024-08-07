@@ -39,7 +39,7 @@ extern "C" {
     /// - `context_len` - length of the context
     /// - `return_ptr` - pointer to the return data (might be `ptr::null()`)
     /// - `return_len` - length of return data buffer (might be zero)
-    /// - `fuel_ptr` - pointer to the fuel memory field (modifiable)
+    /// - `fuel4_ptr` - pointer to the fuel memory field (modifiable)
     pub fn _exec(
         hash32_ptr: *const u8,
         address20_ptr: *const u8,
@@ -49,9 +49,10 @@ extern "C" {
         context_len: u32,
         return_ptr: *mut u8,
         return_len: u32,
-        fuel_ptr: *mut u32,
+        fuel4_ptr: *mut u32,
+        state: u32,
     ) -> i32;
-    pub fn _resume(call_id: i32, exit_code: i32) -> i32;
+    pub fn _resume(call_id: u32, exit_code: i32) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
 

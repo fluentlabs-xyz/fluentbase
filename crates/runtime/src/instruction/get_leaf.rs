@@ -28,10 +28,7 @@ impl SyscallGetLeaf {
         field: u32,
         committed: bool,
     ) -> Option<([u8; 32], bool)> {
-        let (field_values, _flags, is_cold) = ctx
-            .jzkt()
-            .borrow()
-            .get(key.try_into().unwrap(), committed)?;
+        let (field_values, _flags, is_cold) = ctx.jzkt().get(key.try_into().unwrap(), committed)?;
         let field_value = field_values.get(field as usize)?;
         if field_value.len() < 32 {
             return None;

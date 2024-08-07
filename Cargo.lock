@@ -3848,6 +3848,7 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk 0.1.0",
  "fluentbase-types 0.1.0",
+ "hex",
  "indicatif",
  "lazy_static",
  "reqwest 0.12.5",

@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn test_sstore_sload() {
         let ctx = ContractInput::default();
-        let sdk = TestingContext::new()
+        let sdk = TestingContext::empty()
             .with_context(ctx.encode_to_vec(0))
             .with_devnet_genesis();
         // call sstore
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_sstore_sload_api() {
         let ctx = ContractInput::default();
-        let sdk = TestingContext::new()
+        let sdk = TestingContext::empty()
             .with_context(ctx.encode_to_vec(0))
             .with_devnet_genesis();
         // call sstore

@@ -15,7 +15,7 @@ impl SyscallCommit {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext) -> Result<[u8; 32], ExitCode> {
-        let (root, _logs) = ctx.jzkt().borrow().commit()?;
+        let (root, _logs) = ctx.jzkt().commit()?;
         Ok(root)
     }
 }

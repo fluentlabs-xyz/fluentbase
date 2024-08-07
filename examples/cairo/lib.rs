@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn test_contract_works() {
         let cairo_proof = include_bytes!("./fib100.proof");
-        let sdk = TestingContext::new().with_input(cairo_proof);
+        let sdk = TestingContext::empty().with_input(cairo_proof);
         let cairo = CAIRO::new(JournalState::empty(sdk));
         cairo.deploy();
         cairo.main();

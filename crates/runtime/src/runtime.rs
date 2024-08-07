@@ -94,25 +94,7 @@ pub struct RuntimeContext {
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
-    pub(crate) jzkt: Option<Rc<RefCell<dyn IJournaledTrie>>>,
-}
-
-impl Clone for RuntimeContext {
-    fn clone(&self) -> Self {
-        Self {
-            bytecode: self.bytecode.clone(),
-            fuel_limit: self.fuel_limit.clone(),
-            state: self.state.clone(),
-            is_shared: self.is_shared.clone(),
-            input: self.input.clone(),
-            context: self.context.clone(),
-            depth: self.depth.clone(),
-            execution_result: self.execution_result.clone(),
-            // we can't clone resumable invocation
-            resumable_invocation: None,
-            jzkt: self.jzkt.clone(),
-        }
-    }
+    pub(crate) jzkt: Option<Box<dyn IJournaledTrie>>,
 }
 
 impl Debug for RuntimeContext {
@@ -186,7 +168,7 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_jzkt(mut self, jzkt: Rc<RefCell<dyn IJournaledTrie>>) -> Self {
+    pub fn with_jzkt(mut self, jzkt: Box<dyn IJournaledTrie>) -> Self {
         self.jzkt = Some(jzkt);
         self
     }
@@ -196,7 +178,7 @@ impl RuntimeContext {
         self
     }
 
-    pub fn jzkt(&self) -> &Rc<RefCell<dyn IJournaledTrie>> {
+    pub fn jzkt(&self) -> &Box<dyn IJournaledTrie> {
         self.jzkt.as_ref().expect("jzkt is not initialized")
     }
 
@@ -296,6 +278,7 @@ impl RecoverableRuntime {
 
 pub struct CachingRuntime {
     // TODO(dmitry123): "add expiration to this map to avoid memory leak"
+    cached_bytecode: HashMap<F254, Bytes>,
     modules: HashMap<F254, Module>,
     recoverable_runtimes: HashMap<u32, RecoverableRuntime>,
 }
@@ -303,6 +286,7 @@ pub struct CachingRuntime {
 impl CachingRuntime {
     pub fn new() -> Self {
         Self {
+            cached_bytecode: HashMap::new(),
             modules: HashMap::new(),
             recoverable_runtimes: HashMap::new(),
         }
@@ -336,8 +320,11 @@ impl CachingRuntime {
         &mut self,
         engine: &Engine,
         rwasm_hash: F254,
-        rwasm_bytecode: &[u8],
     ) -> Result<&Module, RuntimeError> {
+        let rwasm_bytecode = self
+            .cached_bytecode
+            .get(&rwasm_hash)
+            .expect("missing cached rWASM bytecode");
         let entry = match self.modules.entry(rwasm_hash) {
             Entry::Occupied(_) => return Err(RuntimeError::UnloadedModule(rwasm_hash)),
             Entry::Vacant(entry) => entry,
@@ -439,6 +426,12 @@ impl Runtime {
         Self { store, linker }
     }
 
+    pub fn warmup_bytecode(hash: F254, bytecode: Bytes) {
+        CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
+            caching_runtime.cached_bytecode.insert(hash, bytecode);
+        });
+    }
+
     fn resolve_instance(&mut self) -> Result<Instance, RuntimeError> {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             let bytecode_repr = take(&mut self.store.data_mut().bytecode);
@@ -451,7 +444,10 @@ impl Runtime {
                     if let Some(module) = caching_runtime.resolve_module(&hash) {
                         Ok(module)
                     } else {
-                        caching_runtime.init_module(self.store.engine(), hash, &bytecode)
+                        caching_runtime
+                            .cached_bytecode
+                            .insert(hash, bytecode.clone());
+                        caching_runtime.init_module(self.store.engine(), hash)
                     }
                 }
                 BytecodeOrHash::Hash(hash) => {
@@ -459,15 +455,20 @@ impl Runtime {
                     match caching_runtime.resolve_module(hash) {
                         Some(module) => Ok(module),
                         None => {
-                            let rwasm_bytecode = self
-                                .store
-                                .data_mut()
-                                .jzkt
-                                .as_ref()
-                                .ok_or(RuntimeError::UnloadedModule(*hash))?
-                                .borrow()
-                                .preimage(hash);
-                            caching_runtime.init_module(self.store.engine(), *hash, &rwasm_bytecode)
+                            let cached_bytecode = caching_runtime.cached_bytecode.get(hash);
+                            if cached_bytecode.is_none() {
+                                let bytecode = self
+                                    .store
+                                    .data_mut()
+                                    .jzkt
+                                    .as_ref()
+                                    .ok_or(RuntimeError::UnloadedModule(*hash))?
+                                    .preimage(hash);
+                                caching_runtime
+                                    .cached_bytecode
+                                    .insert(*hash, bytecode.into());
+                            }
+                            caching_runtime.init_module(self.store.engine(), *hash)
                         }
                     }
                 }
@@ -560,8 +561,12 @@ impl Runtime {
                 // since this call is initiated on the root level and it is trusted
                 let exit_code =
                     SyscallExec::fn_continue(Caller::new(&mut self.store, None), delayed_state)
-                        .unwrap_or_else(|exit_code| exit_code.into());
-                let exit_code = Value::I32(exit_code.into_i32());
+                        .unwrap_or_else(|exit_code| {
+                            exit_code
+                                .i32_exit_status()
+                                .unwrap_or(ExitCode::UnknownError.into_i32())
+                        });
+                let exit_code = Value::I32(exit_code);
                 next_result = resumable_invocation
                     .resume(self.store.as_context_mut(), &[exit_code], &mut [])
                     .map_err(Into::<RuntimeError>::into);
@@ -643,5 +648,9 @@ impl Runtime {
 
     pub fn data_mut(&mut self) -> &mut RuntimeContext {
         self.store.data_mut()
+    }
+
+    pub fn take_context(&mut self) -> RuntimeContext {
+        take(self.store.data_mut())
     }
 }
