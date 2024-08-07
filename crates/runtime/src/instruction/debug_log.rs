@@ -19,7 +19,7 @@ impl SyscallDebugLog {
         Ok(())
     }
 
-    // #[cfg(feature = "debug")]
+    #[cfg(feature = "debug")]
     pub fn fn_impl(msg: &[u8]) {
         use std::time::Instant;
         let now = Instant::now();
@@ -46,6 +46,6 @@ impl SyscallDebugLog {
         );
     }
 
-    // #[cfg(not(feature = "debug"))]
-    // pub fn fn_impl(_msg: &[u8]) {}
+    #[cfg(not(feature = "debug"))]
+    pub fn fn_impl(_msg: &[u8]) {}
 }
