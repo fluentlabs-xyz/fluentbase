@@ -45,7 +45,7 @@ mod test {
                 ..Default::default()
             })
             .with_devnet_genesis()
-            .build(TestingContext::new().with_input(input))
+            .build(TestingContext::empty().with_input(input))
     }
 
     #[serial]

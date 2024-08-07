@@ -52,7 +52,6 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
 
     fn load_account(&mut self, address: Address) -> Option<LoadAccountResult> {
         let (account, is_cold) = self.sdk.account(&address);
-        // Some((is_cold, account.is_not_empty()))
         Some(LoadAccountResult {
             is_cold,
             is_empty: account.is_empty(),
@@ -82,7 +81,6 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
         Some((
             self.sdk
                 .preimage(&account.source_code_hash)
-                .map(Bytes::copy_from_slice)
                 .unwrap_or_default(),
             is_cold,
         ))
@@ -97,7 +95,7 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
     }
 
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
-        let (value, is_cold) = self.sdk.storage(address, index);
+        let (value, is_cold) = self.sdk.storage(&address, &index);
         debug_log!(
             self.sdk,
             "ecl(sload): address={}, index={}, value={}",
@@ -116,8 +114,8 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
             hex::encode(index.to_be_bytes::<32>().as_slice()),
             hex::encode(value.to_be_bytes::<32>().as_slice()),
         );
-        let (original_value, _) = self.sdk.committed_storage(address, index);
-        let (present_value, is_cold) = self.sdk.storage(address, index);
+        let (original_value, _) = self.sdk.committed_storage(&address, &index);
+        let (present_value, is_cold) = self.sdk.storage(&address, &index);
         self.sdk.write_storage(address, index, value);
         return Some(SStoreResult {
             original_value,
@@ -192,7 +190,7 @@ impl<'a, SDK: SovereignAPI> EvmBytecodeExecutor<'a, SDK> {
                     nonce: Some(sdk.tx_context().nonce),
                     chain_id: None, // no checks
                     access_list: Default::default(),
-                    gas_priority_fee: Default::default(),
+                    gas_priority_fee: Some(sdk.tx_context().gas_price),
                     blob_hashes: Default::default(),
                     max_fee_per_blob_gas: Default::default(),
                     #[cfg(feature = "optimism")]
@@ -244,16 +242,12 @@ impl<'a, SDK: SovereignAPI> EvmBytecodeExecutor<'a, SDK> {
         // get EVM bytecode hash from the current address
         let evm_code_hash: B256 = {
             let code_hash_storage_key = self.code_hash_storage_key(address);
-            let (value, _) = self.sdk.storage(contract_address, code_hash_storage_key);
+            let (value, _) = self.sdk.storage(&contract_address, &code_hash_storage_key);
             value.to_be_bytes::<32>().into()
         };
 
         // load EVM bytecode from preimage storage
-        let evm_bytecode = self
-            .sdk
-            .preimage(&evm_code_hash)
-            .map(Bytes::copy_from_slice)
-            .unwrap_or_default();
+        let evm_bytecode = self.sdk.preimage(&evm_code_hash).unwrap_or_default();
 
         // make sure bytecode is analyzed (required by interpreter)
         let evm_bytecode = to_analysed(Bytecode::new_raw(evm_bytecode));

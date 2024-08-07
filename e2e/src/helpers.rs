@@ -1,8 +1,6 @@
-use fluentbase_codec::Encoder;
 use fluentbase_runtime::{
     instruction::runtime_register_sovereign_handlers,
     types::RuntimeError,
-    DefaultEmptyRuntimeDatabase,
     ExecutionResult,
     Runtime,
     RuntimeContext,

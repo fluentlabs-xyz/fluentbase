@@ -164,11 +164,11 @@ impl NativeAPI for RwasmContext {
 
     fn exec(
         &self,
-        code_hash: F254,
-        address: Address,
+        code_hash: &F254,
+        address: &Address,
         input: &[u8],
-        context: &[u8],
         fuel: &mut Fuel,
+        state: u32,
     ) -> i32 {
         let mut fuel32 = fuel.0 as u32;
         let exit_code = unsafe {
@@ -177,11 +177,12 @@ impl NativeAPI for RwasmContext {
                 address.as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
-                context.as_ptr(),
-                context.len() as u32,
+                core::ptr::null(),
+                0,
                 core::ptr::null_mut(),
                 0,
                 &mut fuel32 as *mut u32,
+                state,
             )
         };
         fuel.0 = fuel32 as u64;
@@ -189,7 +190,7 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn resume(&self, call_id: i32, exit_code: i32) -> i32 {
+    fn resume(&self, call_id: u32, exit_code: i32) -> i32 {
         unsafe { _resume(call_id, exit_code) }
     }
 }

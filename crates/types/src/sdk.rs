@@ -29,13 +29,20 @@ pub trait NativeAPI {
     fn charge_fuel(&self, fuel: &mut Fuel);
     fn exec(
         &self,
-        code_hash: F254,
-        address: Address,
+        code_hash: &F254,
+        address: &Address,
         input: &[u8],
-        context: &[u8],
         fuel: &mut Fuel,
+        state: u32,
     ) -> i32;
-    fn resume(&self, call_id: i32, exit_code: i32) -> i32;
+    fn resume(&self, call_id: u32, exit_code: i32) -> i32;
+
+    fn return_data(&self) -> Bytes {
+        let output_size = self.output_size();
+        let mut buffer = vec![0u8; output_size as usize];
+        self.read_output(&mut buffer, 0);
+        buffer.into()
+    }
 }
 
 pub type IsColdAccess = bool;
@@ -72,8 +79,11 @@ pub struct TxContext {
     pub gas_limit: u64,
     pub nonce: u64,
     pub gas_price: U256,
+    pub gas_priority_fee: Option<U256>,
     pub origin: Address,
     pub data: Bytes,
+    pub blob_hashes: Vec<B256>,
+    pub max_fee_per_blob_gas: Option<U256>,
     pub value: U256,
 }
 
@@ -83,8 +93,11 @@ impl From<&Env> for TxContext {
             gas_limit: value.tx.gas_limit,
             nonce: value.tx.nonce.unwrap_or_default(),
             gas_price: value.tx.gas_price,
+            gas_priority_fee: value.tx.gas_priority_fee,
             origin: value.tx.caller,
             data: value.tx.data.clone(),
+            blob_hashes: value.tx.blob_hashes.clone(),
+            max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
             value: value.tx.value,
         }
     }
@@ -155,6 +168,13 @@ pub struct SovereignStateResult {
 #[derive(Default)]
 pub struct SharedStateResult {}
 
+pub struct DestroyedAccountResult {
+    pub had_value: bool,
+    pub target_exists: bool,
+    pub is_cold: bool,
+    pub previously_destroyed: bool,
+}
+
 pub trait SovereignAPI {
     fn native_sdk(&self) -> &impl NativeAPI;
 
@@ -167,29 +187,39 @@ pub trait SovereignAPI {
     fn rollback(&mut self, checkpoint: JournalCheckpoint);
 
     fn write_account(&mut self, account: Account, status: AccountStatus);
+    fn destroy_account(&mut self, address: &Address, target: &Address) -> DestroyedAccountResult;
     fn account(&self, address: &Address) -> (Account, IsColdAccess);
     fn account_committed(&self, address: &Address) -> (Account, IsColdAccess);
 
-    fn write_preimage(&mut self, hash: B256, preimage: Bytes);
-    fn preimage(&self, hash: &B256) -> Option<&[u8]>;
+    fn write_preimage(&mut self, address: Address, hash: B256, preimage: Bytes);
+    fn preimage(&self, hash: &B256) -> Option<Bytes>;
     fn preimage_size(&self, hash: &B256) -> u32;
 
     fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess;
-    fn storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess);
-    fn committed_storage(&self, address: Address, slot: U256) -> (U256, IsColdAccess);
+    fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
+    fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
+
+    fn write_transient_storage(&mut self, address: Address, index: U256, value: U256);
+    fn transient_storage(&self, address: Address, index: U256) -> U256;
 
     fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]);
 
     fn context_call(
         &mut self,
-        caller: Address,
-        address: Address,
-        value: U256,
+        caller: &Address,
+        address: &Address,
+        value: &U256,
         fuel: &mut Fuel,
         input: &[u8],
         state: u32,
     ) -> (Bytes, ExitCode);
 
+    fn precompile(
+        &self,
+        address: &Address,
+        input: &Bytes,
+        gas: u64,
+    ) -> Option<(Bytes, ExitCode, u64, i64)>;
     fn is_precompile(&self, address: &Address) -> bool;
     fn transfer(
         &mut self,
@@ -211,19 +241,12 @@ pub trait SharedAPI {
     fn account(&self, address: &Address) -> (Account, IsColdAccess);
     fn transfer(&mut self, from: &mut Account, to: &mut Account, amount: U256);
     fn write_storage(&mut self, slot: U256, value: U256);
-    fn storage(&self, slot: U256) -> U256;
+    fn storage(&self, slot: &U256) -> U256;
 
     fn write_log(&mut self, data: Bytes, topics: &[B256]);
 
     fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
     fn delegate(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
-
-    fn return_data(&self) -> Bytes {
-        let output_size = self.native_sdk().output_size();
-        let mut buffer = vec![0u8; output_size as usize];
-        self.native_sdk().read_output(&mut buffer, 0);
-        buffer.into()
-    }
 
     fn exit(&mut self, exit_code: ExitCode) -> ! {
         self.commit();

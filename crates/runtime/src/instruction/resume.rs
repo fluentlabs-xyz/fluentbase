@@ -11,18 +11,14 @@ impl SyscallResume {
         call_id: u32,
         exit_code: i32,
     ) -> Result<i32, Trap> {
-        let (_fuel_remaining, exit_code) = Self::fn_impl(caller.data_mut(), call_id, exit_code)?;
-        Ok(exit_code.into_i32())
+        let (_fuel_remaining, exit_code) = Self::fn_impl(caller.data_mut(), call_id, exit_code);
+        Ok(exit_code)
     }
 
-    pub fn fn_impl(
-        ctx: &mut RuntimeContext,
-        call_id: u32,
-        exit_code: i32,
-    ) -> Result<(u64, ExitCode), Trap> {
+    pub fn fn_impl(ctx: &mut RuntimeContext, call_id: u32, exit_code: i32) -> (u64, i32) {
         // only root can use resume function
         if ctx.depth > 0 {
-            return Ok((0, ExitCode::RootCallOnly));
+            return (0, ExitCode::RootCallOnly.into_i32());
         }
 
         let mut recoverable_runtime = Runtime::recover_runtime(call_id);
@@ -44,7 +40,7 @@ impl SyscallResume {
 
         // make sure there is no return overflow
         if state.return_len > 0 && execution_result.output.len() > state.return_len as usize {
-            return Ok((0, ExitCode::OutputOverflow));
+            return (0, ExitCode::OutputOverflow.into_i32());
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
@@ -53,9 +49,9 @@ impl SyscallResume {
         ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
 
-        Ok((
+        (
             state.delegated_execution.fuel as u64 - execution_result.fuel_consumed,
-            ExitCode::from(execution_result.exit_code),
-        ))
+            execution_result.exit_code,
+        )
     }
 }

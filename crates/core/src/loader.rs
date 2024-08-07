@@ -15,7 +15,7 @@ pub fn _loader_call<SDK: SovereignAPI>(
     let (account, _) = sdk.account(&input.bytecode_address);
     let bytecode_type = sdk
         .preimage(&account.source_code_hash)
-        .map(BytecodeType::from_slice)
+        .map(|v| BytecodeType::from_slice(v.as_ref()))
         .unwrap_or(BytecodeType::EVM);
     match bytecode_type {
         BytecodeType::EVM => _evm_call(sdk, input),

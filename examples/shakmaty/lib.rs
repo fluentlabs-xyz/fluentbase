@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
-        let sdk = JournalState::empty(TestingContext::new());
+        let sdk = JournalState::empty(TestingContext::empty());
         let shakmaty = SHAKMATY::new(sdk);
         shakmaty.deploy();
         shakmaty.main();

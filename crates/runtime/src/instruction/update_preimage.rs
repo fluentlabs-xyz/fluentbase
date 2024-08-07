@@ -27,7 +27,6 @@ impl SyscallUpdatePreimage {
     ) -> Result<bool, ExitCode> {
         let res = ctx
             .jzkt()
-            .borrow()
             .update_preimage(key.try_into().unwrap(), field, preimage);
         Ok(res)
     }

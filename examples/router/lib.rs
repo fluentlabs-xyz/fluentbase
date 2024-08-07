@@ -55,7 +55,7 @@ mod tests {
         let msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
             panic!("Failed to decode input {:?} {:?}", "msg", e,);
         });
-        let sdk = TestingContext::new().with_input(input);
+        let sdk = TestingContext::empty().with_input(input);
         // run router
         let mut greeting = ROUTER::new(JournalState::empty(sdk.clone()));
         greeting.deploy();

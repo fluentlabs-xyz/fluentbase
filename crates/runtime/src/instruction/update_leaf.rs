@@ -33,7 +33,6 @@ impl SyscallUpdateLeaf {
         vals: Vec<[u8; 32]>,
     ) -> Result<(), ExitCode> {
         ctx.jzkt()
-            .borrow()
             .update(key.try_into().unwrap(), &vals, value_flags);
         Ok(())
     }

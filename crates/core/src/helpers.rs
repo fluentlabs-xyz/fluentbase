@@ -144,37 +144,13 @@ fn exec_evm_call<SDK: SovereignAPI>(
         bytecode_address: inputs.bytecode_address,
         // here we take transfer value, because for DELEGATECALL it's not apparent
         value: inputs.value.transfer().unwrap_or_default(),
-        apparent_value: inputs.value.get(),
+        apparent_value: inputs.value.apparent().unwrap_or_default(),
         input: take(&mut inputs.input),
         gas_limit: inputs.gas_limit,
         depth,
         is_static: inputs.is_static,
     };
     let call_output = crate::loader::_loader_call(sdk, method_data);
-
-    // let core_input = CoreInput {
-    //     method_id: EVM_CALL_METHOD_ID,
-    //     method_data,
-    // };
-    // let mut gas_limit = inputs.gas_limit as u32;
-    // let contract_input =
-    //     contract_input_from_call_inputs(cr, &inputs, core_input.encode_to_vec(0).into())
-    //         .encode_to_vec(0);
-    // let (callee, _) = am.account(ECL_CONTRACT_ADDRESS);
-    // let (output_buffer, exit_code) = am.exec_hash(
-    //     callee.rwasm_code_hash.as_ptr(),
-    //     &contract_input,
-    //     &mut gas_limit as *mut u32,
-    //     STATE_MAIN,
-    // );
-    // let call_output = if exit_code == 0 {
-    //     let mut buffer_decoder = BufferDecoder::new(&output_buffer);
-    //     let mut method_output = EvmCallMethodOutput::default();
-    //     EvmCallMethodOutput::decode_body(&mut buffer_decoder, 0, &mut method_output);
-    //     method_output
-    // } else {
-    //     EvmCallMethodOutput::from_exit_code(exit_code.into())
-    // };
 
     let mut gas = Gas::new(call_output.gas_remaining);
     gas.record_refund(call_output.gas_refund);

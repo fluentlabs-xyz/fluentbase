@@ -14,7 +14,7 @@ impl SyscallComputeRoot {
     }
 
     pub fn fn_impl(ctx: &mut RuntimeContext) -> [u8; 32] {
-        let result = ctx.jzkt().borrow().compute_root();
+        let result = ctx.jzkt().compute_root();
         result
     }
 }

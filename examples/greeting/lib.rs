@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
-        let native_sdk = TestingContext::new().with_input("Hello, World");
+        let native_sdk = TestingContext::empty().with_input("Hello, World");
         let sdk = JournalState::empty(native_sdk.clone());
         let greeting = GREETING::new(sdk);
         greeting.deploy();

@@ -11,7 +11,7 @@ impl SyscallCheckpoint {
     }
 
     pub fn fn_impl(context: &RuntimeContext) -> Result<JournalCheckpoint, ExitCode> {
-        let checkpoint = context.jzkt().borrow().checkpoint();
+        let checkpoint = context.jzkt().checkpoint();
         Ok(checkpoint)
     }
 }

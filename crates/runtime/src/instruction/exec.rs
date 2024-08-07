@@ -23,7 +23,8 @@ pub struct SysExecResumable {
     pub context_len: u32,
     pub return_ptr: u32,
     pub return_len: u32,
-    pub fuel_ptr: u32,
+    pub fuel4_ptr: u32,
+    pub state: u32,
 
     pub delegated_execution: DelegatedExecution,
 
@@ -58,7 +59,8 @@ impl SyscallExec {
         context_len: u32,
         return_ptr: u32,
         return_len: u32,
-        fuel_ptr: u32,
+        fuel4_ptr: u32,
+        state: u32,
     ) -> Result<i32, Trap> {
         // it's impossible to interrupt execution on the root level if there is a context
         if caller.data().depth > 0 && context_len > 0 {
@@ -68,7 +70,7 @@ impl SyscallExec {
             address: Address::from_slice(caller.read_memory(hash32_ptr, 20)?),
             hash: F254::from_slice(caller.read_memory(hash32_ptr, 32)?),
             input: Bytes::copy_from_slice(caller.read_memory(input_ptr, input_len)?),
-            fuel: LittleEndian::read_u32(caller.read_memory(fuel_ptr, 4)?),
+            fuel: LittleEndian::read_u32(caller.read_memory(fuel4_ptr, 4)?),
         };
         return Err(SysExecResumable {
             hash32_ptr,
@@ -79,7 +81,8 @@ impl SyscallExec {
             context_len,
             return_ptr,
             return_len,
-            fuel_ptr,
+            fuel4_ptr,
+            state,
             delegated_execution,
             depth_level: caller.data().depth,
         }
@@ -89,7 +92,7 @@ impl SyscallExec {
     pub fn fn_continue(
         mut caller: Caller<'_, RuntimeContext>,
         state: &SysExecResumable,
-    ) -> Result<ExitCode, Trap> {
+    ) -> Result<i32, Trap> {
         let bytecode_hash32: [u8; 32] = caller
             .read_memory(state.hash32_ptr, 32)?
             .try_into()
@@ -97,7 +100,7 @@ impl SyscallExec {
         let input = caller
             .read_memory(state.input_ptr, state.input_len)?
             .to_vec();
-        let fuel_data = caller.read_memory(state.fuel_ptr, 4)?;
+        let fuel_data = caller.read_memory(state.fuel4_ptr, 4)?;
         let fuel_limit = LittleEndian::read_u32(fuel_data);
         let (remaining_fuel, exit_code) = Self::fn_impl(
             caller.data_mut(),
@@ -105,6 +108,7 @@ impl SyscallExec {
             &input,
             state.return_len,
             fuel_limit as u64,
+            state.state,
         );
         if state.return_len > 0 {
             let return_data = caller.data().execution_result.return_data.clone();
@@ -112,7 +116,7 @@ impl SyscallExec {
         }
         let mut fuel_buffer = [0u8; 4];
         LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
-        caller.write_memory(state.fuel_ptr, &fuel_buffer)?;
+        caller.write_memory(state.fuel4_ptr, &fuel_buffer)?;
         Ok(exit_code)
     }
 
@@ -122,7 +126,8 @@ impl SyscallExec {
         input: &[u8],
         return_len: u32,
         fuel_limit: u64,
-    ) -> (u64, ExitCode) {
+        state: u32,
+    ) -> (u64, i32) {
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -130,7 +135,7 @@ impl SyscallExec {
 
         // check call depth overflow
         if ctx.depth >= CALL_STACK_LIMIT {
-            return (0, ExitCode::CallDepthOverflow);
+            return (0, ExitCode::CallDepthOverflow.into_i32());
         }
 
         // take jzkt from the existing context (we will return it soon)
@@ -141,10 +146,10 @@ impl SyscallExec {
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input.to_vec())
             .with_context(context)
-            .with_is_shared(false)
+            .with_is_shared(ctx.depth > 0)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(jzkt)
-            .with_state(STATE_MAIN)
+            .with_state(state)
             .with_depth(ctx.depth + 1);
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
@@ -155,7 +160,7 @@ impl SyscallExec {
 
         // make sure there is no return overflow
         if return_len > 0 && execution_result.output.len() > return_len as usize {
-            return (0, ExitCode::OutputOverflow);
+            return (0, ExitCode::OutputOverflow.into_i32());
         }
 
         // if execution was interrupted,
@@ -186,7 +191,7 @@ impl SyscallExec {
 
         (
             fuel_limit - execution_result.fuel_consumed,
-            ExitCode::from(execution_result.exit_code),
+            execution_result.exit_code,
         )
     }
 }

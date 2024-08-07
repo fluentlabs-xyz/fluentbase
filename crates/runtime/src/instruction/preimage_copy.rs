@@ -17,7 +17,7 @@ impl SyscallPreimageCopy {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext, hash: &[u8]) -> Result<Vec<u8>, ExitCode> {
-        let preimage = ctx.jzkt().borrow().preimage(hash.try_into().unwrap());
+        let preimage = ctx.jzkt().preimage(hash.try_into().unwrap());
         Ok(preimage)
     }
 }
