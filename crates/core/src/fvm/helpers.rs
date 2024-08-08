@@ -1,6 +1,6 @@
 use alloc::vec;
 use core::{mem::size_of, ops::Deref, str::FromStr};
-use fluentbase_sdk::{Address, LowLevelSDK, U256};
+use fluentbase_sdk::{Address, ContextReader, LowLevelSDK, U256};
 use fluentbase_types::{Bytes32, Bytes34, Bytes64, SharedAPI};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
@@ -29,9 +29,9 @@ use fuel_core_types::{
 };
 
 pub fn fuel_testnet_consensus_params_from(
-    max_gas_per_tx: u64,
-    max_gas_per_predicate: u64,
-    block_gas_limit: u64,
+    max_gas_per_tx: Option<u64>,
+    max_gas_per_predicate: Option<u64>,
+    block_gas_limit: Option<u64>,
     chain_id: ChainId,
     gas_costs: Option<GasCosts>,
 ) -> ConsensusParameters {
@@ -40,7 +40,7 @@ pub fn fuel_testnet_consensus_params_from(
             max_inputs: 8,
             max_outputs: 8,
             max_witnesses: 8,
-            max_gas_per_tx,
+            max_gas_per_tx: max_gas_per_tx.unwrap_or(30000000),
             max_size: 110 * 1024,
             max_bytecode_subsections: 255,
         }),
@@ -48,7 +48,7 @@ pub fn fuel_testnet_consensus_params_from(
             max_predicate_length: 1024 * 1024,
             max_predicate_data_length: 1024 * 1024,
             max_message_data_length: 1024 * 1024,
-            max_gas_per_predicate,
+            max_gas_per_predicate: max_gas_per_predicate.unwrap_or(30000000),
         }),
         script_params: ScriptParameters::V1(ScriptParametersV1 {
             max_script_length: 1024 * 1024,
@@ -68,12 +68,22 @@ pub fn fuel_testnet_consensus_params_from(
             "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
         )
         .expect("invalid asset id format"),
-        block_gas_limit,
+        block_gas_limit: block_gas_limit.unwrap_or(30000000),
         privileged_address: fuel_types::Address::from_str(
             "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9",
         )
         .expect("invalid privileged address format"),
     })
+}
+
+pub fn fuel_testnet_consensus_params_from_cr<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+    fuel_testnet_consensus_params_from(
+        Some(cr.tx_gas_limit()),
+        Some(cr.tx_gas_limit()),
+        Some(cr.block_gas_limit()),
+        ChainId::new(cr.block_chain_id()),
+        None,
+    )
 }
 
 fn keccak256(data: &[u8], target: &mut Bytes32) {
