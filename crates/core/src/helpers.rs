@@ -1,48 +1,16 @@
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use core::mem::take;
-use fluentbase_sdk::{
-    types::{EvmCallMethodInput, EvmCreateMethodInput},
-    SovereignAPI,
-};
 use fluentbase_types::{
     create_sovereign_import_linker,
-    Address,
     ExitCode,
-    NativeAPI,
-    SharedAPI,
     SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
 };
-use revm_interpreter::{
-    opcode::make_instruction_table,
-    CallInputs,
-    CallOutcome,
-    Contract,
-    CreateInputs,
-    CreateOutcome,
-    Gas,
-    InstructionResult,
-    Interpreter,
-    InterpreterAction,
-    InterpreterResult,
-    SharedMemory,
-};
-use revm_primitives::{CancunSpec, CreateScheme};
+use revm_interpreter::InstructionResult;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
 };
-
-#[macro_export]
-macro_rules! decode_method_input {
-    ($core_input: ident, $method_input: ident) => {{
-        let mut buffer = BufferDecoder::new(&mut $core_input.method_data);
-        let mut method_input = $method_input::default();
-        $method_input::decode_body(&mut buffer, 0, &mut method_input);
-        method_input
-    }};
-}
 
 #[inline(always)]
 pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
@@ -169,33 +137,3 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         _ => ExitCode::UnknownError,
     }
 }
-
-// pub(crate) struct InputHelper {
-//     input: Bytes,
-// }
-//
-// impl InputHelper {
-//     pub(crate) fn new() -> Self {
-//         let input_size = LowLevelSDK::input_size();
-//         let mut input = vec![0u8; input_size as usize];
-//         LowLevelSDK::read(input.as_mut_ptr(), input_size, 0);
-//         Self {
-//             input: input.into(),
-//         }
-//     }
-//
-//     pub(crate) fn decode_method_id(&self) -> u32 {
-//         let mut method_id = 0u32;
-//         <CoreInput<Bytes> as ICoreInput>::MethodId::decode_field_header(
-//             &self.input,
-//             &mut method_id,
-//         );
-//         method_id
-//     }
-//
-//     pub(crate) fn decode_method_input<T: Encoder<T> + Default>(&self) -> T {
-//         let mut core_input = T::default();
-//         <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(&self.input, &mut
-// core_input);         core_input
-//     }
-// }
