@@ -2,7 +2,7 @@ use crate::{debug_log, fluentbase_sdk::NativeAPI, helpers::exit_code_from_evm_er
 use alloc::boxed::Box;
 use core::mem::take;
 use fluentbase_sdk::{Address, Bytes, B256, U256};
-use fluentbase_types::SovereignAPI;
+use fluentbase_types::{env_from_context, SovereignAPI};
 use revm_interpreter::{
     analysis::to_analysed,
     as_usize_saturated,
@@ -23,18 +23,7 @@ use revm_interpreter::{
     SelfDestructResult,
     SharedMemory,
 };
-use revm_primitives::{
-    AnalysisKind,
-    BlockEnv,
-    Bytecode,
-    CancunSpec,
-    CfgEnv,
-    Env,
-    Log,
-    TransactTo,
-    TxEnv,
-    BLOCK_HASH_HISTORY,
-};
+use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY};
 
 struct EvmBytecodeExecutor<'a, SDK> {
     sdk: &'a mut SDK,
@@ -126,20 +115,11 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
     }
 
     fn tload(&mut self, address: Address, index: U256) -> U256 {
-        // self.transient_storage
-        //     .get(&(address, index))
-        //     .copied()
-        //     .unwrap_or_default()
-        // self.sdk.unwrap().transient_storage(address, index)
-        todo!("not supported yet")
+        self.sdk.transient_storage(address, index)
     }
 
     fn tstore(&mut self, address: Address, index: U256, value: U256) {
-        // self.transient_storage.insert((address, index), value);
-        // self.sdk
-        //     .unwrap()
-        //     .write_transient_storage(address, index, value)
-        todo!("not supported yet")
+        self.sdk.write_transient_storage(address, index, value)
     }
 
     fn log(&mut self, mut log: Log) {
@@ -148,55 +128,20 @@ impl<'a, SDK: SovereignAPI> Host for EvmBytecodeExecutor<'a, SDK> {
     }
 
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
-        todo!("not supported yet");
-        // let [had_value, target_exists, is_cold, previously_destroyed] =
-        //     self.sdk.as_mut().unwrap().self_destruct(address, target);
-        // Some(SelfDestructResult {
-        //     had_value,
-        //     target_exists,
-        //     is_cold,
-        //     previously_destroyed,
-        // })
+        let result = self.sdk.destroy_account(&address, &target);
+        Some(SelfDestructResult {
+            had_value: result.had_value,
+            target_exists: result.target_exists,
+            is_cold: result.is_cold,
+            previously_destroyed: result.previously_destroyed,
+        })
     }
 }
 
 impl<'a, SDK: SovereignAPI> EvmBytecodeExecutor<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
         Self {
-            env: Env {
-                cfg: {
-                    let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = sdk.block_context().chain_id;
-                    cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
-                    cfg_env
-                },
-                block: BlockEnv {
-                    number: U256::from(sdk.block_context().number),
-                    coinbase: sdk.block_context().coinbase,
-                    timestamp: U256::from(sdk.block_context().timestamp),
-                    gas_limit: U256::from(sdk.block_context().gas_limit),
-                    basefee: sdk.block_context().base_fee,
-                    difficulty: sdk.block_context().difficulty,
-                    prevrandao: Some(sdk.block_context().prev_randao),
-                    blob_excess_gas_and_price: None,
-                },
-                tx: TxEnv {
-                    caller: sdk.tx_context().origin,
-                    gas_limit: sdk.tx_context().gas_limit,
-                    gas_price: sdk.tx_context().gas_price,
-                    transact_to: TransactTo::Call(Address::ZERO), // will do nothing
-                    value: sdk.tx_context().value,
-                    data: Default::default(), // not used because we already pass all validations
-                    nonce: Some(sdk.tx_context().nonce),
-                    chain_id: None, // no checks
-                    access_list: Default::default(),
-                    gas_priority_fee: Some(sdk.tx_context().gas_price),
-                    blob_hashes: Default::default(),
-                    max_fee_per_blob_gas: Default::default(),
-                    #[cfg(feature = "optimism")]
-                    optimism: Default::default(),
-                },
-            },
+            env: env_from_context(sdk.block_context(), sdk.tx_context()),
             sdk,
         }
     }

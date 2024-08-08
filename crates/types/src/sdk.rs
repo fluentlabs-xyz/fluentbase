@@ -4,7 +4,7 @@ use alloy_primitives::Bytes;
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use fluentbase_codec::Codec;
 use hashbrown::HashMap;
-use revm_primitives::Env;
+use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
 
 /// A trait for providing shared API functionality.
 pub trait NativeAPI {
@@ -112,6 +112,48 @@ pub struct ContractContext {
     pub is_static: bool,
     pub value: U256,
     pub input: Bytes,
+}
+
+pub fn env_from_context(block_context: &BlockContext, tx_context: &TxContext) -> Env {
+    Env {
+        cfg: {
+            let mut cfg_env = CfgEnv::default();
+            cfg_env.chain_id = block_context.chain_id;
+            cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
+            cfg_env
+        },
+        block: BlockEnv {
+            number: U256::from(block_context.number),
+            coinbase: block_context.coinbase,
+            timestamp: U256::from(block_context.timestamp),
+            gas_limit: U256::from(block_context.gas_limit),
+            basefee: block_context.base_fee,
+            difficulty: block_context.difficulty,
+            prevrandao: Some(block_context.prev_randao),
+            blob_excess_gas_and_price: None,
+        },
+        tx: TxEnv {
+            caller: tx_context.origin,
+            gas_limit: tx_context.gas_limit,
+            gas_price: tx_context.gas_price,
+            // we don't check this field, and we don't know what type of "transact"
+            // we execute right now, so can safely skip the field
+            transact_to: TransactTo::Call(Address::ZERO),
+            value: tx_context.value,
+            // we don't use this field, so there is no need to do redundant copy operation
+            data: Default::default(),
+            nonce: Some(tx_context.nonce),
+            chain_id: Some(block_context.chain_id),
+            // we check access lists in advance before executing a smart contract, it
+            // doesn't affect gas price or something else, can skip
+            access_list: Default::default(),
+            gas_priority_fee: tx_context.gas_priority_fee,
+            blob_hashes: tx_context.blob_hashes.clone(),
+            max_fee_per_blob_gas: tx_context.max_fee_per_blob_gas,
+            #[cfg(feature = "optimism")]
+            optimism: Default::default(),
+        },
+    }
 }
 
 #[derive(Codec, Default)]
