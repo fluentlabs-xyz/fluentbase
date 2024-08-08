@@ -1,21 +1,10 @@
 use crate::debug_log;
 use core::mem::take;
 use fluentbase_sdk::{Bytes, SovereignAPI};
-use fluentbase_types::{NativeAPI, SharedAPI};
+use fluentbase_types::{env_from_context, NativeAPI};
 use revm_interpreter::{
     as_usize_saturated,
-    primitives::{
-        Address,
-        AnalysisKind,
-        BlockEnv,
-        CfgEnv,
-        Env,
-        Log,
-        TransactTo,
-        TxEnv,
-        B256,
-        U256,
-    },
+    primitives::{Address, Env, Log, B256, U256},
     Host,
     LoadAccountResult,
     SStoreResult,
@@ -31,45 +20,7 @@ pub struct FluentHost<'sdk, SDK: SovereignAPI> {
 impl<'sdk, SDK: SovereignAPI> FluentHost<'sdk, SDK> {
     pub fn new(sdk: &'sdk mut SDK) -> Self {
         Self {
-            env: Env {
-                cfg: {
-                    let mut cfg_env = CfgEnv::default();
-                    cfg_env.chain_id = sdk.block_context().chain_id;
-                    cfg_env.perf_analyse_created_bytecodes = AnalysisKind::Raw;
-                    cfg_env
-                },
-                block: BlockEnv {
-                    number: U256::from(sdk.block_context().number),
-                    coinbase: sdk.block_context().coinbase,
-                    timestamp: U256::from(sdk.block_context().timestamp),
-                    gas_limit: U256::from(sdk.block_context().gas_limit),
-                    basefee: sdk.block_context().base_fee,
-                    difficulty: sdk.block_context().difficulty,
-                    prevrandao: Some(sdk.block_context().prev_randao),
-                    blob_excess_gas_and_price: None,
-                },
-                tx: TxEnv {
-                    caller: sdk.tx_context().origin,
-                    gas_limit: sdk.tx_context().gas_limit,
-                    gas_price: sdk.tx_context().gas_price,
-                    // we don't check this field, and we honestly don't know what type of transact
-                    // we execute right now, so can safely skp the field
-                    transact_to: TransactTo::Call(Address::ZERO),
-                    value: sdk.tx_context().value,
-                    // we don't use this field, so there is no need to do redundant copy operation
-                    data: Default::default(),
-                    nonce: Some(sdk.tx_context().nonce),
-                    chain_id: Some(sdk.block_context().chain_id),
-                    // we check access lists in advance before executing smart contract, it doesn't
-                    // affect gas price or something else, can skip
-                    access_list: Default::default(),
-                    gas_priority_fee: sdk.tx_context().gas_priority_fee,
-                    blob_hashes: sdk.tx_context().blob_hashes.clone(),
-                    max_fee_per_blob_gas: sdk.tx_context().max_fee_per_blob_gas,
-                    #[cfg(feature = "optimism")]
-                    optimism: Default::default(),
-                },
-            },
+            env: env_from_context(sdk.block_context(), sdk.tx_context()),
             sdk: Some(sdk),
         }
     }
