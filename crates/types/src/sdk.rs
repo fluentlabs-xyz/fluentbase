@@ -111,6 +111,7 @@ pub struct ContractContext {
     pub caller: Address,
     pub is_static: bool,
     pub value: U256,
+    pub apparent_value: U256,
     pub input: Bytes,
 }
 
@@ -210,6 +211,13 @@ pub struct SovereignStateResult {
 #[derive(Default)]
 pub struct SharedStateResult {}
 
+pub struct CallPrecompileResult {
+    pub output: Bytes,
+    pub exit_code: ExitCode,
+    pub gas_remaining: u64,
+    pub gas_refund: i64,
+}
+
 pub struct DestroyedAccountResult {
     pub had_value: bool,
     pub target_exists: bool,
@@ -261,7 +269,7 @@ pub trait SovereignAPI {
         address: &Address,
         input: &Bytes,
         gas: u64,
-    ) -> Option<(Bytes, ExitCode, u64, i64)>;
+    ) -> Option<CallPrecompileResult>;
     fn is_precompile(&self, address: &Address) -> bool;
     fn transfer(
         &mut self,
