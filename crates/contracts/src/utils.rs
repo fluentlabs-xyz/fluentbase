@@ -1,32 +1,9 @@
-use core::str::FromStr;
-use fluentbase_core::fvm::helpers::fuel_testnet_consensus_params_from;
 use fluentbase_sdk::{
     codec::Encoder,
     types::{CoreInput, ICoreInput},
     Address,
     ContextReader,
     U256,
-};
-use fuel_core_types::{
-    fuel_tx::{
-        consensus_parameters::{
-            ConsensusParametersV1,
-            ContractParametersV1,
-            FeeParametersV1,
-            PredicateParametersV1,
-            ScriptParametersV1,
-            TxParametersV1,
-        },
-        AssetId,
-        ConsensusParameters,
-        ContractParameters,
-        FeeParameters,
-        GasCosts,
-        PredicateParameters,
-        ScriptParameters,
-        TxParameters,
-    },
-    fuel_types,
 };
 use revm::{
     primitives::{SpecId, TransactTo, TxEnv},
@@ -60,16 +37,6 @@ pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Data
         .modify_cfg_env(|cfg_env| {
             cfg_env.chain_id = cr.block_chain_id();
         })
-}
-
-pub fn fuel_testnet_consensus_params_from_cr<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
-    fuel_testnet_consensus_params_from(
-        cr.tx_gas_limit(),
-        cr.tx_gas_limit(),
-        cr.block_gas_limit(),
-        fuel_types::ChainId::new(cr.block_chain_id()),
-        None,
-    )
 }
 
 pub fn fill_eth_tx_env(tx_env: &mut TxEnv, essence: &EthereumTxEssence, caller: Address) {
