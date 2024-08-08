@@ -11,6 +11,7 @@ use fluentbase_types::{
     AccountCheckpoint,
     AccountStatus,
     BlockContext,
+    CallPrecompileResult,
     ContractContext,
     DestroyedAccountResult,
     ExitCode,
@@ -472,7 +473,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         address: &Address,
         input: &Bytes,
         gas: u64,
-    ) -> Option<(Bytes, ExitCode, u64, i64)> {
+    ) -> Option<CallPrecompileResult> {
         todo!()
     }
 

@@ -42,7 +42,7 @@ pub fn _wasm_call<SDK: SovereignAPI>(
     // parse callee address
     let (callee_account, _) = sdk.account(&input.bytecode_address);
 
-    let mut gas_limit = input.gas_limit;
+    let gas_limit = input.gas_limit;
 
     let mut fuel = Fuel::from(gas_limit);
     let (output_buffer, exit_code) = sdk.context_call(

@@ -1,4 +1,4 @@
-use fluentbase_core::evm2::exec_evm_bytecode;
+use fluentbase_core::evm::EvmBytecodeExecutor;
 use fluentbase_sdk::{basic_entrypoint, derive::Contract, SovereignAPI};
 
 #[derive(Contract)]
@@ -12,7 +12,7 @@ impl<SDK: SovereignAPI> EvmLoaderImpl<SDK> {
     }
 
     pub fn main(&mut self) {
-        let result = exec_evm_bytecode(&mut self.sdk);
+        // let result = EvmBytecodeExecutor::new(&mut self.sdk).call();
 
         // if matches!(result.result, return_ok!()) {
         //     self.sdk.commit();

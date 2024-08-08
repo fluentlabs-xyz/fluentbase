@@ -9,7 +9,6 @@ mod account;
 mod allocator;
 pub use account::*;
 pub use allocator::*;
-pub mod consts;
 pub mod contracts;
 mod journal;
 mod linker;
