@@ -26,7 +26,7 @@ pub trait NativeAPI {
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
     fn read_context(&self, target: &mut [u8], offset: u32);
-    fn charge_fuel(&self, fuel: &mut Fuel);
+    fn charge_fuel(&self, value: u64) -> u64;
     fn exec(
         &self,
         code_hash: &F254,
@@ -36,6 +36,13 @@ pub trait NativeAPI {
         state: u32,
     ) -> i32;
     fn resume(&self, call_id: u32, exit_code: i32) -> i32;
+
+    fn input(&self) -> Bytes {
+        let input_size = self.input_size();
+        let mut buffer = vec![0u8; input_size as usize];
+        self.read(&mut buffer, 0);
+        buffer.into()
+    }
 
     fn return_data(&self) -> Bytes {
         let output_size = self.output_size();
@@ -103,13 +110,11 @@ impl From<&Env> for TxContext {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContractContext {
-    pub gas_limit: u64,
     pub address: Address,
     pub bytecode_address: Address,
     pub caller: Address,
-    pub is_static: bool,
     pub value: U256,
     pub apparent_value: U256,
     pub input: Bytes,
@@ -256,9 +261,7 @@ pub trait SovereignAPI {
 
     fn context_call(
         &mut self,
-        caller: &Address,
         address: &Address,
-        value: &U256,
         fuel: &mut Fuel,
         input: &[u8],
         state: u32,

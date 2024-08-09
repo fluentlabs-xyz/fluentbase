@@ -163,8 +163,8 @@ impl NativeAPI for RuntimeContextWrapper {
         target.copy_from_slice(&result);
     }
 
-    fn charge_fuel(&self, fuel: &mut Fuel) {
-        fuel.0 = SyscallChargeFuel::fn_impl(&mut self.ctx.borrow_mut(), fuel.0);
+    fn charge_fuel(&self, value: u64) -> u64 {
+        todo!("not supported in runtime mode")
     }
 
     fn exec(
@@ -180,10 +180,10 @@ impl NativeAPI for RuntimeContextWrapper {
             &code_hash.0,
             input,
             0,
-            fuel.0,
+            fuel.remaining(),
             state,
         );
-        fuel.0 = remaining_fuel;
+        fuel.charge(fuel.remaining() - remaining_fuel);
         exit_code
     }
 

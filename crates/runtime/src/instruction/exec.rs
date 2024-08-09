@@ -146,7 +146,7 @@ impl SyscallExec {
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
             .with_input(input.to_vec())
             .with_context(context)
-            .with_is_shared(ctx.depth > 0)
+            .with_is_shared(true)
             .with_fuel_limit(fuel_limit)
             .with_jzkt(jzkt)
             .with_state(state)

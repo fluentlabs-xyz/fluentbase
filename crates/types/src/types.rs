@@ -10,18 +10,34 @@ use strum_macros::{Display, FromRepr};
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
-pub struct Fuel(pub u64);
+pub struct Fuel {
+    pub limit: u64,
+    pub spent: u64,
+}
+
+impl Fuel {
+    pub fn remaining(&self) -> u64 {
+        self.limit - self.spent
+    }
+
+    pub fn charge(&mut self, value: u64) {
+        self.spent += value;
+    }
+}
 
 impl From<u64> for Fuel {
     #[inline]
     fn from(value: u64) -> Self {
-        Self(value)
+        Self {
+            limit: value,
+            spent: 0,
+        }
     }
 }
 impl Into<u64> for Fuel {
     #[inline]
     fn into(self) -> u64 {
-        self.0
+        self.limit - self.spent
     }
 }
 
@@ -249,6 +265,7 @@ impl Into<FuncIdx> for SysFuncIdx {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum BytecodeType {
     EVM,

@@ -158,8 +158,8 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
-    fn charge_fuel(&self, fuel: &mut Fuel) {
-        fuel.0 = unsafe { _charge_fuel(fuel.0) }
+    fn charge_fuel(&self, value: u64) -> u64 {
+        unsafe { _charge_fuel(value) }
     }
 
     fn exec(
@@ -170,7 +170,7 @@ impl NativeAPI for RwasmContext {
         fuel: &mut Fuel,
         state: u32,
     ) -> i32 {
-        let mut fuel32 = fuel.0 as u32;
+        let mut fuel32 = fuel.remaining() as u32;
         let exit_code = unsafe {
             _exec(
                 code_hash.as_ptr(),
@@ -185,7 +185,8 @@ impl NativeAPI for RwasmContext {
                 state,
             )
         };
-        fuel.0 = fuel32 as u64;
+        let fuel_spent = fuel.remaining() as u32 - fuel32;
+        fuel.charge(fuel_spent as u64);
         exit_code
     }
 

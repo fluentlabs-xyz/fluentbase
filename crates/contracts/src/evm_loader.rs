@@ -1,5 +1,6 @@
-use fluentbase_core::evm::EvmBytecodeExecutor;
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, SovereignAPI};
+use fluentbase_core::evm::EvmRuntime;
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, ExitCode, SovereignAPI};
+use revm_interpreter::Gas;
 
 #[derive(Contract)]
 pub struct EvmLoaderImpl<SDK> {
@@ -7,18 +8,19 @@ pub struct EvmLoaderImpl<SDK> {
 }
 
 impl<SDK: SovereignAPI> EvmLoaderImpl<SDK> {
-    pub fn deploy(&mut self) {
-        unreachable!("deploy is not supported for loader")
+    pub fn deploy(&mut self) -> ExitCode {
+        let contract_context = self.sdk.contract_context().cloned().unwrap();
+
+        // execute EVM constructor to produce final EVM bytecode
+        // let mut evm_runtime = EvmRuntime::new(&mut self.sdk);
+        // let mut gas = Gas::new(contract_context.gas_limit);
+        // evm_runtime.deploy_evm_contract(contract_context, &mut gas)
+
+        ExitCode::Ok
     }
 
-    pub fn main(&mut self) {
-        // let result = EvmBytecodeExecutor::new(&mut self.sdk).call();
-
-        // if matches!(result.result, return_ok!()) {
-        //     self.sdk.commit();
-        // } else {
-        //     self.sdk.rollback(checkpoint);
-        // }
+    pub fn main(&mut self) -> ExitCode {
+        ExitCode::Ok
     }
 }
 
