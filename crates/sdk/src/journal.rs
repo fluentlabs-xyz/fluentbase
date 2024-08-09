@@ -458,9 +458,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 
     fn context_call(
         &mut self,
-        caller: &Address,
         address: &Address,
-        value: &U256,
         fuel: &mut Fuel,
         input: &[u8],
         state: u32,

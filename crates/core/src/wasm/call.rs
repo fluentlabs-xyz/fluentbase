@@ -45,14 +45,8 @@ pub fn _wasm_call<SDK: SovereignAPI>(
     let gas_limit = input.gas_limit;
 
     let mut fuel = Fuel::from(gas_limit);
-    let (output_buffer, exit_code) = sdk.context_call(
-        &input.caller,
-        &input.bytecode_address,
-        &input.value,
-        &mut fuel,
-        &input.input,
-        STATE_MAIN,
-    );
+    let (output_buffer, exit_code) =
+        sdk.context_call(&input.bytecode_address, &mut fuel, &input.input, STATE_MAIN);
 
     // if exit code success then commit changes, otherwise rollback
     if ExitCode::from(exit_code).is_ok() {

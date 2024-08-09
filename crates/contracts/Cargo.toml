@@ -14,9 +14,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 fluentbase-sdk = { workspace = true, default-features = false }
-revm-precompile = { workspace = true, default-features = false }
 fluentbase-core = { workspace = true, default-features = false }
 #revm = { workspace = true, default-features = false }
+
+revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
+revm-precompile = { workspace = true, default-features = false }
+revm-primitives = { workspace = true, default-features = false }
 
 zeth-primitives = { workspace = true, default-features = false, features = [
     "revm"

@@ -106,14 +106,7 @@ pub fn _wasm_create<SDK: SovereignAPI>(
     contract_account.update_bytecode(sdk, input.bytecode, None, rwasm_bytecode.into(), None);
 
     let mut fuel = Fuel::from(input.gas_limit);
-    let (_, exit_code) = sdk.context_call(
-        &input.caller,
-        &contract_account.address,
-        &input.value,
-        &mut fuel,
-        &[],
-        STATE_DEPLOY,
-    );
+    let (_, exit_code) = sdk.context_call(&contract_account.address, &mut fuel, &[], STATE_DEPLOY);
     // if call is not success set deployed address to zero
     if exit_code != ExitCode::Ok {
         sdk.rollback(checkpoint);
