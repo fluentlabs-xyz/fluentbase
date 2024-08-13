@@ -57,7 +57,7 @@ impl SyscallExec {
             },
             is_root: caller.data().depth == 0,
         }
-            .into())
+        .into())
     }
 
     pub fn fn_continue(

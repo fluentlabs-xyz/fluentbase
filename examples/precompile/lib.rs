@@ -5,7 +5,7 @@ extern crate fluentbase_sdk;
 use fluentbase_sdk::{
     basic_entrypoint,
     codec::{Codec, Encoder},
-    derive::{client, router, signature, Contract},
+    derive::{router, signature, Contract},
     Bytes,
     SovereignAPI,
 };

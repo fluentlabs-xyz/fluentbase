@@ -5,7 +5,6 @@ extern crate fluentbase_sdk;
 use alloc::vec::Vec;
 use alloy_sol_types::SolEvent;
 use fluentbase_sdk::{
-    address,
     basic_entrypoint,
     derive::{router, solidity_storage},
     Address,

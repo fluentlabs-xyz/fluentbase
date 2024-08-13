@@ -524,11 +524,16 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::write_log(self, caller, data, topics);
     }
 
-    fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode) {
+    fn call(&mut self, _address: Address, _input: &[u8], _fuel: &mut Fuel) -> (Bytes, ExitCode) {
         todo!()
     }
 
-    fn delegate(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode) {
+    fn delegate(
+        &mut self,
+        _address: Address,
+        _input: &[u8],
+        _fuel: &mut Fuel,
+    ) -> (Bytes, ExitCode) {
         todo!()
     }
 }
