@@ -1,12 +1,21 @@
 use crate::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_poseidon::poseidon_hash;
-use fluentbase_types::{address, b256, contracts::PRECOMPILE_EVM, Address, Bytes, B256, U256};
+use fluentbase_types::{
+    address,
+    b256,
+    consts::DEVNET_CHAIN_ID,
+    contracts::PRECOMPILE_EVM,
+    Address,
+    Bytes,
+    B256,
+    U256,
+};
 use revm_primitives::keccak256;
 use std::collections::BTreeMap;
 
 pub fn devnet_chain_config() -> ChainConfig {
     ChainConfig {
-        chain_id: 1337,
+        chain_id: DEVNET_CHAIN_ID,
         homestead_block: Some(0u64),
         dao_fork_block: Some(0u64),
         dao_fork_support: false,
