@@ -3,9 +3,9 @@ use crate::{
     fluentbase_sdk::NativeAPI,
     helpers::{evm_error_from_exit_code, wasm2rwasm},
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::ToString};
 use core::mem::take;
-use fluentbase_sdk::{Address, Bytes, B256, U256};
+use fluentbase_sdk::{syscall::execute_rwasm_smart_contract, Address, Bytes, B256, U256};
 use fluentbase_types::{
     env_from_context,
     Account,
@@ -254,7 +254,7 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
     fn exec_rwasm_bytecode(
         &mut self,
         caller: &Address,
-        address: &Address,
+        account: &Account,
         input: &[u8],
         gas: Gas,
         state: u32,
@@ -262,13 +262,14 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
         debug_log!(
             self.sdk,
             "ecl(exec_rwasm_bytecode): executing rWASM contract={}, caller={}, gas={} input={}",
-            &address,
+            &account.address,
             &caller,
             gas.remaining(),
             hex::encode(&input),
         );
         let mut fuel = Fuel::from(gas.remaining());
-        let (output, exit_code) = self.sdk.context_call(&address, &mut fuel, input, state);
+        let (output, exit_code) =
+            execute_rwasm_smart_contract(self.sdk, account, &mut fuel, input, state);
         InterpreterResult {
             result: evm_error_from_exit_code(exit_code),
             output,
@@ -384,13 +385,7 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
         contract_account.update_bytecode(self.sdk, Bytes::new(), None, rwasm_bytecode.into(), None);
 
         // execute rWASM deploy function
-        self.exec_rwasm_bytecode(
-            &contract.caller,
-            &contract_account.address,
-            &[],
-            gas,
-            STATE_DEPLOY,
-        )
+        self.exec_rwasm_bytecode(&contract.caller, &contract_account, &[], gas, STATE_DEPLOY)
     }
 
     pub fn deploy_evm_contract(
@@ -664,9 +659,10 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
             };
             self.exec_evm_bytecode(contract, gas, inputs.is_static, depth)
         } else {
+            let (account, _) = self.sdk.account(&inputs.target_address);
             self.exec_rwasm_bytecode(
                 &inputs.caller,
-                &inputs.target_address,
+                &account,
                 inputs.input.as_ref(),
                 gas,
                 STATE_MAIN,

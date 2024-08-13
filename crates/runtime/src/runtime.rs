@@ -230,8 +230,8 @@ impl RuntimeContext {
         self.state
     }
 
-    pub fn clean_output(&mut self) {
-        self.execution_result.output = vec![];
+    pub fn clear_output(&mut self) {
+        self.execution_result.output.clear();
     }
 }
 
@@ -253,7 +253,7 @@ impl ExecutionResult {
     }
 }
 
-static mut GLOBAL_RUNTIME_INDEX: AtomicU32 = AtomicU32::new(0);
+static mut GLOBAL_RUNTIME_INDEX: AtomicU32 = AtomicU32::new(1);
 
 pub(crate) struct RecoverableRuntime {
     pub(crate) runtime: Runtime,
@@ -554,7 +554,7 @@ impl Runtime {
                 .host_error()
                 .downcast_ref::<SysExecResumable>()
             {
-                if delayed_state.depth_level > 0 {
+                if !delayed_state.is_root {
                     return self.handle_resumable_state(resumable_invocation);
                 }
                 // if we're at zero depth level, then we can safely execute function
@@ -588,14 +588,17 @@ impl Runtime {
         // so we must save the current state
         // to interrupt execution and delegate decision-making
         // to the root execution
-        let return_data = self.store.data_mut().return_data_mut();
-        assert!(return_data.is_empty(), "return data must be empty");
+        let output = self.store.data_mut().output_mut();
+        output.clear();
+        assert!(output.is_empty(), "return data must be empty");
         // serialize delegated execution state,
         // but we don't serialize registers and stack state,
         // instead we remember it inside the internal structure
         // and assign a special identifier for recovery
-        let encoded_state = delayed_state.delegated_execution.to_bytes();
-        return_data.extend(encoded_state.as_ref());
+        let encoded_state = delayed_state.params.to_vec();
+        output.extend(&encoded_state);
+        // save resumable invocation inside store
+        self.store_mut().data_mut().resumable_invocation = Some(resumable_invocation);
         // interruption is a special exit code that indicates to the root what happened inside
         // the call
         Err(RuntimeError::ExecutionInterrupted)
@@ -628,10 +631,15 @@ impl Runtime {
         if let Some(err) = err {
             match err {
                 RuntimeError::ExecutionInterrupted => execution_result.interrupted = true,
-                _ => execution_result.exit_code = Runtime::catch_trap(&err),
+                _ => {
+                    let exit_code = Runtime::catch_trap(&err);
+                    if exit_code != ExitCode::ExecutionHalted.into_i32() {
+                        execution_result.exit_code = exit_code
+                    }
+                }
             }
         }
-        return execution_result;
+        execution_result
     }
 
     pub fn store(&self) -> &Store<RuntimeContext> {

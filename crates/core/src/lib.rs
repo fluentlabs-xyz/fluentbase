@@ -9,4 +9,3 @@ extern crate paste;
 pub mod evm;
 pub mod helpers;
 pub mod svm;
-pub mod wasm;

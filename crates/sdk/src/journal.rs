@@ -456,16 +456,6 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         });
     }
 
-    fn context_call(
-        &mut self,
-        address: &Address,
-        fuel: &mut Fuel,
-        input: &[u8],
-        state: u32,
-    ) -> (Bytes, ExitCode) {
-        todo!()
-    }
-
     fn precompile(
         &self,
         address: &Address,

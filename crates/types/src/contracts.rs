@@ -41,3 +41,6 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
     address!("0000000000000000000000000000000000000013");
 pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
+
+pub const SYSCALL_ID_COLD_STORAGE_READ: Address =
+    address!("38ee7db9faa72e2e2d6d3e1521368ad4561f09b1"); // keccak256("_cold_storage_read")[12..]-1

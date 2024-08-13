@@ -8,6 +8,7 @@ pub mod emit_log;
 pub mod exec;
 pub mod exit;
 pub mod forward_output;
+pub mod fuel;
 pub mod get_leaf;
 pub mod input_size;
 pub mod keccak256;
@@ -39,6 +40,7 @@ use crate::{
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
+        fuel::SyscallFuel,
         get_leaf::SyscallGetLeaf,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
@@ -81,21 +83,14 @@ impl_runtime_handler!(SyscallRead, READ, fn fluentbase_v1preview::_read(target: 
 impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_output_size() -> u32);
 impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
-impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, address32_ptr: u32, input_ptr: u32, input_len: u32, context_ptr: u32, context_len: u32, return_ptr: u32, return_len: u32, fuel_ptr: u32, state: u32) -> i32);
-impl_runtime_handler!(SyscallResume, RESUME, fn fluentbase_v1preview::_resume(call_id: u32, exit_code: i32) -> i32);
+impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, address32_ptr: u32, input_ptr: u32, input_len: u32, fuel: u64, state: u32) -> i32);
+impl_runtime_handler!(SyscallResume, RESUME, fn fluentbase_v1preview::_resume(call_id: u32, return_data_ptr: u32, return_data_len: u32, exit_code: i32) -> i32);
 impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);
+impl_runtime_handler!(SyscallFuel, FUEL, fn fluentbase_v1preview::_fuel() -> u64);
 impl_runtime_handler!(SyscallReadContext, READ_CONTEXT, fn fluentbase_v1preview::_read_context(target_ptr: u32, offset: u32, length: u32) -> ());
-impl_runtime_handler!(SyscallCheckpoint, CHECKPOINT, fn fluentbase_v1preview::_checkpoint() -> u64);
-impl_runtime_handler!(SyscallGetLeaf, GET_LEAF, fn fluentbase_v1preview::_get_leaf(key32_ptr: u32, field: u32, output32_ptr: u32, committed: u32) -> u32);
-impl_runtime_handler!(SyscallUpdateLeaf, UPDATE_LEAF, fn fluentbase_v1preview::_update_leaf(key32_ptr: u32, flags: u32, vals32_ptr: u32, vals32_len: u32) -> ());
-impl_runtime_handler!(SyscallComputeRoot, COMPUTE_ROOT, fn fluentbase_v1preview::_compute_root(output32_ptr: u32) -> ());
-impl_runtime_handler!(SyscallEmitLog, EMIT_LOG, fn fluentbase_v1preview::_emit_log(key32_ptr: u32, topics32s_ptr: u32, topics32s_len: u32, data_ptr: u32, data_len: u32) -> ());
-impl_runtime_handler!(SyscallCommit, COMMIT, fn fluentbase_v1preview::_commit(root32_ptr: u32) -> ());
-impl_runtime_handler!(SyscallRollback, ROLLBACK, fn fluentbase_v1preview::_rollback(checkpoint: u64) -> ());
 impl_runtime_handler!(SyscallPreimageSize, PREIMAGE_SIZE, fn fluentbase_v1preview::_preimage_size(hash32_ptr: u32) -> u32);
 impl_runtime_handler!(SyscallPreimageCopy, PREIMAGE_COPY, fn fluentbase_v1preview::_preimage_copy(hash32_ptr: u32, preimage_ptr: u32) -> ());
-impl_runtime_handler!(SyscallUpdatePreimage, UPDATE_PREIMAGE, fn fluentbase_v1preview::_update_preimage(key32_ptr: u32, field: u32, preimage_ptr: u32, preimage_len: u32) -> i32);
 impl_runtime_handler!(SyscallDebugLog, DEBUG_LOG, fn fluentbase_v1preview::_debug_log(msg_ptr: u32, msg_len: u32) -> ());
 
 fn runtime_register_handlers<const IS_SOVEREIGN: bool>(
@@ -117,21 +112,7 @@ fn runtime_register_handlers<const IS_SOVEREIGN: bool>(
     SyscallState::register_handler(linker, store);
     SyscallChargeFuel::register_handler(linker, store);
     SyscallReadContext::register_handler(linker, store);
-    if IS_SOVEREIGN {
-        SyscallCheckpoint::register_handler(linker, store);
-        SyscallUpdateLeaf::register_handler(linker, store);
-        SyscallComputeRoot::register_handler(linker, store);
-    }
-    SyscallGetLeaf::register_handler(linker, store);
-    SyscallEmitLog::register_handler(linker, store);
-    if IS_SOVEREIGN {
-        SyscallCommit::register_handler(linker, store);
-        SyscallRollback::register_handler(linker, store);
-    }
-    if IS_SOVEREIGN {
-        SyscallPreimageSize::register_handler(linker, store);
-        SyscallUpdatePreimage::register_handler(linker, store);
-    }
+    SyscallPreimageSize::register_handler(linker, store);
     SyscallPreimageCopy::register_handler(linker, store);
     SyscallDebugLog::register_handler(linker, store);
 }

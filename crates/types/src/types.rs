@@ -75,6 +75,7 @@ pub enum ExitCode {
     ImmutableContext = -1034,
     ContextWriteProtection = -1035,
     NonNegativeExitCode = -1036,
+    MalformedSyscallParams = -1037,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -213,17 +214,10 @@ pub enum SysFuncIdx {
     RESUME = 0x000a,
     FORWARD_OUTPUT = 0x000b,
     CHARGE_FUEL = 0x000c,
-    READ_CONTEXT = 0x000d,
+    FUEL = 0x000d,
+    READ_CONTEXT = 0x000e,
 
-    // jzkt
-    CHECKPOINT = 0x0702,
-    GET_LEAF = 0x0703,
-    UPDATE_LEAF = 0x0704,
-    UPDATE_PREIMAGE = 0x0705,
-    COMPUTE_ROOT = 0x0707,
-    EMIT_LOG = 0x0708,
-    COMMIT = 0x0709,
-    ROLLBACK = 0x070A,
+    // preimage
     PREIMAGE_SIZE = 0x070D,
     PREIMAGE_COPY = 0x070E,
 
@@ -242,11 +236,6 @@ impl SysFuncIdx {
             SysFuncIdx::POSEIDON => 1,
             SysFuncIdx::POSEIDON_HASH => 1,
             SysFuncIdx::ECRECOVER => 1,
-            SysFuncIdx::UPDATE_LEAF => 1,
-            SysFuncIdx::GET_LEAF => 1,
-            SysFuncIdx::COMPUTE_ROOT => 1,
-            SysFuncIdx::ROLLBACK => 1,
-            SysFuncIdx::COMMIT => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
     }
