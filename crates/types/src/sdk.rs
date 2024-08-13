@@ -2,7 +2,7 @@ use crate::{Account, AccountStatus, Address, ExitCode, Fuel, JournalCheckpoint, 
 use alloc::{vec, vec::Vec};
 use alloy_primitives::Bytes;
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use fluentbase_codec::Codec;
+use fluentbase_codec::{BufferDecoder, Codec, Encoder};
 use hashbrown::HashMap;
 use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
 
@@ -32,10 +32,10 @@ pub trait NativeAPI {
         code_hash: &F254,
         address: &Address,
         input: &[u8],
-        fuel: &mut Fuel,
+        fuel_limit: u64,
         state: u32,
     ) -> i32;
-    fn resume(&self, call_id: u32, exit_code: i32) -> i32;
+    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32;
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();
@@ -147,9 +147,10 @@ pub fn env_from_context(block_context: &BlockContext, tx_context: &TxContext) ->
             transact_to: TransactTo::Call(Address::ZERO),
             value: tx_context.value,
             // we don't use this field, so there is no need to do redundant copy operation
-            data: Default::default(),
-            nonce: Some(tx_context.nonce),
-            chain_id: Some(block_context.chain_id),
+            data: Bytes::default(),
+            // we do nonce and chain id checks before executing transaction
+            nonce: None,
+            chain_id: None,
             // we check access lists in advance before executing a smart contract, it
             // doesn't affect gas price or something else, can skip
             access_list: Default::default(),
@@ -181,30 +182,6 @@ pub struct TransitStateOutput {
 pub struct ContractCallInput {}
 pub struct ContractCallOutput {}
 
-#[derive(Clone, RlpEncodable, RlpDecodable)]
-pub struct DelegatedExecution {
-    pub address: Address,
-    pub hash: F254,
-    pub input: Bytes,
-    pub fuel: u32,
-}
-
-impl DelegatedExecution {
-    pub fn to_bytes(&self) -> Bytes {
-        // TODO(dmitry123): "RLP encoding here is temporary solution"
-        use alloy_rlp::Encodable;
-        let mut buffer = Vec::new();
-        self.encode(&mut buffer);
-        buffer.into()
-    }
-    pub fn from_bytes(buffer: Bytes) -> Self {
-        // TODO(dmitry123): "RLP encoding here is temporary solution"
-        use alloy_rlp::Decodable;
-        let mut buffer_slice = buffer.as_ref();
-        Self::decode(&mut buffer_slice).expect("failed to decode delegated execution")
-    }
-}
-
 #[derive(Default)]
 pub struct SovereignStateResult {
     pub accounts: Vec<Account>,
@@ -228,6 +205,29 @@ pub struct DestroyedAccountResult {
     pub target_exists: bool,
     pub is_cold: bool,
     pub previously_destroyed: bool,
+}
+
+#[derive(Clone, Default, Debug, RlpEncodable, RlpDecodable)]
+pub struct DelayedInvocationParams {
+    pub code_hash: B256,
+    pub address: Address,
+    pub input: Bytes,
+    pub fuel_limit: u64,
+    pub state: u32,
+}
+
+impl DelayedInvocationParams {
+    pub fn to_vec(&self) -> Vec<u8> {
+        use alloy_rlp::Encodable;
+        let mut result = Vec::with_capacity(32 + 20 + 8 + 4 + self.input.len());
+        self.encode(&mut result);
+        result
+    }
+
+    pub fn from_slice(mut buffer: &[u8]) -> Option<Self> {
+        use alloy_rlp::Decodable;
+        Self::decode(&mut buffer).ok()
+    }
 }
 
 pub trait SovereignAPI {
@@ -259,14 +259,6 @@ pub trait SovereignAPI {
 
     fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]);
 
-    fn context_call(
-        &mut self,
-        address: &Address,
-        fuel: &mut Fuel,
-        input: &[u8],
-        state: u32,
-    ) -> (Bytes, ExitCode);
-
     fn precompile(
         &self,
         address: &Address,
@@ -274,6 +266,7 @@ pub trait SovereignAPI {
         gas: u64,
     ) -> Option<CallPrecompileResult>;
     fn is_precompile(&self, address: &Address) -> bool;
+
     fn transfer(
         &mut self,
         from: &mut Account,

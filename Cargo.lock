@@ -1975,6 +1975,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder",
  "eth_trie",
+ "fluentbase-codec 0.1.0",
  "fluentbase-poseidon",
  "fluentbase-types 0.1.0",
  "fluentbase-zktrie",

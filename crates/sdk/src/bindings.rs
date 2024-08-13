@@ -35,26 +35,25 @@ extern "C" {
     /// - `address20_ptr` - a 160-bit callee address (must matches account's code hash)
     /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
     /// - `input_len` - length of input (can be zero)
-    /// - `context_ptr` - pointer to the context (must be `ptr::null()` for shared env)
-    /// - `context_len` - length of the context
-    /// - `return_ptr` - pointer to the return data (might be `ptr::null()`)
-    /// - `return_len` - length of return data buffer (might be zero)
-    /// - `fuel4_ptr` - pointer to the fuel memory field (modifiable)
+    /// - `fuel` - an amount of fuel is allocated for the call
+    /// - `state` - execution state (must be 0 for non-authorized calls)
     pub fn _exec(
         hash32_ptr: *const u8,
         address20_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
-        context_ptr: *const u8,
-        context_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel4_ptr: *mut u32,
+        fuel_limit: u64,
         state: u32,
     ) -> i32;
-    pub fn _resume(call_id: u32, exit_code: i32) -> i32;
+    pub fn _resume(
+        call_id: u32,
+        return_data_ptr: *const u8,
+        return_data_len: u32,
+        exit_code: i32,
+    ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
+    pub fn _fuel() -> u64;
 
     /// Journaled ZK Trie methods to work with blockchain state
     pub fn _preimage_size(hash32_ptr: *const u8) -> u32;

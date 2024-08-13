@@ -172,24 +172,26 @@ impl NativeAPI for RuntimeContextWrapper {
         code_hash: &F254,
         _address: &Address,
         input: &[u8],
-        fuel: &mut Fuel,
+        fuel_limit: u64,
         state: u32,
     ) -> i32 {
-        let (remaining_fuel, exit_code) = SyscallExec::fn_impl(
+        let exit_code = SyscallExec::fn_impl(
             &mut self.ctx.borrow_mut(),
             &code_hash.0,
             input,
-            0,
-            fuel.remaining(),
+            fuel_limit,
             state,
         );
-        fuel.charge(fuel.remaining() - remaining_fuel);
         exit_code
     }
 
-    fn resume(&self, call_id: u32, exit_code: i32) -> i32 {
-        let (_fuel_remaining, exit_code) =
-            SyscallResume::fn_impl(&mut self.ctx.borrow_mut(), call_id, exit_code);
+    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32 {
+        let exit_code = SyscallResume::fn_impl(
+            &mut self.ctx.borrow_mut(),
+            call_id,
+            return_data.to_vec(),
+            exit_code,
+        );
         exit_code
     }
 

@@ -30,7 +30,7 @@ pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) 
         .with_fuel_limit(100_000)
         .with_input(input_data.into());
     let mut runtime = Runtime::new(ctx);
-    runtime.data_mut().clean_output();
+    runtime.data_mut().clear_output();
     runtime.call()
 }
 
@@ -135,7 +135,7 @@ pub(crate) fn run_rwasm_with_raw_input(
         .with_fuel_limit(3_000_000)
         .with_input(input_data.to_vec());
     let mut runtime = Runtime::new(ctx);
-    runtime.data_mut().clean_output();
+    runtime.data_mut().clear_output();
     let execution_result = runtime.call();
     if let Some(wasm_exit_code) = wasm_exit_code {
         assert_eq!(execution_result.exit_code, wasm_exit_code);

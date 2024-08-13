@@ -12,6 +12,7 @@ categories.workspace = true
 [dependencies]
 rwasm = { workspace = true, default-features = false }
 fluentbase-poseidon = { workspace = true, default-features = false }
+fluentbase-codec = { workspace = true }
 fluentbase-zktrie = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
 
