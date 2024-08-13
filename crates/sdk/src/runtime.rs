@@ -163,7 +163,7 @@ impl NativeAPI for RuntimeContextWrapper {
         target.copy_from_slice(&result);
     }
 
-    fn charge_fuel(&self, value: u64) -> u64 {
+    fn charge_fuel(&self, _value: u64) -> u64 {
         todo!("not supported in runtime mode")
     }
 
@@ -261,9 +261,9 @@ impl TestingContext {
                 .map(|v| v.len() as u64)
                 .unwrap_or_default();
             account2.rwasm_code_hash = rwasm_code_hash;
-            let address32 = address.into_word();
+            // let address32 = address.into_word();
             // self.write_account(&account2, AccountStatus::NewlyCreated);
-            let bytecode = account.code.clone().unwrap_or_default();
+            // let bytecode = account.code.clone().unwrap_or_default();
             // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
             // self.update_preimage(&address32.0, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, &bytecode);
             // self.update_preimage(&address32.0, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, &bytecode);

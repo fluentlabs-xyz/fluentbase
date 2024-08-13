@@ -478,7 +478,7 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
         }
 
         // calc source code hash
-        let mut source_code_hash = self.sdk.native_sdk().keccak256(inputs.init_code.as_ref());
+        let source_code_hash = self.sdk.native_sdk().keccak256(inputs.init_code.as_ref());
 
         // create an account
         let salt_hash = match inputs.scheme {
@@ -536,14 +536,14 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
         self.create_inner(create_inputs, 0)
     }
 
-    fn call_inner(&mut self, mut inputs: Box<CallInputs>, depth: u32) -> CallOutcome {
+    fn call_inner(&mut self, inputs: Box<CallInputs>, depth: u32) -> CallOutcome {
         let return_error = |gas: Gas, exit_code: ExitCode| -> CallOutcome {
             CallOutcome::new(
                 InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas),
                 Default::default(),
             )
         };
-        let mut gas = Gas::new(inputs.gas_limit);
+        let gas = Gas::new(inputs.gas_limit);
         debug_log!(
             self.sdk,
             "ecl(_evm_call): start. gas_limit {}",
