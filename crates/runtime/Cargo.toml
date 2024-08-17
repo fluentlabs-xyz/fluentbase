@@ -17,7 +17,6 @@ fluentbase-zktrie = { workspace = true, default-features = false }
 fluentbase-types = { workspace = true, features = ["rwasm"] }
 
 halo2curves = { workspace = true, default-features = false }
-byteorder = { workspace = true, default-features = false }
 eth_trie = { workspace = true, default-features = false }
 hex-literal = { workspace = true }
 

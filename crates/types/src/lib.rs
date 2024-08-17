@@ -17,6 +17,7 @@ mod types;
 mod utils;
 
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use journal::*;
 pub use linker::*;
 pub use sdk::*;

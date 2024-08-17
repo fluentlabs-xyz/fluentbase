@@ -11,7 +11,6 @@ fluentbase-runtime = { workspace = true, default-features = false, optional = tr
 fluentbase-genesis = { workspace = true, default-features = false, optional = true }
 fluentbase-sdk-derive = { workspace = true }
 byteorder = { workspace = true }
-paste = { workspace = true }
 hashbrown = { workspace = true }
 
 [dev-dependencies]

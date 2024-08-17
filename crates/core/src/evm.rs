@@ -1,33 +1,23 @@
-use crate::{
-    debug_log,
-    fluentbase_sdk::NativeAPI,
-    helpers::{evm_error_from_exit_code, wasm2rwasm},
-};
-use alloc::{boxed::Box, string::ToString};
+use crate::{debug_log, helpers::evm_error_from_exit_code};
+use alloc::string::ToString;
 use core::mem::take;
-use fluentbase_sdk::{syscall::execute_rwasm_smart_contract, Address, Bytes, B256, U256};
+use fluentbase_sdk::{Address, Bytes, NativeAPI, B256, U256};
 use fluentbase_types::{
+    contracts::{PRECOMPILE_EVM_LOADER, SYSCALL_ID_CALL},
     env_from_context,
-    Account,
     AccountStatus,
-    BytecodeType,
     ExitCode,
-    Fuel,
     SovereignAPI,
-    STATE_DEPLOY,
-    STATE_MAIN,
+    SyscallAPI,
 };
 use revm_interpreter::{
     analysis::to_analysed,
     as_usize_saturated,
     gas,
     opcode::make_instruction_table,
-    return_ok,
-    CallInputs,
     CallOutcome,
+    CallScheme,
     Contract,
-    CreateInputs,
-    CreateOutcome,
     Gas,
     Host,
     InstructionResult,
@@ -42,22 +32,19 @@ use revm_interpreter::{
 use revm_primitives::{
     Bytecode,
     CancunSpec,
-    CreateScheme,
     Env,
     Log,
     BLOCK_HASH_HISTORY,
     MAX_CALL_STACK_LIMIT,
     MAX_CODE_SIZE,
-    MAX_INITCODE_SIZE,
-    WASM_MAX_CODE_SIZE,
 };
 
-pub struct EvmRuntime<'a, SDK> {
+pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
 }
 
-impl<'a, SDK: SovereignAPI> Host for EvmRuntime<'a, SDK> {
+impl<'a, SDK: SovereignAPI> Host for EvmLoader<'a, SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -93,44 +80,44 @@ impl<'a, SDK: SovereignAPI> Host for EvmRuntime<'a, SDK> {
     }
 
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
-        let (account, is_cold) = self.sdk.account(&address);
-        Some((
-            self.sdk
-                .preimage(&account.source_code_hash)
-                .unwrap_or_default(),
-            is_cold,
-        ))
         // let (account, is_cold) = self.sdk.account(&address);
-        // if account.is_empty() {
-        //     return Some((Bytes::new(), is_cold));
-        // }
-        // let code_hash_storage_key = self.code_hash_storage_key(&address);
-        // let (value, _) = self
-        //     .sdk
-        //     .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-        // let evm_code_hash = B256::from(value.to_le_bytes());
         // Some((
-        //     self.sdk.preimage(&evm_code_hash).unwrap_or_default(),
+        //     self.sdk
+        //         .preimage(&account.source_code_hash)
+        //         .unwrap_or_default(),
         //     is_cold,
         // ))
+        let (account, is_cold) = self.sdk.account(&address);
+        if account.is_empty() {
+            return Some((Bytes::new(), is_cold));
+        }
+        let code_hash_storage_key = self.code_hash_storage_key(&address);
+        let (value, _) = self
+            .sdk
+            .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+        let evm_code_hash = B256::from(value.to_le_bytes());
+        Some((
+            self.sdk.preimage(&evm_code_hash).unwrap_or_default(),
+            is_cold,
+        ))
     }
 
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        let (account, is_cold) = self.sdk.account(&address);
-        if account.is_empty() {
-            return Some((B256::ZERO, is_cold));
-        }
-        Some((account.source_code_hash, is_cold))
         // let (account, is_cold) = self.sdk.account(&address);
         // if account.is_empty() {
         //     return Some((B256::ZERO, is_cold));
         // }
-        // let code_hash_storage_key = self.code_hash_storage_key(&address);
-        // let (value, _) = self
-        //     .sdk
-        //     .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-        // let evm_code_hash = B256::from(value.to_le_bytes());
-        // Some((evm_code_hash, is_cold))
+        // Some((account.source_code_hash, is_cold))
+        let (account, is_cold) = self.sdk.account(&address);
+        if account.is_empty() {
+            return Some((B256::ZERO, is_cold));
+        }
+        let code_hash_storage_key = self.code_hash_storage_key(&address);
+        let (value, _) = self
+            .sdk
+            .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+        let evm_code_hash = B256::from(value.to_le_bytes());
+        Some((evm_code_hash, is_cold))
     }
 
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
@@ -156,12 +143,12 @@ impl<'a, SDK: SovereignAPI> Host for EvmRuntime<'a, SDK> {
         let (original_value, _) = self.sdk.committed_storage(&address, &index);
         let (present_value, is_cold) = self.sdk.storage(&address, &index);
         self.sdk.write_storage(address, index, value);
-        return Some(SStoreResult {
+        Some(SStoreResult {
             original_value,
             present_value,
             new_value: value,
             is_cold,
-        });
+        })
     }
 
     fn tload(&mut self, address: Address, index: U256) -> U256 {
@@ -173,8 +160,11 @@ impl<'a, SDK: SovereignAPI> Host for EvmRuntime<'a, SDK> {
     }
 
     fn log(&mut self, mut log: Log) {
-        self.sdk
-            .write_log(log.address, take(&mut log.data.data), log.data.topics());
+        self.sdk.write_log(
+            log.address,
+            take(&mut log.data.data),
+            log.data.topics().to_vec(),
+        );
     }
 
     fn selfdestruct(&mut self, address: Address, target: Address) -> Option<SelfDestructResult> {
@@ -191,7 +181,7 @@ impl<'a, SDK: SovereignAPI> Host for EvmRuntime<'a, SDK> {
     }
 }
 
-impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
+impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
         Self {
             env: env_from_context(sdk.block_context(), sdk.tx_context()),
@@ -208,73 +198,46 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
     }
 
     pub fn load_evm_bytecode(&self, address: &Address) -> (Bytecode, B256) {
-        let (account, _) = self.sdk.account(address);
-        let bytecode = self
-            .sdk
-            .preimage(&account.source_code_hash)
-            .unwrap_or_default();
-        let bytecode = Bytecode::new_raw(bytecode);
-        return (bytecode, account.source_code_hash);
+        // let (account, _) = self.sdk.account(address);
+        // let bytecode = self
+        //     .sdk
+        //     .preimage(&account.source_code_hash)
+        //     .unwrap_or_default();
+        // let bytecode = Bytecode::new_raw(bytecode);
+        // return (bytecode, account.source_code_hash);
 
-        // // get EVM bytecode hash from the current address
-        // let evm_code_hash: B256 = {
-        //     let code_hash_storage_key = self.code_hash_storage_key(address);
-        //     let (value, _) = self
-        //         .sdk
-        //         .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-        //     B256::from(value.to_le_bytes())
-        // };
-        //
-        // // load EVM bytecode from preimage storage
-        // let evm_bytecode = self.sdk.preimage(&evm_code_hash).unwrap_or_default();
-        //
-        // // make sure bytecode is analyzed (required by interpreter)
-        // let evm_bytecode = Bytecode::new_raw(evm_bytecode);
-        // (evm_bytecode, evm_code_hash)
+        // get EVM bytecode hash from the current address
+        let evm_code_hash: B256 = {
+            let code_hash_storage_key = self.code_hash_storage_key(address);
+            let (value, _) = self
+                .sdk
+                .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+            B256::from(value.to_le_bytes())
+        };
+
+        // load EVM bytecode from preimage storage
+        let evm_bytecode = self.sdk.preimage(&evm_code_hash).unwrap_or_default();
+
+        // make sure bytecode is analyzed (required by interpreter)
+        let evm_bytecode = Bytecode::new_raw(evm_bytecode);
+        (evm_bytecode, evm_code_hash)
     }
 
-    pub fn store_evm_bytecode(&mut self, address: &Address, code_hash: B256, bytecode: Bytecode) {
-        self.sdk
-            .write_preimage(*address, code_hash, bytecode.original_bytes());
-
-        // // write bytecode hash to the storage
-        // let code_hash = bytecode.hash_slow();
-        // let code_hash_storage_key = self.code_hash_storage_key(address);
-        // self.sdk.write_storage(
-        //     PRECOMPILE_EVM_LOADER,
-        //     code_hash_storage_key,
-        //     U256::from_le_bytes(code_hash.0),
-        // );
-        //
-        // // store EVM bytecode inside preimage storage
+    pub fn store_evm_bytecode(&mut self, address: &Address, bytecode: Bytecode) {
         // self.sdk
         //     .write_preimage(*address, code_hash, bytecode.original_bytes());
-    }
-
-    fn exec_rwasm_bytecode(
-        &mut self,
-        caller: &Address,
-        account: &Account,
-        input: &[u8],
-        gas: Gas,
-        state: u32,
-    ) -> InterpreterResult {
-        debug_log!(
-            self.sdk,
-            "ecl(exec_rwasm_bytecode): executing rWASM contract={}, caller={}, gas={} input={}",
-            &account.address,
-            &caller,
-            gas.remaining(),
-            hex::encode(&input),
+        // write bytecode hash to the storage
+        let code_hash = bytecode.hash_slow();
+        let code_hash_storage_key = self.code_hash_storage_key(address);
+        self.sdk.write_storage(
+            PRECOMPILE_EVM_LOADER,
+            code_hash_storage_key,
+            U256::from_le_bytes(code_hash.0),
         );
-        let mut fuel = Fuel::from(gas.remaining());
-        let (output, exit_code) =
-            execute_rwasm_smart_contract(self.sdk, account, &mut fuel, input, state);
-        InterpreterResult {
-            result: evm_error_from_exit_code(exit_code),
-            output,
-            gas: Gas::new(fuel.remaining()),
-        }
+
+        // store EVM bytecode inside preimage storage
+        self.sdk
+            .write_preimage(*address, code_hash, bytecode.original_bytes());
     }
 
     pub fn exec_evm_bytecode(
@@ -328,8 +291,29 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
                         inputs.value.apparent().unwrap_or_default().to_string(),
                     );
                     let return_memory_offset = inputs.return_memory_offset.clone();
-                    let mut call_outcome = self.call_inner(inputs, depth + 1);
-                    call_outcome.memory_offset = return_memory_offset;
+
+                    let (output, exit_code) = match inputs.scheme {
+                        CallScheme::Call => self.sdk.native_sdk().syscall_call(
+                            inputs.gas_limit,
+                            inputs.target_address,
+                            inputs.value.transfer().unwrap_or_default(),
+                            inputs.input.as_ref(),
+                        ),
+                        CallScheme::CallCode => unreachable!(),
+                        CallScheme::DelegateCall => self.sdk.native_sdk().syscall_delegate_call(
+                            inputs.gas_limit,
+                            inputs.target_address,
+                            inputs.input.as_ref(),
+                        ),
+                        CallScheme::StaticCall => unreachable!(),
+                    };
+
+                    let result = InterpreterResult::new(
+                        evm_error_from_exit_code(ExitCode::from(exit_code)),
+                        output,
+                        gas,
+                    );
+                    let call_outcome = CallOutcome::new(result, return_memory_offset);
                     interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
                 }
                 InterpreterAction::Create { inputs } => {
@@ -339,8 +323,9 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
                         inputs.caller,
                         hex::encode(inputs.value.to_be_bytes::<32>())
                     );
-                    let create_outcome = self.create_inner(inputs, depth + 1);
-                    interpreter.insert_create_outcome(create_outcome);
+                    unreachable!();
+                    // let create_outcome = self.create_inner(inputs, depth + 1);
+                    // interpreter.insert_create_outcome(create_outcome);
                 }
                 InterpreterAction::Return { result } => {
                     debug_log!(
@@ -360,50 +345,50 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
         }
     }
 
-    pub fn deploy_wasm_contract(&mut self, contract: Contract, mut gas: Gas) -> InterpreterResult {
-        let return_error = |gas: Gas, exit_code: ExitCode| -> InterpreterResult {
-            InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas)
+    pub fn call(
+        &mut self,
+        caller: Address,
+        target_address: Address,
+        call_value: U256,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> InterpreterResult {
+        let (evm_bytecode, _code_hash) = self.load_evm_bytecode(&target_address);
+        let contract = Contract {
+            input,
+            bytecode: to_analysed(evm_bytecode),
+            hash: None,
+            target_address,
+            caller,
+            call_value,
         };
-
-        // translate WASM to rWASM
-        let rwasm_bytecode = match wasm2rwasm(contract.bytecode.original_byte_slice()) {
-            Ok(rwasm_bytecode) => rwasm_bytecode,
-            Err(exit_code) => {
-                return return_error(gas, exit_code);
-            }
-        };
-
-        // record gas for each created byte
-        let gas_for_code = rwasm_bytecode.len() as u64 * gas::CODEDEPOSIT;
-        if !gas.record_cost(gas_for_code) {
-            return return_error(gas, ExitCode::OutOfGas);
-        }
-
-        // write callee changes to a database (lets keep rWASM part empty for now since universal
-        // loader is not ready yet)
-        let (mut contract_account, _) = self.sdk.account(&contract.target_address);
-        contract_account.update_bytecode(self.sdk, Bytes::new(), None, rwasm_bytecode.into(), None);
-
-        // execute rWASM deploy function
-        self.exec_rwasm_bytecode(&contract.caller, &contract_account, &[], gas, STATE_DEPLOY)
+        self.exec_evm_bytecode(contract, Gas::new(gas_limit), false, 0)
     }
 
-    pub fn deploy_evm_contract(
+    pub fn deploy(
         &mut self,
-        contract: Contract,
-        gas: Gas,
-        depth: u32,
+        caller: Address,
+        target_address: Address,
+        init_code: Bytes,
+        call_value: U256,
+        gas_limit: u64,
     ) -> InterpreterResult {
-        let return_error = |gas: Gas, exit_code: InstructionResult| -> InterpreterResult {
-            InterpreterResult::new(exit_code, Bytes::new(), gas)
+        let return_error = |gas: Gas, result: InstructionResult| -> InterpreterResult {
+            InterpreterResult::new(result, Bytes::new(), gas)
         };
-        let target_address = contract.target_address;
+        let gas = Gas::new(gas_limit);
+        let contract = Contract {
+            input: Default::default(),
+            bytecode: to_analysed(Bytecode::new_raw(init_code)),
+            hash: None,
+            target_address,
+            caller,
+            call_value,
+        };
 
         // execute EVM constructor bytecode to produce new resulting EVM bytecode
-        let mut result = self.exec_evm_bytecode(contract, gas, false, depth);
-
-        // if there is an address, then we have new EVM bytecode inside output
-        if !matches!(result.result, return_ok!()) {
+        let mut result = self.exec_evm_bytecode(contract, gas, false, 0);
+        if !result.result.is_ok() {
             return result;
         }
 
@@ -420,274 +405,44 @@ impl<'a, SDK: SovereignAPI> EvmRuntime<'a, SDK> {
             return return_error(gas, InstructionResult::OutOfGas);
         }
 
+        // // create a EVM loader proxy
+        // SYSCALL_ID_DELEGATE_CALL;
+        // let evm_loader_module = RwasmModule {
+        //     code_section: instruction_set! {
+        //         I32Const(0)
+        //         // hash32_ptr
+        //         // input_ptr
+        //         // input_len
+        //         // fuel_limit
+        //         // state
+        //         Call(SysFuncIdx::EXEC)
+        //     },
+        //     memory_section: vec![],
+        //     func_section: vec![],
+        //     element_section: vec![],
+        // };
+        // let mut rwasm_binary = Vec::new();
+        // evm_loader_module
+        //     .write_binary_to_vec(&mut rwasm_binary)
+        //     .unwrap();
+
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, result.output.clone(), None, Bytes::new(), None);
+        contract_account.rwasm_code_hash = SYSCALL_ID_CALL;
+        self.sdk
+            .write_account(contract_account, AccountStatus::Modified);
+        // contract_account.update_bytecode(
+        //     self.sdk,
+        //     Bytes::new(),
+        //     None,
+        //     Bytes::from(rwasm_binary),
+        //     None,
+        // );
 
         // if there is an address, then we have new EVM bytecode inside output
-        self.store_evm_bytecode(
-            &contract_account.address,
-            contract_account.source_code_hash,
-            Bytecode::new_raw(result.output.clone()),
-        );
+        self.store_evm_bytecode(&target_address, Bytecode::new_raw(result.output.clone()));
 
         result
-    }
-
-    fn create_inner(&mut self, inputs: Box<CreateInputs>, depth: u32) -> CreateOutcome {
-        let return_error = |gas: Gas, exit_code: ExitCode| -> CreateOutcome {
-            CreateOutcome::new(
-                InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas),
-                None,
-            )
-        };
-        let gas = Gas::new(inputs.gas_limit);
-        debug_log!(
-            self.sdk,
-            "ecl(_evm_create): start. gas_limit {}",
-            inputs.gas_limit
-        );
-
-        // determine bytecode type
-        let bytecode_type = BytecodeType::from_slice(&inputs.init_code);
-
-        // load deployer and contract accounts
-        let (mut caller_account, _) = self.sdk.account(&inputs.caller);
-        if caller_account.balance < inputs.value {
-            return return_error(gas, ExitCode::InsufficientBalance);
-        }
-
-        // call depth check
-        if depth > MAX_CALL_STACK_LIMIT {
-            return return_error(gas, ExitCode::CallDepthOverflow);
-        }
-
-        // check init max code size for EIP-3860
-        match bytecode_type {
-            BytecodeType::EVM => {
-                if inputs.init_code.len() > MAX_INITCODE_SIZE {
-                    return return_error(gas, ExitCode::ContractSizeLimit);
-                }
-            }
-            BytecodeType::WASM => {
-                if inputs.init_code.len() > WASM_MAX_CODE_SIZE {
-                    return return_error(gas, ExitCode::ContractSizeLimit);
-                }
-            }
-        }
-
-        // calc source code hash
-        let source_code_hash = self.sdk.native_sdk().keccak256(inputs.init_code.as_ref());
-
-        // create an account
-        let salt_hash = match inputs.scheme {
-            CreateScheme::Create2 { salt } => Some((salt, source_code_hash)),
-            CreateScheme::Create => None,
-        };
-        let (contract_account, checkpoint) = match Account::create_account_checkpoint(
-            self.sdk,
-            &mut caller_account,
-            inputs.value,
-            salt_hash,
-        ) {
-            Ok(result) => result,
-            Err(exit_code) => return return_error(gas, exit_code),
-        };
-
-        debug_log!(
-            self.sdk,
-            "ecl(_evm_create): creating account={} balance={}",
-            contract_account.address,
-            hex::encode(contract_account.balance.to_be_bytes::<32>())
-        );
-
-        let contract = Contract {
-            input: Bytes::new(),
-            bytecode: Bytecode::new_raw(inputs.init_code),
-            hash: Some(source_code_hash),
-            target_address: contract_account.address,
-            caller: inputs.caller,
-            call_value: inputs.value,
-        };
-
-        let result = match bytecode_type {
-            BytecodeType::EVM => self.deploy_evm_contract(contract, gas, depth),
-            BytecodeType::WASM => self.deploy_wasm_contract(contract, gas),
-        };
-
-        debug_log!(
-            self.sdk,
-            "ecl(_evm_create): return: Ok: callee_account.address: {}",
-            contract_account.address
-        );
-
-        // commit all changes made
-        if result.result.is_ok() {
-            self.sdk.commit();
-        } else {
-            self.sdk.rollback(checkpoint);
-        }
-
-        CreateOutcome::new(result, Some(contract_account.address))
-    }
-
-    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
-        self.create_inner(create_inputs, 0)
-    }
-
-    fn call_inner(&mut self, inputs: Box<CallInputs>, depth: u32) -> CallOutcome {
-        let return_error = |gas: Gas, exit_code: ExitCode| -> CallOutcome {
-            CallOutcome::new(
-                InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas),
-                Default::default(),
-            )
-        };
-        let gas = Gas::new(inputs.gas_limit);
-        debug_log!(
-            self.sdk,
-            "ecl(_evm_call): start. gas_limit {}",
-            gas.remaining()
-        );
-
-        // call depth check
-        if depth > MAX_CALL_STACK_LIMIT {
-            return return_error(gas, ExitCode::CallDepthOverflow);
-        }
-
-        // read caller and callee
-        let (mut caller_account, _) = self.sdk.account(&inputs.caller);
-        let (mut callee_account, _) = self.sdk.account(&inputs.target_address);
-
-        // create a new checkpoint position in the journal
-        let checkpoint = self.sdk.checkpoint();
-
-        // transfer funds from caller to callee
-        if let Some(value) = inputs.value.transfer() {
-            debug_log!(
-                self.sdk,
-                "ecm(_evm_call): transfer from={} to={} value={}",
-                caller_account.address,
-                callee_account.address,
-                hex::encode(value.to_be_bytes::<32>())
-            );
-        }
-
-        if caller_account.address != callee_account.address {
-            let value = inputs.transfer_value().unwrap_or_default();
-            // do transfer from caller to callee
-            match self
-                .sdk
-                .transfer(&mut caller_account, &mut callee_account, value)
-            {
-                Err(exit_code) => return return_error(gas, exit_code),
-                Ok(_) => {}
-            }
-            // write current account state before doing nested calls
-            self.sdk
-                .write_account(caller_account.clone(), AccountStatus::Modified);
-            self.sdk
-                .write_account(callee_account.clone(), AccountStatus::Modified);
-        } else {
-            let value = inputs.transfer_value().unwrap_or_default();
-            // what if self-transfer amount exceeds our balance?
-            if value > caller_account.balance {
-                return return_error(gas, ExitCode::InsufficientBalance);
-            }
-            // write only one account's state since caller equals callee
-            self.sdk
-                .write_account(caller_account.clone(), AccountStatus::Modified);
-        }
-
-        // check is it precompile
-        if let Some(result) =
-            self.sdk
-                .precompile(&inputs.bytecode_address, &inputs.input, gas.remaining())
-        {
-            // calculate total gas consumed by precompile call
-            let mut gas = Gas::new(gas.remaining());
-            if !gas.record_cost(gas.remaining() - result.gas_remaining) {
-                return return_error(gas, ExitCode::OutOfGas);
-            };
-            gas.record_refund(result.gas_refund);
-            // if exit code is no successful, then rollback changes, otherwise commit them
-            if result.exit_code.is_ok() {
-                self.sdk.commit();
-            } else {
-                self.sdk.rollback(checkpoint);
-            }
-            // map precompile execution result into EVM interpreter result
-            return CallOutcome::new(
-                InterpreterResult::new(
-                    evm_error_from_exit_code(result.exit_code),
-                    result.output,
-                    gas,
-                ),
-                Default::default(),
-            );
-        }
-
-        let (bytecode_account, _) = self.sdk.account(&inputs.bytecode_address);
-        let result = if bytecode_account.source_code_size > 0 {
-            // take right bytecode depending on context params
-            let (evm_bytecode, code_hash) = self.load_evm_bytecode(&inputs.bytecode_address);
-            debug_log!(
-                self.sdk,
-                "ecl(_evm_call): source_bytecode: {}",
-                hex::encode(evm_bytecode.original_byte_slice())
-            );
-
-            // if bytecode is empty, then commit result and return empty buffer
-            if evm_bytecode.is_empty() {
-                self.sdk.commit();
-                debug_log!(self.sdk, "ecl(_evm_call): empty bytecode exit_code=Ok");
-                return return_error(gas, ExitCode::Ok);
-            }
-
-            // initiate contract instance and pass it to interpreter for and EVM transition
-            let call_value = inputs.call_value();
-            let contract = Contract {
-                input: inputs.input,
-                hash: Some(code_hash),
-                bytecode: evm_bytecode,
-                // we don't take contract callee, because callee refers to address with bytecode
-                target_address: inputs.target_address,
-                // inside the contract context, we pass "apparent" value that can be different to
-                // transfer value (it can happen for DELEGATECALL or CALLCODE opcodes)
-                call_value,
-                caller: caller_account.address,
-            };
-            self.exec_evm_bytecode(contract, gas, inputs.is_static, depth)
-        } else {
-            let (account, _) = self.sdk.account(&inputs.target_address);
-            self.exec_rwasm_bytecode(
-                &inputs.caller,
-                &account,
-                inputs.input.as_ref(),
-                gas,
-                STATE_MAIN,
-            )
-        };
-
-        if matches!(result.result, return_ok!()) {
-            self.sdk.commit();
-        } else {
-            self.sdk.rollback(checkpoint);
-        }
-
-        debug_log!(
-            self.sdk,
-            "ecl(_evm_call): return exit_code={:?} gas_remaining={} spent={} gas_refund={}",
-            result.result,
-            result.gas.remaining(),
-            result.gas.spent(),
-            result.gas.refunded()
-        );
-
-        CallOutcome::new(result, Default::default())
-    }
-
-    pub fn call(&mut self, inputs: Box<CallInputs>) -> CallOutcome {
-        self.call_inner(inputs, 0)
     }
 }

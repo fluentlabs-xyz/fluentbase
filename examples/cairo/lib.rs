@@ -49,9 +49,9 @@ impl<SDK: SharedAPI> CAIRO<SDK> {
     }
     fn main(&self) {
         let proof_options = ProofOptions::new_secure(SecurityLevel::Conjecturable100Bits, 3);
-        let input_size = self.sdk.native_sdk().input_size();
+        let input_size = self.sdk.input_size();
         let input = alloc_slice(input_size as usize);
-        self.sdk.native_sdk().read(input, 0);
+        self.sdk.read(input, 0);
         assert!(
             self.verify_cairo_proof_wasm(input, &proof_options),
             "failed to verify cairo proof"

@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address};
+use alloy_primitives::{address, b256, Address, B256};
 
 pub const PRECOMPILE_EVM: Address = address!("0000000000000000000000000000000000005210");
 pub const PRECOMPILE_EVM_DEPLOYER: Address = address!("0000000000000000000000000000000000005211");
@@ -42,5 +42,15 @@ pub const PRECOMPILE_BLS12_381_MAP_FP2_TO_G2: Address =
 pub const PRECOMPILE_SECP256R1_VERIFY: Address =
     address!("0000000000000000000000000000000000000100");
 
-pub const SYSCALL_ID_COLD_STORAGE_READ: Address =
-    address!("38ee7db9faa72e2e2d6d3e1521368ad4561f09b1"); // keccak256("_cold_storage_read")[12..]-1
+pub const SYSCALL_ID_STORAGE_READ: B256 =
+    b256!("4023096842131de08903e3a03a648b5a91209ca2a264e0a3a90f9899431ad227"); // keccak256("_syscall_storage_read")
+pub const SYSCALL_ID_STORAGE_WRITE: B256 =
+    b256!("126659e43fb4baaff19b992a1869aa0cac8ec5e30b38556fd8cf28e6fd2255b9"); // keccak256("_syscall_storage_write")
+pub const SYSCALL_ID_CALL: B256 =
+    b256!("1d2e7a52c8548eccd33b1f100ae79c86c1a6a6baa18215f916d395a7095ee3e9"); // keccak256("_syscall_call")
+pub const SYSCALL_ID_DELEGATE_CALL: B256 =
+    b256!("75bd4ec817c86b0736da59cb28bb22979b1547ee30426044e0ded9055ecfee5a"); // keccak256("_syscall_delegate_call")
+pub const SYSCALL_ID_CREATE: B256 =
+    b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
+pub const SYSCALL_ID_EMIT_LOG: B256 =
+    b256!("505be4983de61b5ab79cdc8164e4db895c4f9548cee794e1e0bccec1dc0b751d"); // keccak256("_syscall_emit_log")

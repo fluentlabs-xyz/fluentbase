@@ -1,10 +1,25 @@
-use crate::{Account, AccountStatus, Address, ExitCode, Fuel, JournalCheckpoint, B256, F254, U256};
+use crate::{
+    contracts::{
+        SYSCALL_ID_CALL,
+        SYSCALL_ID_DELEGATE_CALL,
+        SYSCALL_ID_EMIT_LOG,
+        SYSCALL_ID_STORAGE_READ,
+    },
+    Account,
+    AccountStatus,
+    Address,
+    Bytes,
+    ExitCode,
+    HashMap,
+    JournalCheckpoint,
+    B256,
+    F254,
+    STATE_MAIN,
+    U256,
+};
 use alloc::{vec, vec::Vec};
-use alloy_primitives::Bytes;
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use fluentbase_codec::{BufferDecoder, Codec, Encoder};
-use hashbrown::HashMap;
-use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
+use fluentbase_codec::Codec;
 
 /// A trait for providing shared API functionality.
 pub trait NativeAPI {
@@ -26,15 +41,9 @@ pub trait NativeAPI {
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
     fn read_context(&self, target: &mut [u8], offset: u32);
+    fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
-    fn exec(
-        &self,
-        code_hash: &F254,
-        address: &Address,
-        input: &[u8],
-        fuel_limit: u64,
-        state: u32,
-    ) -> i32;
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32;
     fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32;
 
     fn input(&self) -> Bytes {
@@ -54,7 +63,7 @@ pub trait NativeAPI {
 
 pub type IsColdAccess = bool;
 
-#[derive(Codec, Default)]
+#[derive(Codec, Default, Clone)]
 pub struct BlockContext {
     pub chain_id: u64,
     pub coinbase: Address,
@@ -66,8 +75,8 @@ pub struct BlockContext {
     pub base_fee: U256,
 }
 
-impl From<&Env> for BlockContext {
-    fn from(value: &Env) -> Self {
+impl From<&revm_primitives::Env> for BlockContext {
+    fn from(value: &revm_primitives::Env) -> Self {
         Self {
             chain_id: value.cfg.chain_id,
             coinbase: value.block.coinbase,
@@ -81,46 +90,49 @@ impl From<&Env> for BlockContext {
     }
 }
 
-#[derive(Codec, Default)]
+#[derive(Codec, Default, Clone)]
 pub struct TxContext {
     pub gas_limit: u64,
     pub nonce: u64,
     pub gas_price: U256,
     pub gas_priority_fee: Option<U256>,
     pub origin: Address,
-    pub data: Bytes,
-    pub blob_hashes: Vec<B256>,
-    pub max_fee_per_blob_gas: Option<U256>,
+    // pub data: Bytes,
+    // pub blob_hashes: Vec<B256>,
+    // pub max_fee_per_blob_gas: Option<U256>,
     pub value: U256,
 }
 
-impl From<&Env> for TxContext {
-    fn from(value: &Env) -> Self {
+impl From<&revm_primitives::Env> for TxContext {
+    fn from(value: &revm_primitives::Env) -> Self {
         Self {
             gas_limit: value.tx.gas_limit,
             nonce: value.tx.nonce.unwrap_or_default(),
             gas_price: value.tx.gas_price,
             gas_priority_fee: value.tx.gas_priority_fee,
             origin: value.tx.caller,
-            data: value.tx.data.clone(),
-            blob_hashes: value.tx.blob_hashes.clone(),
-            max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
+            // data: value.tx.data.clone(),
+            // blob_hashes: value.tx.blob_hashes.clone(),
+            // max_fee_per_blob_gas: value.tx.max_fee_per_blob_gas,
             value: value.tx.value,
         }
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Codec, Clone, Debug)]
 pub struct ContractContext {
     pub address: Address,
     pub bytecode_address: Address,
     pub caller: Address,
     pub value: U256,
     pub apparent_value: U256,
-    pub input: Bytes,
 }
 
-pub fn env_from_context(block_context: &BlockContext, tx_context: &TxContext) -> Env {
+pub fn env_from_context(
+    block_context: &BlockContext,
+    tx_context: &TxContext,
+) -> revm_primitives::Env {
+    use revm_primitives::{AnalysisKind, BlockEnv, CfgEnv, Env, TransactTo, TxEnv};
     Env {
         cfg: {
             let mut cfg_env = CfgEnv::default();
@@ -155,8 +167,8 @@ pub fn env_from_context(block_context: &BlockContext, tx_context: &TxContext) ->
             // doesn't affect gas price or something else, can skip
             access_list: Default::default(),
             gas_priority_fee: tx_context.gas_priority_fee,
-            blob_hashes: tx_context.blob_hashes.clone(),
-            max_fee_per_blob_gas: tx_context.max_fee_per_blob_gas,
+            blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
+            max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
             #[cfg(feature = "optimism")]
             optimism: Default::default(),
         },
@@ -179,8 +191,12 @@ pub struct TransitStateOutput {
     pub gas_consumed: u64,
 }
 
-pub struct ContractCallInput {}
-pub struct ContractCallOutput {}
+#[derive(Codec, Default)]
+pub struct SharedContextInputV1 {
+    pub block: BlockContext,
+    pub tx: TxContext,
+    pub contract: ContractContext,
+}
 
 #[derive(Default)]
 pub struct SovereignStateResult {
@@ -189,9 +205,6 @@ pub struct SovereignStateResult {
     pub preimages: Vec<(B256, Bytes)>,
     pub logs: Vec<(Address, Bytes, Vec<B256>)>,
 }
-
-#[derive(Default)]
-pub struct SharedStateResult {}
 
 pub struct CallPrecompileResult {
     pub output: Bytes,
@@ -208,15 +221,14 @@ pub struct DestroyedAccountResult {
 }
 
 #[derive(Clone, Default, Debug, RlpEncodable, RlpDecodable)]
-pub struct DelayedInvocationParams {
+pub struct SyscallInvocationParams {
     pub code_hash: B256,
-    pub address: Address,
     pub input: Bytes,
     pub fuel_limit: u64,
     pub state: u32,
 }
 
-impl DelayedInvocationParams {
+impl SyscallInvocationParams {
     pub fn to_vec(&self) -> Vec<u8> {
         use alloy_rlp::Encodable;
         let mut result = Vec::with_capacity(32 + 20 + 8 + 4 + self.input.len());
@@ -227,6 +239,94 @@ impl DelayedInvocationParams {
     pub fn from_slice(mut buffer: &[u8]) -> Option<Self> {
         use alloy_rlp::Decodable;
         Self::decode(&mut buffer).ok()
+    }
+}
+
+pub trait SyscallAPI {
+    fn syscall_storage_read(&self, slot: &U256) -> U256;
+    fn syscall_storage_write(&self, slot: &U256, value: &U256);
+    fn syscall_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32);
+    fn syscall_delegate_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        input: &[u8],
+    ) -> (Bytes, i32);
+    fn syscall_emit_log(&self, data: &[u8], topics: &[B256]);
+}
+
+impl<T: NativeAPI> SyscallAPI for T {
+    fn syscall_storage_read(&self, slot: &U256) -> U256 {
+        let mut input: [u8; 32] = [0u8; 32];
+        if !slot.is_zero() {
+            input[0..32].copy_from_slice(slot.as_le_slice());
+        }
+        let exit_code = self.exec(&SYSCALL_ID_STORAGE_READ, &input, 0, STATE_MAIN);
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 32] = [0u8; 32];
+        self.read_output(&mut output, 0);
+        U256::from_le_bytes(output)
+    }
+
+    fn syscall_storage_write(&self, slot: &U256, value: &U256) {
+        let mut input: [u8; 64] = [0u8; 64];
+        if !slot.is_zero() {
+            input[0..32].copy_from_slice(slot.as_le_slice());
+        }
+        if !value.is_zero() {
+            input[32..64].copy_from_slice(value.as_le_slice());
+        }
+        let exit_code = self.exec(&SYSCALL_ID_STORAGE_READ, &input, 0, STATE_MAIN);
+        assert_eq!(exit_code, 0);
+    }
+
+    fn syscall_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32) {
+        let mut buffer = vec![0u8; 20 + 32];
+        buffer[0..20].copy_from_slice(target_address.as_slice());
+        if !value.is_zero() {
+            buffer[20..52].copy_from_slice(value.as_le_slice());
+        }
+        buffer.extend_from_slice(input);
+        let exit_code = self.exec(&SYSCALL_ID_CALL, &buffer, fuel_limit, STATE_MAIN);
+        (self.return_data(), exit_code)
+    }
+
+    fn syscall_delegate_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        input: &[u8],
+    ) -> (Bytes, i32) {
+        let mut buffer = vec![0u8; 20];
+        buffer[0..20].copy_from_slice(target_address.as_slice());
+        buffer.extend_from_slice(input);
+        let exit_code = self.exec(&SYSCALL_ID_DELEGATE_CALL, &buffer, fuel_limit, STATE_MAIN);
+        (self.return_data(), exit_code)
+    }
+
+    fn syscall_emit_log(&self, data: &[u8], topics: &[B256]) {
+        let mut buffer = vec![0u8; 1 + topics.len() * B256::len_bytes()];
+        assert!(topics.len() <= 4);
+        buffer[0] = topics.len() as u8;
+        for (i, topic) in topics.iter().enumerate() {
+            buffer[(1 + i * B256::len_bytes())..(1 + i * B256::len_bytes() + B256::len_bytes())]
+                .copy_from_slice(topic.as_slice());
+        }
+        buffer.extend_from_slice(data);
+        let exit_code = self.exec(&SYSCALL_ID_EMIT_LOG, &buffer, 0, STATE_MAIN);
+        assert_eq!(exit_code, 0);
     }
 }
 
@@ -257,7 +357,7 @@ pub trait SovereignAPI {
     fn write_transient_storage(&mut self, address: Address, index: U256, value: U256);
     fn transient_storage(&self, address: Address, index: U256) -> U256;
 
-    fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]);
+    fn write_log(&mut self, address: Address, data: Bytes, topics: Vec<B256>);
 
     fn precompile(
         &self,
@@ -276,26 +376,29 @@ pub trait SovereignAPI {
 }
 
 pub trait SharedAPI {
-    fn native_sdk(&self) -> &impl NativeAPI;
-
     fn block_context(&self) -> &BlockContext;
     fn tx_context(&self) -> &TxContext;
     fn contract_context(&self) -> &ContractContext;
 
-    fn commit(&mut self) -> SharedStateResult;
-
-    fn account(&self, address: &Address) -> (Account, IsColdAccess);
-    fn transfer(&mut self, from: &mut Account, to: &mut Account, amount: U256);
     fn write_storage(&mut self, slot: U256, value: U256);
     fn storage(&self, slot: &U256) -> U256;
 
-    fn write_log(&mut self, data: Bytes, topics: &[B256]);
+    fn read(&self, target: &mut [u8], offset: u32);
+    fn input_size(&self) -> u32;
+    fn write(&mut self, output: &[u8]);
 
-    fn call(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
-    fn delegate(&mut self, address: Address, input: &[u8], fuel: &mut Fuel) -> (Bytes, ExitCode);
+    fn emit_log(&mut self, data: Bytes, topics: &[B256]);
 
-    fn exit(&mut self, exit_code: ExitCode) -> ! {
-        self.commit();
-        self.native_sdk().exit(exit_code.into_i32());
-    }
+    fn call(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: u64,
+    ) -> (Bytes, i32);
+    fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
+
+    fn keccak256(&self, data: &[u8]) -> B256;
+    fn sha256(&self, data: &[u8]) -> B256;
+    fn poseidon(&self, data: &[u8]) -> F254;
 }

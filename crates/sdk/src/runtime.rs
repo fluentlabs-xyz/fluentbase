@@ -28,6 +28,7 @@ use fluentbase_runtime::{
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
+        fuel::SyscallFuel,
         get_leaf::SyscallGetLeaf,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
@@ -163,18 +164,18 @@ impl NativeAPI for RuntimeContextWrapper {
         target.copy_from_slice(&result);
     }
 
-    fn charge_fuel(&self, _value: u64) -> u64 {
-        todo!("not supported in runtime mode")
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        let ctx = self.ctx.borrow();
+        SyscallFuel::fn_impl(&ctx)
     }
 
-    fn exec(
-        &self,
-        code_hash: &F254,
-        _address: &Address,
-        input: &[u8],
-        fuel_limit: u64,
-        state: u32,
-    ) -> i32 {
+    fn charge_fuel(&self, value: u64) -> u64 {
+        let mut ctx = self.ctx.borrow_mut();
+        SyscallChargeFuel::fn_impl(&mut ctx, value)
+    }
+
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
         let exit_code = SyscallExec::fn_impl(
             &mut self.ctx.borrow_mut(),
             &code_hash.0,

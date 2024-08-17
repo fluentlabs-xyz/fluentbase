@@ -1,13 +1,9 @@
-use fluentbase_runtime::{
-    instruction::runtime_register_sovereign_handlers,
-    types::RuntimeError,
-    ExecutionResult,
-    Runtime,
-    RuntimeContext,
-};
+use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
     create_sovereign_import_linker,
     ExitCode,
+    SharedContextInputV1,
     SysFuncIdx::STATE,
     STATE_DEPLOY,
     STATE_MAIN,
@@ -15,23 +11,26 @@ use fluentbase_types::{
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
-    Config,
-    Engine,
     Error,
-    Linker,
-    Module,
-    Store,
 };
 
-pub(crate) fn run_rwasm_with_evm_input(wasm_binary: Vec<u8>, input_data: &[u8]) -> ExecutionResult {
+pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) -> (Vec<u8>, i32) {
     let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
+    let mut context_input = SharedContextInputV1 {
+        block: Default::default(),
+        tx: Default::default(),
+        contract: Default::default(),
+    }
+    .encode_to_vec(0);
+    context_input.extend_from_slice(input_data);
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
-        .with_fuel_limit(100_000)
-        .with_input(input_data.into());
+        .with_fuel(100_000)
+        .with_input(context_input);
     let mut runtime = Runtime::new(ctx);
     runtime.data_mut().clear_output();
-    runtime.call()
+    let result = runtime.call();
+    (result.output.into(), result.exit_code)
 }
 
 #[allow(dead_code)]
@@ -77,68 +76,4 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
         .write_binary(&mut binary_format_writer)
         .expect("failed to encode rwasm bytecode");
     Ok(rwasm_bytecode)
-}
-
-pub(crate) fn run_rwasm_with_raw_input(
-    wasm_binary: Vec<u8>,
-    input_data: &[u8],
-    verify_wasm: bool,
-) -> ExecutionResult {
-    // make sure at least wasm binary works well
-    let wasm_exit_code = if verify_wasm {
-        let config = Config::default();
-        let engine = Engine::new(&config);
-        let module = Module::new(&engine, wasm_binary.as_slice()).unwrap();
-        let ctx = RuntimeContext::new(vec![])
-            .with_state(STATE_MAIN)
-            .with_fuel_limit(10_000_000)
-            .with_input(input_data.to_vec());
-        let mut store = Store::new(&engine, ctx);
-        let mut linker = Linker::new(&engine);
-        runtime_register_sovereign_handlers(&mut linker, &mut store);
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .unwrap()
-            .start(&mut store)
-            .unwrap();
-        let main_func = instance.get_func(&store, "main").unwrap();
-        match main_func.call(&mut store, &[], &mut []) {
-            Err(err) => {
-                let exit_code = Runtime::catch_trap(&RuntimeError::Rwasm(err));
-                if exit_code != 0 {
-                    panic!("err happened during wasm execution: {:?}", exit_code);
-                }
-                // let mut lines = String::new();
-                // for log in store.tracer().logs.iter() {
-                //     let stack = log
-                //         .stack
-                //         .iter()
-                //         .map(|v| v.to_bits() as i64)
-                //         .collect::<Vec<_>>();
-                //     lines += format!("{}\t{:?}\t{:?}\n", log.program_counter, log.opcode, stack)
-                //         .as_str();
-                // }
-                // let _ = fs::create_dir("./tmp");
-                // fs::write("./tmp/cairo.txt", lines).unwrap();
-            }
-            Ok(_) => {}
-        }
-        let wasm_exit_code = store.data().exit_code();
-        Some(wasm_exit_code)
-    } else {
-        None
-    };
-    // compile and run wasm binary
-    let rwasm_binary = wasm2rwasm(wasm_binary.as_slice()).unwrap();
-    let ctx = RuntimeContext::new(rwasm_binary)
-        .with_state(STATE_MAIN)
-        .with_fuel_limit(3_000_000)
-        .with_input(input_data.to_vec());
-    let mut runtime = Runtime::new(ctx);
-    runtime.data_mut().clear_output();
-    let execution_result = runtime.call();
-    if let Some(wasm_exit_code) = wasm_exit_code {
-        assert_eq!(execution_result.exit_code, wasm_exit_code);
-    }
-    execution_result
 }

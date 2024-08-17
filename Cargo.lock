@@ -1818,15 +1818,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-example-allocator"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk 0.1.0",
- "hex",
- "hex-literal",
-]
-
-[[package]]
 name = "fluentbase-example-cairo"
 version = "0.1.0"
 dependencies = [
@@ -1873,15 +1864,6 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-example-panic"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk 0.1.0",
- "hex",
- "hex-literal",
-]
-
-[[package]]
-name = "fluentbase-example-precompile"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk 0.1.0",
@@ -1973,7 +1955,6 @@ dependencies = [
 name = "fluentbase-runtime"
 version = "0.1.0"
 dependencies = [
- "byteorder",
  "eth_trie",
  "fluentbase-codec 0.1.0",
  "fluentbase-poseidon",
@@ -2001,7 +1982,6 @@ dependencies = [
  "fluentbase-sdk-derive 0.1.0",
  "fluentbase-types 0.1.0",
  "hashbrown",
- "paste",
 ]
 
 [[package]]

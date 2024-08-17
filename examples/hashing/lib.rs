@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, derive::Contract, SharedAPI};
 
 #[derive(Contract)]
 struct HASHING<SDK> {
@@ -9,21 +9,21 @@ struct HASHING<SDK> {
 }
 
 impl<SDK: SharedAPI> HASHING<SDK> {
-    fn deploy(&self) {
+    fn deploy(&mut self) {
         // any custom deployment logic here
     }
-    fn main(&self) {
+    fn main(&mut self) {
         // get the size of the input and allocate memory for input
-        let input_size = self.sdk.native_sdk().input_size();
+        let input_size = self.sdk.input_size();
         let input = alloc_slice(input_size as usize);
         // copy input to the allocated memory
-        self.sdk.native_sdk().read(input, 0);
+        self.sdk.read(input, 0);
         // calculate keccak256 & poseidon hashes
-        let keccak256_hash = self.sdk.native_sdk().keccak256(input);
-        let poseidon_hash = self.sdk.native_sdk().poseidon(input);
+        let keccak256_hash = self.sdk.keccak256(input);
+        let poseidon_hash = self.sdk.poseidon(input);
         // write both hashes to output (multiple writes do append)
-        self.sdk.native_sdk().write(keccak256_hash.as_slice());
-        self.sdk.native_sdk().write(poseidon_hash.as_slice());
+        self.sdk.write(keccak256_hash.as_slice());
+        self.sdk.write(poseidon_hash.as_slice());
     }
 }
 
@@ -39,7 +39,7 @@ mod tests {
     fn test_contract_works() {
         let native_sdk = TestingContext::empty().with_input("Hello, World");
         let sdk = JournalState::empty(native_sdk.clone());
-        let hashing = HASHING::new(sdk);
+        let mut hashing = HASHING::new(sdk);
         hashing.deploy();
         hashing.main();
         let output = native_sdk.take_output();

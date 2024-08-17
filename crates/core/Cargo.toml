@@ -12,6 +12,7 @@ categories.workspace = true
 [dependencies]
 fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
 fluentbase-sdk = { workspace = true, default-features = false }
+fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 fluentbase-codec = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
@@ -41,6 +42,7 @@ std = [
     "revm-interpreter/std",
     "byteorder/std",
     "alloy-rlp/std",
+    "dep:fluentbase-runtime",
 ]
 e2e = ["fluentbase-sdk/e2e"]
 

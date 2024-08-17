@@ -1,7 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 extern crate fluentbase_sdk;
 
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, NativeAPI, SharedAPI};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
 
 #[derive(Contract)]
 struct GREETING<SDK> {
@@ -9,12 +9,12 @@ struct GREETING<SDK> {
 }
 
 impl<SDK: SharedAPI> GREETING<SDK> {
-    fn deploy(&self) {
+    fn deploy(&mut self) {
         // any custom deployment logic here
     }
-    fn main(&self) {
+    fn main(&mut self) {
         // write "Hello, World" message into output
-        self.sdk.native_sdk().write("Hello, World".as_bytes());
+        self.sdk.write("Hello, World".as_bytes());
     }
 }
 
@@ -29,7 +29,7 @@ mod tests {
     fn test_contract_works() {
         let native_sdk = TestingContext::empty().with_input("Hello, World");
         let sdk = JournalState::empty(native_sdk.clone());
-        let greeting = GREETING::new(sdk);
+        let mut greeting = GREETING::new(sdk);
         greeting.deploy();
         greeting.main();
         let output = native_sdk.take_output();

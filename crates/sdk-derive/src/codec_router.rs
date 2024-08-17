@@ -62,8 +62,8 @@ fn main_fn_impl(methods: &Vec<&ImplItemFn>) -> ImplItem {
         pub fn main(&mut self) {
             use fluentbase_sdk::NativeAPI;
             let input = {
-                let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
-                self.sdk.native_sdk().read(input, 0);
+                let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
+                self.sdk.read(input, 0);
                 input
             };
             if input.len() < 4 {
@@ -100,7 +100,7 @@ fn selector_impl(func: &ImplItemFn) -> proc_macro2::TokenStream {
             let input = Self::decode_method_input::<#input_ty>(&input);
             let output = self.#method_name(input);
             let output = output.encode_to_vec(0);
-            self.sdk.native_sdk().write(&output);
+            self.sdk.write(&output);
         }
     }
 }
@@ -257,8 +257,8 @@ mod tests {
             pub fn main(&mut self) {
                 use fluentbase_sdk::NativeAPI;
                 let input = {
-                    let input = fluentbase_sdk::alloc_slice(self.sdk.native_sdk().input_size() as usize);
-                    self.sdk.native_sdk().read(input, 0);
+                    let input = fluentbase_sdk::alloc_slice(self.sdk.input_size() as usize);
+                    self.sdk.read(input, 0);
                     input
                 };
                 if input.len() < 4 {
@@ -274,13 +274,13 @@ mod tests {
                         let input = Self::decode_method_input::<EvmCreateMethodInput>(&input);
                         let output = self.evm_create(input);
                         let output = output.encode_to_vec(0);
-                        self.sdk.native_sdk().write(&output);
+                        self.sdk.write(&output);
                     },
                     4246677046u32 => {
                         let input = Self::decode_method_input::<EvmCallMethodInput>(&input);
                         let output = self.evm_call(input);
                         let output = output.encode_to_vec(0);
-                        self.sdk.native_sdk().write(&output);
+                        self.sdk.write(&output);
                     },
                     _ => panic!("unknown method"),
                 }

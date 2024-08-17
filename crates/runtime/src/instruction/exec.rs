@@ -1,6 +1,5 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_codec::{Codec, Encoder};
-use fluentbase_types::{Address, Bytes, DelayedInvocationParams, ExitCode, B256};
+use fluentbase_types::{Bytes, ExitCode, SyscallInvocationParams, B256};
 use rwasm::{
     core::{HostError, Trap},
     Caller,
@@ -8,7 +7,6 @@ use rwasm::{
 use std::{
     fmt::{Debug, Display, Formatter},
     mem::take,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub struct SyscallExec;
@@ -16,7 +14,7 @@ pub struct SyscallExec;
 #[derive(Default, Clone)]
 pub struct SysExecResumable {
     /// List of delayed invocation params, like exec params (address, code hash, etc.)
-    pub params: DelayedInvocationParams,
+    pub params: SyscallInvocationParams,
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
 }
@@ -41,21 +39,19 @@ impl SyscallExec {
     pub fn fn_handler(
         caller: Caller<'_, RuntimeContext>,
         hash32_ptr: u32,
-        address20_ptr: u32,
         input_ptr: u32,
         input_len: u32,
         fuel: u64,
         state: u32,
     ) -> Result<i32, Trap> {
         Err(SysExecResumable {
-            params: DelayedInvocationParams {
+            params: SyscallInvocationParams {
                 code_hash: B256::from_slice(caller.read_memory(hash32_ptr, 32)?),
-                address: Address::from_slice(caller.read_memory(address20_ptr, 20)?),
                 input: Bytes::copy_from_slice(caller.read_memory(input_ptr, input_len)?),
                 fuel_limit: fuel,
                 state,
             },
-            is_root: caller.data().depth == 0,
+            is_root: caller.data().call_depth == 0,
         }
         .into())
     }
@@ -80,14 +76,11 @@ impl SyscallExec {
         fuel_limit: u64,
         state: u32,
     ) -> i32 {
-        let time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-
         // check call depth overflow
-        if ctx.depth >= CALL_STACK_LIMIT {
+        if ctx.call_depth >= CALL_STACK_LIMIT {
             return ExitCode::CallDepthOverflow.into_i32();
+        } else if ctx.fuel.remaining() < fuel_limit {
+            return ExitCode::OutOfGas.into_i32();
         }
 
         // take jzkt from the existing context (we will return it soon)
@@ -99,10 +92,10 @@ impl SyscallExec {
             .with_input(input.to_vec())
             .with_context(context)
             .with_is_shared(true)
-            .with_fuel_limit(fuel_limit)
+            .with_fuel(fuel_limit)
             .with_jzkt(jzkt)
             .with_state(state)
-            .with_depth(ctx.depth + 1);
+            .with_depth(ctx.call_depth + 1);
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
 
@@ -110,36 +103,19 @@ impl SyscallExec {
         ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
         ctx.context = take(&mut runtime.store.data_mut().context);
 
-        // make sure there is no return overflow
-        // if return_len > 0 && execution_result.output.len() > return_len as usize {
-        //     return (0, ExitCode::OutputOverflow.into_i32());
-        // }
-
         // if execution was interrupted,
-        // then we must remember this runtime and assign call id into exit code
-        // (positive exit code stands for interrupted runtime call id)
         if execution_result.interrupted {
+            // then we remember this runtime and assign call id into exit code (positive exit code
+            // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = runtime.remember_runtime() as i32;
+        } else {
+            // increase total fuel consumed and remember return data
+            ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
-        // increase total fuel consumed and remember return data
-        ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
-
-        // println!(
-        //     "sys_exec_hash ({}), exit_code={}, fuel_consumed={}, elapsed time: {}ms, output={}",
-        //     hex::encode(&bytecode_hash32),
-        //     execution_result.exit_code,
-        //     execution_result.fuel_consumed,
-        //     SystemTime::now()
-        //         .duration_since(UNIX_EPOCH)
-        //         .unwrap()
-        //         .as_millis()
-        //         - time,
-        //     hex::encode(&execution_result.output),
-        // );
 
         execution_result.exit_code
     }
