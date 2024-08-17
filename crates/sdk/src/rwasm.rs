@@ -7,6 +7,7 @@ use crate::{
         _exec,
         _exit,
         _forward_output,
+        _fuel,
         _input_size,
         _keccak256,
         _output_size,
@@ -158,22 +159,19 @@ impl NativeAPI for RwasmContext {
     }
 
     #[inline(always)]
+    fn fuel(&self) -> u64 {
+        unsafe { _fuel() }
+    }
+
+    #[inline(always)]
     fn charge_fuel(&self, value: u64) -> u64 {
         unsafe { _charge_fuel(value) }
     }
 
-    fn exec(
-        &self,
-        code_hash: &F254,
-        address: &Address,
-        input: &[u8],
-        fuel_limit: u64,
-        state: u32,
-    ) -> i32 {
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
         unsafe {
             _exec(
                 code_hash.as_ptr(),
-                address.as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
                 fuel_limit,

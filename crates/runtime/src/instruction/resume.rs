@@ -27,7 +27,7 @@ impl SyscallResume {
         exit_code: i32,
     ) -> i32 {
         // only root can use resume function
-        if ctx.depth > 0 {
+        if ctx.call_depth > 0 {
             return ExitCode::RootCallOnly.into_i32();
         }
 
@@ -63,21 +63,17 @@ impl SyscallResume {
         ctx.context = take(&mut recoverable_runtime.runtime.store.data_mut().context);
 
         // if execution was interrupted,
-        // then we must remember this runtime and assign call id into exit code
-        // (positive exit code stands for interrupted runtime call id)
         if execution_result.interrupted {
+            // then we remember this runtime and assign call id into exit code (positive exit code
+            // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = recoverable_runtime.runtime.remember_runtime() as i32;
+        } else {
+            // increase total fuel consumed and remember return data
+            ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         }
-
-        // make sure there is no return overflow
-        // if state.return_len > 0 && execution_result.output.len() > state.return_len as usize {
-        //     return (0, ExitCode::OutputOverflow.into_i32());
-        // }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
-        // increase total fuel consumed and remember return data
-        ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
 
         execution_result.exit_code

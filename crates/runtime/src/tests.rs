@@ -57,7 +57,7 @@ fn test_simple() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel(10_000_000);
     let execution_result = Runtime::run_with_context(ctx);
     assert_eq!(execution_result.exit_code, 0);
 }
@@ -85,7 +85,7 @@ fn test_wrong_indirect_type() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_bytecode)
-        .with_fuel_limit(1_000_000)
+        .with_fuel(1_000_000)
         .with_state(STATE_DEPLOY);
     let mut runtime = Runtime::new(ctx);
     let res = runtime.call();
@@ -119,7 +119,7 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(1_000_000);
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel(1_000_000);
     let execution_result = Runtime::run_with_context(ctx);
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);

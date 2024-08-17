@@ -259,7 +259,7 @@ impl Account {
             to.into_word(),
             B256::from(amount.to_be_bytes::<32>()),
         ];
-        sdk.write_log(NATIVE_TRANSFER_ADDRESS, Bytes::new(), &topics);
+        sdk.write_log(NATIVE_TRANSFER_ADDRESS, Bytes::new(), topics.to_vec());
     }
 
     pub fn sub_balance(&mut self, amount: U256) -> Result<(), ExitCode> {

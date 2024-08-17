@@ -12,7 +12,7 @@ use fluentbase_sdk::{
     B256,
     U256,
 };
-use fluentbase_types::{ContractContext, SharedAPI};
+use fluentbase_types::SharedAPI;
 
 pub trait ERC20API {
     fn symbol(&self) -> Bytes;
@@ -39,7 +39,7 @@ fn emit_event<SDK: SharedAPI, T: SolEvent>(sdk: &mut SDK, event: T) {
         .iter()
         .map(|v| B256::from(v.0))
         .collect();
-    sdk.write_log(data, &topics);
+    sdk.emit_log(data, &topics);
 }
 
 solidity_storage! {
@@ -204,7 +204,7 @@ mod test {
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
     };
-    use fluentbase_types::address;
+    use fluentbase_types::{address, ContractContext};
     use hex_literal::hex;
     use serial_test::serial;
 

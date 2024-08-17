@@ -31,17 +31,12 @@ use crate::{
     impl_runtime_handler,
     instruction::{
         charge_fuel::SyscallChargeFuel,
-        checkpoint::SyscallCheckpoint,
-        commit::SyscallCommit,
-        compute_root::SyscallComputeRoot,
         debug_log::SyscallDebugLog,
         ecrecover::SyscallEcrecover,
-        emit_log::SyscallEmitLog,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
         fuel::SyscallFuel,
-        get_leaf::SyscallGetLeaf,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         output_size::SyscallOutputSize,
@@ -53,10 +48,7 @@ use crate::{
         read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
-        rollback::SyscallRollback,
         state::SyscallState,
-        update_leaf::SyscallUpdateLeaf,
-        update_preimage::SyscallUpdatePreimage,
         write::SyscallWrite,
     },
     RuntimeContext,
@@ -83,7 +75,7 @@ impl_runtime_handler!(SyscallRead, READ, fn fluentbase_v1preview::_read(target: 
 impl_runtime_handler!(SyscallOutputSize, OUTPUT_SIZE, fn fluentbase_v1preview::_output_size() -> u32);
 impl_runtime_handler!(SyscallReadOutput, READ_OUTPUT, fn fluentbase_v1preview::_read_output(target: u32, offset: u32, length: u32) -> ());
 impl_runtime_handler!(SyscallState, STATE, fn fluentbase_v1preview::_state() -> u32);
-impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, address32_ptr: u32, input_ptr: u32, input_len: u32, fuel: u64, state: u32) -> i32);
+impl_runtime_handler!(SyscallExec, EXEC, fn fluentbase_v1preview::_exec(code_hash32_ptr: u32, input_ptr: u32, input_len: u32, fuel: u64, state: u32) -> i32);
 impl_runtime_handler!(SyscallResume, RESUME, fn fluentbase_v1preview::_resume(call_id: u32, return_data_ptr: u32, return_data_len: u32, exit_code: i32) -> i32);
 impl_runtime_handler!(SyscallForwardOutput, FORWARD_OUTPUT, fn fluentbase_v1preview::_forward_output(offset: u32, len: u32) -> ());
 impl_runtime_handler!(SyscallChargeFuel, CHARGE_FUEL, fn fluentbase_v1preview::_charge_fuel(delta: u64) -> u64);

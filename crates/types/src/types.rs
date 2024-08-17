@@ -10,18 +10,32 @@ use strum_macros::{Display, FromRepr};
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
+#[derive(Default, Clone, Debug)]
 pub struct Fuel {
     pub limit: u64,
     pub spent: u64,
 }
 
 impl Fuel {
+    pub fn new(limit: u64) -> Self {
+        Self { limit, spent: 0 }
+    }
+
     pub fn remaining(&self) -> u64 {
         self.limit - self.spent
     }
 
-    pub fn charge(&mut self, value: u64) {
+    pub fn charge(&mut self, value: u64) -> bool {
+        if value > self.remaining() {
+            return false;
+        }
         self.spent += value;
+        true
+    }
+
+    pub fn refund(&mut self, value: u64) {
+        assert!(self.spent >= value);
+        self.spent -= value;
     }
 }
 
@@ -176,6 +190,15 @@ impl Into<Trap> for ExitCode {
 #[cfg(feature = "rwasm")]
 impl From<Trap> for ExitCode {
     fn from(value: Trap) -> Self {
+        value
+            .i32_exit_status()
+            .map(ExitCode::from)
+            .unwrap_or(ExitCode::UnknownError)
+    }
+}
+#[cfg(feature = "rwasm")]
+impl From<&Trap> for ExitCode {
+    fn from(value: &Trap) -> Self {
         value
             .i32_exit_status()
             .map(ExitCode::from)

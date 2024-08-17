@@ -1,27 +1,28 @@
-use fluentbase_core::evm::EvmRuntime;
-use fluentbase_sdk::{basic_entrypoint, derive::Contract, ExitCode, SovereignAPI};
-use revm_interpreter::Gas;
+use fluentbase_core::{evm::EvmLoader, helpers::exit_code_from_evm_error};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, SovereignAPI};
 
 #[derive(Contract)]
-pub struct EvmLoaderImpl<SDK> {
+pub struct EvmLoaderEntrypoint<SDK> {
     sdk: SDK,
 }
 
-impl<SDK: SovereignAPI> EvmLoaderImpl<SDK> {
-    pub fn deploy(&mut self) -> ExitCode {
-        let contract_context = self.sdk.contract_context().cloned().unwrap();
-
-        // execute EVM constructor to produce final EVM bytecode
-        // let mut evm_runtime = EvmRuntime::new(&mut self.sdk);
-        // let mut gas = Gas::new(contract_context.gas_limit);
-        // evm_runtime.deploy_evm_contract(contract_context, &mut gas)
-
-        ExitCode::Ok
+impl<SDK: SovereignAPI> EvmLoaderEntrypoint<SDK> {
+    pub fn deploy(&mut self) {
+        unreachable!("deploy is not allowed for genesis contract")
     }
 
-    pub fn main(&mut self) -> ExitCode {
-        ExitCode::Ok
+    pub fn main(&mut self) {
+        let (caller, address, value, input) = self
+            .sdk
+            .contract_context()
+            .map(|v| (v.caller, v.address, v.value, v.input.clone()))
+            .unwrap();
+        let gas_limit = self.sdk.native_sdk().fuel();
+        let result = EvmLoader::new(&mut self.sdk).call(caller, address, value, input, gas_limit);
+        self.sdk.native_sdk().write(result.output.as_ref());
+        let exit_code = exit_code_from_evm_error(result.result);
+        self.sdk.native_sdk().exit(exit_code.into_i32());
     }
 }
 
-basic_entrypoint!(EvmLoaderImpl);
+basic_entrypoint!(EvmLoaderEntrypoint);

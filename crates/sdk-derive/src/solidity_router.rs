@@ -81,15 +81,14 @@ fn derive_route_method(methods: &Vec<&ImplItemFn>) -> proc_macro2::TokenStream {
 
     quote! {
         pub fn main(&mut self) {
-            use crate::fluentbase_sdk::NativeAPI;
-            let input_size = self.sdk.native_sdk().input_size();
+            let input_size = self.sdk.input_size();
             if input_size < 4 {
                 panic!("input too short, cannot extract selector");
             }
             let mut selector: [u8; 4] = [0; 4];
-            self.sdk.native_sdk().read(&mut selector, 0);
+            self.sdk.read(&mut selector, 0);
             let input = fluentbase_sdk::alloc_slice(input_size as usize);
-            self.sdk.native_sdk().read(input, 0);
+            self.sdk.read(input, 0);
             match selector {
                 #match_arms
             }
@@ -133,7 +132,7 @@ fn derive_route_selector_arm(func: &ImplItemFn) -> proc_macro2::TokenStream {
         #selector_name => {
             #args_expr
             let output = self.#method_name #generics(#(#args),*).abi_encode();
-            self.sdk.native_sdk().write(&output);
+            self.sdk.write(&output);
         }
     }
 }
@@ -336,7 +335,7 @@ mod tests {
                     Err(_) => panic!("failed to decode input"),
                 };
                 let output = self.greet(msg).abi_encode();
-                self.sdk.native_sdk().write(&output);
+                self.sdk.write(&output);
             }
         };
 

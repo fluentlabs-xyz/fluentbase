@@ -14,6 +14,7 @@ use fluentbase_types::{
     create_sovereign_import_linker,
     Bytes,
     ExitCode,
+    Fuel,
     IJournaledTrie,
     SysFuncIdx::STATE,
     F254,
@@ -43,7 +44,6 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
-    rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -84,13 +84,13 @@ impl BytecodeOrHash {
 pub struct RuntimeContext {
     // context inputs
     pub(crate) bytecode: BytecodeOrHash,
-    pub(crate) fuel_limit: u64,
+    pub(crate) fuel: Fuel,
     pub(crate) state: u32,
+    pub(crate) call_depth: u32,
     // #[deprecated(note = "this parameter can be removed, we filter on the AOT level")]
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
     pub(crate) context: Vec<u8>,
-    pub(crate) depth: u32,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
@@ -106,14 +106,14 @@ impl Debug for RuntimeContext {
 impl Default for RuntimeContext {
     fn default() -> Self {
         Self {
-            bytecode: Default::default(),
-            fuel_limit: 0,
+            bytecode: BytecodeOrHash::default(),
+            fuel: Fuel::default(),
             state: 0,
             is_shared: false,
             input: vec![],
             context: vec![],
-            depth: 0,
-            execution_result: Default::default(),
+            call_depth: 0,
+            execution_result: ExecutionResult::default(),
             resumable_invocation: None,
             jzkt: None,
         }
@@ -163,8 +163,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_fuel_limit(mut self, fuel_limit: u64) -> Self {
-        self.fuel_limit = fuel_limit;
+    pub fn with_fuel<T: Into<Fuel>>(mut self, fuel: T) -> Self {
+        self.fuel = fuel.into();
         self
     }
 
@@ -174,7 +174,7 @@ impl RuntimeContext {
     }
 
     pub fn with_depth(mut self, depth: u32) -> Self {
-        self.depth = depth;
+        self.call_depth = depth;
         self
     }
 
@@ -183,7 +183,7 @@ impl RuntimeContext {
     }
 
     pub fn depth(&self) -> u32 {
-        self.depth
+        self.call_depth
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -216,6 +216,14 @@ impl RuntimeContext {
 
     pub fn output_mut(&mut self) -> &mut Vec<u8> {
         &mut self.execution_result.output
+    }
+
+    pub fn fuel(&self) -> &Fuel {
+        &self.fuel
+    }
+
+    pub fn fuel_mut(&mut self) -> &mut Fuel {
+        &mut self.fuel
     }
 
     pub fn return_data(&self) -> &Vec<u8> {
@@ -412,8 +420,10 @@ impl Runtime {
         let mut linker = Linker::<RuntimeContext>::new(&engine);
 
         // add fuel if limit is specified
-        if store.data().fuel_limit > 0 {
-            store.add_fuel(store.data().fuel_limit).unwrap();
+        if store.data().fuel.remaining() > 0 {
+            store
+                .add_fuel(store.data().fuel.remaining())
+                .expect("fuel metering is disabled");
         }
 
         // register linker trampolines for external calls
@@ -571,7 +581,8 @@ impl Runtime {
                     .resume(self.store.as_context_mut(), &[exit_code], &mut [])
                     .map_err(Into::<RuntimeError>::into);
             } else {
-                unreachable!("not supported host error, this should never happen");
+                let exit_code = ExitCode::from(resumable_invocation.host_error());
+                return Err(RuntimeError::ExitCode(exit_code.into_i32()));
             };
         }
     }

@@ -32,14 +32,12 @@ extern "C" {
 
     /// Executes nested call with specified bytecode poseidon hash:
     /// - `hash32_ptr` - a 254-bit poseidon hash of a contract to be called
-    /// - `address20_ptr` - a 160-bit callee address (must matches account's code hash)
     /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
     /// - `input_len` - length of input (can be zero)
     /// - `fuel` - an amount of fuel is allocated for the call
     /// - `state` - execution state (must be 0 for non-authorized calls)
     pub fn _exec(
         hash32_ptr: *const u8,
-        address20_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
         fuel_limit: u64,

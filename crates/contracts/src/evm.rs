@@ -1,4 +1,4 @@
-use fluentbase_core::evm::{call::_evm_call, create::_evm_create};
+use fluentbase_core::blended::{call::_evm_call, create::_evm_create};
 use fluentbase_sdk::{
     basic_entrypoint,
     codec::Encoder,

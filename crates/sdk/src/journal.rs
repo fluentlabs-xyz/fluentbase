@@ -20,7 +20,6 @@ use fluentbase_types::{
     JournalCheckpoint,
     NativeAPI,
     SharedAPI,
-    SharedStateResult,
     SovereignAPI,
     SovereignStateResult,
     TxContext,
@@ -357,7 +356,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         });
     }
 
-    fn destroy_account(&mut self, address: &Address, target: &Address) -> DestroyedAccountResult {
+    fn destroy_account(&mut self, _address: &Address, _target: &Address) -> DestroyedAccountResult {
         todo!()
     }
 
@@ -433,7 +432,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         (value, false)
     }
 
-    fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess) {
+    fn committed_storage(&self, _address: &Address, _slot: &U256) -> (U256, IsColdAccess) {
         todo!("not supported yet")
     }
 
@@ -448,42 +447,38 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
             .unwrap_or_default()
     }
 
-    fn write_log(&mut self, address: Address, data: Bytes, topics: &[B256]) {
+    fn write_log(&mut self, address: Address, data: Bytes, topics: Vec<B256>) {
         self.logs.push(JournalStateLog {
             address,
-            topics: topics.to_vec(),
+            topics,
             data,
         });
     }
 
     fn precompile(
         &self,
-        address: &Address,
-        input: &Bytes,
-        gas: u64,
+        _address: &Address,
+        _input: &Bytes,
+        _gas: u64,
     ) -> Option<CallPrecompileResult> {
         todo!()
     }
 
-    fn is_precompile(&self, address: &Address) -> bool {
+    fn is_precompile(&self, _address: &Address) -> bool {
         todo!()
     }
 
     fn transfer(
         &mut self,
-        from: &mut Account,
-        to: &mut Account,
-        value: U256,
+        _from: &mut Account,
+        _to: &mut Account,
+        _value: U256,
     ) -> Result<(), ExitCode> {
         todo!()
     }
 }
 
 impl<API: NativeAPI> SharedAPI for JournalState<API> {
-    fn native_sdk(&self) -> &impl NativeAPI {
-        &self.native_sdk
-    }
-
     fn block_context(&self) -> &BlockContext {
         self.block_context.as_ref().unwrap()
     }
@@ -494,18 +489,6 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn contract_context(&self) -> &ContractContext {
         self.contract_context.as_ref().unwrap()
-    }
-
-    fn commit(&mut self) -> SharedStateResult {
-        todo!()
-    }
-
-    fn account(&self, address: &Address) -> (Account, IsColdAccess) {
-        SovereignAPI::account(self, address)
-    }
-
-    fn transfer(&mut self, from: &mut Account, to: &mut Account, amount: U256) {
-        todo!()
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {
@@ -519,21 +502,51 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         value
     }
 
-    fn write_log(&mut self, data: Bytes, topics: &[B256]) {
-        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
-        SovereignAPI::write_log(self, caller, data, topics);
+    fn read(&self, target: &mut [u8], offset: u32) {
+        self.native_sdk.read(target, offset)
     }
 
-    fn call(&mut self, _address: Address, _input: &[u8], _fuel: &mut Fuel) -> (Bytes, ExitCode) {
+    fn input_size(&self) -> u32 {
+        self.native_sdk.input_size()
+    }
+
+    fn write(&mut self, output: &[u8]) {
+        self.native_sdk.write(output)
+    }
+
+    fn emit_log(&mut self, data: Bytes, topics: &[B256]) {
+        let address = self.contract_context.as_ref().unwrap().address;
+        SovereignAPI::write_log(self, address, data, topics.to_vec());
+    }
+
+    fn call(
+        &mut self,
+        _address: Address,
+        _value: U256,
+        _input: &[u8],
+        _fuel_limit: u64,
+    ) -> (Bytes, i32) {
         todo!()
     }
 
-    fn delegate(
+    fn delegate_call(
         &mut self,
         _address: Address,
         _input: &[u8],
-        _fuel: &mut Fuel,
-    ) -> (Bytes, ExitCode) {
+        _fuel_limit: u64,
+    ) -> (Bytes, i32) {
         todo!()
+    }
+
+    fn keccak256(&self, data: &[u8]) -> B256 {
+        self.native_sdk.keccak256(data)
+    }
+
+    fn sha256(&self, data: &[u8]) -> B256 {
+        self.native_sdk.sha256(data)
+    }
+
+    fn poseidon(&self, data: &[u8]) -> F254 {
+        self.native_sdk.poseidon(data)
     }
 }

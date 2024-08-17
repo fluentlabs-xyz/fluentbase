@@ -4,16 +4,20 @@ macro_rules! basic_entrypoint {
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn deploy() {
-            use fluentbase_sdk::{journal::JournalState, rwasm::RwasmContext};
-            let mut typ = $struct_typ::new(JournalState::empty(RwasmContext {}));
-            typ.deploy();
+            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            let mut sdk = SharedContextImpl::parse_from_input(RwasmContext {});
+            let mut app = $struct_typ::new(sdk);
+            app.deploy();
+            app.sdk.commit_changes_and_exit();
         }
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn main() {
-            use fluentbase_sdk::{journal::JournalState, rwasm::RwasmContext};
-            let mut typ = $struct_typ::new(JournalState::empty(RwasmContext {}));
-            typ.main();
+            use fluentbase_sdk::{rwasm::RwasmContext, shared::SharedContextImpl};
+            let mut sdk = SharedContextImpl::parse_from_input(RwasmContext {});
+            let mut app = $struct_typ::new(sdk);
+            app.main();
+            app.sdk.commit_changes_and_exit();
         }
     };
 }
