@@ -1,4 +1,4 @@
-PRECOMPILES=blended blake2 sha256 ripemd160 identity modexp ecrecover evm_loader wasm_loader
+PRECOMPILES=blended blake2 sha256 ripemd160 identity modexp ecrecover evm wasm
 CUR_DIR="$(shell pwd)"
 OUT_DIR="${CUR_DIR}/assets"
 RUSTFLAGS='-C link-arg=-zstack-size=262144 -C target-feature=+bulk-memory'

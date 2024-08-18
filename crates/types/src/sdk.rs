@@ -1,8 +1,10 @@
 use crate::{
     contracts::{
         SYSCALL_ID_CALL,
+        SYSCALL_ID_CREATE,
         SYSCALL_ID_DELEGATE_CALL,
         SYSCALL_ID_EMIT_LOG,
+        SYSCALL_ID_STATIC_CALL,
         SYSCALL_ID_STORAGE_READ,
     },
     Account,
@@ -19,7 +21,7 @@ use crate::{
 };
 use alloc::{vec, vec::Vec};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use fluentbase_codec::Codec;
+use fluentbase_codec::{Codec, Encoder};
 
 /// A trait for providing shared API functionality.
 pub trait NativeAPI {
@@ -45,6 +47,9 @@ pub trait NativeAPI {
     fn charge_fuel(&self, value: u64) -> u64;
     fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32;
     fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32;
+
+    fn preimage_size(&self, hash: &B256) -> u32;
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
 
     fn input(&self) -> Bytes {
         let input_size = self.input_size();
@@ -252,12 +257,26 @@ pub trait SyscallAPI {
         value: U256,
         input: &[u8],
     ) -> (Bytes, i32);
+    fn syscall_static_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32);
     fn syscall_delegate_call(
         &self,
         fuel_limit: u64,
         target_address: Address,
         input: &[u8],
     ) -> (Bytes, i32);
+    fn syscall_create(
+        &self,
+        fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> Result<Address, i32>;
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]);
 }
 
@@ -303,6 +322,23 @@ impl<T: NativeAPI> SyscallAPI for T {
         (self.return_data(), exit_code)
     }
 
+    fn syscall_static_call(
+        &self,
+        fuel_limit: u64,
+        target_address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32) {
+        let mut buffer = vec![0u8; 20 + 32];
+        buffer[0..20].copy_from_slice(target_address.as_slice());
+        if !value.is_zero() {
+            buffer[20..52].copy_from_slice(value.as_le_slice());
+        }
+        buffer.extend_from_slice(input);
+        let exit_code = self.exec(&SYSCALL_ID_STATIC_CALL, &buffer, fuel_limit, STATE_MAIN);
+        (self.return_data(), exit_code)
+    }
+
     fn syscall_delegate_call(
         &self,
         fuel_limit: u64,
@@ -314,6 +350,28 @@ impl<T: NativeAPI> SyscallAPI for T {
         buffer.extend_from_slice(input);
         let exit_code = self.exec(&SYSCALL_ID_DELEGATE_CALL, &buffer, fuel_limit, STATE_MAIN);
         (self.return_data(), exit_code)
+    }
+
+    fn syscall_create(
+        &self,
+        fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> Result<Address, i32> {
+        let mut buffer = vec![0u8; 33 + 32];
+        if let Some(salt) = salt {
+            buffer[0] = 1;
+            buffer[1..33].copy_from_slice(salt.as_le_slice());
+        }
+        buffer[33..].copy_from_slice(value.as_le_slice());
+        buffer.extend_from_slice(init_code);
+        let exit_code = self.exec(&SYSCALL_ID_CREATE, &buffer, fuel_limit, STATE_MAIN);
+        if exit_code != ExitCode::Ok.into_i32() {
+            return Err(exit_code);
+        }
+        let return_data = self.return_data();
+        Ok(Address::from_slice(return_data.as_ref()))
     }
 
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]) {
@@ -376,6 +434,8 @@ pub trait SovereignAPI {
 }
 
 pub trait SharedAPI {
+    fn native_sdk(&self) -> &impl NativeAPI;
+
     fn block_context(&self) -> &BlockContext;
     fn tx_context(&self) -> &TxContext;
     fn contract_context(&self) -> &ContractContext;
@@ -385,7 +445,26 @@ pub trait SharedAPI {
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
+
+    fn input(&self) -> Bytes {
+        let input_size = self.input_size();
+        let mut buffer = vec![0u8; input_size as usize - SharedContextInputV1::HEADER_SIZE];
+        self.read(&mut buffer, SharedContextInputV1::HEADER_SIZE as u32);
+        buffer.into()
+    }
+
     fn write(&mut self, output: &[u8]);
+    fn exit(&self, exit_code: i32) -> !;
+
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32);
+    fn preimage_size(&self, hash: &B256) -> u32;
+
+    fn preimage(&self, hash: &B256) -> Bytes {
+        let preimage_size = self.preimage_size(hash);
+        let mut buffer = vec![0u8; preimage_size as usize];
+        self.preimage_copy(hash, &mut buffer, preimage_size);
+        buffer.into()
+    }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]);
 

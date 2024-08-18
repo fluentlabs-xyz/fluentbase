@@ -1,11 +1,7 @@
 use alloy_primitives::{address, b256, Address, B256};
 
 pub const PRECOMPILE_EVM: Address = address!("0000000000000000000000000000000000005210");
-pub const PRECOMPILE_EVM_DEPLOYER: Address = address!("0000000000000000000000000000000000005211");
-pub const PRECOMPILE_EVM_LOADER: Address = address!("0000000000000000000000000000000000005212");
 pub const PRECOMPILE_WASM: Address = address!("0000000000000000000000000000000000005220");
-pub const PRECOMPILE_WASM_DEPLOYER: Address = address!("0000000000000000000000000000000000005221");
-pub const PRECOMPILE_WASM_LOADER: Address = address!("0000000000000000000000000000000000005222");
 pub const PRECOMPILE_SVM: Address = address!("0000000000000000000000000000000000005230");
 pub const PRECOMPILE_BLENDED: Address = address!("0000000000000000000000000000000000005240");
 
@@ -48,9 +44,15 @@ pub const SYSCALL_ID_STORAGE_WRITE: B256 =
     b256!("126659e43fb4baaff19b992a1869aa0cac8ec5e30b38556fd8cf28e6fd2255b9"); // keccak256("_syscall_storage_write")
 pub const SYSCALL_ID_CALL: B256 =
     b256!("1d2e7a52c8548eccd33b1f100ae79c86c1a6a6baa18215f916d395a7095ee3e9"); // keccak256("_syscall_call")
+pub const SYSCALL_ID_STATIC_CALL: B256 =
+    b256!("c8d75aa83d2d2710550b424cf8ed7ce575348ac9628ae284118ed839ec5003b1"); // keccak256("_syscall_static_call")
+pub const SYSCALL_ID_CALL_CODE: B256 =
+    b256!("10c6aac9a8c0edaa89d4eb61ccd665b386d1faef9222d1f04b88aa9f43ede6d4"); // keccak256("_syscall_call_code")
 pub const SYSCALL_ID_DELEGATE_CALL: B256 =
     b256!("75bd4ec817c86b0736da59cb28bb22979b1547ee30426044e0ded9055ecfee5a"); // keccak256("_syscall_delegate_call")
 pub const SYSCALL_ID_CREATE: B256 =
     b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
 pub const SYSCALL_ID_EMIT_LOG: B256 =
     b256!("505be4983de61b5ab79cdc8164e4db895c4f9548cee794e1e0bccec1dc0b751d"); // keccak256("_syscall_emit_log")
+pub const SYSCALL_ID_EVM_EXEC: B256 =
+    b256!("9568242525c1e6143bd36ab9e14e3b3d5a62259ecb464ac541ca22b0d8995486"); // keccak256("_syscall_evm_exec")

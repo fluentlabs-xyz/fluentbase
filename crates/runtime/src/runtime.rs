@@ -436,6 +436,11 @@ impl Runtime {
         Self { store, linker }
     }
 
+    pub fn is_warm_bytecode(hash: &F254) -> bool {
+        CACHING_RUNTIME
+            .with_borrow(|caching_runtime| caching_runtime.cached_bytecode.contains_key(hash))
+    }
+
     pub fn warmup_bytecode(hash: F254, bytecode: Bytes) {
         CACHING_RUNTIME.with_borrow_mut(|caching_runtime| {
             caching_runtime.cached_bytecode.insert(hash, bytecode);

@@ -1,14 +1,16 @@
 use crate::{debug_log, helpers::evm_error_from_exit_code};
-use alloc::string::ToString;
 use core::mem::take;
-use fluentbase_sdk::{Address, Bytes, NativeAPI, B256, U256};
-use fluentbase_types::{
-    contracts::{PRECOMPILE_EVM_LOADER, SYSCALL_ID_CALL},
+use fluentbase_sdk::{
+    codec::Encoder,
     env_from_context,
-    AccountStatus,
+    Address,
+    Bytes,
     ExitCode,
+    NativeAPI,
     SovereignAPI,
     SyscallAPI,
+    B256,
+    U256,
 };
 use revm_interpreter::{
     analysis::to_analysed,
@@ -18,6 +20,7 @@ use revm_interpreter::{
     CallOutcome,
     CallScheme,
     Contract,
+    CreateOutcome,
     Gas,
     Host,
     InstructionResult,
@@ -32,6 +35,7 @@ use revm_interpreter::{
 use revm_primitives::{
     Bytecode,
     CancunSpec,
+    CreateScheme,
     Env,
     Log,
     BLOCK_HASH_HISTORY,
@@ -40,8 +44,8 @@ use revm_primitives::{
 };
 
 pub struct EvmLoader<'a, SDK> {
-    sdk: &'a mut SDK,
-    env: Env,
+    pub(crate) sdk: &'a mut SDK,
+    pub(crate) env: Env,
 }
 
 impl<'a, SDK: SovereignAPI> Host for EvmLoader<'a, SDK> {
@@ -80,44 +84,38 @@ impl<'a, SDK: SovereignAPI> Host for EvmLoader<'a, SDK> {
     }
 
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
-        // let (account, is_cold) = self.sdk.account(&address);
-        // Some((
-        //     self.sdk
-        //         .preimage(&account.source_code_hash)
-        //         .unwrap_or_default(),
-        //     is_cold,
-        // ))
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
             return Some((Bytes::new(), is_cold));
         }
-        let code_hash_storage_key = self.code_hash_storage_key(&address);
-        let (value, _) = self
+        let evm_bytecode = self
             .sdk
-            .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-        let evm_code_hash = B256::from(value.to_le_bytes());
-        Some((
-            self.sdk.preimage(&evm_code_hash).unwrap_or_default(),
-            is_cold,
-        ))
+            .preimage(&account.source_code_hash)
+            .unwrap_or_default();
+        Some((evm_bytecode, is_cold))
+        // let code_hash_storage_key = self.code_hash_storage_key(&address);
+        // let (value, _) = self
+        //     .sdk
+        //     .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+        // let evm_code_hash = B256::from(value.to_le_bytes());
+        // Some((
+        //     self.sdk.preimage(&evm_code_hash).unwrap_or_default(),
+        //     is_cold,
+        // ))
     }
 
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        // let (account, is_cold) = self.sdk.account(&address);
-        // if account.is_empty() {
-        //     return Some((B256::ZERO, is_cold));
-        // }
-        // Some((account.source_code_hash, is_cold))
         let (account, is_cold) = self.sdk.account(&address);
         if account.is_empty() {
             return Some((B256::ZERO, is_cold));
         }
-        let code_hash_storage_key = self.code_hash_storage_key(&address);
-        let (value, _) = self
-            .sdk
-            .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-        let evm_code_hash = B256::from(value.to_le_bytes());
-        Some((evm_code_hash, is_cold))
+        Some((account.source_code_hash, is_cold))
+        // let code_hash_storage_key = self.code_hash_storage_key(&address);
+        // let (value, _) = self
+        //     .sdk
+        //     .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+        // let evm_code_hash = B256::from(value.to_le_bytes());
+        // Some((evm_code_hash, is_cold))
     }
 
     fn sload(&mut self, address: Address, index: U256) -> Option<(U256, bool)> {
@@ -198,46 +196,45 @@ impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
     }
 
     pub fn load_evm_bytecode(&self, address: &Address) -> (Bytecode, B256) {
-        // let (account, _) = self.sdk.account(address);
-        // let bytecode = self
-        //     .sdk
-        //     .preimage(&account.source_code_hash)
-        //     .unwrap_or_default();
-        // let bytecode = Bytecode::new_raw(bytecode);
-        // return (bytecode, account.source_code_hash);
+        let (account, _) = self.sdk.account(address);
+        let bytecode = self
+            .sdk
+            .preimage(&account.source_code_hash)
+            .unwrap_or_default();
+        let bytecode = Bytecode::new_raw(bytecode);
+        (bytecode, account.source_code_hash)
 
-        // get EVM bytecode hash from the current address
-        let evm_code_hash: B256 = {
-            let code_hash_storage_key = self.code_hash_storage_key(address);
-            let (value, _) = self
-                .sdk
-                .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
-            B256::from(value.to_le_bytes())
-        };
-
-        // load EVM bytecode from preimage storage
-        let evm_bytecode = self.sdk.preimage(&evm_code_hash).unwrap_or_default();
-
-        // make sure bytecode is analyzed (required by interpreter)
-        let evm_bytecode = Bytecode::new_raw(evm_bytecode);
-        (evm_bytecode, evm_code_hash)
+        // // get EVM bytecode hash from the current address
+        // let evm_code_hash: B256 = {
+        //     let code_hash_storage_key = self.code_hash_storage_key(address);
+        //     let (value, _) = self
+        //         .sdk
+        //         .storage(&PRECOMPILE_EVM_LOADER, &code_hash_storage_key);
+        //     B256::from(value.to_le_bytes())
+        // };
+        //
+        // // load EVM bytecode from preimage storage
+        // let evm_bytecode = self.sdk.preimage(&evm_code_hash).unwrap_or_default();
+        //
+        // // make sure bytecode is analyzed (required by interpreter)
+        // let evm_bytecode = Bytecode::new_raw(evm_bytecode);
+        // (evm_bytecode, evm_code_hash)
     }
 
-    pub fn store_evm_bytecode(&mut self, address: &Address, bytecode: Bytecode) {
-        // self.sdk
-        //     .write_preimage(*address, code_hash, bytecode.original_bytes());
-        // write bytecode hash to the storage
-        let code_hash = bytecode.hash_slow();
-        let code_hash_storage_key = self.code_hash_storage_key(address);
-        self.sdk.write_storage(
-            PRECOMPILE_EVM_LOADER,
-            code_hash_storage_key,
-            U256::from_le_bytes(code_hash.0),
-        );
-
-        // store EVM bytecode inside preimage storage
+    pub fn store_evm_bytecode(&mut self, address: &Address, code_hash: B256, bytecode: Bytecode) {
         self.sdk
             .write_preimage(*address, code_hash, bytecode.original_bytes());
+        // // write bytecode hash to the storage
+        // let code_hash = bytecode.hash_slow();
+        // let code_hash_storage_key = self.code_hash_storage_key(address);
+        // self.sdk.write_storage(
+        //     PRECOMPILE_EVM_LOADER,
+        //     code_hash_storage_key,
+        //     U256::from_le_bytes(code_hash.0),
+        // );
+        // // store EVM bytecode inside preimage storage
+        // self.sdk
+        //     .write_preimage(*address, code_hash, bytecode.original_bytes());
     }
 
     pub fn exec_evm_bytecode(
@@ -257,9 +254,6 @@ impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
             hex::encode(&contract.input),
             depth,
         );
-        if depth >= MAX_CALL_STACK_LIMIT {
-            debug_log!(self.sdk, "depth limit reached: {}", depth);
-        }
 
         // make sure bytecode is analyzed
         contract.bytecode = to_analysed(contract.bytecode);
@@ -305,7 +299,12 @@ impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
                             inputs.target_address,
                             inputs.input.as_ref(),
                         ),
-                        CallScheme::StaticCall => unreachable!(),
+                        CallScheme::StaticCall => self.sdk.native_sdk().syscall_static_call(
+                            inputs.gas_limit,
+                            inputs.target_address,
+                            inputs.value.transfer().unwrap_or_default(),
+                            inputs.input.as_ref(),
+                        ),
                     };
 
                     let result = InterpreterResult::new(
@@ -323,9 +322,35 @@ impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
                         inputs.caller,
                         hex::encode(inputs.value.to_be_bytes::<32>())
                     );
-                    unreachable!();
-                    // let create_outcome = self.create_inner(inputs, depth + 1);
-                    // interpreter.insert_create_outcome(create_outcome);
+
+                    let create_outcome = match self.sdk.native_sdk().syscall_create(
+                        inputs.gas_limit,
+                        match inputs.scheme {
+                            CreateScheme::Create => None,
+                            CreateScheme::Create2 { salt } => Some(salt),
+                        },
+                        &inputs.value,
+                        inputs.init_code.as_ref(),
+                    ) {
+                        Ok(created_address) => {
+                            let result = InterpreterResult::new(
+                                InstructionResult::Return,
+                                Bytes::default(),
+                                gas,
+                            );
+                            CreateOutcome::new(result, Some(created_address))
+                        }
+                        Err(exit_code) => {
+                            let result = InterpreterResult::new(
+                                evm_error_from_exit_code(ExitCode::from(exit_code)),
+                                Bytes::default(),
+                                gas,
+                            );
+                            CreateOutcome::new(result, None)
+                        }
+                    };
+
+                    interpreter.insert_create_outcome(create_outcome);
                 }
                 InterpreterAction::Return { result } => {
                     debug_log!(
@@ -405,43 +430,21 @@ impl<'a, SDK: SovereignAPI> EvmLoader<'a, SDK> {
             return return_error(gas, InstructionResult::OutOfGas);
         }
 
-        // // create a EVM loader proxy
-        // SYSCALL_ID_DELEGATE_CALL;
-        // let evm_loader_module = RwasmModule {
-        //     code_section: instruction_set! {
-        //         I32Const(0)
-        //         // hash32_ptr
-        //         // input_ptr
-        //         // input_len
-        //         // fuel_limit
-        //         // state
-        //         Call(SysFuncIdx::EXEC)
-        //     },
-        //     memory_section: vec![],
-        //     func_section: vec![],
-        //     element_section: vec![],
-        // };
-        // let mut rwasm_binary = Vec::new();
-        // evm_loader_module
-        //     .write_binary_to_vec(&mut rwasm_binary)
-        //     .unwrap();
-
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.rwasm_code_hash = SYSCALL_ID_CALL;
-        self.sdk
-            .write_account(contract_account, AccountStatus::Modified);
-        // contract_account.update_bytecode(
-        //     self.sdk,
-        //     Bytes::new(),
-        //     None,
-        //     Bytes::from(rwasm_binary),
-        //     None,
-        // );
+        let evm_bytecode = Bytecode::new_raw(result.output.clone());
+        let code_hash = evm_bytecode.hash_slow();
+        contract_account.update_bytecode(
+            self.sdk,
+            evm_bytecode.original_bytes(),
+            Some(code_hash),
+            Bytes::default(),
+            None,
+        );
 
         // if there is an address, then we have new EVM bytecode inside output
-        self.store_evm_bytecode(&target_address, Bytecode::new_raw(result.output.clone()));
+        self.store_evm_bytecode(&target_address, code_hash, evm_bytecode);
 
         result
     }

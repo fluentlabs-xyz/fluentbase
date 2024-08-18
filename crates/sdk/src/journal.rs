@@ -8,14 +8,12 @@ use fluentbase_genesis::{
 };
 use fluentbase_types::{
     Account,
-    AccountCheckpoint,
     AccountStatus,
     BlockContext,
     CallPrecompileResult,
     ContractContext,
     DestroyedAccountResult,
     ExitCode,
-    Fuel,
     IsColdAccess,
     JournalCheckpoint,
     NativeAPI,
@@ -24,8 +22,6 @@ use fluentbase_types::{
     SovereignStateResult,
     TxContext,
     F254,
-    KECCAK_EMPTY,
-    POSEIDON_EMPTY,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 
@@ -107,6 +103,7 @@ impl JournalStateBuilder {
 
     #[cfg(feature = "std")]
     pub fn add_genesis(&mut self, genesis: Genesis) {
+        use fluentbase_types::{KECCAK_EMPTY, POSEIDON_EMPTY};
         for (address, account) in genesis.alloc.iter() {
             let source_code_hash = account
                 .storage
@@ -479,6 +476,10 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 }
 
 impl<API: NativeAPI> SharedAPI for JournalState<API> {
+    fn native_sdk(&self) -> &impl NativeAPI {
+        &self.native_sdk
+    }
+
     fn block_context(&self) -> &BlockContext {
         self.block_context.as_ref().unwrap()
     }
@@ -512,6 +513,18 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn write(&mut self, output: &[u8]) {
         self.native_sdk.write(output)
+    }
+
+    fn exit(&self, exit_code: i32) -> ! {
+        self.native_sdk.exit(exit_code)
+    }
+
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32) {
+        todo!()
+    }
+
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        todo!()
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) {

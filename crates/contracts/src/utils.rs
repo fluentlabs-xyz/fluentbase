@@ -1,11 +1,8 @@
 use fluentbase_sdk::{
     codec::Encoder,
     types::{CoreInput, ICoreInput},
-    Address,
-    SovereignAPI,
-    U256,
 };
-use zeth_primitives::transactions::ethereum::{EthereumTxEssence, TransactionKind};
+// use zeth_primitives::transactions::ethereum::{EthereumTxEssence, TransactionKind};
 
 #[allow(dead_code)]
 pub(crate) fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {

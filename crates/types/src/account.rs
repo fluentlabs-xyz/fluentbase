@@ -234,7 +234,6 @@ impl Account {
         sdk.transfer(caller, &mut callee, amount)?;
         // tidy hack to make SELFDESTRUCT work for now
         // am.mark_account_created(callee_address);
-        // println!("mark account created: {callee_address}");
         // emit transfer log (do we want to have native transfer events or native wrapper?)
         // Self::emit_transfer_log(am, &caller.address, &callee.address, &amount);
         // change nonce (we are always on spurious dragon)

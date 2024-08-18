@@ -35,7 +35,6 @@ fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
 fluentbase-contracts = { path = "crates/contracts", default-features = false }
-#fluentbase-revm = { path = "crates/revm", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
@@ -50,7 +49,7 @@ alloy-primitives = { version = "0.7", default-features = false, features = ["rlp
 alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
-hashbrown = { version = "0.14" }
+hashbrown = { version = "0.14", default-features = false }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }
@@ -64,7 +63,7 @@ revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-feat
     #    "secp256k1",
     #    "debug-print",
 ] }
-zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
+#zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
 #revm-interpreter = { package = "revm-interpreter-fluent", path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
