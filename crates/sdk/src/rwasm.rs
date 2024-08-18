@@ -1,5 +1,4 @@
 use crate::{
-    alloc_slice,
     bindings::{
         _charge_fuel,
         _debug_log,
@@ -22,33 +21,9 @@ use crate::{
         _state,
         _write,
     },
-    Address,
-    Bytes,
     B256,
-    U256,
 };
-use alloc::{vec, vec::Vec};
-use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{
-    calc_storage_key,
-    Account,
-    AccountCheckpoint,
-    AccountStatus,
-    Bytes32,
-    ExitCode,
-    Fuel,
-    NativeAPI,
-    SovereignAPI,
-    F254,
-    JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS,
-    JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-    JZKT_STORAGE_COMPRESSION_FLAGS,
-};
+use fluentbase_types::{NativeAPI, F254};
 
 #[derive(Default)]
 pub struct RwasmContext;
@@ -190,5 +165,15 @@ impl NativeAPI for RwasmContext {
                 exit_code,
             )
         }
+    }
+
+    #[inline(always)]
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        unsafe { _preimage_size(hash.as_ptr()) }
+    }
+
+    #[inline(always)]
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
     }
 }

@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use fluentbase_types::{
+use fluentbase_sdk::{
     create_sovereign_import_linker,
     ExitCode,
     SysFuncIdx::STATE,
@@ -21,7 +21,7 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
                 ("deploy".to_string(), STATE_DEPLOY),
                 ("main".to_string(), STATE_MAIN),
             ]),
-            opcode: Instruction::Call(STATE.into()),
+            opcode: Instruction::Call((STATE as u32).into()),
         }),
         entrypoint_name: None,
         import_linker: Some(create_sovereign_import_linker()),

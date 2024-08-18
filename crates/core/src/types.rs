@@ -1,5 +1,4 @@
-use fluentbase_sdk::Bytes;
-use fluentbase_types::{ExitCode, SyscallInvocationParams};
+use fluentbase_sdk::{Bytes, ExitCode, SyscallInvocationParams};
 
 #[derive(Clone, Debug)]
 pub(crate) enum NextAction {

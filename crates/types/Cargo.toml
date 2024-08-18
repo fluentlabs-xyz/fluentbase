@@ -15,7 +15,7 @@ serde = { version = "1.0", default-features = false, features = [
     "derive",
     "rc",
 ], optional = true }
-byteorder = { workspace = true }
+byteorder = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false, optional = true }
 alloy-primitives = { workspace = true }
 alloy-rlp = { workspace = true }
@@ -30,6 +30,7 @@ serde = ["dep:serde"]
 std = [
     "rwasm?/std",
     "alloy-primitives/std",
+    "byteorder/std",
 ]
 rwasm = [
     "dep:rwasm",

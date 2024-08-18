@@ -1,12 +1,10 @@
-#![allow(dead_code)]
+#![cfg_attr(not(feature = "std"), no_std)]
+#![warn(unused_crate_dependencies)]
 
 extern crate alloc;
 extern crate core;
-extern crate fluentbase_sdk;
-extern crate paste;
 
 pub mod blended;
-pub mod evm;
+// pub mod evm;
 pub mod helpers;
-pub mod svm;
 mod types;

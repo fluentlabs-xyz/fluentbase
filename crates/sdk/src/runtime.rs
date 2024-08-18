@@ -1,35 +1,14 @@
-use crate::{
-    Account,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS,
-    JZKT_ACCOUNT_FIELDS_COUNT,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-    U256,
-};
 use alloc::rc::Rc;
-use byteorder::{ByteOrder, LittleEndian};
-use core::ptr;
-use fluentbase_codec::{BufferDecoder, Encoder};
-use fluentbase_genesis::devnet::{
-    devnet_genesis,
-    devnet_genesis_from_file,
-    KECCAK_HASH_KEY,
-    POSEIDON_HASH_KEY,
-};
+use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
-        checkpoint::SyscallCheckpoint,
-        commit::SyscallCommit,
-        compute_root::SyscallComputeRoot,
         debug_log::SyscallDebugLog,
         ecrecover::SyscallEcrecover,
-        emit_log::SyscallEmitLog,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
         fuel::SyscallFuel,
-        get_leaf::SyscallGetLeaf,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         output_size::SyscallOutputSize,
@@ -41,44 +20,24 @@ use fluentbase_runtime::{
         read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
-        rollback::SyscallRollback,
         state::SyscallState,
-        update_leaf::SyscallUpdateLeaf,
-        update_preimage::SyscallUpdatePreimage,
         write::SyscallWrite,
     },
-    types::InMemoryTrieDb,
-    zktrie::ZkTrieStateDb,
-    BytecodeOrHash::Bytecode,
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
 use fluentbase_types::{
-    address,
-    calc_storage_key,
-    AccountCheckpoint,
-    AccountStatus,
-    Address,
+    Account,
     Bytes,
-    ExitCode,
-    Fuel,
     IJournaledTrie,
-    JournalCheckpoint,
     NativeAPI,
-    SovereignAPI,
     UnwrapExitCode,
     B256,
     F254,
-    JZKT_ACCOUNT_BALANCE_FIELD,
-    JZKT_ACCOUNT_NONCE_FIELD,
-    JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD,
-    JZKT_STORAGE_COMPRESSION_FLAGS,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
 };
-use hashbrown::HashMap;
-use std::{cell::RefCell, mem::take, ops::Deref};
+use std::{cell::RefCell, mem::take};
 
 pub struct RuntimeContextWrapper {
     pub ctx: Rc<RefCell<RuntimeContext>>,
@@ -194,6 +153,16 @@ impl NativeAPI for RuntimeContextWrapper {
             exit_code,
         );
         exit_code
+    }
+
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code()
+    }
+
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        let preimage =
+            SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code();
+        target.copy_from_slice(&preimage);
     }
 
     fn return_data(&self) -> Bytes {

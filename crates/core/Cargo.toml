@@ -10,39 +10,22 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
-fluentbase-codec = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
-revm-precompile = { workspace = true, default-features = false, optional = true }
 revm-primitives = { workspace = true, default-features = false }
-
-byteorder = { workspace = true, default-features = false }
-alloy-rlp = { workspace = true }
-hashbrown = { workspace = true }
-paste = { workspace = true }
-hex.workspace = true
-
-[dev-dependencies]
-fluentbase-runtime = { workspace = true, default-features = false }
-fluentbase-sdk = { workspace = true, default-features = false }
-keccak-hash = { version = "0.10.0" }
-hex = { version = "0.4.3" }
+hex = { workspace = true, default-features = false }
 
 [lib]
-crate-type = ["cdylib", "rlib", "staticlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["std"]
 std = [
     "fluentbase-sdk/std",
-    "fluentbase-types/std",
     "revm-interpreter/std",
-    "byteorder/std",
-    "alloy-rlp/std",
     "dep:fluentbase-runtime",
+    "fluentbase-runtime/std",
 ]
 e2e = ["fluentbase-sdk/e2e"]
-

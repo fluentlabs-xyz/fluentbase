@@ -1,6 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(unused_crate_dependencies)]
-#![allow(unused_imports)]
 extern crate alloc;
 extern crate core;
 
@@ -40,7 +39,6 @@ unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
 #[cfg(target_arch = "wasm32")]
 static ALLOCATOR: fluentbase_types::HeapBaseAllocator = fluentbase_types::HeapBaseAllocator {};
 
-pub use byteorder;
 pub use fluentbase_codec as codec;
 pub use fluentbase_sdk_derive as derive;
 pub use fluentbase_types::*;

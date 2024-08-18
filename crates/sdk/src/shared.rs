@@ -1,13 +1,9 @@
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_types::{
-    Account,
     Address,
     BlockContext,
     Bytes,
     ContractContext,
-    ExitCode,
-    Fuel,
-    IsColdAccess,
     NativeAPI,
     SharedAPI,
     SharedContextInputV1,
@@ -48,6 +44,10 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 }
 
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
+    fn native_sdk(&self) -> &impl NativeAPI {
+        &self.native_sdk
+    }
+
     fn block_context(&self) -> &BlockContext {
         &self.input.block
     }
@@ -79,6 +79,16 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn write(&mut self, output: &[u8]) {
         self.native_sdk.write(output);
+    }
+
+    fn exit(&self, exit_code: i32) -> ! {
+        self.native_sdk.exit(exit_code)
+    }
+
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32) {}
+
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        todo!()
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) {
