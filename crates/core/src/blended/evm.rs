@@ -196,6 +196,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         target_address: Address,
         inputs: Box<CreateInputs>,
         gas: Gas,
+        call_depth: u32,
     ) -> InterpreterResult {
         let return_error = |gas: Gas, result: InstructionResult| -> InterpreterResult {
             InterpreterResult::new(result, Bytes::new(), gas)
@@ -210,7 +211,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_value: inputs.value,
         };
         // execute EVM constructor bytecode to produce new resulting EVM bytecode
-        let mut result = self.exec_evm_bytecode(contract, gas, false, 0);
+        let mut result = self.exec_evm_bytecode(contract, gas, false, call_depth);
         if !result.result.is_ok() {
             return result;
         }

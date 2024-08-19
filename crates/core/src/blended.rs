@@ -286,8 +286,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         };
 
         let result = match bytecode_type {
-            BytecodeType::EVM => self.deploy_evm_contract(contract_account.address, inputs, gas),
-            BytecodeType::WASM => self.deploy_wasm_contract(contract_account.address, inputs, gas),
+            BytecodeType::EVM => {
+                self.deploy_evm_contract(contract_account.address, inputs, gas, call_depth)
+            }
+            BytecodeType::WASM => {
+                self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
+            }
         };
 
         // commit all changes made
