@@ -1,14 +1,90 @@
 use alloc::vec;
-use core::{mem::size_of, ops::Deref};
-use fluentbase_sdk::{Address, LowLevelSDK, U256};
+use core::{mem::size_of, ops::Deref, str::FromStr};
+use fluentbase_sdk::{Address, ContextReader, LowLevelSDK, U256};
 use fluentbase_types::{Bytes32, Bytes34, Bytes64, SharedAPI};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
-    fuel_tx::ContractId,
+    fuel_tx::{
+        consensus_parameters::{
+            ConsensusParametersV1,
+            ContractParametersV1,
+            FeeParametersV1,
+            PredicateParametersV1,
+            ScriptParametersV1,
+            TxParametersV1,
+        },
+        AssetId,
+        ConsensusParameters,
+        ContractId,
+        ContractParameters,
+        FeeParameters,
+        GasCosts,
+        PredicateParameters,
+        ScriptParameters,
+        TxParameters,
+    },
     fuel_types,
-    fuel_types::canonical::Deserialize,
+    fuel_types::{canonical::Deserialize, ChainId},
     fuel_vm::ContractsStateKey,
 };
+
+pub const TESTNET_BASE_ASSET_ID: &str =
+    "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
+pub const TESTNET_PRIVILEGED_ADDRESS: &str =
+    "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9";
+
+pub fn fuel_testnet_consensus_params_from(
+    max_gas_per_tx: Option<u64>,
+    max_gas_per_predicate: Option<u64>,
+    block_gas_limit: Option<u64>,
+    chain_id: ChainId,
+    gas_costs: Option<GasCosts>,
+) -> ConsensusParameters {
+    ConsensusParameters::V1(ConsensusParametersV1 {
+        tx_params: TxParameters::V1(TxParametersV1 {
+            max_inputs: 8,
+            max_outputs: 8,
+            max_witnesses: 8,
+            max_gas_per_tx: max_gas_per_tx.unwrap_or(30000000),
+            max_size: 110 * 1024,
+            max_bytecode_subsections: 255,
+        }),
+        predicate_params: PredicateParameters::V1(PredicateParametersV1 {
+            max_predicate_length: 1024 * 1024,
+            max_predicate_data_length: 1024 * 1024,
+            max_message_data_length: 1024 * 1024,
+            max_gas_per_predicate: max_gas_per_predicate.unwrap_or(30000000),
+        }),
+        script_params: ScriptParameters::V1(ScriptParametersV1 {
+            max_script_length: 1024 * 1024,
+            max_script_data_length: 1024 * 1024,
+        }),
+        contract_params: ContractParameters::V1(ContractParametersV1 {
+            contract_max_size: 100 * 1024,
+            max_storage_slots: 1760,
+        }),
+        fee_params: FeeParameters::V1(FeeParametersV1 {
+            gas_price_factor: 92,
+            gas_per_byte: 62,
+        }),
+        chain_id,
+        gas_costs: gas_costs.unwrap_or_default(),
+        base_asset_id: AssetId::from_str(TESTNET_BASE_ASSET_ID).expect("valid asset id format"),
+        block_gas_limit: block_gas_limit.unwrap_or(30000000),
+        privileged_address: fuel_types::Address::from_str(TESTNET_PRIVILEGED_ADDRESS)
+            .expect("valid privileged address format"),
+    })
+}
+
+pub fn fuel_testnet_consensus_params_from_cr<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+    fuel_testnet_consensus_params_from(
+        Some(cr.tx_gas_limit()),
+        Some(cr.tx_gas_limit()),
+        Some(cr.block_gas_limit()),
+        ChainId::new(cr.block_chain_id()),
+        None,
+    )
+}
 
 fn keccak256(data: &[u8], target: &mut Bytes32) {
     LowLevelSDK::keccak256(data.as_ptr(), data.len() as u32, target.as_mut_ptr());
