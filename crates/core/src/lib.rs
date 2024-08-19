@@ -16,3 +16,5 @@ pub mod helpers_fvm;
 pub mod loader;
 pub mod svm;
 pub mod wasm;
+
+pub use fluentbase_types::consts::DEVNET_CHAIN_ID;

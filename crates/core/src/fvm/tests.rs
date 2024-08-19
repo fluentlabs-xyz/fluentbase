@@ -53,6 +53,10 @@ mod tests {
         services::executor::{Error, TransactionValidityError},
     };
 
+    fn test_builder() -> TestBuilder {
+        TestBuilder::new(1234u64)
+    }
+
     #[test]
     fn skipped_tx_not_changed_spent_status() {
         let wasm_storage = WasmStorage {
@@ -60,20 +64,21 @@ mod tests {
             am: &GuestAccountManager::DEFAULT,
         };
         let mut storage = StructuredStorage::new(wasm_storage);
+        // let mut tb = || TestBuilder::new(2322u64);
         // let mut db = GenericDatabase::from_storage(storage);
         // `tx2` has two inputs: one used by `tx1` and on random. So after the execution of `tx1`,
         // the `tx2` become invalid and should be skipped by the block producers. Skipped
         // transactions should not affect the state so the second input should be `Unspent`.
         // # Dev-note: `TxBuilder::new(2322u64)` is used to create transactions, it produces
         // the same first input.
-        let tx1 = TestBuilder::new(2322u64)
+        let tx1 = test_builder()
             .coin_input(AssetId::default(), 100)
             .change_output(AssetId::default())
             .build()
             .transaction()
             .clone();
 
-        let tx2 = TestBuilder::new(2322u64)
+        let tx2 = test_builder()
             // The same input as `tx1`
             .coin_input(AssetId::default(), 100)
             // Additional unique for `tx2` input
@@ -183,7 +188,7 @@ mod tests {
     fn coin_input_fails_when_mismatches_database() {
         const AMOUNT: u64 = 100;
 
-        let tx = TestBuilder::new(2322u64)
+        let tx = test_builder()
             .coin_input(AssetId::default(), AMOUNT)
             .change_output(AssetId::default())
             .build()
@@ -243,7 +248,7 @@ mod tests {
     #[test]
     fn contract_input_fails_when_doesnt_exist_in_database() {
         let contract_id: ContractId = [1; 32].into();
-        let tx = TestBuilder::new(2322u64)
+        let tx = test_builder()
             .contract_input(contract_id)
             .coin_input(AssetId::default(), 100)
             .change_output(AssetId::default())
@@ -307,7 +312,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(2322u64);
 
         let (create, contract_id) = create_contract(vec![], &mut rng);
-        let non_modify_state_tx: Transaction = TestBuilder::new(2322)
+        let non_modify_state_tx: Transaction = test_builder()
             .script_gas_limit(10000)
             .coin_input(AssetId::zeroed(), 10000)
             .start_script(vec![op::ret(1)], vec![])
@@ -389,7 +394,7 @@ mod tests {
 
         let (create, contract_id) = create_contract(vec![], &mut rng);
         // The transaction with invalid script.
-        let non_modify_state_tx: Transaction = TestBuilder::new(2322)
+        let non_modify_state_tx: Transaction = test_builder()
             .start_script(vec![op::add(RegId::PC, RegId::PC, RegId::PC)], vec![])
             .contract_input(contract_id)
             .fee_input()
@@ -514,7 +519,7 @@ mod tests {
         .copied()
         .collect();
 
-        let modify_balance_and_state_tx = TestBuilder::new(2322)
+        let modify_balance_and_state_tx = test_builder()
             .script_gas_limit(10000)
             .coin_input(AssetId::zeroed(), 10000)
             .start_script(script, script_data)
@@ -649,7 +654,7 @@ mod tests {
         .copied()
         .collect();
 
-        let modify_balance_and_state_tx = TestBuilder::new(2322)
+        let modify_balance_and_state_tx = test_builder()
             .script_gas_limit(10000)
             .coin_input(AssetId::zeroed(), 10000)
             .start_script(script, script_data)
@@ -812,7 +817,7 @@ mod tests {
         .copied()
         .collect();
 
-        let modify_balance_and_state_tx = TestBuilder::new(2322)
+        let modify_balance_and_state_tx = test_builder()
             .script_gas_limit(10000)
             .coin_input(AssetId::zeroed(), 10000)
             .start_script(script, script_data)
@@ -940,7 +945,7 @@ mod tests {
 
         let transfer_amount = 100 as Word;
         let asset_id = AssetId::from([2; 32]);
-        let mut foreign_transfer = TestBuilder::new(2322)
+        let mut foreign_transfer = test_builder()
             .script_gas_limit(10000)
             .coin_input(AssetId::zeroed(), 10000)
             .start_script(vec![op::ret(1)], vec![])
@@ -1099,7 +1104,7 @@ mod tests {
         let input_amount = 0;
         let coin_output_amount = 0;
 
-        let tx: Transaction = TestBuilder::new(2322)
+        let tx: Transaction = test_builder()
             .coin_input(asset_id, input_amount)
             .variable_output(Default::default())
             .coin_output(asset_id, coin_output_amount)

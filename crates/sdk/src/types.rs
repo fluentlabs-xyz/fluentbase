@@ -148,20 +148,34 @@ pub type WasmCallMethodInput = EvmCallMethodInput;
 pub type WasmCallMethodOutput = EvmCallMethodOutput;
 
 #[derive(Default, Debug, Clone, Codec)]
-pub struct FvmCreateMethodInput {
-    // checked_tx: Checked<Tx>,
-    // header: &'a PartialBlockHeader,
-    // coinbase_contract_id: ContractId,
-    // gas_price: Word,
-    // storage_tx: &'a mut TxStorageTransaction<'a, T>,
-    // memory: &'a mut MemoryInstance,
+pub struct FvmMethodInput {}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmMethodOutput {
+    pub output: Bytes,
+    pub exit_code: i32,
+    pub gas_remaining: u64,
+    pub gas_refund: i64,
 }
 
-#[derive(Default, Debug, Clone, Codec)]
-pub struct FvmCreateMethodOutput {}
+impl FvmMethodOutput {
+    pub fn from_exit_code(exit_code: ExitCode) -> Self {
+        Self {
+            output: Default::default(),
+            exit_code: exit_code.into_i32(),
+            gas_remaining: 0,
+            gas_refund: 0,
+        }
+    }
 
-#[derive(Default, Debug, Clone, Codec)]
-pub struct FvmCallMethodInput {}
+    pub fn with_output(mut self, output: Bytes) -> Self {
+        self.output = output;
+        self
+    }
 
-#[derive(Default, Debug, Clone, Codec)]
-pub struct FvmCallMethodOutput {}
+    pub fn with_gas(mut self, gas: u64, refund: i64) -> Self {
+        self.gas_remaining = gas;
+        self.gas_refund = refund;
+        self
+    }
+}
