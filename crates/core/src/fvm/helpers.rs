@@ -28,6 +28,11 @@ use fuel_core_types::{
     fuel_vm::ContractsStateKey,
 };
 
+pub const TESTNET_BASE_ASSET_ID: &str =
+    "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
+pub const TESTNET_PRIVILEGED_ADDRESS: &str =
+    "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9";
+
 pub fn fuel_testnet_consensus_params_from(
     max_gas_per_tx: Option<u64>,
     max_gas_per_predicate: Option<u64>,
@@ -64,15 +69,10 @@ pub fn fuel_testnet_consensus_params_from(
         }),
         chain_id,
         gas_costs: gas_costs.unwrap_or_default(),
-        base_asset_id: AssetId::from_str(
-            "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-        )
-        .expect("invalid asset id format"),
+        base_asset_id: AssetId::from_str(TESTNET_BASE_ASSET_ID).expect("valid asset id format"),
         block_gas_limit: block_gas_limit.unwrap_or(30000000),
-        privileged_address: fuel_types::Address::from_str(
-            "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9",
-        )
-        .expect("invalid privileged address format"),
+        privileged_address: fuel_types::Address::from_str(TESTNET_PRIVILEGED_ADDRESS)
+            .expect("valid privileged address format"),
     })
 }
 

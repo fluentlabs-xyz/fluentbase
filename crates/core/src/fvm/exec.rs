@@ -72,7 +72,7 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+            .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Create(etx) => {
@@ -91,7 +91,7 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+            .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upgrade(etx) => {
