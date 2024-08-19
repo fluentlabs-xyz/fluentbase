@@ -24,7 +24,7 @@ hex.workspace = true
 alloy-sol-types = { workspace = true }
 anyhow = { workspace = true, default-features = false }
 postcard = { workspace = true, default-features = false, features = ["alloc"] }
-keccak-hash = { version = "0.10.0" }
+keccak-hash = { version = "0.10.0", default-features = false }
 
 fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }
 fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }

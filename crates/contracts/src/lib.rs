@@ -2,8 +2,8 @@
 extern crate alloc;
 extern crate core;
 
-#[cfg(feature = "blended")]
-mod blended;
+// #[cfg(feature = "blended")]
+// mod blended;
 #[cfg(feature = "evm")]
 mod evm;
 #[cfg(any(
