@@ -72,55 +72,57 @@ const main = async () => {
 
     const web3 = new Web3(web3Url);
 
-    const LOCAL_FUEL_NETWORK = 'http://127.0.0.1:4000/v1/graphql';
-    const fuelProvider = await Provider.create(LOCAL_FUEL_NETWORK);
-    let fuelEthAssetId = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    let fuelBaseAssetId = "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
+    {
+        const LOCAL_FUEL_NETWORK = 'http://127.0.0.1:4000/v1/graphql';
+        const fuelProvider = await Provider.create(LOCAL_FUEL_NETWORK);
+        let fuelEthAssetId = "0x0000000000000000000000000000000000000000000000000000000000000000";
+        let fuelBaseAssetId = "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
 
-    let baseAssetId = fuelProvider.getBaseAssetId();
-    console.log(`baseAssetId ${baseAssetId}`);
+        let baseAssetId = fuelProvider.getBaseAssetId();
+        console.log(`baseAssetId ${baseAssetId}`);
 
-    // let fuelTestWallet = await generateTestWallet(fuelProvider, [
-    //     [42, baseAssetId],
-    // ]);
-    // let fuelTestWalletCoins = await fuelProvider.getCoins(fuelTestWallet.address);
-    // console.log(`fuelTestWalletCoins`, fuelTestWalletCoins);
-    // let fuelTestWalletBalance = await fuelTestWallet.getBalance();
-    // console.log(`fuelWalletOfficialBalance ${fuelTestWalletBalance}`);
+        // let fuelTestWallet = await generateTestWallet(fuelProvider, [
+        //     [42, baseAssetId],
+        // ]);
+        // let fuelTestWalletCoins = await fuelProvider.getCoins(fuelTestWallet.address);
+        // console.log(`fuelTestWalletCoins`, fuelTestWalletCoins);
+        // let fuelTestWalletBalance = await fuelTestWallet.getBalance();
+        // console.log(`fuelWalletOfficialBalance ${fuelTestWalletBalance}`);
 
-    // let fuelSecretOfficial = "a1447cd75accc6b71a976fd3401a1f6ce318d27ba660b0315ee6ac347bf39568";
-    // let fuelWalletOfficial = Wallet.fromPrivateKey(fuelSecretOfficial, fuelProvider);
+        // let fuelSecretOfficial = "a1447cd75accc6b71a976fd3401a1f6ce318d27ba660b0315ee6ac347bf39568";
+        // let fuelWalletOfficial = Wallet.fromPrivateKey(fuelSecretOfficial, fuelProvider);
 
-    let fuelSecretOfficial = "de97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
-    let fuelWalletOfficial = Wallet.fromPrivateKey(fuelSecretOfficial, fuelProvider);
-    console.log(`fuelWalletOfficial.address`, fuelWalletOfficial.address.toHexString());
-    let fuelWalletOfficialCoins = await fuelProvider.getCoins(fuelWalletOfficial.address);
-    console.log(`fuelWalletOfficialCoins:`, fuelWalletOfficialCoins);
+        let fuelSecretOfficial = "de97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
+        let fuelWalletOfficial = Wallet.fromPrivateKey(fuelSecretOfficial, fuelProvider);
+        console.log(`fuelWalletOfficial.address`, fuelWalletOfficial.address.toHexString());
+        let fuelWalletOfficialCoins = await fuelProvider.getCoins(fuelWalletOfficial.address);
+        console.log(`fuelWalletOfficialCoins:`, fuelWalletOfficialCoins);
 
-    let fuelSecret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
-    let fuelWallet1 = Wallet.fromPrivateKey(fuelSecret1, fuelProvider);
-    console.log(`fuelWallet1.address:`, fuelWallet1.signer().address.toHexString());
-    let fuelWallet1Coins = await fuelProvider.getCoins(fuelWallet1.address);
-    console.log(`fuelWallet1Coins:`, fuelWallet1Coins);
+        let fuelSecret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
+        let fuelWallet1 = Wallet.fromPrivateKey(fuelSecret1, fuelProvider);
+        console.log(`fuelWallet1.address:`, fuelWallet1.signer().address.toHexString());
+        let fuelWallet1Coins = await fuelProvider.getCoins(fuelWallet1.address);
+        console.log(`fuelWallet1Coins:`, fuelWallet1Coins);
 
-    let fuelWallet2 = Wallet.fromAddress("0x53a9c6a74bee79c5e04115a007984f4bddaafed75f512f68766c6ed59d0aedec", fuelProvider);
-    console.log(`fuelWallet2.address:`, fuelWallet1.signer().address.toHexString());
-    let fuelWallet2Coins = await fuelProvider.getCoins(fuelWallet2.address);
-    console.log(`fuelWallet2Coins:`, fuelWallet2Coins);
+        let fuelWallet2 = Wallet.fromAddress("0x53a9c6a74bee79c5e04115a007984f4bddaafed75f512f68766c6ed59d0aedec", fuelProvider);
+        console.log(`fuelWallet2.address:`, fuelWallet1.signer().address.toHexString());
+        let fuelWallet2Coins = await fuelProvider.getCoins(fuelWallet2.address);
+        console.log(`fuelWallet2Coins:`, fuelWallet2Coins);
 
-    console.log("fuel: creating transfer");
-    let fuelTransferFromOfficialToWallet1Tx = await fuelWalletOfficial.createTransfer(fuelWallet1.address, 1);
-    console.log("fuelTransferFromOfficialToWallet1Tx:", fuelTransferFromOfficialToWallet1Tx);
-    let transferResult = await fuelWalletOfficial.sendTransaction(fuelTransferFromOfficialToWallet1Tx);
-    console.log(`transferResult`, transferResult);
-    let {id} = await transferResult.wait();
-    console.log(`transfer id`, id);
+        console.log("fuel: creating transfer");
+        let fuelTransferFromOfficialToWallet1Tx = await fuelWalletOfficial.createTransfer(fuelWallet1.address, 1);
+        console.log("fuelTransferFromOfficialToWallet1Tx:", fuelTransferFromOfficialToWallet1Tx);
+        let transferResult = await fuelWalletOfficial.sendTransaction(fuelTransferFromOfficialToWallet1Tx);
+        console.log(`transferResult`, transferResult);
+        let {id} = await transferResult.wait();
+        console.log(`transfer id`, id);
 
 
-    fuelWalletOfficialCoins = await fuelProvider.getCoins(fuelWalletOfficial.address);
-    console.log(`fuelWalletOfficialCoins:`, fuelWalletOfficialCoins);
-    fuelWallet1Coins = await fuelProvider.getCoins(fuelWallet1.address);
-    console.log(`fuelWallet1Coins:`, fuelWallet1Coins);
+        fuelWalletOfficialCoins = await fuelProvider.getCoins(fuelWalletOfficial.address);
+        console.log(`fuelWalletOfficialCoins:`, fuelWalletOfficialCoins);
+        fuelWallet1Coins = await fuelProvider.getCoins(fuelWallet1.address);
+        console.log(`fuelWallet1Coins:`, fuelWallet1Coins);
+    }
 
     let doSendBalance = false;
     let doSendFuelTx = false;
