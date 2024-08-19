@@ -2921,6 +2921,7 @@ checksum = "6c2141d6d6c8512188a7891b4b01590a45f6dac67afb4f255c4124dbb86d4eaa"
 [[package]]
 name = "fuel-asm"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "bitflags 2.6.0",
  "fuel-types",
@@ -2931,6 +2932,7 @@ dependencies = [
 [[package]]
 name = "fuel-core"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -2980,6 +2982,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-chain-config"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "bech32",
@@ -2998,6 +3001,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-consensus-module"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "fuel-core-chain-config",
@@ -3009,6 +3013,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-database"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3019,6 +3024,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-executor"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "fuel-core-storage",
@@ -3032,6 +3038,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-gas-price-service"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3054,6 +3061,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-importer"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3069,6 +3077,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-metrics"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "parking_lot",
  "pin-project-lite",
@@ -3080,6 +3089,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-p2p"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3111,6 +3121,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-poa"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3126,6 +3137,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-producer"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3140,6 +3152,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-services"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3153,6 +3166,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-storage"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3175,6 +3189,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-txpool"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3194,6 +3209,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-types"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "anyhow",
  "bs58",
@@ -3212,6 +3228,7 @@ dependencies = [
 [[package]]
 name = "fuel-core-upgradable-executor"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "fuel-core-executor",
  "fuel-core-storage",
@@ -3221,6 +3238,7 @@ dependencies = [
 [[package]]
 name = "fuel-crypto"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "coins-bip32",
  "coins-bip39",
@@ -3240,6 +3258,7 @@ dependencies = [
 [[package]]
 name = "fuel-derive"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3250,6 +3269,7 @@ dependencies = [
 [[package]]
 name = "fuel-gas-price-algorithm"
 version = "0.31.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#1b7ce6a19c4fc351f564ad4ea695381cb12f6cd9"
 dependencies = [
  "proptest",
  "serde",
@@ -3259,6 +3279,7 @@ dependencies = [
 [[package]]
 name = "fuel-merkle"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "derive_more",
  "digest 0.10.7",
@@ -3272,10 +3293,12 @@ dependencies = [
 [[package]]
 name = "fuel-storage"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 
 [[package]]
 name = "fuel-tx"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "bitflags 2.6.0",
  "derivative",
@@ -3297,6 +3320,7 @@ dependencies = [
 [[package]]
 name = "fuel-types"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "fuel-derive",
  "hex",
@@ -3307,6 +3331,7 @@ dependencies = [
 [[package]]
 name = "fuel-vm"
 version = "0.55.0"
+source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#432b295f6a0cd360e1f86a7fb55aec0b5008df6a"
 dependencies = [
  "anyhow",
  "async-trait",
