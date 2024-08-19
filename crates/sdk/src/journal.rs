@@ -369,10 +369,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 
     fn account_committed(&self, address: &Address) -> (Account, IsColdAccess) {
         (
-            self.accounts
-                .get(address)
-                .cloned()
-                .unwrap_or_else(|| unreachable!("missing account: {}", address)),
+            self.accounts.get(address).cloned().unwrap_or_default(),
             false,
         )
     }
@@ -430,7 +427,7 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn committed_storage(&self, _address: &Address, _slot: &U256) -> (U256, IsColdAccess) {
-        todo!("not supported yet")
+        (U256::ZERO, false)
     }
 
     fn write_transient_storage(&mut self, address: Address, index: U256, value: U256) {

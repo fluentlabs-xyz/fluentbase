@@ -20,3 +20,5 @@ libzktrie.so
 *.wat
 
 crates/revm/e2e/tests
+
+node_modules

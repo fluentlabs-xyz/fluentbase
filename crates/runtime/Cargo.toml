@@ -22,7 +22,7 @@ hex-literal = { workspace = true }
 
 # misc
 keccak-hash = { version = "0.10.0" }
-k256 = { version = "0.13.1" }
+k256 = { version = "0.13.1", default-features = false }
 hashbrown.workspace = true
 #hex = "0.4.3"
 #chrono = "0.4.38"

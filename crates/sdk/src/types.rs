@@ -1,6 +1,6 @@
 use fluentbase_codec::{Codec, Encoder};
 use fluentbase_sdk_derive::derive_keccak256_id;
-use fluentbase_types::{Address, Bytes, ExitCode, U256};
+use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, U256};
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct CoreInput<T: Encoder<T> + Default> {
@@ -150,3 +150,36 @@ pub const WASM_CALL_METHOD_ID: u32 =
 
 pub type WasmCallMethodInput = EvmCallMethodInput;
 pub type WasmCallMethodOutput = EvmCallMethodOutput;
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmMethodInput {}
+
+#[derive(Default, Debug, Clone, Codec)]
+pub struct FvmMethodOutput {
+    pub output: Bytes,
+    pub exit_code: i32,
+    pub gas_remaining: u64,
+    pub gas_refund: i64,
+}
+
+impl FvmMethodOutput {
+    pub fn from_exit_code(exit_code: ExitCode) -> Self {
+        Self {
+            output: Default::default(),
+            exit_code: exit_code.into_i32(),
+            gas_remaining: 0,
+            gas_refund: 0,
+        }
+    }
+
+    pub fn with_output(mut self, output: Bytes) -> Self {
+        self.output = output;
+        self
+    }
+
+    pub fn with_gas(mut self, gas: u64, refund: i64) -> Self {
+        self.gas_remaining = gas;
+        self.gas_refund = refund;
+        self
+    }
+}

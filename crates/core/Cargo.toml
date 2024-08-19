@@ -16,6 +16,29 @@ rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
 revm-primitives = { workspace = true, default-features = false }
 
+byteorder = { workspace = true, default-features = false }
+alloy-rlp = { workspace = true }
+hashbrown = { workspace = true }
+paste = { workspace = true }
+hex.workspace = true
+alloy-sol-types = { workspace = true }
+anyhow = { workspace = true, default-features = false }
+postcard = { workspace = true, default-features = false, features = ["alloc"] }
+keccak-hash = { version = "0.10.0" }
+
+fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }
+fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }
+fuel-core-executor = { workspace = true, default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+fluentbase-runtime = { workspace = true, default-features = false }
+fluentbase-sdk = { workspace = true, default-features = false }
+hex = { version = "0.4.3" }
+fuel-core = { workspace = true, features = ["test-helpers"] }
+fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc", "test-helpers"] }
+fuel-core-storage = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+fuel-core-executor = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -28,3 +51,4 @@ std = [
     "fluentbase-runtime/std",
 ]
 e2e = ["fluentbase-sdk/e2e"]
+test-helpers = []

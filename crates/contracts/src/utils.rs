@@ -1,34 +1,22 @@
-use fluentbase_sdk::{
-    codec::Encoder,
-    types::{CoreInput, ICoreInput},
-};
 // use zeth_primitives::transactions::ethereum::{EthereumTxEssence, TransactionKind};
-
-#[allow(dead_code)]
-pub(crate) fn decode_method_input<T: Encoder<T> + Default>(input: &[u8]) -> T {
-    let mut core_input = T::default();
-    <CoreInput<T> as ICoreInput>::MethodData::decode_field_body(input, &mut core_input);
-    core_input
-}
-
-// pub fn evm_builder_apply_envs<'a, SDK: SovereignAPI, BuilderStage, EXT, DB: Database>(
+//
+// pub fn evm_builder_apply_envs<'a, CR: ContextReader, BuilderStage, EXT, DB: Database>(
 //     builder: EvmBuilder<'a, BuilderStage, EXT, DB>,
-//     sdk: &'a SDK,
+//     cr: &'a CR,
 // ) -> EvmBuilder<'a, BuilderStage, EXT, DB> {
 //     builder
-//         // .with_db(block_builder.db.take().unwrap())
 //         .with_spec_id(SpecId::CANCUN)
 //         .modify_block_env(|blk_env| {
-//             blk_env.number = U256::from(sdk.block_context().number);
-//             blk_env.coinbase = sdk.block_context().coinbase;
-//             blk_env.timestamp = U256::from(sdk.block_context().timestamp);
-//             blk_env.difficulty = U256::from(sdk.block_context().difficulty);
-//             blk_env.prevrandao = Some(sdk.block_context().prev_randao);
-//             blk_env.basefee = sdk.block_context().base_fee;
-//             blk_env.gas_limit = U256::from(sdk.block_context().gas_limit);
+//             blk_env.number = U256::from(cr.block_number());
+//             blk_env.coinbase = cr.block_coinbase();
+//             blk_env.timestamp = U256::from(cr.block_timestamp());
+//             blk_env.difficulty = U256::from(cr.block_difficulty());
+//             blk_env.prevrandao = Some(cr.block_prevrandao());
+//             blk_env.basefee = cr.block_base_fee();
+//             blk_env.gas_limit = U256::from(cr.tx_gas_limit());
 //         })
 //         .modify_cfg_env(|cfg_env| {
-//             cfg_env.chain_id = sdk.block_context().chain_id;
+//             cfg_env.chain_id = cr.block_chain_id();
 //         })
 // }
 //
