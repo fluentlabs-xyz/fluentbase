@@ -43,12 +43,12 @@ fluentbase-zktrie = { path = "./crates/zktrie", default-features = false }
 fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 
 # fuel
-fuel-tx = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
-fuel-vm = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
-fuel-core = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm" }
-fuel-core-types = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false, features = ["serde", "alloc"] }
-fuel-core-executor = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
-fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "feat/fuel-vm", default-features = false, features = ["alloc"] }
+fuel-tx = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "develop", default-features = false, features = ["alloc"] }
+fuel-vm = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "develop", default-features = false, features = ["alloc"] }
+fuel-core = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel" }
+fuel-core-types = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["serde", "alloc"] }
+fuel-core-executor = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["alloc"] }
+fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["alloc"] }
 #fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
 #fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
 #fuel-core = { path = "../fuel-core/crates/fuel-core" }
