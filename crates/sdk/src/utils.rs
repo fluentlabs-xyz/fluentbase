@@ -20,7 +20,7 @@ pub fn calc_storage_key(address: &Address, slot32_le_ptr: *const u8) -> [u8; 32]
     }
     // pad address to 32 bytes value (11 bytes to avoid 254 overflow)
     let mut address32: [u8; 32] = [0u8; 32];
-    address32[11..31].copy_from_slice(address.as_slice());
+    address32[11..31].copy_from_slice(address.last_20_bytes());
     let mut storage_key: [u8; 32] = [0u8; 32];
     if cfg!(feature = "e2e") {
         // let's use keccak256 for e2e tests to speedup execution process

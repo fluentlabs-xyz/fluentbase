@@ -360,7 +360,7 @@ impl FuelAddress {
 impl From<&Address> for FuelAddress {
     fn from(value: &Address) -> Self {
         let mut address = fuel_types::Address::default();
-        address[12..].copy_from_slice(&value.0 .0);
+        address[12..].copy_from_slice(value.last_20_bytes());
         Self { address }
     }
 }

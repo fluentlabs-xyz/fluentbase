@@ -55,7 +55,7 @@ pub trait BlendedAPI {
 
 pub fn call_system_contract(address: &Address, input: &[u8], mut fuel: u32) -> (Bytes, i32) {
     let mut address32: [u8; 32] = [0u8; 32];
-    address32[12..].copy_from_slice(address.as_slice());
+    address32[0..].copy_from_slice(&address.as_slice()[1..]);
     let mut hash32: [u8; 32] = [0u8; 32];
     _ = LowLevelSDK::get_leaf(
         address32.as_ptr(),
