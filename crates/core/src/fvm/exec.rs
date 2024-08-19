@@ -71,7 +71,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact commit inner success");
+                .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Create(etx) => {
@@ -89,7 +89,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact commit inner success");
+                .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upgrade(etx) => {
@@ -107,7 +107,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+                .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upload(etx) => {
@@ -125,7 +125,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+                .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Mint(_) => {
@@ -177,7 +177,6 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
             } => {
                 let sig =
                     derive_keccak256!("ReturnData(uint64,uint64,bytes32,uint64,uint64,bytes)");
-                // TODO what todo with `data` field
                 let log_data =
                     (ptr, len, digest.0, pc, is, data.clone().unwrap_or_default()).abi_encode();
                 let topics = [B256::from(sig)];
