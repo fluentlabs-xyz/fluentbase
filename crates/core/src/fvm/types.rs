@@ -269,7 +269,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
 
                 let raw_metadata = self.metadata(key);
 
-                return Ok(raw_metadata.map(|v| v.to_vec()));
+                Ok(raw_metadata.map(|v| v.to_vec()));
             }
             Column::ContractsRawCode => {
                 // key -> ContractId
@@ -278,7 +278,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let raw_code = self.contracts_raw_code(&key);
 
-                return Ok(raw_code.map(|v| v.to_vec()));
+                Ok(raw_code.map(|v| v.to_vec()));
             }
             Column::ContractsState => {
                 // key -> ContractsStateKey
@@ -287,7 +287,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let contract_state_key: Bytes64 = key.try_into().expect("64 bytes key");
                 let contracts_state_data = self.contracts_state_data(&contract_state_key);
 
-                return Ok(contracts_state_data.map(|v| v.to_vec()));
+                Ok(contracts_state_data.map(|v| v.to_vec()));
             }
             Column::ContractsLatestUtxo => {
                 // key -> ContractId
@@ -296,7 +296,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let contract_id: Bytes32 = key.try_into().expect("32 bytes key");
                 let contracts_latest_utxo_data = self.contracts_latest_utxo(&contract_id);
 
-                return Ok(contracts_latest_utxo_data.map(|v| v.to_vec()));
+                Ok(contracts_latest_utxo_data.map(|v| v.to_vec()));
             }
             Column::ContractsAssets => {
                 // key -> ContractsAssetKey
@@ -305,7 +305,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let contracts_assets_key: Bytes64 = key.try_into().expect("64 bytes key");
                 let value_data = self.contracts_assets_value(&contracts_assets_key);
 
-                return Ok(value_data.map(|v| v.to_vec()));
+                Ok(value_data.map(|v| v.to_vec()));
             }
             Column::Coins => {
                 // key -> UtxoId
@@ -313,7 +313,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
 
                 let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
                 let Some(owner_with_balance) = self.coins_owner_with_balance(&utxo_id_key) else {
-                    return Ok(None);
+                    Ok(None);
                 };
                 let mut fuel_address = FuelAddress::new(*owner_with_balance.address());
                 let (account, _is_cold) = self.am.account(fuel_address.fluent_address());
@@ -327,7 +327,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
 
                 let r =
                     postcard::to_allocvec(&compressed_coin).expect("compressed coin serialized");
-                return Ok(Some(r));
+                Ok(Some(r));
             }
 
             Column::ContractsStateMerkleData => {
@@ -336,7 +336,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_state_merkle_data(&key);
 
-                return Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()));
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
@@ -344,7 +344,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_state_merkle_metadata(&key);
 
-                return Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()));
             }
 
             Column::ContractsAssetsMerkleData => {
@@ -353,7 +353,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_assets_merkle_data(&key);
 
-                return Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()));
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
@@ -361,7 +361,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> KeyValueInspect for WasmStorage<
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_assets_merkle_metadata(&key);
 
-                return Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()));
             }
 
             Column::Transactions
