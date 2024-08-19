@@ -67,6 +67,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     pub(crate) fn metadata_update(&self, raw_key: &[u8], data: &[u8]) {
         self.am
             .update_preimage(&MetadataHelper::new(raw_key).value_preimage_key(), 0, data);
+        self.am.commit();
     }
     pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let preimage = self.am.preimage(
@@ -82,6 +83,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
         let key =
             ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key)).value_preimage_key();
         self.am.update_preimage(&key, 0, data);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_latest_utxo(
@@ -103,11 +105,13 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
             0,
             data,
         );
+        self.am.commit();
     }
 
     pub(crate) fn contracts_state_data_update(&self, raw_key: &Bytes64, data: &[u8]) {
         let key = ContractsStateHelper::new(raw_key).value_preimage_key();
         self.am.update_preimage(&key, 0, data);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
@@ -122,6 +126,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     pub(crate) fn contracts_state_merkle_data_update(&self, raw_key: &Bytes32, data: &[u8]) {
         let key = ContractsStateHelper::new_transformed(raw_key).merkle_data_preimage_key();
         self.am.update_preimage(&key, 0, data);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -136,6 +141,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     pub(crate) fn contracts_state_merkle_metadata_update(&self, raw_key: &Bytes32, data: &[u8]) {
         let key = ContractsStateHelper::new_transformed(raw_key).merkle_metadata_preimage_key();
         self.am.update_preimage(&key, 0, data);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -153,13 +159,17 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
             ContractsAssetsHelper::value_to_u256(value.try_into().expect("encoded value is valid"));
         self.am
             .write_storage(CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, slot, value);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_assets_value(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot = ContractsAssetsHelper::new(raw_key).value_storage_slot();
-        let (val, _is_cold) =
-            self.am
-                .storage(CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, slot, false);
+        const COMMITED: bool = true;
+        let (val, _is_cold) = self.am.storage(
+            CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS,
+            slot,
+            COMMITED,
+        );
         if val == U256::ZERO {
             return None;
         }
@@ -171,6 +181,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     pub(crate) fn contracts_assets_merkle_data_update(&self, raw_key: &Bytes32, value: &[u8]) {
         let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_data_preimage_key();
         self.am.update_preimage(&key, 0, value);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -185,6 +196,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
     pub(crate) fn contracts_assets_merkle_metadata_update(&self, raw_key: &Bytes32, value: &[u8]) {
         let key = ContractsAssetsHelper::from_transformed(raw_key).merkle_metadata_preimage_key();
         self.am.update_preimage(&key, 0, value);
+        self.am.commit();
     }
 
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -200,18 +212,20 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
         &self,
         raw_key: &Bytes34,
     ) -> Option<CoinsOwnerWithBalanceHelper> {
+        let ch = CoinsHelper::new(raw_key);
+        const COMMITED: bool = true;
         let (owner, _is_cold) = self.am.storage(
             UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            CoinsHelper::new(raw_key).owner_storage_slot(),
-            false,
+            ch.owner_storage_slot(),
+            COMMITED,
         );
         if owner == U256::ZERO {
             return None;
         }
         let (balance, _is_cold) = self.am.storage(
             UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            CoinsHelper::new(raw_key).balance_storage_slot(),
-            false,
+            ch.balance_storage_slot(),
+            COMMITED,
         );
         Some(CoinsOwnerWithBalanceHelper::from_u256_address_balance(&(
             owner, balance,
@@ -234,6 +248,7 @@ impl<'a, CR: ContextReader, AM: AccountManager> WasmStorage<'a, CR, AM> {
             CoinsHelper::new(raw_key).balance_storage_slot(),
             balance,
         );
+        self.am.commit();
     }
 }
 
