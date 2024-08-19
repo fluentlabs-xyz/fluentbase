@@ -102,7 +102,6 @@ pub struct TxContext {
     pub gas_price: U256,
     pub gas_priority_fee: Option<U256>,
     pub origin: Address,
-    // pub data: Bytes,
     // pub blob_hashes: Vec<B256>,
     // pub max_fee_per_blob_gas: Option<U256>,
     pub value: U256,

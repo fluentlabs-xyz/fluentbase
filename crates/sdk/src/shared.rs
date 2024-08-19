@@ -85,7 +85,9 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.exit(exit_code)
     }
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32) {}
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32) {
+        todo!()
+    }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
         todo!()
