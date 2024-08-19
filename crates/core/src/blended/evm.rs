@@ -1,4 +1,6 @@
 use crate::{blended::BlendedRuntime, helpers::evm_error_from_exit_code};
+use alloc::boxed::Box;
+use core::mem::take;
 use fluentbase_sdk::{Address, Bytes, ExitCode, SovereignAPI, B256, U256};
 use revm_interpreter::{
     analysis::to_analysed,
@@ -20,7 +22,6 @@ use revm_interpreter::{
     SharedMemory,
 };
 use revm_primitives::{Bytecode, CancunSpec, Env, Log, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
-use std::mem::take;
 
 impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
     fn env(&self) -> &Env {

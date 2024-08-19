@@ -2,6 +2,7 @@ use crate::{
     blended::BlendedRuntime,
     helpers::{evm_error_from_exit_code, wasm2rwasm},
 };
+use alloc::boxed::Box;
 use fluentbase_sdk::{Address, Bytes, ContractContext, ExitCode, SovereignAPI, STATE_DEPLOY, U256};
 use revm_interpreter::{gas, CreateInputs, Gas, InterpreterResult};
 

@@ -15,7 +15,6 @@ fluentbase-runtime = { workspace = true, default-features = false, optional = tr
 rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
 revm-primitives = { workspace = true, default-features = false }
-hex = { workspace = true, default-features = false }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

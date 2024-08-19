@@ -1,3 +1,4 @@
+use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     codec::Encoder,
     contracts::SYSCALL_ID_DELEGATE_CALL,

@@ -1,4 +1,5 @@
 use crate::{blended::BlendedRuntime, helpers::exit_code_from_evm_error, types::NextAction};
+use alloc::{boxed::Box, vec::Vec};
 use fluentbase_sdk::{
     Address,
     Bytes,
@@ -208,8 +209,8 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
     pub(crate) fn syscall_evm_exec(
         &mut self,
-        context: &ContractContext,
-        params: SyscallInvocationParams,
+        _context: &ContractContext,
+        _params: SyscallInvocationParams,
     ) -> NextAction {
         // let mut buffer_decoder = BufferDecoder::new(params.input.as_ref());
         // let mut context2 = SharedContextInputV1::default();
