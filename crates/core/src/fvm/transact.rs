@@ -1,6 +1,6 @@
 use crate::{debug_log, fvm::types::WasmStorage, helpers_fvm::fvm_transact_commit};
 use alloc::vec::Vec;
-use fluentbase_sdk::{AccountManager, ContextReader};
+use fluentbase_sdk::{NativeAPI, SovereignAPI};
 use fuel_core_executor::executor::ExecutionData;
 use fuel_core_storage::transactional::Changes;
 use fuel_core_types::{
@@ -14,11 +14,10 @@ use fuel_core_types::{
     services::executor::Result,
 };
 
-pub fn _fvm_transact_commit_inner<'a, Tx, CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _fvm_transact_commit_inner<Tx, SDK: SovereignAPI>(
+    sdk: &mut SDK,
     checked_tx: Checked<Tx>,
-    header: &'a PartialBlockHeader,
+    header: &PartialBlockHeader,
     coinbase_contract_id: ContractId,
     gas_price: Word,
     consensus_params: ConsensusParameters,
@@ -27,9 +26,9 @@ where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
 {
-    debug_log!("ecl(_fvm_transact_inner): start");
+    debug_log!(sdk, "ecl(_fvm_transact_inner): start");
 
-    let mut storage = WasmStorage { cr, am };
+    let mut storage = WasmStorage { sdk };
 
     // TODO warmup storage from state based on tx inputs?
     // let inputs = checked_tx.transaction().inputs();

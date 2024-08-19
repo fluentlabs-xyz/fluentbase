@@ -1,6 +1,4 @@
-use alloc::vec::Vec;
-use fluentbase_codec::Encoder;
-use fluentbase_codec_derive::Codec;
+use fluentbase_codec::{Codec, Encoder};
 use fluentbase_sdk_derive::derive_keccak256_id;
 use fluentbase_types::{Address, Bytes, Bytes32, ExitCode, U256};
 
@@ -24,11 +22,13 @@ pub const EVM_CREATE_METHOD_ID: u32 =
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCreateMethodInput {
+    pub caller: Address,
     pub bytecode: Bytes,
     pub value: U256,
     pub gas_limit: u64,
     pub salt: Option<U256>,
     pub depth: u32,
+    pub is_static: bool,
 }
 
 #[derive(Default, Debug, Clone, Codec)]
@@ -73,13 +73,17 @@ pub const EVM_CALL_METHOD_ID: u32 =
 
 #[derive(Default, Debug, Clone, Codec)]
 pub struct EvmCallMethodInput {
-    /// Callee is an address that holds bytecode only, it doesn't mean that its also
+    pub caller: Address,
+    pub address: Address,
+    /// Bytecode address is an address that holds bytecode only, it doesn't mean that it's also
     /// used as callee address itself. Callee is managed by context reader and can differ.
-    pub callee: Address,
+    pub bytecode_address: Address,
     pub value: U256,
+    pub apparent_value: U256,
     pub input: Bytes,
     pub gas_limit: u64,
     pub depth: u32,
+    pub is_static: bool,
 }
 
 #[derive(Default, Debug, Clone, Codec)]

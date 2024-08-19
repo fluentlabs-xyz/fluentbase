@@ -13,6 +13,51 @@ pub type Bytes34 = [u8; 34];
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
+#[derive(Default, Clone, Debug)]
+pub struct Fuel {
+    pub limit: u64,
+    pub spent: u64,
+}
+
+impl Fuel {
+    pub fn new(limit: u64) -> Self {
+        Self { limit, spent: 0 }
+    }
+
+    pub fn remaining(&self) -> u64 {
+        self.limit - self.spent
+    }
+
+    pub fn charge(&mut self, value: u64) -> bool {
+        if value > self.remaining() {
+            return false;
+        }
+        self.spent += value;
+        true
+    }
+
+    pub fn refund(&mut self, value: u64) {
+        assert!(self.spent >= value);
+        self.spent -= value;
+    }
+}
+
+impl From<u64> for Fuel {
+    #[inline]
+    fn from(value: u64) -> Self {
+        Self {
+            limit: value,
+            spent: 0,
+        }
+    }
+}
+impl Into<u64> for Fuel {
+    #[inline]
+    fn into(self) -> u64 {
+        self.limit - self.spent
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Display, FromRepr)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i32)]
@@ -23,28 +68,18 @@ pub enum ExitCode {
     Panic = -71,
     // fluentbase error codes
     ExecutionHalted = -1001,
-    NotSupportedCall = -1003,
-    TransactError = -1004,
+    RootCallOnly = -1003,
     OutputOverflow = -1005,
-    // InputDecodeFailure = -1006,
     PoseidonError = -1007,
     PersistentStorageError = -1008,
     WriteProtection = -1009,
-    // CreateError = -1010,
-    // PreimageUnavailable = -1011,
     InsufficientBalance = -1012,
     CreateCollision = -1013,
     ContractSizeLimit = -1014,
-    // StorageSlotOverflow = -1015,
     CallDepthOverflow = -1016,
     FatalExternalError = -1017,
     CompilationError = -1018,
     OverflowPayment = -1019,
-    // EVMCreateError = -1020,
-    // EVMCreateRevert = -1021,
-    // EVMCallError = -1022,
-    // EVMCallRevert = -1023,
-    // EVMNotFound = -1024,
     PrecompileError = -1025,
     EcrecoverBadSignature = -1026,
     EcrecoverError = -1027,
@@ -55,29 +90,9 @@ pub enum ExitCode {
     InvalidJump = -1032,
     NotActivatedEIP = -1033,
     ImmutableContext = -1034,
-    // NotActivated = -1033,
-    // ReturnContract = -1034,
-    // ReturnContractInNotInitEOF = -1035,
-    // EOFOpcodeDisabledInLegacy = -1036,
-    // EOFFunctionStackOverflow = -1037,
-    // InvalidOperandOOG = -1038,
-    // MemoryOOG = -1039,
-    // CallOrCreate = -1040,
-    // CallNotAllowedInsideStatic = -1041,
-    // StateChangeDuringStaticCall = -1042,
-    // CreateInitCodeSizeLimit = -1043,
-    // Return = -1044,
-    // Revert = -1045,
-    // Stop = -1046,
-    // InvalidFEOpcode = -1047,
-    // SelfDestruct = -1048,
-    // OutOfOffset = -1049,
-    // Continue = -1050,
-    // CallTooDeep = -1051,
-    // OutOfFunds = -1052,
-    // PrecompileOOG = -1053,
-    // CreateContractSizeLimit = -1054,
-    // MemoryLimitOOG = -1055,
+    ContextWriteProtection = -1035,
+    NonNegativeExitCode = -1036,
+    MalformedSyscallParams = -1037,
     // trap error codes
     UnreachableCodeReached = -2006,
     MemoryOutOfBounds = -2007,
@@ -93,6 +108,19 @@ pub enum ExitCode {
     UnknownError = -2017,
     UnresolvedFunction = -2018,
     StackUnderflow = -2019,
+}
+
+pub trait UnwrapExitCode<T> {
+    fn unwrap_exit_code(self) -> T;
+}
+
+impl<T> UnwrapExitCode<T> for Result<T, ExitCode> {
+    fn unwrap_exit_code(self) -> T {
+        match self {
+            Ok(res) => res,
+            Err(err) => panic!("exit code: {} ({})", err, err.into_i32()),
+        }
+    }
 }
 
 impl From<i32> for ExitCode {
@@ -162,6 +190,24 @@ impl Into<Trap> for ExitCode {
         self.into_trap()
     }
 }
+#[cfg(feature = "rwasm")]
+impl From<Trap> for ExitCode {
+    fn from(value: Trap) -> Self {
+        value
+            .i32_exit_status()
+            .map(ExitCode::from)
+            .unwrap_or(ExitCode::UnknownError)
+    }
+}
+#[cfg(feature = "rwasm")]
+impl From<&Trap> for ExitCode {
+    fn from(value: &Trap) -> Self {
+        value
+            .i32_exit_status()
+            .map(ExitCode::from)
+            .unwrap_or(ExitCode::UnknownError)
+    }
+}
 
 impl Into<i32> for ExitCode {
     fn into(self) -> i32 {
@@ -191,20 +237,13 @@ pub enum SysFuncIdx {
     OUTPUT_SIZE = 0x0006,
     READ_OUTPUT = 0x0007,
     EXEC = 0x0009,
-    FORWARD_OUTPUT = 0x000a,
-    CHARGE_FUEL = 0x000b,
-    READ_CONTEXT = 0x000d,
-    CONTEXT_CALL = 0x000e,
+    RESUME = 0x000a,
+    FORWARD_OUTPUT = 0x000b,
+    CHARGE_FUEL = 0x000c,
+    FUEL = 0x000d,
+    READ_CONTEXT = 0x000e,
 
-    // jzkt
-    CHECKPOINT = 0x0702,
-    GET_LEAF = 0x0703,
-    UPDATE_LEAF = 0x0704,
-    UPDATE_PREIMAGE = 0x0705,
-    COMPUTE_ROOT = 0x0707,
-    EMIT_LOG = 0x0708,
-    COMMIT = 0x0709,
-    ROLLBACK = 0x070A,
+    // preimage
     PREIMAGE_SIZE = 0x070D,
     PREIMAGE_COPY = 0x070E,
 
@@ -223,11 +262,6 @@ impl SysFuncIdx {
             SysFuncIdx::POSEIDON => 1,
             SysFuncIdx::POSEIDON_HASH => 1,
             SysFuncIdx::ECRECOVER => 1,
-            SysFuncIdx::UPDATE_LEAF => 1,
-            SysFuncIdx::GET_LEAF => 1,
-            SysFuncIdx::COMPUTE_ROOT => 1,
-            SysFuncIdx::ROLLBACK => 1,
-            SysFuncIdx::COMMIT => 1,
             _ => 1, //unreachable!("not configured fuel for opcode: {:?}", self),
         }
     }
@@ -246,12 +280,12 @@ impl Into<FuncIdx> for SysFuncIdx {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
 pub enum BytecodeType {
     EVM,
-    FVM,
     WASM,
+    FVM,
 }
 
 /// Fuel asm signature (\0FASM)

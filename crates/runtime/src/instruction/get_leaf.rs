@@ -1,12 +1,11 @@
 use crate::RuntimeContext;
-use fluentbase_types::IJournaledTrie;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallGetLeaf;
 
 impl SyscallGetLeaf {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         key32_offset: u32,
         field: u32,
         output32_offset: u32,
@@ -23,8 +22,8 @@ impl SyscallGetLeaf {
         Ok(is_cold as u32)
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+    pub fn fn_impl(
+        ctx: &RuntimeContext,
         key: &[u8],
         field: u32,
         committed: bool,

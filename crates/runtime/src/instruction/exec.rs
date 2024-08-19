@@ -1,29 +1,31 @@
-use crate::{ExecutionResult, Runtime, RuntimeContext};
-use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_types::{ExitCode, IJournaledTrie, STATE_MAIN};
+use crate::{Runtime, RuntimeContext};
+use fluentbase_types::{Bytes, ExitCode, SyscallInvocationParams, B256};
 use rwasm::{
     core::{HostError, Trap},
     Caller,
 };
 use std::{
-    fmt::{Display, Formatter},
+    fmt::{Debug, Display, Formatter},
     mem::take,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub struct SyscallExec;
 
-#[derive(Debug)]
+#[derive(Default, Clone)]
 pub struct SysExecResumable {
-    pub code_hash32_ptr: u32,
-    pub input_ptr: u32,
-    pub input_len: u32,
-    pub return_ptr: u32,
-    pub return_len: u32,
-    pub fuel_ptr: u32,
+    /// List of delayed invocation params, like exec params (address, code hash, etc.)
+    pub params: SyscallInvocationParams,
+    /// A depth level of the current call, for root it's always zero
+    pub is_root: bool,
 }
 
 pub const CALL_STACK_LIMIT: u32 = 1024;
+
+impl Debug for SysExecResumable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime resume error")
+    }
+}
 
 impl Display for SysExecResumable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -34,128 +36,87 @@ impl Display for SysExecResumable {
 impl HostError for SysExecResumable {}
 
 impl SyscallExec {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        _caller: Caller<'_, RuntimeContext<DB>>,
-        code_hash32_ptr: u32,
+    pub fn fn_handler(
+        caller: Caller<'_, RuntimeContext>,
+        hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
-        return_ptr: u32,
-        return_len: u32,
-        fuel_ptr: u32,
+        fuel: u64,
+        state: u32,
     ) -> Result<i32, Trap> {
-        return Err(SysExecResumable {
-            code_hash32_ptr,
-            input_ptr,
-            input_len,
-            return_ptr,
-            return_len,
-            fuel_ptr,
+        Err(SysExecResumable {
+            params: SyscallInvocationParams {
+                code_hash: B256::from_slice(caller.read_memory(hash32_ptr, 32)?),
+                input: Bytes::copy_from_slice(caller.read_memory(input_ptr, input_len)?),
+                fuel_limit: fuel,
+                state,
+            },
+            is_root: caller.data().call_depth == 0,
         }
-        .into());
+        .into())
     }
 
-    pub fn fn_continue<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
-        state: &SysExecResumable,
+    pub fn fn_continue(
+        mut caller: Caller<'_, RuntimeContext>,
+        context: &SysExecResumable,
     ) -> Result<i32, Trap> {
-        let bytecode_hash32: [u8; 32] = caller
-            .read_memory(state.code_hash32_ptr, 32)?
-            .try_into()
-            .unwrap();
-        let input = caller
-            .read_memory(state.input_ptr, state.input_len)?
-            .to_vec();
-        let fuel_data = caller.read_memory(state.fuel_ptr, 4)?;
-        let fuel_limit = LittleEndian::read_u32(fuel_data);
-        let exit_code = match Self::fn_impl(
+        Ok(Self::fn_impl(
             caller.data_mut(),
-            &bytecode_hash32,
-            input,
-            state.return_len,
-            fuel_limit as u64,
-        ) {
-            Ok(remaining_fuel) => {
-                if state.return_len > 0 {
-                    let return_data = caller.data().execution_result.return_data.clone();
-                    caller.write_memory(state.return_ptr, &return_data)?;
-                }
-                let mut fuel_buffer = [0u8; 4];
-                LittleEndian::write_u32(&mut fuel_buffer, remaining_fuel as u32);
-                caller.write_memory(state.fuel_ptr, &fuel_buffer)?;
-                ExitCode::Ok.into_i32()
-            }
-            Err(err) => err,
-        };
-        Ok(exit_code)
+            &context.params.code_hash.0,
+            context.params.input.as_ref(),
+            context.params.fuel_limit,
+            context.params.state,
+        ))
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+    pub fn fn_impl(
+        ctx: &mut RuntimeContext,
         bytecode_hash32: &[u8; 32],
-        input: Vec<u8>,
-        return_len: u32,
+        input: &[u8],
         fuel_limit: u64,
-    ) -> Result<u64, i32> {
-        let time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-
+        state: u32,
+    ) -> i32 {
         // check call depth overflow
-        if ctx.depth >= CALL_STACK_LIMIT {
-            return Err(ExitCode::CallDepthOverflow.into_i32());
+        if ctx.call_depth >= CALL_STACK_LIMIT {
+            return ExitCode::CallDepthOverflow.into_i32();
+        } else if ctx.fuel.remaining() < fuel_limit {
+            return ExitCode::OutOfGas.into_i32();
         }
 
-        // take jzkt from the existing context (we will return it back soon)
+        // take jzkt from the existing context (we will return it soon)
         let jzkt = take(&mut ctx.jzkt).expect("jzkt is not initialized");
         let context = take(&mut ctx.context);
 
-        // create new runtime instance with the context
+        // create a new runtime instance with the context
         let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
-            .with_input(input)
+            .with_input(input.to_vec())
             .with_context(context)
-            .with_is_shared(false)
-            .with_fuel_limit(fuel_limit)
+            .with_is_shared(true)
+            .with_fuel(fuel_limit)
             .with_jzkt(jzkt)
-            .with_state(STATE_MAIN)
-            .with_depth(ctx.depth + 1);
+            .with_state(state)
+            .with_depth(ctx.call_depth + 1);
         let mut runtime = Runtime::new(ctx2);
-        let execution_result = runtime
-            .call()
-            .unwrap_or_else(|err| ExecutionResult::new_error(Runtime::catch_trap(&err)));
+        let mut execution_result = runtime.call();
 
         // return jzkt context back
         ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
         ctx.context = take(&mut runtime.store.data_mut().context);
 
-        // make sure there is no return overflow
-        if return_len > 0 && execution_result.output.len() > return_len as usize {
-            return Err(ExitCode::OutputOverflow.into_i32());
+        // if execution was interrupted,
+        if execution_result.interrupted {
+            // then we remember this runtime and assign call id into exit code (positive exit code
+            // stands for interrupted runtime call id, negative or zero for error)
+            execution_result.exit_code = runtime.remember_runtime() as i32;
+        } else {
+            // increase total fuel consumed and remember return data
+            ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
-        // increase total fuel consumed and remember return data
-        ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         ctx.execution_result.return_data = execution_result.output.clone();
 
-        println!(
-            "sys_exec_hash ({}), exit_code={}, fuel_consumed={}, elapsed time: {}ms, output={}",
-            hex::encode(&bytecode_hash32),
-            execution_result.exit_code,
-            execution_result.fuel_consumed,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-                - time,
-            hex::encode(&execution_result.output),
-        );
-
-        if execution_result.exit_code != ExitCode::Ok.into_i32() {
-            return Err(execution_result.exit_code);
-        }
-
-        Ok(fuel_limit - execution_result.fuel_consumed)
+        execution_result.exit_code
     }
 }

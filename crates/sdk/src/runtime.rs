@@ -1,32 +1,14 @@
-use crate::{
-    Account,
-    LowLevelSDK,
-    JZKT_ACCOUNT_COMPRESSION_FLAGS,
-    JZKT_ACCOUNT_FIELDS_COUNT,
-    JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-    JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-};
-use byteorder::{ByteOrder, LittleEndian};
-use fluentbase_genesis::devnet::{
-    devnet_genesis,
-    devnet_genesis_from_file,
-    KECCAK_HASH_KEY,
-    POSEIDON_HASH_KEY,
-};
+use alloc::rc::Rc;
+use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
-        checkpoint::SyscallCheckpoint,
-        commit::SyscallCommit,
-        compute_root::SyscallComputeRoot,
-        context_call::SyscallContextCall,
         debug_log::SyscallDebugLog,
         ecrecover::SyscallEcrecover,
-        emit_log::SyscallEmitLog,
         exec::SyscallExec,
         exit::SyscallExit,
         forward_output::SyscallForwardOutput,
-        get_leaf::SyscallGetLeaf,
+        fuel::SyscallFuel,
         input_size::SyscallInputSize,
         keccak256::SyscallKeccak256,
         output_size::SyscallOutputSize,
@@ -37,357 +19,189 @@ use fluentbase_runtime::{
         read::SyscallRead,
         read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
-        rollback::SyscallRollback,
+        resume::SyscallResume,
         state::SyscallState,
-        update_leaf::SyscallUpdateLeaf,
-        update_preimage::SyscallUpdatePreimage,
         write::SyscallWrite,
     },
-    types::InMemoryTrieDb,
-    zktrie::ZkTrieStateDb,
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
 use fluentbase_types::{
-    address,
-    Address,
+    Account,
     Bytes,
-    ExitCode,
-    JournalCheckpoint,
-    SharedAPI,
-    SovereignAPI,
+    IJournaledTrie,
+    NativeAPI,
+    UnwrapExitCode,
     B256,
+    F254,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
 };
-use std::ptr;
+use std::{cell::RefCell, mem::take};
 
-type Context = RuntimeContext<DefaultEmptyRuntimeDatabase>;
-
-thread_local! {
-    pub static CONTEXT: std::cell::Cell<Context> = std::cell::Cell::new(Context::new(&[0u8; 0])
-        .with_jzkt(DefaultEmptyRuntimeDatabase::new(ZkTrieStateDb::new_empty(InMemoryTrieDb::default()))));
+pub struct RuntimeContextWrapper {
+    pub ctx: Rc<RefCell<RuntimeContext>>,
 }
 
-fn with_context<F, R>(func: F) -> R
-where
-    F: Fn(&Context) -> R,
-{
-    CONTEXT.with(|ctx| {
-        let ctx2 = ctx.take();
-        let result = func(&ctx2);
-        ctx.set(ctx2);
-        result
-    })
+impl RuntimeContextWrapper {
+    pub fn new(ctx: RuntimeContext) -> Self {
+        Self {
+            ctx: Rc::new(RefCell::new(ctx)),
+        }
+    }
 }
 
-fn with_context_mut<F, R>(func: F) -> R
-where
-    F: Fn(&mut Context) -> R,
-{
-    CONTEXT.with(|ctx| {
-        let mut ctx2 = ctx.take();
-        let result = func(&mut ctx2);
-        ctx.set(ctx2);
-        result
-    })
+impl Clone for RuntimeContextWrapper {
+    fn clone(&self) -> Self {
+        Self {
+            ctx: self.ctx.clone(),
+        }
+    }
 }
 
-impl SharedAPI for LowLevelSDK {
-    fn keccak256(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
-        let result = SyscallKeccak256::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_ptr, data_len as usize)
-        });
-        unsafe {
-            ptr::copy(result.as_ptr(), output32_ptr, 32);
-        }
+impl NativeAPI for RuntimeContextWrapper {
+    fn keccak256(&self, data: &[u8]) -> B256 {
+        SyscallKeccak256::fn_impl(data)
     }
 
-    fn poseidon(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
-        let result = SyscallPoseidon::fn_impl(unsafe {
-            &*ptr::slice_from_raw_parts(data_ptr, data_len as usize)
-        });
-        unsafe {
-            ptr::copy(result.as_ptr(), output32_ptr, 32);
-        }
+    fn poseidon(&self, data: &[u8]) -> F254 {
+        SyscallPoseidon::fn_impl(data)
     }
 
-    fn poseidon_hash(
-        fa32_ptr: *const u8,
-        fb32_ptr: *const u8,
-        fd32_ptr: *const u8,
-        output32_ptr: *mut u8,
-    ) {
-        let fa32 = unsafe { &*ptr::slice_from_raw_parts(fa32_ptr, 32) };
-        let fb32 = unsafe { &*ptr::slice_from_raw_parts(fb32_ptr, 32) };
-        let fd32 = unsafe { &*ptr::slice_from_raw_parts(fd32_ptr, 32) };
-        match SyscallPoseidonHash::fn_impl(fa32, fb32, fd32) {
-            Ok(result) => unsafe {
-                ptr::copy(result.as_ptr(), output32_ptr, result.len());
-            },
-            Err(_) => {}
-        }
+    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
-    fn ecrecover(digest32_ptr: *const u8, sig64_ptr: *const u8, output65_ptr: *mut u8, rec_id: u8) {
-        let digest = unsafe { &*ptr::slice_from_raw_parts(digest32_ptr, 32) };
-        let sig = unsafe { &*ptr::slice_from_raw_parts(sig64_ptr, 64) };
-        let output = unsafe { &mut *ptr::slice_from_raw_parts_mut(output65_ptr, 65) };
-        let result = SyscallEcrecover::fn_impl(digest, sig, rec_id as u32).expect("");
-        output.copy_from_slice(&result);
+    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
     }
 
-    fn read(target_ptr: *mut u8, target_len: u32, offset: u32) {
-        let target =
-            unsafe { &mut *ptr::slice_from_raw_parts_mut(target_ptr, target_len as usize) };
-        let result =
-            with_context(|ctx| SyscallRead::fn_impl(ctx, offset, target.len() as u32).unwrap());
+    fn debug_log(&self, message: &str) {
+        SyscallDebugLog::fn_impl(message.as_bytes())
+    }
+
+    fn read(&self, target: &mut [u8], offset: u32) {
+        let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
+            .unwrap_exit_code();
         target.copy_from_slice(&result);
     }
 
-    fn input_size() -> u32 {
-        with_context(|ctx| SyscallInputSize::fn_impl(ctx))
+    fn input_size(&self) -> u32 {
+        SyscallInputSize::fn_impl(&self.ctx.borrow())
     }
 
-    fn write(value_ptr: *const u8, value_len: u32) {
-        let value = unsafe { &*ptr::slice_from_raw_parts(value_ptr, value_len as usize) };
-        with_context_mut(|ctx| SyscallWrite::fn_impl(ctx, value))
+    fn write(&self, value: &[u8]) {
+        SyscallWrite::fn_impl(&mut self.ctx.borrow_mut(), value)
     }
 
-    fn forward_output(offset: u32, len: u32) {
-        with_context_mut(|ctx| SyscallForwardOutput::fn_impl(ctx, offset, len)).unwrap()
+    fn forward_output(&self, offset: u32, len: u32) {
+        SyscallForwardOutput::fn_impl(&mut self.ctx.borrow_mut(), offset, len).unwrap_exit_code()
     }
 
-    fn exit(exit_code: i32) -> ! {
-        with_context_mut(|ctx| SyscallExit::fn_impl(ctx, exit_code));
-        unreachable!("exit code: {}", exit_code);
+    fn exit(&self, exit_code: i32) -> ! {
+        SyscallExit::fn_impl(&mut self.ctx.borrow_mut(), exit_code).unwrap_exit_code();
+        unreachable!("exit code: {}", exit_code)
     }
 
-    fn output_size() -> u32 {
-        with_context(|ctx| SyscallOutputSize::fn_impl(ctx))
+    fn output_size(&self) -> u32 {
+        SyscallOutputSize::fn_impl(&self.ctx.borrow())
     }
 
-    fn read_output(target: *mut u8, offset: u32, length: u32) {
-        let result = with_context(|ctx| SyscallReadOutput::fn_impl(ctx, offset, length).unwrap());
-        unsafe { ptr::copy(result.as_ptr(), target, length as usize) }
+    fn read_output(&self, target: &mut [u8], offset: u32) {
+        let result = SyscallReadOutput::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
+            .unwrap_exit_code();
+        target.copy_from_slice(&result);
     }
 
-    fn state() -> u32 {
-        with_context(|ctx| SyscallState::fn_impl(ctx))
+    fn state(&self) -> u32 {
+        SyscallState::fn_impl(&self.ctx.borrow())
     }
 
-    fn exec(
-        bytecode_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-    ) -> i32 {
-        with_context_mut(|ctx| {
-            let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_ptr, 32) };
-            let input =
-                unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) }.to_vec();
-            let fuel = unsafe { *fuel_ptr };
-            match SyscallExec::fn_impl(
-                ctx,
-                bytecode_hash32.try_into().unwrap(),
-                input,
-                return_len,
-                fuel as u64,
-            ) {
-                Ok(remaining_fuel) => {
-                    if return_len > 0 {
-                        let return_data = ctx.return_data();
-                        unsafe { ptr::copy(return_data.as_ptr(), return_ptr, return_len as usize) }
-                    }
-                    unsafe {
-                        *fuel_ptr = remaining_fuel as u32;
-                    }
-                    0
-                }
-                Err(err) => err,
-            }
-        })
+    fn read_context(&self, target: &mut [u8], offset: u32) {
+        let result = SyscallReadContext::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
+            .unwrap_exit_code();
+        target.copy_from_slice(&result);
     }
 
-    fn charge_fuel(delta: u64) -> u64 {
-        with_context_mut(|ctx| SyscallChargeFuel::fn_impl(ctx, delta))
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        let ctx = self.ctx.borrow();
+        SyscallFuel::fn_impl(&ctx)
     }
 
-    fn read_context(target_ptr: *mut u8, offset: u32, length: u32) {
-        let context =
-            with_context_mut(|ctx| SyscallReadContext::fn_impl(ctx, offset, length).unwrap());
-        unsafe {
-            ptr::copy(context.as_ptr(), target_ptr, length as usize);
-        }
-    }
-}
-
-impl SovereignAPI for LowLevelSDK {
-    fn context_call(
-        bytecode_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        context_ptr: *const u8,
-        context_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-        state: u32,
-    ) -> i32 {
-        with_context_mut(|ctx| {
-            let bytecode_hash32 = unsafe { &*ptr::slice_from_raw_parts(bytecode_hash32_ptr, 32) };
-            let input =
-                unsafe { &*ptr::slice_from_raw_parts(input_ptr, input_len as usize) }.to_vec();
-            let context =
-                unsafe { &*ptr::slice_from_raw_parts(context_ptr, context_len as usize) }.to_vec();
-            let fuel = unsafe { *fuel_ptr };
-            match SyscallContextCall::fn_impl(
-                ctx,
-                bytecode_hash32.try_into().unwrap(),
-                input,
-                context,
-                return_len,
-                fuel as u64,
-                state,
-            ) {
-                Ok(remaining_fuel) => {
-                    if return_len > 0 {
-                        let return_data = ctx.return_data();
-                        unsafe { ptr::copy(return_data.as_ptr(), return_ptr, return_len as usize) }
-                    }
-                    unsafe {
-                        *fuel_ptr = remaining_fuel as u32;
-                    }
-                    0
-                }
-                Err(err) => err,
-            }
-        })
+    fn charge_fuel(&self, value: u64) -> u64 {
+        let mut ctx = self.ctx.borrow_mut();
+        SyscallChargeFuel::fn_impl(&mut ctx, value)
     }
 
-    fn checkpoint() -> u64 {
-        let result = with_context_mut(|ctx| SyscallCheckpoint::fn_impl(ctx).unwrap());
-        result.to_u64()
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
+        let exit_code = SyscallExec::fn_impl(
+            &mut self.ctx.borrow_mut(),
+            &code_hash.0,
+            input,
+            fuel_limit,
+            state,
+        );
+        exit_code
     }
 
-    fn get_leaf(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8, committed: bool) -> bool {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        match with_context_mut(|ctx| SyscallGetLeaf::fn_impl(ctx, key, field, committed)) {
-            Some((output, is_cold)) => {
-                unsafe { ptr::copy(output.as_ptr(), output32_ptr, 32) }
-                is_cold
-            }
-            None => true,
-        }
+    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32 {
+        let exit_code = SyscallResume::fn_impl(
+            &mut self.ctx.borrow_mut(),
+            call_id,
+            return_data.to_vec(),
+            exit_code,
+        );
+        exit_code
     }
 
-    fn update_leaf(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        let values =
-            unsafe { &*ptr::slice_from_raw_parts(vals32_ptr, vals32_len as usize / 32) }.to_vec();
-        with_context_mut(|ctx| {
-            SyscallUpdateLeaf::fn_impl(ctx, key, flags, values.clone()).unwrap()
-        });
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        SyscallPreimageSize::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code()
     }
 
-    fn update_preimage(
-        key32_ptr: *const u8,
-        field: u32,
-        preimage_ptr: *const u8,
-        preimage_len: u32,
-    ) -> bool {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        let preimage = unsafe { &*ptr::slice_from_raw_parts(preimage_ptr, preimage_len as usize) };
-        with_context_mut(|ctx| SyscallUpdatePreimage::fn_impl(ctx, key, field, preimage).unwrap())
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        let preimage =
+            SyscallPreimageCopy::fn_impl(&self.ctx.borrow(), hash.as_slice()).unwrap_exit_code();
+        target.copy_from_slice(&preimage);
     }
 
-    fn compute_root(output32_ptr: *mut u8) {
-        let root = with_context_mut(|ctx| SyscallComputeRoot::fn_impl(ctx));
-        unsafe { ptr::copy(root.as_ptr(), output32_ptr, 32) }
-    }
-
-    fn emit_log(
-        address20_ptr: *const u8,
-        topics32s_ptr: *const [u8; 32],
-        topics32s_len: u32,
-        data_ptr: *const u8,
-        data_len: u32,
-    ) {
-        with_context_mut(|ctx| {
-            let key = unsafe { &*ptr::slice_from_raw_parts(address20_ptr, 20) };
-            let topics =
-                unsafe { &*ptr::slice_from_raw_parts(topics32s_ptr, topics32s_len as usize) }
-                    .iter()
-                    .map(|v| B256::new(*v))
-                    .collect::<Vec<_>>();
-            let data = unsafe { &*ptr::slice_from_raw_parts(data_ptr, data_len as usize) };
-            SyscallEmitLog::fn_impl(
-                ctx,
-                Address::from_slice(key),
-                topics,
-                Bytes::copy_from_slice(data),
-            )
-        });
-    }
-
-    fn commit(root32_ptr: *mut u8) {
-        let root = with_context_mut(|ctx| SyscallCommit::fn_impl(ctx).unwrap());
-        unsafe { ptr::copy(root.as_ptr(), root32_ptr, 32) }
-    }
-
-    fn rollback(checkpoint: u64) {
-        with_context_mut(|ctx| {
-            SyscallRollback::fn_impl(ctx, JournalCheckpoint::from_u64(checkpoint))
-        });
-    }
-
-    fn preimage_size(key32_ptr: *const u8) -> u32 {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        return with_context_mut(|ctx| SyscallPreimageSize::fn_impl(ctx, key).unwrap());
-    }
-
-    fn preimage_copy(key32_ptr: *const u8, preimage_ptr: *mut u8) {
-        let key = unsafe { &*ptr::slice_from_raw_parts(key32_ptr, 32) };
-        let preimage_copy = with_context_mut(|ctx| SyscallPreimageCopy::fn_impl(ctx, key).unwrap());
-        let dest =
-            unsafe { &mut *ptr::slice_from_raw_parts_mut(preimage_ptr, preimage_copy.len()) };
-        dest.copy_from_slice(&preimage_copy);
-    }
-
-    fn debug_log(msg_ptr: *const u8, msg_len: u32) {
-        let msg = unsafe { &*ptr::slice_from_raw_parts(msg_ptr, msg_len as usize) };
-        SyscallDebugLog::fn_impl(msg)
+    fn return_data(&self) -> Bytes {
+        self.ctx.borrow_mut().return_data().clone().into()
     }
 }
 
-impl LowLevelSDK {
-    pub fn with_test_input(input: Vec<u8>) {
-        with_context_mut(|ctx| {
-            ctx.change_input(input.clone());
-        });
+pub type TestingContext = RuntimeContextWrapper;
+
+impl TestingContext {
+    pub fn empty() -> Self {
+        let ctx =
+            RuntimeContext::default().with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        Self {
+            ctx: Rc::new(RefCell::new(ctx)),
+        }
     }
 
-    pub fn with_test_context(input: Vec<u8>) {
-        with_context_mut(|ctx| {
-            ctx.change_context(input.clone());
-        });
+    pub fn with_input<I: Into<Vec<u8>>>(mut self, input: I) -> Self {
+        self.set_input(input);
+        self
     }
 
-    pub fn get_test_output() -> Vec<u8> {
-        with_context_mut(|ctx| {
-            let output = ctx.output().clone();
-            ctx.clean_output();
-            output
-        })
+    pub fn set_input<I: Into<Vec<u8>>>(&mut self, input: I) {
+        self.ctx
+            .replace_with(|ctx| take(ctx).with_input(input.into()));
     }
 
-    pub fn with_default_jzkt() -> DefaultEmptyRuntimeDatabase {
-        with_context_mut(|ctx| ctx.jzkt().clone())
+    pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
+        let context: Vec<u8> = context.into();
+        self.ctx.replace_with(|ctx| take(ctx).with_context(context));
+        self
     }
 
-    pub fn init_with_devnet_genesis() {
+    pub fn take_output(&self) -> Vec<u8> {
+        take(self.ctx.borrow_mut().output_mut())
+    }
+
+    pub fn with_devnet_genesis(self) -> Self {
         let devnet_genesis = devnet_genesis_from_file();
         for (address, account) in devnet_genesis.alloc.iter() {
             let source_code_hash = account
@@ -417,27 +231,56 @@ impl LowLevelSDK {
                 .map(|v| v.len() as u64)
                 .unwrap_or_default();
             account2.rwasm_code_hash = rwasm_code_hash;
-            let fields = account2.get_fields();
-            let address32 = address.into_word();
-            Self::update_leaf(
-                address32.as_ptr(),
-                JZKT_ACCOUNT_COMPRESSION_FLAGS,
-                fields.as_ptr(),
-                JZKT_ACCOUNT_FIELDS_COUNT * 32,
-            );
-            let bytecode = account.code.clone().unwrap_or_default();
-            Self::update_preimage(
-                address32.as_ptr(),
-                JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD,
-                bytecode.as_ptr(),
-                bytecode.len() as u32,
-            );
-            Self::update_preimage(
-                address32.as_ptr(),
-                JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD,
-                bytecode.as_ptr(),
-                bytecode.len() as u32,
-            );
+            // let address32 = address.into_word();
+            // self.write_account(&account2, AccountStatus::NewlyCreated);
+            // let bytecode = account.code.clone().unwrap_or_default();
+            // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
+            // self.update_preimage(&address32.0, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, &bytecode);
+            // self.update_preimage(&address32.0, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, &bytecode);
         }
+        self
     }
+
+    // pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
+    //     &mut self,
+    //     address: Address,
+    //     rwasm_module: I,
+    // ) -> AccountInfo {
+    //     let rwasm_binary = {
+    //         let rwasm_module: RwasmModule = rwasm_module.into();
+    //         let mut result = Vec::new();
+    //         rwasm_module.write_binary_to_vec(&mut result).unwrap();
+    //         result
+    //     };
+    //     let account = Account {
+    //         address,
+    //         balance: U256::ZERO,
+    //         nonce: 0,
+    //         // it makes not much sense to fill these fields, but it optimizes hash calculation a
+    // bit         source_code_size: 0,
+    //         source_code_hash: KECCAK_EMPTY,
+    //         rwasm_code_size: rwasm_binary.len() as u64,
+    //         rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+    //     };
+    //     let mut info: AccountInfo = account.into();
+    //     info.code = None;
+    //     if !rwasm_binary.is_empty() {
+    //         info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+    //     }
+    //     self.db.insert_account_info(address, info.clone());
+    //     info
+    // }
+    //
+    // pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
+    //     let account = self.db.load_account(address).unwrap();
+    //     account.info.balance
+    // }
+    //
+    // pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
+    //     let account = self.db.load_account(address).unwrap();
+    //     account.info.balance += value;
+    //     let mut revm_account = crate::primitives::Account::from(account.info.clone());
+    //     revm_account.mark_touch();
+    //     self.db.commit(HashMap::from([(address, revm_account)]));
+    // }
 }

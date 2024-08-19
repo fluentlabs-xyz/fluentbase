@@ -389,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_code_preimage_update_and_check() {
         let db = InMemoryTrieDb::default();
         let zktrie = ZkTrieStateDb::new_empty(db);

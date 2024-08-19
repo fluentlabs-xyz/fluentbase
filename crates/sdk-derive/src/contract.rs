@@ -1,23 +1,23 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{self, GenericParam};
+use syn::GenericParam;
 
 pub(crate) fn impl_derive_contract(ast: &syn::DeriveInput) -> TokenStream {
     let struct_name = &ast.ident;
-    for param in ast.generics.params.iter() {
-        match param {
-            GenericParam::Lifetime(_) => {}
-            GenericParam::Type(_) => {}
-            GenericParam::Const(_) => {}
-        }
-    }
+    ast.generics
+        .params
+        .iter()
+        .find(|param| match param {
+            GenericParam::Lifetime(_) => false,
+            GenericParam::Type(val) => val.ident.to_string() == "SDK",
+            GenericParam::Const(_) => false,
+        })
+        .unwrap_or_else(|| panic!("missing SDK generic inside struct: {}", struct_name));
+    let (impl_generics, type_generics, _where_clause) = ast.generics.split_for_impl();
     let output = quote! {
-        impl Default for #struct_name<'static, fluentbase_sdk::GuestContextReader, fluentbase_sdk::GuestAccountManager> {
-            fn default() -> Self {
-                #struct_name {
-                    cr: &fluentbase_sdk::GuestContextReader::DEFAULT,
-                    am: &fluentbase_sdk::GuestAccountManager::DEFAULT,
-                }
+        impl #impl_generics #struct_name #type_generics {
+            pub fn new(sdk: SDK) -> Self {
+                #struct_name { sdk }
             }
         }
     };

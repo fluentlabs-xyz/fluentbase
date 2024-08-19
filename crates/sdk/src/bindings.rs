@@ -28,71 +28,32 @@ extern "C" {
     pub fn _read_output(target: *mut u8, offset: u32, length: u32);
     pub fn _forward_output(offset: u32, len: u32);
     pub fn _state() -> u32;
+    pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
 
     /// Executes nested call with specified bytecode poseidon hash:
-    /// - `code_hash32_ptr` - a 254-bit poseidon hash of a contract to be called
+    /// - `hash32_ptr` - a 254-bit poseidon hash of a contract to be called
     /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
     /// - `input_len` - length of input (can be zero)
-    /// - `context_ptr` - pointer to the context (must be `ptr::null()` for shared env)
-    /// - `context_len` - length of the context
-    /// - `return_ptr` - pointer to the return data (might be `ptr::null()`)
-    /// - `return_len` - length of return data buffer (might be zero)
-    /// - `fuel_ptr` - pointer to the fuel memory field (modifiable)
+    /// - `fuel` - an amount of fuel is allocated for the call
+    /// - `state` - execution state (must be 0 for non-authorized calls)
     pub fn _exec(
-        code_hash32_ptr: *const u8,
+        hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-    ) -> i32;
-    pub fn _context_call(
-        code_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        context_ptr: *const u8,
-        context_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
+        fuel_limit: u64,
         state: u32,
+    ) -> i32;
+    pub fn _resume(
+        call_id: u32,
+        return_data_ptr: *const u8,
+        return_data_len: u32,
+        exit_code: i32,
     ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;
-
-    /// Read context and write into specified target with offset and length.
-    pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
+    pub fn _fuel() -> u64;
 
     /// Journaled ZK Trie methods to work with blockchain state
-    pub fn _checkpoint() -> u64;
-    pub fn _get_leaf(
-        key32_ptr: *const u8,
-        field: u32,
-        output32_ptr: *mut u8,
-        committed: bool,
-    ) -> bool;
-    pub fn _update_leaf(
-        key32_ptr: *const u8,
-        flags: u32,
-        vals32_offset: *const [u8; 32],
-        vals32_len: u32,
-    );
-    pub fn _update_preimage(
-        key32_ptr: *const u8,
-        field: u32,
-        preimage_ptr: *const u8,
-        preimage_len: u32,
-    ) -> bool;
-    pub fn _compute_root(output32_ptr: *mut u8);
-    pub fn _emit_log(
-        address20_ptr: *const u8,
-        topics32s_ptr: *const [u8; 32],
-        topics32s_len: u32,
-        data_ptr: *const u8,
-        data_len: u32,
-    );
-    pub fn _commit(root32_ptr: *mut u8);
-    pub fn _rollback(checkpoint: u64);
     pub fn _preimage_size(hash32_ptr: *const u8) -> u32;
     pub fn _preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8);
 

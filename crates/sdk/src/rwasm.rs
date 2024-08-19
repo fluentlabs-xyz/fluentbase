@@ -1,17 +1,12 @@
 use crate::{
     bindings::{
         _charge_fuel,
-        _checkpoint,
-        _commit,
-        _compute_root,
-        _context_call,
         _debug_log,
         _ecrecover,
-        _emit_log,
         _exec,
         _exit,
         _forward_output,
-        _get_leaf,
+        _fuel,
         _input_size,
         _keccak256,
         _output_size,
@@ -22,214 +17,163 @@ use crate::{
         _read,
         _read_context,
         _read_output,
-        _rollback,
+        _resume,
         _state,
-        _update_leaf,
-        _update_preimage,
         _write,
     },
-    LowLevelSDK,
+    B256,
 };
-use fluentbase_types::{SharedAPI, SovereignAPI};
+use fluentbase_types::{NativeAPI, F254};
 
-impl SharedAPI for LowLevelSDK {
-    #[inline(always)]
-    fn read(target_ptr: *mut u8, target_len: u32, offset: u32) {
-        unsafe { _read(target_ptr, offset, target_len) }
-    }
+#[derive(Default)]
+pub struct RwasmContext;
 
+impl NativeAPI for RwasmContext {
     #[inline(always)]
-    fn input_size() -> u32 {
-        unsafe { _input_size() }
-    }
-
-    #[inline(always)]
-    fn write(value_ptr: *const u8, value_len: u32) {
-        unsafe { _write(value_ptr, value_len) }
-    }
-
-    #[inline(always)]
-    fn forward_output(offset: u32, len: u32) {
-        unsafe { _forward_output(offset, len) }
-    }
-
-    #[inline(always)]
-    fn exit(exit_code: i32) -> ! {
-        unsafe { _exit(exit_code) }
-    }
-
-    #[inline(always)]
-    fn output_size() -> u32 {
-        unsafe { _output_size() }
-    }
-
-    #[inline(always)]
-    fn read_output(target: *mut u8, offset: u32, length: u32) {
-        unsafe { _read_output(target, offset, length) }
-    }
-
-    #[inline(always)]
-    fn state() -> u32 {
-        unsafe { _state() }
-    }
-
-    #[inline(always)]
-    fn exec(
-        code_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-    ) -> i32 {
+    fn keccak256(&self, data: &[u8]) -> B256 {
         unsafe {
-            _exec(
-                code_hash32_ptr,
-                input_ptr,
-                input_len,
-                return_ptr,
-                return_len,
-                fuel_ptr,
-            )
+            let mut res = B256::ZERO;
+            _keccak256(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
         }
     }
 
     #[inline(always)]
-    fn charge_fuel(delta: u64) -> u64 {
-        unsafe { _charge_fuel(delta) }
-    }
-
-    #[inline(always)]
-    fn read_context(target_ptr: *mut u8, offset: u32, length: u32) {
-        unsafe { _read_context(target_ptr, offset, length) }
-    }
-
-    #[inline(always)]
-    fn keccak256(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
-        unsafe { _keccak256(data_ptr, data_len, output32_ptr) }
-    }
-
-    #[inline(always)]
-    fn poseidon(data_ptr: *const u8, data_len: u32, output32_ptr: *mut u8) {
-        unsafe { _poseidon(data_ptr, data_len, output32_ptr) }
-    }
-
-    #[inline(always)]
-    fn poseidon_hash(
-        fa32_ptr: *const u8,
-        fb32_ptr: *const u8,
-        fd32_ptr: *const u8,
-        output32_ptr: *mut u8,
-    ) {
-        unsafe { _poseidon_hash(fa32_ptr, fb32_ptr, fd32_ptr, output32_ptr) }
-    }
-
-    #[inline(always)]
-    fn ecrecover(digest32_ptr: *const u8, sig64_ptr: *const u8, output65_ptr: *mut u8, rec_id: u8) {
-        unsafe { _ecrecover(digest32_ptr, sig64_ptr, output65_ptr, rec_id as u32) }
-    }
-}
-
-impl SovereignAPI for LowLevelSDK {
-    #[inline(always)]
-    fn context_call(
-        code_hash32_ptr: *const u8,
-        input_ptr: *const u8,
-        input_len: u32,
-        context_ptr: *const u8,
-        context_len: u32,
-        return_ptr: *mut u8,
-        return_len: u32,
-        fuel_ptr: *mut u32,
-        state: u32,
-    ) -> i32 {
+    fn poseidon(&self, data: &[u8]) -> F254 {
         unsafe {
-            _context_call(
-                code_hash32_ptr,
-                input_ptr,
-                input_len,
-                context_ptr,
-                context_len,
-                return_ptr,
-                return_len,
-                fuel_ptr,
+            let mut res = B256::ZERO;
+            _poseidon(
+                data.as_ptr(),
+                data.len() as u32,
+                res.as_mut_slice().as_mut_ptr(),
+            );
+            res
+        }
+    }
+
+    #[inline(always)]
+    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        let mut res = B256::ZERO;
+        unsafe {
+            _poseidon_hash(
+                fa.as_ptr(),
+                fb.as_ptr(),
+                fd.as_ptr(),
+                res.as_mut_slice().as_mut_ptr(),
+            )
+        }
+        res
+    }
+
+    #[inline(always)]
+    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        unsafe {
+            let mut res: [u8; 65] = [0u8; 65];
+            _ecrecover(
+                digest.0.as_ptr(),
+                sig.as_ptr(),
+                res.as_mut_ptr(),
+                rec_id as u32,
+            );
+            res
+        }
+    }
+
+    #[inline(always)]
+    fn debug_log(&self, message: &str) {
+        unsafe { _debug_log(message.as_ptr(), message.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn read(&self, target: &mut [u8], offset: u32) {
+        unsafe { _read(target.as_mut_ptr(), offset, target.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn input_size(&self) -> u32 {
+        unsafe { _input_size() }
+    }
+
+    #[inline(always)]
+    fn write(&self, value: &[u8]) {
+        unsafe { _write(value.as_ptr(), value.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn forward_output(&self, offset: u32, len: u32) {
+        unsafe { _forward_output(offset, len) }
+    }
+
+    #[inline(always)]
+    fn exit(&self, exit_code: i32) -> ! {
+        unsafe { _exit(exit_code) }
+    }
+
+    #[inline(always)]
+    fn output_size(&self) -> u32 {
+        unsafe { _output_size() }
+    }
+
+    #[inline(always)]
+    fn read_output(&self, target: &mut [u8], offset: u32) {
+        unsafe { _read_output(target.as_mut_ptr(), offset, target.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn state(&self) -> u32 {
+        unsafe { _state() }
+    }
+
+    #[inline(always)]
+    fn read_context(&self, target: &mut [u8], offset: u32) {
+        unsafe { _read_context(target.as_mut_ptr(), offset, target.len() as u32) }
+    }
+
+    #[inline(always)]
+    fn fuel(&self) -> u64 {
+        unsafe { _fuel() }
+    }
+
+    #[inline(always)]
+    fn charge_fuel(&self, value: u64) -> u64 {
+        unsafe { _charge_fuel(value) }
+    }
+
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
+        unsafe {
+            _exec(
+                code_hash.as_ptr(),
+                input.as_ptr(),
+                input.len() as u32,
+                fuel_limit,
                 state,
             )
         }
     }
 
     #[inline(always)]
-    fn checkpoint() -> u64 {
-        unsafe { _checkpoint() }
-    }
-
-    #[inline(always)]
-    fn get_leaf(key32_ptr: *const u8, field: u32, output32_ptr: *mut u8, committed: bool) -> bool {
-        unsafe { _get_leaf(key32_ptr, field, output32_ptr, committed) }
-    }
-
-    #[inline(always)]
-    fn update_leaf(key32_ptr: *const u8, flags: u32, vals32_ptr: *const [u8; 32], vals32_len: u32) {
+    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32 {
         unsafe {
-            _update_leaf(key32_ptr, flags, vals32_ptr, vals32_len);
-        }
-    }
-
-    #[inline(always)]
-    fn update_preimage(
-        key32_ptr: *const u8,
-        field: u32,
-        preimage_ptr: *const u8,
-        preimage_len: u32,
-    ) -> bool {
-        unsafe { _update_preimage(key32_ptr, field, preimage_ptr, preimage_len) }
-    }
-
-    #[inline(always)]
-    fn compute_root(output32_ptr: *mut u8) {
-        unsafe { _compute_root(output32_ptr) }
-    }
-
-    #[inline(always)]
-    fn emit_log(
-        address20_ptr: *const u8,
-        topics32s_ptr: *const [u8; 32],
-        topics32s_len: u32,
-        data_ptr: *const u8,
-        data_len: u32,
-    ) {
-        unsafe {
-            _emit_log(
-                address20_ptr,
-                topics32s_ptr,
-                topics32s_len,
-                data_ptr,
-                data_len,
+            _resume(
+                call_id,
+                return_data.as_ptr(),
+                return_data.len() as u32,
+                exit_code,
             )
         }
     }
+
     #[inline(always)]
-    fn commit(root32_ptr: *mut u8) {
-        unsafe { _commit(root32_ptr) }
+    fn preimage_size(&self, hash: &B256) -> u32 {
+        unsafe { _preimage_size(hash.as_ptr()) }
     }
 
     #[inline(always)]
-    fn rollback(checkpoint: u64) {
-        unsafe { _rollback(checkpoint) }
-    }
-
-    #[inline(always)]
-    fn preimage_size(hash32_ptr: *const u8) -> u32 {
-        unsafe { _preimage_size(hash32_ptr) }
-    }
-
-    #[inline(always)]
-    fn preimage_copy(hash32_ptr: *const u8, preimage_ptr: *mut u8) {
-        unsafe { _preimage_copy(hash32_ptr, preimage_ptr) }
-    }
-
-    #[inline(always)]
-    fn debug_log(msg_ptr: *const u8, msg_len: u32) {
-        unsafe { _debug_log(msg_ptr, msg_len) }
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
+        unsafe { _preimage_copy(hash.as_ptr(), target.as_mut_ptr()) }
     }
 }

@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, DefaultEmptyRuntimeDatabase, RuntimeContext};
+use crate::{runtime::Runtime, RuntimeContext};
 use fluentbase_types::{
     create_sovereign_import_linker,
     SysFuncIdx::STATE,
@@ -57,8 +57,9 @@ fn test_simple() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(10_000_000);
-    Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel(10_000_000);
+    let execution_result = Runtime::run_with_context(ctx);
+    assert_eq!(execution_result.exit_code, 0);
 }
 
 #[test]
@@ -84,13 +85,13 @@ fn test_wrong_indirect_type() {
     "#,
     );
     let ctx = RuntimeContext::new(rwasm_bytecode)
-        .with_fuel_limit(1_000_000)
+        .with_fuel(1_000_000)
         .with_state(STATE_DEPLOY);
-    let mut runtime = Runtime::<DefaultEmptyRuntimeDatabase>::new(ctx);
-    let res = runtime.call().unwrap();
+    let mut runtime = Runtime::new(ctx);
+    let res = runtime.call();
+    let ctx = runtime.take_context();
     assert_eq!(res.exit_code, 0);
-    runtime.data_mut().state = STATE_MAIN;
-    let res = runtime.call().unwrap();
+    let res = Runtime::run_with_context(ctx.with_state(STATE_MAIN));
     assert_eq!(res.exit_code, -2008);
 }
 
@@ -118,8 +119,8 @@ fn test_keccak256() {
   (export "main" (func $main)))
     "#,
     );
-    let ctx = RuntimeContext::new(rwasm_binary).with_fuel_limit(1_000_000);
-    let execution_result = Runtime::<DefaultEmptyRuntimeDatabase>::run_with_context(ctx).unwrap();
+    let ctx = RuntimeContext::new(rwasm_binary).with_fuel(1_000_000);
+    let execution_result = Runtime::run_with_context(ctx);
     println!("fuel consumed: {}", execution_result.fuel_consumed);
     assert_eq!(execution_result.exit_code, 0);
     assert_eq!(

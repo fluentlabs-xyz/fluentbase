@@ -1,13 +1,16 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{self, Data, Fields, Ident};
+use syn::{Data, Fields, Ident};
 
 fn impl_derive_codec(ast: &syn::DeriveInput) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let crate_name = if crate_name == "fluentbase-codec" {
         quote! { crate }
-    } else if crate_name == "fluentbase-sdk" {
+    } else if crate_name == "fluentbase-sdk"
+        || crate_name == "fluentbase-types"
+        || crate_name == "fluentbase-runtime"
+    {
         quote! { fluentbase_codec }
     } else {
         quote! { fluentbase_sdk::codec }

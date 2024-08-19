@@ -3,7 +3,6 @@ use proc_macro::TokenStream;
 use proc_macro_error::proc_macro_error;
 use quote::quote;
 use syn::{
-    self,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,

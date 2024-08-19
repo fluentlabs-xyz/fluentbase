@@ -35,7 +35,6 @@ fluentbase-sdk = { path = "./crates/sdk", default-features = false }
 fluentbase-sdk-derive = { path = "./crates/sdk-derive", default-features = false }
 fluentbase-core = { path = "./crates/core", default-features = false }
 fluentbase-contracts = { path = "crates/contracts", default-features = false }
-#fluentbase-revm = { path = "crates/revm", default-features = false }
 fluentbase-core-macros = { path = "./crates/core-macros", default-features = false }
 fluentbase-runtime = { path = "./crates/runtime", default-features = false }
 fluentbase-poseidon = { path = "./crates/poseidon", default-features = false }
@@ -61,7 +60,7 @@ rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", def
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.7", default-features = false, features = ["rlp"] }
-alloy-rlp = { version = "0.3", default-features = false }
+alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
 hashbrown = { version = "0.14" }
@@ -69,7 +68,7 @@ serde = { version = "1.0.203", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
 casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
-revm-interpreter = { package = "revm-interpreter-fluent", path = "revm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
+revm-interpreter = { path = "revm/crates/interpreter", default-features = false, features = ["rwasm"] }
 revm-primitives = { path = "revm/crates/primitives", default-features = false, features = ["rwasm"] }
 revm-precompile = { path = "revm/crates/precompile", default-features = false, features = ["rwasm"] }
 revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-features = false, features = [
@@ -77,8 +76,9 @@ revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-feat
     "blst",
     "rwasm",
     #    "secp256k1",
-    #    "debug_print",
+    #    "debug-print",
 ] }
+zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
 #revm-interpreter = { package = "revm-interpreter-fluent", path = "../revm-rwasm/crates/interpreter_fluent", default-features = false, features = ["rwasm"] }
 #revm-primitives = { path = "../revm-rwasm/crates/primitives", default-features = false, features = ["rwasm"] }
 #revm-precompile = { path = "../revm-rwasm/crates/precompile", default-features = false, features = ["rwasm"] }
@@ -87,10 +87,8 @@ revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-feat
 #    "blst",
 #    "rwasm",
 #    #    "secp256k1",
-#    #    "debug_print",
+#    #    "debug-print",
 #] }
-zeth-primitives = { git = "https://github.com/fluentlabs-xyz/zeth-rwasm.git", branch = "rwasm", default-features = false }
-#zeth-primitives = { path = "../zeth-rwasm/primitives", default-features = false }
 bytes = { version = "1.5" }
 eth_trie = { version = "0.4", default-features = false }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
@@ -99,6 +97,8 @@ strum = { version = "0.26" }
 strum_macros = { version = "0.26" }
 lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
 regex = { version = "1.10" }
+#borsh = { version = "1.5.1", default-features = false, features = ["bytes", "derive", "hashbrown"] }
+#borsh-derive = { version = "1.5.1" }
 anyhow = { version = "1.0.86", default-features = false }
 syn = "2.0"
 clap = { version = "4.5", features = ["derive"] }

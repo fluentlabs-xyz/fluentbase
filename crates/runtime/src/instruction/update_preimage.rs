@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallUpdatePreimage;
 
 impl SyscallUpdatePreimage {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         key32_ptr: u32,
         field: u32,
         preimage_ptr: u32,
@@ -19,8 +19,8 @@ impl SyscallUpdatePreimage {
         Ok(res as i32)
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
+    pub fn fn_impl(
+        ctx: &RuntimeContext,
         key: &[u8],
         field: u32,
         preimage: &[u8],
