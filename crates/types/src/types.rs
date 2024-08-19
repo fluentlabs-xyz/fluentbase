@@ -7,6 +7,9 @@ use rwasm::{
 };
 use strum_macros::{Display, FromRepr};
 
+pub type Bytes64 = [u8; 64];
+pub type Bytes34 = [u8; 34];
+
 pub type Bytes32 = [u8; 32];
 pub type Bytes20 = [u8; 20];
 
@@ -282,25 +285,36 @@ impl Into<FuncIdx> for SysFuncIdx {
 pub enum BytecodeType {
     EVM,
     WASM,
+    FVM,
 }
 
-/// WebAssembly signature (\0ASM)
-const WASM_SIG: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
+/// Fuel asm signature (\0FASM)
+const FUEL_ASM_SIG_LEN: usize = 5;
+const FUEL_ASM_SIG: [u8; FUEL_ASM_SIG_LEN] = [0x00, 0x66, 0x61, 0x73, 0x6d];
 
+const WASM_SIG_LEN: usize = 4;
+/// WebAssembly signature (\0ASM)
+const WASM_SIG: [u8; WASM_SIG_LEN] = [0x00, 0x61, 0x73, 0x6d];
+
+const RWASM_SIG_LEN: usize = 3;
 /// rWASM binary format signature:
 /// - 0xef 0x00 - EIP-3540 compatible prefix
 /// - 0x52 - rWASM version number (equal to 'R')
-const RWASM_SIG: [u8; 3] = [0xef, 0x00, 0x52];
+const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x00, 0x52];
 
 impl BytecodeType {
     pub fn from_slice(input: &[u8]) -> Self {
         // default WebAssembly signature (\0ASM)
-        if input.len() >= WASM_SIG.len() && input[0..4] == WASM_SIG {
+        if input.len() >= WASM_SIG.len() && input[0..WASM_SIG_LEN] == WASM_SIG {
             return Self::WASM;
         }
         // case for rWASM contracts that are inside genesis
-        if input.len() >= RWASM_SIG.len() && input[0..3] == RWASM_SIG {
+        if input.len() >= RWASM_SIG.len() && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;
+        }
+        // case for Fuel contracts that are inside genesis
+        if input.len() >= FUEL_ASM_SIG.len() && input[0..FUEL_ASM_SIG_LEN] == FUEL_ASM_SIG {
+            return Self::FVM;
         }
         // all the rest are EVM bytecode
         Self::EVM

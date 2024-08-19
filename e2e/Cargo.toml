@@ -28,7 +28,7 @@ keccak-hash = "0.10.0"
 hex-literal = "0.4.1"
 
 [dev-dependencies]
-serde_json = "1.0.108"
+serde_json = "1.0"
 hex = { version = "0.4.3", features = [] }
 hex-literal = "0.4.1"
 keccak-hash = "0.10.0"
