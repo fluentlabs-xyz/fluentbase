@@ -11,6 +11,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         target_address: Address,
         inputs: Box<CreateInputs>,
         mut gas: Gas,
+        call_depth: u32,
     ) -> InterpreterResult {
         let return_error = |gas: Gas, exit_code: ExitCode| -> InterpreterResult {
             InterpreterResult::new(evm_error_from_exit_code(exit_code), Bytes::new(), gas)
@@ -43,8 +44,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             value: inputs.value,
             apparent_value: U256::ZERO,
         };
-        let (output, exit_code) =
-            self.exec_rwasm_bytecode(context, &contract_account, &[], &mut gas, STATE_DEPLOY);
+        let (output, exit_code) = self.exec_rwasm_bytecode(
+            context,
+            &contract_account,
+            &[],
+            &mut gas,
+            STATE_DEPLOY,
+            call_depth,
+        );
 
         InterpreterResult {
             result: evm_error_from_exit_code(ExitCode::from(exit_code)),
