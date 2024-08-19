@@ -2,7 +2,7 @@ Fluentbase Codec
 ================
 
 Is our encoding/decoding format that is optimized for random reads.
-It is very similar to the standard Solidity ABI encoding with one major difference that is uses static structure, and it doesn't align elements with 32 bytes.
+It is very similar to the standard Solidity ABI encoding with one major difference is uses static structure, and it doesn't align elements with 32 bytes.
 We also support recursive encoding, so everything that can be encoded inside Codec can also be embedded as nested structure.
 The idea of this codec is that you can access any first level information w/o reading the rest info.
 The only thing you need to know is a type of structure.

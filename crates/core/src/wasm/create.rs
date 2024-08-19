@@ -125,7 +125,7 @@ pub fn _wasm_create<CR: ContextReader, AM: AccountManager>(
         &mut gas_limit as *mut u32,
         STATE_DEPLOY,
     );
-    // if call is not success set deployed address to zero
+    // if call is not successful set deployed address to zero
     if exit_code != ExitCode::Ok.into_i32() {
         am.rollback(checkpoint);
         debug_log!("_wasm_create return: Err: ExitCode::TransactError");

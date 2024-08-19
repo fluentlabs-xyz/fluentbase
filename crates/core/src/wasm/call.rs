@@ -52,7 +52,7 @@ pub fn _wasm_call<CR: ContextReader, AM: AccountManager>(
         STATE_MAIN,
     );
 
-    // if exit code success then commit changes, otherwise rollback
+    // if exit code is successful, then commit changes, otherwise rollback
     if ExitCode::from(exit_code).is_ok() {
         am.commit();
     } else {
