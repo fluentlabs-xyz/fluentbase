@@ -49,7 +49,7 @@ alloy-primitives = { version = "0.7", default-features = false, features = ["rlp
 alloy-rlp = { version = "0.3", default-features = false, features = ["derive"] }
 alloy-genesis = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7", default-features = false }
-hashbrown = { version = "0.14", default-features = false }
+hashbrown = { version = "0.14" }
 serde = { version = "1.0.193", default-features = false }
 casey = { version = "0.4.0" }
 paste = { version = "1.0", default-features = false }

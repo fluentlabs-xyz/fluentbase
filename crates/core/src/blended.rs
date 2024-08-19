@@ -141,7 +141,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-            .encode_to_vec(0);
+        .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -260,9 +260,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-            BytecodeType::EVM => MAX_INITCODE_SIZE,
-            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-        }
+                BytecodeType::EVM => MAX_INITCODE_SIZE,
+                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+            }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
