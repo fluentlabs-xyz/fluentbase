@@ -1,17 +1,7 @@
 use crate::utils::{evm_builder_apply_envs, fill_eth_tx_env};
 use alloy_rlp::{Decodable, Encodable};
 use fluentbase_core::fvm::exec::_exec_fuel_tx;
-use fluentbase_sdk::{
-    basic_entrypoint,
-    contracts::BlendedAPI,
-    derive::Contract,
-    AccountManager,
-    Bytes,
-    ContextReader,
-    LowLevelSDK,
-    SharedAPI,
-    U256,
-};
+use fluentbase_sdk::{basic_entrypoint, derive::Contract, Bytes, SharedAPI, U256};
 use fuel_vm::fuel_types::canonical::Serialize;
 use revm::{interpreter::Host, primitives::ResultAndState, Evm};
 use zeth_primitives::{

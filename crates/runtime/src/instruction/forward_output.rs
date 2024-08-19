@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallForwardOutput;
 
 impl SyscallForwardOutput {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         offset: u32,
         len: u32,
     ) -> Result<(), Trap> {
@@ -14,11 +14,7 @@ impl SyscallForwardOutput {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
-        offset: u32,
-        len: u32,
-    ) -> Result<(), ExitCode> {
+    pub fn fn_impl(ctx: &mut RuntimeContext, offset: u32, len: u32) -> Result<(), ExitCode> {
         if offset + len <= ctx.execution_result.return_data.len() as u32 {
             let ret_data = &ctx.execution_result.return_data
                 [(offset as usize)..(offset as usize + len as usize)];

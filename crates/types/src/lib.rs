@@ -5,18 +5,25 @@
 extern crate alloc;
 extern crate core;
 
-pub mod consts;
+mod account;
+mod allocator;
+pub use account::*;
+pub use allocator::*;
 pub mod contracts;
 mod journal;
 mod linker;
 mod sdk;
 mod types;
+mod utils;
 
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
+pub use byteorder;
+pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use journal::*;
 pub use linker::*;
 pub use sdk::*;
 pub use types::*;
+pub use utils::*;
 
 pub const KECCAK_EMPTY: B256 =
     b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
@@ -33,3 +40,5 @@ pub const NATIVE_TRANSFER_ADDRESS: Address = address!("0000000000000000000000000
 
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
+
+pub const DEVNET_CHAIN_ID: u64 = 20993;

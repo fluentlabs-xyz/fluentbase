@@ -3,11 +3,11 @@ use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     address,
     b256,
-    consts::DEVNET_CHAIN_ID,
     contracts::PRECOMPILE_EVM,
     Address,
     Bytes,
     B256,
+    DEVNET_CHAIN_ID,
     U256,
 };
 use revm_primitives::keccak256;

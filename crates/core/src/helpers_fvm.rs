@@ -122,7 +122,7 @@ where
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
     T: KeyValueMutate<Column = Column>,
 {
-    debug_log!("ecl(fvm_transact_commit): start");
+    // debug_log!("ecl(fvm_transact_commit): start");
 
     // TODO warmup storage from state based on tx inputs?
     // let inputs = checked_tx.transaction().inputs();

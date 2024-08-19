@@ -1,7 +1,6 @@
 use alloc::vec;
 use core::{mem::size_of, ops::Deref, str::FromStr};
-use fluentbase_sdk::{Address, ContextReader, LowLevelSDK, U256};
-use fluentbase_types::{Bytes32, Bytes34, Bytes64, SharedAPI};
+use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SharedAPI, SovereignAPI, B256, U256};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
     fuel_tx::{
@@ -76,18 +75,20 @@ pub fn fuel_testnet_consensus_params_from(
     })
 }
 
-pub fn fuel_testnet_consensus_params_from_cr<CR: ContextReader>(cr: &CR) -> ConsensusParameters {
+pub fn fuel_testnet_consensus_params_from_cr<SDK: SovereignAPI>(sdk: &SDK) -> ConsensusParameters {
     fuel_testnet_consensus_params_from(
-        Some(cr.tx_gas_limit()),
-        Some(cr.tx_gas_limit()),
-        Some(cr.block_gas_limit()),
-        ChainId::new(cr.block_chain_id()),
+        Some(sdk.tx_context().gas_limit),
+        Some(sdk.tx_context().gas_limit),
+        Some(sdk.block_context().gas_limit),
+        ChainId::new(sdk.block_context().chain_id),
         None,
     )
 }
 
 fn keccak256(data: &[u8], target: &mut Bytes32) {
-    LowLevelSDK::keccak256(data.as_ptr(), data.len() as u32, target.as_mut_ptr());
+    use keccak_hash::keccak;
+    // TODO: "replace with SDK version"
+    *target = keccak(data).0;
 }
 
 pub trait PreimageKey {
@@ -125,6 +126,12 @@ impl Deref for IndexedHash {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Into<B256> for IndexedHash {
+    fn into(self) -> B256 {
+        B256::from(self.0)
     }
 }
 

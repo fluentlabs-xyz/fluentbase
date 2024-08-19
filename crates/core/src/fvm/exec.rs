@@ -6,12 +6,13 @@ use alloy_sol_types::SolValue;
 use fluentbase_sdk::{
     derive::derive_keccak256,
     types::FvmMethodOutput,
-    AccountManager,
+    Address,
     Bytes,
-    ContextReader,
-    LowLevelSDK,
+    Bytes32,
+    ExitCode,
+    SovereignAPI,
+    B256,
 };
-use fluentbase_types::{Bytes32, ExitCode, SovereignAPI};
 use fuel_core_types::{
     blockchain::{
         header::{ApplicationHeader, ConsensusHeader, PartialBlockHeader},
@@ -27,9 +28,8 @@ use revm_primitives::hex;
 pub const FUEL_VM_NON_CONTRACT_LOGS_ADDRESS: Bytes32 =
     hex!("00000000000000000000000000000000000000000000000000004675656C564D"); // ANSI: FuelVM
 
-pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
-    cr: &CR,
-    am: &AM,
+pub fn _exec_fuel_tx<SDK: SovereignAPI>(
+    sdk: &mut SDK,
     gas_limit: u64,
     raw_fuel_tx: Bytes,
 ) -> FvmMethodOutput {
@@ -38,8 +38,8 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             .with_gas(gas_limit, 0);
     };
 
-    let consensus_params = fuel_testnet_consensus_params_from_cr(cr);
-    let tx_gas_price = cr.tx_gas_price().as_limbs()[0];
+    let consensus_params = fuel_testnet_consensus_params_from_cr(sdk);
+    let tx_gas_price = sdk.tx_context().gas_price.as_limbs()[0];
     let coinbase_contract_id = ContractId::zeroed();
     let header = PartialBlockHeader {
         application: ApplicationHeader {
@@ -50,7 +50,7 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
         },
         consensus: ConsensusHeader {
             prev_root: Default::default(),
-            height: BlockHeight::new(cr.block_number() as u32),
+            height: BlockHeight::new(sdk.block_context().number as u32),
             time: Tai64::UNIX_EPOCH,
             generated: Empty::default(),
         },
@@ -59,77 +59,73 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
         fuel_tx::Transaction::Script(etx) => {
             let checked_tx = etx
                 .into_checked(
-                    BlockHeight::new(cr.block_number() as u32),
+                    BlockHeight::new(sdk.block_context().number as u32),
                     &consensus_params,
                 )
                 .expect("convert into checked");
             let res = _fvm_transact_commit_inner(
-                cr,
-                am,
+                sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact commit inner success");
+                .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Create(etx) => {
             let checked_tx = etx
                 .into_checked(
-                    BlockHeight::new(cr.block_number() as u32),
+                    BlockHeight::new(sdk.block_context().number as u32),
                     &consensus_params,
                 )
                 .expect("failed to convert tx into checked tx");
             let res = _fvm_transact_commit_inner(
-                cr,
-                am,
+                sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact commit inner success");
+                .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upgrade(etx) => {
             let checked_tx = etx
                 .into_checked(
-                    BlockHeight::new(cr.block_number() as u32),
+                    BlockHeight::new(sdk.block_context().number as u32),
                     &consensus_params,
                 )
                 .expect("failed to convert tx into checked tx");
             let res = _fvm_transact_commit_inner(
-                cr,
-                am,
+                sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+                .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upload(etx) => {
             let checked_tx = etx
                 .into_checked(
-                    BlockHeight::new(cr.block_number() as u32),
+                    BlockHeight::new(sdk.block_context().number as u32),
                     &consensus_params,
                 )
                 .expect("failed to convert tx into checked tx");
             let res = _fvm_transact_commit_inner(
-                cr,
-                am,
+                sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
             )
-            .expect("fvm transact inner success");
+                .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Mint(_) => {
@@ -153,25 +149,21 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                     "Call(bytes32,uint64,bytes32,uint64,uint64,uint64,uint64,uint64)"
                 );
                 let log_data = (to.0, amount, asset_id.0, gas, param1, param2, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Return { id, val, pc, is } => {
                 let sig = derive_keccak256!("Return(uint64,uint64,uint64,uint64)");
                 let log_data = (val, pc, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::ReturnData {
@@ -185,16 +177,13 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig =
                     derive_keccak256!("ReturnData(uint64,uint64,bytes32,uint64,uint64,bytes)");
-                // TODO what todo with `data` field
                 let log_data =
                     (ptr, len, digest.0, pc, is, data.clone().unwrap_or_default()).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Panic {
@@ -215,25 +204,21 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                     contract_id.unwrap_or_default().0,
                 )
                     .abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Revert { id, ra, pc, is } => {
                 let sig = derive_keccak256!("Revert(uint64,uint64,uint64)");
                 let log_data = (ra, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Log {
@@ -247,13 +232,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig = derive_keccak256!("Log(uint64,uint64,uint64,uint64,uint64,uint64)");
                 let log_data = (ra, rb, rc, rd, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::LogData {
@@ -281,13 +264,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                     data.clone().unwrap_or_default(),
                 )
                     .abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Transfer {
@@ -300,13 +281,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    id[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&id[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::TransferOut {
@@ -319,26 +298,22 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::ScriptResult { result, gas_used } => {
                 let sig = derive_keccak256!("ScriptResult(uint64,uint64)");
                 let result_u64: u64 = (*result).into();
                 let log_data = (result_u64, gas_used).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::MessageOut {
@@ -363,13 +338,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
                     data.clone().unwrap_or_default(),
                 )
                     .abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Mint {
@@ -381,13 +354,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig = derive_keccak256!("Mint(bytes32,bytes32,uint64,uint64,uint64)");
                 let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
             fuel_tx::Receipt::Burn {
@@ -399,13 +370,11 @@ pub fn _exec_fuel_tx<CR: ContextReader, AM: AccountManager>(
             } => {
                 let sig = derive_keccak256!("Burn(bytes32,bytes32,uint64,uint64,uint64)");
                 let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
-                let topics = [sig];
-                LowLevelSDK::emit_log(
-                    FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..].as_ptr(),
-                    topics.as_ptr(),
-                    topics.len() as u32 * 32,
-                    log_data.as_ptr(),
-                    log_data.len() as u32,
+                let topics = [B256::from(sig)];
+                sdk.write_log(
+                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
+                    log_data.into(),
+                    topics.to_vec(),
                 );
             }
         }

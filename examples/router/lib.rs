@@ -5,33 +5,35 @@ extern crate fluentbase_sdk;
 use alloc::string::String;
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, signature},
+    derive::{router, signature, Contract},
     SharedAPI,
 };
 
-#[derive(Default)]
-struct ROUTER;
+#[derive(Contract)]
+struct ROUTER<SDK> {
+    sdk: SDK,
+}
 
 pub trait RouterAPI {
-    fn greeting<SDK: SharedAPI>(&self, message: String) -> String;
-    fn custom_greeting<SDK: SharedAPI>(&self, message: String) -> String;
+    fn greeting(&self, message: String) -> String;
+    fn custom_greeting(&self, message: String) -> String;
 }
 
 #[router(mode = "solidity")]
-impl RouterAPI for ROUTER {
+impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
     #[signature("function greeting(string message) external returns (string)")]
-    fn greeting<SDK: SharedAPI>(&self, message: String) -> String {
+    fn greeting(&self, message: String) -> String {
         message
     }
 
     #[signature("customGreeting(string)")]
-    fn custom_greeting<SDK: SharedAPI>(&self, message: String) -> String {
+    fn custom_greeting(&self, message: String) -> String {
         message
     }
 }
 
-impl ROUTER {
-    fn deploy<SDK: SharedAPI>(&self) {
+impl<SDK: SharedAPI> ROUTER<SDK> {
+    fn deploy(&self) {
         // any custom deployment logic here
     }
 }
@@ -41,8 +43,7 @@ basic_entrypoint!(ROUTER);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_sol_types::SolCall;
-    use fluentbase_sdk::LowLevelSDK;
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
     use hex_literal::hex;
 
     #[test]
@@ -52,13 +53,15 @@ mod tests {
         let msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
             panic!("Failed to decode input {:?} {:?}", "msg", e,);
         });
-        LowLevelSDK::with_test_input(input.into());
+        let sdk = TestingContext::empty().with_input(input);
         // run router
-        let greeting = ROUTER::default();
-        greeting.deploy::<LowLevelSDK>();
-        greeting.main::<LowLevelSDK>();
+        let mut greeting = ROUTER::new(JournalState::empty(sdk.clone()));
+        greeting.deploy();
+        greeting.main();
         // check result
-        let test_output = LowLevelSDK::get_test_output();
-        assert_eq!(test_output, hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000"));
+        let test_output = sdk.take_output();
+        assert_eq!(test_output,
+                   hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000"
+    ));
     }
 }

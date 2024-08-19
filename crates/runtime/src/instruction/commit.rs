@@ -1,12 +1,12 @@
 use crate::RuntimeContext;
-use fluentbase_types::{ExitCode, IJournaledTrie};
+use fluentbase_types::ExitCode;
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallCommit;
 
 impl SyscallCommit {
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         root32_offset: u32,
     ) -> Result<(), Trap> {
         let output = Self::fn_impl(caller.data_mut()).map_err(|err| err.into_trap())?;
@@ -14,7 +14,7 @@ impl SyscallCommit {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(ctx: &mut RuntimeContext<DB>) -> Result<[u8; 32], ExitCode> {
+    pub fn fn_impl(ctx: &RuntimeContext) -> Result<[u8; 32], ExitCode> {
         let (root, _logs) = ctx.jzkt().commit()?;
         Ok(root)
     }

@@ -1,0 +1,73 @@
+use alloc::{vec, vec::Vec};
+use fluentbase_sdk::{
+    codec::Encoder,
+    contracts::SYSCALL_ID_DELEGATE_CALL,
+    Address,
+    Bytes,
+    SharedContextInputV1,
+    SysFuncIdx,
+};
+use rwasm::{
+    instruction_set,
+    rwasm::{BinaryFormat, RwasmModule},
+};
+
+pub(crate) fn create_rwasm_proxy_bytecode(address: &Address) -> Bytes {
+    let mut memory_section = vec![0u8; 32 + 20];
+    memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
+    memory_section[32..52].copy_from_slice(address.as_slice()); // 20 bytes
+    debug_assert_eq!(memory_section.len(), 52);
+    let code_section = instruction_set! {
+        // alloc default memory
+        I32Const(1) // number of pages (64kB)
+        MemoryGrow // grow memory
+        Drop // drop exit code (it can't fail here)
+        // initialize memory segment
+        I32Const(0) // destination
+        I32Const(0) // source
+        I32Const(memory_section.len() as u32) // length
+        MemoryInit(0) // initialize 0 segment
+        DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
+        // copy input (EVM bytecode can't exceed 24kB, so this op is safe)
+        I32Const(52) // target
+        I32Const(SharedContextInputV1::HEADER_SIZE as u32) // offset
+        Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size
+        I32Const(SharedContextInputV1::HEADER_SIZE as u32)
+        I32Sub
+        Call(SysFuncIdx::READ)
+        // delegate call
+        I32Const(0) // hash32_ptr
+        I32Const(32) // input_ptr
+        Call(SysFuncIdx::INPUT_SIZE) // input_len=input_size-header_size+20
+        I32Const(SharedContextInputV1::HEADER_SIZE as u32)
+        I32Sub
+        I32Const(20)
+        I32Add
+        Call(SysFuncIdx::FUEL) // fuel_limit
+        Call(SysFuncIdx::STATE) // state
+        Call(SysFuncIdx::EXEC)
+        // copy return data into output
+        I32Const(0) // target
+        I32Const(0) // offset
+        Call(SysFuncIdx::OUTPUT_SIZE) // length
+        // TODO(dmitry123): "make sure we have enough memory pages allocated"
+        Call(SysFuncIdx::READ_OUTPUT)
+        I32Const(0) // offset
+        Call(SysFuncIdx::OUTPUT_SIZE) // length
+        Call(SysFuncIdx::WRITE)
+        // exit with the resulting exit code
+        Call(SysFuncIdx::EXIT)
+    };
+    let func_section = vec![code_section.len() as u32];
+    let evm_loader_module = RwasmModule {
+        code_section,
+        memory_section,
+        func_section,
+        ..Default::default()
+    };
+    let mut rwasm_bytecode = Vec::new();
+    evm_loader_module
+        .write_binary_to_vec(&mut rwasm_bytecode)
+        .unwrap();
+    rwasm_bytecode.into()
+}

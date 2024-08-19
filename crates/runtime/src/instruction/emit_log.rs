@@ -1,5 +1,5 @@
 use crate::RuntimeContext;
-use fluentbase_types::{Address, Bytes, IJournaledTrie, B256};
+use fluentbase_types::{Address, Bytes, B256};
 use rwasm::{core::Trap, Caller};
 
 pub struct SyscallEmitLog;
@@ -12,8 +12,8 @@ impl SyscallEmitLog {
             .checked_add(375u64 * n as u64)
     }
 
-    pub fn fn_handler<DB: IJournaledTrie>(
-        mut caller: Caller<'_, RuntimeContext<DB>>,
+    pub fn fn_handler(
+        mut caller: Caller<'_, RuntimeContext>,
         address20_ptr: u32,
         topics32s_ptr: u32,
         topics32s_len: u32,
@@ -44,12 +44,7 @@ impl SyscallEmitLog {
         Ok(())
     }
 
-    pub fn fn_impl<DB: IJournaledTrie>(
-        ctx: &mut RuntimeContext<DB>,
-        address: Address,
-        topics: Vec<B256>,
-        data: Bytes,
-    ) {
+    pub fn fn_impl(ctx: &RuntimeContext, address: Address, topics: Vec<B256>, data: Bytes) {
         ctx.jzkt().emit_log(address, topics.clone(), data);
     }
 }

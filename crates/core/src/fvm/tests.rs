@@ -5,7 +5,7 @@ mod tests {
         helpers_fvm::{fvm_transact, fvm_transact_commit},
     };
     use alloc::{vec, vec::Vec};
-    use fluentbase_sdk::{GuestAccountManager, GuestContextReader};
+    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
     use fuel_core::{
         database::{database_description::on_chain::OnChain, Database, RegularStage},
         executor::test_helpers::{create_contract, setup_executable_script},
@@ -57,12 +57,12 @@ mod tests {
         TestBuilder::new(1234u64)
     }
 
+    type TestingSDK = JournalState<TestingContext>;
+
     #[test]
     fn skipped_tx_not_changed_spent_status() {
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
         // let mut tb = || TestBuilder::new(2322u64);
         // let mut db = GenericDatabase::from_storage(storage);
@@ -98,16 +98,18 @@ mod tests {
         second_coin.set_amount(100);
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         // Insert both inputs
-        <StructuredStorage<WasmStorage<'_, GuestContextReader, GuestAccountManager>> as StorageMutate<Coins>>::insert(
+        <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageMutate<Coins>>::insert(
             &mut storage,
             &first_input.utxo_id().unwrap().clone(),
-            &first_coin
-        ).expect("insert first utxo success");
-        <StructuredStorage<WasmStorage<'_, GuestContextReader, GuestAccountManager>> as StorageMutate<Coins>>::insert(
+            &first_coin,
+        )
+        .expect("insert first utxo success");
+        <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageMutate<Coins>>::insert(
             &mut storage,
             &second_input.utxo_id().unwrap().clone(),
-            &second_coin
-        ).expect("insert first utxo success");
+            &second_coin,
+        )
+        .expect("insert first utxo success");
 
         let block = PartialFuelBlock {
             header: Default::default(),
@@ -115,14 +117,14 @@ mod tests {
         };
 
         // The first input should be `Unspent` before execution.
-        <StructuredStorage<WasmStorage<'_, GuestContextReader, GuestAccountManager>> as StorageInspect<Coins>>::get(
+        <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageInspect<Coins>>::get(
             &storage,
             first_input.utxo_id().unwrap(),
         )
         .unwrap()
         .expect("coin should be unspent");
         // The second input should be `Unspent` before execution.
-        <StructuredStorage<WasmStorage<'_, GuestContextReader, GuestAccountManager>> as StorageInspect<Coins>>::get(
+        <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageInspect<Coins>>::get(
             &storage,
             second_input.utxo_id().unwrap(),
         )
@@ -200,18 +202,17 @@ mod tests {
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(AMOUNT - 1);
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         // Inserting a coin with `AMOUNT - 1` should cause a mismatching error during production.
-        <StructuredStorage<WasmStorage<'_, GuestContextReader, GuestAccountManager>> as StorageMutate<Coins>>::insert(
+        <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageMutate<Coins>>::insert(
             &mut storage,
             &input.utxo_id().unwrap().clone(),
             &coin,
-        ).unwrap();
+        )
+        .unwrap();
 
         let block = PartialFuelBlock {
             header: Default::default(),
@@ -262,10 +263,8 @@ mod tests {
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(100);
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         // db.storage::<Coins>()
@@ -324,10 +323,8 @@ mod tests {
             .clone()
             .into();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         let block = PartialFuelBlock {
@@ -404,10 +401,8 @@ mod tests {
             .clone()
             .into();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         let block = PartialFuelBlock {
@@ -531,10 +526,8 @@ mod tests {
             .transaction()
             .clone();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         let block = PartialFuelBlock {
@@ -829,10 +822,8 @@ mod tests {
             .transaction()
             .clone();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         let consensus_parameters = ConsensusParameters::default();
@@ -1028,10 +1019,8 @@ mod tests {
         let script_id = script.id(&ChainId::default());
 
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         let block = PartialFuelBlock {
@@ -1121,10 +1110,8 @@ mod tests {
         };
 
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let wasm_storage = WasmStorage {
-            cr: &GuestContextReader::DEFAULT,
-            am: &GuestAccountManager::DEFAULT,
-        };
+        let mut sdk = JournalState::empty(TestingContext::empty());
+        let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
         // fluent tests

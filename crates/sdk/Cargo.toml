@@ -6,15 +6,11 @@ edition = "2021"
 
 [dependencies]
 fluentbase-codec = { workspace = true, default-features = false }
-fluentbase-codec-derive = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
+fluentbase-types = { workspace = true, default-features = false, features = ["rwasm"] }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 fluentbase-genesis = { workspace = true, default-features = false, optional = true }
 fluentbase-sdk-derive = { workspace = true }
-byteorder = { workspace = true }
-revm-primitives = { workspace = true, default-features = false }
-alloy-rlp = { workspace = true }
-paste = { workspace = true }
+hashbrown = { workspace = true }
 
 [dev-dependencies]
 
@@ -24,9 +20,9 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["std"]
 std = [
+    "fluentbase-types/std",
     "fluentbase-codec/std",
     "dep:fluentbase-runtime",
     "dep:fluentbase-genesis",
-    "byteorder/std",
 ]
 e2e = []

@@ -30,6 +30,9 @@ macro_rules! forward_call_args {
     ($func:path, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty, $a8:ident :$t8:ty, $a9:ident :$t9:ty]) => {
         $func($caller, $a1, $a2, $a3, $a4, $a5, $a6, $a7, $a8, $a9)
     };
+    ($func:path, $caller:ident, [$a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty, $a8:ident :$t8:ty, $a9:ident :$t9:ty, $a10:ident :$t10:ty]) => {
+        $func($caller, $a1, $a2, $a3, $a4, $a5, $a6, $a7, $a8, $a9, $a10)
+    };
 }
 
 #[macro_export]
@@ -63,6 +66,9 @@ macro_rules! count_call_args {
     };
     ($a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty, $a8:ident :$t8:ty, $a9:ident :$t9:ty) => {
         9
+    };
+    ($a1:ident :$t1:ident, $a2:ident :$t2:ty, $a3:ident :$t3:ty, $a4:ident :$t4:ty, $a5:ident :$t5:ty, $a6:ident :$t6:ty, $a7:ident :$t7:ty, $a8:ident :$t8:ty, $a9:ident :$t9:ty, $a10:ident :$t10:ty) => {
+        10
     };
 }
 
@@ -103,14 +109,14 @@ macro_rules! impl_runtime_handler {
 
                 const FUNC_INDEX: fluentbase_types::SysFuncIdx = fluentbase_types::SysFuncIdx::$sys_func;
 
-                fn register_handler<DB: IJournaledTrie>(
-                    linker: &mut rwasm::Linker<RuntimeContext<DB>>,
-                    store: &mut rwasm::Store<RuntimeContext<DB>>,
+                fn register_handler(
+                    linker: &mut rwasm::Linker<RuntimeContext>,
+                    store: &mut rwasm::Store<RuntimeContext>,
                 ) {
                     use rwasm::AsContextMut;
                     let func = rwasm::Func::wrap(
                         store.as_context_mut(),
-                        |caller: Caller<'_, RuntimeContext<DB>>, $($t)*| -> Result<$out, rwasm::core::Trap> {
+                        |caller: Caller<'_, RuntimeContext>, $($t)*| -> Result<$out, rwasm::core::Trap> {
                             return $crate::forward_call_args! { Self::fn_handler, caller, [$($t)*] };
                         });
                     let wrapped_index = store.inner.wrap_stored(rwasm::engine::bytecode::FuncIdx::from(Self::FUNC_INDEX as u32));
