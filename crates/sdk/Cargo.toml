@@ -10,7 +10,7 @@ fluentbase-types = { workspace = true, default-features = false, features = ["rw
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 fluentbase-genesis = { workspace = true, default-features = false, optional = true }
 fluentbase-sdk-derive = { workspace = true }
-hashbrown = { workspace = true, default-features = false }
+hashbrown = { workspace = true }
 
 [dev-dependencies]
 
