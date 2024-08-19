@@ -30,7 +30,6 @@ use fluentbase_sdk::{
     NativeAPI,
     SharedContextInputV1,
     SovereignAPI,
-    SyscallAPI,
     SyscallInvocationParams,
     STATE_MAIN,
 };
