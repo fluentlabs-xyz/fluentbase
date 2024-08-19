@@ -70,7 +70,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
     pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
@@ -85,7 +84,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_latest_utxo(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -101,7 +99,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_state_data_update(&mut self, raw_key: &Bytes64, data: &[u8]) {
@@ -110,7 +107,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
@@ -126,7 +122,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -146,7 +141,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -162,14 +156,13 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             ContractsAssetsHelper::value_to_u256(value.try_into().expect("encoded value is valid"));
         self.sdk
             .write_storage(CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, slot, value);
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_assets_value(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot = ContractsAssetsHelper::new(raw_key).value_storage_slot();
         let (val, _is_cold) = self
             .sdk
-            .committed_storage(&CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, &slot);
+            .storage(&CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, &slot);
         if val == U256::ZERO {
             return None;
         }
@@ -184,7 +177,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(value));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -204,7 +196,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .into();
         self.sdk
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(value));
-        self.sdk.commit();
     }
 
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
@@ -219,14 +210,14 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         raw_key: &Bytes34,
     ) -> Option<CoinsOwnerWithBalanceHelper> {
         let ch = CoinsHelper::new(raw_key);
-        let (owner, _is_cold) = self.sdk.committed_storage(
+        let (owner, _is_cold) = self.sdk.storage(
             &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
             &ch.owner_storage_slot(),
         );
         if owner == U256::ZERO {
             return None;
         }
-        let (balance, _is_cold) = self.sdk.committed_storage(
+        let (balance, _is_cold) = self.sdk.storage(
             &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
             &ch.balance_storage_slot(),
         );
@@ -251,7 +242,6 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             CoinsHelper::new(raw_key).balance_storage_slot(),
             balance,
         );
-        self.sdk.commit();
     }
 }
 
