@@ -129,18 +129,12 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             .syscall_delegate_call(fuel_limit, address, input)
     }
 
-    fn static_call(
-        &mut self,
-        address: Address,
-        value: U256,
-        input: &[u8],
-        mut fuel_limit: u64,
-    ) -> (Bytes, i32) {
+    fn static_call(&mut self, address: Address, input: &[u8], mut fuel_limit: u64) -> (Bytes, i32) {
         if fuel_limit == 0 {
             fuel_limit = self.native_sdk.fuel();
         }
         self.native_sdk
-            .syscall_static_call(fuel_limit, address, value, input)
+            .syscall_static_call(fuel_limit, address, input)
     }
 
     fn destroy_account(&mut self, address: Address) {

@@ -1,18 +1,4 @@
 use crate::{
-    contracts::{
-        FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
-        FUEL_LIMIT_SYSCALL_EMIT_LOG,
-        FUEL_LIMIT_SYSCALL_STORAGE_READ,
-        FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
-        SYSCALL_ID_CALL,
-        SYSCALL_ID_CREATE,
-        SYSCALL_ID_DELEGATE_CALL,
-        SYSCALL_ID_DESTROY_ACCOUNT,
-        SYSCALL_ID_EMIT_LOG,
-        SYSCALL_ID_STATIC_CALL,
-        SYSCALL_ID_STORAGE_READ,
-        SYSCALL_ID_STORAGE_WRITE,
-    },
     Account,
     AccountStatus,
     Address,
@@ -22,7 +8,19 @@ use crate::{
     JournalCheckpoint,
     B256,
     F254,
+    FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
+    FUEL_LIMIT_SYSCALL_EMIT_LOG,
+    FUEL_LIMIT_SYSCALL_STORAGE_READ,
+    FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
     STATE_MAIN,
+    SYSCALL_ID_CALL,
+    SYSCALL_ID_CREATE,
+    SYSCALL_ID_DELEGATE_CALL,
+    SYSCALL_ID_DESTROY_ACCOUNT,
+    SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_STATIC_CALL,
+    SYSCALL_ID_STORAGE_READ,
+    SYSCALL_ID_STORAGE_WRITE,
     U256,
 };
 use alloc::{vec, vec::Vec};
@@ -261,13 +259,7 @@ pub trait SyscallAPI {
         value: U256,
         input: &[u8],
     ) -> (Bytes, i32);
-    fn syscall_static_call(
-        &self,
-        fuel_limit: u64,
-        target_address: Address,
-        value: U256,
-        input: &[u8],
-    ) -> (Bytes, i32);
+    fn syscall_static_call(&self, fuel_limit: u64, address: Address, input: &[u8]) -> (Bytes, i32);
     fn syscall_delegate_call(
         &self,
         fuel_limit: u64,
@@ -337,18 +329,9 @@ impl<T: NativeAPI> SyscallAPI for T {
         (self.return_data(), exit_code)
     }
 
-    fn syscall_static_call(
-        &self,
-        fuel_limit: u64,
-        target_address: Address,
-        value: U256,
-        input: &[u8],
-    ) -> (Bytes, i32) {
-        let mut buffer = vec![0u8; 20 + 32];
-        buffer[0..20].copy_from_slice(target_address.as_slice());
-        if !value.is_zero() {
-            buffer[20..52].copy_from_slice(value.as_le_slice());
-        }
+    fn syscall_static_call(&self, fuel_limit: u64, address: Address, input: &[u8]) -> (Bytes, i32) {
+        let mut buffer = vec![0u8; 20];
+        buffer[0..20].copy_from_slice(address.as_slice());
         buffer.extend_from_slice(input);
         let exit_code = self.exec(&SYSCALL_ID_STATIC_CALL, &buffer, fuel_limit, STATE_MAIN);
         (self.return_data(), exit_code)
@@ -506,13 +489,7 @@ pub trait SharedAPI {
         fuel_limit: u64,
     ) -> (Bytes, i32);
     fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
-    fn static_call(
-        &mut self,
-        address: Address,
-        value: U256,
-        input: &[u8],
-        fuel_limit: u64,
-    ) -> (Bytes, i32);
+    fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32);
     fn destroy_account(&mut self, address: Address);
 
     fn keccak256(&self, data: &[u8]) -> B256;
