@@ -262,7 +262,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
 
                 let raw_metadata = self.metadata(key);
 
-                Ok(raw_metadata.map(|v| v.to_vec()));
+                Ok(raw_metadata.map(|v| v.to_vec()))
             }
             Column::ContractsRawCode => {
                 // key -> ContractId
@@ -271,7 +271,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let raw_code = self.contracts_raw_code(&key);
 
-                Ok(raw_code.map(|v| v.to_vec()));
+                Ok(raw_code.map(|v| v.to_vec()))
             }
             Column::ContractsState => {
                 // key -> ContractsStateKey
@@ -280,7 +280,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let contract_state_key: Bytes64 = key.try_into().expect("64 bytes key");
                 let contracts_state_data = self.contracts_state_data(&contract_state_key);
 
-                Ok(contracts_state_data.map(|v| v.to_vec()));
+                Ok(contracts_state_data.map(|v| v.to_vec()))
             }
             Column::ContractsLatestUtxo => {
                 // key -> ContractId
@@ -289,7 +289,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let contract_id: Bytes32 = key.try_into().expect("32 bytes key");
                 let contracts_latest_utxo_data = self.contracts_latest_utxo(&contract_id);
 
-                Ok(contracts_latest_utxo_data.map(|v| v.to_vec()));
+                Ok(contracts_latest_utxo_data.map(|v| v.to_vec()))
             }
             Column::ContractsAssets => {
                 // key -> ContractsAssetKey
@@ -298,7 +298,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let contracts_assets_key: Bytes64 = key.try_into().expect("64 bytes key");
                 let value_data = self.contracts_assets_value(&contracts_assets_key);
 
-                Ok(value_data.map(|v| v.to_vec()));
+                Ok(value_data.map(|v| v.to_vec()))
             }
             Column::Coins => {
                 // key -> UtxoId
@@ -306,7 +306,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
 
                 let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
                 let Some(owner_with_balance) = self.coins_owner_with_balance(&utxo_id_key) else {
-                    Ok(None);
+                    return Ok(None);
                 };
                 let mut fuel_address = FuelAddress::new(*owner_with_balance.address());
                 let (account, _is_cold) = self.sdk.account(&fuel_address.fluent_address());
@@ -320,7 +320,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
 
                 let r =
                     postcard::to_allocvec(&compressed_coin).expect("compressed coin serialized");
-                Ok(Some(r));
+                Ok(Some(r))
             }
 
             Column::ContractsStateMerkleData => {
@@ -329,7 +329,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_state_merkle_data(&key);
 
-                Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()))
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
@@ -337,7 +337,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_state_merkle_metadata(&key);
 
-                Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()))
             }
 
             Column::ContractsAssetsMerkleData => {
@@ -346,7 +346,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_assets_merkle_data(&key);
 
-                Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()))
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
@@ -354,7 +354,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
                 let data = self.contracts_assets_merkle_metadata(&key);
 
-                Ok(data.map(|v| v.to_vec()));
+                Ok(data.map(|v| v.to_vec()))
             }
 
             Column::Transactions
