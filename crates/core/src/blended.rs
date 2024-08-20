@@ -33,7 +33,6 @@ use fluentbase_sdk::{
     SyscallInvocationParams,
     STATE_MAIN,
 };
-use fuel_core_types::fuel_crypto::coins_bip32::prelude::k256::pkcs8::der::Encode;
 use revm_interpreter::{
     CallInputs,
     CallOutcome,

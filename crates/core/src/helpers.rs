@@ -1,11 +1,5 @@
 use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use fluentbase_sdk::{
-    create_sovereign_import_linker,
-    ExitCode,
-    SysFuncIdx::STATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use fluentbase_sdk::{create_import_linker, ExitCode, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use revm_interpreter::InstructionResult;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -24,7 +18,7 @@ pub fn wasm2rwasm(wasm_binary: &[u8]) -> Result<Vec<u8>, ExitCode> {
             opcode: Instruction::Call((STATE as u32).into()),
         }),
         entrypoint_name: None,
-        import_linker: Some(create_sovereign_import_linker()),
+        import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
     });
     let rwasm_module = RwasmModule::compile_with_config(wasm_binary, &config)

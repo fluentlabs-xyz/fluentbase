@@ -1,7 +1,7 @@
 use fluentbase_codec::{BufferDecoder, Encoder};
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
-    create_sovereign_import_linker,
+    create_import_linker,
     ExitCode,
     SharedContextInputV1,
     SysFuncIdx::STATE,
@@ -56,7 +56,7 @@ pub fn rwasm_module(wasm_binary: &[u8]) -> Result<RwasmModule, Error> {
             opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
-        import_linker: Some(create_sovereign_import_linker()),
+        import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
     });
     RwasmModule::compile_with_config(wasm_binary, &config)
