@@ -46,7 +46,7 @@ use revm_interpreter::{
 use revm_primitives::{
     CreateScheme,
     Env,
-    MAX_CALL_STACK_LIMIT,
+    // MAX_CALL_STACK_LIMIT,
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
