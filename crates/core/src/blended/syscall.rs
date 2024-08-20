@@ -8,6 +8,7 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     B256,
+    STATE_MAIN,
     U256,
 };
 use revm_interpreter::{
@@ -17,6 +18,7 @@ use revm_interpreter::{
     CallScheme,
     CallValue,
     CreateInputs,
+    SelfDestructResult,
 };
 use revm_primitives::{CreateScheme, SpecId};
 
@@ -121,6 +123,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 is_static,
                 is_eof: false,
             }),
+            STATE_MAIN,
             call_depth + 1,
         );
 
@@ -133,12 +136,6 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
-        debug_assert_eq!(
-            Address::len_bytes(),
-            20,
-            "address len doesn't match 20 bytes"
-        );
-
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
         if params.input.len() < 20 {
@@ -155,13 +152,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 return_memory_offset: Default::default(),
                 gas_limit: params.fuel_limit,
                 bytecode_address: target_address,
-                target_address,
-                caller: context.address,
-                value: CallValue::Apparent(context.value.max(context.apparent_value)),
+                target_address: context.address,
+                caller: context.caller,
+                value: CallValue::Apparent(context.value),
                 scheme: CallScheme::DelegateCall,
                 is_static: false,
                 is_eof: false,
             }),
+            params.state,
             call_depth + 1,
         );
 
@@ -207,27 +205,32 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         NextAction::ExecutionResult(Bytes::default(), gas_cost, ExitCode::Ok.into_i32())
     }
 
-    pub(crate) fn syscall_evm_exec(
+    pub(crate) fn syscall_destroy_account(
         &mut self,
-        _context: &ContractContext,
-        _params: SyscallInvocationParams,
+        context: &ContractContext,
+        params: SyscallInvocationParams,
     ) -> NextAction {
-        // let mut buffer_decoder = BufferDecoder::new(params.input.as_ref());
-        // let mut context2 = SharedContextInputV1::default();
-        // SharedContextInputV1::decode_header(&mut buffer_decoder, 0, &mut context2);
-        // let result = EvmLoader::new(self.sdk).call(
-        //     context2.contract.caller,
-        //     context2.contract.address,
-        //     context2.contract.value.max(context.apparent_value),
-        //     Bytes::copy_from_slice(&params.input[SharedContextInputV1::HEADER_SIZE..]),
-        //     params.fuel_limit,
-        // );
-        // NextAction::ExecutionResult(
-        //     result.output,
-        //     result.gas.remaining(),
-        //     exit_code_from_evm_error(result.result).into_i32(),
-        // )
-        todo!()
+        // make sure input is 32 bytes len, and we have enough gas to pay for the call
+        if params.input.len() != 20 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        let result = self
+            .sdk
+            .destroy_account(&context.address, &Address::from_slice(&params.input[0..20]));
+
+        let gas_cost = gas::selfdestruct_cost(
+            SpecId::CANCUN,
+            SelfDestructResult {
+                had_value: result.had_value,
+                target_exists: result.target_exists,
+                is_cold: result.is_cold,
+                previously_destroyed: result.previously_destroyed,
+            },
+        );
+
+        // return value as bytes with success exit code
+        NextAction::ExecutionResult(Bytes::default(), gas_cost, ExitCode::Ok.into_i32())
     }
 
     pub(crate) fn syscall_create(

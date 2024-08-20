@@ -22,6 +22,7 @@ use fluentbase_types::{
     SovereignStateResult,
     TxContext,
     F254,
+    STATE_MAIN,
 };
 use hashbrown::{hash_map::Entry, HashMap};
 
@@ -62,8 +63,8 @@ pub struct JournalStateBuilder {
     accounts: Option<HashMap<Address, Account>>,
     storage: Option<HashMap<(Address, U256), U256>>,
     preimages: Option<HashMap<B256, (Bytes, u32)>>,
-    block_context: Option<BlockContext>,
-    tx_context: Option<TxContext>,
+    block_context: BlockContext,
+    tx_context: TxContext,
     contract_context: Option<ContractContext>,
 }
 
@@ -73,7 +74,7 @@ impl JournalStateBuilder {
             storage: self.storage.unwrap_or_default(),
             accounts: self.accounts.unwrap_or_default(),
             dirty_state: Default::default(),
-            preimages: self.preimages.unwrap(),
+            preimages: self.preimages.unwrap_or_default(),
             logs: vec![],
             journal: vec![],
             native_sdk,
@@ -179,7 +180,7 @@ impl JournalStateBuilder {
     }
 
     pub fn add_block_context(&mut self, block_context: BlockContext) {
-        self.block_context.replace(block_context);
+        self.block_context = block_context;
     }
 
     pub fn with_tx_context(mut self, tx_context: TxContext) -> Self {
@@ -188,7 +189,7 @@ impl JournalStateBuilder {
     }
 
     pub fn add_tx_context(&mut self, tx_context: TxContext) {
-        self.tx_context.replace(tx_context);
+        self.tx_context = tx_context;
     }
 
     pub fn with_contract_context(mut self, contract_context: ContractContext) -> Self {
@@ -213,8 +214,8 @@ pub struct JournalState<API: NativeAPI> {
     native_sdk: API,
     transient_storage: HashMap<(Address, U256), U256>,
     // block/tx/contract contexts
-    block_context: Option<BlockContext>,
-    tx_context: Option<TxContext>,
+    block_context: BlockContext,
+    tx_context: TxContext,
     contract_context: Option<ContractContext>,
 }
 
@@ -244,7 +245,7 @@ impl<API: NativeAPI> JournalState<API> {
     }
 
     pub fn rewrite_tx_context(&mut self, tx_context: TxContext) {
-        self.tx_context = Some(tx_context);
+        self.tx_context = tx_context;
     }
 
     pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
@@ -258,11 +259,11 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
     }
 
     fn block_context(&self) -> &BlockContext {
-        self.block_context.as_ref().unwrap()
+        &self.block_context
     }
 
     fn tx_context(&self) -> &TxContext {
-        self.tx_context.as_ref().unwrap()
+        &self.tx_context
     }
 
     fn contract_context(&self) -> Option<&ContractContext> {
@@ -473,16 +474,12 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
 }
 
 impl<API: NativeAPI> SharedAPI for JournalState<API> {
-    fn native_sdk(&self) -> &impl NativeAPI {
-        &self.native_sdk
-    }
-
     fn block_context(&self) -> &BlockContext {
-        self.block_context.as_ref().unwrap()
+        &self.block_context
     }
 
     fn tx_context(&self) -> &TxContext {
-        self.tx_context.as_ref().unwrap()
+        &self.tx_context
     }
 
     fn contract_context(&self) -> &ContractContext {
@@ -506,6 +503,10 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn input_size(&self) -> u32 {
         self.native_sdk.input_size()
+    }
+
+    fn fuel(&self) -> u64 {
+        self.native_sdk.fuel()
     }
 
     fn write(&mut self, output: &[u8]) {
@@ -545,6 +546,24 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         _input: &[u8],
         _fuel_limit: u64,
     ) -> (Bytes, i32) {
+        todo!()
+    }
+
+    fn static_call(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: u64,
+    ) -> (Bytes, i32) {
+        let (account, _) = self.account(&address);
+        let exit_code =
+            self.native_sdk
+                .exec(&account.rwasm_code_hash, input, fuel_limit, STATE_MAIN);
+        (self.native_sdk.return_data(), exit_code)
+    }
+
+    fn destroy_account(&mut self, address: Address) {
         todo!()
     }
 

@@ -1,6 +1,6 @@
-use crate::{debug_log, fvm::types::WasmStorage, helpers_fvm::fvm_transact_commit};
+use crate::{fvm::types::WasmStorage, helpers_fvm::fvm_transact_commit};
 use alloc::vec::Vec;
-use fluentbase_sdk::{NativeAPI, SovereignAPI};
+use fluentbase_sdk::SovereignAPI;
 use fuel_core_executor::executor::ExecutionData;
 use fuel_core_storage::transactional::Changes;
 use fuel_core_types::{
@@ -26,7 +26,7 @@ where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
 {
-    debug_log!(sdk, "ecl(_fvm_transact_inner): start");
+    // debug_log!(sdk, "ecl(_fvm_transact_inner): start");
 
     let mut storage = WasmStorage { sdk };
 

@@ -4,6 +4,7 @@ mod util;
 mod wasm;
 
 use crate::{
+    blended::util::ENABLE_EVM_PROXY_CONTRACT,
     helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
     types::{Frame, NextAction},
 };
@@ -15,6 +16,7 @@ use fluentbase_sdk::{
         SYSCALL_ID_CALL,
         SYSCALL_ID_CREATE,
         SYSCALL_ID_DELEGATE_CALL,
+        SYSCALL_ID_DESTROY_ACCOUNT,
         SYSCALL_ID_EMIT_LOG,
         SYSCALL_ID_STATIC_CALL,
         SYSCALL_ID_STORAGE_READ,
@@ -94,12 +96,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         if return_call_id > 0 {
             // only main state can be forwarded to the other contract as a nested call,
             // other states can be only used by root
-            if params.state != STATE_MAIN {
-                return NextAction::from_exit_code(
-                    params.fuel_limit,
-                    ExitCode::MalformedSyscallParams,
-                );
-            }
+            // if params.state != STATE_MAIN {
+            //     return NextAction::from_exit_code(
+            //         params.fuel_limit,
+            //         ExitCode::MalformedSyscallParams,
+            //     );
+            // }
             // check code hashes for system calls
             match params.code_hash {
                 SYSCALL_ID_STORAGE_READ => {
@@ -121,6 +123,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     return self.syscall_create(contract_context, params, call_depth)
                 }
                 SYSCALL_ID_EMIT_LOG => return self.syscall_emit_log(contract_context, params),
+                SYSCALL_ID_DESTROY_ACCOUNT => {
+                    return self.syscall_destroy_account(contract_context, params)
+                }
                 _ => {}
             }
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
@@ -140,7 +145,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-        .encode_to_vec(0);
+            .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -169,7 +174,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     fn exec_rwasm_bytecode(
         &mut self,
         context: ContractContext,
-        account: &Account,
+        bytecode_account: &Account,
         input: &[u8],
         gas: &mut Gas,
         state: u32,
@@ -177,7 +182,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     ) -> (Bytes, i32) {
         let mut call_stack: Vec<Frame> = vec![Frame::Execute(
             SyscallInvocationParams {
-                code_hash: account.rwasm_code_hash,
+                code_hash: bytecode_account.rwasm_code_hash,
                 input: Bytes::copy_from_slice(input),
                 fuel_limit: gas.remaining(),
                 state,
@@ -259,10 +264,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-                BytecodeType::EVM => MAX_INITCODE_SIZE,
-                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-                BytecodeType::FVM => MAX_INITCODE_SIZE,
-            }
+            BytecodeType::EVM => MAX_INITCODE_SIZE,
+            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+            BytecodeType::FVM => MAX_INITCODE_SIZE,
+        }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
@@ -287,7 +292,16 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let result = match bytecode_type {
             BytecodeType::EVM => {
-                self.deploy_evm_contract(contract_account.address, inputs, gas, call_depth)
+                if ENABLE_EVM_PROXY_CONTRACT {
+                    self.deploy_evm_contract_proxy(
+                        contract_account.address,
+                        inputs,
+                        gas,
+                        call_depth,
+                    )
+                } else {
+                    self.deploy_evm_contract(contract_account.address, inputs, gas, call_depth)
+                }
             }
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
@@ -309,14 +323,19 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         self.create_inner(create_inputs, 0)
     }
 
-    fn call_inner(&mut self, inputs: Box<CallInputs>, depth: u32) -> (Bytes, Gas, i32) {
+    fn call_inner(
+        &mut self,
+        inputs: Box<CallInputs>,
+        state: u32,
+        call_depth: u32,
+    ) -> (Bytes, Gas, i32) {
         let return_error = |gas: Gas, exit_code: ExitCode| -> (Bytes, Gas, i32) {
             (Bytes::default(), gas, exit_code.into_i32())
         };
         let mut gas = Gas::new(inputs.gas_limit);
 
         // call depth check
-        if depth > MAX_CALL_STACK_LIMIT {
+        if call_depth > MAX_CALL_STACK_LIMIT {
             return return_error(gas, ExitCode::CallDepthOverflow);
         }
 
@@ -374,7 +393,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         let (bytecode_account, _) = self.sdk.account(&inputs.bytecode_address);
-        let (output, exit_code) = if bytecode_account.source_code_size > 0 {
+        let (output, exit_code) = if !ENABLE_EVM_PROXY_CONTRACT
+            && bytecode_account.source_code_size > 0
+        {
             // take right bytecode depending on context params
             let (evm_bytecode, code_hash) = self.load_evm_bytecode(&inputs.bytecode_address);
 
@@ -397,28 +418,25 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 call_value,
                 caller: caller_account.address,
             };
-            let result = self.exec_evm_bytecode(contract, gas, inputs.is_static, depth);
+            let result = self.exec_evm_bytecode(contract, gas, inputs.is_static, call_depth);
             gas = result.gas;
             (
                 result.output,
                 exit_code_from_evm_error(result.result).into_i32(),
             )
         } else {
-            let (account, _) = self.sdk.account(&inputs.target_address);
             let contract_context = ContractContext {
                 address: inputs.target_address,
-                bytecode_address: inputs.target_address,
                 caller: inputs.caller,
-                value: inputs.value.transfer().unwrap_or_default(),
-                apparent_value: inputs.value.apparent().unwrap_or_default(),
+                value: inputs.value.get(),
             };
             self.exec_rwasm_bytecode(
                 contract_context,
-                &account,
+                &bytecode_account,
                 inputs.input.as_ref(),
                 &mut gas,
-                STATE_MAIN,
-                depth,
+                state,
+                call_depth,
             )
         };
 
@@ -432,7 +450,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     }
 
     pub fn call(&mut self, inputs: Box<CallInputs>) -> CallOutcome {
-        let (output, gas, exit_code) = self.call_inner(inputs, 0);
+        let (output, gas, exit_code) = self.call_inner(inputs, STATE_MAIN, 0);
         let result = InterpreterResult {
             result: evm_error_from_exit_code(ExitCode::from(exit_code)),
             output,

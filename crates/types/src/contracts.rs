@@ -54,5 +54,10 @@ pub const SYSCALL_ID_CREATE: B256 =
     b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
 pub const SYSCALL_ID_EMIT_LOG: B256 =
     b256!("505be4983de61b5ab79cdc8164e4db895c4f9548cee794e1e0bccec1dc0b751d"); // keccak256("_syscall_emit_log")
-pub const SYSCALL_ID_EVM_EXEC: B256 =
-    b256!("9568242525c1e6143bd36ab9e14e3b3d5a62259ecb464ac541ca22b0d8995486"); // keccak256("_syscall_evm_exec")
+pub const SYSCALL_ID_DESTROY_ACCOUNT: B256 =
+    b256!("288b6990f686aff01fe73bc8be3738b4669f5cab8c40076fac1d0abc9c8883d8"); // keccak256("_syscall_destroy_account")
+
+pub const FUEL_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
+pub const FUEL_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
+pub const FUEL_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
+pub const FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
