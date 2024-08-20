@@ -12,16 +12,6 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_sdk::{
     codec::Encoder,
-    contracts::{
-        SYSCALL_ID_CALL,
-        SYSCALL_ID_CREATE,
-        SYSCALL_ID_DELEGATE_CALL,
-        SYSCALL_ID_DESTROY_ACCOUNT,
-        SYSCALL_ID_EMIT_LOG,
-        SYSCALL_ID_STATIC_CALL,
-        SYSCALL_ID_STORAGE_READ,
-        SYSCALL_ID_STORAGE_WRITE,
-    },
     env_from_context,
     Account,
     AccountStatus,
@@ -34,6 +24,14 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     STATE_MAIN,
+    SYSCALL_ID_CALL,
+    SYSCALL_ID_CREATE,
+    SYSCALL_ID_DELEGATE_CALL,
+    SYSCALL_ID_DESTROY_ACCOUNT,
+    SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_STATIC_CALL,
+    SYSCALL_ID_STORAGE_READ,
+    SYSCALL_ID_STORAGE_WRITE,
 };
 use revm_interpreter::{
     CallInputs,
@@ -110,11 +108,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 SYSCALL_ID_STORAGE_WRITE => {
                     return self.syscall_storage_write(contract_context, params)
                 }
-                SYSCALL_ID_CALL => {
-                    return self.syscall_call(contract_context, params, call_depth, false)
-                }
+                SYSCALL_ID_CALL => return self.syscall_call(contract_context, params, call_depth),
                 SYSCALL_ID_STATIC_CALL => {
-                    return self.syscall_call(contract_context, params, call_depth, true)
+                    return self.syscall_static_call(contract_context, params, call_depth)
                 }
                 SYSCALL_ID_DELEGATE_CALL => {
                     return self.syscall_delegate_call(contract_context, params, call_depth)
@@ -145,7 +141,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-            .encode_to_vec(0);
+        .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -264,10 +260,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-            BytecodeType::EVM => MAX_INITCODE_SIZE,
-            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-            BytecodeType::FVM => MAX_INITCODE_SIZE,
-        }
+                BytecodeType::EVM => MAX_INITCODE_SIZE,
+                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+                BytecodeType::FVM => MAX_INITCODE_SIZE,
+            }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }

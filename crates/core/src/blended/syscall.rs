@@ -96,7 +96,6 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
         call_depth: u32,
-        is_static: bool,
     ) -> NextAction {
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
@@ -120,7 +119,44 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 caller: context.address,
                 value: CallValue::Transfer(value),
                 scheme: CallScheme::Call,
-                is_static,
+                is_static: false,
+                is_eof: false,
+            }),
+            STATE_MAIN,
+            call_depth + 1,
+        );
+
+        NextAction::ExecutionResult(output, params.fuel_limit - gas.remaining(), exit_code)
+    }
+
+    pub(crate) fn syscall_static_call(
+        &mut self,
+        context: &ContractContext,
+        params: SyscallInvocationParams,
+        call_depth: u32,
+    ) -> NextAction {
+        // make sure we have enough bytes inside input params, where:
+        // - 20 bytes for the target address
+        // - 32 bytes for the call value
+        if params.input.len() < 20 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        let target_address = Address::from_slice(&params.input[0..20]);
+        let contract_input = Bytes::copy_from_slice(&params.input[20..]);
+
+        // execute a nested call to another binary
+        let (output, gas, exit_code) = self.call_inner(
+            Box::new(CallInputs {
+                input: contract_input,
+                return_memory_offset: Default::default(),
+                gas_limit: params.fuel_limit,
+                bytecode_address: target_address,
+                target_address,
+                caller: context.address,
+                value: CallValue::Transfer(U256::ZERO),
+                scheme: CallScheme::StaticCall,
+                is_static: true,
                 is_eof: false,
             }),
             STATE_MAIN,

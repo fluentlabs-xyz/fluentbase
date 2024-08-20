@@ -1,11 +1,12 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     codec::Encoder,
-    contracts::{PRECOMPILE_EVM, SYSCALL_ID_DELEGATE_CALL},
     Address,
     Bytes,
     SharedContextInputV1,
     SysFuncIdx,
+    PRECOMPILE_EVM,
+    SYSCALL_ID_DELEGATE_CALL,
 };
 use rwasm::{
     instruction_set,

@@ -244,7 +244,6 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                         ),
                         CallScheme::StaticCall => self.sdk.static_call(
                             inputs.target_address,
-                            inputs.value.transfer().unwrap_or_default(),
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),

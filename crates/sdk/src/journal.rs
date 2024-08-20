@@ -549,13 +549,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         todo!()
     }
 
-    fn static_call(
-        &mut self,
-        address: Address,
-        value: U256,
-        input: &[u8],
-        fuel_limit: u64,
-    ) -> (Bytes, i32) {
+    fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
         let (account, _) = self.account(&address);
         let exit_code =
             self.native_sdk
