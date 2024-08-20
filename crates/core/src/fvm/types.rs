@@ -6,7 +6,7 @@ use crate::fvm::helpers::{
     ContractsRawCodeHelper,
     ContractsStateHelper,
     FuelAddress,
-    MetadataHelper,
+    StorageChunksWriter,
 };
 use alloc::{vec, vec::Vec};
 use core::hash::Hash;
@@ -37,7 +37,11 @@ use fuel_core_types::{
     fuel_tx::{AssetId, ContractId},
     services::relayer::Event,
 };
-use revm_primitives::{bitvec::macros::internal::funty::Fundamental, hex};
+use revm_primitives::{
+    alloy_primitives::private::serde::de::IntoDeserializer,
+    bitvec::macros::internal::funty::Fundamental,
+    hex,
+};
 
 pub struct WasmRelayer;
 
@@ -55,28 +59,40 @@ pub const UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS: Address =
     Address::new(hex!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"));
 pub const CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS: Address =
     Address::new(hex!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc"));
+pub const CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS: Address =
+    Address::new(hex!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5"));
+pub const CONTRACTS_STATE_DATA_STORAGE_ADDRESS: Address =
+    Address::new(hex!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d"));
+pub const CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS: Address =
+    Address::new(hex!("1a456cdbe1c54e7a774dd89d659c128d56dba51d"));
+pub const CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS: Address =
+    Address::new(hex!("727d22651ab98fcf20fa7bdd646e71102c6ac47b"));
+pub const CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS: Address =
+    Address::new(hex!("037e25b327c1a5acc4a98e8e2e8d16066119eeed"));
+pub const CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS: Address =
+    Address::new(hex!("f96178848125f6d39487bd426a42adf7129ba924"));
+
+const CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN: usize = 44;
+const CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
+const CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN: usize = 33;
+const CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
+const CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN: usize = 33;
 
 pub struct WasmStorage<'a, SDK: SovereignAPI> {
     pub sdk: &'a mut SDK,
 }
 
 impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
-    pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<Bytes> {
-        let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
-    }
-
-    pub(crate) fn metadata_update(&mut self, raw_key: &[u8], data: &[u8]) {
-        let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-    }
-    pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
-            .value_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
-    }
+    // pub(crate) fn metadata_update(&mut self, raw_key: &[u8], data: &[u8]) {
+    //     let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
+    //     self.sdk
+    //         .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
+    // }
+    //
+    // pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<Bytes> {
+    //     let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
+    //     self.sdk.preimage(&key).filter(|v| !v.is_empty())
+    // }
 
     pub(crate) fn contracts_raw_code_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
         let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
@@ -86,68 +102,75 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
     }
 
-    pub(crate) fn contracts_latest_utxo(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsLatestUtxoHelper::new(&ContractId::new(*raw_key))
+    pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
             .value_preimage_key()
             .into();
         self.sdk.preimage(&key).filter(|v| !v.is_empty())
     }
 
-    pub(crate) fn contracts_latest_utxo_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
-        let key: B256 = ContractsLatestUtxoHelper::new(&ContractId::new(*raw_key))
-            .value_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-    }
-
-    pub(crate) fn contracts_state_data_update(&mut self, raw_key: &Bytes64, data: &[u8]) {
-        let key: B256 = ContractsStateHelper::new(raw_key)
-            .value_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-    }
-
-    pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
-        let key: B256 = ContractsStateHelper::new(raw_key)
-            .value_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
-    }
-
-    pub(crate) fn contracts_state_merkle_data_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
-        let key: B256 = ContractsStateHelper::new_transformed(raw_key)
-            .merkle_data_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
-    }
-
-    pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsStateHelper::new_transformed(raw_key)
-            .merkle_data_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
-    }
-
-    pub(crate) fn contracts_state_merkle_metadata_update(
+    pub(crate) fn contracts_latest_utxo_update(
         &mut self,
         raw_key: &Bytes32,
         data: &[u8],
-    ) {
-        let key: B256 = ContractsStateHelper::new_transformed(raw_key)
-            .merkle_metadata_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN,
+            anyhow::Error::msg("ContractsLatestUtxo data len must be <= 44")
+        );
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
+        storage_chunks.write_data_in_padded_chunks(
+            self.sdk,
+            &helper,
+            data,
+            (CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN / 32) as u32,
+            true,
+        );
+        Ok(())
     }
 
-    pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsStateHelper::new_transformed(raw_key)
-            .merkle_metadata_preimage_key()
+    pub(crate) fn contracts_latest_utxo(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        const CAPACITY: usize = ((CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
+            return None;
+        }
+        Some(res.into())
+    }
+
+    pub(crate) fn contracts_state_data_update(&mut self, raw_key: &Bytes64, value: Bytes32) {
+        let slot: U256 = ContractsStateHelper::new(raw_key)
+            .value_storage_slot()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk.write_storage(
+            CONTRACTS_STATE_DATA_STORAGE_ADDRESS,
+            slot,
+            U256::from_be_bytes(value),
+        );
+    }
+
+    pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
+        let slot: U256 = ContractsStateHelper::new(raw_key)
+            .value_storage_slot()
+            .into();
+        let (v, _) = self
+            .sdk
+            .storage(&CONTRACTS_STATE_DATA_STORAGE_ADDRESS, &slot);
+        if v == U256::ZERO {
+            return None;
+        }
+        Some(v.to_be_bytes_vec().into())
     }
 
     pub(crate) fn contracts_assets_value_update(&mut self, raw_key: &Bytes64, value: &[u8]) {
@@ -171,38 +194,146 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         ))
     }
 
-    pub(crate) fn contracts_assets_merkle_data_update(&mut self, raw_key: &Bytes32, value: &[u8]) {
-        let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
-            .merkle_data_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(value));
+    pub(crate) fn contracts_state_merkle_data_update(
+        &mut self,
+        raw_key: &Bytes32,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN,
+            anyhow::Error::msg("merkle_data encoded len must be <= 66")
+        );
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsStateHelper::new_transformed(raw_key);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        Ok(())
+    }
+
+    pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsStateHelper::new_transformed(raw_key);
+        const CAPACITY: usize = ((CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
+            return None;
+        }
+        Some(res.into())
+    }
+
+    pub(crate) fn contracts_state_merkle_metadata_update(
+        &mut self,
+        raw_key: &Bytes32,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN,
+            anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
+        );
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsStateHelper::new_transformed(raw_key);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        Ok(())
+    }
+
+    pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsStateHelper::new_transformed(raw_key);
+        const CAPACITY: usize =
+            ((CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
+            return None;
+        }
+        Some(res.into())
+    }
+
+    pub(crate) fn contracts_assets_merkle_data_update(
+        &mut self,
+        raw_key: &Bytes32,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN,
+            anyhow::Error::msg("merkle_data encoded len must be <= 66")
+        );
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        Ok(())
     }
 
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
-            .merkle_data_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
+        const CAPACITY: usize = ((CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
+            return None;
+        }
+        Some(res.into())
     }
 
     pub(crate) fn contracts_assets_merkle_metadata_update(
         &mut self,
         raw_key: &Bytes32,
-        value: &[u8],
-    ) {
-        let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
-            .merkle_metadata_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(value));
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN,
+            anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
+        );
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        Ok(())
     }
 
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
-            .merkle_metadata_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
+        const CAPACITY: usize =
+            ((CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
+            return None;
+        }
+        Some(res.into())
     }
 
     pub(crate) fn coins_owner_with_balance(
@@ -256,14 +387,14 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
         assert!(key.len() > 0, "key len greater 0");
 
         match column {
-            Column::Metadata => {
-                // key -> [u8]
-                // value -> [u8]
-
-                let raw_metadata = self.metadata(key);
-
-                Ok(raw_metadata.map(|v| v.to_vec()))
-            }
+            // Column::Metadata => {
+            //     // key -> [u8]
+            //     // value -> [u8]
+            //
+            //     let raw_metadata = self.metadata(key);
+            //
+            //     Ok(raw_metadata.map(|v| v.to_vec()))
+            // }
             Column::ContractsRawCode => {
                 // key -> ContractId
                 // value -> [u8]
@@ -280,7 +411,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let contract_state_key: Bytes64 = key.try_into().expect("64 bytes key");
                 let contracts_state_data = self.contracts_state_data(&contract_state_key);
 
-                Ok(contracts_state_data.map(|v| v.to_vec()))
+                Ok(contracts_state_data.map(|v| v.into()))
             }
             Column::ContractsLatestUtxo => {
                 // key -> ContractId
@@ -357,17 +488,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 Ok(data.map(|v| v.to_vec()))
             }
 
-            Column::Transactions
-            | Column::FuelBlocks
-            | Column::FuelBlockMerkleData
-            | Column::FuelBlockMerkleMetadata
-            | Column::Messages
-            | Column::ProcessedTransactions
-            | Column::FuelBlockConsensus
-            | Column::ConsensusParametersVersions
-            | Column::StateTransitionBytecodeVersions
-            | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {
+            _ => {
                 panic!(
                     "unsupported column referenced '{:?}' while getting data from storage",
                     &column
@@ -380,12 +501,12 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
 impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
     fn write(&mut self, key: &[u8], column: Self::Column, buf: &[u8]) -> StorageResult<usize> {
         match column {
-            Column::Metadata => {
-                // key -> [u8]
-                // value -> [u8]
-
-                self.metadata_update(&key, buf);
-            }
+            // Column::Metadata => {
+            //     // key -> [u8]
+            //     // value -> [u8]
+            //
+            //     self.metadata_update(&key, buf);
+            // }
             Column::ContractsRawCode => {
                 // key -> ContractId
                 // value -> [u8]
@@ -398,14 +519,18 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 // value -> [u8]
 
                 let key: Bytes64 = key.try_into().expect("64 bytes key");
-                self.contracts_state_data_update(&key, buf);
+                let value: Bytes32 = buf.try_into().expect("32 bytes value");
+                self.contracts_state_data_update(&key, value);
             }
             Column::ContractsLatestUtxo => {
                 // key -> ContractId
                 // value -> ContractUtxoInfo
 
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
-                self.contracts_latest_utxo_update(&key, buf);
+                assert!(
+                    self.contracts_latest_utxo_update(&key, buf).is_ok(),
+                    "contracts_latest_utxo update must succeed"
+                );
             }
             Column::ContractsAssets => {
                 // key -> ContractsAssetKey
@@ -506,17 +631,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 self.contracts_assets_merkle_metadata_update(&key, buf);
             }
 
-            Column::Transactions
-            | Column::FuelBlocks
-            | Column::FuelBlockMerkleData
-            | Column::FuelBlockMerkleMetadata
-            | Column::Messages
-            | Column::ProcessedTransactions
-            | Column::FuelBlockConsensus
-            | Column::ConsensusParametersVersions
-            | Column::StateTransitionBytecodeVersions
-            | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {
+            _ => {
                 // panic!(
                 //     "unsupported column referenced '{:?}' while writing data",
                 //     &column
@@ -529,8 +644,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
 
     fn delete(&mut self, key: &[u8], column: Self::Column) -> StorageResult<()> {
         match column {
-            Column::Metadata
-            | Column::ContractsRawCode
+            Column::ContractsRawCode
             | Column::ContractsState
             | Column::ContractsLatestUtxo
             | Column::ContractsAssets
@@ -542,17 +656,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 self.write(key, column, &[])?;
             }
 
-            Column::Transactions
-            | Column::FuelBlocks
-            | Column::FuelBlockMerkleData
-            | Column::FuelBlockMerkleMetadata
-            | Column::Messages
-            | Column::ProcessedTransactions
-            | Column::FuelBlockConsensus
-            | Column::ConsensusParametersVersions
-            | Column::StateTransitionBytecodeVersions
-            | Column::UploadedBytecodes
-            | Column::GenesisMetadata => {
+            _ => {
                 panic!(
                     "unsupported column referenced '{:?}' while deleting data",
                     &column
@@ -582,36 +686,22 @@ impl<'a, SDK: SovereignAPI> Modifiable for WasmStorage<'a, SDK> {
     }
 }
 
-// impl<'a, CR: ContextReader, AM: AccountManager, Type: Mappable> StorageInspect<Type>
-//     for WasmStorage<'a, CR, AM>
-// {
-//     type Error = ();
-//
-//     fn get(&self, key: &Type::Key) -> Result<Option<Cow<Type::OwnedValue>>, Self::Error> {
-//         // TODO
-//         Ok(None)
-//     }
-//
-//     fn contains_key(&self, key: &Type::Key) -> Result<bool, Self::Error> {
-//         // TODO
-//         Ok(false)
-//     }
-// }
-//
-// impl<'a, CR: ContextReader, AM: AccountManager, Type: Mappable> StorageMutate<Type>
-//     for WasmStorage<'a, CR, AM>
-// {
-//     fn replace(
-//         &mut self,
-//         key: &Type::Key,
-//         value: &Type::Value,
-//     ) -> Result<Option<Type::OwnedValue>, Self::Error> {
-//         // TODO
-//         Ok(None)
-//     }
-//
-//     fn take(&mut self, key: &Type::Key) -> Result<Option<Type::OwnedValue>, Self::Error> {
-//         // TODO
-//         Ok(None)
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use fuel_core::txpool::types::TxId;
+    use fuel_core_types::{
+        entities::contract::{ContractUtxoInfo, ContractUtxoInfoV1},
+        fuel_tx::{TxPointer, UtxoId},
+        fuel_types::BlockHeight,
+    };
+
+    #[test]
+    fn max_sizes_encoded() {
+        let v = ContractUtxoInfo::V1(ContractUtxoInfoV1 {
+            utxo_id: UtxoId::new(TxId::new([0xffu8; 32]), u16::MAX),
+            tx_pointer: TxPointer::new(BlockHeight::new(u32::MAX), u16::MAX),
+        });
+        let res = postcard::to_allocvec(&v).unwrap();
+        assert_eq!(44, res.len());
+    }
+}

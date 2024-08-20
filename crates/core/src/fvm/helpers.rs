@@ -1,6 +1,7 @@
 use alloc::vec;
+use alloy_rlp::{bytes::buf::Writer, BufMut};
 use core::{mem::size_of, ops::Deref, str::FromStr};
-use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SharedAPI, SovereignAPI, B256, U256};
+use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SovereignAPI, B256, U256};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
     fuel_tx::{
@@ -26,6 +27,7 @@ use fuel_core_types::{
     fuel_types::{canonical::Deserialize, ChainId},
     fuel_vm::ContractsStateKey,
 };
+use phantom_type::PhantomType;
 
 pub const TESTNET_BASE_ASSET_ID: &str =
     "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
@@ -105,7 +107,7 @@ pub trait PreimageKey {
     }
 }
 
-pub trait StorageSlot {
+pub trait StorageSlotPure {
     const COLUMN: Column;
 
     fn storage_slot(hash: &Bytes32, slot: u32) -> IndexedHash {
@@ -116,6 +118,84 @@ pub trait StorageSlot {
         let mut hash = Bytes32::default();
         keccak256(raw_key, &mut hash);
         Self::storage_slot(&hash, slot)
+    }
+}
+
+pub trait StorageSlotCalc {
+    const COLUMN: Column;
+
+    fn storage_slot(&self, slot: u32) -> U256;
+}
+
+pub(crate) struct StorageChunksWriter<'a, SDK> {
+    pub(crate) address: &'a Address,
+    pub(crate) _phantom: PhantomType<SDK>,
+}
+impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
+    fn write_data_chunk_padded(
+        &self,
+        sdk: &'a mut SDK,
+        slot_calc: &impl StorageSlotCalc,
+        data: &[u8],
+        chunk_index: u32,
+        force_write: bool,
+    ) -> usize {
+        let start_index = chunk_index * U256::BYTES as u32;
+        let end_index = start_index + U256::BYTES as u32;
+        let data_tail_index = data.len() as u32;
+        if start_index >= data_tail_index {
+            if force_write {
+                sdk.write_storage(
+                    *self.address,
+                    slot_calc.storage_slot(chunk_index),
+                    U256::ZERO,
+                );
+            }
+            return 0;
+        }
+        let chunk =
+            &data[start_index as usize..core::cmp::min(end_index, data_tail_index) as usize];
+        let value = U256::from_le_slice(chunk);
+        sdk.write_storage(*self.address, slot_calc.storage_slot(chunk_index), value);
+        chunk.len()
+    }
+
+    pub fn write_data_in_padded_chunks(
+        &self,
+        sdk: &'a mut SDK,
+        slot_calc: &impl StorageSlotCalc,
+        data: &[u8],
+        tail_chunk_index: u32,
+        force_write: bool,
+    ) -> usize {
+        let mut len_written = 0;
+        for chunk_index in 0..=tail_chunk_index {
+            len_written +=
+                self.write_data_chunk_padded(sdk, slot_calc, data, chunk_index, force_write)
+        }
+        len_written
+    }
+    fn read_data_chunk_padded(
+        &self,
+        sdk: &'a SDK,
+        slot_calc: &impl StorageSlotCalc,
+        chunk_index: u32,
+        buf: &mut Vec<u8>,
+    ) {
+        let slot = slot_calc.storage_slot(chunk_index);
+        let (value, _) = sdk.storage(self.address, &slot);
+        buf.extend_from_slice(value.as_le_slice());
+    }
+    pub fn read_data_in_padded_chunks(
+        &self,
+        sdk: &'a SDK,
+        slot_calc: &impl StorageSlotCalc,
+        tail_chunk_index: u32,
+        buf: &mut Vec<u8>,
+    ) {
+        for chunk_index in 0..=tail_chunk_index {
+            self.read_data_chunk_padded(sdk, slot_calc, chunk_index, buf)
+        }
     }
 }
 
@@ -132,6 +212,12 @@ impl Deref for IndexedHash {
 impl Into<B256> for IndexedHash {
     fn into(self) -> B256 {
         B256::from(self.0)
+    }
+}
+
+impl Into<U256> for IndexedHash {
+    fn into(self) -> U256 {
+        U256::from_le_bytes(self.0)
     }
 }
 
@@ -218,8 +304,16 @@ pub struct ContractsLatestUtxoHelper {
     original_key: ContractId,
 }
 
-impl PreimageKey for ContractsLatestUtxoHelper {
+impl StorageSlotPure for ContractsLatestUtxoHelper {
     const COLUMN: Column = Column::ContractsLatestUtxo;
+}
+
+impl StorageSlotCalc for ContractsLatestUtxoHelper {
+    const COLUMN: Column = Column::ContractsLatestUtxo;
+
+    fn storage_slot(&self, slot: u32) -> U256 {
+        <Self as StorageSlotPure>::storage_slot(&self.original_key, slot).into()
+    }
 }
 
 impl ContractsLatestUtxoHelper {
@@ -227,9 +321,6 @@ impl ContractsLatestUtxoHelper {
         Self {
             original_key: *contract_id,
         }
-    }
-    pub fn value_preimage_key(&self) -> IndexedHash {
-        Self::preimage_key(&self.original_key)
     }
 }
 
@@ -246,13 +337,27 @@ impl PreimageKey for ContractsStateHelper {
     const COLUMN: Column = Column::ContractsState;
 }
 
-impl StorageSlot for ContractsStateHelper {
+impl StorageSlotPure for ContractsStateHelper {
     const COLUMN: Column = Column::ContractsState;
 }
 
+impl StorageSlotCalc for ContractsStateHelper {
+    const COLUMN: Column = Column::ContractsState;
+
+    fn storage_slot(&self, slot: u32) -> U256 {
+        match self.key {
+            ContractsStateKeyWrapper::Original(v) => {
+                <Self as StorageSlotPure>::storage_slot_raw(v.as_ref(), slot).into()
+            }
+            ContractsStateKeyWrapper::Transformed(v) => {
+                <Self as StorageSlotPure>::storage_slot(&v, slot).into()
+            }
+        }
+    }
+}
+
 impl ContractsStateHelper {
-    const MERKLE_DATA_STORAGE_SLOT: u32 = 0;
-    const MERKLE_METADATA_STORAGE_SLOT: u32 = 1;
+    const VALUE_STORAGE_SLOT: u32 = 0;
 
     pub(crate) fn new(key: &Bytes64) -> Self {
         return Self {
@@ -266,36 +371,15 @@ impl ContractsStateHelper {
         };
     }
 
-    // pub(crate) fn from_slice(v: &[u8]) -> Self {
-    //     return Self {
-    //         key: ContractsStateKey::from_slice(v)
-    //             .expect("valid contract state key 64 bytes"),
-    //     };
-    // }
-
     pub(crate) fn get(&self) -> &ContractsStateKeyWrapper {
         &self.key
     }
 
-    pub(crate) fn value_preimage_key(&self) -> IndexedHash {
+    pub(crate) fn value_storage_slot(&self) -> IndexedHash {
         if let ContractsStateKeyWrapper::Original(key) = self.key {
-            return Self::preimage_key_raw(key.as_ref());
+            return Self::storage_slot_raw(key.as_ref(), Self::VALUE_STORAGE_SLOT);
         }
         panic!("original key expected")
-    }
-
-    pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
-        if let ContractsStateKeyWrapper::Transformed(key) = self.key {
-            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT);
-        }
-        panic!("transformed key expected")
-    }
-
-    pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
-        if let ContractsStateKeyWrapper::Transformed(key) = self.key {
-            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_METADATA_STORAGE_SLOT);
-        }
-        panic!("transformed key expected")
     }
 }
 
@@ -308,23 +392,36 @@ pub(crate) struct ContractsAssetsHelper {
     key: ContractsAssetKeyWrapper,
 }
 
-impl StorageSlot for ContractsAssetsHelper {
+impl StorageSlotPure for ContractsAssetsHelper {
     const COLUMN: Column = Column::ContractsAssets;
+}
+
+impl StorageSlotCalc for ContractsAssetsHelper {
+    const COLUMN: Column = Column::ContractsAssets;
+
+    fn storage_slot(&self, slot: u32) -> U256 {
+        match self.key {
+            ContractsAssetKeyWrapper::Original(v) => {
+                <Self as StorageSlotPure>::storage_slot_raw(v.as_ref(), slot).into()
+            }
+            ContractsAssetKeyWrapper::Transformed(v) => {
+                <Self as StorageSlotPure>::storage_slot(&v, slot).into()
+            }
+        }
+    }
 }
 
 impl ContractsAssetsHelper {
     const VALUE_STORAGE_SLOT: u32 = 0;
-    const MERKLE_DATA_STORAGE_SLOT: u32 = 1;
-    const MERKLE_METADATA_STORAGE_SLOT: u32 = 2;
     pub(crate) fn new(original_key: &Bytes64) -> Self {
-        return Self {
+        Self {
             key: ContractsAssetKeyWrapper::Original(ContractsAssetKey::from_array(*original_key)),
-        };
+        }
     }
-    pub(crate) fn from_transformed(key: &Bytes32) -> Self {
-        return Self {
+    pub(crate) fn new_transformed(key: &Bytes32) -> Self {
+        Self {
             key: ContractsAssetKeyWrapper::Transformed(*key),
-        };
+        }
     }
 
     // pub(crate) fn from_slice(v: &[u8]) -> Self {
@@ -358,26 +455,26 @@ impl ContractsAssetsHelper {
         res
     }
 
-    pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
-        if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
-            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT);
-        }
-        panic!("transformed key expected")
-    }
-
-    pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
-        if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
-            return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_METADATA_STORAGE_SLOT);
-        }
-        panic!("transformed key expected")
-    }
+    // pub(crate) fn merkle_data_preimage_key(&self) -> IndexedHash {
+    //     if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
+    //         return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_DATA_STORAGE_SLOT);
+    //     }
+    //     panic!("transformed key expected")
+    // }
+    //
+    // pub(crate) fn merkle_metadata_preimage_key(&self) -> IndexedHash {
+    //     if let ContractsAssetKeyWrapper::Transformed(key) = self.key {
+    //         return Self::storage_slot_raw(key.as_ref(), Self::MERKLE_METADATA_STORAGE_SLOT);
+    //     }
+    //     panic!("transformed key expected")
+    // }
 }
 
 pub(crate) struct CoinsHelper {
     original_key: Bytes34, // UtxoId as a key
 }
 
-impl StorageSlot for CoinsHelper {
+impl StorageSlotPure for CoinsHelper {
     const COLUMN: Column = Column::Coins;
 }
 
