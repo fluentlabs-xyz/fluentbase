@@ -60,7 +60,6 @@ mod tests {
     type TestingSDK = JournalState<TestingContext>;
 
     #[test]
-    #[ignore]
     fn skipped_tx_not_changed_spent_status() {
         let mut sdk = JournalState::empty(TestingContext::empty());
         let wasm_storage = WasmStorage { sdk: &mut sdk };
@@ -1015,7 +1014,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn outputs_with_amount_are_included_utxo_set() {
         let (deploy, script) = setup_executable_script();
         let script_id = script.id(&ChainId::default());
