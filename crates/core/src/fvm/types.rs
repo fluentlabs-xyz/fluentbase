@@ -9,7 +9,6 @@ use crate::fvm::helpers::{
     StorageChunksWriter,
 };
 use alloc::{vec, vec::Vec};
-use core::hash::Hash;
 use fluentbase_sdk::{
     AccountStatus,
     Address,
@@ -24,11 +23,9 @@ use fluentbase_sdk::{
 use fuel_core_executor::ports::RelayerPort;
 use fuel_core_storage::{
     self,
-    codec::Encoder,
     column::Column,
     kv_store::{KeyValueInspect, KeyValueMutate, Value, WriteOperation},
     transactional::{Changes, Modifiable},
-    Mappable,
     Result as StorageResult,
 };
 use fuel_core_types::{

@@ -174,8 +174,6 @@ pub fn env_from_context(
             // TODO(dmitry123): "we don't support blobs yet, so 2 tests from e2e testing suite fail"
             blob_hashes: vec![],        // tx_context.blob_hashes.clone(),
             max_fee_per_blob_gas: None, // tx_context.max_fee_per_blob_gas,
-            #[cfg(feature = "optimism")]
-            optimism: Default::default(),
         },
     }
 }
@@ -456,13 +454,13 @@ pub trait SharedAPI {
     fn write(&mut self, output: &[u8]);
     fn exit(&self, exit_code: i32) -> !;
 
-    fn preimage_copy(&self, hash: &B256, target: &mut [u8], offset: u32);
+    fn preimage_copy(&self, hash: &B256, target: &mut [u8]);
     fn preimage_size(&self, hash: &B256) -> u32;
 
     fn preimage(&self, hash: &B256) -> Bytes {
         let preimage_size = self.preimage_size(hash);
         let mut buffer = vec![0u8; preimage_size as usize];
-        self.preimage_copy(hash, &mut buffer, preimage_size);
+        self.preimage_copy(hash, &mut buffer);
         buffer.into()
     }
 
