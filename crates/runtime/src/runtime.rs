@@ -24,7 +24,7 @@ use fluentbase_types::{
 use hashbrown::{hash_map::Entry, HashMap};
 use rwasm::{
     core::ImportLinker,
-    engine::{bytecode::Instruction, DropKeep, RwasmConfig, StateRouterConfig},
+    engine::{bytecode::Instruction, DropKeep, RwasmConfig, StateRouterConfig, Tracer},
     instruction_set,
     rwasm::RwasmModule,
     AsContextMut,
@@ -86,6 +86,7 @@ pub struct RuntimeContext {
     pub(crate) fuel: Fuel,
     pub(crate) state: u32,
     pub(crate) call_depth: u32,
+    pub(crate) trace: bool,
     // #[deprecated(note = "this parameter can be removed, we filter on the AOT level")]
     pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
@@ -112,6 +113,7 @@ impl Default for RuntimeContext {
             input: vec![],
             context: vec![],
             call_depth: 0,
+            trace: false,
             execution_result: ExecutionResult::default(),
             resumable_invocation: None,
             jzkt: None,
@@ -412,7 +414,11 @@ impl Runtime {
         });
 
         // create new linker and store (it shares the same engine resources)
-        let mut store = Store::<RuntimeContext>::new(&engine, runtime_context);
+        let mut store = if runtime_context.trace {
+            Store::<RuntimeContext>::new(&engine, runtime_context).with_tracer(Tracer::default())
+        } else {
+            Store::<RuntimeContext>::new(&engine, runtime_context)
+        };
         let mut linker = Linker::<RuntimeContext>::new(&engine);
 
         // add fuel if limit is specified
