@@ -1,10 +1,5 @@
 use crate::{runtime::Runtime, RuntimeContext};
-use fluentbase_types::{
-    create_sovereign_import_linker,
-    SysFuncIdx::STATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use hex_literal::hex;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -12,7 +7,7 @@ use rwasm::{
 };
 
 pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
-    let import_linker = Runtime::new_sovereign_linker();
+    let import_linker = Runtime::new_import_linker();
     let wasm_binary = wat::parse_str(wat).unwrap();
     let mut rwasm_config = RwasmModule::default_config(Some(import_linker));
     rwasm_config.rwasm_config(RwasmConfig {
@@ -24,7 +19,7 @@ pub(crate) fn wat2rwasm(wat: &str) -> Vec<u8> {
             opcode: Instruction::Call(STATE.into()),
         }),
         entrypoint_name: None,
-        import_linker: Some(create_sovereign_import_linker()),
+        import_linker: Some(create_import_linker()),
         wrap_import_functions: true,
     });
     let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &rwasm_config).unwrap();

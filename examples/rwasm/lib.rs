@@ -4,7 +4,7 @@ extern crate fluentbase_sdk;
 use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
-    create_sovereign_import_linker,
+    create_import_linker,
     derive::Contract,
     SharedAPI,
 };
@@ -23,7 +23,7 @@ impl<SDK: SharedAPI> RWASM<SDK> {
         let input_size = self.sdk.input_size() as usize;
         let wasm_binary = alloc_slice(input_size);
         self.sdk.read(wasm_binary, 0);
-        let import_linker = create_sovereign_import_linker();
+        let import_linker = create_import_linker();
         let rwasm_module =
             RwasmModule::compile(wasm_binary, Some(import_linker)).expect("failed to compile");
         let encoded_length = rwasm_module.encoded_length();

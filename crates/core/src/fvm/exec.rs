@@ -71,7 +71,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-                .expect("fvm transact commit inner success");
+            .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Create(etx) => {
@@ -89,7 +89,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-                .expect("fvm transact commit inner success");
+            .expect("fvm transact commit inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upgrade(etx) => {
@@ -107,7 +107,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-                .expect("fvm transact inner success");
+            .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Upload(etx) => {
@@ -125,7 +125,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 tx_gas_price,
                 consensus_params,
             )
-                .expect("fvm transact inner success");
+            .expect("fvm transact inner success");
             res.3.to_vec()
         }
         fuel_tx::Transaction::Mint(_) => {
@@ -281,7 +281,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
             } => {
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
-                let topics = [B256::from(sig)];
+                let topics = [B256::from(sig), B256::from(id.0), B256::from(to.0)];
                 sdk.write_log(
                     Address::from_slice(&id[12..]),
                     log_data.into(),
@@ -298,7 +298,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
             } => {
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
-                let topics = [B256::from(sig)];
+                let topics = [B256::from(sig), B256::from(id.0), B256::from(to.0)];
                 sdk.write_log(
                     Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
                     log_data.into(),

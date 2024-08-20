@@ -4,12 +4,7 @@ extern crate core;
 
 use crate::types::FileFormat;
 use clap::Parser;
-use fluentbase_types::{
-    create_sovereign_import_linker,
-    SysFuncIdx::STATE,
-    STATE_DEPLOY,
-    STATE_MAIN,
-};
+use fluentbase_types::{create_import_linker, SysFuncIdx::STATE, STATE_DEPLOY, STATE_MAIN};
 use log::debug;
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
@@ -108,7 +103,7 @@ fn main() {
                 opcode: Instruction::Call(STATE.into()),
             }),
             entrypoint_name: None,
-            import_linker: Some(create_sovereign_import_linker()),
+            import_linker: Some(create_import_linker()),
             wrap_import_functions: true,
         })
         .consume_fuel(false);
