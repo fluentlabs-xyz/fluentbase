@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     codec::Encoder,
-    contracts::SYSCALL_ID_DELEGATE_CALL,
+    contracts::{PRECOMPILE_EVM, SYSCALL_ID_DELEGATE_CALL},
     Address,
     Bytes,
     SharedContextInputV1,
@@ -12,14 +12,16 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 
-pub(crate) fn create_rwasm_proxy_bytecode(address: &Address) -> Bytes {
+pub(crate) const ENABLE_EVM_PROXY_CONTRACT: bool = false;
+
+pub(crate) fn create_rwasm_proxy_bytecode(_address: &Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
     memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
-    memory_section[32..52].copy_from_slice(address.as_slice()); // 20 bytes
+    memory_section[32..52].copy_from_slice(PRECOMPILE_EVM.as_slice()); // 20 bytes
     debug_assert_eq!(memory_section.len(), 52);
     let code_section = instruction_set! {
         // alloc default memory
-        I32Const(1) // number of pages (64kB)
+        I32Const(1) // number of pages (64kB memory in total)
         MemoryGrow // grow memory
         Drop // drop exit code (it can't fail here)
         // initialize memory segment
@@ -28,7 +30,7 @@ pub(crate) fn create_rwasm_proxy_bytecode(address: &Address) -> Bytes {
         I32Const(memory_section.len() as u32) // length
         MemoryInit(0) // initialize 0 segment
         DataDrop(0) // mark 0 segment as dropped (required to satisfy WASM standards)
-        // copy input (EVM bytecode can't exceed 24kB, so this op is safe)
+        // copy input (EVM bytecode can't exceed 2*24kB, so this op is safe)
         I32Const(52) // target
         I32Const(SharedContextInputV1::HEADER_SIZE as u32) // offset
         Call(SysFuncIdx::INPUT_SIZE) // length=input_size-header_size

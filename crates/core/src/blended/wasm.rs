@@ -3,7 +3,7 @@ use crate::{
     helpers::{evm_error_from_exit_code, wasm2rwasm},
 };
 use alloc::boxed::Box;
-use fluentbase_sdk::{Address, Bytes, ContractContext, ExitCode, SovereignAPI, STATE_DEPLOY, U256};
+use fluentbase_sdk::{Address, Bytes, ContractContext, ExitCode, SovereignAPI, STATE_DEPLOY};
 use revm_interpreter::{gas, CreateInputs, Gas, InterpreterResult};
 
 impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
@@ -40,10 +40,8 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // execute rWASM deploy function
         let context = ContractContext {
             address: target_address,
-            bytecode_address: target_address,
             caller: inputs.caller,
             value: inputs.value,
-            apparent_value: U256::ZERO,
         };
         let (output, exit_code) = self.exec_rwasm_bytecode(
             context,
