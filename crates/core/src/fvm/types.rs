@@ -5,8 +5,10 @@ use crate::fvm::helpers::{
     ContractsLatestUtxoHelper,
     ContractsRawCodeHelper,
     ContractsStateHelper,
+    FixedChunksWriter,
     FuelAddress,
     StorageChunksWriter,
+    VariableLengthDataWriter,
 };
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
@@ -52,6 +54,8 @@ impl RelayerPort for WasmRelayer {
     }
 }
 
+pub const CONTRACTS_RAW_CODE_STORAGE_ADDRESS: Address =
+    Address::new(hex!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"));
 pub const UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS: Address =
     Address::new(hex!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"));
 pub const CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS: Address =
@@ -92,18 +96,28 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     // }
 
     pub(crate) fn contracts_raw_code_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
-        let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
-            .value_preimage_key()
-            .into();
-        self.sdk
-            .write_preimage(Address::ZERO, key, Bytes::copy_from_slice(data));
+        let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let _ = storage_chunks.write_data(self.sdk, &helper, data);
     }
 
     pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
-        let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
-            .value_preimage_key()
-            .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
+        let mut storage_chunks = StorageChunksWriter {
+            address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            _phantom: Default::default(),
+        };
+        let mut buf = Vec::new();
+        storage_chunks
+            .read_data(self.sdk, &helper, &mut buf)
+            .expect("raw code extracted successfully");
+        if buf.len() <= 0 {
+            return None;
+        }
+        Some(buf.into())
     }
 
     pub(crate) fn contracts_latest_utxo_update(
@@ -591,7 +605,12 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                     buf.len()
                 );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
-                self.contracts_state_merkle_data_update(&key, buf);
+                self.contracts_state_merkle_data_update(&key, buf)
+                    .map_err(|_| {
+                        fuel_core_storage::Error::Other(anyhow::Error::msg(
+                            "failed to write key-value for ContractsStateMerkleData",
+                        ))
+                    })?;
             }
             Column::ContractsStateMerkleMetadata => {
                 // key - 32 bytes
@@ -602,7 +621,12 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                     buf.len()
                 );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
-                self.contracts_state_merkle_metadata_update(&key, buf);
+                self.contracts_state_merkle_metadata_update(&key, buf)
+                    .map_err(|_| {
+                        fuel_core_storage::Error::Other(anyhow::Error::msg(
+                            "failed to write key-value for ContractsStateMerkleMetadata",
+                        ))
+                    })?;
             }
 
             Column::ContractsAssetsMerkleData => {
@@ -614,7 +638,12 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                     buf.len()
                 );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
-                self.contracts_assets_merkle_data_update(&key, buf);
+                self.contracts_assets_merkle_data_update(&key, buf)
+                    .map_err(|_| {
+                        fuel_core_storage::Error::Other(anyhow::Error::msg(
+                            "failed to write key-value for ContractsAssetsMerkleData",
+                        ))
+                    })?;
             }
             Column::ContractsAssetsMerkleMetadata => {
                 // key - 32 bytes
@@ -625,14 +654,15 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                     buf.len()
                 );
                 let key: Bytes32 = key.try_into().expect("32 bytes key");
-                self.contracts_assets_merkle_metadata_update(&key, buf);
+                self.contracts_assets_merkle_metadata_update(&key, buf)
+                    .map_err(|_| {
+                        fuel_core_storage::Error::Other(anyhow::Error::msg(
+                            "failed to write key-value for ContractsAssetsMerkleMetadata",
+                        ))
+                    })?;
             }
 
             _ => {
-                // panic!(
-                //     "unsupported column referenced '{:?}' while writing data",
-                //     &column
-                // )
                 return Ok(0);
             }
         }

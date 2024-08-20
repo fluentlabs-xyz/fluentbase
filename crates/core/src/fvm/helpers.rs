@@ -131,10 +131,22 @@ pub(crate) struct StorageChunksWriter<'a, SDK> {
     pub(crate) address: &'a Address,
     pub(crate) _phantom: PhantomType<SDK>,
 }
-impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
+impl<'a, SDK: SovereignAPI> FixedChunksWriter<'a, SDK> for StorageChunksWriter<'a, SDK> {
+    fn address(&self) -> &'a Address {
+        self.address
+    }
+}
+impl<'a, SDK: SovereignAPI> VariableLengthDataWriter<'a, SDK> for StorageChunksWriter<'a, SDK> {
+    fn address(&self) -> &'a Address {
+        self.address
+    }
+}
+pub trait FixedChunksWriter<'a, SDK: SovereignAPI> {
+    fn address(&self) -> &'a Address;
+
     fn write_data_chunk_padded(
         &self,
-        sdk: &'a mut SDK,
+        sdk: &mut SDK,
         slot_calc: &impl StorageSlotCalc,
         data: &[u8],
         chunk_index: u32,
@@ -145,8 +157,8 @@ impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
         let data_tail_index = data.len() as u32;
         if start_index >= data_tail_index {
             if force_write {
-                sdk.write_storage(
-                    *self.address,
+                let _ = sdk.write_storage(
+                    *self.address(),
                     slot_calc.storage_slot(chunk_index),
                     U256::ZERO,
                 );
@@ -156,13 +168,13 @@ impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
         let chunk =
             &data[start_index as usize..core::cmp::min(end_index, data_tail_index) as usize];
         let value = U256::from_le_slice(chunk);
-        sdk.write_storage(*self.address, slot_calc.storage_slot(chunk_index), value);
+        let _ = sdk.write_storage(*self.address(), slot_calc.storage_slot(chunk_index), value);
         chunk.len()
     }
 
-    pub fn write_data_in_padded_chunks(
+    fn write_data_in_padded_chunks(
         &self,
-        sdk: &'a mut SDK,
+        sdk: &mut SDK,
         slot_calc: &impl StorageSlotCalc,
         data: &[u8],
         tail_chunk_index: u32,
@@ -175,6 +187,7 @@ impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
         }
         len_written
     }
+
     fn read_data_chunk_padded(
         &self,
         sdk: &'a SDK,
@@ -183,10 +196,11 @@ impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
         buf: &mut Vec<u8>,
     ) {
         let slot = slot_calc.storage_slot(chunk_index);
-        let (value, _) = sdk.storage(self.address, &slot);
+        let (value, _) = sdk.storage(self.address(), &slot);
         buf.extend_from_slice(value.as_le_slice());
     }
-    pub fn read_data_in_padded_chunks(
+
+    fn read_data_in_padded_chunks(
         &self,
         sdk: &'a SDK,
         slot_calc: &impl StorageSlotCalc,
@@ -196,6 +210,59 @@ impl<'a, SDK: SovereignAPI> StorageChunksWriter<'a, SDK> {
         for chunk_index in 0..=tail_chunk_index {
             self.read_data_chunk_padded(sdk, slot_calc, chunk_index, buf)
         }
+    }
+}
+pub trait VariableLengthDataWriter<'a, SDK: SovereignAPI> {
+    fn address(&self) -> &'a Address;
+
+    fn write_data(&self, sdk: &mut SDK, slot_calc: &impl StorageSlotCalc, data: &[u8]) -> usize {
+        let data_len = data.len();
+        if data_len <= 0 {
+            return 0;
+        }
+        let slot = slot_calc.storage_slot(0);
+        let _ = sdk.write_storage(*self.address(), slot, U256::from(data_len));
+        let chunks_count = (data_len - 1) / U256::BYTES + 1;
+        for chunk_index in 0..chunks_count {
+            let chunk_start_index = chunk_index * U256::BYTES;
+            let chunk_end_index = core::cmp::min(data_len, chunk_start_index + U256::BYTES);
+            let chunk = &data[chunk_start_index..chunk_end_index];
+            let value = U256::from_le_slice(chunk);
+            let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+            let _ = sdk.write_storage(*self.address(), slot, value);
+        }
+        data_len
+    }
+
+    fn read_data(
+        &self,
+        sdk: &SDK,
+        slot_calc: &impl StorageSlotCalc,
+        buf: &mut Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let slot = slot_calc.storage_slot(0);
+        let (data_len, _) = sdk.storage(self.address(), &slot);
+        let data_len: usize = data_len
+            .try_into()
+            .map_err(|e| anyhow::Error::msg("failed to decode result data len"))?;
+        if data_len <= 0 {
+            return Ok(());
+        }
+        let chunks_count = (data_len - 1) / U256::BYTES + 1;
+        for chunk_index in 0..chunks_count - 1 {
+            let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+            let (value, _) = sdk.storage(self.address(), &slot);
+            let value = value.as_le_slice();
+            buf.extend_from_slice(value);
+        }
+        let chunk_index = chunks_count - 1;
+        let last_chunk_len = data_len - U256::BYTES * chunk_index;
+        let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+        let (value, _) = sdk.storage(self.address(), &slot);
+        let value = &value.as_le_slice()[0..last_chunk_len];
+        buf.extend_from_slice(value);
+
+        Ok(())
     }
 }
 
@@ -286,6 +353,18 @@ pub struct ContractsRawCodeHelper {
 
 impl PreimageKey for ContractsRawCodeHelper {
     const COLUMN: Column = Column::ContractsRawCode;
+}
+
+impl StorageSlotPure for ContractsRawCodeHelper {
+    const COLUMN: Column = Column::ContractsRawCode;
+}
+
+impl StorageSlotCalc for ContractsRawCodeHelper {
+    const COLUMN: Column = Column::ContractsRawCode;
+
+    fn storage_slot(&self, slot: u32) -> U256 {
+        <Self as StorageSlotPure>::storage_slot(&self.original_key, slot).into()
+    }
 }
 
 impl ContractsRawCodeHelper {
