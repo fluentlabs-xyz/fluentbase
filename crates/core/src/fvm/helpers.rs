@@ -1,6 +1,6 @@
 use alloc::vec;
 use core::{mem::size_of, ops::Deref, str::FromStr};
-use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SharedAPI, SovereignAPI, B256, U256};
+use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SovereignAPI, B256, U256};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
     fuel_tx::{

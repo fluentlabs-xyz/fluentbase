@@ -10,8 +10,7 @@ use crate::{
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
-    create_shared_import_linker,
-    create_sovereign_import_linker,
+    create_import_linker,
     Bytes,
     ExitCode,
     Fuel,
@@ -303,7 +302,7 @@ impl CachingRuntime {
     fn new_engine() -> Engine {
         // we can safely use sovereign import linker because all protected are filtered out during
         // a translation process
-        let import_linker = Runtime::new_sovereign_linker();
+        let import_linker = Runtime::new_import_linker();
         let mut config = RwasmModule::default_config(None);
         config.rwasm_config(RwasmConfig {
             state_router: Some(StateRouterConfig {
@@ -366,11 +365,8 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new_sovereign_linker() -> ImportLinker {
-        create_sovereign_import_linker()
-    }
-    pub fn new_shared_linker() -> ImportLinker {
-        create_shared_import_linker()
+    pub fn new_import_linker() -> ImportLinker {
+        create_import_linker()
     }
 
     pub fn catch_trap(err: &RuntimeError) -> i32 {
