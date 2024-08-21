@@ -69,7 +69,17 @@ pub fn devnet_genesis() -> Genesis {
             (
                 address!($address),
                 GenesisAccount {
-                    balance: U256::from(100000_000000000000000000u128),
+                    balance: U256::from(100000_000000000000000000_u128),
+                    ..Default::default()
+                },
+            )
+        };
+    }
+    macro_rules! storage_only {
+        ($address:literal) => {
+            (
+                address!($address),
+                GenesisAccount {
                     ..Default::default()
                 },
             )
@@ -98,6 +108,15 @@ pub fn devnet_genesis() -> Genesis {
         initial_balance!("bDA5747bFD65F08deb54cb465eB87D40e51B197E"),
         initial_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
         initial_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
+        storage_only!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"),
+        storage_only!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"),
+        storage_only!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc"),
+        storage_only!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5"),
+        storage_only!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d"),
+        storage_only!("1a456cdbe1c54e7a774dd89d659c128d56dba51d"),
+        storage_only!("727d22651ab98fcf20fa7bdd646e71102c6ac47b"),
+        storage_only!("037e25b327c1a5acc4a98e8e2e8d16066119eeed"),
+        storage_only!("f96178848125f6d39487bd426a42adf7129ba924"),
     ]);
 
     macro_rules! enable_rwasm_contract {

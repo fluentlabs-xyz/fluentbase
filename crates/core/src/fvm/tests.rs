@@ -201,7 +201,6 @@ mod tests {
         let mut coin = CompressedCoin::default();
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(AMOUNT - 1);
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = JournalState::empty(TestingContext::empty());
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
