@@ -19,7 +19,6 @@ use fluentbase_sdk::{
     Bytes34,
     Bytes64,
     SovereignAPI,
-    B256,
     U256,
 };
 use fuel_core_executor::ports::RelayerPort;
@@ -72,6 +71,18 @@ pub const CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS: Address =
     Address::new(hex!("037e25b327c1a5acc4a98e8e2e8d16066119eeed"));
 pub const CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS: Address =
     Address::new(hex!("f96178848125f6d39487bd426a42adf7129ba924"));
+
+pub const STORAGE_ADDRESSES: [Address; 9] = [
+    CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+    UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+    CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS,
+    CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+    CONTRACTS_STATE_DATA_STORAGE_ADDRESS,
+    CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+    CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+    CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+    CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+];
 
 const CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN: usize = 44;
 const CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
@@ -127,7 +138,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN,
-            anyhow::Error::msg("ContractsLatestUtxo data len must be <= 44")
+            anyhow::Error::msg("ContractsLatestUtxo encoded len must be <= 44")
         );
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,

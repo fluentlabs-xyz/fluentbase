@@ -1,5 +1,4 @@
-use alloc::vec;
-use alloy_rlp::{bytes::buf::Writer, BufMut};
+use alloc::{vec, vec::Vec};
 use core::{mem::size_of, ops::Deref, str::FromStr};
 use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SovereignAPI, B256, U256};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
@@ -29,9 +28,9 @@ use fuel_core_types::{
 };
 use phantom_type::PhantomType;
 
-pub const TESTNET_BASE_ASSET_ID: &str =
+pub const FUEL_TESTNET_BASE_ASSET_ID: &str =
     "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
-pub const TESTNET_PRIVILEGED_ADDRESS: &str =
+pub const FUEL_TESTNET_PRIVILEGED_ADDRESS: &str =
     "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9";
 
 pub fn fuel_testnet_consensus_params_from(
@@ -70,9 +69,10 @@ pub fn fuel_testnet_consensus_params_from(
         }),
         chain_id,
         gas_costs: gas_costs.unwrap_or_default(),
-        base_asset_id: AssetId::from_str(TESTNET_BASE_ASSET_ID).expect("valid asset id format"),
+        base_asset_id: AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID)
+            .expect("valid asset id format"),
         block_gas_limit: block_gas_limit.unwrap_or(30000000),
-        privileged_address: fuel_types::Address::from_str(TESTNET_PRIVILEGED_ADDRESS)
+        privileged_address: fuel_types::Address::from_str(FUEL_TESTNET_PRIVILEGED_ADDRESS)
             .expect("valid privileged address format"),
     })
 }

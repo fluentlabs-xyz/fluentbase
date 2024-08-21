@@ -104,15 +104,15 @@ const main = async () => {
         let fuelWallet1Coins = await fuelProvider.getCoins(fuelWallet1.address);
         console.log(`fuelWallet1Coins:`, fuelWallet1Coins);
 
-        let fuelWallet2 = Wallet.fromAddress("0x53a9c6a74bee79c5e04115a007984f4bddaafed75f512f68766c6ed59d0aedec", fuelProvider);
-        console.log(`fuelWallet2.address:`, fuelWallet1.signer().address.toHexString());
-        let fuelWallet2Coins = await fuelProvider.getCoins(fuelWallet2.address);
-        console.log(`fuelWallet2Coins:`, fuelWallet2Coins);
+        // let fuelWallet2 = Wallet.fromAddress("0x53a9c6a74bee79c5e04115a007984f4bddaafed75f512f68766c6ed59d0aedec", fuelProvider);
+        // console.log(`fuelWallet2.address:`, fuelWallet2.address.toHexString());
+        // let fuelWallet2Coins = await fuelProvider.getCoins(fuelWallet2.address);
+        // console.log(`fuelWallet2Coins:`, fuelWallet2Coins);
 
         console.log("fuel: creating transfer");
         let fuelTransferFromOfficialToWallet1Tx = await fuelWalletOfficial.createTransfer(fuelWallet1.address, 1);
         console.log("fuelTransferFromOfficialToWallet1Tx:", fuelTransferFromOfficialToWallet1Tx);
-        let transferResult = await fuelWalletOfficial.sendTransaction(fuelTransferFromOfficialToWallet1Tx);
+        let transferResult = await fuelWallet1.sendTransaction(fuelTransferFromOfficialToWallet1Tx);
         console.log(`transferResult`, transferResult);
         let {id} = await transferResult.wait();
         console.log(`transfer id`, id);
