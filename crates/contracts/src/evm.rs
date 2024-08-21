@@ -12,9 +12,7 @@ use fluentbase_sdk::{
     Bytes,
     ContractContext,
     ExitCode,
-    NativeAPI,
     SharedAPI,
-    SovereignAPI,
     SyscallAPI,
     B256,
     U256,
@@ -26,8 +24,10 @@ use revm_interpreter::{
     CallOutcome,
     CallScheme,
     Contract,
+    CreateOutcome,
     Gas,
     Host,
+    InstructionResult,
     Interpreter,
     InterpreterAction,
     InterpreterResult,
@@ -37,7 +37,14 @@ use revm_interpreter::{
     SharedMemory,
 };
 use revm_precompile::Log;
-use revm_primitives::{Bytecode, CancunSpec, Env, BLOCK_HASH_HISTORY, MAX_CALL_STACK_LIMIT};
+use revm_primitives::{
+    Bytecode,
+    CancunSpec,
+    CreateScheme,
+    Env,
+    BLOCK_HASH_HISTORY,
+    MAX_CALL_STACK_LIMIT,
+};
 
 pub struct EvmLoader2<'a, SDK> {
     sdk: &'a mut SDK,
@@ -236,7 +243,12 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                             inputs.input.as_ref(),
                             inputs.gas_limit,
                         ),
-                        CallScheme::CallCode => unreachable!(),
+                        CallScheme::CallCode => self.sdk.call_code(
+                            inputs.target_address,
+                            inputs.value.transfer().unwrap_or_default(),
+                            inputs.input.as_ref(),
+                            inputs.gas_limit,
+                        ),
                         CallScheme::DelegateCall => self.sdk.delegate_call(
                             inputs.target_address,
                             inputs.input.as_ref(),
@@ -258,9 +270,26 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                     interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
                 }
                 InterpreterAction::Create { inputs } => {
-                    unreachable!();
-                    // let create_outcome = self.create_inner(inputs, depth + 1);
-                    // interpreter.insert_create_outcome(create_outcome);
+                    let (output, exit_code) = self.sdk.create(
+                        inputs.gas_limit,
+                        match inputs.scheme {
+                            CreateScheme::Create2 { salt } => Some(salt),
+                            CreateScheme::Create => None,
+                        },
+                        &inputs.value,
+                        inputs.init_code.as_ref(),
+                    );
+                    let create_outcome = if exit_code != 0 {
+                        assert_eq!(output.len(), 20, "mismatch create/create2 output length");
+                        let result =
+                            InterpreterResult::new(InstructionResult::Stop, Bytes::default(), gas);
+                        CreateOutcome::new(result, Some(Address::from_slice(output.as_ref())))
+                    } else {
+                        let error = evm_error_from_exit_code(ExitCode::from(exit_code));
+                        let result = InterpreterResult::new(error, Bytes::default(), gas);
+                        CreateOutcome::new(result, None)
+                    };
+                    interpreter.insert_create_outcome(create_outcome);
                 }
                 InterpreterAction::Return { result } => {
                     return result;

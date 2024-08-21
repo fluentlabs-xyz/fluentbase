@@ -102,6 +102,20 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.syscall_emit_log(data.as_ref(), topics);
     }
 
+    fn create(
+        &self,
+        mut fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
+        self.native_sdk
+            .syscall_create(fuel_limit, salt, value, init_code)
+    }
+
     fn call(
         &mut self,
         address: Address,
@@ -114,6 +128,20 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         }
         self.native_sdk
             .syscall_call(fuel_limit, address, value, input)
+    }
+
+    fn call_code(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        mut fuel_limit: u64,
+    ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
+        self.native_sdk
+            .syscall_call_code(fuel_limit, address, value, input)
     }
 
     fn delegate_call(

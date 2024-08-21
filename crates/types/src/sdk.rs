@@ -8,12 +8,15 @@ use crate::{
     JournalCheckpoint,
     B256,
     F254,
+    FUEL_LIMIT_SYSCALL_BALANCE,
     FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
     FUEL_LIMIT_SYSCALL_EMIT_LOG,
     FUEL_LIMIT_SYSCALL_STORAGE_READ,
     FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
     STATE_MAIN,
+    SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
+    SYSCALL_ID_CALL_CODE,
     SYSCALL_ID_CREATE,
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
@@ -255,7 +258,14 @@ pub trait SyscallAPI {
     fn syscall_call(
         &self,
         fuel_limit: u64,
-        target_address: Address,
+        address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32);
+    fn syscall_call_code(
+        &self,
+        fuel_limit: u64,
+        address: Address,
         value: U256,
         input: &[u8],
     ) -> (Bytes, i32);
@@ -263,7 +273,7 @@ pub trait SyscallAPI {
     fn syscall_delegate_call(
         &self,
         fuel_limit: u64,
-        target_address: Address,
+        address: Address,
         input: &[u8],
     ) -> (Bytes, i32);
     fn syscall_create(
@@ -272,9 +282,10 @@ pub trait SyscallAPI {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> Result<Address, i32>;
+    ) -> (Bytes, i32);
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]);
     fn syscall_destroy_account(&self, target: &Address);
+    fn syscall_balance(&self, address: &Address) -> U256;
 }
 
 impl<T: NativeAPI> SyscallAPI for T {
@@ -315,17 +326,34 @@ impl<T: NativeAPI> SyscallAPI for T {
     fn syscall_call(
         &self,
         fuel_limit: u64,
-        target_address: Address,
+        address: Address,
         value: U256,
         input: &[u8],
     ) -> (Bytes, i32) {
         let mut buffer = vec![0u8; 20 + 32];
-        buffer[0..20].copy_from_slice(target_address.as_slice());
+        buffer[0..20].copy_from_slice(address.as_slice());
         if !value.is_zero() {
             buffer[20..52].copy_from_slice(value.as_le_slice());
         }
         buffer.extend_from_slice(input);
         let exit_code = self.exec(&SYSCALL_ID_CALL, &buffer, fuel_limit, STATE_MAIN);
+        (self.return_data(), exit_code)
+    }
+
+    fn syscall_call_code(
+        &self,
+        fuel_limit: u64,
+        address: Address,
+        value: U256,
+        input: &[u8],
+    ) -> (Bytes, i32) {
+        let mut buffer = vec![0u8; 20 + 32];
+        buffer[0..20].copy_from_slice(address.as_slice());
+        if !value.is_zero() {
+            buffer[20..52].copy_from_slice(value.as_le_slice());
+        }
+        buffer.extend_from_slice(input);
+        let exit_code = self.exec(&SYSCALL_ID_CALL_CODE, &buffer, fuel_limit, STATE_MAIN);
         (self.return_data(), exit_code)
     }
 
@@ -340,11 +368,11 @@ impl<T: NativeAPI> SyscallAPI for T {
     fn syscall_delegate_call(
         &self,
         fuel_limit: u64,
-        target_address: Address,
+        address: Address,
         input: &[u8],
     ) -> (Bytes, i32) {
         let mut buffer = vec![0u8; 20];
-        buffer[0..20].copy_from_slice(target_address.as_slice());
+        buffer[0..20].copy_from_slice(address.as_slice());
         buffer.extend_from_slice(input);
         let exit_code = self.exec(&SYSCALL_ID_DELEGATE_CALL, &buffer, fuel_limit, STATE_MAIN);
         (self.return_data(), exit_code)
@@ -356,7 +384,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> Result<Address, i32> {
+    ) -> (Bytes, i32) {
         let mut buffer = vec![0u8; 33 + 32];
         if let Some(salt) = salt {
             buffer[0] = 1;
@@ -365,11 +393,8 @@ impl<T: NativeAPI> SyscallAPI for T {
         buffer[33..].copy_from_slice(value.as_le_slice());
         buffer.extend_from_slice(init_code);
         let exit_code = self.exec(&SYSCALL_ID_CREATE, &buffer, fuel_limit, STATE_MAIN);
-        if exit_code != ExitCode::Ok.into_i32() {
-            return Err(exit_code);
-        }
         let return_data = self.return_data();
-        Ok(Address::from_slice(return_data.as_ref()))
+        (return_data, exit_code)
     }
 
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]) {
@@ -398,6 +423,19 @@ impl<T: NativeAPI> SyscallAPI for T {
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
+    }
+
+    fn syscall_balance(&self, address: &Address) -> U256 {
+        let exit_code = self.exec(
+            &SYSCALL_ID_BALANCE,
+            address.as_slice(),
+            FUEL_LIMIT_SYSCALL_BALANCE,
+            STATE_MAIN,
+        );
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 32] = [0u8; 32];
+        self.read_output(&mut output, 0);
+        U256::from_le_bytes(output)
     }
 }
 
@@ -481,7 +519,21 @@ pub trait SharedAPI {
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]);
 
+    fn create(
+        &self,
+        fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> (Bytes, i32);
     fn call(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: u64,
+    ) -> (Bytes, i32);
+    fn call_code(
         &mut self,
         address: Address,
         value: U256,

@@ -24,7 +24,9 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     STATE_MAIN,
+    SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
+    SYSCALL_ID_CALL_CODE,
     SYSCALL_ID_CREATE,
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
@@ -100,31 +102,41 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             //         ExitCode::MalformedSyscallParams,
             //     );
             // }
+            let fuel_limit = params.fuel_limit;
             // check code hashes for system calls
-            match params.code_hash {
-                SYSCALL_ID_STORAGE_READ => {
-                    return self.syscall_storage_read(contract_context, params)
-                }
-                SYSCALL_ID_STORAGE_WRITE => {
-                    return self.syscall_storage_write(contract_context, params)
-                }
-                SYSCALL_ID_CALL => return self.syscall_call(contract_context, params, call_depth),
+            let next_action = match params.code_hash {
+                SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
+                SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
+                SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
                 SYSCALL_ID_STATIC_CALL => {
-                    return self.syscall_static_call(contract_context, params, call_depth)
+                    self.syscall_static_call(contract_context, params, call_depth)
                 }
                 SYSCALL_ID_DELEGATE_CALL => {
-                    return self.syscall_delegate_call(contract_context, params, call_depth)
+                    self.syscall_delegate_call(contract_context, params, call_depth)
                 }
-                SYSCALL_ID_CREATE => {
-                    return self.syscall_create(contract_context, params, call_depth)
+                SYSCALL_ID_CALL_CODE => {
+                    self.syscall_call_code(contract_context, params, call_depth)
                 }
-                SYSCALL_ID_EMIT_LOG => return self.syscall_emit_log(contract_context, params),
+                SYSCALL_ID_CREATE => self.syscall_create(contract_context, params, call_depth),
+                SYSCALL_ID_EMIT_LOG => self.syscall_emit_log(contract_context, params),
                 SYSCALL_ID_DESTROY_ACCOUNT => {
-                    return self.syscall_destroy_account(contract_context, params)
+                    self.syscall_destroy_account(contract_context, params)
                 }
-                _ => {}
+                SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, params),
+                _ => {
+                    NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams)
+                }
+            };
+            // make sure we have enough gas for this op
+            match &next_action {
+                NextAction::ExecutionResult(_, gas_cost, _) => {
+                    if fuel_limit < *gas_cost {
+                        return NextAction::from_exit_code(fuel_limit, ExitCode::OutOfGas);
+                    }
+                }
+                NextAction::NestedCall(_, _) => {}
             }
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+            return next_action;
         }
 
         // warmup bytecode before execution,
@@ -141,7 +153,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-        .encode_to_vec(0);
+            .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -260,10 +272,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-                BytecodeType::EVM => MAX_INITCODE_SIZE,
-                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-                BytecodeType::FVM => MAX_INITCODE_SIZE,
-            }
+            BytecodeType::EVM => MAX_INITCODE_SIZE,
+            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+            BytecodeType::FVM => MAX_INITCODE_SIZE,
+        }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
