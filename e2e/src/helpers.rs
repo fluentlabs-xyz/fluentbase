@@ -1,4 +1,4 @@
-use fluentbase_codec::{BufferDecoder, Encoder};
+use fluentbase_codec::Encoder;
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
     create_import_linker,

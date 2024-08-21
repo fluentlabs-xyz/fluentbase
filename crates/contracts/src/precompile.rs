@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+
 extern crate fluentbase_sdk;
 
 use core::marker::PhantomData;
-use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, NativeAPI};
+use fluentbase_sdk::{alloc_slice, basic_entrypoint, Bytes, ExitCode, SharedAPI};
 use revm_precompile::{PrecompileError, PrecompileErrors, PrecompileResult};
 
 pub trait PrecompileInvokeFunc {
@@ -33,16 +35,22 @@ define_precompile_func!(
     revm_precompile::secp256k1::ec_recover_run
 );
 
-#[derive(Default)]
-pub struct PRECOMPILE<SDK: NativeAPI, FN: PrecompileInvokeFunc> {
+pub struct PRECOMPILE<SDK, FN: PrecompileInvokeFunc> {
     sdk: SDK,
     _pd: PhantomData<FN>,
 }
 
-impl<SDK: NativeAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
+impl<SDK: SharedAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
+    pub fn new(sdk: SDK) -> Self {
+        Self {
+            sdk,
+            _pd: Default::default(),
+        }
+    }
+
     pub fn deploy(&self) {}
 
-    pub fn main(&self) {
+    pub fn main(&mut self) {
         let input_size = self.sdk.input_size();
         let input = alloc_slice(input_size as usize);
         self.sdk.read(input, 0);
@@ -76,15 +84,22 @@ pub(crate) fn map_precompile_error(err: PrecompileErrors) -> ExitCode {
     }
 }
 
-// #[cfg(feature = "blake2")]
-// basic_entrypoint!(PRECOMPILE<BlakeInvokeFunc>);
-// #[cfg(feature = "sha256")]
-// basic_entrypoint!(PRECOMPILE<Sha256InvokeFunc>);
-// #[cfg(feature = "ripemd160")]
-// basic_entrypoint!(PRECOMPILE<Ripemd160InvokeFunc>);
-// #[cfg(feature = "identity")]
-// basic_entrypoint!(PRECOMPILE<IdentityInvokeFunc>);
-// #[cfg(feature = "modexp")]
-// basic_entrypoint!(PRECOMPILE<ModexpInvokeFunc>);
-// #[cfg(feature = "ecrecover")]
-// basic_entrypoint!(PRECOMPILE<EcrecoverInvokeFunc>);
+type BlakePrecompile<SDK> = PRECOMPILE<SDK, BlakeInvokeFunc>;
+type Sha256Precompile<SDK> = PRECOMPILE<SDK, Sha256InvokeFunc>;
+type Ripemd160Precompile<SDK> = PRECOMPILE<SDK, Ripemd160InvokeFunc>;
+type IdentityPrecompile<SDK> = PRECOMPILE<SDK, IdentityInvokeFunc>;
+type ModexpPrecompile<SDK> = PRECOMPILE<SDK, ModexpInvokeFunc>;
+type EcrecoverPrecompile<SDK> = PRECOMPILE<SDK, EcrecoverInvokeFunc>;
+
+#[cfg(feature = "blake2")]
+basic_entrypoint!(BlakePrecompile);
+#[cfg(feature = "sha256")]
+basic_entrypoint!(Sha256Precompile);
+#[cfg(feature = "ripemd160")]
+basic_entrypoint!(Ripemd160Precompile);
+#[cfg(feature = "identity")]
+basic_entrypoint!(IdentityPrecompile);
+#[cfg(feature = "modexp")]
+basic_entrypoint!(ModexpPrecompile);
+#[cfg(feature = "ecrecover")]
+basic_entrypoint!(EcrecoverPrecompile);

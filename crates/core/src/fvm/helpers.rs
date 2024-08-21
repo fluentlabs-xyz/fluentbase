@@ -307,7 +307,7 @@ impl IndexedHash {
     }
 
     pub(crate) fn compute_by_column(&self, column: u32) -> IndexedHash {
-        let mut res = IndexedHash::from_hash(&self.0);
+        let res = IndexedHash::from_hash(&self.0);
         res.update_with_column(column)
     }
 
@@ -321,7 +321,7 @@ impl IndexedHash {
     }
 
     pub(crate) fn compute_by_column_index(&self, column: u32, index: u32) -> IndexedHash {
-        let mut res = IndexedHash::from_hash(&self.0);
+        let res = IndexedHash::from_hash(&self.0);
         res.update_with_column_index(column, index)
     }
 
@@ -566,8 +566,8 @@ impl CoinsHelper {
     }
 
     pub(crate) fn from_slice(v: &[u8]) -> Self {
-        let mut original_key = Bytes34::from_bytes(v).expect("valid utxo id key");
-        return Self { original_key };
+        let original_key = Bytes34::from_bytes(v).expect("valid utxo id key");
+        Self { original_key }
     }
 
     pub(crate) fn get(&self) -> Bytes34 {

@@ -7,17 +7,18 @@ extern crate core;
 
 mod account;
 mod allocator;
-pub use account::*;
-pub use allocator::*;
-pub mod contracts;
+mod contracts;
 mod journal;
 mod linker;
 mod sdk;
 mod types;
 mod utils;
 
+pub use account::*;
+pub use allocator::*;
 pub use alloy_primitives::{address, b256, bloom, bytes, fixed_bytes, Address, Bytes, B256, U256};
 pub use byteorder;
+pub use contracts::*;
 pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
 pub use journal::*;
 pub use linker::*;

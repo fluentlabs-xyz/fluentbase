@@ -462,7 +462,7 @@ mod tests {
             mapping(Address => MyStruct)
         };
 
-        let (args, output) = MappingStorage::parse_args(&mapping);
+        let (args, _output) = MappingStorage::parse_args(&mapping);
 
         assert_eq!(args.len(), 1);
         assert_eq!(args[0].name.to_string(), "arg0");

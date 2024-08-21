@@ -461,7 +461,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 let Some(owner_with_balance) = self.coins_owner_with_balance(&utxo_id_key) else {
                     return Ok(None);
                 };
-                let mut fuel_address = FuelAddress::new(*owner_with_balance.address());
+                let fuel_address = FuelAddress::new(*owner_with_balance.address());
                 let (account, _is_cold) = self.sdk.account(&fuel_address.fluent_address());
                 let amount = account.balance / U256::from(1_000_000_000);
                 let compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
@@ -575,7 +575,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                             postcard::from_bytes(old_value.as_slice())
                                 .expect("compressed coin recovered");
                         // fetch old acc
-                        let mut fuel_address = FuelAddress::new(*compressed_coin.owner());
+                        let fuel_address = FuelAddress::new(*compressed_coin.owner());
                         let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
                         // subtract balance
                         account.balance -= U256::from(1_000_000_000)
@@ -599,7 +599,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 );
                 self.coins_owner_with_balance_update(&utxo_id_key, &coins_owner_with_balance);
 
-                let mut fuel_address = FuelAddress::new(*coins_owner_with_balance.address());
+                let fuel_address = FuelAddress::new(*coins_owner_with_balance.address());
                 let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
                 let coin_amount =
                     U256::from(1_000_000_000) * U256::from(coins_owner_with_balance.balance());

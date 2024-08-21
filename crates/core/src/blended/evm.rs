@@ -1,7 +1,20 @@
-use crate::{blended::BlendedRuntime, helpers::evm_error_from_exit_code};
+use crate::{
+    blended::{util::create_rwasm_proxy_bytecode, BlendedRuntime},
+    helpers::evm_error_from_exit_code,
+};
 use alloc::boxed::Box;
 use core::mem::take;
-use fluentbase_sdk::{Address, Bytes, ExitCode, SovereignAPI, B256, U256};
+use fluentbase_sdk::{
+    Address,
+    Bytes,
+    ContractContext,
+    ExitCode,
+    SovereignAPI,
+    B256,
+    STATE_DEPLOY,
+    STATE_MAIN,
+    U256,
+};
 use revm_interpreter::{
     analysis::to_analysed,
     as_usize_saturated,
@@ -166,7 +179,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             match next_action {
                 InterpreterAction::Call { inputs } => {
                     let return_memory_offset = inputs.return_memory_offset.clone();
-                    let (output, gas, exit_code) = self.call_inner(inputs, depth + 1);
+                    let (output, gas, exit_code) = self.call_inner(inputs, STATE_MAIN, depth + 1);
                     let result = InterpreterResult::new(
                         evm_error_from_exit_code(ExitCode::from(exit_code)),
                         output,
@@ -247,5 +260,57 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         self.store_evm_bytecode(&target_address, code_hash, evm_bytecode);
 
         result
+    }
+
+    pub fn deploy_evm_contract_proxy(
+        &mut self,
+        target_address: Address,
+        inputs: Box<CreateInputs>,
+        mut gas: Gas,
+        call_depth: u32,
+    ) -> InterpreterResult {
+        // let return_error = |gas: Gas, result: InstructionResult| -> InterpreterResult {
+        //     InterpreterResult::new(result, Bytes::new(), gas)
+        // };
+
+        let rwasm_bytecode = create_rwasm_proxy_bytecode(&target_address);
+
+        // write callee changes to a database (lets keep rWASM part empty for now since universal
+        // loader is not ready yet)
+        let (mut contract_account, _) = self.sdk.account(&target_address);
+        contract_account.update_bytecode(self.sdk, Bytes::default(), None, rwasm_bytecode, None);
+
+        let context = ContractContext {
+            address: target_address,
+            caller: inputs.caller,
+            value: inputs.value,
+        };
+        let (output, exit_code) = self.exec_rwasm_bytecode(
+            context,
+            &contract_account,
+            inputs.init_code.as_ref(),
+            &mut gas,
+            STATE_DEPLOY,
+            call_depth,
+        );
+
+        // if bytecode starts with 0xEF or exceeds MAX_CODE_SIZE then return the corresponding error
+        // if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
+        //     return return_error(gas, InstructionResult::CreateContractStartingWithEF);
+        // } else if result.output.len() > MAX_CODE_SIZE {
+        //     return return_error(gas, InstructionResult::CreateContractSizeLimit);
+        // }
+
+        // record gas for each created byte
+        // let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
+        // if !result.gas.record_cost(gas_for_code) {
+        //     return return_error(gas, InstructionResult::OutOfGas);
+        // }
+
+        InterpreterResult {
+            result: evm_error_from_exit_code(ExitCode::from(exit_code)),
+            output,
+            gas,
+        }
     }
 }

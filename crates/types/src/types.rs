@@ -1,5 +1,5 @@
 use crate::U256;
-use alloy_primitives::hex;
+use alloy_primitives::{b256, hex, B256};
 #[cfg(feature = "rwasm")]
 use rwasm::{
     core::{Trap, TrapCode},
@@ -320,3 +320,34 @@ impl BytecodeType {
         Self::EVM
     }
 }
+
+pub const SYSCALL_ID_STORAGE_READ: B256 =
+    b256!("4023096842131de08903e3a03a648b5a91209ca2a264e0a3a90f9899431ad227"); // keccak256("_syscall_storage_read")
+pub const SYSCALL_ID_STORAGE_WRITE: B256 =
+    b256!("126659e43fb4baaff19b992a1869aa0cac8ec5e30b38556fd8cf28e6fd2255b9"); // keccak256("_syscall_storage_write")
+pub const SYSCALL_ID_CALL: B256 =
+    b256!("1d2e7a52c8548eccd33b1f100ae79c86c1a6a6baa18215f916d395a7095ee3e9"); // keccak256("_syscall_call")
+pub const SYSCALL_ID_STATIC_CALL: B256 =
+    b256!("c8d75aa83d2d2710550b424cf8ed7ce575348ac9628ae284118ed839ec5003b1"); // keccak256("_syscall_static_call")
+pub const SYSCALL_ID_CALL_CODE: B256 =
+    b256!("10c6aac9a8c0edaa89d4eb61ccd665b386d1faef9222d1f04b88aa9f43ede6d4"); // keccak256("_syscall_call_code")
+pub const SYSCALL_ID_DELEGATE_CALL: B256 =
+    b256!("75bd4ec817c86b0736da59cb28bb22979b1547ee30426044e0ded9055ecfee5a"); // keccak256("_syscall_delegate_call")
+pub const SYSCALL_ID_CREATE: B256 =
+    b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
+pub const SYSCALL_ID_EMIT_LOG: B256 =
+    b256!("505be4983de61b5ab79cdc8164e4db895c4f9548cee794e1e0bccec1dc0b751d"); // keccak256("_syscall_emit_log")
+pub const SYSCALL_ID_DESTROY_ACCOUNT: B256 =
+    b256!("288b6990f686aff01fe73bc8be3738b4669f5cab8c40076fac1d0abc9c8883d8"); // keccak256("_syscall_destroy_account")
+pub const SYSCALL_ID_BALANCE: B256 =
+    b256!("cb4021d39709b0f968e88fb3916c04ea18509e666daf1eb14ebd757d0db9e9b2"); // keccak256("_syscall_balance")
+
+// code hash
+// code size
+// code copy
+
+pub const FUEL_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
+pub const FUEL_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
+pub const FUEL_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
+pub const FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
+pub const FUEL_LIMIT_SYSCALL_BALANCE: u64 = 2_600;
