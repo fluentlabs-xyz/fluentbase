@@ -44,10 +44,6 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 }
 
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
-    fn native_sdk(&self) -> &impl NativeAPI {
-        &self.native_sdk
-    }
-
     fn block_context(&self) -> &BlockContext {
         &self.input.block
     }
@@ -74,7 +70,16 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn input_size(&self) -> u32 {
-        self.native_sdk.input_size() - SharedContextInputV1::HEADER_SIZE as u32
+        let input_size = self.native_sdk.input_size();
+        assert!(
+            input_size >= SharedContextInputV1::HEADER_SIZE as u32,
+            "input less than context header"
+        );
+        input_size - SharedContextInputV1::HEADER_SIZE as u32
+    }
+
+    fn fuel(&self) -> u64 {
+        self.native_sdk.fuel()
     }
 
     fn write(&mut self, output: &[u8]) {
@@ -97,20 +102,71 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.syscall_emit_log(data.as_ref(), topics);
     }
 
+    fn create(
+        &self,
+        mut fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
+        self.native_sdk
+            .syscall_create(fuel_limit, salt, value, init_code)
+    }
+
     fn call(
         &mut self,
         address: Address,
         value: U256,
         input: &[u8],
-        fuel_limit: u64,
+        mut fuel_limit: u64,
     ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
         self.native_sdk
             .syscall_call(fuel_limit, address, value, input)
     }
 
-    fn delegate_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
+    fn call_code(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        mut fuel_limit: u64,
+    ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
+        self.native_sdk
+            .syscall_call_code(fuel_limit, address, value, input)
+    }
+
+    fn delegate_call(
+        &mut self,
+        address: Address,
+        input: &[u8],
+        mut fuel_limit: u64,
+    ) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
         self.native_sdk
             .syscall_delegate_call(fuel_limit, address, input)
+    }
+
+    fn static_call(&mut self, address: Address, input: &[u8], mut fuel_limit: u64) -> (Bytes, i32) {
+        if fuel_limit == 0 {
+            fuel_limit = self.native_sdk.fuel();
+        }
+        self.native_sdk
+            .syscall_static_call(fuel_limit, address, input)
+    }
+
+    fn destroy_account(&mut self, address: Address) {
+        self.native_sdk.syscall_destroy_account(&address);
     }
 
     fn keccak256(&self, data: &[u8]) -> B256 {

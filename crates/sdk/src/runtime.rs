@@ -29,7 +29,6 @@ use fluentbase_runtime::{
 use fluentbase_types::{
     Account,
     Bytes,
-    IJournaledTrie,
     NativeAPI,
     UnwrapExitCode,
     B256,

@@ -156,7 +156,7 @@ impl<DB: TrieStorage> JournalTrieInner<DB> {
         self.logs.truncate(checkpoint.logs());
     }
 
-    fn update_preimage(&mut self, key: &[u8; 32], field: u32, preimage: &[u8]) -> bool {
+    fn update_preimage(&mut self, key: &[u8; 32], _field: u32, preimage: &[u8]) -> bool {
         // find and decode value and hash
         // let value_hash = match self
         //     .get(key)

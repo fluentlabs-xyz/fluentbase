@@ -37,14 +37,14 @@ pub fn fvm_transact<'a, Tx, T>(
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-    T: KeyValueInspect<Column=Column>,
+    T: KeyValueInspect<Column = Column>,
 {
     let execution_options = ExecutionOptions {
         extra_tx_checks,
         backtrace: false,
     };
 
-    let mut block_executor =
+    let block_executor =
         BlockExecutor::new(WasmRelayer {}, execution_options.clone(), consensus_params)
             .expect("failed to create block executor");
 
@@ -120,7 +120,7 @@ pub fn fvm_transact_commit<Tx, T>(
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
-    T: KeyValueMutate<Column=Column>,
+    T: KeyValueMutate<Column = Column>,
 {
     // debug_log!("ecl(fvm_transact_commit): start");
 
