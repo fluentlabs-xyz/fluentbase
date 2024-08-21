@@ -530,12 +530,32 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::write_log(self, address, data, topics.to_vec());
     }
 
+    fn create(
+        &self,
+        fuel_limit: u64,
+        salt: Option<U256>,
+        value: &U256,
+        init_code: &[u8],
+    ) -> (Bytes, i32) {
+        todo!()
+    }
+
     fn call(
         &mut self,
         _address: Address,
         _value: U256,
         _input: &[u8],
         _fuel_limit: u64,
+    ) -> (Bytes, i32) {
+        todo!()
+    }
+
+    fn call_code(
+        &mut self,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: u64,
     ) -> (Bytes, i32) {
         todo!()
     }
