@@ -60,7 +60,9 @@ pub struct WasmStorage<'a, SDK: SovereignAPI> {
 impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn metadata(&self, raw_key: &[u8]) -> Option<Bytes> {
         let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn metadata_update(&mut self, raw_key: &[u8], data: &[u8]) {
@@ -73,7 +75,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key))
             .value_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_raw_code_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
@@ -88,7 +92,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsLatestUtxoHelper::new(&ContractId::new(*raw_key))
             .value_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_latest_utxo_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
@@ -111,7 +117,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsStateHelper::new(raw_key)
             .value_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_state_merkle_data_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
@@ -126,7 +134,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsStateHelper::new_transformed(raw_key)
             .merkle_data_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_state_merkle_metadata_update(
@@ -145,7 +155,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsStateHelper::new_transformed(raw_key)
             .merkle_metadata_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_assets_value_update(&mut self, raw_key: &Bytes64, value: &[u8]) {
@@ -181,7 +193,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
             .merkle_data_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn contracts_assets_merkle_metadata_update(
@@ -200,7 +214,9 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let key: B256 = ContractsAssetsHelper::from_transformed(raw_key)
             .merkle_metadata_preimage_key()
             .into();
-        self.sdk.preimage(&key).filter(|v| !v.is_empty())
+        self.sdk
+            .preimage(&Address::ZERO, &key)
+            .filter(|v| !v.is_empty())
     }
 
     pub(crate) fn coins_owner_with_balance(

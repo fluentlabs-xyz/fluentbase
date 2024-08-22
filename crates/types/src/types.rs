@@ -341,13 +341,19 @@ pub const SYSCALL_ID_DESTROY_ACCOUNT: B256 =
     b256!("288b6990f686aff01fe73bc8be3738b4669f5cab8c40076fac1d0abc9c8883d8"); // keccak256("_syscall_destroy_account")
 pub const SYSCALL_ID_BALANCE: B256 =
     b256!("cb4021d39709b0f968e88fb3916c04ea18509e666daf1eb14ebd757d0db9e9b2"); // keccak256("_syscall_balance")
-
-// code hash
-// code size
-// code copy
+pub const SYSCALL_ID_WRITE_PREIMAGE: B256 =
+    b256!("d114f5a81f2232d3237cf0e4c72a9a2928f4385fb43e1a0021ed9fe41fb2e8e9"); // keccak256("_syscall_write_preimage")
+pub const SYSCALL_ID_PREIMAGE_COPY: B256 =
+    b256!("3e98d2443cafeb26748e1eaa1a87e7bf75b170685b56524d8435eb90047e7c3e"); // keccak256("_syscall_preimage_copy")
+pub const SYSCALL_ID_PREIMAGE_SIZE: B256 =
+    b256!("af119f11b6bece48a4770a5a5aa01003d69518f36a0d9882ddd93e1c9e7bd32a"); // keccak256("_syscall_preimage_size")
+pub const SYSCALL_ID_EXT_STORAGE_READ: B256 =
+    b256!("25960aed19d8a68d1e45dfed7e5000c174f340980b7942624fa5f12a12cc91cc"); // keccak256("_syscall_ext_storage_read")
 
 pub const FUEL_LIMIT_SYSCALL_STORAGE_READ: u64 = 2_100;
 pub const FUEL_LIMIT_SYSCALL_STORAGE_WRITE: u64 = 22_100;
 pub const FUEL_LIMIT_SYSCALL_EMIT_LOG: u64 = 10_000;
 pub const FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT: u64 = 32_600;
 pub const FUEL_LIMIT_SYSCALL_BALANCE: u64 = 2_600;
+pub const FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ: u64 = 2_100;
+pub const FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE: u64 = 2_600;

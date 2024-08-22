@@ -40,6 +40,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // execute rWASM deploy function
         let context = ContractContext {
             address: target_address,
+            bytecode_address: target_address,
             caller: inputs.caller,
             value: inputs.value,
         };
