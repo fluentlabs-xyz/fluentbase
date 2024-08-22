@@ -389,11 +389,11 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
             .push(JournalStateEvent::PreimageChanged { hash })
     }
 
-    fn preimage(&self, hash: &B256) -> Option<Bytes> {
+    fn preimage(&self, _address: &Address, hash: &B256) -> Option<Bytes> {
         self.preimages.get(hash).map(|v| v.0.clone())
     }
 
-    fn preimage_size(&self, hash: &B256) -> u32 {
+    fn preimage_size(&self, _address: &Address, hash: &B256) -> u32 {
         self.preimages
             .get(hash)
             .map(|v| v.0.len() as u32)
@@ -497,6 +497,11 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         value
     }
 
+    fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
+        let (value, _) = SovereignAPI::storage(self, address, slot);
+        value
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk.read(target, offset)
     }
@@ -518,16 +523,35 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        self.native_sdk.preimage_copy(hash, target);
+        let preimage = self
+            .preimages
+            .get(hash)
+            .map(|v| v.0.clone())
+            .unwrap_or_default();
+        target.copy_from_slice(preimage.as_ref());
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
-        self.native_sdk.preimage_size(hash)
+        self.preimages
+            .get(hash)
+            .map(|v| v.0.len() as u32)
+            .unwrap_or(0)
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) {
         let address = self.contract_context.as_ref().unwrap().address;
         SovereignAPI::write_log(self, address, data, topics.to_vec());
+    }
+
+    fn balance(&self, address: &Address) -> U256 {
+        todo!()
+    }
+
+    fn write_preimage(&mut self, preimage: Bytes) -> B256 {
+        let address = self.contract_context.as_ref().unwrap().address;
+        let code_hash = self.native_sdk.keccak256(preimage.as_ref());
+        SovereignAPI::write_preimage(self, address, code_hash, preimage);
+        code_hash
     }
 
     fn create(

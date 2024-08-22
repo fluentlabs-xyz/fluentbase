@@ -190,6 +190,15 @@ impl TestingContext {
             .replace_with(|ctx| take(ctx).with_input(input.into()));
     }
 
+    pub fn with_fuel(mut self, fuel: u64) -> Self {
+        self.set_fuel(fuel);
+        self
+    }
+
+    pub fn set_fuel(&mut self, fuel: u64) {
+        self.ctx.replace_with(|ctx| take(ctx).with_fuel(fuel));
+    }
+
     pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
         let context: Vec<u8> = context.into();
         self.ctx.replace_with(|ctx| take(ctx).with_context(context));
