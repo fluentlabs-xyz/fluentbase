@@ -28,6 +28,7 @@ use fluentbase_sdk::{
     SYSCALL_ID_CALL,
     SYSCALL_ID_CALL_CODE,
     SYSCALL_ID_CREATE,
+    SYSCALL_ID_CREATE2,
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
@@ -73,7 +74,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // if the exit code is non-positive (stands for termination), then execution is finished
         if exit_code <= 0 {
             let return_data = self.sdk.native_sdk().return_data();
-            return NextAction::ExecutionResult(return_data, fuel_spent, exit_code);
+            return NextAction::ExecutionResult(return_data, fuel_spent.into(), exit_code);
         }
 
         // otherwise, exit code is a "call_id" that identifies saved context
@@ -91,6 +92,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     fn process_exec(
         &mut self,
         contract_context: &ContractContext,
+        gas: &mut Gas,
         params: SyscallInvocationParams,
         return_call_id: u32,
         call_depth: u32,
@@ -109,29 +111,42 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             let fuel_limit = params.fuel_limit;
             // check code hashes for system calls
             let next_action = match params.code_hash {
-                SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
-                SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
-                SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
+                SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, gas, params),
+                SYSCALL_ID_STORAGE_WRITE => {
+                    self.syscall_storage_write(contract_context, gas, params)
+                }
+                SYSCALL_ID_CALL => self.syscall_call(contract_context, gas, params, call_depth),
                 SYSCALL_ID_STATIC_CALL => {
-                    self.syscall_static_call(contract_context, params, call_depth)
+                    self.syscall_static_call(contract_context, gas, params, call_depth)
                 }
                 SYSCALL_ID_DELEGATE_CALL => {
-                    self.syscall_delegate_call(contract_context, params, call_depth)
+                    self.syscall_delegate_call(contract_context, gas, params, call_depth)
                 }
                 SYSCALL_ID_CALL_CODE => {
-                    self.syscall_call_code(contract_context, params, call_depth)
+                    self.syscall_call_code(contract_context, gas, params, call_depth)
                 }
-                SYSCALL_ID_CREATE => self.syscall_create(contract_context, params, call_depth),
-                SYSCALL_ID_EMIT_LOG => self.syscall_emit_log(contract_context, params),
+                SYSCALL_ID_CREATE => {
+                    self.syscall_create::<false>(contract_context, gas, params, call_depth)
+                }
+                SYSCALL_ID_CREATE2 => {
+                    self.syscall_create::<true>(contract_context, gas, params, call_depth)
+                }
+                SYSCALL_ID_EMIT_LOG => self.syscall_emit_log(contract_context, gas, params),
                 SYSCALL_ID_DESTROY_ACCOUNT => {
-                    self.syscall_destroy_account(contract_context, params)
+                    self.syscall_destroy_account(contract_context, gas, params)
                 }
-                SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, params),
-                SYSCALL_ID_WRITE_PREIMAGE => self.syscall_write_preimage(contract_context, params),
-                SYSCALL_ID_PREIMAGE_COPY => self.syscall_preimage_copy(contract_context, params),
-                SYSCALL_ID_PREIMAGE_SIZE => self.syscall_preimage_size(contract_context, params),
+                SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, gas, params),
+                SYSCALL_ID_WRITE_PREIMAGE => {
+                    self.syscall_write_preimage(contract_context, gas, params)
+                }
+                SYSCALL_ID_PREIMAGE_COPY => {
+                    self.syscall_preimage_copy(contract_context, gas, params)
+                }
+                SYSCALL_ID_PREIMAGE_SIZE => {
+                    self.syscall_preimage_size(contract_context, gas, params)
+                }
                 SYSCALL_ID_EXT_STORAGE_READ => {
-                    self.syscall_ext_storage_read(contract_context, params)
+                    self.syscall_ext_storage_read(contract_context, gas, params)
                 }
                 _ => {
                     NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams)
@@ -140,11 +155,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             // make sure we have enough gas for this op
             match &next_action {
                 NextAction::ExecutionResult(_, gas_cost, _) => {
-                    if fuel_limit < *gas_cost {
+                    if fuel_limit < gas_cost.spent() {
                         return NextAction::from_exit_code(fuel_limit, ExitCode::OutOfGas);
                     }
                 }
-                NextAction::NestedCall(_, _) => {}
+                _ => {}
             }
             return next_action;
         }
@@ -166,7 +181,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-        .encode_to_vec(0);
+            .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -215,7 +230,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (output, exit_code) = loop {
             let next_action = match stack_frame {
                 Frame::Execute(params, return_call_id) => {
-                    self.process_exec(&context, take(params), *return_call_id, call_depth)
+                    self.process_exec(&context, gas, take(params), *return_call_id, call_depth)
                 }
                 Frame::Resume(return_call_id, return_data, exit_code) => {
                     self.process_resume(*return_call_id, return_data.as_ref(), *exit_code)
@@ -224,10 +239,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             match next_action {
                 NextAction::ExecutionResult(return_data, fuel_spent, exit_code) => {
                     let _resumable_frame = call_stack.pop().unwrap();
-                    assert!(
-                        gas.record_cost(fuel_spent),
-                        "not enough gas for nested call"
-                    );
+                    // assert!(
+                    //     gas.record_cost(fuel_spent.spent),
+                    //     "not enough gas for nested call"
+                    // );
                     if call_stack.is_empty() {
                         break (return_data, exit_code);
                     }
@@ -285,10 +300,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-                BytecodeType::EVM => MAX_INITCODE_SIZE,
-                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-                BytecodeType::FVM => MAX_INITCODE_SIZE,
-            }
+            BytecodeType::EVM => MAX_INITCODE_SIZE,
+            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+            BytecodeType::FVM => MAX_INITCODE_SIZE,
+        }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
@@ -450,6 +465,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 address: inputs.target_address,
                 bytecode_address: bytecode_account.address,
                 caller: inputs.caller,
+                is_static: inputs.is_static,
                 value: inputs.value.get(),
             };
             self.exec_rwasm_bytecode(

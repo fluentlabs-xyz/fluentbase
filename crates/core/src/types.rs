@@ -1,14 +1,18 @@
-use fluentbase_sdk::{Bytes, ExitCode, SyscallInvocationParams};
+use fluentbase_sdk::{Bytes, ExitCode, Fuel, SyscallInvocationParams};
 
 #[derive(Clone, Debug)]
 pub(crate) enum NextAction {
-    ExecutionResult(Bytes, u64, i32),
+    ExecutionResult(Bytes, Fuel, i32),
     NestedCall(u32, SyscallInvocationParams),
 }
 
 impl NextAction {
     pub(crate) fn from_exit_code(fuel_spent: u64, exit_code: ExitCode) -> Self {
-        Self::ExecutionResult(Bytes::default(), fuel_spent, exit_code.into_i32())
+        Self::ExecutionResult(
+            Bytes::default(),
+            Fuel::new(fuel_spent),
+            exit_code.into_i32(),
+        )
     }
 }
 
