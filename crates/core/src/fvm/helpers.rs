@@ -560,7 +560,8 @@ impl StorageSlotPure for CoinsHelper {
 impl CoinsHelper {
     const OWNER_WITH_BALANCE_SLOT: u32 = 0;
     const OWNER_SLOT: u32 = 1;
-    const BALANCE_SLOT: u32 = 2;
+    const ASSET_ID_SLOT: u32 = 2;
+    const BALANCE_SLOT: u32 = 3;
     pub(crate) fn new(key: &Bytes34) -> Self {
         return Self { original_key: *key };
     }
@@ -585,6 +586,14 @@ impl CoinsHelper {
     pub(crate) fn owner_storage_slot(&self) -> U256 {
         U256::from_be_bytes(
             Self::storage_slot_raw(self.original_key.as_ref(), Self::OWNER_SLOT)
+                .inner()
+                .clone(),
+        )
+    }
+
+    pub(crate) fn asset_id_slot(&self) -> U256 {
+        U256::from_be_bytes(
+            Self::storage_slot_raw(self.original_key.as_ref(), Self::ASSET_ID_SLOT)
                 .inner()
                 .clone(),
         )
@@ -631,47 +640,61 @@ impl AsRef<fuel_types::Address> for FuelAddress {
 }
 
 #[derive(Default)]
-pub(crate) struct CoinsOwnerWithBalanceHelper {
+pub(crate) struct CoinsHolderHelper {
     address: fuel_types::Address,
+    asset_id: AssetId,
     balance: u64,
 }
 
-impl CoinsOwnerWithBalanceHelper {
+impl CoinsHolderHelper {
     pub const ENCODED_LEN: usize = size_of::<Address>() + size_of::<u64>();
 
-    pub(crate) fn new(address: fuel_types::Address, balance: u64) -> Self {
-        Self { address, balance }
+    pub(crate) fn new(address: fuel_types::Address, asset_id: AssetId, balance: u64) -> Self {
+        Self {
+            address,
+            asset_id,
+            balance,
+        }
     }
 
-    pub(crate) fn from_owner(owner: &fuel_types::Address, balance: u64) -> Self {
+    pub(crate) fn from(owner: &fuel_types::Address, asset_id: AssetId, balance: u64) -> Self {
         Self {
             address: owner.clone(),
+            asset_id,
             balance,
         }
     }
 
     pub(crate) fn address(&self) -> &fuel_types::Address {
-        return &self.address;
+        &self.address
+    }
+
+    pub(crate) fn asset_id(&self) -> &AssetId {
+        &self.asset_id
     }
 
     pub(crate) fn balance(&self) -> u64 {
-        return self.balance;
+        self.balance
     }
 
-    pub(crate) fn to_u256_address_balance(&self) -> (U256, U256) {
+    pub(crate) fn to_u256_tuple(&self) -> (U256, U256, U256) {
         (
-            U256::from_be_slice(self.address.as_slice()),
+            U256::from_le_slice(self.address.as_slice()),
+            U256::from_le_slice(self.asset_id.as_slice()),
             U256::from_limbs_slice(&[self.balance]),
         )
     }
 
-    pub(crate) fn from_u256_address_balance(v: &(U256, U256)) -> Self {
-        let address = &v.0.to_be_bytes::<32>();
-        let balance = &v.1.as_limbs()[0];
-        let address = fuel_types::Address::from_bytes_ref(address);
-        CoinsOwnerWithBalanceHelper {
-            address: *address,
-            balance: *balance,
+    pub(crate) fn from_u256_tuple(address: &U256, asset_id: &U256, balance: &U256) -> Self {
+        // let address = &v.0.to_be_bytes::<32>();
+        // let balance = &v.1.as_limbs()[0];
+        let address = fuel_types::Address::from_bytes(&address.to_le_bytes::<32>()).unwrap();
+        let asset_id = AssetId::from_bytes(&asset_id.to_le_bytes::<32>()).unwrap();
+        let balance = balance.as_limbs()[0];
+        CoinsHolderHelper {
+            address,
+            asset_id,
+            balance,
         }
     }
 }

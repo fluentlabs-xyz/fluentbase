@@ -23,6 +23,15 @@ use fuel_core_types::{
     services::executor::Result,
 };
 
+#[derive(Debug, Clone)]
+pub struct FvmTransactResult<Tx> {
+    pub reverted: bool,
+    pub program_state: ProgramState,
+    pub tx: Tx,
+    pub receipts: Vec<Receipt>,
+    pub changes: Changes,
+}
+
 pub fn fvm_transact<'a, Tx, T>(
     storage: &mut T,
     checked_tx: Checked<Tx>,
@@ -33,7 +42,7 @@ pub fn fvm_transact<'a, Tx, T>(
     consensus_params: ConsensusParameters,
     extra_tx_checks: bool,
     execution_data: &mut ExecutionData,
-) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
+) -> Result<FvmTransactResult<Tx>>
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
@@ -64,7 +73,7 @@ where
         checked_tx = block_executor.extra_tx_checks(checked_tx, header, tx_transaction, memory)?;
     }
 
-    let (reverted, state, tx, receipts) = block_executor.attempt_tx_execution_with_vm(
+    let (reverted, program_state, tx, receipts) = block_executor.attempt_tx_execution_with_vm(
         checked_tx,
         header,
         coinbase_contract_id,
@@ -94,17 +103,17 @@ where
         receipts.clone(),
         gas_price,
         reverted,
-        state,
+        program_state,
         tx_id,
     )?;
 
-    Ok((
+    Ok(FvmTransactResult {
         reverted,
-        state,
+        program_state,
         tx,
         receipts,
-        tx_transaction.changes().clone(),
-    ))
+        changes: tx_transaction.changes().clone(),
+    })
 }
 
 pub fn fvm_transact_commit<Tx, T>(
@@ -116,7 +125,7 @@ pub fn fvm_transact_commit<Tx, T>(
     consensus_params: ConsensusParameters,
     extra_tx_checks: bool,
     execution_data: &mut ExecutionData,
-) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
+) -> Result<FvmTransactResult<Tx>>
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
@@ -140,7 +149,7 @@ where
 
     let mut memory = MemoryInstance::new();
 
-    let res = fvm_transact(
+    let result = fvm_transact(
         storage,
         checked_tx,
         header,
@@ -152,7 +161,7 @@ where
         execution_data,
     )?;
 
-    for (col_num, changes) in &res.4 {
+    for (col_num, changes) in &result.changes {
         let column: Column = col_num.clone().try_into().expect("valid column number");
         match column {
             Column::Metadata
@@ -193,5 +202,5 @@ where
         }
     }
 
-    Ok(res)
+    Ok(result)
 }

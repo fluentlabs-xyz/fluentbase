@@ -6420,6 +6420,8 @@ dependencies = [
  "fuel-core-executor",
  "fuel-core-storage",
  "fuel-core-types",
+ "fuel-tx",
+ "fuel-vm",
  "indicatif",
  "lazy_static",
  "reqwest 0.12.5",

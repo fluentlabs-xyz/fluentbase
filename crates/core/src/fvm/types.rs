@@ -1,6 +1,6 @@
 use crate::fvm::helpers::{
     CoinsHelper,
-    CoinsOwnerWithBalanceHelper,
+    CoinsHolderHelper,
     ContractsAssetsHelper,
     ContractsLatestUtxoHelper,
     ContractsRawCodeHelper,
@@ -358,10 +358,27 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         Some(res.into())
     }
 
-    pub(crate) fn coins_owner_with_balance(
-        &self,
-        raw_key: &Bytes34,
-    ) -> Option<CoinsOwnerWithBalanceHelper> {
+    pub(crate) fn coins_update(&mut self, raw_key: &Bytes34, v: &CoinsHolderHelper) {
+        let (address, asset_id, balance) = v.to_u256_tuple();
+        let ch = CoinsHelper::new(raw_key);
+        self.sdk.write_storage(
+            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            ch.owner_storage_slot(),
+            address,
+        );
+        self.sdk.write_storage(
+            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            ch.asset_id_slot(),
+            asset_id,
+        );
+        self.sdk.write_storage(
+            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            ch.balance_storage_slot(),
+            balance,
+        );
+    }
+
+    pub(crate) fn coins(&self, raw_key: &Bytes34) -> Option<CoinsHolderHelper> {
         let ch = CoinsHelper::new(raw_key);
         let (owner, _is_cold) = self.sdk.storage(
             &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
@@ -370,31 +387,17 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         if owner == U256::ZERO {
             return None;
         }
+        let (asset_id, _is_cold) = self.sdk.storage(
+            &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            &ch.asset_id_slot(),
+        );
         let (balance, _is_cold) = self.sdk.storage(
             &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
             &ch.balance_storage_slot(),
         );
-        Some(CoinsOwnerWithBalanceHelper::from_u256_address_balance(&(
-            owner, balance,
-        )))
-    }
-
-    pub(crate) fn coins_owner_with_balance_update(
-        &mut self,
-        raw_key: &Bytes34,
-        v: &CoinsOwnerWithBalanceHelper,
-    ) {
-        let (address, balance) = v.to_u256_address_balance();
-        self.sdk.write_storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            CoinsHelper::new(raw_key).owner_storage_slot(),
-            address,
-        );
-        self.sdk.write_storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            CoinsHelper::new(raw_key).balance_storage_slot(),
-            balance,
-        );
+        Some(CoinsHolderHelper::from_u256_tuple(
+            &owner, &asset_id, &balance,
+        ))
     }
 }
 
@@ -458,16 +461,16 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 // value -> CompressedCoin
 
                 let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
-                let Some(owner_with_balance) = self.coins_owner_with_balance(&utxo_id_key) else {
+                let Some(coins_holder_helper) = self.coins(&utxo_id_key) else {
                     return Ok(None);
                 };
-                let fuel_address = FuelAddress::new(*owner_with_balance.address());
+                let fuel_address = FuelAddress::new(*coins_holder_helper.address());
                 let (account, _is_cold) = self.sdk.account(&fuel_address.fluent_address());
                 let amount = account.balance / U256::from(1_000_000_000);
                 let compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
                     owner: fuel_address.get(),
-                    amount: amount.as_limbs()[0], // gwei ?
-                    asset_id: AssetId::BASE,
+                    amount: amount.as_limbs()[0],
+                    asset_id: *coins_holder_helper.asset_id(),
                     tx_pointer: Default::default(),
                 });
 
@@ -568,41 +571,37 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
 
                 if buf.len() <= 0 {
-                    // get current if exists
+                    // deletion process
                     let old_value = KeyValueInspect::get(&self, key, column)?;
                     if let Some(old_value) = old_value {
                         let compressed_coin: CompressedCoin =
                             postcard::from_bytes(old_value.as_slice())
                                 .expect("compressed coin recovered");
-                        // fetch old acc
                         let fuel_address = FuelAddress::new(*compressed_coin.owner());
                         let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
-                        // subtract balance
                         account.balance -= U256::from(1_000_000_000)
                             * U256::from(compressed_coin.amount().as_u64());
-                        // write updated acc
                         self.sdk.write_account(account, AccountStatus::Modified);
                     }
-                    // delete current mapping
-                    let coins_owner_with_balance = CoinsOwnerWithBalanceHelper::default();
-                    self.coins_owner_with_balance_update(&utxo_id_key, &coins_owner_with_balance);
+                    // delete existing mapping
+                    let coins_owner_with_balance = CoinsHolderHelper::default();
+                    self.coins_update(&utxo_id_key, &coins_owner_with_balance);
 
                     return Ok(0);
                 }
 
                 let compressed_coin: CompressedCoin =
                     postcard::from_bytes(buf).expect("compressed coin");
-                // assert_eq!(compressed_coin.asset_id(), &AssetId::BASE);
-                let coins_owner_with_balance = CoinsOwnerWithBalanceHelper::from_owner(
+                let coins = CoinsHolderHelper::from(
                     compressed_coin.owner(),
+                    *compressed_coin.asset_id(),
                     *compressed_coin.amount(),
                 );
-                self.coins_owner_with_balance_update(&utxo_id_key, &coins_owner_with_balance);
+                self.coins_update(&utxo_id_key, &coins);
 
-                let fuel_address = FuelAddress::new(*coins_owner_with_balance.address());
+                let fuel_address = FuelAddress::new(*coins.address());
                 let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
-                let coin_amount =
-                    U256::from(1_000_000_000) * U256::from(coins_owner_with_balance.balance());
+                let coin_amount = U256::from(1_000_000_000) * U256::from(coins.balance());
                 account.balance += coin_amount;
                 self.sdk.write_account(account, AccountStatus::Modified);
             }

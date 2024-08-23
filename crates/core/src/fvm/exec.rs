@@ -13,6 +13,7 @@ use fluentbase_sdk::{
     SovereignAPI,
     B256,
 };
+use fuel_core_executor::executor::ExecutionData;
 use fuel_core_types::{
     blockchain::{
         header::{ApplicationHeader, ConsensusHeader, PartialBlockHeader},
@@ -55,6 +56,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
             generated: Empty::default(),
         },
     };
+    let mut execution_data = ExecutionData::new();
     let receipts = match tx {
         fuel_tx::Transaction::Script(etx) => {
             let checked_tx = etx
@@ -63,16 +65,17 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                     &consensus_params,
                 )
                 .expect("convert into checked");
-            let res = _fvm_transact_commit_inner(
+            let result = _fvm_transact_commit_inner(
                 sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
+                &mut execution_data,
             )
             .expect("fvm transact commit inner success");
-            res.3.to_vec()
+            result.receipts.to_vec()
         }
         fuel_tx::Transaction::Create(etx) => {
             let checked_tx = etx
@@ -81,16 +84,17 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                     &consensus_params,
                 )
                 .expect("failed to convert tx into checked tx");
-            let res = _fvm_transact_commit_inner(
+            let result = _fvm_transact_commit_inner(
                 sdk,
                 checked_tx,
                 &header,
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
+                &mut execution_data,
             )
             .expect("fvm transact commit inner success");
-            res.3.to_vec()
+            result.receipts.to_vec()
         }
         fuel_tx::Transaction::Upgrade(etx) => {
             let checked_tx = etx
@@ -106,9 +110,10 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
+                &mut execution_data,
             )
             .expect("fvm transact inner success");
-            res.3.to_vec()
+            res.receipts.to_vec()
         }
         fuel_tx::Transaction::Upload(etx) => {
             let checked_tx = etx
@@ -124,9 +129,10 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 coinbase_contract_id,
                 tx_gas_price,
                 consensus_params,
+                &mut execution_data,
             )
             .expect("fvm transact inner success");
-            res.3.to_vec()
+            res.receipts.to_vec()
         }
         fuel_tx::Transaction::Mint(_) => {
             panic!("mint transaction not supported")
@@ -384,10 +390,11 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
     //     .encode(&mut receipts_encoded)
     //     .expect("failed to encode receipts");
     // LowLevelSDK::write(receipts_encoded.as_ptr(), receipts_encoded.len() as u32);
+
     FvmMethodOutput {
         output: Default::default(),
         exit_code: ExitCode::Ok.into_i32(),
-        gas_remaining: 0,
+        gas_remaining: gas_limit - execution_data.used_gas(),
         gas_refund: 0,
     }
 }
