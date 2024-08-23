@@ -7,10 +7,30 @@ pub struct SyscallChargeFuel;
 impl SyscallChargeFuel {
     pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, delta: u64) -> Result<u64, Trap> {
         match caller.consume_fuel(delta) {
-            Ok(remaining) => Ok(remaining),
+            Ok(remaining) => {
+                println!(
+                    "gas_record_cost(ok): remaining={}, delta={}",
+                    remaining, delta,
+                );
+                Ok(remaining)
+            }
             Err(err) => match err {
-                FuelError::FuelMeteringDisabled => Ok(u64::MAX),
-                FuelError::OutOfFuel => Err(ExitCode::OutOfGas.into_trap()),
+                FuelError::FuelMeteringDisabled => {
+                    let remaining = Self::fn_impl(caller.data_mut(), delta);
+                    if remaining == u64::MAX {
+                        println!("gas_record_cost(err): delta={} err=OutOfGas", delta);
+                        return Err(ExitCode::OutOfGas.into_trap());
+                    }
+                    println!(
+                        "gas_record_cost(ok): remaining={}, delta={}",
+                        remaining, delta,
+                    );
+                    Ok(remaining)
+                }
+                FuelError::OutOfFuel => {
+                    println!("gas_record_cost(err): delta={} err=OutOfGas", delta);
+                    Err(ExitCode::OutOfGas.into_trap())
+                }
             },
         }
     }

@@ -10,6 +10,7 @@ impl SyscallFuel {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext) -> u64 {
+        // println!("fuel remaining={}", ctx.fuel().remaining());
         ctx.fuel().remaining()
     }
 }

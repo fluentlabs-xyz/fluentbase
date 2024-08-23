@@ -181,29 +181,50 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-            .encode_to_vec(0);
+        .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
+        // #[cfg(feature = "std")]
+        // if contract_context.bytecode_address == PRECOMPILE_EVM {
+        //     let runtime_ctx = RuntimeContext::new_with_hash(params.code_hash)
+        //         .with_input(context_input)
+        //         .with_fuel(params.fuel_limit)
+        //         .with_state(params.state)
+        //         .with_depth(call_depth)
+        //         .with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        //     let native_sdk = RuntimeContextWrapper::new(runtime_ctx);
+        //     let sdk = SharedContextImpl::parse_from_input(native_sdk);
+        //     let mut evm_loader2 = EvmLoaderEntrypoint::new(sdk);
+        //     let exit_code = if params.state == STATE_DEPLOY {
+        //         evm_loader2.deploy_inner()
+        //     } else {
+        //         evm_loader2.main_inner()
+        //     };
+        //     return self.process_exec_params(exit_code.into_i32(), 0);
+        // }
+
         // execute smart contract
-        let fuel_before = self.sdk.native_sdk().fuel();
-        let exit_code = self.sdk.native_sdk().exec(
+        let (fuel_spent, exit_code) = self.sdk.native_sdk().exec(
             &params.code_hash,
             &context_input,
             params.fuel_limit,
             params.state,
         );
-        let fuel_spent = fuel_before - self.sdk.native_sdk().fuel();
 
         self.process_exec_params(exit_code, fuel_spent)
     }
 
-    fn process_resume(&mut self, call_id: u32, return_data: &[u8], exit_code: i32) -> NextAction {
-        let fuel_before = self.sdk.native_sdk().fuel();
-        let exit_code = self
-            .sdk
-            .native_sdk()
-            .resume(call_id, return_data, exit_code);
-        let fuel_spent = fuel_before - self.sdk.native_sdk().fuel();
+    fn process_resume(
+        &mut self,
+        call_id: u32,
+        return_data: &[u8],
+        exit_code: i32,
+        fuel_used: u64,
+    ) -> NextAction {
+        let (fuel_spent, exit_code) =
+            self.sdk
+                .native_sdk()
+                .resume(call_id, return_data, exit_code, fuel_used);
         self.process_exec_params(exit_code, fuel_spent)
     }
 
@@ -232,24 +253,30 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 Frame::Execute(params, return_call_id) => {
                     self.process_exec(&context, gas, take(params), *return_call_id, call_depth)
                 }
-                Frame::Resume(return_call_id, return_data, exit_code) => {
-                    self.process_resume(*return_call_id, return_data.as_ref(), *exit_code)
-                }
+                Frame::Resume(return_call_id, return_data, exit_code, fuel_used) => self
+                    .process_resume(
+                        *return_call_id,
+                        return_data.as_ref(),
+                        *exit_code,
+                        *fuel_used,
+                    ),
             };
             match next_action {
-                NextAction::ExecutionResult(return_data, fuel_spent, exit_code) => {
+                NextAction::ExecutionResult(return_data, fuel_used, exit_code) => {
                     let _resumable_frame = call_stack.pop().unwrap();
-                    // assert!(
-                    //     gas.record_cost(fuel_spent.spent),
-                    //     "not enough gas for nested call"
-                    // );
                     if call_stack.is_empty() {
                         break (return_data, exit_code);
                     }
                     match call_stack.last_mut().unwrap() {
-                        Frame::Resume(_, return_data_result, exit_code_result) => {
+                        Frame::Resume(
+                            _,
+                            return_data_result,
+                            exit_code_result,
+                            fuel_used_result,
+                        ) => {
                             *return_data_result = return_data;
                             *exit_code_result = exit_code;
+                            *fuel_used_result = fuel_used.spent();
                         }
                         _ => unreachable!(),
                     }
@@ -259,9 +286,9 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     let last_frame = call_stack.last_mut().unwrap();
                     match last_frame {
                         Frame::Execute(_, _) => {
-                            *last_frame = Frame::Resume(call_id, Bytes::default(), i32::MIN);
+                            *last_frame = Frame::Resume(call_id, Bytes::default(), i32::MIN, 0);
                         }
-                        Frame::Resume(call_id_result, _, _) => {
+                        Frame::Resume(call_id_result, _, _, _) => {
                             *call_id_result = call_id;
                         }
                     }
@@ -300,10 +327,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-            BytecodeType::EVM => MAX_INITCODE_SIZE,
-            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-            BytecodeType::FVM => MAX_INITCODE_SIZE,
-        }
+                BytecodeType::EVM => MAX_INITCODE_SIZE,
+                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+                BytecodeType::FVM => MAX_INITCODE_SIZE,
+            }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
