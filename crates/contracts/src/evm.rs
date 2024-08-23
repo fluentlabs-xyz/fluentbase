@@ -1,5 +1,8 @@
 use core::mem::take;
-use fluentbase_core::helpers::{evm_error_from_exit_code, exit_code_from_evm_error};
+use fluentbase_core::{
+    debug_log,
+    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
+};
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{derive_keccak256, Contract},
@@ -16,6 +19,7 @@ use fluentbase_sdk::{
 use revm_interpreter::{
     analysis::to_analysed,
     as_usize_saturated,
+    gas,
     opcode::make_instruction_table,
     CallOutcome,
     CallScheme,
@@ -40,6 +44,7 @@ use revm_primitives::{
     CreateScheme,
     Env,
     BLOCK_HASH_HISTORY,
+    MAX_CODE_SIZE,
 };
 
 pub struct EvmLoader2<'a, SDK> {
@@ -184,8 +189,11 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
 
     pub fn exec_evm_bytecode(&mut self, mut contract: Contract) -> InterpreterResult {
         let gas = Gas::new(self.sdk.fuel());
+
         // make sure bytecode is analyzed
         contract.bytecode = to_analysed(contract.bytecode);
+
+        debug_log!(self.sdk, "gas: {}", gas.remaining());
 
         let instruction_table = make_instruction_table::<Self, CancunSpec>();
 
@@ -295,7 +303,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
-        let result = self.exec_evm_bytecode(contract);
+        let mut result = self.exec_evm_bytecode(contract);
         // self.sdk.charge_fuel(result.gas.spent());
         if !result.is_ok() {
             // it might be an error message, have to return
@@ -303,6 +311,20 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             // exit with corresponding error code
             return exit_code_from_evm_error(result.result);
         }
+
+        // if bytecode starts with 0xEF or exceeds MAX_CODE_SIZE then return the corresponding error
+        if !result.output.is_empty() && result.output.first() == Some(&0xEF) {
+            return ExitCode::CreateContractStartingWithEF;
+        } else if result.output.len() > MAX_CODE_SIZE {
+            return ExitCode::ContractSizeLimit;
+        }
+
+        // record gas for each created byte
+        let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
+        if !result.gas.record_cost(gas_for_code) {
+            return ExitCode::ContractSizeLimit;
+        }
+
         self.store_evm_bytecode(Bytecode::new_raw(result.output));
         ExitCode::Ok
     }
@@ -319,7 +341,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
         self.sdk.exit(exit_code.into_i32());
     }
 
-    pub(crate) fn deploy_inner(&mut self) -> ExitCode {
+    pub fn deploy_inner(&mut self) -> ExitCode {
         let contract_context = self.sdk.contract_context().clone();
         EvmLoader2::new(&mut self.sdk).deploy(contract_context)
     }
@@ -329,7 +351,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
         self.sdk.exit(exit_code.into_i32());
     }
 
-    pub(crate) fn main_inner(&mut self) -> ExitCode {
+    pub fn main_inner(&mut self) -> ExitCode {
         let contract_context = self.sdk.contract_context().clone();
         let result = EvmLoader2::new(&mut self.sdk).call(contract_context);
         self.sdk.write(result.output.as_ref());
@@ -363,6 +385,7 @@ mod tests {
                 ]),
                 bytecode_address: Default::default(),
                 caller: Address::ZERO,
+                is_static: false,
                 value: U256::ZERO,
             })
             .build(native_sdk.clone());
@@ -387,6 +410,7 @@ mod tests {
                 ]),
                 bytecode_address: Default::default(),
                 caller: Address::ZERO,
+                is_static: false,
                 value: U256::ZERO,
             })
             .build(native_sdk.clone());

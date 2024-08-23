@@ -48,6 +48,7 @@ extern "C" {
         return_data_ptr: *const u8,
         return_data_len: u32,
         exit_code: i32,
+        fuel_used: u64,
     ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;

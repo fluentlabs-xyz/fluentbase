@@ -133,25 +133,30 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallChargeFuel::fn_impl(&mut ctx, value)
     }
 
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
-        let exit_code = SyscallExec::fn_impl(
-            &mut self.ctx.borrow_mut(),
-            &code_hash.0,
-            input,
-            fuel_limit,
-            state,
-        );
-        exit_code
+    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32) {
+        let mut ctx = self.ctx.borrow_mut();
+        let spent_before = ctx.fuel().spent();
+        let exit_code = SyscallExec::fn_impl(&mut ctx, &code_hash.0, input, fuel_limit, state);
+        (ctx.fuel().spent() - spent_before, exit_code)
     }
 
-    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32 {
+    fn resume(
+        &self,
+        call_id: u32,
+        return_data: &[u8],
+        exit_code: i32,
+        fuel_used: u64,
+    ) -> (u64, i32) {
+        let mut ctx = self.ctx.borrow_mut();
+        let spent_before = ctx.fuel().spent();
         let exit_code = SyscallResume::fn_impl(
-            &mut self.ctx.borrow_mut(),
+            &mut ctx,
             call_id,
             return_data.to_vec(),
             exit_code,
+            fuel_used,
         );
-        exit_code
+        (ctx.fuel().spent() - spent_before, exit_code)
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {

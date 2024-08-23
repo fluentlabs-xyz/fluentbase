@@ -321,7 +321,7 @@ impl CachingRuntime {
         config
             .floats(false)
             .fuel_consumption_mode(FuelConsumptionMode::Eager)
-            .consume_fuel(true);
+            .consume_fuel(false);
         Engine::new(&config)
     }
 
@@ -422,7 +422,7 @@ impl Runtime {
         let mut linker = Linker::<RuntimeContext>::new(&engine);
 
         // add fuel if limit is specified
-        if store.data().fuel.remaining() > 0 {
+        if store.engine().config().get_consume_fuel() {
             store
                 .add_fuel(store.data().fuel.remaining())
                 .expect("fuel metering is disabled");
@@ -645,7 +645,11 @@ impl Runtime {
 
     fn handle_execution_result(&self, err: Option<RuntimeError>) -> ExecutionResult {
         let mut execution_result = self.store.data().execution_result.clone();
-        execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
+        if self.store.engine().config().get_consume_fuel() {
+            execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
+        } else {
+            execution_result.fuel_consumed = self.store.data().fuel.spent();
+        }
         if let Some(err) = err {
             match err {
                 RuntimeError::ExecutionInterrupted => execution_result.interrupted = true,

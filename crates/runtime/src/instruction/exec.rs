@@ -109,6 +109,8 @@ impl SyscallExec {
             // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = runtime.remember_runtime() as i32;
         } else {
+            // charge consumed fuel from parent's context
+            ctx.fuel.charge(execution_result.fuel_consumed);
             // increase total fuel consumed and remember return data
             ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         }

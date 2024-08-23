@@ -268,7 +268,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
-        let is_gas_free = is_gas_free_call(context);
+        let mut is_gas_free = is_gas_free_call(context);
 
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
@@ -280,6 +280,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let contract_input = params.input.slice(20..);
 
         let (_, is_cold) = self.sdk.account(&target_address);
+
+        if target_address == PRECOMPILE_EVM {
+            is_gas_free = true;
+        }
 
         let gas_limit = if !is_gas_free {
             // make sure we have enough gas for the call
