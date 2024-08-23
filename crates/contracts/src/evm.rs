@@ -1,9 +1,5 @@
-use alloc::vec::Vec;
 use core::mem::take;
-use fluentbase_core::{
-    debug_log,
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
-};
+use fluentbase_core::helpers::{evm_error_from_exit_code, exit_code_from_evm_error};
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{derive_keccak256, Contract},
@@ -12,8 +8,8 @@ use fluentbase_sdk::{
     Bytes,
     ContractContext,
     ExitCode,
+    HashMap,
     SharedAPI,
-    SyscallAPI,
     B256,
     U256,
 };
@@ -38,17 +34,19 @@ use revm_interpreter::{
 };
 use revm_precompile::Log;
 use revm_primitives::{
+    bitvec::macros::internal::funty::Fundamental,
     Bytecode,
     CancunSpec,
     CreateScheme,
     Env,
     BLOCK_HASH_HISTORY,
-    MAX_CALL_STACK_LIMIT,
 };
 
 pub struct EvmLoader2<'a, SDK> {
     sdk: &'a mut SDK,
+    transient_storage: HashMap<U256, U256>,
     env: Env,
+    address: Address,
 }
 
 impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
@@ -80,32 +78,31 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
         }
     }
 
-    fn balance(&mut self, _address: Address) -> Option<(U256, bool)> {
-        unreachable!("not supported");
-        Some((U256::ZERO, false))
+    fn balance(&mut self, address: Address) -> Option<(U256, bool)> {
+        let balance = self.sdk.balance(&address);
+        Some((balance, false))
     }
 
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
-        unreachable!("not supported");
-        // let (account, is_cold) = self.sdk.account(&address);
-        // if account.is_empty() {
-        //     return Some((Bytes::new(), is_cold));
-        // }
-        let code_hash_storage_key = self.code_hash_storage_key(&address);
-        let value = self.sdk.storage(&code_hash_storage_key);
-        let evm_code_hash = B256::from(value.to_le_bytes());
-        Some((self.sdk.preimage(&evm_code_hash), false))
+        let (evm_code_hash, is_cold) = self.code_hash(address)?;
+        let evm_bytecode = self.sdk.preimage(&evm_code_hash);
+        Some((evm_bytecode, is_cold))
     }
 
     fn code_hash(&mut self, address: Address) -> Option<(B256, bool)> {
-        unreachable!("not supported");
-        // let (account, is_cold) = self.sdk.account(&address);
-        // if account.is_empty() {
-        //     return Some((B256::ZERO, is_cold));
-        // }
-        let code_hash_storage_key = self.code_hash_storage_key(&address);
-        let value = self.sdk.storage(&code_hash_storage_key);
-        let evm_code_hash = B256::from(value.to_le_bytes());
+        if address == self.address {
+            let evm_code_hash = self
+                .sdk
+                .storage(&EVM_CODE_HASH_SLOT)
+                .to_le_bytes::<32>()
+                .into();
+            return Some((evm_code_hash, false));
+        }
+        let evm_code_hash = self
+            .sdk
+            .ext_storage(&address, &EVM_CODE_HASH_SLOT)
+            .to_le_bytes::<32>()
+            .into();
         Some((evm_code_hash, false))
     }
 
@@ -124,12 +121,15 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
         })
     }
 
-    fn tload(&mut self, _address: Address, _index: U256) -> U256 {
-        unreachable!("not supported");
+    fn tload(&mut self, _address: Address, index: U256) -> U256 {
+        self.transient_storage
+            .get(&index)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    fn tstore(&mut self, _address: Address, _index: U256, _value: U256) {
-        unreachable!("not supported");
+    fn tstore(&mut self, _address: Address, index: U256, value: U256) {
+        self.transient_storage.insert(index, value);
     }
 
     fn log(&mut self, mut log: Log) {
@@ -143,11 +143,17 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
     }
 }
 
+const EVM_CODE_HASH_SLOT: U256 =
+    U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode_hash")));
+
 impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
+        let address = sdk.contract_context().address;
         Self {
             env: env_from_context(sdk.block_context(), sdk.tx_context()),
             sdk,
+            transient_storage: Default::default(),
+            address,
         }
     }
 
@@ -160,69 +166,30 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
     }
 
     pub fn load_evm_bytecode(&self) -> (Bytecode, B256) {
-        let evm_bytecode_slot = U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode")));
-        let bytecode_len: usize = self.sdk.storage(&evm_bytecode_slot).as_limbs()[0] as usize;
-        let mut bytecode = Vec::with_capacity(bytecode_len);
-        let chunks_num = (bytecode_len + 31) / 32;
-        for i in 0..chunks_num {
-            let slot_i = evm_bytecode_slot + U256::from(i + 1);
-            let chunk = self.sdk.storage(&slot_i);
-            bytecode.extend_from_slice(chunk.to_le_bytes::<32>().as_ref());
-        }
-        bytecode.resize(bytecode_len, 0);
-        let evm_bytecode_hash_slot =
-            U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode_hash")));
-        let code_hash = self.sdk.storage(&evm_bytecode_hash_slot);
-        let evm_bytecode = Bytecode::new_raw(Bytes::from(bytecode));
-        let code_hash = B256::from(code_hash.to_le_bytes::<32>());
-        debug_assert_eq!(evm_bytecode.hash_slow(), code_hash);
-        (evm_bytecode, code_hash)
+        let evm_code_hash = self
+            .sdk
+            .storage(&EVM_CODE_HASH_SLOT)
+            .to_le_bytes::<32>()
+            .into();
+        let evm_bytecode = self.sdk.preimage(&evm_code_hash);
+        (Bytecode::new_raw(evm_bytecode), evm_code_hash)
     }
 
     pub fn store_evm_bytecode(&mut self, bytecode: Bytecode) {
-        let evm_bytecode_slot = U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode")));
+        let code_hash = self.sdk.write_preimage(bytecode.original_bytes());
+        debug_assert_eq!(code_hash, bytecode.hash_slow());
         self.sdk
-            .write_storage(evm_bytecode_slot, U256::from(bytecode.len()));
-        for (i, chunk) in bytecode.original_byte_slice().chunks(32).enumerate() {
-            if chunk.len() < 32 {
-                let mut padded_chunk = [0u8; 32];
-                padded_chunk[0..chunk.len()].copy_from_slice(chunk);
-                self.sdk.write_storage(
-                    evm_bytecode_slot + U256::from(i + 1),
-                    U256::from_le_slice(&padded_chunk),
-                );
-            } else {
-                self.sdk.write_storage(
-                    evm_bytecode_slot + U256::from(i + 1),
-                    U256::from_le_slice(chunk),
-                );
-            }
-        }
-        let evm_bytecode_hash_slot =
-            U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode_hash")));
-        self.sdk.write_storage(
-            evm_bytecode_hash_slot,
-            U256::from_le_bytes(bytecode.hash_slow().0),
-        );
+            .write_storage(EVM_CODE_HASH_SLOT, U256::from_le_bytes(code_hash.0));
     }
 
-    pub fn exec_evm_bytecode(
-        &mut self,
-        mut contract: Contract,
-        gas: Gas,
-        is_static: bool,
-        depth: u32,
-    ) -> InterpreterResult {
-        if depth >= MAX_CALL_STACK_LIMIT {
-            debug_log!(self.sdk, "depth limit reached: {}", depth);
-        }
-
+    pub fn exec_evm_bytecode(&mut self, mut contract: Contract) -> InterpreterResult {
+        let gas = Gas::new(self.sdk.fuel());
         // make sure bytecode is analyzed
         contract.bytecode = to_analysed(contract.bytecode);
 
         let instruction_table = make_instruction_table::<Self, CancunSpec>();
 
-        let mut interpreter = Interpreter::new(contract, gas.remaining(), is_static);
+        let mut interpreter = Interpreter::new(contract, gas.remaining(), false);
         let mut shared_memory = SharedMemory::new();
 
         loop {
@@ -313,7 +280,9 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
-        self.exec_evm_bytecode(contract, Gas::new(self.sdk.fuel()), false, 0)
+        let result = self.exec_evm_bytecode(contract);
+        // self.sdk.charge_fuel(result.gas.spent());
+        result
     }
 
     pub fn deploy(&mut self, contract_context: ContractContext) -> ExitCode {
@@ -326,7 +295,8 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
-        let result = self.exec_evm_bytecode(contract, Gas::new(self.sdk.fuel()), false, 0);
+        let result = self.exec_evm_bytecode(contract);
+        // self.sdk.charge_fuel(result.gas.spent());
         if !result.is_ok() {
             // it might be an error message, have to return
             self.sdk.write(result.output.as_ref());
@@ -391,6 +361,7 @@ mod tests {
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
                 ]),
+                bytecode_address: Default::default(),
                 caller: Address::ZERO,
                 value: U256::ZERO,
             })
@@ -407,13 +378,14 @@ mod tests {
 
     #[test]
     fn test_deploy_greeting() {
-        let mut native_sdk = TestingContext::empty();
+        let mut native_sdk = TestingContext::empty().with_fuel(100_000);
         let sdk = JournalStateBuilder::default()
             .with_contract_context(ContractContext {
                 address: Address::from([
                     189, 119, 4, 22, 163, 52, 95, 145, 228, 179, 69, 118, 203, 128, 74, 87, 111,
                     164, 142, 177,
                 ]),
+                bytecode_address: Default::default(),
                 caller: Address::ZERO,
                 value: U256::ZERO,
             })

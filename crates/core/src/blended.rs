@@ -31,9 +31,13 @@ use fluentbase_sdk::{
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_EXT_STORAGE_READ,
+    SYSCALL_ID_PREIMAGE_COPY,
+    SYSCALL_ID_PREIMAGE_SIZE,
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
+    SYSCALL_ID_WRITE_PREIMAGE,
 };
 use revm_interpreter::{
     CallInputs,
@@ -123,6 +127,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                     self.syscall_destroy_account(contract_context, params)
                 }
                 SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, params),
+                SYSCALL_ID_WRITE_PREIMAGE => self.syscall_write_preimage(contract_context, params),
+                SYSCALL_ID_PREIMAGE_COPY => self.syscall_preimage_copy(contract_context, params),
+                SYSCALL_ID_PREIMAGE_SIZE => self.syscall_preimage_size(contract_context, params),
+                SYSCALL_ID_EXT_STORAGE_READ => {
+                    self.syscall_ext_storage_read(contract_context, params)
+                }
                 _ => {
                     NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams)
                 }
@@ -144,7 +154,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // planning to solve it in the future
         #[cfg(feature = "std")]
         if !fluentbase_runtime::Runtime::is_warm_bytecode(&params.code_hash) {
-            let bytecode = self.sdk.preimage(&params.code_hash).unwrap_or_default();
+            let bytecode = self
+                .sdk
+                .preimage(&contract_context.bytecode_address, &params.code_hash)
+                .unwrap_or_default();
             fluentbase_runtime::Runtime::warmup_bytecode(params.code_hash, bytecode);
         }
 
@@ -153,7 +166,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             tx: self.sdk.tx_context().clone(),
             contract: contract_context.clone(),
         }
-            .encode_to_vec(0);
+        .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
         // execute smart contract
@@ -272,10 +285,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // check init max code size for EIP-3860
         if inputs.init_code.len()
             > match bytecode_type {
-            BytecodeType::EVM => MAX_INITCODE_SIZE,
-            BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-            BytecodeType::FVM => MAX_INITCODE_SIZE,
-        }
+                BytecodeType::EVM => MAX_INITCODE_SIZE,
+                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
+                BytecodeType::FVM => MAX_INITCODE_SIZE,
+            }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
         }
@@ -435,6 +448,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         } else {
             let contract_context = ContractContext {
                 address: inputs.target_address,
+                bytecode_address: bytecode_account.address,
                 caller: inputs.caller,
                 value: inputs.value.get(),
             };

@@ -11,6 +11,8 @@ use crate::{
     FUEL_LIMIT_SYSCALL_BALANCE,
     FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
     FUEL_LIMIT_SYSCALL_EMIT_LOG,
+    FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
+    FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
     FUEL_LIMIT_SYSCALL_STORAGE_READ,
     FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
     STATE_MAIN,
@@ -21,13 +23,18 @@ use crate::{
     SYSCALL_ID_DELEGATE_CALL,
     SYSCALL_ID_DESTROY_ACCOUNT,
     SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_EXT_STORAGE_READ,
+    SYSCALL_ID_PREIMAGE_COPY,
+    SYSCALL_ID_PREIMAGE_SIZE,
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
+    SYSCALL_ID_WRITE_PREIMAGE,
     U256,
 };
 use alloc::{vec, vec::Vec};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
+use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_codec::Codec;
 
 /// A trait for providing shared API functionality.
@@ -133,6 +140,7 @@ impl From<&revm_primitives::Env> for TxContext {
 #[derive(Default, Codec, Clone, Debug)]
 pub struct ContractContext {
     pub address: Address,
+    pub bytecode_address: Address,
     pub caller: Address,
     pub value: U256,
 }
@@ -286,17 +294,17 @@ pub trait SyscallAPI {
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]);
     fn syscall_destroy_account(&self, target: &Address);
     fn syscall_balance(&self, address: &Address) -> U256;
+    fn syscall_write_preimage(&self, preimage: &Bytes) -> B256;
+    fn syscall_preimage_size(&self, hash: &B256) -> u32;
+    fn syscall_preimage_copy(&self, hash: &B256) -> Bytes;
+    fn syscall_ext_storage_read(&self, address: &Address, slot: &U256) -> U256;
 }
 
 impl<T: NativeAPI> SyscallAPI for T {
     fn syscall_storage_read(&self, slot: &U256) -> U256 {
-        let mut input: [u8; 32] = [0u8; 32];
-        if !slot.is_zero() {
-            input[0..32].copy_from_slice(slot.as_le_slice());
-        }
         let exit_code = self.exec(
             &SYSCALL_ID_STORAGE_READ,
-            &input,
+            slot.as_le_slice(),
             FUEL_LIMIT_SYSCALL_STORAGE_READ,
             STATE_MAIN,
         );
@@ -437,6 +445,49 @@ impl<T: NativeAPI> SyscallAPI for T {
         self.read_output(&mut output, 0);
         U256::from_le_bytes(output)
     }
+
+    fn syscall_write_preimage(&self, preimage: &Bytes) -> B256 {
+        let exit_code = self.exec(&SYSCALL_ID_WRITE_PREIMAGE, preimage.as_ref(), 0, STATE_MAIN);
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 32] = [0u8; 32];
+        self.read_output(&mut output, 0);
+        B256::from(output)
+    }
+
+    fn syscall_preimage_size(&self, hash: &B256) -> u32 {
+        let exit_code = self.exec(
+            &SYSCALL_ID_PREIMAGE_SIZE,
+            hash.as_ref(),
+            FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
+            STATE_MAIN,
+        );
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 4] = [0u8; 4];
+        self.read_output(&mut output, 0);
+        LittleEndian::read_u32(&output)
+    }
+
+    fn syscall_preimage_copy(&self, hash: &B256) -> Bytes {
+        let exit_code = self.exec(&SYSCALL_ID_PREIMAGE_COPY, hash.as_ref(), 0, STATE_MAIN);
+        assert_eq!(exit_code, 0);
+        self.return_data()
+    }
+
+    fn syscall_ext_storage_read(&self, address: &Address, slot: &U256) -> U256 {
+        let mut input: [u8; 20 + 32] = [0u8; 20 + 32];
+        input[0..20].copy_from_slice(address.as_slice());
+        input[20..52].copy_from_slice(slot.as_le_slice());
+        let exit_code = self.exec(
+            &SYSCALL_ID_EXT_STORAGE_READ,
+            &input,
+            FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
+            STATE_MAIN,
+        );
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 32] = [0u8; 32];
+        self.read_output(&mut output, 0);
+        U256::from_le_bytes(output)
+    }
 }
 
 pub trait SovereignAPI {
@@ -456,8 +507,8 @@ pub trait SovereignAPI {
     fn account_committed(&self, address: &Address) -> (Account, IsColdAccess);
 
     fn write_preimage(&mut self, address: Address, hash: B256, preimage: Bytes);
-    fn preimage(&self, hash: &B256) -> Option<Bytes>;
-    fn preimage_size(&self, hash: &B256) -> u32;
+    fn preimage(&self, address: &Address, hash: &B256) -> Option<Bytes>;
+    fn preimage_size(&self, address: &Address, hash: &B256) -> u32;
 
     fn write_storage(&mut self, address: Address, slot: U256, value: U256) -> IsColdAccess;
     fn storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
@@ -491,6 +542,7 @@ pub trait SharedAPI {
 
     fn write_storage(&mut self, slot: U256, value: U256);
     fn storage(&self, slot: &U256) -> U256;
+    fn ext_storage(&self, address: &Address, slot: &U256) -> U256;
 
     fn read(&self, target: &mut [u8], offset: u32);
     fn input_size(&self) -> u32;
@@ -502,6 +554,7 @@ pub trait SharedAPI {
         buffer.into()
     }
 
+    fn charge_fuel(&self, value: u64);
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
@@ -519,6 +572,8 @@ pub trait SharedAPI {
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]);
 
+    fn balance(&self, address: &Address) -> U256;
+    fn write_preimage(&mut self, preimage: Bytes) -> B256;
     fn create(
         &self,
         fuel_limit: u64,

@@ -78,7 +78,7 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
         }
         let evm_bytecode = self
             .sdk
-            .preimage(&account.source_code_hash)
+            .preimage(&address, &account.source_code_hash)
             .unwrap_or_default();
         Some((evm_bytecode, is_cold))
     }
@@ -143,7 +143,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (account, _) = self.sdk.account(address);
         let bytecode = self
             .sdk
-            .preimage(&account.source_code_hash)
+            .preimage(address, &account.source_code_hash)
             .unwrap_or_default();
         let bytecode = Bytecode::new_raw(bytecode);
         (bytecode, account.source_code_hash)
@@ -282,6 +282,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let context = ContractContext {
             address: target_address,
+            bytecode_address: target_address,
             caller: inputs.caller,
             value: inputs.value,
         };

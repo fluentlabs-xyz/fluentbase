@@ -32,7 +32,7 @@ use fuel_core_storage::{
 use fuel_core_types::{
     blockchain::primitives::DaBlockHeight,
     entities::coins::coin::{CompressedCoin, CompressedCoinV1},
-    fuel_tx::{AssetId, ContractId},
+    fuel_tx::ContractId,
     services::relayer::Event,
 };
 use revm_primitives::{
