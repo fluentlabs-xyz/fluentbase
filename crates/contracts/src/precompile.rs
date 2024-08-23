@@ -55,9 +55,10 @@ impl<SDK: SharedAPI, FN: PrecompileInvokeFunc> PRECOMPILE<SDK, FN> {
         let input = alloc_slice(input_size as usize);
         self.sdk.read(input, 0);
         let input = Bytes::copy_from_slice(input);
-        let call_output = FN::call(&input, u64::MAX).unwrap_or_else(|err| {
+        let call_output = FN::call(&input, self.sdk.fuel()).unwrap_or_else(|err| {
             self.sdk.exit(map_precompile_error(err).into_i32());
         });
+        // self.sdk.charge_fuel(call_output.gas_used);
         let return_bytes = call_output.bytes;
         self.sdk.write(&return_bytes);
     }

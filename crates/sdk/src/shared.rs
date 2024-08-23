@@ -64,6 +64,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.syscall_storage_read(slot)
     }
 
+    fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
+        self.native_sdk.syscall_ext_storage_read(address, slot)
+    }
+
     fn read(&self, target: &mut [u8], offset: u32) {
         self.native_sdk
             .read(target, SharedContextInputV1::HEADER_SIZE as u32 + offset)
@@ -76,6 +80,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
             "input less than context header"
         );
         input_size - SharedContextInputV1::HEADER_SIZE as u32
+    }
+
+    fn charge_fuel(&self, value: u64) {
+        self.native_sdk.charge_fuel(value);
     }
 
     fn fuel(&self) -> u64 {
@@ -91,15 +99,24 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     }
 
     fn preimage_copy(&self, hash: &B256, target: &mut [u8]) {
-        self.native_sdk.preimage_copy(hash, target)
+        let preimage = self.native_sdk.syscall_preimage_copy(hash);
+        target.copy_from_slice(preimage.as_ref());
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
-        self.native_sdk.preimage_size(hash)
+        self.native_sdk.syscall_preimage_size(hash)
     }
 
     fn emit_log(&mut self, data: Bytes, topics: &[B256]) {
         self.native_sdk.syscall_emit_log(data.as_ref(), topics);
+    }
+
+    fn balance(&self, address: &Address) -> U256 {
+        self.native_sdk.syscall_balance(address)
+    }
+
+    fn write_preimage(&mut self, preimage: Bytes) -> B256 {
+        self.native_sdk.syscall_write_preimage(&preimage)
     }
 
     fn create(
