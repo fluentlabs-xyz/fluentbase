@@ -82,6 +82,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         input_size - SharedContextInputV1::HEADER_SIZE as u32
     }
 
+    fn charge_fuel(&self, value: u64) {
+        self.native_sdk.charge_fuel(value);
+    }
+
     fn fuel(&self) -> u64 {
         self.native_sdk.fuel()
     }
