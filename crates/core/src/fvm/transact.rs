@@ -1,15 +1,15 @@
-use crate::{fvm::types::WasmStorage, helpers_fvm::fvm_transact_commit};
-use alloc::vec::Vec;
+use crate::{
+    fvm::types::WasmStorage,
+    helpers_fvm::{fvm_transact_commit, FvmTransactResult},
+};
 use fluentbase_sdk::SovereignAPI;
 use fuel_core_executor::executor::ExecutionData;
-use fuel_core_storage::transactional::Changes;
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
-    fuel_tx::{Cacheable, ConsensusParameters, ContractId, Receipt, Word},
+    fuel_tx::{Cacheable, ConsensusParameters, ContractId, Word},
     fuel_vm::{
         checked_transaction::{Checked, IntoChecked},
         interpreter::{CheckedMetadata, ExecutableTransaction},
-        ProgramState,
     },
     services::executor::Result,
 };
@@ -21,13 +21,12 @@ pub fn _fvm_transact_commit_inner<Tx, SDK: SovereignAPI>(
     coinbase_contract_id: ContractId,
     gas_price: Word,
     consensus_params: ConsensusParameters,
-) -> Result<(bool, ProgramState, Tx, Vec<Receipt>, Changes)>
+    execution_data: &mut ExecutionData,
+) -> Result<FvmTransactResult<Tx>>
 where
     Tx: ExecutableTransaction + Cacheable + Send + Sync + 'static,
     <Tx as IntoChecked>::Metadata: CheckedMetadata + Send + Sync,
 {
-    // debug_log!(sdk, "ecl(_fvm_transact_inner): start");
-
     let mut storage = WasmStorage { sdk };
 
     // TODO warmup storage from state based on tx inputs?
@@ -56,9 +55,7 @@ where
     //     true,
     // )?;
 
-    let mut execution_data = ExecutionData::new();
-
-    let res = fvm_transact_commit(
+    let result = fvm_transact_commit(
         &mut storage,
         checked_tx,
         header,
@@ -66,8 +63,8 @@ where
         gas_price,
         consensus_params,
         true,
-        &mut execution_data,
+        execution_data,
     )?;
 
-    Ok(res)
+    Ok(result)
 }

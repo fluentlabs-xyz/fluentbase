@@ -151,7 +151,7 @@ mod tests {
         );
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
-        storage.commit_changes(exec_result1.4).unwrap();
+        storage.commit_changes(exec_result1.changes).unwrap();
 
         let tx2 = tx2.as_script().unwrap().clone();
         let tx2_checked = tx2
@@ -239,8 +239,9 @@ mod tests {
             execution_data,
         );
         assert_eq!(true, fvm_exec_result.is_err());
+        let err = fvm_exec_result.unwrap_err();
         assert!(matches!(
-            &fvm_exec_result.unwrap_err(),
+            &err,
             &Error::TransactionValidity(TransactionValidityError::CoinMismatch(_))
         ));
     }
@@ -375,7 +376,7 @@ mod tests {
         assert_eq!(true, fvm_exec_result.is_ok());
         let fvm_exec_result = fvm_exec_result.unwrap();
         let empty_state = (*sparse::empty_sum()).into();
-        let executed_tx = fvm_exec_result.2;
+        let executed_tx = fvm_exec_result.tx;
         assert_eq!(executed_tx.inputs()[0].state_root(), Some(&empty_state));
         assert_eq!(executed_tx.inputs()[0].balance_root(), Some(&empty_state));
         assert_eq!(executed_tx.outputs()[0].state_root(), Some(&empty_state));
@@ -453,8 +454,11 @@ mod tests {
         assert_eq!(true, fvm_exec_result.is_ok());
         let fvm_exec_result = fvm_exec_result.unwrap();
         let empty_state = (*sparse::empty_sum()).into();
-        let executed_tx = fvm_exec_result.2;
-        assert!(matches!(fvm_exec_result.1, ProgramState::Revert { .. }));
+        let executed_tx = fvm_exec_result.tx;
+        assert!(matches!(
+            fvm_exec_result.program_state,
+            ProgramState::Revert { .. }
+        ));
         assert_eq!(
             executed_tx.inputs()[0].state_root(),
             executed_tx.outputs()[0].state_root()
@@ -583,7 +587,7 @@ mod tests {
         let fvm_exec_result = fvm_exec_result.unwrap();
 
         let empty_state = (*sparse::empty_sum()).into();
-        let executed_tx = fvm_exec_result.2;
+        let executed_tx = fvm_exec_result.tx;
         assert_eq!(executed_tx.inputs()[0].state_root(), Some(&empty_state));
         assert_eq!(executed_tx.inputs()[0].balance_root(), Some(&empty_state));
         // Roots should be different
@@ -696,7 +700,7 @@ mod tests {
         );
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
-        db.commit_changes(exec_result1.4).unwrap();
+        db.commit_changes(exec_result1.changes).unwrap();
 
         let tx2 = modify_balance_and_state_tx.as_script().unwrap().clone();
         let tx2_checked = tx2
@@ -715,8 +719,8 @@ mod tests {
         );
         assert_eq!(true, exec_result2.is_ok());
         let exec_result2 = exec_result2.unwrap();
-        db.commit_changes(exec_result2.4).unwrap();
-        let executed_tx2 = &exec_result2.2;
+        db.commit_changes(exec_result2.changes).unwrap();
+        let executed_tx2 = &exec_result2.tx;
         let state_root = executed_tx2.outputs()[0].state_root();
         let balance_root = executed_tx2.outputs()[0].balance_root();
 
@@ -755,7 +759,7 @@ mod tests {
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
 
-        let tx = exec_result1.2;
+        let tx = exec_result1.tx;
         assert_eq!(tx.inputs()[0].balance_root(), balance_root);
         assert_eq!(tx.inputs()[0].state_root(), state_root);
     }
@@ -862,7 +866,7 @@ mod tests {
         );
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
-        storage.commit_changes(exec_result1.4).unwrap();
+        storage.commit_changes(exec_result1.changes).unwrap();
 
         let tx2 = modify_balance_and_state_tx.as_script().unwrap().clone();
         let tx2_checked = tx2
@@ -882,8 +886,8 @@ mod tests {
         );
         assert_eq!(true, exec_result2.is_ok());
         let exec_result2 = exec_result2.unwrap();
-        storage.commit_changes(exec_result2.4).unwrap();
-        let executed_tx2 = &exec_result2.2;
+        storage.commit_changes(exec_result2.changes).unwrap();
+        let executed_tx2 = &exec_result2.tx;
         let state_root = executed_tx2.outputs()[0].state_root();
         let balance_root = executed_tx2.outputs()[0].balance_root();
 
@@ -921,7 +925,7 @@ mod tests {
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
 
-        let tx = exec_result1.2;
+        let tx = exec_result1.tx;
         assert_eq!(tx.inputs()[0].state_root(), state_root);
         assert_eq!(tx.inputs()[0].balance_root(), balance_root);
     }
@@ -1005,7 +1009,7 @@ mod tests {
         assert_eq!(true, exec_result2.is_ok());
         let exec_result2 = exec_result2.unwrap();
 
-        db.commit_changes(exec_result2.4).unwrap();
+        db.commit_changes(exec_result2.changes).unwrap();
         let contract_ref = ContractRef::new(db.clone(), contract_id);
         // Assert the balance root should not be affected.
         let empty_state = (*sparse::empty_sum()).into();
@@ -1049,7 +1053,7 @@ mod tests {
         );
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
-        storage.commit_changes(exec_result1.4).unwrap();
+        storage.commit_changes(exec_result1.changes).unwrap();
 
         let tx2 = script.as_script().unwrap().clone();
         let tx2_checked = tx2
@@ -1069,9 +1073,9 @@ mod tests {
         );
         assert_eq!(true, exec_result2.is_ok());
         let exec_result2 = exec_result2.unwrap();
-        storage.commit_changes(exec_result2.4).unwrap();
+        storage.commit_changes(exec_result2.changes).unwrap();
 
-        for (idx, output) in exec_result2.2.outputs().iter().enumerate() {
+        for (idx, output) in exec_result2.tx.outputs().iter().enumerate() {
             let id = UtxoId::new(script_id, idx as u16);
             match output {
                 Output::Change { .. } | Output::Variable { .. } | Output::Coin { .. } => {
@@ -1134,7 +1138,7 @@ mod tests {
         );
         assert_eq!(true, exec_result1.is_ok());
         let exec_result1 = exec_result1.unwrap();
-        storage.commit_changes(exec_result1.4).unwrap();
+        storage.commit_changes(exec_result1.changes).unwrap();
 
         for idx in 0..2 {
             let id = UtxoId::new(tx_id, idx);
