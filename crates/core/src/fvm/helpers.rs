@@ -127,27 +127,40 @@ pub trait StorageSlotCalc {
     fn storage_slot(&self, slot: u32) -> U256;
 }
 
-pub(crate) struct StorageChunksWriter<'a, SDK> {
+pub(crate) struct StorageChunksWriter<'a, SDK, SC> {
     pub(crate) address: &'a Address,
+    pub(crate) slot_calc: &'a SC,
     pub(crate) _phantom: PhantomType<SDK>,
 }
-impl<'a, SDK: SovereignAPI> FixedChunksWriter<'a, SDK> for StorageChunksWriter<'a, SDK> {
+impl<'a, SDK: SovereignAPI, SC: StorageSlotCalc> FixedChunksWriter<'a, SDK, SC>
+    for StorageChunksWriter<'a, SDK, SC>
+{
     fn address(&self) -> &'a Address {
         self.address
     }
+
+    fn slot_calc(&self) -> &'a SC {
+        &self.slot_calc
+    }
 }
-impl<'a, SDK: SovereignAPI> VariableLengthDataWriter<'a, SDK> for StorageChunksWriter<'a, SDK> {
+impl<'a, SDK: SovereignAPI, SC: StorageSlotCalc> VariableLengthDataWriter<'a, SDK, SC>
+    for StorageChunksWriter<'a, SDK, SC>
+{
     fn address(&self) -> &'a Address {
         self.address
     }
+
+    fn slot_calc(&self) -> &'a SC {
+        &self.slot_calc
+    }
 }
-pub trait FixedChunksWriter<'a, SDK: SovereignAPI> {
+pub trait FixedChunksWriter<'a, SDK: SovereignAPI, SC: StorageSlotCalc + 'a> {
     fn address(&self) -> &'a Address;
+    fn slot_calc(&self) -> &'a SC;
 
     fn write_data_chunk_padded(
         &self,
         sdk: &mut SDK,
-        slot_calc: &impl StorageSlotCalc,
         data: &[u8],
         chunk_index: u32,
         force_write: bool,
@@ -159,7 +172,7 @@ pub trait FixedChunksWriter<'a, SDK: SovereignAPI> {
             if force_write {
                 let _ = sdk.write_storage(
                     *self.address(),
-                    slot_calc.storage_slot(chunk_index),
+                    self.slot_calc().storage_slot(chunk_index),
                     U256::ZERO,
                 );
             }
@@ -168,59 +181,51 @@ pub trait FixedChunksWriter<'a, SDK: SovereignAPI> {
         let chunk =
             &data[start_index as usize..core::cmp::min(end_index, data_tail_index) as usize];
         let value = U256::from_le_slice(chunk);
-        let _ = sdk.write_storage(*self.address(), slot_calc.storage_slot(chunk_index), value);
+        let _ = sdk.write_storage(
+            *self.address(),
+            self.slot_calc().storage_slot(chunk_index),
+            value,
+        );
         chunk.len()
     }
 
     fn write_data_in_padded_chunks(
         &self,
         sdk: &mut SDK,
-        slot_calc: &impl StorageSlotCalc,
         data: &[u8],
         tail_chunk_index: u32,
         force_write: bool,
     ) -> usize {
         let mut len_written = 0;
         for chunk_index in 0..=tail_chunk_index {
-            len_written +=
-                self.write_data_chunk_padded(sdk, slot_calc, data, chunk_index, force_write)
+            len_written += self.write_data_chunk_padded(sdk, data, chunk_index, force_write)
         }
         len_written
     }
 
-    fn read_data_chunk_padded(
-        &self,
-        sdk: &'a SDK,
-        slot_calc: &impl StorageSlotCalc,
-        chunk_index: u32,
-        buf: &mut Vec<u8>,
-    ) {
-        let slot = slot_calc.storage_slot(chunk_index);
+    fn read_data_chunk_padded(&self, sdk: &'a SDK, chunk_index: u32, buf: &mut Vec<u8>) {
+        let slot = self.slot_calc().storage_slot(chunk_index);
         let (value, _) = sdk.storage(self.address(), &slot);
         buf.extend_from_slice(value.as_le_slice());
     }
 
-    fn read_data_in_padded_chunks(
-        &self,
-        sdk: &'a SDK,
-        slot_calc: &impl StorageSlotCalc,
-        tail_chunk_index: u32,
-        buf: &mut Vec<u8>,
-    ) {
+    fn read_data_in_padded_chunks(&self, sdk: &'a SDK, tail_chunk_index: u32, buf: &mut Vec<u8>) {
         for chunk_index in 0..=tail_chunk_index {
-            self.read_data_chunk_padded(sdk, slot_calc, chunk_index, buf)
+            self.read_data_chunk_padded(sdk, chunk_index, buf)
         }
     }
 }
-pub trait VariableLengthDataWriter<'a, SDK: SovereignAPI> {
+pub trait VariableLengthDataWriter<'a, SDK: SovereignAPI, SC: StorageSlotCalc + 'a> {
     fn address(&self) -> &'a Address;
 
-    fn write_data(&self, sdk: &mut SDK, slot_calc: &impl StorageSlotCalc, data: &[u8]) -> usize {
+    fn slot_calc(&self) -> &'a SC;
+
+    fn write_data(&self, sdk: &mut SDK, data: &[u8]) -> usize {
         let data_len = data.len();
         if data_len <= 0 {
             return 0;
         }
-        let slot = slot_calc.storage_slot(0);
+        let slot = self.slot_calc().storage_slot(0);
         let _ = sdk.write_storage(*self.address(), slot, U256::from(data_len));
         let chunks_count = (data_len - 1) / U256::BYTES + 1;
         for chunk_index in 0..chunks_count {
@@ -228,19 +233,14 @@ pub trait VariableLengthDataWriter<'a, SDK: SovereignAPI> {
             let chunk_end_index = core::cmp::min(data_len, chunk_start_index + U256::BYTES);
             let chunk = &data[chunk_start_index..chunk_end_index];
             let value = U256::from_le_slice(chunk);
-            let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+            let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
             let _ = sdk.write_storage(*self.address(), slot, value);
         }
         data_len
     }
 
-    fn read_data(
-        &self,
-        sdk: &SDK,
-        slot_calc: &impl StorageSlotCalc,
-        buf: &mut Vec<u8>,
-    ) -> anyhow::Result<()> {
-        let slot = slot_calc.storage_slot(0);
+    fn read_data(&self, sdk: &SDK, buf: &mut Vec<u8>) -> anyhow::Result<()> {
+        let slot = self.slot_calc().storage_slot(0);
         let (data_len, _) = sdk.storage(self.address(), &slot);
         let data_len: usize = data_len
             .try_into()
@@ -250,14 +250,14 @@ pub trait VariableLengthDataWriter<'a, SDK: SovereignAPI> {
         }
         let chunks_count = (data_len - 1) / U256::BYTES + 1;
         for chunk_index in 0..chunks_count - 1 {
-            let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+            let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
             let (value, _) = sdk.storage(self.address(), &slot);
             let value = value.as_le_slice();
             buf.extend_from_slice(value);
         }
         let chunk_index = chunks_count - 1;
         let last_chunk_len = data_len - U256::BYTES * chunk_index;
-        let slot = slot_calc.storage_slot(chunk_index as u32 + 1);
+        let slot = self.slot_calc().storage_slot(chunk_index as u32 + 1);
         let (value, _) = sdk.storage(self.address(), &slot);
         let value = &value.as_le_slice()[0..last_chunk_len];
         buf.extend_from_slice(value);
@@ -439,15 +439,15 @@ impl ContractsStateHelper {
     const VALUE_STORAGE_SLOT: u32 = 0;
 
     pub(crate) fn new(key: &Bytes64) -> Self {
-        return Self {
+        Self {
             key: ContractsStateKeyWrapper::Original(ContractsStateKey::from_array(*key)),
-        };
+        }
     }
 
     pub(crate) fn new_transformed(key: &Bytes32) -> Self {
-        return Self {
+        Self {
             key: ContractsStateKeyWrapper::Transformed(*key),
-        };
+        }
     }
 
     pub(crate) fn get(&self) -> &ContractsStateKeyWrapper {
@@ -503,12 +503,6 @@ impl ContractsAssetsHelper {
         }
     }
 
-    // pub(crate) fn from_slice(v: &[u8]) -> Self {
-    //     return Self {
-    //         original_key: ContractsAssetKey::from_slice(v).expect("contracts assets key 64
-    // bytes"),     };
-    // }
-
     pub(crate) fn get(&self) -> &ContractsAssetKeyWrapper {
         &self.key
     }
@@ -563,7 +557,7 @@ impl CoinsHelper {
     const ASSET_ID_SLOT: u32 = 2;
     const BALANCE_SLOT: u32 = 3;
     pub(crate) fn new(key: &Bytes34) -> Self {
-        return Self { original_key: *key };
+        Self { original_key: *key }
     }
 
     pub(crate) fn from_slice(v: &[u8]) -> Self {
@@ -574,14 +568,6 @@ impl CoinsHelper {
     pub(crate) fn get(&self) -> Bytes34 {
         self.original_key
     }
-
-    // pub(crate) fn owner_with_balance_storage_slot(&self) -> U256 {
-    //     U256::from_be_bytes(
-    //         Self::storage_slot_raw(self.original_key.as_ref(), Self::OWNER_WITH_BALANCE_SLOT)
-    //             .inner()
-    //             .clone(),
-    //     )
-    // }
 
     pub(crate) fn owner_storage_slot(&self) -> U256 {
         U256::from_be_bytes(
@@ -635,7 +621,7 @@ impl From<&Address> for FuelAddress {
 
 impl AsRef<fuel_types::Address> for FuelAddress {
     fn as_ref(&self) -> &fuel_core_types::fuel_tx::Address {
-        return &self.address;
+        &self.address
     }
 }
 
@@ -686,8 +672,6 @@ impl CoinsHolderHelper {
     }
 
     pub(crate) fn from_u256_tuple(address: &U256, asset_id: &U256, balance: &U256) -> Self {
-        // let address = &v.0.to_be_bytes::<32>();
-        // let balance = &v.1.as_limbs()[0];
         let address = fuel_types::Address::from_bytes(&address.to_le_bytes::<32>()).unwrap();
         let asset_id = AssetId::from_bytes(&asset_id.to_le_bytes::<32>()).unwrap();
         let balance = balance.as_limbs()[0];
