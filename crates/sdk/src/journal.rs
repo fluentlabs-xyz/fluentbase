@@ -510,6 +510,10 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         self.native_sdk.input_size()
     }
 
+    fn charge_fuel(&self, value: u64) {
+        self.native_sdk.charge_fuel(value);
+    }
+
     fn fuel(&self) -> u64 {
         self.native_sdk.fuel()
     }

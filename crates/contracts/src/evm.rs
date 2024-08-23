@@ -1,8 +1,5 @@
 use core::mem::take;
-use fluentbase_core::{
-    debug_log,
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
-};
+use fluentbase_core::helpers::{evm_error_from_exit_code, exit_code_from_evm_error};
 use fluentbase_sdk::{
     basic_entrypoint,
     derive::{derive_keccak256, Contract},
@@ -283,7 +280,9 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             caller: contract_context.caller,
             call_value: contract_context.value,
         };
-        self.exec_evm_bytecode(contract)
+        let result = self.exec_evm_bytecode(contract);
+        // self.sdk.charge_fuel(result.gas.spent());
+        result
     }
 
     pub fn deploy(&mut self, contract_context: ContractContext) -> ExitCode {
@@ -297,6 +296,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
             call_value: contract_context.value,
         };
         let result = self.exec_evm_bytecode(contract);
+        // self.sdk.charge_fuel(result.gas.spent());
         if !result.is_ok() {
             // it might be an error message, have to return
             self.sdk.write(result.output.as_ref());

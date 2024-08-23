@@ -554,6 +554,7 @@ pub trait SharedAPI {
         buffer.into()
     }
 
+    fn charge_fuel(&self, value: u64);
     fn fuel(&self) -> u64;
 
     fn write(&mut self, output: &[u8]);
