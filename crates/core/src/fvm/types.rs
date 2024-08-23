@@ -36,9 +36,9 @@ use fuel_core_types::{
     services::relayer::Event,
 };
 use revm_primitives::{
+    address,
     alloy_primitives::private::serde::de::IntoDeserializer,
     bitvec::macros::internal::funty::Fundamental,
-    hex,
 };
 
 pub struct WasmRelayer;
@@ -54,23 +54,23 @@ impl RelayerPort for WasmRelayer {
 }
 
 pub const CONTRACTS_RAW_CODE_STORAGE_ADDRESS: Address =
-    Address::new(hex!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"));
+    address!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161");
 pub const UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS: Address =
-    Address::new(hex!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"));
+    address!("c5c497b0814b0eebc27864ea5ff9af596b715ee3");
 pub const CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS: Address =
-    Address::new(hex!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc"));
+    address!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc");
 pub const CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS: Address =
-    Address::new(hex!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5"));
+    address!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5");
 pub const CONTRACTS_STATE_DATA_STORAGE_ADDRESS: Address =
-    Address::new(hex!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d"));
+    address!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d");
 pub const CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS: Address =
-    Address::new(hex!("1a456cdbe1c54e7a774dd89d659c128d56dba51d"));
+    address!("1a456cdbe1c54e7a774dd89d659c128d56dba51d");
 pub const CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS: Address =
-    Address::new(hex!("727d22651ab98fcf20fa7bdd646e71102c6ac47b"));
+    address!("727d22651ab98fcf20fa7bdd646e71102c6ac47b");
 pub const CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS: Address =
-    Address::new(hex!("037e25b327c1a5acc4a98e8e2e8d16066119eeed"));
+    address!("037e25b327c1a5acc4a98e8e2e8d16066119eeed");
 pub const CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS: Address =
-    Address::new(hex!("f96178848125f6d39487bd426a42adf7129ba924"));
+    address!("f96178848125f6d39487bd426a42adf7129ba924");
 
 pub const STORAGE_ADDRESSES: [Address; 9] = [
     CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
@@ -110,20 +110,22 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let _ = storage_chunks.write_data(self.sdk, &helper, data);
+        let _ = storage_chunks.write_data(self.sdk, data);
     }
 
     pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
         let mut buf = Vec::new();
         storage_chunks
-            .read_data(self.sdk, &helper, &mut buf)
+            .read_data(self.sdk, &mut buf)
             .expect("raw code extracted successfully");
         if buf.len() <= 0 {
             return None;
@@ -140,14 +142,14 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             data.len() <= CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN,
             anyhow::Error::msg("ContractsLatestUtxo encoded len must be <= 44")
         );
+        let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         storage_chunks.write_data_in_padded_chunks(
             self.sdk,
-            &helper,
             data,
             (CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN / 32) as u32,
             true,
@@ -159,12 +161,13 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
         const CAPACITY: usize = ((CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
         let mut res = Vec::with_capacity(CAPACITY);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
         if res.iter().all(|&v| v == 0) {
             return None;
         }
@@ -225,26 +228,28 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             data.len() <= CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN,
             anyhow::Error::msg("merkle_data encoded len must be <= 66")
         );
+        let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsStateHelper::new_transformed(raw_key);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        storage_chunks.write_data_in_padded_chunks(self.sdk, data, MAX_CHUNK_INDEX, true);
         Ok(())
     }
 
     pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsStateHelper::new_transformed(raw_key);
         const CAPACITY: usize = ((CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
         let mut res = Vec::with_capacity(CAPACITY);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
         if res.iter().all(|&v| v == 0) {
             return None;
         }
@@ -260,27 +265,29 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             data.len() <= CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN,
             anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
         );
+        let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsStateHelper::new_transformed(raw_key);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        storage_chunks.write_data_in_padded_chunks(self.sdk, data, MAX_CHUNK_INDEX, true);
         Ok(())
     }
 
     pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsStateHelper::new_transformed(raw_key);
         const CAPACITY: usize =
             ((CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
         let mut res = Vec::with_capacity(CAPACITY);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
         if res.iter().all(|&v| v == 0) {
             return None;
         }
@@ -296,26 +303,28 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             data.len() <= CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN,
             anyhow::Error::msg("merkle_data encoded len must be <= 66")
         );
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        storage_chunks.write_data_in_padded_chunks(self.sdk, data, MAX_CHUNK_INDEX, true);
         Ok(())
     }
 
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         const CAPACITY: usize = ((CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
         let mut res = Vec::with_capacity(CAPACITY);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
         if res.iter().all(|&v| v == 0) {
             return None;
         }
@@ -331,27 +340,29 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
             data.len() <= CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN,
             anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
         );
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.write_data_in_padded_chunks(self.sdk, &helper, data, MAX_CHUNK_INDEX, true);
+        storage_chunks.write_data_in_padded_chunks(self.sdk, data, MAX_CHUNK_INDEX, true);
         Ok(())
     }
 
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
+        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
             address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            slot_calc: &helper,
             _phantom: Default::default(),
         };
-        let helper = ContractsAssetsHelper::new_transformed(raw_key);
         const CAPACITY: usize =
             ((CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
         let mut res = Vec::with_capacity(CAPACITY);
         const MAX_CHUNK_INDEX: u32 = (CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN / 32) as u32;
-        storage_chunks.read_data_in_padded_chunks(self.sdk, &helper, MAX_CHUNK_INDEX, &mut res);
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
         if res.iter().all(|&v| v == 0) {
             return None;
         }
