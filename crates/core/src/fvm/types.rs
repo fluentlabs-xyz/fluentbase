@@ -53,36 +53,9 @@ impl RelayerPort for WasmRelayer {
     }
 }
 
-pub const CONTRACTS_RAW_CODE_STORAGE_ADDRESS: Address =
-    address!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161");
-pub const UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS: Address =
-    address!("c5c497b0814b0eebc27864ea5ff9af596b715ee3");
-pub const CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS: Address =
-    address!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc");
-pub const CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS: Address =
-    address!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5");
-pub const CONTRACTS_STATE_DATA_STORAGE_ADDRESS: Address =
-    address!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d");
-pub const CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS: Address =
-    address!("1a456cdbe1c54e7a774dd89d659c128d56dba51d");
-pub const CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS: Address =
-    address!("727d22651ab98fcf20fa7bdd646e71102c6ac47b");
-pub const CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS: Address =
-    address!("037e25b327c1a5acc4a98e8e2e8d16066119eeed");
-pub const CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS: Address =
-    address!("f96178848125f6d39487bd426a42adf7129ba924");
+pub const FUEL_BASE_STORAGE_ADDRESS: Address = address!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161");
 
-pub const STORAGE_ADDRESSES: [Address; 9] = [
-    CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
-    UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-    CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS,
-    CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
-    CONTRACTS_STATE_DATA_STORAGE_ADDRESS,
-    CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
-    CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
-    CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
-    CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
-];
+pub const STORAGE_ADDRESSES: [Address; 1] = [FUEL_BASE_STORAGE_ADDRESS];
 
 const CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN: usize = 44;
 const CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
@@ -109,7 +82,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_raw_code_update(&mut self, raw_key: &Bytes32, data: &[u8]) {
         let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -119,7 +92,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_raw_code(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsRawCodeHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_RAW_CODE_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -144,7 +117,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         );
         let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -160,7 +133,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_latest_utxo(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_LATEST_UTXO_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -178,20 +151,15 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let slot: U256 = ContractsStateHelper::new(raw_key)
             .value_storage_slot()
             .into();
-        self.sdk.write_storage(
-            CONTRACTS_STATE_DATA_STORAGE_ADDRESS,
-            slot,
-            U256::from_be_bytes(value),
-        );
+        self.sdk
+            .write_storage(FUEL_BASE_STORAGE_ADDRESS, slot, U256::from_be_bytes(value));
     }
 
     pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot: U256 = ContractsStateHelper::new(raw_key)
             .value_storage_slot()
             .into();
-        let (v, _) = self
-            .sdk
-            .storage(&CONTRACTS_STATE_DATA_STORAGE_ADDRESS, &slot);
+        let (v, _) = self.sdk.storage(&FUEL_BASE_STORAGE_ADDRESS, &slot);
         if v == U256::ZERO {
             return None;
         }
@@ -203,14 +171,12 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let value =
             ContractsAssetsHelper::value_to_u256(value.try_into().expect("encoded value is valid"));
         self.sdk
-            .write_storage(CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, slot, value);
+            .write_storage(FUEL_BASE_STORAGE_ADDRESS, slot, value);
     }
 
     pub(crate) fn contracts_assets_value(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot = ContractsAssetsHelper::new(raw_key).value_storage_slot();
-        let (val, _is_cold) = self
-            .sdk
-            .storage(&CONTRACTS_ASSETS_KEY_TO_VALUE_STORAGE_ADDRESS, &slot);
+        let (val, _is_cold) = self.sdk.storage(&FUEL_BASE_STORAGE_ADDRESS, &slot);
         if val == U256::ZERO {
             return None;
         }
@@ -230,7 +196,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         );
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -242,7 +208,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_state_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_STATE_MERKLE_DATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -267,7 +233,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         );
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -279,7 +245,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_state_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_STATE_MERKLE_METADATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -305,7 +271,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         );
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -317,7 +283,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_assets_merkle_data(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_ASSETS_MERKLE_DATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -342,7 +308,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         );
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -354,7 +320,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn contracts_assets_merkle_metadata(&self, raw_key: &Bytes32) -> Option<Bytes> {
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
-            address: &CONTRACTS_ASSETS_MERKLE_METADATA_STORAGE_ADDRESS,
+            address: &FUEL_BASE_STORAGE_ADDRESS,
             slot_calc: &helper,
             _phantom: Default::default(),
         };
@@ -372,18 +338,12 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     pub(crate) fn coins_update(&mut self, raw_key: &Bytes34, v: &CoinsHolderHelper) {
         let (address, asset_id, balance) = v.to_u256_tuple();
         let ch = CoinsHelper::new(raw_key);
+        self.sdk
+            .write_storage(FUEL_BASE_STORAGE_ADDRESS, ch.owner_storage_slot(), address);
+        self.sdk
+            .write_storage(FUEL_BASE_STORAGE_ADDRESS, ch.asset_id_slot(), asset_id);
         self.sdk.write_storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            ch.owner_storage_slot(),
-            address,
-        );
-        self.sdk.write_storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            ch.asset_id_slot(),
-            asset_id,
-        );
-        self.sdk.write_storage(
-            UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
+            FUEL_BASE_STORAGE_ADDRESS,
             ch.balance_storage_slot(),
             balance,
         );
@@ -391,21 +351,18 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
 
     pub(crate) fn coins(&self, raw_key: &Bytes34) -> Option<CoinsHolderHelper> {
         let ch = CoinsHelper::new(raw_key);
-        let (owner, _is_cold) = self.sdk.storage(
-            &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            &ch.owner_storage_slot(),
-        );
+        let (owner, _is_cold) = self
+            .sdk
+            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.owner_storage_slot());
         if owner == U256::ZERO {
             return None;
         }
-        let (asset_id, _is_cold) = self.sdk.storage(
-            &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            &ch.asset_id_slot(),
-        );
-        let (balance, _is_cold) = self.sdk.storage(
-            &UTXO_UNIQ_ID_TO_OWNER_WITH_BALANCE_STORAGE_ADDRESS,
-            &ch.balance_storage_slot(),
-        );
+        let (asset_id, _is_cold) = self
+            .sdk
+            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.asset_id_slot());
+        let (balance, _is_cold) = self
+            .sdk
+            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.balance_storage_slot());
         Some(CoinsHolderHelper::from_u256_tuple(
             &owner, &asset_id, &balance,
         ))
