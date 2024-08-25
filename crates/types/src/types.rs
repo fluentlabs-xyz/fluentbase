@@ -213,19 +213,19 @@ impl Into<Trap> for ExitCode {
 #[cfg(feature = "rwasm")]
 impl From<Trap> for ExitCode {
     fn from(value: Trap) -> Self {
-        value
-            .i32_exit_status()
-            .map(ExitCode::from)
-            .unwrap_or(ExitCode::UnknownError)
+        ExitCode::from(&value)
     }
 }
 #[cfg(feature = "rwasm")]
 impl From<&Trap> for ExitCode {
     fn from(value: &Trap) -> Self {
-        value
-            .i32_exit_status()
-            .map(ExitCode::from)
-            .unwrap_or(ExitCode::UnknownError)
+        if let Some(trap_code) = value.trap_code() {
+            return ExitCode::from(trap_code);
+        }
+        if let Some(exit_code) = value.i32_exit_status() {
+            return ExitCode::from(exit_code);
+        }
+        ExitCode::UnknownError
     }
 }
 

@@ -16,16 +16,8 @@ impl SyscallChargeFuel {
             }
             Err(err) => match err {
                 FuelError::FuelMeteringDisabled => {
-                    let remaining = Self::fn_impl(caller.data_mut(), delta);
-                    if remaining == u64::MAX {
-                        println!("gas_record_cost(err): delta={} err=OutOfGas", delta);
-                        return Err(ExitCode::OutOfGas.into_trap());
-                    }
-                    println!(
-                        "gas_record_cost(ok): remaining={}, delta={}",
-                        remaining, delta,
-                    );
-                    Ok(remaining)
+                    // TODO(dmitry123): "how safe to return u64::MAX for fuel disabled?"
+                    Ok(u64::MAX)
                 }
                 FuelError::OutOfFuel => {
                     println!("gas_record_cost(err): delta={} err=OutOfGas", delta);
@@ -35,10 +27,8 @@ impl SyscallChargeFuel {
         }
     }
 
-    pub fn fn_impl(ctx: &mut RuntimeContext, delta: u64) -> u64 {
-        if !ctx.fuel_mut().charge(delta) {
-            return u64::MAX;
-        }
-        ctx.fuel().remaining()
+    pub fn fn_impl(_ctx: &mut RuntimeContext, _delta: u64) -> u64 {
+        // TODO(dmitry123): "we can't charge fuel in runtime context, what to do?"
+        u64::MAX
     }
 }

@@ -20,12 +20,10 @@ impl<SDK: SharedAPI> RWASM<SDK> {
         // any custom deployment logic here
     }
     fn main(&mut self) {
-        let input_size = self.sdk.input_size() as usize;
-        let wasm_binary = alloc_slice(input_size);
-        self.sdk.read(wasm_binary, 0);
+        let wasm_binary = self.sdk.input();
         let import_linker = create_import_linker();
-        let rwasm_module =
-            RwasmModule::compile(wasm_binary, Some(import_linker)).expect("failed to compile");
+        let rwasm_module = RwasmModule::compile(wasm_binary.as_ref(), Some(import_linker))
+            .expect("failed to compile");
         let encoded_length = rwasm_module.encoded_length();
         let rwasm_bytecode = alloc_slice(encoded_length);
         let mut binary_format_writer = BinaryFormatWriter::new(rwasm_bytecode);

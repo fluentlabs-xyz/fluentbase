@@ -37,15 +37,7 @@ use revm_interpreter::{
     SharedMemory,
 };
 use revm_precompile::Log;
-use revm_primitives::{
-    bitvec::macros::internal::funty::Fundamental,
-    Bytecode,
-    CancunSpec,
-    CreateScheme,
-    Env,
-    BLOCK_HASH_HISTORY,
-    MAX_CODE_SIZE,
-};
+use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
 
 pub struct EvmLoader2<'a, SDK> {
     sdk: &'a mut SDK,
