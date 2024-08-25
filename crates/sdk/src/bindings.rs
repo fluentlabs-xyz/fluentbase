@@ -30,25 +30,55 @@ extern "C" {
     pub fn _state() -> u32;
     pub fn _read_context(target_ptr: *mut u8, offset: u32, length: u32);
 
-    /// Executes nested call with specified bytecode poseidon hash:
-    /// - `hash32_ptr` - a 254-bit poseidon hash of a contract to be called
-    /// - `input_ptr` - pointer to the input (must be `ptr::null()` if len zero)
-    /// - `input_len` - length of input (can be zero)
-    /// - `fuel` - an amount of fuel is allocated for the call
-    /// - `state` - execution state (must be 0 for non-authorized calls)
+    /// Executes a nested call with specified bytecode poseidon hash.
+    ///
+    /// # Parameters
+    /// - `hash32_ptr`: A pointer to a 254-bit poseidon hash of a contract to be called.
+    /// - `input_ptr`: A pointer to the input data (const u8).
+    /// - `input_len`: The length of the input data (u32).
+    /// - `fuel_ptr`: A mutable pointer to a fuel value (u64), consumed fuel is stored in the same
+    ///   pointer after execution.
+    /// - `state`: A state value (u32), used internally to maintain function state.
+    ///
+    /// Fuel ptr can be set to zero if you want to delegate all remaining gas.
+    /// In this case sender won't get consumed gas result.
+    ///
+    /// # Returns
+    /// - An `i32` value indicating the result of the execution,
+    /// negative or zero result stands for terminated execution,
+    /// but positive code stands for interrupted execution (works only for root execution level)
     pub fn _exec(
         hash32_ptr: *const u8,
         input_ptr: *const u8,
         input_len: u32,
-        fuel_limit: u64,
+        fuel_ptr: *mut u64,
         state: u32,
     ) -> i32;
+
+    /// Resumes the execution of a previously suspended function call.
+    ///
+    /// This function is designed to handle the resumption of a function call
+    /// that was previously paused.
+    /// It takes several parameters that provide
+    /// the necessary context and data for resuming the call.
+    ///
+    /// # Parameters
+    ///
+    /// * `call_id` - A unique identifier for the call that needs to be resumed.
+    /// * `return_data_ptr` - A pointer to the return data that needs to be passed back to the
+    ///   resuming function.
+    /// This should point to a byte array.
+    /// * `return_data_len` - The length of the return data in bytes.
+    /// * `exit_code` - An integer code that represents the exit status of the resuming function.
+    ///   Typically, this might be 0 for success or an error code for failure.
+    /// * `fuel_ptr` - A mutable pointer to a 64-bit unsigned integer representing the fuel need to
+    ///   be charged, also it puts a consumed fuel result into the same pointer
     pub fn _resume(
         call_id: u32,
         return_data_ptr: *const u8,
         return_data_len: u32,
         exit_code: i32,
-        fuel_used: u64,
+        fuel_ptr: *mut u64,
     ) -> i32;
 
     pub fn _charge_fuel(delta: u64) -> u64;

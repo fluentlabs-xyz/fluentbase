@@ -1,5 +1,4 @@
 use alloc::rc::Rc;
-use fluentbase_genesis::devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY};
 use fluentbase_runtime::{
     instruction::{
         charge_fuel::SyscallChargeFuel,
@@ -26,16 +25,7 @@ use fluentbase_runtime::{
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
-use fluentbase_types::{
-    Account,
-    Bytes,
-    NativeAPI,
-    UnwrapExitCode,
-    B256,
-    F254,
-    KECCAK_EMPTY,
-    POSEIDON_EMPTY,
-};
+use fluentbase_types::{Bytes, NativeAPI, UnwrapExitCode, B256, F254};
 use std::{cell::RefCell, mem::take};
 
 pub struct RuntimeContextWrapper {
@@ -135,9 +125,9 @@ impl NativeAPI for RuntimeContextWrapper {
 
     fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        let spent_before = ctx.fuel().spent();
-        let exit_code = SyscallExec::fn_impl(&mut ctx, &code_hash.0, input, fuel_limit, state);
-        (ctx.fuel().spent() - spent_before, exit_code)
+        let (fuel_consumed, exit_code) =
+            SyscallExec::fn_impl(&mut ctx, &code_hash, input, fuel_limit, state);
+        (fuel_consumed, exit_code)
     }
 
     fn resume(
@@ -148,15 +138,13 @@ impl NativeAPI for RuntimeContextWrapper {
         fuel_used: u64,
     ) -> (u64, i32) {
         let mut ctx = self.ctx.borrow_mut();
-        let spent_before = ctx.fuel().spent();
-        let exit_code = SyscallResume::fn_impl(
+        SyscallResume::fn_impl(
             &mut ctx,
             call_id,
             return_data.to_vec(),
             exit_code,
             fuel_used,
-        );
-        (ctx.fuel().spent() - spent_before, exit_code)
+        )
     }
 
     fn preimage_size(&self, hash: &B256) -> u32 {
@@ -201,7 +189,7 @@ impl TestingContext {
     }
 
     pub fn set_fuel(&mut self, fuel: u64) {
-        self.ctx.replace_with(|ctx| take(ctx).with_fuel(fuel));
+        self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
     }
 
     pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
@@ -213,87 +201,4 @@ impl TestingContext {
     pub fn take_output(&self) -> Vec<u8> {
         take(self.ctx.borrow_mut().output_mut())
     }
-
-    pub fn with_devnet_genesis(self) -> Self {
-        let devnet_genesis = devnet_genesis_from_file();
-        for (address, account) in devnet_genesis.alloc.iter() {
-            let source_code_hash = account
-                .storage
-                .as_ref()
-                .and_then(|storage| storage.get(&KECCAK_HASH_KEY))
-                .cloned()
-                .unwrap_or(KECCAK_EMPTY);
-            let rwasm_code_hash = account
-                .storage
-                .as_ref()
-                .and_then(|storage| storage.get(&POSEIDON_HASH_KEY))
-                .cloned()
-                .unwrap_or(POSEIDON_EMPTY);
-            let mut account2 = Account::new(*address);
-            account2.balance = account.balance;
-            account2.nonce = account.nonce.unwrap_or_default();
-            account2.source_code_size = account
-                .code
-                .as_ref()
-                .map(|v| v.len() as u64)
-                .unwrap_or_default();
-            account2.source_code_hash = source_code_hash;
-            account2.rwasm_code_size = account
-                .code
-                .as_ref()
-                .map(|v| v.len() as u64)
-                .unwrap_or_default();
-            account2.rwasm_code_hash = rwasm_code_hash;
-            // let address32 = address.into_word();
-            // self.write_account(&account2, AccountStatus::NewlyCreated);
-            // let bytecode = account.code.clone().unwrap_or_default();
-            // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
-            // self.update_preimage(&address32.0, JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD, &bytecode);
-            // self.update_preimage(&address32.0, JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD, &bytecode);
-        }
-        self
-    }
-
-    // pub(crate) fn add_wasm_contract<I: Into<RwasmModule>>(
-    //     &mut self,
-    //     address: Address,
-    //     rwasm_module: I,
-    // ) -> AccountInfo {
-    //     let rwasm_binary = {
-    //         let rwasm_module: RwasmModule = rwasm_module.into();
-    //         let mut result = Vec::new();
-    //         rwasm_module.write_binary_to_vec(&mut result).unwrap();
-    //         result
-    //     };
-    //     let account = Account {
-    //         address,
-    //         balance: U256::ZERO,
-    //         nonce: 0,
-    //         // it makes not much sense to fill these fields, but it optimizes hash calculation a
-    // bit         source_code_size: 0,
-    //         source_code_hash: KECCAK_EMPTY,
-    //         rwasm_code_size: rwasm_binary.len() as u64,
-    //         rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
-    //     };
-    //     let mut info: AccountInfo = account.into();
-    //     info.code = None;
-    //     if !rwasm_binary.is_empty() {
-    //         info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
-    //     }
-    //     self.db.insert_account_info(address, info.clone());
-    //     info
-    // }
-    //
-    // pub(crate) fn get_balance(&mut self, address: Address) -> U256 {
-    //     let account = self.db.load_account(address).unwrap();
-    //     account.info.balance
-    // }
-    //
-    // pub(crate) fn add_balance(&mut self, address: Address, value: U256) {
-    //     let account = self.db.load_account(address).unwrap();
-    //     account.info.balance += value;
-    //     let mut revm_account = crate::primitives::Account::from(account.info.clone());
-    //     revm_account.mark_touch();
-    //     self.db.commit(HashMap::from([(address, revm_account)]));
-    // }
 }

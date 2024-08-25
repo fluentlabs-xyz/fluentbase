@@ -17,6 +17,8 @@ pub(crate) const ENABLE_EVM_PROXY_CONTRACT: bool = false;
 
 pub(crate) fn create_rwasm_proxy_bytecode(_address: &Address) -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
+    //  0..32: code hash
+    // 32..52: precompile address
     memory_section[0..32].copy_from_slice(SYSCALL_ID_DELEGATE_CALL.as_slice()); // 32 bytes
     memory_section[32..52].copy_from_slice(PRECOMPILE_EVM.as_slice()); // 20 bytes
     debug_assert_eq!(memory_section.len(), 52);
@@ -46,7 +48,7 @@ pub(crate) fn create_rwasm_proxy_bytecode(_address: &Address) -> Bytes {
         I32Sub
         I32Const(20)
         I32Add
-        Call(SysFuncIdx::FUEL) // fuel_limit
+        I32Const(0) // fuel_limit
         Call(SysFuncIdx::STATE) // state
         Call(SysFuncIdx::EXEC)
         // copy return data into output
