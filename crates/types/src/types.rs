@@ -16,16 +16,35 @@ pub type Bytes20 = [u8; 20];
 #[derive(Default, Clone, Debug)]
 pub struct Fuel {
     pub limit: u64,
+    pub refund: i64,
     pub spent: u64,
 }
 
 impl Fuel {
     pub fn new(limit: u64) -> Self {
-        Self { limit, spent: 0 }
+        Self {
+            limit,
+            refund: 0,
+            spent: 0,
+        }
+    }
+
+    pub fn with_refund(mut self, refund: i64) -> Self {
+        self.refund = refund;
+        self
+    }
+
+    pub fn with_spent(mut self, spent: u64) -> Self {
+        self.spent = spent;
+        self
     }
 
     pub fn remaining(&self) -> u64 {
         self.limit - self.spent
+    }
+
+    pub fn spent(&self) -> u64 {
+        self.spent
     }
 
     pub fn charge(&mut self, value: u64) -> bool {
@@ -47,6 +66,7 @@ impl From<u64> for Fuel {
     fn from(value: u64) -> Self {
         Self {
             limit: value,
+            refund: 0,
             spent: 0,
         }
     }
@@ -193,19 +213,19 @@ impl Into<Trap> for ExitCode {
 #[cfg(feature = "rwasm")]
 impl From<Trap> for ExitCode {
     fn from(value: Trap) -> Self {
-        value
-            .i32_exit_status()
-            .map(ExitCode::from)
-            .unwrap_or(ExitCode::UnknownError)
+        ExitCode::from(&value)
     }
 }
 #[cfg(feature = "rwasm")]
 impl From<&Trap> for ExitCode {
     fn from(value: &Trap) -> Self {
-        value
-            .i32_exit_status()
-            .map(ExitCode::from)
-            .unwrap_or(ExitCode::UnknownError)
+        if let Some(trap_code) = value.trap_code() {
+            return ExitCode::from(trap_code);
+        }
+        if let Some(exit_code) = value.i32_exit_status() {
+            return ExitCode::from(exit_code);
+        }
+        ExitCode::UnknownError
     }
 }
 
@@ -335,6 +355,8 @@ pub const SYSCALL_ID_DELEGATE_CALL: B256 =
     b256!("75bd4ec817c86b0736da59cb28bb22979b1547ee30426044e0ded9055ecfee5a"); // keccak256("_syscall_delegate_call")
 pub const SYSCALL_ID_CREATE: B256 =
     b256!("9708d5acbee3bf900474f0e80767e267e15a3c0f8bda6f3f882235855d42a61f"); // keccak256("_syscall_create")
+pub const SYSCALL_ID_CREATE2: B256 =
+    b256!("ae4ca3b6b3d9965a736c58075c7b05246e0aeb31c16a1be2f2b569c3e6545f2a"); // keccak256("_syscall_create2")
 pub const SYSCALL_ID_EMIT_LOG: B256 =
     b256!("505be4983de61b5ab79cdc8164e4db895c4f9548cee794e1e0bccec1dc0b751d"); // keccak256("_syscall_emit_log")
 pub const SYSCALL_ID_DESTROY_ACCOUNT: B256 =

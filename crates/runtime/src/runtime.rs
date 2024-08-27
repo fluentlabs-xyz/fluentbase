@@ -13,7 +13,6 @@ use fluentbase_types::{
     create_import_linker,
     Bytes,
     ExitCode,
-    Fuel,
     IJournaledTrie,
     SysFuncIdx::STATE,
     F254,
@@ -83,7 +82,7 @@ impl BytecodeOrHash {
 pub struct RuntimeContext {
     // context inputs
     pub(crate) bytecode: BytecodeOrHash,
-    pub(crate) fuel: Fuel,
+    pub(crate) fuel_limit: u64,
     pub(crate) state: u32,
     pub(crate) call_depth: u32,
     pub(crate) trace: bool,
@@ -107,7 +106,7 @@ impl Default for RuntimeContext {
     fn default() -> Self {
         Self {
             bytecode: BytecodeOrHash::default(),
-            fuel: Fuel::default(),
+            fuel_limit: 0,
             state: 0,
             is_shared: false,
             input: vec![],
@@ -164,8 +163,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_fuel<T: Into<Fuel>>(mut self, fuel: T) -> Self {
-        self.fuel = fuel.into();
+    pub fn with_fuel_limit(mut self, fuel_limit: u64) -> Self {
+        self.fuel_limit = fuel_limit;
         self
     }
 
@@ -176,6 +175,11 @@ impl RuntimeContext {
 
     pub fn with_depth(mut self, depth: u32) -> Self {
         self.call_depth = depth;
+        self
+    }
+
+    pub fn with_tracer(mut self) -> Self {
+        self.trace = true;
         self
     }
 
@@ -219,12 +223,8 @@ impl RuntimeContext {
         &mut self.execution_result.output
     }
 
-    pub fn fuel(&self) -> &Fuel {
-        &self.fuel
-    }
-
-    pub fn fuel_mut(&mut self) -> &mut Fuel {
-        &mut self.fuel
+    pub fn fuel_limit(&self) -> u64 {
+        self.fuel_limit
     }
 
     pub fn return_data(&self) -> &Vec<u8> {
@@ -244,7 +244,7 @@ impl RuntimeContext {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub fuel_consumed: u64,
@@ -422,9 +422,9 @@ impl Runtime {
         let mut linker = Linker::<RuntimeContext>::new(&engine);
 
         // add fuel if limit is specified
-        if store.data().fuel.remaining() > 0 {
+        if store.engine().config().get_consume_fuel() {
             store
-                .add_fuel(store.data().fuel.remaining())
+                .add_fuel(store.data().fuel_limit)
                 .expect("fuel metering is disabled");
         }
 
@@ -507,32 +507,36 @@ impl Runtime {
     }
 
     pub fn call(&mut self) -> ExecutionResult {
-        match self.call_internal() {
+        let fuel_consumed_before_call = self.store.fuel_consumed().unwrap_or_default();
+        match self.call_internal(fuel_consumed_before_call) {
             Ok(result) => result,
-            Err(err) => self.handle_execution_result(Some(err)),
+            Err(err) => self.handle_execution_result(Some(err), fuel_consumed_before_call),
         }
     }
 
-    fn call_internal(&mut self) -> Result<ExecutionResult, RuntimeError> {
+    fn call_internal(
+        &mut self,
+        fuel_consumed_before_call: u64,
+    ) -> Result<ExecutionResult, RuntimeError> {
         let next_result = self
             .resolve_instance()?
             .get_func(&mut self.store, "main")
             .ok_or(RuntimeError::MissingEntrypoint)?
             .call_resumable(&mut self.store, &[], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        self.handle_resumable_call_result(next_result)
+        self.handle_resumable_call_result(next_result, fuel_consumed_before_call)
     }
 
-    pub fn resume(&mut self, exit_code: i32) -> ExecutionResult {
+    pub fn resume(&mut self, exit_code: i32, fuel_consumed_before_call: u64) -> ExecutionResult {
         let resumable_invocation = self
             .store_mut()
             .data_mut()
             .resumable_invocation
             .take()
             .expect("can't resolve resumable invocation state");
-        match self.resume_internal(resumable_invocation, exit_code) {
+        match self.resume_internal(resumable_invocation, exit_code, fuel_consumed_before_call) {
             Ok(result) => result,
-            Err(err) => self.handle_execution_result(Some(err)),
+            Err(err) => self.handle_execution_result(Some(err), fuel_consumed_before_call),
         }
     }
 
@@ -540,21 +544,25 @@ impl Runtime {
         &mut self,
         resumable_invocation: ResumableInvocation,
         exit_code: i32,
+        fuel_consumed_before_call: u64,
     ) -> Result<ExecutionResult, RuntimeError> {
         let exit_code = Value::I32(exit_code);
         let next_result = resumable_invocation
             .resume(self.store.as_context_mut(), &[exit_code], &mut [])
             .map_err(Into::<RuntimeError>::into);
-        self.handle_resumable_call_result(next_result)
+        self.handle_resumable_call_result(next_result, fuel_consumed_before_call)
     }
 
     fn handle_resumable_call_result(
         &mut self,
         mut next_result: Result<ResumableCall, RuntimeError>,
+        fuel_consumed_before_call: u64,
     ) -> Result<ExecutionResult, RuntimeError> {
         loop {
             let resumable_invocation = match next_result? {
-                ResumableCall::Finished => return Ok(self.handle_execution_result(None)),
+                ResumableCall::Finished => {
+                    return Ok(self.handle_execution_result(None, fuel_consumed_before_call))
+                }
                 ResumableCall::Resumable(state) => state,
             };
 
@@ -643,9 +651,14 @@ impl Runtime {
         })
     }
 
-    fn handle_execution_result(&self, err: Option<RuntimeError>) -> ExecutionResult {
-        let mut execution_result = self.store.data().execution_result.clone();
-        execution_result.fuel_consumed = self.store.fuel_consumed().unwrap_or_default();
+    fn handle_execution_result(
+        &mut self,
+        err: Option<RuntimeError>,
+        fuel_consumed_before_call: u64,
+    ) -> ExecutionResult {
+        let mut execution_result = take(&mut self.store.data_mut().execution_result);
+        execution_result.fuel_consumed =
+            self.store.fuel_consumed().unwrap_or_default() - fuel_consumed_before_call;
         if let Some(err) = err {
             match err {
                 RuntimeError::ExecutionInterrupted => execution_result.interrupted = true,

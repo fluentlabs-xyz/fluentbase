@@ -1,7 +1,14 @@
 use crate::{Runtime, RuntimeContext};
-use fluentbase_types::{Bytes, ExitCode, SyscallInvocationParams, B256};
+use fluentbase_types::{
+    byteorder::{ByteOrder, LittleEndian},
+    Bytes,
+    ExitCode,
+    SyscallInvocationParams,
+    B256,
+};
 use rwasm::{
     core::{HostError, Trap},
+    errors::FuelError,
     Caller,
 };
 use std::{
@@ -17,6 +24,8 @@ pub struct SysExecResumable {
     pub params: SyscallInvocationParams,
     /// A depth level of the current call, for root it's always zero
     pub is_root: bool,
+    /// Return consumed fuel result into this pointer (u64 value)
+    pub fuel_ptr: u32,
 }
 
 pub const CALL_STACK_LIMIT: u32 = 1024;
@@ -41,17 +50,29 @@ impl SyscallExec {
         hash32_ptr: u32,
         input_ptr: u32,
         input_len: u32,
-        fuel: u64,
+        fuel_ptr: u32,
         state: u32,
     ) -> Result<i32, Trap> {
+        // make sure we have enough fuel for this call
+        let fuel_limit = if fuel_ptr > 0 {
+            let fuel_limit = LittleEndian::read_u64(caller.read_memory(fuel_ptr, 8)?);
+            if fuel_limit > caller.fuel_remaining().unwrap_or(fuel_limit) {
+                return Err(ExitCode::OutOfGas.into_trap());
+            }
+            fuel_limit
+        } else {
+            caller.fuel_remaining().unwrap_or_default()
+        };
+        // return resumable error
         Err(SysExecResumable {
             params: SyscallInvocationParams {
                 code_hash: B256::from_slice(caller.read_memory(hash32_ptr, 32)?),
                 input: Bytes::copy_from_slice(caller.read_memory(input_ptr, input_len)?),
-                fuel_limit: fuel,
+                fuel_limit,
                 state,
             },
             is_root: caller.data().call_depth == 0,
+            fuel_ptr,
         }
         .into())
     }
@@ -60,27 +81,37 @@ impl SyscallExec {
         mut caller: Caller<'_, RuntimeContext>,
         context: &SysExecResumable,
     ) -> Result<i32, Trap> {
-        Ok(Self::fn_impl(
+        let (fuel_consumed, exit_code) = Self::fn_impl(
             caller.data_mut(),
-            &context.params.code_hash.0,
+            &context.params.code_hash,
             context.params.input.as_ref(),
             context.params.fuel_limit,
             context.params.state,
-        ))
+        );
+        if let Err(err) = caller.consume_fuel(fuel_consumed) {
+            match err {
+                FuelError::FuelMeteringDisabled => {}
+                FuelError::OutOfFuel => return Err(ExitCode::OutOfGas.into_trap()),
+            }
+        }
+        if context.fuel_ptr > 0 {
+            let mut fuel_buffer = [0u8; 8];
+            LittleEndian::write_u64(&mut fuel_buffer, fuel_consumed);
+            caller.write_memory(context.fuel_ptr, &fuel_buffer)?;
+        }
+        Ok(exit_code)
     }
 
     pub fn fn_impl(
         ctx: &mut RuntimeContext,
-        bytecode_hash32: &[u8; 32],
+        code_hash: &B256,
         input: &[u8],
         fuel_limit: u64,
         state: u32,
-    ) -> i32 {
+    ) -> (u64, i32) {
         // check call depth overflow
         if ctx.call_depth >= CALL_STACK_LIMIT {
-            return ExitCode::CallDepthOverflow.into_i32();
-        } else if ctx.fuel.remaining() < fuel_limit {
-            return ExitCode::OutOfGas.into_i32();
+            return (fuel_limit, ExitCode::CallDepthOverflow.into_i32());
         }
 
         // take jzkt from the existing context (we will return it soon)
@@ -88,14 +119,15 @@ impl SyscallExec {
         let context = take(&mut ctx.context);
 
         // create a new runtime instance with the context
-        let ctx2 = RuntimeContext::new_with_hash(bytecode_hash32.into())
+        let ctx2 = RuntimeContext::new_with_hash(*code_hash)
             .with_input(input.to_vec())
             .with_context(context)
             .with_is_shared(true)
-            .with_fuel(fuel_limit)
+            .with_fuel_limit(fuel_limit)
             .with_jzkt(jzkt)
             .with_state(state)
-            .with_depth(ctx.call_depth + 1);
+            .with_depth(ctx.call_depth + 1)
+            .with_tracer();
         let mut runtime = Runtime::new(ctx2);
         let mut execution_result = runtime.call();
 
@@ -103,20 +135,65 @@ impl SyscallExec {
         ctx.jzkt = take(&mut runtime.store.data_mut().jzkt);
         ctx.context = take(&mut runtime.store.data_mut().context);
 
+        // println!("\n\nEXEC, interrupted: {}", execution_result.interrupted);
+        // println!(
+        //     "exit_code: {} ({})",
+        //     execution_result.exit_code,
+        //     ExitCode::from(execution_result.exit_code)
+        // );
+        // println!(
+        //     "output: 0x{} ({})",
+        //     hex::encode(&execution_result.output),
+        //     std::str::from_utf8(&execution_result.output).unwrap_or("can't decode utf-8")
+        // );
+        // println!("fuel consumed: {}", execution_result.fuel_consumed);
+        // let logs = &runtime.store().tracer().unwrap().logs;
+        // println!("execution trace ({} steps):", logs.len());
+        // for log in logs.iter().rev().take(100).rev() {
+        //     use rwasm::rwasm::instruction::InstructionExtra;
+        //     if let Some(value) = log.opcode.aux_value() {
+        //         println!(
+        //             " - pc={} opcode={}({}) gas={} stack={:?}",
+        //             log.program_counter,
+        //             log.opcode,
+        //             value,
+        //             log.consumed_fuel,
+        //             log.stack
+        //                 .iter()
+        //                 .map(|v| v.to_string())
+        //                 .rev()
+        //                 .take(3)
+        //                 .rev()
+        //                 .collect::<Vec<_>>(),
+        //         );
+        //     } else {
+        //         println!(
+        //             " - pc={} opcode={} gas={} stack={:?}",
+        //             log.program_counter,
+        //             log.opcode,
+        //             log.consumed_fuel,
+        //             log.stack
+        //                 .iter()
+        //                 .map(|v| v.to_string())
+        //                 .rev()
+        //                 .take(3)
+        //                 .rev()
+        //                 .collect::<Vec<_>>(),
+        //         );
+        //     }
+        // }
+
         // if execution was interrupted,
         if execution_result.interrupted {
             // then we remember this runtime and assign call id into exit code (positive exit code
             // stands for interrupted runtime call id, negative or zero for error)
             execution_result.exit_code = runtime.remember_runtime() as i32;
-        } else {
-            // increase total fuel consumed and remember return data
-            ctx.execution_result.fuel_consumed += execution_result.fuel_consumed;
         }
 
         // TODO(dmitry123): "do we need to put any fuel penalties for failed calls?"
 
         ctx.execution_result.return_data = execution_result.output.clone();
 
-        execution_result.exit_code
+        (execution_result.fuel_consumed, execution_result.exit_code)
     }
 }

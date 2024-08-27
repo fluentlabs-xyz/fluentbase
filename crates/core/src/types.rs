@@ -2,27 +2,47 @@ use fluentbase_sdk::{Bytes, ExitCode, SyscallInvocationParams};
 
 #[derive(Clone, Debug)]
 pub(crate) enum NextAction {
-    ExecutionResult(Bytes, u64, i32),
-    NestedCall(u32, SyscallInvocationParams),
+    ExecutionResult {
+        exit_code: i32,
+        output: Bytes,
+        gas_used: u64,
+    },
+    NestedCall {
+        call_id: u32,
+        params: SyscallInvocationParams,
+        gas_used: u64,
+    },
 }
 
 impl NextAction {
-    pub(crate) fn from_exit_code(fuel_spent: u64, exit_code: ExitCode) -> Self {
-        Self::ExecutionResult(Bytes::default(), fuel_spent, exit_code.into_i32())
+    pub(crate) fn from_exit_code(gas_used: u64, exit_code: ExitCode) -> Self {
+        Self::ExecutionResult {
+            exit_code: exit_code.into_i32(),
+            output: Default::default(),
+            gas_used,
+        }
     }
 }
 
 #[derive(Debug)]
 pub(crate) enum Frame {
-    Execute(SyscallInvocationParams, u32),
-    Resume(u32, Bytes, i32),
+    Execute {
+        params: SyscallInvocationParams,
+        call_id: u32,
+    },
+    Resume {
+        call_id: u32,
+        output: Bytes,
+        exit_code: i32,
+        gas_used: u64,
+    },
 }
 
 impl Frame {
     pub(crate) fn call_id(&self) -> u32 {
         match self {
-            Frame::Execute(_, call_id) => *call_id,
-            Frame::Resume(call_id, _, _) => *call_id,
+            Frame::Execute { call_id, .. } => *call_id,
+            Frame::Resume { call_id, .. } => *call_id,
         }
     }
 }

@@ -186,6 +186,10 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.syscall_destroy_account(&address);
     }
 
+    fn debug_log(&self, message: &str) {
+        self.native_sdk.debug_log(message)
+    }
+
     fn keccak256(&self, data: &[u8]) -> B256 {
         self.native_sdk.keccak256(data)
     }

@@ -599,7 +599,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn static_call(&mut self, address: Address, input: &[u8], fuel_limit: u64) -> (Bytes, i32) {
         let (account, _) = self.account(&address);
-        let exit_code =
+        let (_, exit_code) =
             self.native_sdk
                 .exec(&account.rwasm_code_hash, input, fuel_limit, STATE_MAIN);
         (self.native_sdk.return_data(), exit_code)
@@ -607,6 +607,10 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn destroy_account(&mut self, address: Address) {
         todo!()
+    }
+
+    fn debug_log(&self, message: &str) {
+        self.native_sdk.debug_log(message)
     }
 
     fn keccak256(&self, data: &[u8]) -> B256 {

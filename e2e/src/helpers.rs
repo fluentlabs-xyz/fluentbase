@@ -1,3 +1,4 @@
+use core::str::from_utf8;
 use fluentbase_codec::Encoder;
 use fluentbase_runtime::{ExecutionResult, Runtime, RuntimeContext};
 use fluentbase_types::{
@@ -10,7 +11,7 @@ use fluentbase_types::{
 };
 use rwasm::{
     engine::{bytecode::Instruction, RwasmConfig, StateRouterConfig},
-    rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    rwasm::{instruction::InstructionExtra, BinaryFormat, BinaryFormatWriter, RwasmModule},
     Error,
 };
 
@@ -25,11 +26,42 @@ pub(crate) fn run_with_default_context(wasm_binary: Vec<u8>, input_data: &[u8]) 
     context_input.extend_from_slice(input_data);
     let ctx = RuntimeContext::new(rwasm_binary)
         .with_state(STATE_MAIN)
-        .with_fuel(100_000)
-        .with_input(context_input);
+        .with_fuel_limit(100_000)
+        .with_input(context_input)
+        .with_tracer();
     let mut runtime = Runtime::new(ctx);
     runtime.data_mut().clear_output();
     let result = runtime.call();
+    println!(
+        "exit_code: {} ({})",
+        result.exit_code,
+        ExitCode::from(result.exit_code)
+    );
+    println!(
+        "output: 0x{} ({})",
+        hex::encode(&result.output),
+        from_utf8(&result.output).unwrap_or("can't decode utf-8")
+    );
+    println!("fuel consumed: {}", result.fuel_consumed);
+    if result.exit_code != 0 {
+        let logs = &runtime.store().tracer().unwrap().logs;
+        println!("execution trace ({} steps):", logs.len());
+        for log in logs.iter().rev().take(100).rev() {
+            if let Some(value) = log.opcode.aux_value() {
+                println!(
+                    " - pc={} opcode={}({})",
+                    log.program_counter, log.opcode, value
+                );
+            } else {
+                println!(" - pc={} opcode={}", log.program_counter, log.opcode);
+            }
+        }
+    } else {
+        println!(
+            "trace steps: {}",
+            runtime.store().tracer().unwrap().logs.len()
+        );
+    }
     (result.output.into(), result.exit_code)
 }
 

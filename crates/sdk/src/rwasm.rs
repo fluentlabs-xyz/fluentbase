@@ -143,27 +143,38 @@ impl NativeAPI for RwasmContext {
         unsafe { _charge_fuel(value) }
     }
 
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> i32 {
+    #[inline(always)]
+    fn exec(&self, code_hash: &F254, input: &[u8], mut fuel_limit: u64, state: u32) -> (u64, i32) {
         unsafe {
-            _exec(
+            let exit_code = _exec(
                 code_hash.as_ptr(),
                 input.as_ptr(),
                 input.len() as u32,
-                fuel_limit,
+                &mut fuel_limit as *mut u64,
                 state,
-            )
+            );
+            // fuel limit now contains consumed fuel
+            (fuel_limit, exit_code)
         }
     }
 
     #[inline(always)]
-    fn resume(&self, call_id: u32, return_data: &[u8], exit_code: i32) -> i32 {
+    fn resume(
+        &self,
+        call_id: u32,
+        return_data: &[u8],
+        exit_code: i32,
+        mut fuel_used: u64,
+    ) -> (u64, i32) {
         unsafe {
-            _resume(
+            let exit_code = _resume(
                 call_id,
                 return_data.as_ptr(),
                 return_data.len() as u32,
                 exit_code,
-            )
+                &mut fuel_used as *mut u64,
+            );
+            (fuel_used, exit_code)
         }
     }
 

@@ -106,7 +106,7 @@ fn main() {
             import_linker: Some(create_import_linker()),
             wrap_import_functions: true,
         })
-        .consume_fuel(false);
+        .consume_fuel(true);
     let rwasm_module = RwasmModule::compile_with_config(&wasm_binary, &config).unwrap();
 
     let rwasm_bytecode_length = rwasm_module.encoded_length();
