@@ -10,7 +10,7 @@ use fluentbase_sdk::{
     Bytes,
     Bytes32,
     ExitCode,
-    SovereignAPI,
+    SharedAPI,
     B256,
 };
 use fuel_core_executor::executor::ExecutionData;
@@ -29,7 +29,7 @@ use revm_primitives::hex;
 pub const FUEL_VM_NON_CONTRACT_LOGS_ADDRESS: Bytes32 =
     hex!("00000000000000000000000000000000000000000000000000004675656C564D"); // ANSI: FuelVM
 
-pub fn _exec_fuel_tx<SDK: SovereignAPI>(
+pub fn _exec_fuel_tx<SDK: SharedAPI>(
     sdk: &mut SDK,
     gas_limit: u64,
     raw_fuel_tx: Bytes,
@@ -156,21 +156,13 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 );
                 let log_data = (to.0, amount, asset_id.0, gas, param1, param2, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Return { id, val, pc, is } => {
                 let sig = derive_keccak256!("Return(uint64,uint64,uint64,uint64)");
                 let log_data = (val, pc, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::ReturnData {
                 id,
@@ -186,11 +178,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let log_data =
                     (ptr, len, digest.0, pc, is, data.clone().unwrap_or_default()).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Panic {
                 id,
@@ -211,21 +199,13 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 )
                     .abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Revert { id, ra, pc, is } => {
                 let sig = derive_keccak256!("Revert(uint64,uint64,uint64)");
                 let log_data = (ra, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Log {
                 id,
@@ -239,11 +219,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let sig = derive_keccak256!("Log(uint64,uint64,uint64,uint64,uint64,uint64)");
                 let log_data = (ra, rb, rc, rd, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::LogData {
                 id,
@@ -271,11 +247,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 )
                     .abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Transfer {
                 id,
@@ -288,11 +260,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
                 let topics = [B256::from(sig), B256::from(id.0), B256::from(to.0)];
-                sdk.write_log(
-                    Address::from_slice(&id[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::TransferOut {
                 id,
@@ -305,22 +273,14 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let sig = derive_keccak256!("Log(bytes32,uint64,bytes32,uint64,uint64)");
                 let log_data = (to.0, amount, asset_id.0, pc, is).abi_encode();
                 let topics = [B256::from(sig), B256::from(id.0), B256::from(to.0)];
-                sdk.write_log(
-                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::ScriptResult { result, gas_used } => {
                 let sig = derive_keccak256!("ScriptResult(uint64,uint64)");
                 let result_u64: u64 = (*result).into();
                 let log_data = (result_u64, gas_used).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::MessageOut {
                 sender,
@@ -345,11 +305,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 )
                     .abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Mint {
                 sub_id,
@@ -361,11 +317,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let sig = derive_keccak256!("Mint(bytes32,bytes32,uint64,uint64,uint64)");
                 let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
             fuel_tx::Receipt::Burn {
                 sub_id,
@@ -377,11 +329,7 @@ pub fn _exec_fuel_tx<SDK: SovereignAPI>(
                 let sig = derive_keccak256!("Burn(bytes32,bytes32,uint64,uint64,uint64)");
                 let log_data = (sub_id.0, contract_id.0, val, pc, is).abi_encode();
                 let topics = [B256::from(sig)];
-                sdk.write_log(
-                    Address::from_slice(&FUEL_VM_NON_CONTRACT_LOGS_ADDRESS[12..]),
-                    log_data.into(),
-                    topics.to_vec(),
-                );
+                sdk.emit_log(log_data.into(), &topics);
             }
         }
     }
