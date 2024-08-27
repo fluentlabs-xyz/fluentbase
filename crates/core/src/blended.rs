@@ -24,20 +24,6 @@ use fluentbase_sdk::{
     SovereignAPI,
     SyscallInvocationParams,
     STATE_MAIN,
-    SYSCALL_ID_BALANCE,
-    SYSCALL_ID_CALL,
-    SYSCALL_ID_CALL_CODE,
-    SYSCALL_ID_CREATE,
-    SYSCALL_ID_DELEGATE_CALL,
-    SYSCALL_ID_DESTROY_ACCOUNT,
-    SYSCALL_ID_EMIT_LOG,
-    SYSCALL_ID_EXT_STORAGE_READ,
-    SYSCALL_ID_PREIMAGE_COPY,
-    SYSCALL_ID_PREIMAGE_SIZE,
-    SYSCALL_ID_STATIC_CALL,
-    SYSCALL_ID_STORAGE_READ,
-    SYSCALL_ID_STORAGE_WRITE,
-    SYSCALL_ID_WRITE_PREIMAGE,
 };
 use revm_interpreter::{
     CallInputs,
@@ -69,11 +55,15 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
     }
 
-    fn process_exec_params(&mut self, exit_code: i32, fuel_spent: u64) -> NextAction {
+    fn process_exec_params(&mut self, exit_code: i32, gas_used: u64) -> NextAction {
         // if the exit code is non-positive (stands for termination), then execution is finished
         if exit_code <= 0 {
             let return_data = self.sdk.native_sdk().return_data();
-            return NextAction::ExecutionResult(return_data, fuel_spent, exit_code);
+            return NextAction::ExecutionResult {
+                exit_code,
+                output: return_data,
+                gas_used,
+            };
         }
 
         // otherwise, exit code is a "call_id" that identifies saved context
@@ -85,70 +75,18 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             unreachable!("can't decode invocation params");
         };
 
-        NextAction::NestedCall(call_id, params)
+        NextAction::NestedCall {
+            call_id,
+            params,
+            gas_used,
+        }
     }
 
     fn process_exec(
         &mut self,
         contract_context: &ContractContext,
         params: SyscallInvocationParams,
-        return_call_id: u32,
-        call_depth: u32,
     ) -> NextAction {
-        // we don't do all these checks for root level
-        // because root level is trusted and can do any calls
-        if return_call_id > 0 {
-            // only main state can be forwarded to the other contract as a nested call,
-            // other states can be only used by root
-            // if params.state != STATE_MAIN {
-            //     return NextAction::from_exit_code(
-            //         params.fuel_limit,
-            //         ExitCode::MalformedSyscallParams,
-            //     );
-            // }
-            let fuel_limit = params.fuel_limit;
-            // check code hashes for system calls
-            let next_action = match params.code_hash {
-                SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
-                SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
-                SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
-                SYSCALL_ID_STATIC_CALL => {
-                    self.syscall_static_call(contract_context, params, call_depth)
-                }
-                SYSCALL_ID_DELEGATE_CALL => {
-                    self.syscall_delegate_call(contract_context, params, call_depth)
-                }
-                SYSCALL_ID_CALL_CODE => {
-                    self.syscall_call_code(contract_context, params, call_depth)
-                }
-                SYSCALL_ID_CREATE => self.syscall_create(contract_context, params, call_depth),
-                SYSCALL_ID_EMIT_LOG => self.syscall_emit_log(contract_context, params),
-                SYSCALL_ID_DESTROY_ACCOUNT => {
-                    self.syscall_destroy_account(contract_context, params)
-                }
-                SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, params),
-                SYSCALL_ID_WRITE_PREIMAGE => self.syscall_write_preimage(contract_context, params),
-                SYSCALL_ID_PREIMAGE_COPY => self.syscall_preimage_copy(contract_context, params),
-                SYSCALL_ID_PREIMAGE_SIZE => self.syscall_preimage_size(contract_context, params),
-                SYSCALL_ID_EXT_STORAGE_READ => {
-                    self.syscall_ext_storage_read(contract_context, params)
-                }
-                _ => {
-                    NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams)
-                }
-            };
-            // make sure we have enough gas for this op
-            match &next_action {
-                NextAction::ExecutionResult(_, gas_cost, _) => {
-                    if fuel_limit < *gas_cost {
-                        return NextAction::from_exit_code(fuel_limit, ExitCode::OutOfGas);
-                    }
-                }
-                NextAction::NestedCall(_, _) => {}
-            }
-            return next_action;
-        }
-
         // warmup bytecode before execution,
         // it's a technical limitation we're having right now,
         // planning to solve it in the future
@@ -169,26 +107,47 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         .encode_to_vec(0);
         context_input.extend_from_slice(params.input.as_ref());
 
+        // #[cfg(feature = "std")]
+        // if contract_context.bytecode_address == PRECOMPILE_EVM {
+        //     let runtime_ctx = RuntimeContext::new_with_hash(params.code_hash)
+        //         .with_input(context_input)
+        //         .with_fuel(params.fuel_limit)
+        //         .with_state(params.state)
+        //         .with_depth(call_depth)
+        //         .with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        //     let native_sdk = RuntimeContextWrapper::new(runtime_ctx);
+        //     let sdk = SharedContextImpl::parse_from_input(native_sdk);
+        //     let mut evm_loader2 = EvmLoaderEntrypoint::new(sdk);
+        //     let exit_code = if params.state == STATE_DEPLOY {
+        //         evm_loader2.deploy_inner()
+        //     } else {
+        //         evm_loader2.main_inner()
+        //     };
+        //     return self.process_exec_params(exit_code.into_i32(), 0);
+        // }
+
         // execute smart contract
-        let fuel_before = self.sdk.native_sdk().fuel();
-        let exit_code = self.sdk.native_sdk().exec(
+        let (fuel_consumed, exit_code) = self.sdk.native_sdk().exec(
             &params.code_hash,
             &context_input,
             params.fuel_limit,
             params.state,
         );
-        let fuel_spent = fuel_before - self.sdk.native_sdk().fuel();
 
-        self.process_exec_params(exit_code, fuel_spent)
+        self.process_exec_params(exit_code, fuel_consumed)
     }
 
-    fn process_resume(&mut self, call_id: u32, return_data: &[u8], exit_code: i32) -> NextAction {
-        let fuel_before = self.sdk.native_sdk().fuel();
-        let exit_code = self
-            .sdk
-            .native_sdk()
-            .resume(call_id, return_data, exit_code);
-        let fuel_spent = fuel_before - self.sdk.native_sdk().fuel();
+    fn process_resume(
+        &mut self,
+        call_id: u32,
+        return_data: &[u8],
+        exit_code: i32,
+        fuel_used: u64,
+    ) -> NextAction {
+        let (fuel_spent, exit_code) =
+            self.sdk
+                .native_sdk()
+                .resume(call_id, return_data, exit_code, fuel_used);
         self.process_exec_params(exit_code, fuel_spent)
     }
 
@@ -201,60 +160,92 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let mut call_stack: Vec<Frame> = vec![Frame::Execute(
-            SyscallInvocationParams {
+        let mut call_stack: Vec<Frame> = vec![Frame::Execute {
+            params: SyscallInvocationParams {
                 code_hash: bytecode_account.rwasm_code_hash,
                 input: Bytes::copy_from_slice(input),
                 fuel_limit: gas.remaining(),
                 state,
             },
-            0,
-        )];
+            call_id: 0,
+        }];
 
         let mut stack_frame = call_stack.last_mut().unwrap();
-        let (output, exit_code) = loop {
+        let (output, fuel_used, exit_code) = loop {
             let next_action = match stack_frame {
-                Frame::Execute(params, return_call_id) => {
-                    self.process_exec(&context, take(params), *return_call_id, call_depth)
+                Frame::Execute { params, call_id } => {
+                    if *call_id > 0 {
+                        self.process_syscall(&context, take(params), call_depth)
+                    } else {
+                        self.process_exec(&context, take(params))
+                    }
                 }
-                Frame::Resume(return_call_id, return_data, exit_code) => {
-                    self.process_resume(*return_call_id, return_data.as_ref(), *exit_code)
-                }
+                Frame::Resume {
+                    call_id,
+                    output,
+                    exit_code,
+                    gas_used,
+                } => self.process_resume(*call_id, output.as_ref(), *exit_code, *gas_used),
             };
             match next_action {
-                NextAction::ExecutionResult(return_data, fuel_spent, exit_code) => {
+                NextAction::ExecutionResult {
+                    exit_code,
+                    output: return_data,
+                    gas_used,
+                } => {
                     let _resumable_frame = call_stack.pop().unwrap();
-                    assert!(
-                        gas.record_cost(fuel_spent),
-                        "not enough gas for nested call"
-                    );
                     if call_stack.is_empty() {
-                        break (return_data, exit_code);
+                        break (return_data, gas_used, exit_code);
                     }
+                    // execution result can happen only after resume
                     match call_stack.last_mut().unwrap() {
-                        Frame::Resume(_, return_data_result, exit_code_result) => {
+                        Frame::Resume {
+                            output: return_data_result,
+                            exit_code: exit_code_result,
+                            gas_used: fuel_used_result,
+                            ..
+                        } => {
                             *return_data_result = return_data;
                             *exit_code_result = exit_code;
+                            *fuel_used_result += gas_used;
                         }
                         _ => unreachable!(),
                     }
                     stack_frame = call_stack.last_mut().unwrap();
                 }
-                NextAction::NestedCall(call_id, params) => {
+                NextAction::NestedCall {
+                    call_id,
+                    params,
+                    gas_used,
+                } => {
                     let last_frame = call_stack.last_mut().unwrap();
                     match last_frame {
-                        Frame::Execute(_, _) => {
-                            *last_frame = Frame::Resume(call_id, Bytes::default(), i32::MIN);
+                        Frame::Execute { .. } => {
+                            *last_frame = Frame::Resume {
+                                call_id,
+                                output: Bytes::default(),
+                                exit_code: 0,
+                                gas_used,
+                            };
                         }
-                        Frame::Resume(call_id_result, _, _) => {
+                        Frame::Resume {
+                            call_id: call_id_result,
+                            gas_used: gas_used_result,
+                            ..
+                        } => {
                             *call_id_result = call_id;
+                            *gas_used_result = gas_used;
                         }
                     }
-                    call_stack.push(Frame::Execute(params, call_id));
+                    call_stack.push(Frame::Execute { params, call_id });
                     stack_frame = call_stack.last_mut().unwrap();
                 }
             }
         };
+
+        if !gas.record_cost(fuel_used) {
+            return (Bytes::default(), ExitCode::OutOfGas.into_i32());
+        }
 
         (output, exit_code)
     }
@@ -450,6 +441,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 address: inputs.target_address,
                 bytecode_address: bytecode_account.address,
                 caller: inputs.caller,
+                is_static: inputs.is_static,
                 value: inputs.value.get(),
             };
             self.exec_rwasm_bytecode(

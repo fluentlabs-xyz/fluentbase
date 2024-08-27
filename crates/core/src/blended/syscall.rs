@@ -1,5 +1,6 @@
 use crate::{blended::BlendedRuntime, helpers::exit_code_from_evm_error, types::NextAction};
 use alloc::{boxed::Box, vec::Vec};
+use alloy_rlp::Encodable;
 use byteorder::{ByteOrder, LittleEndian};
 use fluentbase_sdk::{
     Address,
@@ -11,19 +12,75 @@ use fluentbase_sdk::{
     SyscallInvocationParams,
     B256,
     STATE_MAIN,
+    SYSCALL_ID_BALANCE,
+    SYSCALL_ID_CALL,
+    SYSCALL_ID_CALL_CODE,
+    SYSCALL_ID_CREATE,
+    SYSCALL_ID_CREATE2,
+    SYSCALL_ID_DELEGATE_CALL,
+    SYSCALL_ID_DESTROY_ACCOUNT,
+    SYSCALL_ID_EMIT_LOG,
+    SYSCALL_ID_EXT_STORAGE_READ,
+    SYSCALL_ID_PREIMAGE_COPY,
+    SYSCALL_ID_PREIMAGE_SIZE,
+    SYSCALL_ID_STATIC_CALL,
+    SYSCALL_ID_STORAGE_READ,
+    SYSCALL_ID_STORAGE_WRITE,
+    SYSCALL_ID_WRITE_PREIMAGE,
     U256,
 };
 use revm_interpreter::{gas, CallInputs, CallScheme, CallValue, CreateInputs, SelfDestructResult};
-use revm_primitives::{CreateScheme, SpecId};
+use revm_primitives::{CreateScheme, SpecId, MAX_INITCODE_SIZE};
+
+fn is_gas_free_call(_context: &ContractContext) -> bool {
+    // _context.bytecode_address == PRECOMPILE_EVM
+    false
+}
 
 impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
+    pub(crate) fn process_syscall(
+        &mut self,
+        contract_context: &ContractContext,
+        params: SyscallInvocationParams,
+        call_depth: u32,
+    ) -> NextAction {
+        // only main state can be forwarded to the other contract as a nested call,
+        // other states can be only used by root
+        match params.code_hash {
+            SYSCALL_ID_STORAGE_READ => self.syscall_storage_read(contract_context, params),
+            SYSCALL_ID_STORAGE_WRITE => self.syscall_storage_write(contract_context, params),
+            SYSCALL_ID_CALL => self.syscall_call(contract_context, params, call_depth),
+            SYSCALL_ID_STATIC_CALL => {
+                self.syscall_static_call(contract_context, params, call_depth)
+            }
+            SYSCALL_ID_DELEGATE_CALL => {
+                self.syscall_delegate_call(contract_context, params, call_depth)
+            }
+            SYSCALL_ID_CALL_CODE => self.syscall_call_code(contract_context, params, call_depth),
+            SYSCALL_ID_CREATE => self.syscall_create::<false>(contract_context, params, call_depth),
+            SYSCALL_ID_CREATE2 => self.syscall_create::<true>(contract_context, params, call_depth),
+            SYSCALL_ID_EMIT_LOG => self.syscall_emit_log(contract_context, params),
+            SYSCALL_ID_DESTROY_ACCOUNT => self.syscall_destroy_account(contract_context, params),
+            SYSCALL_ID_BALANCE => self.syscall_balance(contract_context, params),
+            SYSCALL_ID_WRITE_PREIMAGE => self.syscall_write_preimage(contract_context, params),
+            SYSCALL_ID_PREIMAGE_COPY => self.syscall_preimage_copy(contract_context, params),
+            SYSCALL_ID_PREIMAGE_SIZE => self.syscall_preimage_size(contract_context, params),
+            SYSCALL_ID_EXT_STORAGE_READ => self.syscall_ext_storage_read(contract_context, params),
+            _ => NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams),
+        }
+    }
+
     pub(crate) fn syscall_storage_read(
         &mut self,
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure input is 32 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 32 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -33,23 +90,26 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             &U256::from_le_slice(params.input.as_ref()),
         );
 
-        let gas_cost = if is_cold {
-            gas::COLD_SLOAD_COST
+        let gas_cost = if !is_gas_free {
+            let gas_cost = if is_cold {
+                gas::COLD_SLOAD_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            };
+            if gas_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            gas_cost
         } else {
-            gas::WARM_STORAGE_READ_COST
+            0
         };
 
-        // make sure we have enough gas for this op
-        if params.fuel_limit < gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
-
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(
-            value.to_le_bytes::<32>().into(),
-            gas_cost,
-            ExitCode::Ok.into_i32(),
-        )
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: value.to_le_bytes::<32>().into(),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_storage_write(
@@ -57,8 +117,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure input is 32 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 64 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -69,30 +133,33 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (present_value, is_cold) = self.sdk.storage(&context.address, &slot);
         self.sdk.write_storage(context.address, slot, value);
 
-        let gas_cost = match gas::sstore_cost(
-            SpecId::CANCUN,
-            original_value,
-            present_value,
-            value,
-            params.fuel_limit,
-            is_cold,
-        ) {
-            Some(gas_cost) => {
-                if params.fuel_limit < gas_cost {
-                    return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-                }
-                gas_cost
+        let gas_cost = if !is_gas_free {
+            let gas_cost = match gas::sstore_cost(
+                SpecId::CANCUN,
+                original_value,
+                present_value,
+                value,
+                params.fuel_limit,
+                is_cold,
+            ) {
+                Some(gas_cost) => gas_cost,
+                None => return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas),
+            };
+            if gas_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
             }
-            None => return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas),
+            gas_cost
+        } else {
+            0
         };
 
-        // make sure we have enough gas for this op
-        if params.fuel_limit < gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
-
         let _is_cold = self.sdk.write_storage(context.address, slot, value);
-        NextAction::ExecutionResult(Bytes::default(), gas_cost, ExitCode::Ok.into_i32())
+
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: Default::default(),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_call(
@@ -101,10 +168,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
         // - 32 bytes for the call value
         if params.input.len() < 20 + 32 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -112,24 +183,37 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let value = U256::from_le_slice(&params.input[20..52]);
         let contract_input = params.input.slice(52..);
 
+        let has_transfer = !value.is_zero();
+        if context.is_static && has_transfer {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::WriteProtection);
+        }
+
         let (account, is_cold) = self.sdk.account(&target_address);
 
-        // make sure we have enough gas for the call
-        let call_gas_cost = gas::call_cost(
-            SpecId::CANCUN,
-            !value.is_zero(),
-            is_cold,
-            account.is_empty(),
-        );
-        if params.fuel_limit < call_gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
-
-        // add call stipend if there is a value to be transferred.
-        let mut gas_limit = params.fuel_limit - call_gas_cost;
-        if !value.is_zero() {
-            gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
-        }
+        let (call_cost, gas_limit) = if !is_gas_free {
+            // make sure we have enough gas for the call
+            let call_cost = gas::call_cost(
+                SpecId::CANCUN,
+                !value.is_zero(),
+                is_cold,
+                account.is_empty(),
+            );
+            if call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            let mut gas_limit = params.fuel_limit - call_cost;
+            gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
+            if gas_limit + call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            // add call stipend if there is a value to be transferred.
+            if has_transfer {
+                gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
+            }
+            (call_cost, gas_limit)
+        } else {
+            (0, params.fuel_limit)
+        };
 
         // execute a nested call to another binary
         let (output, gas, exit_code) = self.call_inner(
@@ -149,7 +233,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_depth + 1,
         );
 
-        NextAction::ExecutionResult(output, call_gas_cost + gas.spent(), exit_code)
+        NextAction::ExecutionResult {
+            exit_code,
+            output,
+            gas_used: call_cost + gas.spent(),
+        }
     }
 
     pub(crate) fn syscall_static_call(
@@ -158,10 +246,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure we have enough bytes inside input params, where:
-        // - 20 bytes for the target address
-        // - 32 bytes for the call value
         if params.input.len() < 20 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -170,18 +260,28 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (_, is_cold) = self.sdk.account(&target_address);
 
-        // make sure we have enough gas for the call
-        let call_gas_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
-        if params.fuel_limit < call_gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
+        let (call_cost, gas_limit) = if !is_gas_free {
+            // make sure we have enough gas for the call
+            let call_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
+            if call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            let mut gas_limit = params.fuel_limit - call_cost;
+            gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
+            if gas_limit + call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            (call_cost, gas_limit)
+        } else {
+            (0, params.fuel_limit)
+        };
 
         // execute a nested call to another binary
         let (output, gas, exit_code) = self.call_inner(
             Box::new(CallInputs {
                 input: contract_input,
                 return_memory_offset: Default::default(),
-                gas_limit: params.fuel_limit - call_gas_cost,
+                gas_limit,
                 bytecode_address: target_address,
                 target_address,
                 caller: context.address,
@@ -194,7 +294,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_depth + 1,
         );
 
-        NextAction::ExecutionResult(output, call_gas_cost + gas.spent(), exit_code)
+        NextAction::ExecutionResult {
+            exit_code,
+            output,
+            gas_used: call_cost + gas.spent(),
+        }
     }
 
     pub(crate) fn syscall_delegate_call(
@@ -203,6 +307,8 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
+        let mut is_gas_free = is_gas_free_call(context);
+
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
         if params.input.len() < 20 {
@@ -214,18 +320,32 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (_, is_cold) = self.sdk.account(&target_address);
 
-        // make sure we have enough gas for the call
-        let call_gas_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
-        if params.fuel_limit < call_gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
+        // if target_address == PRECOMPILE_EVM {
+        //     is_gas_free = true;
+        // }
+
+        let (call_cost, gas_limit) = if !is_gas_free {
+            // make sure we have enough gas for the call
+            let call_cost = gas::call_cost(SpecId::CANCUN, false, is_cold, false);
+            if call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            let mut gas_limit = params.fuel_limit - call_cost;
+            gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
+            if gas_limit + call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            (call_cost, gas_limit)
+        } else {
+            (0, params.fuel_limit)
+        };
 
         // execute a nested call to another binary
         let (output, gas, exit_code) = self.call_inner(
             Box::new(CallInputs {
                 input: contract_input,
                 return_memory_offset: Default::default(),
-                gas_limit: params.fuel_limit - call_gas_cost,
+                gas_limit,
                 bytecode_address: target_address,
                 target_address: context.address,
                 caller: context.caller,
@@ -238,7 +358,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_depth + 1,
         );
 
-        NextAction::ExecutionResult(output, call_gas_cost + gas.spent(), exit_code)
+        NextAction::ExecutionResult {
+            exit_code,
+            output,
+            gas_used: call_cost + gas.spent(),
+        }
     }
 
     pub(crate) fn syscall_call_code(
@@ -247,9 +371,14 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure we have enough bytes inside input params, where:
         // - 20 bytes for the target address
+        // - 32 bytes for the transfer value
         if params.input.len() < 20 + 32 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -259,17 +388,25 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (_, is_cold) = self.sdk.account(&target_address);
 
-        // make sure we have enough gas for the call
-        let call_gas_cost = gas::call_cost(SpecId::CANCUN, !value.is_zero(), is_cold, false);
-        if params.fuel_limit < call_gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
-
-        // add call stipend if there is a value to be transferred.
-        let mut gas_limit = params.fuel_limit - call_gas_cost;
-        if !value.is_zero() {
-            gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
-        }
+        let (call_cost, gas_limit) = if !is_gas_free {
+            // make sure we have enough gas for the call
+            let call_cost = gas::call_cost(SpecId::CANCUN, !value.is_zero(), is_cold, false);
+            if call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            let mut gas_limit = params.fuel_limit - call_cost;
+            gas_limit = core::cmp::min(gas_limit - gas_limit / 64, params.fuel_limit);
+            if gas_limit + call_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            // add call stipend if there is a value to be transferred.
+            if !value.is_zero() {
+                gas_limit = gas_limit.saturating_add(gas::CALL_STIPEND);
+            }
+            (call_cost, gas_limit)
+        } else {
+            (0, params.fuel_limit)
+        };
 
         // execute a nested call to another binary
         let (output, gas, exit_code) = self.call_inner(
@@ -289,65 +426,118 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             call_depth + 1,
         );
 
-        NextAction::ExecutionResult(output, call_gas_cost + gas.spent(), exit_code)
+        NextAction::ExecutionResult {
+            exit_code,
+            output,
+            gas_used: call_cost + gas.spent(),
+        }
     }
 
-    pub(crate) fn syscall_create(
+    pub(crate) fn syscall_create<const IS_CREATE2: bool>(
         &mut self,
         context: &ContractContext,
         params: SyscallInvocationParams,
         call_depth: u32,
     ) -> NextAction {
-        // make sure we have enough bytes inside input params, where:
-        // - 1 byte for salt option flag
-        // - 32 bytes for salt
-        if params.input.len() < 1 + 32 {
+        let is_gas_free = is_gas_free_call(context);
+
+        if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
-        let init_code = params.input.slice(33..);
-
-        let is_create2 = params.input[0] != 0;
-        let (create_scheme, create_gas_cost) = if is_create2 {
-            let Some(gas_cost) = gas::create2_cost(init_code.len() as u64) else {
-                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-            };
-            (
-                CreateScheme::Create2 {
-                    salt: U256::from_le_slice(&params.input[1..33]),
-                },
-                gas_cost,
-            )
+        // make sure we have enough bytes inside input params
+        let (scheme, value, init_code) = if IS_CREATE2 {
+            if params.input.len() < 32 + 32 {
+                return NextAction::from_exit_code(
+                    params.fuel_limit,
+                    ExitCode::MalformedSyscallParams,
+                );
+            }
+            let value = U256::from_le_slice(&params.input[0..32]);
+            let salt = U256::from_le_slice(&params.input[32..64]);
+            let init_code = params.input.slice(64..);
+            (CreateScheme::Create2 { salt }, value, init_code)
         } else {
-            (CreateScheme::Create, gas::CREATE)
+            if params.input.len() < 32 {
+                return NextAction::from_exit_code(
+                    params.fuel_limit,
+                    ExitCode::MalformedSyscallParams,
+                );
+            }
+            let value = U256::from_le_slice(&params.input[0..32]);
+            let init_code = params.input.slice(32..);
+            (CreateScheme::Create, value, init_code)
         };
 
-        let gas_limit = params.fuel_limit - params.fuel_limit / 64 - create_gas_cost;
+        let (create_cost, gas_limit) = if !is_gas_free {
+            // make sure we don't exceed max possible init code
+            let init_cost = if init_code.len() > 0 {
+                let max_initcode_size = self
+                    .env
+                    .cfg
+                    .limit_contract_code_size
+                    .map(|limit| limit.saturating_mul(2))
+                    .unwrap_or(MAX_INITCODE_SIZE);
+                if init_code.len() > max_initcode_size {
+                    return NextAction::from_exit_code(
+                        params.fuel_limit,
+                        ExitCode::ContractSizeLimit,
+                    );
+                }
+                gas::initcode_cost(init_code.length() as u64)
+            } else {
+                0
+            };
+            if init_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            // calc gas cost for CREATE/CREATE2 opcode call
+            let create_cost = if IS_CREATE2 {
+                let Some(gas_cost) = gas::create2_cost(init_code.len() as u64) else {
+                    return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+                };
+                gas_cost
+            } else {
+                gas::CREATE
+            };
+            if init_cost + create_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            let mut gas_limit = params.fuel_limit - init_cost - create_cost;
+            gas_limit -= gas_limit / 64;
+            if gas_limit + init_cost + create_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            (init_cost + create_cost, gas_limit)
+        } else {
+            (0, params.fuel_limit)
+        };
 
         // execute a nested call to another binary
-        let mut call_outcome = self.create_inner(
+        let mut create_outcome = self.create_inner(
             Box::new(CreateInputs {
                 caller: context.address,
-                scheme: create_scheme,
-                value: context.value,
+                scheme,
+                value,
                 init_code,
                 gas_limit,
             }),
             call_depth + 1,
         );
 
-        call_outcome.result.output = if call_outcome.result.is_ok() {
-            Bytes::copy_from_slice(call_outcome.address.unwrap().as_slice())
+        create_outcome.result.output = if create_outcome.result.is_ok() {
+            Bytes::copy_from_slice(create_outcome.address.unwrap().as_slice())
         } else {
-            call_outcome.result.output
+            create_outcome.result.output
         };
 
-        let exit_code = exit_code_from_evm_error(call_outcome.result.result).into_i32();
-        NextAction::ExecutionResult(
-            call_outcome.result.output,
-            create_gas_cost + call_outcome.result.gas.spent(),
+        let exit_code = exit_code_from_evm_error(create_outcome.result.result).into_i32();
+
+        NextAction::ExecutionResult {
             exit_code,
-        )
+            output: create_outcome.result.output,
+            gas_used: create_cost + create_outcome.result.gas.spent(),
+        }
     }
 
     pub(crate) fn syscall_emit_log(
@@ -355,8 +545,11 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
-        // make sure input is 32 bytes len, and we have enough gas to pay for the call
+        let is_gas_free = is_gas_free_call(context);
+
         if params.input.len() < 1 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -379,17 +572,26 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let data = params.input.slice((1 + topics_len * B256::len_bytes())..);
 
         // make sure we have enough gas to cover this operation
-        let Some(gas_cost) = gas::log_cost(topics_len as u8, data.len() as u64) else {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+        let gas_cost = if !is_gas_free {
+            let Some(gas_cost) = gas::log_cost(topics_len as u8, data.len() as u64) else {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            };
+            if gas_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            gas_cost
+        } else {
+            0
         };
-        if params.fuel_limit < gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
 
         // write new log into the journal
         self.sdk.write_log(context.address, data, topics);
 
-        NextAction::ExecutionResult(Bytes::default(), gas_cost, ExitCode::Ok.into_i32())
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: Default::default(),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_destroy_account(
@@ -397,8 +599,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure input is 20 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 20 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -407,21 +613,30 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             .destroy_account(&context.address, &Address::from_slice(&params.input[0..20]));
 
         // make sure we have enough gas for this op
-        let gas_cost = gas::selfdestruct_cost(
-            SpecId::CANCUN,
-            SelfDestructResult {
-                had_value: result.had_value,
-                target_exists: result.target_exists,
-                is_cold: result.is_cold,
-                previously_destroyed: result.previously_destroyed,
-            },
-        );
-        if params.fuel_limit < gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
+        let gas_cost = if !is_gas_free {
+            let gas_cost = gas::selfdestruct_cost(
+                SpecId::CANCUN,
+                SelfDestructResult {
+                    had_value: result.had_value,
+                    target_exists: result.target_exists,
+                    is_cold: result.is_cold,
+                    previously_destroyed: result.previously_destroyed,
+                },
+            );
+            if gas_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            gas_cost
+        } else {
+            0
+        };
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(Bytes::default(), gas_cost, ExitCode::Ok.into_i32())
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: Default::default(),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_balance(
@@ -429,8 +644,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure input is 32 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 20 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -438,23 +657,28 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (result, is_cold) = self.sdk.account(&address);
 
         // make sure we have enough gas for this op
-        let gas_cost = if &context.address == address {
-            gas::LOW
-        } else if is_cold {
-            gas::COLD_ACCOUNT_ACCESS_COST
+        let gas_cost = if !is_gas_free {
+            let gas_cost = if &context.address == address {
+                gas::LOW
+            } else if is_cold {
+                gas::COLD_ACCOUNT_ACCESS_COST
+            } else {
+                gas::WARM_STORAGE_READ_COST
+            };
+            if gas_cost > params.fuel_limit {
+                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
+            }
+            gas_cost
         } else {
-            gas::WARM_STORAGE_READ_COST
+            0
         };
-        if params.fuel_limit < gas_cost {
-            return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-        }
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(
-            Bytes::from(result.balance.to_le_bytes::<32>()),
-            gas_cost,
-            ExitCode::Ok.into_i32(),
-        )
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: Bytes::from(result.balance.to_le_bytes::<32>()),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_write_preimage(
@@ -462,14 +686,23 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
-        let preimage = params.input;
-        let preimage_hash = self.sdk.native_sdk().keccak256(preimage.as_ref());
+        let is_gas_free = is_gas_free_call(context);
+
+        if params.state != STATE_MAIN {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        }
+
+        let preimage_hash = self.sdk.native_sdk().keccak256(params.input.as_ref());
 
         self.sdk
-            .write_preimage(context.address, preimage_hash, preimage);
+            .write_preimage(context.address, preimage_hash, params.input);
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(preimage_hash.0.into(), 0, ExitCode::Ok.into_i32())
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: preimage_hash.0.into(),
+            gas_used: 0,
+        }
     }
 
     pub(crate) fn syscall_preimage_copy(
@@ -477,15 +710,24 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure we have at least 32 bytes
         if params.input.len() != 32 {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
+
         let preimage_hash = B256::from_slice(&params.input[0..32]);
         let preimage = self.sdk.preimage(&context.address, &preimage_hash);
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(preimage.unwrap_or_default(), 0, ExitCode::Ok.into_i32())
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: preimage.unwrap_or_default(),
+            gas_used: 0,
+        }
     }
 
     pub(crate) fn syscall_preimage_size(
@@ -493,10 +735,15 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure we have at least 32 bytes
         if params.input.len() != 32 {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
+
         let preimage_hash = B256::from_slice(&params.input[0..32]);
         let gas_cost = gas::warm_cold_cost(false);
         let preimage_size = self.sdk.preimage_size(&context.address, &preimage_hash);
@@ -505,16 +752,24 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         LittleEndian::write_u32(&mut buffer, preimage_size);
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(buffer.into(), gas_cost, ExitCode::Ok.into_i32())
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: buffer.into(),
+            gas_used: gas_cost,
+        }
     }
 
     pub(crate) fn syscall_ext_storage_read(
         &mut self,
-        _context: &ContractContext,
+        context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
+        let is_gas_free = is_gas_free_call(context);
+
         // make sure input is 32 bytes len, and we have enough gas to pay for the call
         if params.input.len() != 20 + 32 {
+            return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
+        } else if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
@@ -536,10 +791,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         // return value as bytes with success exit code
-        NextAction::ExecutionResult(
-            value.to_le_bytes::<32>().into(),
-            gas_cost,
-            ExitCode::Ok.into_i32(),
-        )
+        NextAction::ExecutionResult {
+            exit_code: ExitCode::Ok.into_i32(),
+            output: value.to_le_bytes::<32>().into(),
+            gas_used: gas_cost,
+        }
     }
 }

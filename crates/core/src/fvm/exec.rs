@@ -6,7 +6,6 @@ use alloy_sol_types::SolValue;
 use fluentbase_sdk::{
     derive::derive_keccak256,
     types::FvmMethodOutput,
-    Address,
     Bytes,
     Bytes32,
     ExitCode,

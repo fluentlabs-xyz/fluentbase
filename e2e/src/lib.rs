@@ -7,4 +7,6 @@ pub mod assets;
 #[cfg(test)]
 mod helpers;
 #[cfg(test)]
-mod tests;
+mod revm;
+#[cfg(test)]
+mod rwasm;

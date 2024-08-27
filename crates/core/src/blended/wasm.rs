@@ -42,6 +42,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             address: target_address,
             bytecode_address: target_address,
             caller: inputs.caller,
+            is_static: false,
             value: inputs.value,
         };
         let (output, exit_code) = self.exec_rwasm_bytecode(

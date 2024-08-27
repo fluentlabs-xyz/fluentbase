@@ -42,23 +42,23 @@ macro_rules! result_value {
     };
 }
 
-#[cfg(feature = "e2e")]
+// #[cfg(feature = "e2e")]
 #[macro_export]
 macro_rules! debug_log {
     ($sdk:expr, $msg:tt) => {{
-        $sdk.native_sdk().debug_log(&$msg);
+        $sdk.debug_log(&$msg);
     }};
     ($sdk:expr, $($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
         debug_log!($sdk, msg);
     }};
 }
-#[cfg(not(feature = "e2e"))]
-#[macro_export]
-macro_rules! debug_log {
-    ($msg:tt) => {{}};
-    ($($arg:tt)*) => {{}};
-}
+// #[cfg(not(feature = "e2e"))]
+// #[macro_export]
+// macro_rules! debug_log {
+//     ($msg:tt) => {{}};
+//     ($($arg:tt)*) => {{}};
+// }
 
 pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
     match exit_code {
