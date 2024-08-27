@@ -2,7 +2,7 @@ use crate::{
     fvm::types::WasmStorage,
     helpers_fvm::{fvm_transact_commit, FvmTransactResult},
 };
-use fluentbase_sdk::SovereignAPI;
+use fluentbase_sdk::SharedAPI;
 use fuel_core_executor::executor::ExecutionData;
 use fuel_core_types::{
     blockchain::header::PartialBlockHeader,
@@ -14,7 +14,7 @@ use fuel_core_types::{
     services::executor::Result,
 };
 
-pub fn _fvm_transact_commit_inner<Tx, SDK: SovereignAPI>(
+pub fn _fvm_transact_commit_inner<Tx, SDK: SharedAPI>(
     sdk: &mut SDK,
     checked_tx: Checked<Tx>,
     header: &PartialBlockHeader,

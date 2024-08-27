@@ -5,7 +5,11 @@ mod tests {
         helpers_fvm::{fvm_transact, fvm_transact_commit},
     };
     use alloc::{vec, vec::Vec};
-    use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
+    use fluentbase_sdk::{
+        journal::{JournalState, JournalStateBuilder},
+        runtime::TestingContext,
+        ContractContext,
+    };
     use fuel_core::{
         database::{database_description::on_chain::OnChain, Database, RegularStage},
         executor::test_helpers::{create_contract, setup_executable_script},
@@ -52,16 +56,31 @@ mod tests {
         },
         services::executor::{Error, TransactionValidityError},
     };
+    use revm_primitives::{alloy_primitives, U256};
 
     fn test_builder() -> TestBuilder {
         TestBuilder::new(1234u64)
+    }
+    fn contract_context() -> ContractContext {
+        ContractContext {
+            address: alloy_primitives::Address::from_slice(&[01; 20]),
+            bytecode_address: alloy_primitives::Address::from_slice(&[00; 20]),
+            caller: alloy_primitives::Address::from_slice(&[00; 20]),
+            value: U256::default(),
+        }
+    }
+
+    fn journal_state() -> JournalState<TestingContext> {
+        let mut journal_state_builder = JournalStateBuilder::default();
+        journal_state_builder.add_contract_context(contract_context());
+        JournalState::builder(TestingContext::empty(), journal_state_builder)
     }
 
     type TestingSDK = JournalState<TestingContext>;
 
     #[test]
     fn skipped_tx_not_changed_spent_status() {
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
         // let mut tb = || TestBuilder::new(2322u64);
@@ -201,7 +220,7 @@ mod tests {
         let mut coin = CompressedCoin::default();
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(AMOUNT - 1);
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -263,7 +282,7 @@ mod tests {
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(100);
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -323,7 +342,7 @@ mod tests {
             .clone()
             .into();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -401,7 +420,7 @@ mod tests {
             .clone()
             .into();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -529,7 +548,7 @@ mod tests {
             .transaction()
             .clone();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -825,7 +844,7 @@ mod tests {
             .transaction()
             .clone();
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -1022,7 +1041,7 @@ mod tests {
         let script_id = script.id(&ChainId::default());
 
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 
@@ -1113,7 +1132,7 @@ mod tests {
         };
 
         // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
-        let mut sdk = JournalState::empty(TestingContext::empty());
+        let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
 

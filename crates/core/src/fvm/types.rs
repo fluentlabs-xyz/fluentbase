@@ -1,26 +1,15 @@
 use crate::fvm::helpers::{
     CoinsHelper,
-    CoinsHolderHelper,
     ContractsAssetsHelper,
     ContractsLatestUtxoHelper,
     ContractsRawCodeHelper,
     ContractsStateHelper,
     FixedChunksWriter,
-    FuelAddress,
     StorageChunksWriter,
     VariableLengthDataWriter,
 };
 use alloc::{vec, vec::Vec};
-use fluentbase_sdk::{
-    AccountStatus,
-    Address,
-    Bytes,
-    Bytes32,
-    Bytes34,
-    Bytes64,
-    SovereignAPI,
-    U256,
-};
+use fluentbase_sdk::{Address, Bytes, Bytes32, Bytes34, Bytes64, SharedAPI, U256};
 use fuel_core_executor::ports::RelayerPort;
 use fuel_core_storage::{
     self,
@@ -58,16 +47,17 @@ pub const FUEL_BASE_STORAGE_ADDRESS: Address = address!("ba8ab429ff0aaa5f1bb8f19
 pub const STORAGE_ADDRESSES: [Address; 1] = [FUEL_BASE_STORAGE_ADDRESS];
 
 const CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN: usize = 44;
+const COINS_MAX_ENCODED_LEN: usize = 83;
 const CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
 const CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN: usize = 33;
 const CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN: usize = 66;
 const CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN: usize = 33;
 
-pub struct WasmStorage<'a, SDK: SovereignAPI> {
+pub struct WasmStorage<'a, SDK: SharedAPI> {
     pub sdk: &'a mut SDK,
 }
 
-impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
+impl<'a, SDK: SharedAPI> WasmStorage<'a, SDK> {
     // pub(crate) fn metadata_update(&mut self, raw_key: &[u8], data: &[u8]) {
     //     let key: B256 = MetadataHelper::new(raw_key).value_preimage_key().into();
     //     self.sdk
@@ -99,7 +89,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let mut buf = Vec::new();
         storage_chunks
             .read_data(self.sdk, &mut buf)
-            .expect("raw code extracted successfully");
+            .expect("raw code extracted");
         if buf.len() <= 0 {
             return None;
         }
@@ -113,7 +103,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_LATEST_UTXO_MAX_ENCODED_LEN,
-            anyhow::Error::msg("ContractsLatestUtxo encoded len must be <= 44")
+            anyhow::Error::msg("contracts latest utxo encoded len must fit max len")
         );
         let helper = ContractsLatestUtxoHelper::new(ContractId::from_bytes_ref(raw_key));
         let mut storage_chunks = StorageChunksWriter {
@@ -151,32 +141,30 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         let slot: U256 = ContractsStateHelper::new(raw_key)
             .value_storage_slot()
             .into();
-        self.sdk
-            .write_storage(FUEL_BASE_STORAGE_ADDRESS, slot, U256::from_be_bytes(value));
+        self.sdk.write_storage(slot, U256::from_be_bytes(value));
     }
 
     pub(crate) fn contracts_state_data(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot: U256 = ContractsStateHelper::new(raw_key)
             .value_storage_slot()
             .into();
-        let (v, _) = self.sdk.storage(&FUEL_BASE_STORAGE_ADDRESS, &slot);
+        let v = self.sdk.storage(&slot);
         if v == U256::ZERO {
             return None;
         }
         Some(v.to_be_bytes_vec().into())
     }
 
-    pub(crate) fn contracts_assets_value_update(&mut self, raw_key: &Bytes64, value: &[u8]) {
+    pub(crate) fn contracts_assets_value_update(&mut self, raw_key: &Bytes64, data: &[u8]) {
         let slot = ContractsAssetsHelper::new(raw_key).value_storage_slot();
         let value =
-            ContractsAssetsHelper::value_to_u256(value.try_into().expect("encoded value is valid"));
-        self.sdk
-            .write_storage(FUEL_BASE_STORAGE_ADDRESS, slot, value);
+            ContractsAssetsHelper::value_to_u256(data.try_into().expect("valid encoded value"));
+        self.sdk.write_storage(slot, value);
     }
 
     pub(crate) fn contracts_assets_value(&self, raw_key: &Bytes64) -> Option<Bytes> {
         let slot = ContractsAssetsHelper::new(raw_key).value_storage_slot();
-        let (val, _is_cold) = self.sdk.storage(&FUEL_BASE_STORAGE_ADDRESS, &slot);
+        let val = self.sdk.storage(&slot);
         if val == U256::ZERO {
             return None;
         }
@@ -192,7 +180,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_STATE_MERKLE_DATA_MAX_ENCODED_LEN,
-            anyhow::Error::msg("merkle_data encoded len must be <= 66")
+            anyhow::Error::msg("contract state merkle data encoded len must fit max len")
         );
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
@@ -229,7 +217,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_STATE_MERKLE_METADATA_MAX_ENCODED_LEN,
-            anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
+            anyhow::Error::msg("contracts state merkle metadata encoded len must fit max len")
         );
         let helper = ContractsStateHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
@@ -267,7 +255,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_ASSETS_MERKLE_DATA_MAX_ENCODED_LEN,
-            anyhow::Error::msg("merkle_data encoded len must be <= 66")
+            anyhow::Error::msg("contracts assets merkle data encoded len must fit max len")
         );
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
@@ -304,7 +292,7 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= CONTRACTS_ASSETS_MERKLE_METADATA_MAX_ENCODED_LEN,
-            anyhow::Error::msg("merkle_metadata encoded len must be <= 33")
+            anyhow::Error::msg("contracts assets merkle metadata encoded len must fit max len")
         );
         let helper = ContractsAssetsHelper::new_transformed(raw_key);
         let mut storage_chunks = StorageChunksWriter {
@@ -335,41 +323,66 @@ impl<'a, SDK: SovereignAPI> WasmStorage<'a, SDK> {
         Some(res.into())
     }
 
-    pub(crate) fn coins_update(&mut self, raw_key: &Bytes34, v: &CoinsHolderHelper) {
-        let (address, asset_id, balance) = v.to_u256_tuple();
-        let ch = CoinsHelper::new(raw_key);
-        self.sdk
-            .write_storage(FUEL_BASE_STORAGE_ADDRESS, ch.owner_storage_slot(), address);
-        self.sdk
-            .write_storage(FUEL_BASE_STORAGE_ADDRESS, ch.asset_id_slot(), asset_id);
-        self.sdk.write_storage(
-            FUEL_BASE_STORAGE_ADDRESS,
-            ch.balance_storage_slot(),
-            balance,
+    // pub(crate) fn coins_update(&mut self, raw_key: &Bytes34, v: &CoinsHolderHelper) {
+    //     let (address, asset_id, balance) = v.to_u256_tuple();
+    //     let ch = CoinsHelper::new(raw_key);
+    //     self.sdk.write_storage(ch.owner_storage_slot(), address);
+    //     self.sdk.write_storage(ch.asset_id_storage_slot(), asset_id);
+    //     self.sdk.write_storage(ch.balance_storage_slot(), balance);
+    // }
+    //
+    // pub(crate) fn coins(&self, raw_key: &Bytes34) -> Option<CoinsHolderHelper> {
+    //     let ch = CoinsHelper::new(raw_key);
+    //     let owner = self.sdk.storage(&ch.owner_storage_slot());
+    //     if owner == U256::ZERO {
+    //         return None;
+    //     }
+    //     let asset_id = self.sdk.storage(&ch.asset_id_storage_slot());
+    //     let balance = self.sdk.storage(&ch.balance_storage_slot());
+    //     Some(CoinsHolderHelper::from_u256_tuple(
+    //         &owner, &asset_id, &balance,
+    //     ))
+    // }
+
+    pub(crate) fn coins_update(&mut self, raw_key: &Bytes34, data: &[u8]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= COINS_MAX_ENCODED_LEN,
+            anyhow::Error::msg("coins encoded len must fit max len")
         );
+        let helper = CoinsHelper::new(raw_key);
+        let mut storage_chunks = StorageChunksWriter {
+            address: &FUEL_BASE_STORAGE_ADDRESS,
+            slot_calc: &helper,
+            _phantom: Default::default(),
+        };
+        storage_chunks.write_data_in_padded_chunks(
+            self.sdk,
+            data,
+            (COINS_MAX_ENCODED_LEN / 32) as u32,
+            true,
+        );
+        Ok(())
     }
 
-    pub(crate) fn coins(&self, raw_key: &Bytes34) -> Option<CoinsHolderHelper> {
-        let ch = CoinsHelper::new(raw_key);
-        let (owner, _is_cold) = self
-            .sdk
-            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.owner_storage_slot());
-        if owner == U256::ZERO {
+    pub(crate) fn coins(&self, raw_key: &Bytes34) -> Option<Bytes> {
+        let helper = CoinsHelper::new(raw_key);
+        let mut storage_chunks = StorageChunksWriter {
+            address: &FUEL_BASE_STORAGE_ADDRESS,
+            slot_calc: &helper,
+            _phantom: Default::default(),
+        };
+        const CAPACITY: usize = ((COINS_MAX_ENCODED_LEN - 1) / 32 + 1) * 32;
+        let mut res = Vec::with_capacity(CAPACITY);
+        const MAX_CHUNK_INDEX: u32 = (COINS_MAX_ENCODED_LEN / 32) as u32;
+        storage_chunks.read_data_in_padded_chunks(self.sdk, MAX_CHUNK_INDEX, &mut res);
+        if res.iter().all(|&v| v == 0) {
             return None;
         }
-        let (asset_id, _is_cold) = self
-            .sdk
-            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.asset_id_slot());
-        let (balance, _is_cold) = self
-            .sdk
-            .storage(&FUEL_BASE_STORAGE_ADDRESS, &ch.balance_storage_slot());
-        Some(CoinsHolderHelper::from_u256_tuple(
-            &owner, &asset_id, &balance,
-        ))
+        Some(res.into())
     }
 }
 
-impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
+impl<'a, SDK: SharedAPI> KeyValueInspect for WasmStorage<'a, SDK> {
     type Column = Column;
 
     fn size_of_value(&self, key: &[u8], column: Self::Column) -> StorageResult<Option<usize>> {
@@ -428,23 +441,27 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
                 // key -> UtxoId
                 // value -> CompressedCoin
 
-                let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
-                let Some(coins_holder_helper) = self.coins(&utxo_id_key) else {
-                    return Ok(None);
-                };
-                let fuel_address = FuelAddress::new(*coins_holder_helper.address());
-                let (account, _is_cold) = self.sdk.account(&fuel_address.fluent_address());
-                let amount = account.balance / U256::from(1_000_000_000);
-                let compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
-                    owner: fuel_address.get(),
-                    amount: amount.as_limbs()[0],
-                    asset_id: *coins_holder_helper.asset_id(),
-                    tx_pointer: Default::default(),
-                });
+                let contracts_assets_key: Bytes34 = key.try_into().expect("34 bytes key");
+                let value_data = self.coins(&contracts_assets_key);
 
-                let r =
-                    postcard::to_allocvec(&compressed_coin).expect("compressed coin serialized");
-                Ok(Some(r))
+                Ok(value_data.map(|v| v.to_vec()))
+
+                // let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
+                // let Some(coins_holder_helper) = self.coins(&utxo_id_key) else {
+                //     return Ok(None);
+                // };
+                // let fuel_address = FuelAddress::new(*coins_holder_helper.address());
+                // let (account, _is_cold) = self.sdk.account(&fuel_address.fluent_address());
+                // let amount = account.balance / U256::from(1_000_000_000);
+                // let compressed_coin = CompressedCoin::V1(CompressedCoinV1 {
+                //     owner: *coins_holder_helper.address(),
+                //     amount: coins_holder_helper.balance(),
+                //     asset_id: *coins_holder_helper.asset_id(),
+                //     tx_pointer: Default::default(),
+                // });
+                // let r =
+                //     postcard::to_allocvec(&compressed_coin).expect("compressed coin serialized");
+                // Ok(Some(r))
             }
 
             Column::ContractsStateMerkleData => {
@@ -491,7 +508,7 @@ impl<'a, SDK: SovereignAPI> KeyValueInspect for WasmStorage<'a, SDK> {
     }
 }
 
-impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
+impl<'a, SDK: SharedAPI> KeyValueMutate for WasmStorage<'a, SDK> {
     fn write(&mut self, key: &[u8], column: Self::Column, buf: &[u8]) -> StorageResult<usize> {
         match column {
             // Column::Metadata => {
@@ -536,42 +553,48 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
                 // key -> UtxoId
                 // value -> CompressedCoin
 
-                let utxo_id_key: Bytes34 = key.try_into().expect("34 bytes key");
+                let key: Bytes34 = key.try_into().expect("34 bytes key");
+                self.coins_update(&key, buf).map_err(|_| {
+                    fuel_core_storage::Error::Other(anyhow::Error::msg(
+                        "failed to write key-value for Coins",
+                    ))
+                })?;
 
-                if buf.len() <= 0 {
-                    // deletion process
-                    let old_value = KeyValueInspect::get(&self, key, column)?;
-                    if let Some(old_value) = old_value {
-                        let compressed_coin: CompressedCoin =
-                            postcard::from_bytes(old_value.as_slice())
-                                .expect("compressed coin recovered");
-                        let fuel_address = FuelAddress::new(*compressed_coin.owner());
-                        let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
-                        account.balance -= U256::from(1_000_000_000)
-                            * U256::from(compressed_coin.amount().as_u64());
-                        self.sdk.write_account(account, AccountStatus::Modified);
-                    }
-                    // delete existing mapping
-                    let coins_owner_with_balance = CoinsHolderHelper::default();
-                    self.coins_update(&utxo_id_key, &coins_owner_with_balance);
+                // if buf.len() <= 0 {
+                //     deletion process
+                //     let old_value = KeyValueInspect::get(&self, key, column)?;
+                //     if let Some(old_value) = old_value {
+                //         let compressed_coin: CompressedCoin =
+                //             postcard::from_bytes(old_value.as_slice())
+                //                 .expect("compressed coin");
+                //         let fuel_address = FuelAddress::new(*compressed_coin.owner());
+                //         let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
+                //         account.balance -= U256::from(1_000_000_000)
+                //             * U256::from(compressed_coin.amount().as_u64());
+                //         self.sdk.write_account(account, AccountStatus::Modified);
+                //     }
+                //     delete existing mapping
+                //     let coins_owner_with_balance = CoinsHolderHelper::default();
+                //     self.coins_update(&utxo_id_key, &coins_owner_with_balance);
+                //     self.coins_update(&utxo_id_key, &[]);
+                //
+                //     return Ok(0);
+                // }
 
-                    return Ok(0);
-                }
-
-                let compressed_coin: CompressedCoin =
-                    postcard::from_bytes(buf).expect("compressed coin");
-                let coins = CoinsHolderHelper::from(
-                    compressed_coin.owner(),
-                    *compressed_coin.asset_id(),
-                    *compressed_coin.amount(),
-                );
-                self.coins_update(&utxo_id_key, &coins);
-
-                let fuel_address = FuelAddress::new(*coins.address());
-                let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
-                let coin_amount = U256::from(1_000_000_000) * U256::from(coins.balance());
-                account.balance += coin_amount;
-                self.sdk.write_account(account, AccountStatus::Modified);
+                // let compressed_coin: CompressedCoin =
+                //     postcard::from_bytes(buf).expect("compressed coin");
+                // let coins = CoinsHolderHelper::from(
+                //     compressed_coin.owner(),
+                //     *compressed_coin.asset_id(),
+                //     *compressed_coin.amount(),
+                // );
+                // self.coins_update(&utxo_id_key, &coins);
+                //
+                // let fuel_address = FuelAddress::new(*coins.address());
+                // let (mut account, _) = self.sdk.account(&fuel_address.fluent_address());
+                // let coin_amount = U256::from(1_000_000_000) * U256::from(coins.balance());
+                // account.balance += coin_amount;
+                // self.sdk.write_account(account, AccountStatus::Modified);
             }
 
             Column::ContractsStateMerkleData => {
@@ -672,7 +695,7 @@ impl<'a, SDK: SovereignAPI> KeyValueMutate for WasmStorage<'a, SDK> {
     }
 }
 
-impl<'a, SDK: SovereignAPI> Modifiable for WasmStorage<'a, SDK> {
+impl<'a, SDK: SharedAPI> Modifiable for WasmStorage<'a, SDK> {
     fn commit_changes(&mut self, changes: Changes) -> StorageResult<()> {
         for (column_u32, ops) in &changes {
             let column = Column::try_from(*column_u32).expect("valid column number");
@@ -693,20 +716,38 @@ impl<'a, SDK: SovereignAPI> Modifiable for WasmStorage<'a, SDK> {
 
 #[cfg(test)]
 mod tests {
+    use crate::fvm::helpers::FuelAddress;
     use fuel_core::txpool::types::TxId;
     use fuel_core_types::{
-        entities::contract::{ContractUtxoInfo, ContractUtxoInfoV1},
-        fuel_tx::{TxPointer, UtxoId},
+        entities::{
+            coins::coin::{CompressedCoin, CompressedCoinV1},
+            contract::{ContractUtxoInfo, ContractUtxoInfoV1},
+        },
+        fuel_tx::{Address, AssetId, TxPointer, UtxoId, Word},
         fuel_types::BlockHeight,
     };
 
     #[test]
     fn max_sizes_encoded() {
+        const ASSET_ID_MAX: AssetId = AssetId::new([0xff; 32]);
+        const UTXO_ID_MAX: UtxoId = UtxoId::new(TxId::new([0xffu8; 32]), u16::MAX);
+        const TX_POINTER_MAX: TxPointer = TxPointer::new(BlockHeight::new(u32::MAX), u16::MAX);
+        const ADDRESS_MAX: Address = Address::new([0xff; 32]);
+
         let v = ContractUtxoInfo::V1(ContractUtxoInfoV1 {
-            utxo_id: UtxoId::new(TxId::new([0xffu8; 32]), u16::MAX),
-            tx_pointer: TxPointer::new(BlockHeight::new(u32::MAX), u16::MAX),
+            utxo_id: UTXO_ID_MAX,
+            tx_pointer: TX_POINTER_MAX,
         });
         let res = postcard::to_allocvec(&v).unwrap();
         assert_eq!(44, res.len());
+
+        let v = CompressedCoin::V1(CompressedCoinV1 {
+            owner: ADDRESS_MAX,
+            amount: Word::MAX,
+            asset_id: ASSET_ID_MAX,
+            tx_pointer: TX_POINTER_MAX,
+        });
+        let res = postcard::to_allocvec(&v).unwrap();
+        assert_eq!(83, res.len());
     }
 }
