@@ -1,6 +1,7 @@
 use crate::helpers::run_with_default_context;
 use core::str::from_utf8;
 use hex_literal::hex;
+use rwasm::{engine::RwasmConfig, rwasm::RwasmModule, Config, Engine, Module};
 
 #[test]
 fn test_example_greeting() {
@@ -33,6 +34,45 @@ fn test_example_rwasm() {
         include_bytes!("../../examples/rwasm/lib.wasm").to_vec(),
         input_data,
     );
+    assert_eq!(exit_code, 0);
+    assert_eq!(output[0], 0xef);
+}
+
+#[test]
+#[ignore]
+fn test_example_rwasm_jit() {
+    let input_data = include_bytes!("../../examples/greeting/lib.wasm");
+
+    let mut config = Config::default();
+
+    config
+        .wasm_mutable_global(true)
+        .wasm_saturating_float_to_int(true)
+        .wasm_sign_extension(true)
+        .wasm_multi_value(true)
+        .wasm_bulk_memory(true)
+        .wasm_reference_types(true)
+        .wasm_tail_call(true)
+        .wasm_extended_const(true);
+    config.rwasm_config(RwasmConfig {
+        state_router: None,
+        entrypoint_name: None,
+        import_linker: None,
+        wrap_import_functions: false,
+    });
+
+    let engine = Engine::new(&config);
+    let original_engine = &engine;
+    let original_module = Module::new(original_engine, &input_data[..]).unwrap();
+    let rwasm_module = RwasmModule::from_module(&original_module);
+
+    println!("Imports: {:?}", original_module.imports);
+
+    let (output, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
+        input_data,
+    );
+    println!("Output: {:?}", output);
     assert_eq!(exit_code, 0);
     assert_eq!(output[0], 0xef);
 }
