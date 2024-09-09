@@ -116,10 +116,26 @@ impl Context {
             store,
         };
 
-        context.register_handler("_input_size", "fluentbase_v1preview")?;
-        context.register_handler("_read", "fluentbase_v1preview")?;
-        context.register_handler("_exit", "fluentbase_v1preview")?;
-        context.register_handler("_write", "fluentbase_v1preview")?;
+        let func = rwasm::Func::wrap(&mut context.store, || -> Result<i32, rwasm::core::Trap> {
+            return Ok(0);
+        });
+        context.linker.define("fluentbase_v1preview", "_input_size", func)?;
+
+        let func = rwasm::Func::wrap(&mut context.store, |target: i32, offset: i32, length: i32| -> Result<(), rwasm::core::Trap> {
+            return Ok(());
+        });
+        context.linker.define("fluentbase_v1preview", "_read", func)?;
+
+        let func = rwasm::Func::wrap(&mut context.store, |exit_code: i32| -> Result<(), rwasm::core::Trap> {
+            return Ok(());
+        });
+        context.linker.define("fluentbase_v1preview", "_exit", func)?;
+
+        let func = rwasm::Func::wrap(&mut context.store, |offset: i32, length: i32| -> Result<(), rwasm::core::Trap> {
+            return Ok(());
+        });
+        context.linker.define("fluentbase_v1preview", "_write", func)?;
+
 
         Ok(context)
     }
@@ -208,8 +224,8 @@ impl Context {
     }
 
     fn register_handler(&mut self, name: &str, module: &str) -> Result<(), Error> {
-        let func = rwasm::Func::wrap(&mut self.store, || -> Result<(), rwasm::core::Trap> {
-            return Ok(());
+        let func = rwasm::Func::wrap(&mut self.store, || -> Result<u32, rwasm::core::Trap> {
+            return Ok(0);
         });
 
         self.linker.define(module, name, func)?;
