@@ -64,9 +64,11 @@ fn test_example_rwasm_jit() {
     let engine = Engine::new(&config);
     let original_engine = &engine;
     let original_module = Module::new(original_engine, &input_data[..]).unwrap();
+    let imports = original_module.imports().collect::<Vec<_>>();
+
     let rwasm_module = RwasmModule::from_module(&original_module);
 
-    println!("Imports: {:?}", original_module.imports);
+    println!("Imports: {:?} {:?}", original_module.imports, imports);
 
     let (output, exit_code) = run_with_default_context(
         include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
