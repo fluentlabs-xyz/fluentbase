@@ -35,4 +35,4 @@ std = [
 rwasm = [
     "dep:rwasm",
 ]
-e2e = []
+optimism = []

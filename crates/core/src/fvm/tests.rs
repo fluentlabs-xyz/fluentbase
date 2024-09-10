@@ -66,6 +66,7 @@ mod tests {
             address: alloy_primitives::Address::from_slice(&[01; 20]),
             bytecode_address: alloy_primitives::Address::from_slice(&[00; 20]),
             caller: alloy_primitives::Address::from_slice(&[00; 20]),
+            is_static: false,
             value: U256::default(),
         }
     }
@@ -115,7 +116,6 @@ mod tests {
         let mut second_coin = CompressedCoin::default();
         second_coin.set_owner(*second_input.input_owner().unwrap());
         second_coin.set_amount(100);
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         // Insert both inputs
         <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageMutate<Coins>>::insert(
             &mut storage,

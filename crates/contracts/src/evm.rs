@@ -11,7 +11,6 @@ use fluentbase_sdk::{
     Bytes,
     ContractContext,
     ExitCode,
-    HashMap,
     SharedAPI,
     B256,
     U256,
@@ -41,7 +40,6 @@ use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTOR
 
 pub struct EvmLoader2<'a, SDK> {
     sdk: &'a mut SDK,
-    transient_storage: HashMap<U256, U256>,
     env: Env,
     address: Address,
 }
@@ -81,6 +79,7 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
     }
 
     fn code(&mut self, address: Address) -> Option<(Bytes, bool)> {
+        debug_log!("code: address={} self-address={}", address, self.address);
         let (evm_code_hash, is_cold) = self.code_hash(address)?;
         let evm_bytecode = self.sdk.preimage(&evm_code_hash);
         Some((evm_bytecode, is_cold))
@@ -119,14 +118,11 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
     }
 
     fn tload(&mut self, _address: Address, index: U256) -> U256 {
-        self.transient_storage
-            .get(&index)
-            .cloned()
-            .unwrap_or_default()
+        self.sdk.transient_storage(&index)
     }
 
     fn tstore(&mut self, _address: Address, index: U256, value: U256) {
-        self.transient_storage.insert(index, value);
+        self.sdk.write_transient_storage(index, value);
     }
 
     fn log(&mut self, mut log: Log) {
@@ -140,8 +136,7 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
     }
 }
 
-const EVM_CODE_HASH_SLOT: U256 =
-    U256::from_le_bytes(derive_keccak256!(keccak256("_evm_bytecode_hash")));
+const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_bytecode_hash"));
 
 impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
@@ -149,17 +144,8 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
         Self {
             env: env_from_context(sdk.block_context(), sdk.tx_context()),
             sdk,
-            transient_storage: Default::default(),
             address,
         }
-    }
-
-    fn code_hash_storage_key(&self, address: &Address) -> U256 {
-        let mut buffer64: [u8; 64] = [0u8; 64];
-        buffer64[0..32].copy_from_slice(U256::ZERO.as_le_slice());
-        buffer64[44..64].copy_from_slice(address.as_slice());
-        let code_hash_key = self.sdk.keccak256(&buffer64);
-        U256::from_be_bytes(code_hash_key.0)
     }
 
     pub fn load_evm_bytecode(&self) -> (Bytecode, B256) {
@@ -185,7 +171,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
         // make sure bytecode is analyzed
         contract.bytecode = to_analysed(contract.bytecode);
 
-        debug_log!(self.sdk, "gas: {}", gas.remaining());
+        debug_log!("gas: {}", gas.remaining());
 
         let instruction_table = make_instruction_table::<Self, CancunSpec>();
 
@@ -198,6 +184,8 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
 
             // take memory and cr from interpreter and host back (return later)
             shared_memory = interpreter.take_memory();
+
+            debug_log!("next_action: {:?}", &next_action);
 
             match next_action {
                 InterpreterAction::Call { inputs } => {
@@ -237,7 +225,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                     interpreter.insert_call_outcome(&mut shared_memory, call_outcome);
                 }
                 InterpreterAction::Create { inputs } => {
-                    let (output, exit_code) = self.sdk.create(
+                    let create_outcome = match self.sdk.create(
                         inputs.gas_limit,
                         match inputs.scheme {
                             CreateScheme::Create2 { salt } => Some(salt),
@@ -245,17 +233,22 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
                         },
                         &inputs.value,
                         inputs.init_code.as_ref(),
-                    );
-                    let create_outcome = if exit_code != 0 {
-                        assert_eq!(output.len(), 20, "mismatch create/create2 output length");
-                        let result =
-                            InterpreterResult::new(InstructionResult::Stop, Bytes::default(), gas);
-                        CreateOutcome::new(result, Some(Address::from_slice(output.as_ref())))
-                    } else {
-                        let error = evm_error_from_exit_code(ExitCode::from(exit_code));
-                        let result = InterpreterResult::new(error, Bytes::default(), gas);
-                        CreateOutcome::new(result, None)
+                    ) {
+                        Ok(created_address) => {
+                            let result = InterpreterResult::new(
+                                InstructionResult::Stop,
+                                Bytes::default(),
+                                gas,
+                            );
+                            CreateOutcome::new(result, Some(created_address))
+                        }
+                        Err(exit_code) => {
+                            let error = evm_error_from_exit_code(ExitCode::from(exit_code));
+                            let result = InterpreterResult::new(error, Bytes::default(), gas);
+                            CreateOutcome::new(result, None)
+                        }
                     };
+                    debug_log!("create_outcome: {:?}", &create_outcome);
                     interpreter.insert_create_outcome(create_outcome);
                 }
                 InterpreterAction::Return { result } => {
@@ -297,6 +290,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
         };
         let mut result = self.exec_evm_bytecode(contract);
         // self.sdk.charge_fuel(result.gas.spent());
+
         if !result.is_ok() {
             // it might be an error message, have to return
             self.sdk.write(result.output.as_ref());
@@ -314,7 +308,7 @@ impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
         // record gas for each created byte
         let gas_for_code = result.output.len() as u64 * gas::CODEDEPOSIT;
         if !result.gas.record_cost(gas_for_code) {
-            return ExitCode::ContractSizeLimit;
+            return ExitCode::OutOfGas;
         }
 
         self.store_evm_bytecode(Bytecode::new_raw(result.output));

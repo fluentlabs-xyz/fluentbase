@@ -95,7 +95,7 @@ impl SyscallResume {
         return_data_mut.clear();
         return_data_mut.extend(&return_data);
 
-        let skip_trace_logs = recoverable_runtime
+        let _skip_trace_logs = recoverable_runtime
             .runtime
             .store
             .tracer()

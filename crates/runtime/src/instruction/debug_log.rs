@@ -19,7 +19,7 @@ impl SyscallDebugLog {
         Ok(())
     }
 
-    #[cfg(feature = "debug")]
+    #[cfg(feature = "debug-print")]
     pub fn fn_impl(msg: &[u8]) {
         use std::time::Instant;
         let now = Instant::now();
@@ -32,8 +32,9 @@ impl SyscallDebugLog {
         };
         LAST_LOG_TIME.set(curr_time);
         // let now_str = now.format("%Y%m%d_%H%M%S%.3f");
-        let msg = if msg.len() > 1000 {
-            &msg[..1000]
+        const MSG_LIMIT: usize = 1000;
+        let msg = if msg.len() > MSG_LIMIT {
+            &msg[..MSG_LIMIT]
         } else {
             &msg[..]
         };
@@ -46,6 +47,6 @@ impl SyscallDebugLog {
         );
     }
 
-    #[cfg(not(feature = "debug"))]
+    #[cfg(not(feature = "debug-print"))]
     pub fn fn_impl(_msg: &[u8]) {}
 }

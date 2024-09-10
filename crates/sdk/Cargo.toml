@@ -25,4 +25,3 @@ std = [
     "dep:fluentbase-runtime",
     "dep:fluentbase-genesis",
 ]
-e2e = []

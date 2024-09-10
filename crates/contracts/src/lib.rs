@@ -6,6 +6,8 @@ extern crate core;
 // mod blended;
 #[cfg(feature = "evm")]
 mod evm;
+#[cfg(feature = "fvm")]
+mod fvm;
 #[cfg(any(
     feature = "blake2",
     feature = "sha256",

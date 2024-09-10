@@ -716,7 +716,6 @@ impl<'a, SDK: SharedAPI> Modifiable for WasmStorage<'a, SDK> {
 
 #[cfg(test)]
 mod tests {
-    use crate::fvm::helpers::FuelAddress;
     use fuel_core::txpool::types::TxId;
     use fuel_core_types::{
         entities::{
