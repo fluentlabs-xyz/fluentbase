@@ -1,7 +1,6 @@
 use alloc::{vec, vec::Vec};
 use fluentbase_sdk::{
     codec::Encoder,
-    Address,
     Bytes,
     SharedContextInputV1,
     SysFuncIdx,
@@ -13,9 +12,9 @@ use rwasm::{
     rwasm::{BinaryFormat, RwasmModule},
 };
 
-pub(crate) const ENABLE_EVM_PROXY_CONTRACT: bool = false;
+pub const ENABLE_EVM_PROXY_CONTRACT: bool = false;
 
-pub(crate) fn create_rwasm_proxy_bytecode(_address: &Address) -> Bytes {
+pub fn create_rwasm_proxy_bytecode() -> Bytes {
     let mut memory_section = vec![0u8; 32 + 20];
     //  0..32: code hash
     // 32..52: precompile address
@@ -51,15 +50,10 @@ pub(crate) fn create_rwasm_proxy_bytecode(_address: &Address) -> Bytes {
         I32Const(0) // fuel_limit
         Call(SysFuncIdx::STATE) // state
         Call(SysFuncIdx::EXEC)
-        // copy return data into output
-        I32Const(0) // target
+        // forward return data into output
         I32Const(0) // offset
         Call(SysFuncIdx::OUTPUT_SIZE) // length
-        // TODO(dmitry123): "make sure we have enough memory pages allocated"
-        Call(SysFuncIdx::READ_OUTPUT)
-        I32Const(0) // offset
-        Call(SysFuncIdx::OUTPUT_SIZE) // length
-        Call(SysFuncIdx::WRITE)
+        Call(SysFuncIdx::FORWARD_OUTPUT)
         // exit with the resulting exit code
         Call(SysFuncIdx::EXIT)
     };

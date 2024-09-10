@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use core::mem::take;
 #[cfg(feature = "std")]
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, KECCAK_HASH_KEY, POSEIDON_HASH_KEY},
+    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
 };
 use fluentbase_types::{
@@ -109,13 +109,13 @@ impl JournalStateBuilder {
             let source_code_hash = account
                 .storage
                 .as_ref()
-                .and_then(|storage| storage.get(&KECCAK_HASH_KEY))
+                .and_then(|storage| storage.get(&GENESIS_KECCAK_HASH_SLOT))
                 .cloned()
                 .unwrap_or(KECCAK_EMPTY);
             let rwasm_code_hash = account
                 .storage
                 .as_ref()
-                .and_then(|storage| storage.get(&POSEIDON_HASH_KEY))
+                .and_then(|storage| storage.get(&GENESIS_POSEIDON_HASH_SLOT))
                 .cloned()
                 .unwrap_or(POSEIDON_EMPTY);
             let mut account2 = Account::new(*address);
@@ -435,9 +435,9 @@ impl<API: NativeAPI> SovereignAPI for JournalState<API> {
         self.transient_storage.insert((address, index), value);
     }
 
-    fn transient_storage(&self, address: Address, index: U256) -> U256 {
+    fn transient_storage(&self, address: &Address, index: &U256) -> U256 {
         self.transient_storage
-            .get(&(address, index))
+            .get(&(*address, *index))
             .cloned()
             .unwrap_or_default()
     }
@@ -497,6 +497,16 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         value
     }
 
+    fn write_transient_storage(&mut self, slot: U256, value: U256) {
+        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        SovereignAPI::write_transient_storage(self, caller, slot, value);
+    }
+
+    fn transient_storage(&self, slot: &U256) -> U256 {
+        let caller = self.contract_context.as_ref().map(|v| v.address).unwrap();
+        SovereignAPI::transient_storage(self, &caller, slot)
+    }
+
     fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
         let (value, _) = SovereignAPI::storage(self, address, slot);
         value
@@ -547,7 +557,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         SovereignAPI::write_log(self, address, data, topics.to_vec());
     }
 
-    fn balance(&self, address: &Address) -> U256 {
+    fn balance(&self, _address: &Address) -> U256 {
         todo!()
     }
 
@@ -560,11 +570,11 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn create(
         &self,
-        fuel_limit: u64,
-        salt: Option<U256>,
-        value: &U256,
-        init_code: &[u8],
-    ) -> (Bytes, i32) {
+        _fuel_limit: u64,
+        _salt: Option<U256>,
+        _value: &U256,
+        _init_code: &[u8],
+    ) -> Result<Address, i32> {
         todo!()
     }
 
@@ -580,10 +590,10 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn call_code(
         &mut self,
-        address: Address,
-        value: U256,
-        input: &[u8],
-        fuel_limit: u64,
+        _address: Address,
+        _value: U256,
+        _input: &[u8],
+        _fuel_limit: u64,
     ) -> (Bytes, i32) {
         todo!()
     }
@@ -605,7 +615,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         (self.native_sdk.return_data(), exit_code)
     }
 
-    fn destroy_account(&mut self, address: Address) {
+    fn destroy_account(&mut self, _address: Address) {
         todo!()
     }
 

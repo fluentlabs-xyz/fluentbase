@@ -42,23 +42,26 @@ macro_rules! result_value {
     };
 }
 
-// #[cfg(feature = "e2e")]
+#[cfg(feature = "debug-print")]
 #[macro_export]
 macro_rules! debug_log {
-    ($sdk:expr, $msg:tt) => {{
-        $sdk.debug_log(&$msg);
+    ($msg:tt) => {{
+        #[cfg(target_arch = "wasm32")]
+        unsafe { fluentbase_sdk::rwasm::_debug_log($msg.as_ptr(), $msg.len() as u32) }
+        #[cfg(feature = "std")]
+        println!("{}", $msg);
     }};
-    ($sdk:expr, $($arg:tt)*) => {{
+    ($($arg:tt)*) => {{
         let msg = alloc::format!($($arg)*);
-        debug_log!($sdk, msg);
+        debug_log!(msg);
     }};
 }
-// #[cfg(not(feature = "e2e"))]
-// #[macro_export]
-// macro_rules! debug_log {
-//     ($msg:tt) => {{}};
-//     ($($arg:tt)*) => {{}};
-// }
+#[cfg(not(feature = "debug-print"))]
+#[macro_export]
+macro_rules! debug_log {
+    ($msg:tt) => {{}};
+    ($($arg:tt)*) => {{}};
+}
 
 pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
     match exit_code {

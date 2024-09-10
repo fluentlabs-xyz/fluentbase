@@ -4,7 +4,7 @@ mod util;
 mod wasm;
 
 use crate::{
-    blended::util::ENABLE_EVM_PROXY_CONTRACT,
+    debug_log,
     helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
     types::{Frame, NextAction},
 };
@@ -41,6 +41,7 @@ use revm_primitives::{
     MAX_INITCODE_SIZE,
     WASM_MAX_CODE_SIZE,
 };
+pub use util::{create_rwasm_proxy_bytecode, ENABLE_EVM_PROXY_CONTRACT};
 
 pub struct BlendedRuntime<'a, SDK> {
     sdk: &'a mut SDK,
@@ -148,6 +149,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             self.sdk
                 .native_sdk()
                 .resume(call_id, return_data, exit_code, fuel_used);
+        debug_log!(
+            "process_resume: call_id={}, fuel_spent={} exit_code={}",
+            call_id,
+            fuel_spent,
+            exit_code
+        );
         self.process_exec_params(exit_code, fuel_spent)
     }
 
@@ -331,10 +338,6 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         CreateOutcome::new(result, Some(contract_account.address))
     }
 
-    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
-        self.create_inner(create_inputs, 0)
-    }
-
     fn call_inner(
         &mut self,
         inputs: Box<CallInputs>,
@@ -461,6 +464,10 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         (output, gas, exit_code)
+    }
+
+    pub fn create(&mut self, create_inputs: Box<CreateInputs>) -> CreateOutcome {
+        self.create_inner(create_inputs, 0)
     }
 
     pub fn call(&mut self, inputs: Box<CallInputs>) -> CallOutcome {
