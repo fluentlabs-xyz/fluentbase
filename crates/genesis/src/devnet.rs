@@ -47,10 +47,10 @@ pub fn devnet_chain_config() -> ChainConfig {
 }
 
 /// Keccak256("poseidon_hash_key")
-pub const POSEIDON_HASH_KEY: B256 =
+pub const GENESIS_POSEIDON_HASH_SLOT: B256 =
     b256!("72adc1368da53d255ed52bce3690fa2b9ec0f64072bcdf3c86adcaf50b54cff1");
 /// Keccak256("keccak256_hash_key")
-pub const KECCAK_HASH_KEY: B256 =
+pub const GENESIS_KECCAK_HASH_SLOT: B256 =
     b256!("0215c908b95b16bf09cad5a8f36d2f80c367055b890489abfba6a5f6540b391f");
 
 pub fn devnet_genesis_from_file() -> Genesis {
@@ -133,8 +133,8 @@ pub fn devnet_genesis() -> Genesis {
                 GenesisAccount {
                     code: Some(bytecode),
                     storage: Some(BTreeMap::from([
-                        (POSEIDON_HASH_KEY, poseidon_hash.into()),
-                        (KECCAK_HASH_KEY, keccak_hash.into()),
+                        (GENESIS_POSEIDON_HASH_SLOT, poseidon_hash.into()),
+                        (GENESIS_KECCAK_HASH_SLOT, keccak_hash.into()),
                     ])),
                     ..Default::default()
                 },

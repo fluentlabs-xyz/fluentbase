@@ -19,19 +19,9 @@ pub fn calc_storage_key<API: NativeAPI>(
     // pad address to 32 bytes value (11 bytes to avoid 254-bit overflow)
     let mut address32 = B256::ZERO;
     address32[11..31].copy_from_slice(address.as_slice());
-    let storage_key = if cfg!(feature = "e2e") {
-        // let's use keccak256 for e2e tests to speedup execution process
-        let mut hashing_data = [0u8; 32 + 20];
-        unsafe {
-            core::ptr::copy(slot32_le_ptr, hashing_data.as_mut_ptr(), 32);
-            core::ptr::copy(address.as_ptr(), hashing_data.as_mut_ptr().offset(32), 20);
-        }
-        api.keccak256(&hashing_data)
-    } else {
-        // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
-        let storage_key = api.poseidon_hash(&slot0, &slot1, &POSEIDON_DOMAIN);
-        api.poseidon_hash(&address32, &storage_key, &POSEIDON_DOMAIN)
-    };
+    // compute a storage key, where formula is `p(address, p(slot_0, slot_1))`
+    let storage_key = api.poseidon_hash(&slot0, &slot1, &POSEIDON_DOMAIN);
+    let storage_key = api.poseidon_hash(&address32, &storage_key, &POSEIDON_DOMAIN);
     storage_key
 }
 

@@ -51,5 +51,4 @@ std = [
     "dep:fluentbase-runtime",
     "fluentbase-runtime/std",
 ]
-e2e = ["fluentbase-sdk/e2e"]
-test-helpers = []
+debug-print = []
