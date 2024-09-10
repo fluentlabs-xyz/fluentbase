@@ -16,6 +16,8 @@ use crate::{
     FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
     FUEL_LIMIT_SYSCALL_STORAGE_READ,
     FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
+    FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
+    FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
@@ -31,6 +33,8 @@ use crate::{
     SYSCALL_ID_STATIC_CALL,
     SYSCALL_ID_STORAGE_READ,
     SYSCALL_ID_STORAGE_WRITE,
+    SYSCALL_ID_TRANSIENT_READ,
+    SYSCALL_ID_TRANSIENT_WRITE,
     SYSCALL_ID_WRITE_PREIMAGE,
     U256,
 };
@@ -299,7 +303,7 @@ pub trait SyscallAPI {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> (Bytes, i32);
+    ) -> Result<Address, i32>;
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]);
     fn syscall_destroy_account(&self, target: &Address);
     fn syscall_balance(&self, address: &Address) -> U256;
@@ -307,6 +311,8 @@ pub trait SyscallAPI {
     fn syscall_preimage_size(&self, hash: &B256) -> u32;
     fn syscall_preimage_copy(&self, hash: &B256) -> Bytes;
     fn syscall_ext_storage_read(&self, address: &Address, slot: &U256) -> U256;
+    fn syscall_transient_read(&self, slot: &U256) -> U256;
+    fn syscall_transient_write(&self, slot: &U256, value: &U256);
 }
 
 impl<T: NativeAPI> SyscallAPI for T {
@@ -401,7 +407,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> (Bytes, i32) {
+    ) -> Result<Address, i32> {
         let mut buffer = if let Some(salt) = salt {
             let mut buffer = vec![0u8; 32 + 32];
             buffer[0..32].copy_from_slice(value.as_le_slice());
@@ -419,8 +425,13 @@ impl<T: NativeAPI> SyscallAPI for T {
             SYSCALL_ID_CREATE
         };
         let (_, exit_code) = self.exec(&code_hash, &buffer, fuel_limit, STATE_MAIN);
-        let return_data = self.return_data();
-        (return_data, exit_code)
+        if exit_code != 0 {
+            return Err(exit_code);
+        }
+        assert_eq!(self.output_size(), 20);
+        let mut buffer = [0u8; 20];
+        self.read_output(&mut buffer, 0);
+        Ok(Address::from(buffer))
     }
 
     fn syscall_emit_log(&self, data: &[u8], topics: &[B256]) {
@@ -507,6 +518,36 @@ impl<T: NativeAPI> SyscallAPI for T {
         self.read_output(&mut output, 0);
         U256::from_le_bytes(output)
     }
+
+    fn syscall_transient_read(&self, slot: &U256) -> U256 {
+        let (_, exit_code) = self.exec(
+            &SYSCALL_ID_TRANSIENT_READ,
+            slot.as_le_slice(),
+            FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
+            STATE_MAIN,
+        );
+        assert_eq!(exit_code, 0);
+        let mut output: [u8; 32] = [0u8; 32];
+        self.read_output(&mut output, 0);
+        U256::from_le_bytes(output)
+    }
+
+    fn syscall_transient_write(&self, slot: &U256, value: &U256) {
+        let mut input: [u8; 64] = [0u8; 64];
+        if !slot.is_zero() {
+            input[0..32].copy_from_slice(slot.as_le_slice());
+        }
+        if !value.is_zero() {
+            input[32..64].copy_from_slice(value.as_le_slice());
+        }
+        let (_, exit_code) = self.exec(
+            &SYSCALL_ID_TRANSIENT_WRITE,
+            &input,
+            FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
+            STATE_MAIN,
+        );
+        assert_eq!(exit_code, 0);
+    }
 }
 
 pub trait SovereignAPI {
@@ -534,7 +575,7 @@ pub trait SovereignAPI {
     fn committed_storage(&self, address: &Address, slot: &U256) -> (U256, IsColdAccess);
 
     fn write_transient_storage(&mut self, address: Address, index: U256, value: U256);
-    fn transient_storage(&self, address: Address, index: U256) -> U256;
+    fn transient_storage(&self, address: &Address, index: &U256) -> U256;
 
     fn write_log(&mut self, address: Address, data: Bytes, topics: Vec<B256>);
 
@@ -561,6 +602,8 @@ pub trait SharedAPI {
 
     fn write_storage(&mut self, slot: U256, value: U256);
     fn storage(&self, slot: &U256) -> U256;
+    fn write_transient_storage(&mut self, slot: U256, value: U256);
+    fn transient_storage(&self, slot: &U256) -> U256;
     fn ext_storage(&self, address: &Address, slot: &U256) -> U256;
 
     fn read(&self, target: &mut [u8], offset: u32);
@@ -599,7 +642,7 @@ pub trait SharedAPI {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> (Bytes, i32);
+    ) -> Result<Address, i32>;
     fn call(
         &mut self,
         address: Address,

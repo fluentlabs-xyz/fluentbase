@@ -109,7 +109,7 @@ impl<'a, SDK: SovereignAPI> Host for BlendedRuntime<'a, SDK> {
     }
 
     fn tload(&mut self, address: Address, index: U256) -> U256 {
-        self.sdk.transient_storage(address, index)
+        self.sdk.transient_storage(&address, &index)
     }
 
     fn tstore(&mut self, address: Address, index: U256, value: U256) {
@@ -273,7 +273,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         //     InterpreterResult::new(result, Bytes::new(), gas)
         // };
 
-        let rwasm_bytecode = create_rwasm_proxy_bytecode(&target_address);
+        let rwasm_bytecode = create_rwasm_proxy_bytecode();
 
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)

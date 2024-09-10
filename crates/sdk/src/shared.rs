@@ -64,6 +64,14 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         self.native_sdk.syscall_storage_read(slot)
     }
 
+    fn write_transient_storage(&mut self, slot: U256, value: U256) {
+        self.native_sdk.syscall_transient_write(&slot, &value)
+    }
+
+    fn transient_storage(&self, slot: &U256) -> U256 {
+        self.native_sdk.syscall_transient_read(slot)
+    }
+
     fn ext_storage(&self, address: &Address, slot: &U256) -> U256 {
         self.native_sdk.syscall_ext_storage_read(address, slot)
     }
@@ -125,7 +133,7 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
         salt: Option<U256>,
         value: &U256,
         init_code: &[u8],
-    ) -> (Bytes, i32) {
+    ) -> Result<Address, i32> {
         if fuel_limit == 0 {
             fuel_limit = self.native_sdk.fuel();
         }
