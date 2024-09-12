@@ -8,6 +8,7 @@ use fluentbase_types::{
     B256,
     DEVNET_CHAIN_ID,
     PRECOMPILE_EVM,
+    PRECOMPILE_FVM,
     U256,
 };
 use revm_primitives::keccak256;
@@ -109,14 +110,6 @@ pub fn devnet_genesis() -> Genesis {
         initial_balance!("dD2FD4581271e230360230F9337D5c0430Bf44C0"),
         initial_balance!("8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199"),
         storage_only!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"),
-        storage_only!("c5c497b0814b0eebc27864ea5ff9af596b715ee3"),
-        storage_only!("e3d4160aa0d55eae58508cc89d6cbcab1354bdbc"),
-        storage_only!("eb4cc317c536bff071ef700e2f3d2f2701e4e9e5"),
-        storage_only!("4ac7fb43ea3ae6330ffdb14ec65c17ec8eace55d"),
-        storage_only!("1a456cdbe1c54e7a774dd89d659c128d56dba51d"),
-        storage_only!("727d22651ab98fcf20fa7bdd646e71102c6ac47b"),
-        storage_only!("037e25b327c1a5acc4a98e8e2e8d16066119eeed"),
-        storage_only!("f96178848125f6d39487bd426a42adf7129ba924"),
     ]);
 
     macro_rules! enable_rwasm_contract {
@@ -144,6 +137,10 @@ pub fn devnet_genesis() -> Genesis {
     enable_rwasm_contract!(
         PRECOMPILE_EVM,
         "../../contracts/assets/precompile_evm.rwasm"
+    );
+    enable_rwasm_contract!(
+        PRECOMPILE_FVM,
+        "../../contracts/assets/precompile_fvm.rwasm"
     );
     // enable_rwasm_contract!(
     //     WCL_CONTRACT_ADDRESS,
