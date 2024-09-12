@@ -1,5 +1,5 @@
 const {Web3, ETH_DATA_FORMAT} = require('web3');
-const {hexToBytes, bytesToHex} = require('web3-utils');
+const {hexToBytes} = require('web3-utils');
 const {ethRpcMethods} = require('web3-rpc-methods');
 const {Wallet, Provider} = require('fuels');
 

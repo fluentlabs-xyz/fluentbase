@@ -20,6 +20,7 @@ use fluentbase_types::{
     SysFuncIdx,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
+    PRECOMPILE_FVM,
     STATE_MAIN,
     SYSCALL_ID_CALL,
     U256,
@@ -84,10 +85,11 @@ impl EvmTestingContext {
                 nonce: v.nonce.unwrap_or_default(),
                 // it makes not much sense to fill these fields, but it reduces hash calculation
                 // time a bit
-                source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                source_code_hash: keccak_hash,
+                // source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                // source_code_hash: keccak_hash,
                 rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
                 rwasm_code_hash: poseidon_hash,
+                ..Default::default()
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
@@ -387,6 +389,27 @@ fn test_evm_greeting() {
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
     assert_eq!(result.gas_used(), 21792);
+}
+
+#[test]
+fn test_fvm_tx() {
+    let mut ctx = EvmTestingContext::default();
+    const DEPLOYER_ADDRESS: Address = Address::ZERO;
+    let contract_address = PRECOMPILE_FVM;
+    let fuel_tx = hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000008000000000000000100000000000000010000000000000001240400000000000000000000000000000000000000000000ca41dab08590eda44231b6fcf4bb110c852b24f030bf996a89f02cccc57eb5f10000000000006a13f5bd94297364b371180b42da369f74918912b80c9947d6a174c0c6e2c95fae1d0000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028f974f02ef30fe9ee3e62b50f24a56d9042b4bc0251f23248d92990408afa49f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040f8f6ccbd3005a7900db1de6987e439e09c37ea2ac56eb6c2d82eeb37c3d6450bbf7514dceee2d94dc24f6f610d10f13fc4e6f6dbca6a0d3864b77a2bc7e6f384");
+    // call greeting EVM contract
+    println!("\n\n\n");
+    let result = call_evm_tx(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        contract_address,
+        fuel_tx.into(),
+        None,
+    );
+    println!("{:?}", result);
+    let output = result.output().unwrap_or_default();
+    println!("output: {}", from_utf8(output).unwrap_or_default());
+    assert!(result.is_success());
 }
 
 ///
