@@ -409,7 +409,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
 
         let (bytecode_account, _) = self.sdk.account(&inputs.bytecode_address);
         let (output, exit_code) = if !ENABLE_EVM_PROXY_CONTRACT
-            && bytecode_account.source_code_size > 0
+            && bytecode_account.rwasm_code_size == 0
         {
             // take right bytecode depending on context params
             let (evm_bytecode, code_hash) = self.load_evm_bytecode(&inputs.bytecode_address);
