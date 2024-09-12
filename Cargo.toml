@@ -48,8 +48,8 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 #fuel-core-types = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["serde", "alloc"] }
 #fuel-core-executor = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["alloc"] }
 #fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branch = "devel", default-features = false, features = ["alloc"] }
-fuel-tx = { path = "../../fluentlabs-xyz/fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
-fuel-vm = { path = "../../fluentlabs-xyz/fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
+fuel-tx = { path = "../fuel-vm/fuel-tx", default-features = false, features = ["alloc"] }
+fuel-vm = { path = "../fuel-vm/fuel-vm", default-features = false, features = ["alloc"] }
 fuel-core = { path = "../fuel-core/crates/fuel-core" }
 fuel-core-types = { path = "../fuel-core/crates/types", default-features = false, features = ["serde", "alloc"] }
 fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false, features = ["alloc"] }
