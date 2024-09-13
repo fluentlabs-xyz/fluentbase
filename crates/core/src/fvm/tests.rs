@@ -281,14 +281,9 @@ mod tests {
         let mut coin = CompressedCoin::default();
         coin.set_owner(*input.input_owner().unwrap());
         coin.set_amount(100);
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
-
-        // db.storage::<Coins>()
-        //     .insert(&input.utxo_id().unwrap().clone(), &coin)
-        //     .unwrap();
 
         let block = PartialFuelBlock {
             header: Default::default(),
@@ -341,7 +336,6 @@ mod tests {
             .transaction()
             .clone()
             .into();
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
@@ -419,7 +413,6 @@ mod tests {
             .transaction()
             .clone()
             .into();
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
@@ -547,7 +540,6 @@ mod tests {
             .build()
             .transaction()
             .clone();
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
@@ -843,7 +835,6 @@ mod tests {
             .build()
             .transaction()
             .clone();
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
@@ -1040,7 +1031,6 @@ mod tests {
         let (deploy, script) = setup_executable_script();
         let script_id = script.id(&ChainId::default());
 
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);
@@ -1131,7 +1121,6 @@ mod tests {
             transactions: vec![tx.clone()],
         };
 
-        // let mut db = Database::<OnChain, RegularStage<OnChain>>::default();
         let mut sdk = journal_state();
         let wasm_storage = WasmStorage { sdk: &mut sdk };
         let mut storage = StructuredStorage::new(wasm_storage);

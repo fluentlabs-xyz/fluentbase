@@ -1,4 +1,8 @@
-use core::{mem::take, str::from_utf8};
+use core::{
+    mem::take,
+    str::{from_utf8, FromStr},
+};
+use fluentbase_core::fvm::helpers::FUEL_TESTNET_BASE_ASSET_ID;
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
@@ -18,6 +22,7 @@ use fluentbase_types::{
     Address,
     Bytes,
     SysFuncIdx,
+    DEVNET_CHAIN_ID,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
     PRECOMPILE_FVM,
@@ -25,6 +30,16 @@ use fluentbase_types::{
     SYSCALL_ID_CALL,
     U256,
 };
+use fuel_core_types::{
+    fuel_asm::op,
+    fuel_crypto::{
+        rand::{rngs::StdRng, SeedableRng},
+        SecretKey,
+    },
+    fuel_types::{canonical::Serialize, AssetId, BlockHeight, ChainId},
+};
+use fuel_tx::{ConsensusParameters, Input, TransactionBuilder, TxId, TxPointer, UtxoId};
+use fuel_vm::{fuel_asm::RegId, storage::MemoryStorage};
 use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
@@ -69,16 +84,16 @@ impl EvmTestingContext {
                         .map(|v| poseidon_hash(&v).into())
                         .unwrap_or(POSEIDON_EMPTY)
                 });
-            let keccak_hash = v
-                .storage
-                .as_ref()
-                .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
-                .unwrap_or_else(|| {
-                    v.code
-                        .as_ref()
-                        .map(|v| keccak256(&v))
-                        .unwrap_or(KECCAK_EMPTY)
-                });
+            // let keccak_hash = v
+            //     .storage
+            //     .as_ref()
+            //     .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
+            //     .unwrap_or_else(|| {
+            //         v.code
+            //             .as_ref()
+            //             .map(|v| keccak256(&v))
+            //             .unwrap_or(KECCAK_EMPTY)
+            //     });
             let account = Account {
                 address: *k,
                 balance: v.balance,
@@ -393,20 +408,91 @@ fn test_evm_greeting() {
 
 #[test]
 fn test_fvm_tx() {
+    let base_asset_id = AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID).unwrap();
+    // let chain_id = DEVNET_CHAIN_ID;
+    let chain_id = 0x1;
+
+    let secret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
+    let secret1_vec = revm::primitives::hex::decode(secret1).unwrap();
+    let secret1_secret_key = SecretKey::try_from(secret1_vec.as_slice()).unwrap();
+    let secret1_address = Input::owner(&secret1_secret_key.public_key());
+    println!("secret1_address: {}", secret1_address);
+    let secret1_address_as_evm = Address::from_slice(&secret1_address.as_slice()[12..]);
+
+    let secret2 = "0xde97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
+    let secret2_vec = revm::primitives::hex::decode(secret2).unwrap();
+    let secret2_secret_key = SecretKey::try_from(secret2_vec.as_slice()).unwrap();
+    let secret2_address = Input::owner(&secret2_secret_key.public_key());
+    println!("secret2_address: {}", secret2_address);
+
+    let initial_balance = 0xffff;
+    let coins_sent = 0x1;
+
+    let bytecode = core::iter::once(op::ret(RegId::ZERO)).collect();
+    let mut consensus_params = ConsensusParameters::standard();
+    consensus_params.set_chain_id(chain_id.into());
+    let mut test_builder = fuel_vm::util::test_helpers::TestBuilder {
+        rng: StdRng::seed_from_u64(1234),
+        gas_price: 0,
+        max_fee_limit: 0,
+        script_gas_limit: 100,
+        builder: TransactionBuilder::script(bytecode, vec![]),
+        storage: MemoryStorage::default(),
+        block_height: Default::default(),
+        consensus_params,
+    };
+
+    let tx_in_id: TxId =
+        TxId::from_str("0x0000000000000000000000000000000000000000000000000000000000001000")
+            .unwrap();
+    let utxo_id = UtxoId::new(tx_in_id, 0);
+    test_builder
+        .with_chain_id(ChainId::new(chain_id))
+        .builder
+        .add_unsigned_coin_input(
+            secret1_secret_key.clone(),
+            utxo_id,
+            initial_balance.clone(),
+            base_asset_id,
+            TxPointer::new(BlockHeight::new(0), 0),
+        )
+        .add_output(fuel_tx::Output::change(
+            secret1_address.clone(),
+            0,
+            base_asset_id,
+        ))
+        .add_output(fuel_tx::Output::coin(
+            secret2_address.clone(),
+            coins_sent,
+            base_asset_id,
+        ));
+    let tx1 = test_builder.build().transaction().clone();
+    let tx1: fuel_tx::Transaction = fuel_tx::Transaction::Script(tx1);
+    let fuel_tx_bytes = Bytes::from(tx1.to_bytes());
+    println!(
+        "fuel_tx_bytes hex: {}",
+        revm::primitives::hex::encode(&fuel_tx_bytes)
+    );
+
     let mut ctx = EvmTestingContext::default();
+    // ctx.add_balance(secret1_address_as_evm, U256::from(initial_balance));
     const DEPLOYER_ADDRESS: Address = Address::ZERO;
     let contract_address = PRECOMPILE_FVM;
-    let fuel_tx = hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000008000000000000000100000000000000010000000000000001240400000000000000000000000000000000000000000000ca41dab08590eda44231b6fcf4bb110c852b24f030bf996a89f02cccc57eb5f10000000000006a13f5bd94297364b371180b42da369f74918912b80c9947d6a174c0c6e2c95fae1d0000000000000064000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028f974f02ef30fe9ee3e62b50f24a56d9042b4bc0251f23248d92990408afa49f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040f8f6ccbd3005a7900db1de6987e439e09c37ea2ac56eb6c2d82eeb37c3d6450bbf7514dceee2d94dc24f6f610d10f13fc4e6f6dbca6a0d3864b77a2bc7e6f384");
     // call greeting EVM contract
     println!("\n\n\n");
     let result = call_evm_tx(
         &mut ctx,
         DEPLOYER_ADDRESS,
         contract_address,
-        fuel_tx.into(),
-        None,
+        fuel_tx_bytes.into(),
+        Some(100_000_000),
     );
     println!("{:?}", result);
+    match &result {
+        ExecutionResult::Success { .. } => {}
+        ExecutionResult::Revert { gas_used, output } => {}
+        ExecutionResult::Halt { .. } => {}
+    }
     let output = result.output().unwrap_or_default();
     println!("output: {}", from_utf8(output).unwrap_or_default());
     assert!(result.is_success());

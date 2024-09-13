@@ -26,11 +26,18 @@ alloy-rlp = { workspace = true }
 hashbrown = { workspace = true }
 paste = { workspace = true }
 wasmi = "0.31.2"
-keccak-hash = "0.10.0"
+keccak-hash = "0.11.0"
 hex-literal = "0.4.1"
 
 [dev-dependencies]
 serde_json = "1.0"
 hex = { version = "0.4.3", features = [] }
 hex-literal = "0.4.1"
-keccak-hash = "0.10.0"
+keccak-hash = "0.11.0"
+
+fuel-vm = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+fuel-tx = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+fuel-core = { workspace = true, features = ["test-helpers"] }
+fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc", "test-helpers"] }
+fuel-core-storage = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+fuel-core-executor = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
