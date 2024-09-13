@@ -5,19 +5,18 @@ use crate::{
     Address,
     Bytes,
     ExitCode,
-    HashMap,
     JournalCheckpoint,
     B256,
     F254,
-    FUEL_LIMIT_SYSCALL_BALANCE,
-    FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
-    FUEL_LIMIT_SYSCALL_EMIT_LOG,
-    FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
-    FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
-    FUEL_LIMIT_SYSCALL_STORAGE_READ,
-    FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
-    FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
-    FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
+    GAS_LIMIT_SYSCALL_BALANCE,
+    GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT,
+    GAS_LIMIT_SYSCALL_EMIT_LOG,
+    GAS_LIMIT_SYSCALL_EXT_STORAGE_READ,
+    GAS_LIMIT_SYSCALL_PREIMAGE_SIZE,
+    GAS_LIMIT_SYSCALL_STORAGE_READ,
+    GAS_LIMIT_SYSCALL_STORAGE_WRITE,
+    GAS_LIMIT_SYSCALL_TRANSIENT_READ,
+    GAS_LIMIT_SYSCALL_TRANSIENT_WRITE,
     STATE_MAIN,
     SYSCALL_ID_BALANCE,
     SYSCALL_ID_CALL,
@@ -65,7 +64,7 @@ pub trait NativeAPI {
     fn read_context(&self, target: &mut [u8], offset: u32);
     fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
-    fn exec(&self, code_hash: &F254, input: &[u8], fuel_limit: u64, state: u32) -> (u64, i32);
+    fn exec(&self, code_hash: &F254, input: &[u8], gas_limit: u64, state: u32) -> (u64, i32);
     fn resume(
         &self,
         call_id: u32,
@@ -207,22 +206,6 @@ pub fn env_from_context(
 }
 
 #[derive(Codec, Default)]
-pub struct TransitStateInput {
-    pub accounts: HashMap<Address, Account>,
-    pub preimages: HashMap<B256, Bytes>,
-    pub block: BlockContext,
-    pub transaction: TxContext,
-}
-
-#[derive(Codec, Default)]
-pub struct TransitStateOutput {
-    pub new_accounts: Vec<(Address, Account)>,
-    pub new_preimages: Vec<(B256, Bytes)>,
-    pub status: bool,
-    pub gas_consumed: u64,
-}
-
-#[derive(Codec, Default)]
 pub struct SharedContextInputV1 {
     pub block: BlockContext,
     pub tx: TxContext,
@@ -261,6 +244,7 @@ pub struct SyscallInvocationParams {
 
 impl SyscallInvocationParams {
     pub fn to_vec(&self) -> Vec<u8> {
+        // TODO(dmitry123): "replace RLP encoding/decoding with better serializer"
         use alloy_rlp::Encodable;
         let mut result = Vec::with_capacity(32 + 20 + 8 + 4 + self.input.len());
         self.encode(&mut result);
@@ -320,7 +304,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_STORAGE_READ,
             slot.as_le_slice(),
-            FUEL_LIMIT_SYSCALL_STORAGE_READ,
+            GAS_LIMIT_SYSCALL_STORAGE_READ,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -340,7 +324,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_STORAGE_WRITE,
             &input,
-            FUEL_LIMIT_SYSCALL_STORAGE_WRITE,
+            GAS_LIMIT_SYSCALL_STORAGE_WRITE,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -446,7 +430,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_EMIT_LOG,
             &buffer,
-            FUEL_LIMIT_SYSCALL_EMIT_LOG,
+            GAS_LIMIT_SYSCALL_EMIT_LOG,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -456,7 +440,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_DESTROY_ACCOUNT,
             target.as_slice(),
-            FUEL_LIMIT_SYSCALL_DESTROY_ACCOUNT,
+            GAS_LIMIT_SYSCALL_DESTROY_ACCOUNT,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -466,7 +450,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_BALANCE,
             address.as_slice(),
-            FUEL_LIMIT_SYSCALL_BALANCE,
+            GAS_LIMIT_SYSCALL_BALANCE,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -488,7 +472,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_PREIMAGE_SIZE,
             hash.as_ref(),
-            FUEL_LIMIT_SYSCALL_PREIMAGE_SIZE,
+            GAS_LIMIT_SYSCALL_PREIMAGE_SIZE,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -510,7 +494,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_EXT_STORAGE_READ,
             &input,
-            FUEL_LIMIT_SYSCALL_EXT_STORAGE_READ,
+            GAS_LIMIT_SYSCALL_EXT_STORAGE_READ,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -523,7 +507,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_TRANSIENT_READ,
             slot.as_le_slice(),
-            FUEL_LIMIT_SYSCALL_TRANSIENT_READ,
+            GAS_LIMIT_SYSCALL_TRANSIENT_READ,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -543,7 +527,7 @@ impl<T: NativeAPI> SyscallAPI for T {
         let (_, exit_code) = self.exec(
             &SYSCALL_ID_TRANSIENT_WRITE,
             &input,
-            FUEL_LIMIT_SYSCALL_TRANSIENT_WRITE,
+            GAS_LIMIT_SYSCALL_TRANSIENT_WRITE,
             STATE_MAIN,
         );
         assert_eq!(exit_code, 0);
@@ -662,6 +646,22 @@ pub trait SharedAPI {
     fn destroy_account(&mut self, address: Address);
 
     fn debug_log(&self, message: &str);
+
+    /// Computes a quick hash of the given data using the Keccak256 algorithm or another specified
+    /// hashing method.
+    ///
+    /// The hashing result produced by this function is not standardized and can vary depending on
+    /// the proving system used.
+    ///
+    /// # Parameters
+    /// - `data`: A byte slice representing the input data to be hashed.
+    ///
+    /// # Returns
+    /// - `B256`: A 256-bit hash of the input data.
+    fn hash256(&self, data: &[u8]) -> B256 {
+        // TODO(dmitry): "use the best hashing function here for our proving system"
+        self.keccak256(data)
+    }
 
     fn keccak256(&self, data: &[u8]) -> B256;
     fn sha256(&self, data: &[u8]) -> B256;
