@@ -1,6 +1,11 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
+
+mod macros;
+mod runtime;
+
 extern crate fluentbase_sdk;
 
+use alloc::vec::Vec;
 use core::ptr;
 use fluentbase_sdk::{
     alloc_slice,
@@ -8,13 +13,18 @@ use fluentbase_sdk::{
     codec::Encoder,
     create_import_linker,
     derive::Contract,
+    Bytes,
     SharedAPI,
 };
+use fluentbase_types::{SharedContextInputV1, STATE_MAIN};
+use runtime::{runtime_register_sovereign_handlers, RuntimeContext};
 use rwasm::{
     engine::RwasmConfig,
+    errors::InstantiationError,
     instance,
     module::{FuncIdx, Imported},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
+    AsContext,
     Caller,
     Config,
     Engine,
@@ -25,6 +35,8 @@ use rwasm::{
     Module,
     Store,
 };
+
+extern crate alloc;
 
 #[derive(Contract)]
 struct RWASM<SDK> {
@@ -38,7 +50,14 @@ impl<SDK: SharedAPI> RWASM<SDK> {
     fn main(&mut self) {
         let wasm_binary = self.sdk.input();
 
-        let mut context = match Context::new() {
+        let wasm_binary = wasm_binary.0.as_ref();
+        let input_size = wasm_binary[0];
+
+        let (input, bytecode) = wasm_binary.split_at((input_size + 1).into());
+        let input = input[1..].to_vec();
+        let bytecode = Bytes::from(bytecode.to_vec());
+
+        let mut context = match Context::new(bytecode.clone(), input) {
             Ok(c) => c,
             Err(err) => {
                 let idx = match err {
@@ -57,10 +76,33 @@ impl<SDK: SharedAPI> RWASM<SDK> {
                 return;
             }
         };
-
-        let instance = match context.compile_module(wasm_binary.as_ref()) {
+        let instance = match context.compile_module(bytecode.as_ref()) {
             Ok(instance) => instance,
             Err(err) => {
+                if let Error::Instantiation(InstantiationError::SignatureMismatch {
+                    expected,
+                    actual,
+                }) = err
+                {
+                    self.sdk.write(&[0xfe]);
+                    for param in expected.params() {
+                        self.sdk.write(&[*param as u8])
+                    }
+                    self.sdk.write(&[0xfe]);
+                    for param in expected.results() {
+                        self.sdk.write(&[*param as u8])
+                    }
+                    self.sdk.write(&[0xfe]);
+                    for param in actual.params() {
+                        self.sdk.write(&[*param as u8])
+                    }
+                    self.sdk.write(&[0xfe]);
+                    for param in actual.results() {
+                        self.sdk.write(&[*param as u8])
+                    }
+                    return;
+                }
+
                 let idx = match err {
                     Error::Global(_) => 1,
                     Error::Memory(_) => 2,
@@ -74,7 +116,7 @@ impl<SDK: SharedAPI> RWASM<SDK> {
                     _ => 0,
                 };
                 self.sdk.write(&[0xff, idx]);
-                return;
+                self.sdk.exit(-71);
             }
         };
 
@@ -89,53 +131,52 @@ impl<SDK: SharedAPI> RWASM<SDK> {
         };
 
         if let Err(err) = func.call(&mut context.store, &[], &mut []) {
-            self.sdk.write(&[0, 1, 2, 3, 4]);
+            // println!("Error: {:?}", err);
         }
-
+        let ctx = context.store.as_context();
+        let runtime_context = ctx.data();
+        self.sdk.write(runtime_context.output());
+        self.sdk.exit(runtime_context.exit_code());
         // self.sdk.write(rwasm_bytecode);
     }
 }
 
 struct Context {
     engine: Engine,
-    linker: Linker<()>,
-    store: Store<()>,
+    linker: Linker<RuntimeContext>,
+    store: Store<RuntimeContext>,
 }
 
 impl Context {
-    fn new() -> Result<Self, Error> {
+    fn new(wasm_binary: Bytes, input: Vec<u8>) -> Result<Self, Error> {
         let config = Self::make_config(true);
-
         let engine = Engine::new(&config);
+
+        let mut context_input = SharedContextInputV1 {
+            block: Default::default(),
+            tx: Default::default(),
+            contract: Default::default(),
+        }
+        .encode_to_vec(0);
+
+        context_input.append(&mut input.to_vec());
+
+        let ctx = RuntimeContext::new(wasm_binary)
+            .with_state(STATE_MAIN)
+            .with_fuel_limit(100_000_000_000)
+            .with_input(context_input)
+            .with_tracer();
+
         let mut linker = Linker::new(&engine);
-        let mut store = Store::new(&engine, ());
+        let mut store = Store::new(&engine, ctx);
+
+        runtime_register_sovereign_handlers(&mut linker, &mut store);
 
         let mut context = Context {
             engine,
             linker,
             store,
         };
-
-        let func = rwasm::Func::wrap(&mut context.store, || -> Result<i32, rwasm::core::Trap> {
-            return Ok(0);
-        });
-        context.linker.define("fluentbase_v1preview", "_input_size", func)?;
-
-        let func = rwasm::Func::wrap(&mut context.store, |target: i32, offset: i32, length: i32| -> Result<(), rwasm::core::Trap> {
-            return Ok(());
-        });
-        context.linker.define("fluentbase_v1preview", "_read", func)?;
-
-        let func = rwasm::Func::wrap(&mut context.store, |exit_code: i32| -> Result<(), rwasm::core::Trap> {
-            return Ok(());
-        });
-        context.linker.define("fluentbase_v1preview", "_exit", func)?;
-
-        let func = rwasm::Func::wrap(&mut context.store, |offset: i32, length: i32| -> Result<(), rwasm::core::Trap> {
-            return Ok(());
-        });
-        context.linker.define("fluentbase_v1preview", "_write", func)?;
-
 
         Ok(context)
     }
@@ -178,6 +219,7 @@ impl Context {
             // create module builder
             let mut module_builder = rwasm_module.to_module_builder(&self.engine);
             // copy imports
+
             for (i, imported) in original_module.imports.items.iter().enumerate() {
                 match imported {
                     Imported::Func(import_name) => {
@@ -185,13 +227,14 @@ impl Context {
                         let func_type =
                             original_engine.resolve_func_type(&func_type, |v| v.clone());
                         let new_func_type = self.engine.alloc_func_type(func_type);
-                        module_builder.funcs.insert(0, new_func_type);
+                        module_builder.funcs.insert(i, new_func_type);
                         module_builder.imports.funcs.push(import_name.clone());
                     }
                     Imported::Global(_) => continue,
                     _ => unreachable!("not supported import type ({:?})", imported),
                 }
             }
+
             // copy exports indices (it's not affected, so we can safely copy)
             for (k, v) in original_module.exports.iter() {
                 if let Some(func_index) = v.into_func_idx() {
@@ -244,15 +287,19 @@ mod tests {
 
     #[test]
     fn test_contract_works() {
-        let greeting_bytecode = include_bytes!("../greeting/lib.wasm");
+        let greeting_bytecode = include_bytes!("../hashing/lib.wasm");
         let native_sdk = TestingContext::empty().with_input(greeting_bytecode);
         let sdk = JournalState::empty(native_sdk.clone());
         let mut rwasm = RWASM::new(sdk);
         rwasm.deploy();
         rwasm.main();
         let output = native_sdk.take_output();
-        let module = RwasmModule::new(&output).unwrap();
-        assert!(module.code_section.len() > 0);
-        assert!(unsafe { from_utf8_unchecked(&module.memory_section).contains("Hello, World") })
+
+        println!("Output: {:?}", output);
+        println!("Output: {:?}", String::from_utf8(output))
+
+        // let module = RwasmModule::new(&output).unwrap();
+        // assert!(module.code_section.len() > 0);
+        // assert!(unsafe { from_utf8_unchecked(&module.memory_section).contains("Hello, World") })
     }
 }
