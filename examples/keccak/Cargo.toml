@@ -1,15 +1,11 @@
 [package]
-name = "fluentbase-example-rwasm-jit"
+name = "fluentbase-example-keccak"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 #fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-fluentbase-types = { workspace = true, default-features = false }
-keccak-hash = { version = "0.10.0", default-features = false }
-
-rwasm = { workspace = true, default-features = false }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -28,6 +24,5 @@ path = "lib.rs"
 [features]
 default = ["std"]
 std = [
-    "fluentbase-sdk/std",
-    "rwasm/std"
+    "fluentbase-sdk/std"
 ]

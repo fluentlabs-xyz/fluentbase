@@ -1,7 +1,9 @@
 use crate::helpers::run_with_default_context;
+use alloy_rlp::{Bytes, Encodable};
 use core::str::from_utf8;
 use hex_literal::hex;
 use rwasm::{engine::RwasmConfig, rwasm::RwasmModule, Config, Engine, Module};
+use serde_json::Value::String;
 
 #[test]
 fn test_example_greeting() {
@@ -40,8 +42,75 @@ fn test_example_rwasm() {
 
 #[test]
 #[ignore]
-fn test_example_rwasm_jit() {
+fn test_example_keccak_rwasm() {
+    let input_data = include_bytes!("../../examples/keccak/lib.wasm");
+
+    let input = "Hello World";
+
+    let mut input_bytes = vec![input.len() as u8];
+    input_bytes.append(&mut input.to_string().into_bytes());
+    input_bytes.append(&mut input_data.to_vec());
+
+    let (output_jit, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
+        input_bytes.as_slice(),
+    );
+    assert_eq!(exit_code, 0);
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), input.as_bytes());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_jit, output);
+}
+
+#[test]
+#[ignore]
+fn test_example_greeting_rwasm() {
     let input_data = include_bytes!("../../examples/greeting/lib.wasm");
+
+    let input = "Hello World";
+
+    let mut input_bytes = vec![input.len() as u8];
+    input_bytes.append(&mut input.to_string().into_bytes());
+    input_bytes.append(&mut input_data.to_vec());
+
+    let (output_jit, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
+        input_bytes.as_slice(),
+    );
+    assert_eq!(exit_code, 0);
+
+    let (output, exit_code) =
+        run_with_default_context(input_data.to_vec(), &input.to_string().into_bytes());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_jit, output);
+}
+
+#[test]
+#[ignore]
+fn test_example_panic_rwasm() {
+    let input_data = include_bytes!("../../examples/panic/lib.wasm");
+
+    let mut input_bytes = vec![0];
+    input_bytes.append(&mut input_data.to_vec());
+
+    let (output_jit, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
+        input_bytes.as_slice(),
+    );
+    assert_eq!(exit_code, -71);
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
+    assert_eq!(exit_code, -71);
+
+    assert_eq!(output_jit, output);
+}
+
+#[test]
+#[ignore]
+fn test_example_router_rwasm() {
+    let input_data = include_bytes!("../../examples/router/lib.wasm");
 
     let mut config = Config::default();
 
@@ -70,13 +139,42 @@ fn test_example_rwasm_jit() {
 
     println!("Imports: {:?} {:?}", original_module.imports, imports);
 
-    let (output, exit_code) = run_with_default_context(
+    let mut input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
+
+    let mut input_bytes = vec![input.len() as u8];
+    input_bytes.append(&mut input.clone());
+    input_bytes.append(&mut input_data.to_vec());
+
+    let (output_jit, exit_code) = run_with_default_context(
         include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
-        input_data,
+        input_bytes.as_slice(),
     );
-    println!("Output: {:?}", output);
     assert_eq!(exit_code, 0);
-    assert_eq!(output[0], 0xef);
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), input.as_slice());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_jit, output);
+}
+
+#[test]
+#[ignore]
+fn test_example_chess_rwasm() {
+    let input_data = include_bytes!("../../examples/shakmaty/lib.wasm");
+
+    let mut input_bytes = vec![0];
+    input_bytes.append(&mut input_data.to_vec());
+
+    let (output_jit, exit_code) = run_with_default_context(
+        include_bytes!("../../examples/rwasm-jit/lib.wasm").to_vec(),
+        input_bytes.as_slice(),
+    );
+    assert_eq!(exit_code, 0);
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_jit, output);
 }
 
 #[test]
