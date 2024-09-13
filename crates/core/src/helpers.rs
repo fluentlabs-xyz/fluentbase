@@ -85,10 +85,6 @@ pub fn evm_error_from_exit_code(exit_code: ExitCode) -> InstructionResult {
         ExitCode::ContractSizeLimit => InstructionResult::CreateContractSizeLimit,
         ExitCode::CreateContractStartingWithEF => InstructionResult::CreateContractStartingWithEF,
         ExitCode::FatalExternalError => InstructionResult::FatalExternalError,
-        // ExitCode::ReturnContract => InstructionResult::ReturnContract,
-        // ExitCode::ReturnContractInNotInitEOF => InstructionResult::ReturnContractInNotInitEOF,
-        // ExitCode::EOFOpcodeDisabledInLegacy => InstructionResult::EOFOpcodeDisabledInLegacy,
-        // ExitCode::EOFFunctionStackOverflow => InstructionResult::EOFFunctionStackOverflow,
         // TODO(dmitry123): "what's proper unknown error code mapping?"
         _ => InstructionResult::OutOfGas,
     }
@@ -114,7 +110,6 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         | InstructionResult::StateChangeDuringStaticCall => ExitCode::WriteProtection,
         InstructionResult::InvalidFEOpcode => ExitCode::InvalidEfOpcode,
         InstructionResult::InvalidJump => ExitCode::InvalidJump,
-        // InstructionResult::NotActivated => ExitCode::NotActivated,
         InstructionResult::StackUnderflow => ExitCode::StackUnderflow,
         InstructionResult::StackOverflow => ExitCode::StackOverflow,
         InstructionResult::OutOfOffset => ExitCode::OutputOverflow,
@@ -127,10 +122,6 @@ pub fn exit_code_from_evm_error(evm_error: InstructionResult) -> ExitCode {
         }
         InstructionResult::CreateContractStartingWithEF => ExitCode::CreateContractStartingWithEF,
         InstructionResult::FatalExternalError => ExitCode::FatalExternalError,
-        // InstructionResult::ReturnContract => ExitCode::ReturnContract,
-        // InstructionResult::ReturnContractInNotInitEOF => ExitCode::ReturnContractInNotInitEOF,
-        // InstructionResult::EOFOpcodeDisabledInLegacy => ExitCode::EOFOpcodeDisabledInLegacy,
-        // InstructionResult::EOFFunctionStackOverflow => ExitCode::EOFFunctionStackOverflow,
         _ => ExitCode::UnknownError,
     }
 }
