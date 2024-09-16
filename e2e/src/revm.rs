@@ -63,6 +63,7 @@ struct EvmTestingContext {
 
 impl Default for EvmTestingContext {
     fn default() -> Self {
+        // [TODO:gmm] here is context
         Self::load_from_genesis(devnet_genesis_from_file())
     }
 }
@@ -408,6 +409,7 @@ fn test_evm_greeting() {
 
 #[test]
 fn test_fvm_tx() {
+    // [TODO:gmm] thinks for svm for example
     let base_asset_id = AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID).unwrap();
     // let chain_id = DEVNET_CHAIN_ID;
     let chain_id = 0x1;
@@ -1071,3 +1073,5 @@ fn test_simple_nested_call() {
     // 21k is tx cost + 2600 (x2) is nested calls + 4126 is opcode cost
     assert_eq!(result.gas_used(), 21000 + 2600 * 2 + 4126);
 }
+
+// more comples tests with interop and initial state

@@ -4,6 +4,8 @@ OUT_DIR=assets
 SOURCE_NAME=fluentbase_genesis
 SOURCE_LIB_NAME=lib${SOURCE_NAME}
 
+# [TODO:gmm] recomple genesis assets for svm too
+
 all: generate_devnet_genesis
 
 PROFILE=release

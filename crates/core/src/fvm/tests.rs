@@ -1292,3 +1292,55 @@ mod tests {
     //     ));
     // }
 }
+
+// [TODO:gmm] basic unit tests for svm
+
+#[cfg(test)]
+mod solana_tests {
+    use super::*;
+    use solana_program_test::{BanksClient, ProgramTest};
+    use solana_sdk::{
+        account::Account,
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        transaction::Transaction,
+    };
+    use fluentbase_sdk::{BlockchainState, execute_solana_program};
+
+    // The function that prepares the test environment and client
+    // to interact with the Solana program
+    fn setup() -> (BanksClient, Keypair, Pubkey) {
+        let program_test = ProgramTest::new(
+            "test_solana_program",
+            test_solana_program::id(),
+            processor!(processor_function));
+        let (banks_client, payer, recent_blockhash) = program_test.start();
+        let program_id = test_solana_program::id();
+
+        (banks_client, payer, program_id)
+    }
+
+    fn test_solana_program_execution_changes_state() {
+        let (mut banks_client, payer, program_id) = setup();
+        // build Transaction with Instructions
+        let mut tx = Transaction::new_with_payer(
+            &[test_solana_program::instruction::instruction_method(
+                &program_id,
+                &payer.pubkey(),
+                // ...
+            )],
+            Some(&payer.pubkey()),
+        );
+
+        // Sign & send
+        tx.sign(&[&payer], recent_blockhash);
+        banks_client.process_transaction(transaction).unwrap();
+
+        // Check blockchain state
+        let blockchain_state = BlockchainState::new();
+        let state_changed = execute_solana_program(&blockchain_state, &program_id);
+        assert!(state_changed, "State should be changed after executing the Solana program");
+    }
+}
+
+// testing transact function
