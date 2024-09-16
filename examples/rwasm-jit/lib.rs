@@ -51,10 +51,11 @@ impl<SDK: SharedAPI> RWASM<SDK> {
         let wasm_binary = self.sdk.input();
 
         let wasm_binary = wasm_binary.0.as_ref();
-        let input_size = wasm_binary[0];
+        let is_run = if wasm_binary[0] == 0 { false } else { true };
+        let input_size = wasm_binary[1];
 
-        let (input, bytecode) = wasm_binary.split_at((input_size + 1).into());
-        let input = input[1..].to_vec();
+        let (input, bytecode) = wasm_binary.split_at((input_size + 2).into());
+        let input = input[2..].to_vec();
         let bytecode = Bytes::from(bytecode.to_vec());
 
         let mut context = match Context::new(bytecode.clone(), input) {
@@ -120,24 +121,26 @@ impl<SDK: SharedAPI> RWASM<SDK> {
             }
         };
 
-        let func = if let Some(func) = instance
-            .get_export(&context.store, "main")
-            .and_then(Extern::into_func)
-        {
-            func
-        } else {
-            self.sdk.write(&[4, 3, 2, 1]);
-            return;
-        };
+        if is_run {
+            let func = if let Some(func) = instance
+                .get_export(&context.store, "main")
+                .and_then(Extern::into_func)
+            {
+                func
+            } else {
+                self.sdk.write(&[4, 3, 2, 1]);
+                return;
+            };
 
-        if let Err(err) = func.call(&mut context.store, &[], &mut []) {
-            // println!("Error: {:?}", err);
+            if let Err(err) = func.call(&mut context.store, &[], &mut []) {
+                // println!("Error: {:?}", err);
+            }
+            let ctx = context.store.as_context();
+            let runtime_context = ctx.data();
+            self.sdk.write(runtime_context.output());
+            self.sdk.exit(runtime_context.exit_code());
+            // self.sdk.write(rwasm_bytecode);
         }
-        let ctx = context.store.as_context();
-        let runtime_context = ctx.data();
-        self.sdk.write(runtime_context.output());
-        self.sdk.exit(runtime_context.exit_code());
-        // self.sdk.write(rwasm_bytecode);
     }
 }
 
