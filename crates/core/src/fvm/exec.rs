@@ -37,7 +37,7 @@ pub fn _exec_fuel_tx<SDK: SharedAPI>(
         return FvmMethodOutput::from_exit_code(ExitCode::FatalExternalError)
             .with_gas(gas_limit, 0);
     };
-
+    // [TODO:gmm] uniq for fvm
     let consensus_params = fuel_testnet_consensus_params_from_cr(sdk);
     let tx_gas_price = sdk.tx_context().gas_price.as_limbs()[0];
     let coinbase_contract_id = ContractId::zeroed();

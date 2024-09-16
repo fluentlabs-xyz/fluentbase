@@ -33,6 +33,7 @@ pub const FUEL_TESTNET_BASE_ASSET_ID: &str =
 pub const FUEL_TESTNET_PRIVILEGED_ADDRESS: &str =
     "9f0e19d6c2a6283a3222426ab2630d35516b1799b503f37b02105bebe1b8a3e9";
 
+// [TODO:gmm] consensus params for fvm
 pub fn fuel_testnet_consensus_params_from(
     max_gas_per_tx: Option<u64>,
     max_gas_per_predicate: Option<u64>,
