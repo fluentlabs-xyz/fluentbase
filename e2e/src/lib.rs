@@ -10,3 +10,6 @@ mod helpers;
 mod revm;
 #[cfg(test)]
 mod rwasm;
+
+#[cfg(test)]
+mod bench;
