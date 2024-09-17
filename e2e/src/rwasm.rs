@@ -1,6 +1,9 @@
 use crate::helpers::run_with_default_context;
+use alloy_rlp::{Bytes, Encodable};
 use core::str::from_utf8;
 use hex_literal::hex;
+use rwasm::{engine::RwasmConfig, rwasm::RwasmModule, Config, Engine, Module};
+use serde_json::Value::String;
 
 #[test]
 fn test_example_greeting() {
