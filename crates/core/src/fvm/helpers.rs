@@ -1,5 +1,5 @@
 use alloc::{vec, vec::Vec};
-use core::{mem::size_of, ops::Deref, str::FromStr};
+use core::{ops::Deref, str::FromStr};
 use fluentbase_sdk::{Address, Bytes32, Bytes34, Bytes64, SharedAPI, B256, U256};
 use fuel_core_storage::{column::Column, ContractsAssetKey};
 use fuel_core_types::{
@@ -27,6 +27,7 @@ use fuel_core_types::{
     fuel_vm::ContractsStateKey,
 };
 use phantom_type::PhantomType;
+use revm_primitives::hex;
 
 pub const FUEL_TESTNET_BASE_ASSET_ID: &str =
     "f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07";
@@ -122,7 +123,7 @@ pub trait StorageSlotPure {
 }
 
 pub trait StorageSlotCalc {
-    const COLUMN: Column;
+    // const COLUMN: Column;
 
     fn storage_slot(&self, slot: u32) -> U256;
 }
@@ -352,7 +353,7 @@ impl StorageSlotPure for ContractsRawCodeHelper {
 }
 
 impl StorageSlotCalc for ContractsRawCodeHelper {
-    const COLUMN: Column = Column::ContractsRawCode;
+    // const COLUMN: Column = Column::ContractsRawCode;
 
     fn storage_slot(&self, slot: u32) -> U256 {
         <Self as StorageSlotPure>::storage_slot(&self.original_key, slot).into()
@@ -380,7 +381,7 @@ impl StorageSlotPure for ContractsLatestUtxoHelper {
 }
 
 impl StorageSlotCalc for ContractsLatestUtxoHelper {
-    const COLUMN: Column = Column::ContractsLatestUtxo;
+    // const COLUMN: Column = Column::ContractsLatestUtxo;
 
     fn storage_slot(&self, slot: u32) -> U256 {
         <Self as StorageSlotPure>::storage_slot(&self.original_key, slot).into()
@@ -392,6 +393,34 @@ impl ContractsLatestUtxoHelper {
         Self {
             original_key: *contract_id,
         }
+    }
+}
+
+pub struct DepositWithdrawalIndexHelper<'a, SDK> {
+    sdk: &'a mut SDK,
+}
+
+impl<'a, SDK: SharedAPI> DepositWithdrawalIndexHelper<'a, SDK> {
+    pub const BASE_SLOT: U256 = U256::from_be_bytes(hex!(
+        "3b7beb7da1bf6fe0385840aec5f2bb7a20a36c96e298b5f66760841e0e77a209"
+    ));
+    pub const BASE_INDEX: U256 = U256::from_be_bytes(hex!(
+        "0000000000000000000000000000000000000000000000000012300000000000"
+    ));
+    pub fn new(sdk: &'a mut SDK) -> Self {
+        Self { sdk }
+    }
+
+    const fn slot(&self) -> U256 {
+        Self::BASE_SLOT
+    }
+
+    pub fn next_index(&mut self) -> U256 {
+        let current_index = self.sdk.storage(&self.slot());
+        let next_index = current_index + U256::from(1);
+        self.sdk.write_storage(self.slot(), next_index);
+
+        Self::BASE_INDEX + current_index
     }
 }
 
@@ -413,7 +442,7 @@ impl StorageSlotPure for ContractsStateHelper {
 }
 
 impl StorageSlotCalc for ContractsStateHelper {
-    const COLUMN: Column = Column::ContractsState;
+    // const COLUMN: Column = Column::ContractsState;
 
     fn storage_slot(&self, slot: u32) -> U256 {
         match self.key {
@@ -468,7 +497,7 @@ impl StorageSlotPure for ContractsAssetsHelper {
 }
 
 impl StorageSlotCalc for ContractsAssetsHelper {
-    const COLUMN: Column = Column::ContractsAssets;
+    // const COLUMN: Column = Column::ContractsAssets;
 
     fn storage_slot(&self, slot: u32) -> U256 {
         match self.key {
@@ -544,7 +573,7 @@ impl StorageSlotPure for CoinsHelper {
 }
 
 impl StorageSlotCalc for CoinsHelper {
-    const COLUMN: Column = Column::Coins;
+    // const COLUMN: Column = Column::Coins;
 
     fn storage_slot(&self, slot: u32) -> U256 {
         <Self as StorageSlotPure>::storage_slot_raw(&self.original_key, slot).into()
@@ -594,27 +623,32 @@ impl CoinsHelper {
     }
 }
 
-pub(crate) struct FuelAddress {
+pub struct FuelAddress {
     address: fuel_types::Address,
 }
 
 impl FuelAddress {
-    pub(crate) fn new(address: fuel_types::Address) -> Self {
+    pub fn new(address: fuel_types::Address) -> Self {
         Self { address }
     }
-    pub(crate) fn new_zero() -> Self {
-        const ADDRESS: fuel_types::Address = fuel_types::Address::new([0xff; 32]);
-        Self { address: ADDRESS }
+    pub fn from_evm_address(evm_address: &Address) -> Self {
+        let mut address = fuel_types::Address::zeroed();
+        address.0.as_mut_slice()[12..].copy_from_slice(evm_address.as_slice());
+        Self { address }
     }
-    pub(crate) fn new_max() -> Self {
+    pub fn new_zero() -> Self {
         const ADDRESS: fuel_types::Address = fuel_types::Address::zeroed();
         Self { address: ADDRESS }
     }
+    pub fn new_max() -> Self {
+        const ADDRESS: fuel_types::Address = fuel_types::Address::new([0xff; 32]);
+        Self { address: ADDRESS }
+    }
 
-    pub(crate) fn get(&self) -> fuel_types::Address {
+    pub fn get(&self) -> fuel_types::Address {
         self.address
     }
-    pub(crate) fn fluent_address(&self) -> Address {
+    pub fn fluent_address(&self) -> Address {
         Address::from_slice(&self.address[12..])
     }
 }
