@@ -2,9 +2,12 @@ use core::{
     mem::take,
     str::{from_utf8, FromStr},
 };
-use fluentbase_core::fvm::helpers::FUEL_TESTNET_BASE_ASSET_ID;
+use fluentbase_core::fvm::{
+    helpers::FUEL_TESTNET_BASE_ASSET_ID,
+    types::{FVM_DEPOSIT_SIG, FVM_DEPOSIT_SIG_BYTES, FVM_WITHDRAW_SIG, FVM_WITHDRAW_SIG_BYTES},
+};
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
+    devnet::{devnet_genesis_from_file, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
 };
@@ -21,6 +24,7 @@ use fluentbase_types::{
     Account,
     Address,
     Bytes,
+    SharedAPI,
     SysFuncIdx,
     DEVNET_CHAIN_ID,
     KECCAK_EMPTY,
@@ -38,12 +42,20 @@ use fuel_core_types::{
     },
     fuel_types::{canonical::Serialize, AssetId, BlockHeight, ChainId},
 };
-use fuel_tx::{ConsensusParameters, Input, TransactionBuilder, TxId, TxPointer, UtxoId};
+use fuel_tx::{
+    ConsensusParameters,
+    Input,
+    TransactionBuilder,
+    TransactionRepr,
+    TxId,
+    TxPointer,
+    UtxoId,
+};
 use fuel_vm::{fuel_asm::RegId, storage::MemoryStorage};
 use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
-    primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
+    primitives::{AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
     rwasm::RwasmDbWrapper,
     DatabaseCommit,
     Evm,
@@ -192,8 +204,16 @@ impl<'a> TxBuilder<'a> {
         Self { ctx, env }
     }
 
-    fn call(ctx: &'a mut EvmTestingContext, caller: Address, callee: Address) -> Self {
+    fn call(
+        ctx: &'a mut EvmTestingContext,
+        caller: Address,
+        callee: Address,
+        value: Option<U256>,
+    ) -> Self {
         let mut env = Env::default();
+        if let Some(value) = value {
+            env.tx.value = value;
+        }
         env.tx.gas_price = U256::from(1);
         env.tx.caller = caller;
         env.tx.transact_to = TransactTo::Call(callee);
@@ -274,20 +294,32 @@ fn deploy_evm_tx(ctx: &mut EvmTestingContext, deployer: Address, init_bytecode: 
     contract_address
 }
 
+fn call_evm_tx_simple(
+    ctx: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Bytes,
+    gas_limit: Option<u64>,
+    value: Option<U256>,
+) -> ExecutionResult {
+    // call greeting EVM contract
+    let mut tx_builder = TxBuilder::call(ctx, caller, callee, value).input(input);
+    if let Some(gas_limit) = gas_limit {
+        tx_builder = tx_builder.gas_limit(gas_limit);
+    }
+    tx_builder.exec()
+}
+
 fn call_evm_tx(
     ctx: &mut EvmTestingContext,
     caller: Address,
     callee: Address,
     input: Bytes,
     gas_limit: Option<u64>,
+    value: Option<U256>,
 ) -> ExecutionResult {
     ctx.add_balance(caller, U256::from(1e18));
-    // call greeting EVM contract
-    let mut tx_builder = TxBuilder::call(ctx, caller, callee).input(input);
-    if let Some(gas_limit) = gas_limit {
-        tx_builder = tx_builder.gas_limit(gas_limit);
-    }
-    tx_builder.exec()
+    call_evm_tx_simple(ctx, caller, callee, input, gas_limit, value)
 }
 
 #[test]
@@ -300,6 +332,7 @@ fn test_genesis_greeting() {
         DEPLOYER_ADDRESS,
         EXAMPLE_GREETING_ADDRESS,
         Bytes::default(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -325,6 +358,7 @@ fn test_deploy_greeting() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -347,6 +381,7 @@ fn test_deploy_keccak256() {
         DEPLOYER_ADDRESS,
         contract_address,
         "Hello, World".into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -374,6 +409,7 @@ fn test_deploy_panic() {
         contract_address,
         Bytes::default(),
         None,
+        None,
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -397,6 +433,7 @@ fn test_evm_greeting() {
         contract_address,
         hex!("45773e4e").into(),
         None,
+        None,
     );
     println!("{:?}", result);
     assert!(result.is_success());
@@ -406,10 +443,34 @@ fn test_evm_greeting() {
     assert_eq!(result.gas_used(), 21792);
 }
 
+use alloy_sol_types::SolValue;
+use fluentbase_core::fvm::{
+    helpers::DepositWithdrawalIndexHelper,
+    types::{FvmWithdrawInput, UtxoIdSol},
+};
+use revm_interpreter::instructions::system::gas;
+
 #[test]
-fn test_fvm_tx() {
+fn test_fvm_deposit_withdrawal_signatures_for_collisions() {
+    assert_eq!(FVM_DEPOSIT_SIG, 0xea80eea3);
+    assert_eq!(FVM_WITHDRAW_SIG, 0xaad800af);
+    assert_eq!(FVM_DEPOSIT_SIG_BYTES, [234, 128, 238, 163]);
+    assert_eq!(FVM_WITHDRAW_SIG_BYTES, [170, 216, 0, 175]);
+    let values = [
+        TransactionRepr::Create as u8,
+        TransactionRepr::Mint as u8,
+        TransactionRepr::Script as u8,
+        TransactionRepr::Upgrade as u8,
+        TransactionRepr::Upload as u8,
+    ];
+    assert!(!values.contains(&FVM_DEPOSIT_SIG_BYTES[0]));
+    assert!(!values.contains(&FVM_WITHDRAW_SIG_BYTES[0]));
+}
+
+#[test]
+fn test_fvm_deposit_and_transfer_between_accounts_tx() {
     let base_asset_id = AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID).unwrap();
-    // let chain_id = DEVNET_CHAIN_ID;
+    let chain_id = DEVNET_CHAIN_ID;
     let chain_id = 0x1;
 
     let secret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
@@ -425,7 +486,7 @@ fn test_fvm_tx() {
     let secret2_address = Input::owner(&secret2_secret_key.public_key());
     println!("secret2_address: {}", secret2_address);
 
-    let initial_balance = 0xffff;
+    let initial_balance = 0x5ff;
     let coins_sent = 0x1;
 
     let bytecode = core::iter::once(op::ret(RegId::ZERO)).collect();
@@ -434,7 +495,7 @@ fn test_fvm_tx() {
     let mut test_builder = fuel_vm::util::test_helpers::TestBuilder {
         rng: StdRng::seed_from_u64(1234),
         gas_price: 0,
-        max_fee_limit: 0,
+        max_fee_limit: 1000,
         script_gas_limit: 100,
         builder: TransactionBuilder::script(bytecode, vec![]),
         storage: MemoryStorage::default(),
@@ -442,12 +503,32 @@ fn test_fvm_tx() {
         consensus_params,
     };
 
+    let mut ctx = EvmTestingContext::default();
+
+    // deposit to FVM
+    let mut input = Vec::<u8>::new();
+    input.extend_from_slice(FVM_DEPOSIT_SIG_BYTES.as_slice());
+    input.extend_from_slice(secret1_address.as_slice());
+    let result = call_evm_tx(
+        &mut ctx,
+        secret1_address_as_evm.clone(),
+        PRECOMPILE_FVM,
+        input.into(),
+        Some(100_000_000),
+        Some(U256::from(initial_balance * 1_000_000_000)),
+    );
+    println!("move coins evm->fvm: {:?}", result);
+    let output = result.output().unwrap_or_default();
+    println!("output: {}", from_utf8(output).unwrap_or_default());
+    assert!(result.is_success());
+
     let tx_in_id: TxId =
         TxId::from_str("0x0000000000000000000000000000000000000000000000000000000000001000")
             .unwrap();
     let utxo_id = UtxoId::new(tx_in_id, 0);
     test_builder
         .with_chain_id(ChainId::new(chain_id))
+        .base_asset_id(base_asset_id)
         .builder
         .add_unsigned_coin_input(
             secret1_secret_key.clone(),
@@ -474,28 +555,115 @@ fn test_fvm_tx() {
         revm::primitives::hex::encode(&fuel_tx_bytes)
     );
 
-    let mut ctx = EvmTestingContext::default();
-    // ctx.add_balance(secret1_address_as_evm, U256::from(initial_balance));
-    const DEPLOYER_ADDRESS: Address = Address::ZERO;
-    let contract_address = PRECOMPILE_FVM;
-    // call greeting EVM contract
     println!("\n\n\n");
     let result = call_evm_tx(
         &mut ctx,
-        DEPLOYER_ADDRESS,
-        contract_address,
+        secret1_address_as_evm.clone(),
+        PRECOMPILE_FVM,
         fuel_tx_bytes.into(),
-        Some(100_000_000),
+        Some(1_000_000_000),
+        None,
     );
-    println!("{:?}", result);
-    match &result {
-        ExecutionResult::Success { .. } => {}
-        ExecutionResult::Revert { gas_used, output } => {}
-        ExecutionResult::Halt { .. } => {}
-    }
+    println!("fvm tx: {:?}", result);
     let output = result.output().unwrap_or_default();
     println!("output: {}", from_utf8(output).unwrap_or_default());
     assert!(result.is_success());
+}
+
+#[test]
+fn test_fvm_deposit_then_withdraw() {
+    let base_asset_id = AssetId::from_str(FUEL_TESTNET_BASE_ASSET_ID).unwrap();
+    let chain_id = DEVNET_CHAIN_ID;
+    let chain_id = 0x1;
+
+    let secret1 = "0x99e87b0e9158531eeeb503ff15266e2b23c2a2507b138c9d1b1f2ab458df2d61";
+    let secret1_vec = revm::primitives::hex::decode(secret1).unwrap();
+    let secret1_secret_key = SecretKey::try_from(secret1_vec.as_slice()).unwrap();
+    let secret1_address = Input::owner(&secret1_secret_key.public_key());
+    // println!("secret1_address: {}", secret1_address);
+    let secret1_address_as_evm = Address::from_slice(&secret1_address.as_slice()[12..]);
+
+    let secret2 = "0xde97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
+    let secret2_vec = revm::primitives::hex::decode(secret2).unwrap();
+    let secret2_secret_key = SecretKey::try_from(secret2_vec.as_slice()).unwrap();
+    let secret2_address = Input::owner(&secret2_secret_key.public_key());
+    // println!("secret2_address: {}", secret2_address);
+    let secret2_address_as_evm = Address::from_slice(&secret2_address.as_slice()[12..]);
+
+    let initial_balance = 0x5ff;
+    let coins_sent = 0x500;
+
+    let bytecode = core::iter::once(op::ret(RegId::ZERO)).collect();
+    let mut consensus_params = ConsensusParameters::standard();
+    consensus_params.set_chain_id(chain_id.into());
+    let mut test_builder = fuel_vm::util::test_helpers::TestBuilder {
+        rng: StdRng::seed_from_u64(1234),
+        gas_price: 0,
+        max_fee_limit: 1000,
+        script_gas_limit: 100,
+        builder: TransactionBuilder::script(bytecode, vec![]),
+        storage: MemoryStorage::default(),
+        block_height: Default::default(),
+        consensus_params,
+    };
+
+    let mut ctx = EvmTestingContext::default();
+
+    ctx.add_balance(secret1_address_as_evm, U256::from(1e18));
+    ctx.add_balance(secret2_address_as_evm, U256::from(1e18));
+
+    let balance_before_deposit_to_fvm = ctx.get_balance(secret1_address_as_evm);
+    assert_eq!(balance_before_deposit_to_fvm, U256::from(1e18));
+
+    // FVM deposit
+    let mut input = Vec::<u8>::new();
+    input.extend_from_slice(FVM_DEPOSIT_SIG_BYTES.as_slice());
+    input.extend_from_slice(secret1_address.as_slice());
+    let result = call_evm_tx_simple(
+        &mut ctx,
+        secret1_address_as_evm.clone(),
+        PRECOMPILE_FVM,
+        input.into(),
+        Some(100_000_000),
+        Some(U256::from(coins_sent * 1e9 as u64)),
+    );
+    println!("move coins evm->fvm: {:?}", result);
+    let output = result.output().unwrap_or_default();
+    println!("output: {}", from_utf8(output).unwrap_or_default());
+    assert!(result.is_success());
+
+    let balance_after_deposit_to_fvm = ctx.get_balance(secret1_address_as_evm);
+
+    let tx_id: TxId =
+        TxId::from_str("0000000000000000000000000000000000000000000000000012300000000000").unwrap();
+    let output_index = 0x0;
+
+    // FVM withdraw
+    let mut input = Vec::<u8>::new();
+    input.extend_from_slice(FVM_WITHDRAW_SIG_BYTES.as_slice());
+    let utxo_ids: FvmWithdrawInput = FvmWithdrawInput {
+        utxos: vec![UtxoIdSol {
+            tx_id: tx_id.0.into(),
+            output_index: U256::from(output_index),
+        }],
+        withdraw_amount: U256::from(0x1),
+    };
+    input.extend_from_slice(&utxo_ids.abi_encode());
+    let result = call_evm_tx_simple(
+        &mut ctx,
+        secret1_address_as_evm.clone(),
+        PRECOMPILE_FVM,
+        input.into(),
+        Some(3_000_000_000),
+        None,
+    );
+    println!("move coins fvm->evm: {:?}", result);
+    let output = result.output().unwrap_or_default();
+    println!("output: {}", from_utf8(output).unwrap_or_default());
+    assert!(result.is_success());
+
+    let balance_after_withdraw_from_fvm = ctx.get_balance(secret1_address_as_evm);
+    assert!(balance_after_withdraw_from_fvm > balance_after_deposit_to_fvm);
 }
 
 ///
@@ -542,6 +710,7 @@ fn test_evm_storage() {
         contract_address_1,
         hex!("20965255").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     let bytes = result.output().unwrap_or_default();
@@ -555,6 +724,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -570,6 +740,7 @@ fn test_evm_storage() {
         contract_address_2,
         hex!("552410770000000000000000000000000000000000000000000000000000000000000070").into(),
         None,
+        None,
     );
     assert!(result.is_success());
     // check result is 0x70
@@ -578,6 +749,7 @@ fn test_evm_storage() {
         DEPLOYER_ADDRESS,
         contract_address_2,
         hex!("20965255").into(),
+        None,
         None,
     );
     assert!(result.is_success());
@@ -596,7 +768,7 @@ fn test_simple_send() {
     const RECIPIENT_ADDRESS: Address = address!("1092381297182319023812093812312309123132");
     ctx.add_balance(SENDER_ADDRESS, U256::from(2e18));
     let gas_price = U256::from(1e9);
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, RECIPIENT_ADDRESS, None)
         .gas_price(gas_price)
         .value(U256::from(1e18))
         .exec();
@@ -681,7 +853,7 @@ fn test_evm_self_destruct() {
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
     // call self destructed contract
-    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address)
+    let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address, None)
         .gas_price(gas_price)
         .exec();
     if !result.is_success() {
@@ -841,6 +1013,7 @@ fn test_bridge_contract_with_call() {
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     .input(bytes!(
         "\
@@ -912,6 +1085,7 @@ fn test_bridge_contract_with_call() {
         &mut ctx,
         signer_l1_wallet_owner,
         erc20gateway_contract_address,
+        None,
     )
     // data: 0x70616e69636b6564206174206372617465732f636f72652f7372632f636f6e7472616374732f65636c2e72733a34373a31373a2063616c6c206d6574686f64206661696c65642c206578697420636f64653a202d31303232
     .input(bytes!(
@@ -1060,7 +1234,7 @@ fn test_simple_nested_call() {
             ..Default::default()
         },
     );
-    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS)
+    let result = TxBuilder::call(&mut ctx, Address::ZERO, ACCOUNT3_ADDRESS, None)
         .gas_price(U256::ZERO)
         .exec();
     println!("{:?}", result);

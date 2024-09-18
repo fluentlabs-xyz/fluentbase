@@ -5,14 +5,17 @@ mod tests {
         helpers_fvm::{fvm_transact, fvm_transact_commit},
     };
     use alloc::{vec, vec::Vec};
+    use core::str::FromStr;
     use fluentbase_sdk::{
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
+        Bytes34,
         ContractContext,
     };
     use fuel_core::{
         database::{database_description::on_chain::OnChain, Database, RegularStage},
         executor::test_helpers::{create_contract, setup_executable_script},
+        txpool::types::TxId,
     };
     use fuel_core_executor::{executor::ExecutionData, refs::ContractRef};
     use fuel_core_storage::{
@@ -20,6 +23,7 @@ mod tests {
         structured_storage::StructuredStorage,
         tables::Coins,
         transactional::{Modifiable, WriteTransaction},
+        Mappable,
         StorageAsMut,
         StorageInspect,
         StorageMutate,
@@ -117,9 +121,10 @@ mod tests {
         second_coin.set_owner(*second_input.input_owner().unwrap());
         second_coin.set_amount(100);
         // Insert both inputs
+        let utxo_id = first_input.utxo_id().unwrap().clone();
         <StructuredStorage<WasmStorage<'_, TestingSDK>> as StorageMutate<Coins>>::insert(
             &mut storage,
-            &first_input.utxo_id().unwrap().clone(),
+            &utxo_id,
             &first_coin,
         )
         .expect("insert first utxo success");

@@ -18,13 +18,13 @@ revm-primitives = { workspace = true, default-features = false }
 
 byteorder = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
+alloy-sol-types = { workspace = true }
 hashbrown = { workspace = true }
 paste = { workspace = true }
 hex.workspace = true
-alloy-sol-types = { workspace = true }
 anyhow = { workspace = true, default-features = false }
 postcard = { workspace = true, default-features = false, features = ["alloc"] }
-keccak-hash = { version = "0.10.0", default-features = false }
+keccak-hash = { version = "0.11.0", default-features = false }
 phantom-type = { workspace = true }
 
 fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }

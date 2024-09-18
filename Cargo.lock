@@ -2579,7 +2579,7 @@ dependencies = [
  "fuel-core-types",
  "hashbrown 0.14.5",
  "hex",
- "keccak-hash 0.10.0",
+ "keccak-hash 0.11.0",
  "paste",
  "phantom-type",
  "postcard",
@@ -2602,6 +2602,7 @@ name = "fluentbase-e2e"
 version = "0.1.0"
 dependencies = [
  "alloy-rlp",
+ "alloy-sol-types",
  "byteorder",
  "fluentbase-codec 0.1.0",
  "fluentbase-core",
