@@ -16,26 +16,30 @@ use fluentbase_types::{
 
 pub struct SharedContextImpl<API: NativeAPI> {
     native_sdk: API,
-    input: SharedContextInputV1,
 }
 
 impl<API: NativeAPI> SharedContextImpl<API> {
     pub fn parse_from_input(native_sdk: API) -> Self {
-        let input_size = native_sdk.input_size() as usize;
-        assert!(
-            input_size >= SharedContextInputV1::HEADER_SIZE,
-            "malformed input header"
-        );
-        let mut header_input: [u8; SharedContextInputV1::HEADER_SIZE] =
-            [0u8; SharedContextInputV1::HEADER_SIZE];
-        native_sdk.read(&mut header_input, 0);
-        let mut buffer_decoder = BufferDecoder::new(&header_input);
-        let mut result = Self {
-            native_sdk,
-            input: Default::default(),
-        };
-        SharedContextInputV1::decode_header(&mut buffer_decoder, 0, &mut result.input);
-        result
+        Self { native_sdk }
+    }
+
+    unsafe fn shared_context_ref(&self) -> &SharedContextInputV1 {
+        static mut CONTEXT: Option<SharedContextInputV1> = None;
+        CONTEXT.get_or_insert_with(|| {
+            let input_size = self.native_sdk.input_size() as usize;
+            assert!(
+                input_size >= SharedContextInputV1::HEADER_SIZE,
+                "malformed input header"
+            );
+            let mut header_input: [u8; SharedContextInputV1::HEADER_SIZE] =
+                [0u8; SharedContextInputV1::HEADER_SIZE];
+            self.native_sdk.read(&mut header_input, 0);
+            let mut buffer_decoder = BufferDecoder::new(&header_input);
+            let mut result = SharedContextInputV1::default();
+            SharedContextInputV1::decode_header(&mut buffer_decoder, 0, &mut result);
+            result
+        });
+        CONTEXT.as_ref().unwrap()
     }
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
@@ -45,15 +49,15 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
 impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
     fn block_context(&self) -> &BlockContext {
-        &self.input.block
+        unsafe { &self.shared_context_ref().block }
     }
 
     fn tx_context(&self) -> &TxContext {
-        &self.input.tx
+        unsafe { &self.shared_context_ref().tx }
     }
 
     fn contract_context(&self) -> &ContractContext {
-        &self.input.contract
+        unsafe { &self.shared_context_ref().contract }
     }
 
     fn write_storage(&mut self, slot: U256, value: U256) {

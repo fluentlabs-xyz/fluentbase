@@ -55,8 +55,8 @@ fuel-core-storage = { git = "https://github.com/fluentlabs-xyz/fuel-core", branc
 #fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false, features = ["alloc"] }
 #fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false, features = ["alloc"] }
 
-#rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
-rwasm = { path = "../rwasm/rwasm", default-features = false }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
+#rwasm = { path = "../rwasm/rwasm", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
 alloy-primitives = { version = "0.7", default-features = false, features = ["rlp"] }
