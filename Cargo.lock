@@ -2443,7 +2443,7 @@ dependencies = [
  "fluentbase-core",
  "fluentbase-types 0.1.0",
  "log",
- "rwasm 0.30.0",
+ "rwasm",
  "wat",
 ]
 
@@ -2541,7 +2541,7 @@ dependencies = [
  "postcard",
  "revm-interpreter",
  "revm-primitives 4.0.0",
- "rwasm 0.30.0",
+ "rwasm",
 ]
 
 [[package]]
@@ -2573,7 +2573,7 @@ dependencies = [
  "paste",
  "revm-fluent",
  "revm-interpreter",
- "rwasm 0.30.0",
+ "rwasm",
  "serde_json",
  "wasmi",
 ]
@@ -2658,7 +2658,7 @@ dependencies = [
  "fluentbase-sdk 0.1.0",
  "hex",
  "hex-literal",
- "rwasm 0.30.0",
+ "rwasm",
 ]
 
 [[package]]
@@ -2670,7 +2670,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "keccak-hash",
- "rwasm 0.30.0",
+ "rwasm",
 ]
 
 [[package]]
@@ -2747,7 +2747,7 @@ dependencies = [
  "hex-literal",
  "k256",
  "keccak-hash",
- "rwasm 0.30.0",
+ "rwasm",
  "sha2 0.10.8",
  "wat",
 ]
@@ -2816,7 +2816,7 @@ dependencies = [
  "fluentbase-codec 0.1.0",
  "hashbrown 0.14.5",
  "revm-primitives 4.0.0",
- "rwasm 0.30.0",
+ "rwasm",
  "serde",
  "strum_macros 0.26.4",
 ]
@@ -2832,7 +2832,7 @@ dependencies = [
  "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
  "hashbrown 0.14.5",
  "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
- "rwasm 0.30.0 (git+https://github.com/fluentlabs-xyz/rwasm?branch=devel)",
+ "rwasm",
  "strum_macros 0.26.4",
 ]
 
@@ -6275,7 +6275,7 @@ dependencies = [
  "revm-interpreter",
  "revm-precompile",
  "rstest 0.19.0",
- "rwasm 0.30.0",
+ "rwasm",
  "serde",
  "serde_json",
  "tokio",
@@ -6308,7 +6308,7 @@ dependencies = [
  "revm-interpreter",
  "revm-precompile",
  "rstest 0.19.0",
- "rwasm 0.30.0",
+ "rwasm",
  "serde",
  "serde_json",
  "tokio",
@@ -6728,6 +6728,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.30.0"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#3cfa78a82f611bbaac996aedb4029cb08aaab5f4"
 dependencies = [
  "byteorder",
  "downcast-rs",
@@ -6739,22 +6740,6 @@ dependencies = [
  "spin 0.9.8",
  "strum 0.26.3",
  "strum_macros 0.26.4",
- "wasmparser-nostd",
-]
-
-[[package]]
-name = "rwasm"
-version = "0.30.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#a6bf66574d29462f934c12b449622c639eb10e8b"
-dependencies = [
- "byteorder",
- "downcast-rs",
- "hashbrown 0.14.5",
- "libm",
- "num-traits",
- "paste",
- "smallvec",
- "spin 0.9.8",
  "wasmparser-nostd",
 ]
 

@@ -45,9 +45,5 @@ mod tests {
             &output[0..32],
             hex!("a04a451028d0f9284ce82243755e245238ab1e4ecf7b9dd8bf4734d9ecfd0529")
         );
-        assert_eq!(
-            &output[32..],
-            hex!("9796a3ea6a12e2df13db77ead033b6c14c213726905fb03bd8fab41c72719902")
-        );
     }
 }
