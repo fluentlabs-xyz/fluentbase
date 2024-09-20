@@ -2,10 +2,6 @@ use core::{
     mem::take,
     str::{from_utf8, FromStr},
 };
-use fluentbase_core::fvm::{
-    helpers::FUEL_TESTNET_BASE_ASSET_ID,
-    types::{FVM_DEPOSIT_SIG, FVM_DEPOSIT_SIG_BYTES, FVM_WITHDRAW_SIG, FVM_WITHDRAW_SIG_BYTES},
-};
 use fluentbase_genesis::{
     devnet::{devnet_genesis_from_file, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
@@ -41,6 +37,10 @@ use fuel_core_types::{
         SecretKey,
     },
     fuel_types::{canonical::Serialize, AssetId, BlockHeight, ChainId},
+};
+use fuel_ee_core::fvm::{
+    helpers::FUEL_TESTNET_BASE_ASSET_ID,
+    types::{FVM_DEPOSIT_SIG, FVM_DEPOSIT_SIG_BYTES, FVM_WITHDRAW_SIG, FVM_WITHDRAW_SIG_BYTES},
 };
 use fuel_tx::{
     ConsensusParameters,
@@ -444,11 +444,7 @@ fn test_evm_greeting() {
 }
 
 use alloy_sol_types::SolValue;
-use fluentbase_core::fvm::{
-    helpers::DepositWithdrawalIndexHelper,
-    types::{FvmWithdrawInput, UtxoIdSol},
-};
-use revm_interpreter::instructions::system::gas;
+use fuel_ee_core::fvm::types::{FvmWithdrawInput, UtxoIdSol};
 
 #[test]
 fn test_fvm_deposit_withdrawal_signatures_for_collisions() {
@@ -586,31 +582,18 @@ fn test_fvm_deposit_then_withdraw() {
     let secret2 = "0xde97d8624a438121b86a1956544bd72ed68cd69f2c99555b08b1e8c51ffd511c";
     let secret2_vec = revm::primitives::hex::decode(secret2).unwrap();
     let secret2_secret_key = SecretKey::try_from(secret2_vec.as_slice()).unwrap();
-    let secret2_address = Input::owner(&secret2_secret_key.public_key());
+    // let secret2_address = Input::owner(&secret2_secret_key.public_key());
     // println!("secret2_address: {}", secret2_address);
-    let secret2_address_as_evm = Address::from_slice(&secret2_address.as_slice()[12..]);
+    // let secret2_address_as_evm = Address::from_slice(&secret2_address.as_slice()[12..]);
 
-    let initial_balance = 0x5ff;
     let coins_sent = 0x500;
 
-    let bytecode = core::iter::once(op::ret(RegId::ZERO)).collect();
     let mut consensus_params = ConsensusParameters::standard();
     consensus_params.set_chain_id(chain_id.into());
-    let mut test_builder = fuel_vm::util::test_helpers::TestBuilder {
-        rng: StdRng::seed_from_u64(1234),
-        gas_price: 0,
-        max_fee_limit: 1000,
-        script_gas_limit: 100,
-        builder: TransactionBuilder::script(bytecode, vec![]),
-        storage: MemoryStorage::default(),
-        block_height: Default::default(),
-        consensus_params,
-    };
 
     let mut ctx = EvmTestingContext::default();
 
     ctx.add_balance(secret1_address_as_evm, U256::from(1e18));
-    ctx.add_balance(secret2_address_as_evm, U256::from(1e18));
 
     let balance_before_deposit_to_fvm = ctx.get_balance(secret1_address_as_evm);
     assert_eq!(balance_before_deposit_to_fvm, U256::from(1e18));

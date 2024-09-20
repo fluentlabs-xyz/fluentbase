@@ -55,6 +55,10 @@ fuel-core-types = { path = "../fuel-core/crates/types", default-features = false
 fuel-core-executor = { path = "../fuel-core/crates/services/executor", default-features = false, features = ["alloc"] }
 fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false, features = ["alloc"] }
 
+# fluent's fuel
+#fuel-ee-core = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "devel", default-features = false, features = [] }
+fuel-ee-core = { path = "../fuel-ee/crates/core", default-features = false, features = [] }
+
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 #rwasm = { path = "../rwasm/rwasm", default-features = false }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "v0.6.1", default-features = false }
