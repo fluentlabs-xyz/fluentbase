@@ -2615,6 +2615,7 @@ dependencies = [
  "fuel-core-executor",
  "fuel-core-storage",
  "fuel-core-types",
+ "fuel-ee-core",
  "fuel-tx",
  "fuel-vm",
  "hashbrown 0.14.5",
@@ -3226,6 +3227,29 @@ dependencies = [
  "quote",
  "syn 2.0.77",
  "synstructure",
+]
+
+[[package]]
+name = "fuel-ee-core"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-sol-types",
+ "anyhow",
+ "byteorder",
+ "fluentbase-sdk 0.1.0",
+ "fuel-core-executor",
+ "fuel-core-storage",
+ "fuel-core-types",
+ "hashbrown 0.14.5",
+ "hex",
+ "hex-literal",
+ "keccak-hash 0.11.0",
+ "paste",
+ "phantom-type",
+ "postcard",
+ "rwasm",
 ]
 
 [[package]]
@@ -6347,6 +6371,7 @@ dependencies = [
  "fuel-core-executor",
  "fuel-core-storage",
  "fuel-core-types",
+ "fuel-ee-core",
  "fuel-tx",
  "fuel-vm",
  "indicatif",
