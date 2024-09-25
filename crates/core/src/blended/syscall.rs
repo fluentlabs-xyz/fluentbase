@@ -723,7 +723,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
-        let preimage_hash = self.sdk.native_sdk().keccak256(params.input.as_ref());
+        let preimage_hash = SDK::keccak256(params.input.as_ref());
 
         self.sdk
             .write_preimage(context.address, preimage_hash, params.input);

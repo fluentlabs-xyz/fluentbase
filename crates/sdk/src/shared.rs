@@ -3,6 +3,7 @@ use fluentbase_types::{
     Address,
     BlockContext,
     Bytes,
+    ContextFreeNativeAPI,
     ContractContext,
     NativeAPI,
     SharedAPI,
@@ -44,6 +45,32 @@ impl<API: NativeAPI> SharedContextImpl<API> {
 
     pub fn commit_changes_and_exit(&mut self) -> ! {
         self.native_sdk.exit(0);
+    }
+}
+
+impl<API: NativeAPI> ContextFreeNativeAPI for SharedContextImpl<API> {
+    fn keccak256(data: &[u8]) -> B256 {
+        API::keccak256(data)
+    }
+
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
+        API::poseidon(data)
+    }
+
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        API::poseidon_hash(fa, fb, fd)
+    }
+
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        API::ec_recover(digest, sig, rec_id)
+    }
+
+    fn debug_log(message: &str) {
+        API::debug_log(message)
     }
 }
 
@@ -196,21 +223,5 @@ impl<API: NativeAPI> SharedAPI for SharedContextImpl<API> {
 
     fn destroy_account(&mut self, address: Address) {
         self.native_sdk.syscall_destroy_account(&address);
-    }
-
-    fn debug_log(&self, message: &str) {
-        self.native_sdk.debug_log(message)
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.keccak256(data)
-    }
-
-    fn sha256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.sha256(data)
-    }
-
-    fn poseidon(&self, data: &[u8]) -> F254 {
-        self.native_sdk.poseidon(data)
     }
 }

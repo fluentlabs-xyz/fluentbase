@@ -1,9 +1,6 @@
 use crate::helpers::run_with_default_context;
-use alloy_rlp::{Bytes, Encodable};
-use core::str::from_utf8;
 use hex_literal::hex;
 use rwasm::{engine::RwasmConfig, rwasm::RwasmModule, Config, Engine, Module};
-use serde_json::Value::String;
 
 #[test]
 #[ignore]
@@ -17,7 +14,7 @@ fn test_example_keccak_rwasm() {
     input_bytes.append(&mut input.to_string().into_bytes());
     input_bytes.append(&mut input_data.to_vec());
 
-    let (output_jit, exit_code) = run_with_default_context(
+    let (_output_jit, exit_code) = run_with_default_context(
         include_bytes!("../../../examples/rwasm-jit/lib.wasm").to_vec(),
         input_bytes.as_slice(),
     );
@@ -54,7 +51,7 @@ fn test_example_greeting_rwasm() {
     input_bytes.append(&mut input_data.to_vec());
 
     println!("Compile and Run");
-    let (output_jit, exit_code) = run_with_default_context(
+    let (_output_jit, exit_code) = run_with_default_context(
         include_bytes!("../../../examples/rwasm-jit/lib.wasm").to_vec(),
         input_bytes.as_slice(),
     );
@@ -139,18 +136,18 @@ fn test_example_router_rwasm() {
     let original_module = Module::new(original_engine, &input_data[..]).unwrap();
     let imports = original_module.imports().collect::<Vec<_>>();
 
-    let rwasm_module = RwasmModule::from_module(&original_module);
+    let _rwasm_module = RwasmModule::from_module(&original_module);
 
     println!("Imports: {:?} {:?}", original_module.imports, imports);
 
-    let mut input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
+    let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
 
     println!("Only compile");
     let mut input_bytes = vec![0, input.len() as u8];
     input_bytes.append(&mut input.clone());
     input_bytes.append(&mut input_data.to_vec());
 
-    let (output_jit, exit_code) = run_with_default_context(
+    let (_output_jit, exit_code) = run_with_default_context(
         include_bytes!("../../../examples/rwasm-jit/lib.wasm").to_vec(),
         input_bytes.as_slice(),
     );
