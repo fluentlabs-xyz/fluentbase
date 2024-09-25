@@ -292,7 +292,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         // calc source code hash
-        let source_code_hash = self.sdk.native_sdk().keccak256(inputs.init_code.as_ref());
+        let source_code_hash = SDK::keccak256(inputs.init_code.as_ref());
 
         // create an account
         let salt_hash = match inputs.scheme {

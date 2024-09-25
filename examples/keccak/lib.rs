@@ -19,7 +19,7 @@ impl<SDK: SharedAPI> HASHING<SDK> {
         // copy input to the allocated memory
         self.sdk.read(input, 0);
         // calculate keccak256 & poseidon hashes
-        let keccak256_hash = self.sdk.keccak256(input);
+        let keccak256_hash = SDK::keccak256(input);
         // write both hashes to output (multiple writes do append)
         self.sdk.write(keccak256_hash.as_slice());
     }

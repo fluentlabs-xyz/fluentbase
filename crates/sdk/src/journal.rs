@@ -11,6 +11,7 @@ use fluentbase_types::{
     AccountStatus,
     BlockContext,
     CallPrecompileResult,
+    ContextFreeNativeAPI,
     ContractContext,
     DestroyedAccountResult,
     ExitCode,
@@ -250,6 +251,32 @@ impl<API: NativeAPI> JournalState<API> {
 
     pub fn rewrite_contract_context(&mut self, contract_context: ContractContext) {
         self.contract_context = Some(contract_context);
+    }
+}
+
+impl<API: NativeAPI> ContextFreeNativeAPI for JournalState<API> {
+    fn keccak256(data: &[u8]) -> B256 {
+        API::keccak256(data)
+    }
+
+    fn sha256(data: &[u8]) -> B256 {
+        API::sha256(data)
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
+        API::poseidon(data)
+    }
+
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
+        API::poseidon_hash(fa, fb, fd)
+    }
+
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+        API::ec_recover(digest, sig, rec_id)
+    }
+
+    fn debug_log(message: &str) {
+        API::debug_log(message)
     }
 }
 
@@ -563,7 +590,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn write_preimage(&mut self, preimage: Bytes) -> B256 {
         let address = self.contract_context.as_ref().unwrap().address;
-        let code_hash = self.native_sdk.keccak256(preimage.as_ref());
+        let code_hash = API::keccak256(preimage.as_ref());
         SovereignAPI::write_preimage(self, address, code_hash, preimage);
         code_hash
     }
@@ -617,21 +644,5 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
 
     fn destroy_account(&mut self, _address: Address) {
         todo!()
-    }
-
-    fn debug_log(&self, message: &str) {
-        self.native_sdk.debug_log(message)
-    }
-
-    fn keccak256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.keccak256(data)
-    }
-
-    fn sha256(&self, data: &[u8]) -> B256 {
-        self.native_sdk.sha256(data)
-    }
-
-    fn poseidon(&self, data: &[u8]) -> F254 {
-        self.native_sdk.poseidon(data)
     }
 }
