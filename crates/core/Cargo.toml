@@ -15,6 +15,7 @@ fluentbase-runtime = { workspace = true, default-features = false, optional = tr
 rwasm = { workspace = true, default-features = false }
 revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
 revm-primitives = { workspace = true, default-features = false }
+solana_rbpf = "0.8.0"
 
 byteorder = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
