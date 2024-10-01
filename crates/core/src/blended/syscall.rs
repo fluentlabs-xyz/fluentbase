@@ -163,13 +163,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 value,
                 params.fuel_limit,
                 is_cold,
-            ) {
+            )
+            .filter(|gas_cost| *gas_cost <= params.fuel_limit)
+            {
                 Some(gas_cost) => gas_cost,
                 None => return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas),
             };
-            if gas_cost > params.fuel_limit {
-                return NextAction::from_exit_code(params.fuel_limit, ExitCode::OutOfGas);
-            }
             gas_cost
         } else {
             0
@@ -724,7 +723,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);
         }
 
-        let preimage_hash = self.sdk.native_sdk().keccak256(params.input.as_ref());
+        let preimage_hash = SDK::keccak256(params.input.as_ref());
 
         self.sdk
             .write_preimage(context.address, preimage_hash, params.input);

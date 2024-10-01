@@ -5,7 +5,6 @@ use crate::{
     Bytes32,
     ExitCode,
     JournalCheckpoint,
-    NativeAPI,
     SovereignAPI,
     B256,
     F254,
@@ -189,11 +188,10 @@ impl Account {
     ) {
         // calc source code hash (we use keccak256 for backward compatibility)
         self.source_code_hash =
-            source_hash.unwrap_or_else(|| sdk.native_sdk().keccak256(source_bytecode.as_ref()));
+            source_hash.unwrap_or_else(|| SDK::keccak256(source_bytecode.as_ref()));
         self.source_code_size = source_bytecode.len() as u64;
         // calc rwasm code hash (we use poseidon function for rWASM bytecode)
-        self.rwasm_code_hash =
-            rwasm_hash.unwrap_or_else(|| sdk.native_sdk().poseidon(rwasm_bytecode.as_ref()));
+        self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| SDK::poseidon(rwasm_bytecode.as_ref()));
         self.rwasm_code_size = rwasm_bytecode.len() as u64;
         // write all changes to database
         sdk.write_account(self.clone(), AccountStatus::Modified);
@@ -217,9 +215,9 @@ impl Account {
         sdk.write_account(caller.clone(), AccountStatus::Modified);
         // calc address
         let callee_address = if let Some((salt, hash)) = salt_hash {
-            calc_create2_address(sdk.native_sdk(), &caller.address, &salt, &hash)
+            calc_create2_address::<SDK>(&caller.address, &salt, &hash)
         } else {
-            calc_create_address(sdk.native_sdk(), &caller.address, old_nonce)
+            calc_create_address::<SDK>(&caller.address, old_nonce)
         };
         // load account before checkpoint to keep it warm even in case of revert
         let (mut callee, _) = sdk.account(&callee_address);

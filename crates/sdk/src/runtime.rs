@@ -25,7 +25,7 @@ use fluentbase_runtime::{
     DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
-use fluentbase_types::{Bytes, NativeAPI, UnwrapExitCode, B256, F254};
+use fluentbase_types::{Bytes, ContextFreeNativeAPI, NativeAPI, UnwrapExitCode, B256, F254};
 use std::{cell::RefCell, mem::take};
 
 pub struct RuntimeContextWrapper {
@@ -48,27 +48,33 @@ impl Clone for RuntimeContextWrapper {
     }
 }
 
-impl NativeAPI for RuntimeContextWrapper {
-    fn keccak256(&self, data: &[u8]) -> B256 {
+impl ContextFreeNativeAPI for RuntimeContextWrapper {
+    fn keccak256(data: &[u8]) -> B256 {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn poseidon(&self, data: &[u8]) -> F254 {
+    fn sha256(data: &[u8]) -> B256 {
+        todo!("not implemented")
+    }
+
+    fn poseidon(data: &[u8]) -> F254 {
         SyscallPoseidon::fn_impl(data)
     }
 
-    fn poseidon_hash(&self, fa: &F254, fb: &F254, fd: &F254) -> F254 {
+    fn poseidon_hash(fa: &F254, fb: &F254, fd: &F254) -> F254 {
         SyscallPoseidonHash::fn_impl(fa, fb, fd).unwrap_exit_code()
     }
 
-    fn ec_recover(&self, digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
+    fn ec_recover(digest: &B256, sig: &[u8; 64], rec_id: u8) -> [u8; 65] {
         SyscallEcrecover::fn_impl(digest, sig, rec_id).unwrap_exit_code()
     }
 
-    fn debug_log(&self, message: &str) {
+    fn debug_log(message: &str) {
         SyscallDebugLog::fn_impl(message.as_bytes())
     }
+}
 
+impl NativeAPI for RuntimeContextWrapper {
     fn read(&self, target: &mut [u8], offset: u32) {
         let result = SyscallRead::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
             .unwrap_exit_code();
