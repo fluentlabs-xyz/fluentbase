@@ -73,6 +73,10 @@ mod tests {
         TestBuilder::new(1234u64)
     }
     fn contract_context() -> ContractContext {
+        // [TODO:gmm] rewrite for solana contract context:
+        // - programs
+        // - accounts
+        // - signatures
         ContractContext {
             address: alloy_primitives::Address::from_slice(&[01; 20]),
             bytecode_address: alloy_primitives::Address::from_slice(&[00; 20]),
