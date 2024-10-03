@@ -3087,6 +3087,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-fuel"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types",
+ "fluentbase-sdk 0.1.0",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-greeting"
 version = "0.1.0"
 dependencies = [
