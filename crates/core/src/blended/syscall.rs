@@ -12,7 +12,6 @@ use fluentbase_sdk::{
     Bytes,
     ContractContext,
     ExitCode,
-    NativeAPI,
     SovereignAPI,
     SyscallInvocationParams,
     B256,
@@ -741,7 +740,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
-        let is_gas_free = is_gas_free_call(&context.bytecode_address);
+        let _is_gas_free = is_gas_free_call(&context.bytecode_address);
 
         // make sure we have at least 32 bytes
         if params.input.len() != 32 {

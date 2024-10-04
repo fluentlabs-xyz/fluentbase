@@ -50,7 +50,6 @@ pub trait NativeAPI: ContextFreeNativeAPI {
     fn output_size(&self) -> u32;
     fn read_output(&self, target: &mut [u8], offset: u32);
     fn state(&self) -> u32;
-    fn read_context(&self, target: &mut [u8], offset: u32);
     fn fuel(&self) -> u64;
     fn charge_fuel(&self, value: u64) -> u64;
     fn exec(&self, code_hash: &F254, input: &[u8], gas_limit: u64, state: u32) -> (u64, i32);

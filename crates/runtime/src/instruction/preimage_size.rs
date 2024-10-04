@@ -14,7 +14,9 @@ impl SyscallPreimageSize {
     }
 
     pub fn fn_impl(ctx: &RuntimeContext, hash: &[u8]) -> Result<u32, ExitCode> {
-        let preimage_size = ctx.jzkt().preimage_size(hash.try_into().unwrap());
+        let preimage_size = ctx
+            .preimage_resolver()
+            .preimage_size(hash.try_into().unwrap());
         Ok(preimage_size)
     }
 }
