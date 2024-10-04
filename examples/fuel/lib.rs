@@ -2,7 +2,7 @@
 
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{router, signature, Contract},
+    derive::{function_id, router, signature, Contract},
     Address,
     ExitCode,
     SharedAPI,
@@ -15,7 +15,8 @@ pub struct FvmLoaderEntrypoint<SDK> {
 
 pub trait RouterAPI {
     fn fvm_deposit(&mut self, msg: &[u8], caller: Address);
-    fn fvm_withdraw(&mut self, msg: &[u8]);
+    fn fvm_withdraw(&mut self, msg: &mut [u8]);
+    fn fvm_example(&mut self, msg: &[u8]);
 }
 
 #[router(mode = "solidity")]
@@ -26,7 +27,15 @@ impl<SDK: SharedAPI> RouterAPI for FvmLoaderEntrypoint<SDK> {
         self.sdk.write(&msg.as_bytes());
     }
 
-    fn fvm_withdraw(&mut self, msg: &[u8]) {
+    // fn_id = 212u8,173u8,13u8,159u8
+    // NOTE: signature invalid - should be "fvmWithdraw(uint8[])" (without semicolon)
+    #[signature("fvmWithdraw(uint8[]);", false)]
+    fn fvm_withdraw(&mut self, msg: &mut [u8]) {
+        self.sdk.write(msg);
+    }
+
+    #[function_id("0x12345678")]
+    fn fvm_example(&mut self, msg: &[u8]) {
         self.sdk.write(msg);
     }
 }
@@ -67,7 +76,12 @@ mod tests {
         let msg = vec![1, 2, 3, 4, 5];
         let call_fvm_deposit = fvmWithdrawCall { msg: msg.clone() };
 
-        let native_sdk = TestingContext::empty().with_input(call_fvm_deposit.abi_encode());
+        let mut input = call_fvm_deposit.abi_encode();
+        let real_func_id = [212u8, 173u8, 13u8, 159u8];
+
+        input[0..4].copy_from_slice(&real_func_id);
+
+        let native_sdk = TestingContext::empty().with_input(input);
         let sdk = JournalState::empty(native_sdk.clone());
 
         let mut contract = FvmLoaderEntrypoint::new(sdk);
@@ -81,61 +95,10 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_input() {
-        let caller = Address::default();
-        let msg = "Hello World!".as_bytes();
-
-        let call_fvm_deposit = fvmDepositCall {
-            msg: msg.to_vec(),
-            caller,
-        };
-
-        let input = call_fvm_deposit.abi_encode();
-
-        println!("input: {:?}", input);
-
-        let decoded = fvmDepositCall::abi_decode(&input, false);
-
-        assert_eq!(decoded.unwrap().msg, msg);
-    }
-
-    #[test]
-    fn test_decode_input() {
-        let input = [
-            208, 55, 105, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 101, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            108, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 114, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 33,
-        ];
-
-        let decoded = fvmDepositCall::abi_decode(&input[4..], false);
-        println!("Decoded: {:?}", decoded.err());
-    }
-
-    #[test]
     fn test_signature_works() {
         let caller = Address::default();
         let msg = "Hello World!".as_bytes();
-        // FIXME: we can't use fvmDepositCall structure here, because it was created for method,
-        // // signature. So probably we would like to create
 
-        // the problem is here. We need to build correct input for the contract.
-        // probably we need to provide some tooling for this part
-        //
         let call_fvm_deposit = fvmDepositCall {
             msg: msg.to_vec(),
             caller,
