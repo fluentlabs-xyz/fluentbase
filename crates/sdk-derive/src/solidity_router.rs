@@ -11,6 +11,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Delimiter, Literal, Punct, Spacing, Span, TokenStream as TokenStream2};
 use proc_macro_error::emit_error;
 use quote::{quote, ToTokens, TokenStreamExt};
+use regex::Regex;
 use syn::{
     parse::{Parse, ParseStream, Parser},
     parse_macro_input,
@@ -58,8 +59,6 @@ pub fn derive_solidity_router(input: TokenStream) -> Result<TokenStream> {
 
     // Check if the fallback method exists
     let has_fallback = methods_to_route.iter().any(|m| m.fn_name == "fallback");
-
-    println!("has fallback: {}", has_fallback);
 
     // Exclude fallback from the routes and create selectors for routing
     let routes_except_fallback: Vec<Route> = methods_to_route
@@ -335,9 +334,6 @@ impl Parse for Route {
             _ => false,
         };
 
-        eprintln!("Function ID: {:?}", function_id);
-        eprintln!("Signature: {:?}", &get_minimal_sol_signature(&method));
-
         Ok(Route {
             function_id,
             fn_name: method.sig.ident.to_string(),
@@ -417,6 +413,15 @@ impl Route {
             let decode_args: Vec<TokenStream2> =
                 self.args.iter().map(|arg| arg.to_decode_token()).collect();
 
+            let field_names: Vec<TokenStream2> = self
+                .args
+                .iter()
+                .map(|arg| {
+                    let ident = &arg.ident;
+                    quote! { #ident }
+                })
+                .collect();
+
             quote! {
                 // FIXME:
                 // TODO: d1r1
@@ -426,7 +431,7 @@ impl Route {
                 input[0..4].copy_from_slice(&#fn_call_name::SELECTOR);
                 let (#(#decode_args),*) = match #fn_call_name::abi_decode(&input, true) {
                     Ok(decoded) => (
-                        #(decoded.#decode_args),*
+                        #(decoded.#field_names),*
                     ),
                     Err(_) => panic!("failed to decode input"),
                 };
@@ -465,7 +470,14 @@ impl Arg {
 
     fn to_decode_token(&self) -> TokenStream2 {
         let ident = &self.ident;
-        quote! { #ident }
+        match &self.ty {
+            Type::Reference(ty_ref) if ty_ref.mutability.is_some() => {
+                quote! { mut #ident }
+            }
+            _ => {
+                quote! { #ident }
+            }
+        }
     }
 
     fn to_call_token(&self) -> TokenStream2 {
@@ -531,19 +543,16 @@ fn get_function_id(method: &ImplItemFn) -> [u8; 4] {
     let method_name = &method.sig.ident;
     let sol_method_name = rust_name_to_sol(method_name);
 
-    // Получаем только типы аргументов с помощью rust_type_to_sol
     let input_types: Vec<String> = method
         .sig
         .inputs
         .iter()
         .filter_map(|arg| {
             if let FnArg::Typed(pat_type) = arg {
-                // Convert Rust type to Solidity type using `rust_type_to_sol`, which returns a
-                // `TokenStream2`.
                 let ty = &pat_type.ty;
-                Some(rust_type_to_sol(ty).to_string()) // Convert the TokenStream2 to String here.
+                Some(rust_type_to_sol(ty).to_string())
             } else {
-                None // Non-typed arguments are skipped.
+                None
             }
         })
         .collect();
@@ -579,55 +588,27 @@ fn parse_function_id(input: &str) -> Result<[u8; 4]> {
     result.copy_from_slice(&bytes);
     Ok(result)
 }
-// fn validate_signature(signature: &str) -> Result<()> {
-//     let signature_tokens: TokenStream2 = signature.parse()?;
 
-//     let file: File = parse2(signature_tokens).map_err(|e| {
-//         Error::new(
-//             Span::call_site(),
-//             format!("Failed to parse signature: {}", e),
-//         )
-//     })?;
-
-//     let item = file
-//         .items
-//         .into_iter()
-//         .next()
-//         .ok_or_else(|| Error::new(Span::call_site(), "No items found in parsed file"))?;
-
-//     let function = match item {
-//         SolidityItem::Function(func) => func,
-//         _ => {
-//             return Err(Error::new(
-//                 Span::call_site(),
-//                 "Parsed item is not a function",
-//             ))
-//         }
-//     };
-
-//     if function.name.is_none() {
-//         return Err(Error::new(Span::call_site(), "Function name is empty"));
-//     }
-
-//     eprintln!("signature is valid");
-
-//     Ok(())
-// }
-
-use regex::Regex;
-
-fn validate_solidity_signature(signature: &str) -> core::result::Result<(), String> {
+pub fn validate_solidity_signature(signature: &str) -> Result<()> {
     let short_result = validate_short_signature(signature);
     let full_result = parse_full_signature(signature);
 
-    match (short_result, full_result) {
-        (Ok(_), _) | (_, Ok(_)) => Ok(()),
-        (Err(short_err), Err(full_err)) => Err(format!(
-            "Invalid signature. Neither short nor full format is valid.\n\
+    if short_result.is_ok() || full_result.is_ok() {
+        Ok(())
+    } else {
+        let span = signature.span();
+        let short_err = short_result.unwrap_err();
+        let full_err = full_result.unwrap_err();
+
+        Err(Error::new(
+            span,
+            format!(
+                "Invalid signature. Neither short nor full format is valid.\n\
              Short format error: {}\n\
              Full format error: {}",
-            short_err, full_err
-        )),
+                short_err, full_err
+            ),
+        ))
     }
 }
 
@@ -661,16 +642,15 @@ fn parse_full_signature(signature: &str) -> Result<()> {
         return Err(Error::new(Span::call_site(), "Function name is empty"));
     }
 
-    eprintln!("signature is valid");
-
     Ok(())
 }
 
 fn validate_short_signature(signature: &str) -> core::result::Result<(), String> {
-    let re =
-        Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*\((([a-zA-Z][a-zA-Z0-9]*(\[[0-9]*\])?(,\s*)?)*)\)$;")
-            .unwrap();
-    if re.is_match(signature) {
+    let signature_no_whitespace: String =
+        signature.chars().filter(|c| !c.is_whitespace()).collect();
+
+    let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*\((([a-zA-Z][a-zA-Z0-9]*(\[[0-9]*\])?)(,([a-zA-Z][a-zA-Z0-9]*(\[[0-9]*\])?))*)?\)$").unwrap();
+    if re.is_match(&signature_no_whitespace) {
         Ok(())
     } else {
         Err("Invalid short signature format".to_string())
@@ -682,6 +662,40 @@ mod tests {
     use super::*;
     use quote::quote;
     use syn::{parse2, parse_quote, Attribute};
+
+    #[test]
+    fn test_validate_short_signature() {
+        // Valid signatures
+        assert!(validate_short_signature("transfer(address,uint256)").is_ok());
+        assert!(validate_short_signature("balanceOf(address)").is_ok());
+        assert!(validate_short_signature("approve(address,uint256)").is_ok());
+        assert!(validate_short_signature("transfer_tokens(address,uint256[])").is_ok());
+        assert!(
+            validate_short_signature("complex_function(uint256,bool,string,address[])").is_ok()
+        );
+
+        // Valid signatures with spaces
+        assert!(validate_short_signature("transfer( address , uint256 )").is_ok());
+        assert!(validate_short_signature(" balanceOf ( address ) ").is_ok());
+        assert!(validate_short_signature("approve (address, uint256)").is_ok());
+        assert!(validate_short_signature("transfer_tokens(address, uint256[])").is_ok());
+
+        // Invalid signatures
+        assert!(validate_short_signature("").is_err());
+        assert!(validate_short_signature("invalid()signature").is_err());
+        assert!(validate_short_signature("1invalidName(uint256)").is_err());
+        assert!(validate_short_signature("transfer(address,uint256);").is_err());
+        assert!(validate_short_signature("transfer()extra").is_err());
+        assert!(validate_short_signature("transfer(uint256,)").is_err());
+        assert!(validate_short_signature("transfer(uint256").is_err());
+
+        // Error message check
+        if let Err(msg) = validate_short_signature("invalid()signature") {
+            assert_eq!(msg, "Invalid short signature format");
+        } else {
+            panic!("Expected an error, but got Ok");
+        }
+    }
 
     #[test]
     fn test_function_id_calc() {
@@ -714,7 +728,7 @@ mod tests {
 
         let sig = parsed_sig.unwrap();
         assert_eq!(sig.signature, "function simple() external");
-        assert!(sig.validate); // По умолчанию должно быть true
+        assert!(sig.validate);
     }
 
     #[test]
@@ -758,7 +772,7 @@ mod tests {
     #[test]
     fn test_route_parse_with_signature() {
         let input: TokenStream2 = quote! {
-            #[signature("function fvm_deposit(bytes msg, address caller) external")]
+            #[signature("function fvm_deposit(bytes msg, address caller) external;")]
             fn fvm_deposit(&mut self, msg: &[u8], caller: Address) {
                 self.sdk.write(msg);
             }
@@ -777,7 +791,7 @@ mod tests {
     #[test]
     fn test_route_parse_with_validate_signature() {
         let input: TokenStream2 = quote! {
-            #[signature("function fvm_withdraw(uint256 amount) external", true)]
+            #[signature("function fvm_withdraw(uint256 amount) external;", true)]
             fn fvm_withdraw(&mut self, amount: u64) {
                 self.sdk.write(&amount.to_le_bytes());
             }
@@ -826,7 +840,7 @@ mod tests {
 
         let route = parsed_route.unwrap();
         assert_eq!(route.fn_name, "custom_function");
-        assert_eq!(route.function_id, [0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(route.function_id, [18u8, 52u8, 86u8, 120u8]);
         assert_eq!(route.args.len(), 1);
         assert_eq!(route.args[0].ident.to_string(), "param");
     }
@@ -848,9 +862,9 @@ mod tests {
     #[test]
     fn test_route_to_tokens() {
         let route = Route {
-            function_id: [0x12, 0x34, 0x56, 0x78],
+            function_id: [18u8, 52u8, 86u8, 120u8],
             fn_name: "my_function".to_string(),
-            signature: "function my_function(uint256 x) external".to_string(),
+            signature: "function myFunction(uint256 x) external;".to_string(),
             args: vec![Arg {
                 ident: Ident::new("x", Span::call_site()),
                 ty: parse_str::<Type>("u256").unwrap(),
@@ -862,10 +876,11 @@ mod tests {
         route.to_tokens(&mut tokens);
 
         let expected_tokens = quote! {
-            [0x12, 0x34, 0x56, 0x78] => {
-                let (x) = match my_functionCall::abi_decode(&input, true) {
-                    Ok(decoded) => (decoded.x),
-                    Err(_) => panic!("failed to decode input"),
+            [18u8, 52u8, 86u8, 120u8] => {
+                input[0..4].copy_from_slice(&myFunctionCall::SELECTOR);
+                let (x) = match myFunctionCall::abi_decode(&input, true) {
+                    Ok (decoded) => (decoded.x) ,
+                    Err (_) => panic!("failed to decode input"),
                 };
                 let output = self.my_function(x).abi_encode();
                 self.sdk.write(&output);
@@ -878,9 +893,10 @@ mod tests {
     #[test]
     fn test_route_to_tokens_multiple_args() {
         let route = Route {
-            function_id: [0xde, 0xad, 0xbe, 0xef],
+            function_id: [222u8, 173u8, 190u8, 239u8],
             fn_name: "multiple_args_function".to_string(),
-            signature: "function multiple_args_function(uint256 x, address y) external".to_string(),
+            signature: "function multiple_args_function(uint256 x, address y) external;"
+                .to_string(),
             args: vec![
                 Arg {
                     ident: Ident::new("x", Span::call_site()),
@@ -898,9 +914,10 @@ mod tests {
         route.to_tokens(&mut tokens);
 
         let expected_tokens = quote! {
-            [0xde, 0xad, 0xbe, 0xef] => {
-                let (x, y) = match multiple_args_functionCall :: abi_decode (& input , true) {
-                    Ok (decoded) => (decoded.x, decoded.y),
+            [222u8, 173u8, 190u8, 239u8] => {
+                input[0..4].copy_from_slice(&multipleArgsFunctionCall::SELECTOR);
+                let (x, y) = match multipleArgsFunctionCall::abi_decode(&input, true) {
+                    Ok(decoded) => (decoded.x, decoded.y),
                     Err (_) => panic!("failed to decode input"),
                 };
                 let output = self.multiple_args_function(x, y).abi_encode();
@@ -914,9 +931,9 @@ mod tests {
     #[test]
     fn test_route_to_tokens_with_references() {
         let route = Route {
-            function_id: [0xab, 0xcd, 0xef, 0x12],
+            function_id: [171u8, 205u8, 239u8, 18u8],
             fn_name: "function_with_references".to_string(),
-            signature: "function function_with_references(uint256 x, address y) external"
+            signature: "function function_with_references(uint256 x, address y) external;"
                 .to_string(),
             args: vec![
                 Arg {
@@ -935,12 +952,13 @@ mod tests {
         route.to_tokens(&mut tokens);
 
         let expected_tokens = quote! {
-            [0xab, 0xcd, 0xef, 0x12] => {
-                let (x, y) = match function_with_referencesCall :: abi_decode (& input , true) {
-                    Ok (decoded) => (decoded.x, decoded.y),
+            [171u8, 205u8, 239u8, 18u8] => {
+                input[0..4].copy_from_slice(&functionWithReferencesCall::SELECTOR);
+                let (x, mut y) = match functionWithReferencesCall::abi_decode(&input, true) {
+                    Ok(decoded) => (decoded.x, decoded.y),
                     Err (_) => panic!("failed to decode input"),
                 };
-                let output = self.function_with_references(&x, &mut y).abi_encode(); // Обработка ссылок
+                let output = self.function_with_references(&x, &mut y).abi_encode();
                 self.sdk.write(&output);
             }
         };
