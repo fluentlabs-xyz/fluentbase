@@ -1,19 +1,15 @@
 use crate::{
     instruction::{
         exec::{SysExecResumable, SyscallExec},
-        runtime_register_shared_handlers,
-        runtime_register_sovereign_handlers,
+        runtime_register_handlers,
     },
-    types::{InMemoryTrieDb, RuntimeError},
-    zktrie::ZkTrieStateDb,
-    JournaledTrie,
+    types::{EmptyPreimageResolver, PreimageResolver, RuntimeError},
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     create_import_linker,
     Bytes,
     ExitCode,
-    IJournaledTrie,
     SysFuncIdx::STATE,
     F254,
     POSEIDON_EMPTY,
@@ -42,10 +38,9 @@ use std::{
     cell::RefCell,
     fmt::{Debug, Formatter},
     mem::take,
+    rc::Rc,
     sync::atomic::{AtomicU32, Ordering},
 };
-
-pub type DefaultEmptyRuntimeDatabase = JournaledTrie<ZkTrieStateDb<InMemoryTrieDb>>;
 
 #[derive(Clone)]
 pub enum BytecodeOrHash {
@@ -86,14 +81,11 @@ pub struct RuntimeContext {
     pub(crate) state: u32,
     pub(crate) call_depth: u32,
     pub(crate) trace: bool,
-    // #[deprecated(note = "this parameter can be removed, we filter on the AOT level")]
-    pub(crate) is_shared: bool,
     pub(crate) input: Vec<u8>,
-    pub(crate) context: Vec<u8>,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
-    pub(crate) jzkt: Option<Box<dyn IJournaledTrie>>,
+    pub(crate) preimage_resolver: Rc<dyn PreimageResolver>,
 }
 
 impl Debug for RuntimeContext {
@@ -108,14 +100,12 @@ impl Default for RuntimeContext {
             bytecode: BytecodeOrHash::default(),
             fuel_limit: 0,
             state: 0,
-            is_shared: false,
             input: vec![],
-            context: vec![],
             call_depth: 0,
             trace: false,
             execution_result: ExecutionResult::default(),
             resumable_invocation: None,
-            jzkt: None,
+            preimage_resolver: Rc::new(EmptyPreimageResolver::default()),
         }
     }
 }
@@ -140,26 +130,12 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_context(mut self, context: Vec<u8>) -> Self {
-        self.context = context;
-        self
-    }
-
     pub fn change_input(&mut self, input_data: Vec<u8>) {
         self.input = input_data;
     }
 
-    pub fn change_context(&mut self, new_context: Vec<u8>) {
-        self.context = new_context;
-    }
-
     pub fn with_state(mut self, state: u32) -> Self {
         self.state = state;
-        self
-    }
-
-    pub fn with_is_shared(mut self, is_shared: bool) -> Self {
-        self.is_shared = is_shared;
         self
     }
 
@@ -168,8 +144,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn with_jzkt(mut self, jzkt: Box<dyn IJournaledTrie>) -> Self {
-        self.jzkt = Some(jzkt);
+    pub fn with_preimage_resolver(mut self, preimage_resolver: Rc<dyn PreimageResolver>) -> Self {
+        self.preimage_resolver = preimage_resolver;
         self
     }
 
@@ -183,8 +159,8 @@ impl RuntimeContext {
         self
     }
 
-    pub fn jzkt(&self) -> &Box<dyn IJournaledTrie> {
-        self.jzkt.as_ref().expect("jzkt is not initialized")
+    pub fn preimage_resolver(&self) -> &dyn PreimageResolver {
+        self.preimage_resolver.as_ref()
     }
 
     pub fn depth(&self) -> u32 {
@@ -201,14 +177,6 @@ impl RuntimeContext {
 
     pub fn input_size(&self) -> u32 {
         self.input.len() as u32
-    }
-
-    pub fn context(&self) -> &Vec<u8> {
-        self.context.as_ref()
-    }
-
-    pub fn context_size(&self) -> u32 {
-        self.context.len() as u32
     }
 
     pub fn argv_buffer(&self) -> Vec<u8> {
@@ -429,11 +397,7 @@ impl Runtime {
         }
 
         // register linker trampolines for external calls
-        if store.data().is_shared {
-            runtime_register_shared_handlers(&mut linker, &mut store)
-        } else {
-            runtime_register_sovereign_handlers(&mut linker, &mut store)
-        }
+        runtime_register_handlers(&mut linker, &mut store);
 
         Self { store, linker }
     }
@@ -477,9 +441,8 @@ impl Runtime {
                                 let bytecode = self
                                     .store
                                     .data_mut()
-                                    .jzkt
+                                    .preimage_resolver
                                     .as_ref()
-                                    .ok_or(RuntimeError::UnloadedModule(*hash))?
                                     .preimage(hash);
                                 caching_runtime
                                     .cached_bytecode

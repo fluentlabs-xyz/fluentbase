@@ -13,7 +13,7 @@ impl<SDK: SharedAPI> PANIC<SDK> {
         // any custom deployment logic here
     }
     fn main(&self) {
-        // write "Hello, World" message into output
+        // panic with some message
         panic!("it is panic time")
     }
 }
