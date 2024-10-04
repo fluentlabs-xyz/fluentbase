@@ -1,6 +1,156 @@
 use crate::helpers::run_with_default_context;
 use hex_literal::hex;
 use rwasm::{engine::RwasmConfig, rwasm::RwasmModule, Config, Engine, Module};
+use serde_json::Value::String;
+use sp1_sdk::{ProverClient, SP1Stdin};
+
+#[test]
+#[ignore]
+fn test_example_keccak_sp1() {
+    pub const FIBONACCI_ELF: &[u8] = include_bytes!("../../../examples/sp1/elf/riscv32im-succinct-zkvm-elf");
+
+    sp1_sdk::utils::setup_logger();
+
+    let client = ProverClient::new();
+
+    let input_data = include_bytes!("../../../examples/keccak/lib.wasm");
+
+    let input = "Hello World";
+
+    let mut input_bytes = vec![1, input.len() as u8];
+    input_bytes.append(&mut input.to_string().into_bytes());
+    input_bytes.append(&mut input_data.to_vec());
+
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input_bytes);
+
+    let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), input.as_bytes());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_sp1.to_vec(), output);
+
+    println!("SP1 opcode counts: {:?}", report.opcode_counts.as_slice().iter().sum::<u64>());
+}
+
+#[test]
+#[ignore]
+fn test_example_greeting_sp1() {
+    pub const FIBONACCI_ELF: &[u8] = include_bytes!("../../../examples/sp1/elf/riscv32im-succinct-zkvm-elf");
+
+    sp1_sdk::utils::setup_logger();
+
+    let client = ProverClient::new();
+
+    let input_data = include_bytes!("../../../examples/greeting/lib.wasm");
+
+    let input = "Hello World";
+
+    let mut input_bytes = vec![1, input.len() as u8];
+    input_bytes.append(&mut input.to_string().into_bytes());
+    input_bytes.append(&mut input_data.to_vec());
+
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input_bytes);
+
+    let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), input.as_bytes());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_sp1.to_vec(), output);
+
+    println!("SP1 opcode counts: {:?}", report.opcode_counts.as_slice().iter().sum::<u64>());
+}
+
+#[test]
+#[ignore]
+fn test_example_panic_sp1() {
+    pub const FIBONACCI_ELF: &[u8] = include_bytes!("../../../examples/sp1/elf/riscv32im-succinct-zkvm-elf");
+
+    sp1_sdk::utils::setup_logger();
+
+    let client = ProverClient::new();
+
+    let input_data = include_bytes!("../../../examples/panic/lib.wasm");
+
+    let mut input_bytes = vec![1, 0];
+    input_bytes.append(&mut input_data.to_vec());
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input_bytes);
+
+    let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
+    assert_eq!(exit_code, -71);
+
+    assert_eq!(output_sp1.to_vec(), output);
+
+    println!("SP1 opcode counts: {:?}", report.opcode_counts.as_slice().iter().sum::<u64>());
+}
+
+#[test]
+#[ignore]
+fn test_example_router_sp1() {
+    pub const FIBONACCI_ELF: &[u8] = include_bytes!("../../../examples/sp1/elf/riscv32im-succinct-zkvm-elf");
+
+    sp1_sdk::utils::setup_logger();
+
+    let client = ProverClient::new();
+
+    let input_data = include_bytes!("../../../examples/router/lib.wasm");
+
+    let mut input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
+
+    let mut input_bytes = vec![1, input.len() as u8];
+    input_bytes.append(&mut input.clone());
+    input_bytes.append(&mut input_data.to_vec());
+
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input_bytes);
+
+    let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), input.as_slice());
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_sp1.to_vec(), output);
+
+    println!("SP1 opcode counts: {:?}", report.opcode_counts.as_slice().iter().sum::<u64>());
+}
+
+#[test]
+#[ignore]
+fn test_example_chess_sp1() {
+    pub const FIBONACCI_ELF: &[u8] = include_bytes!("../../../examples/sp1/elf/riscv32im-succinct-zkvm-elf");
+
+    sp1_sdk::utils::setup_logger();
+
+    let client = ProverClient::new();
+
+    let input_data = include_bytes!("../../../examples/shakmaty/lib.wasm");
+
+    let mut input_bytes = vec![1, 0];
+    input_bytes.append(&mut input_data.to_vec());
+
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&input_bytes);
+
+    let (output_sp1, report) = client.execute(FIBONACCI_ELF, stdin).run().unwrap();
+
+    let (output, exit_code) = run_with_default_context(input_data.to_vec(), &[]);
+    assert_eq!(exit_code, 0);
+
+    assert_eq!(output_sp1.to_vec(), output);
+
+    println!("SP1 opcode counts: {:?}", report.opcode_counts.as_slice().iter().sum::<u64>());
+}
 
 #[test]
 #[ignore]
@@ -113,34 +263,7 @@ fn test_example_panic_rwasm() {
 fn test_example_router_rwasm() {
     let input_data = include_bytes!("../../../examples/router/lib.wasm");
 
-    let mut config = Config::default();
-
-    config
-        .wasm_mutable_global(true)
-        .wasm_saturating_float_to_int(true)
-        .wasm_sign_extension(true)
-        .wasm_multi_value(true)
-        .wasm_bulk_memory(true)
-        .wasm_reference_types(true)
-        .wasm_tail_call(true)
-        .wasm_extended_const(true);
-    config.rwasm_config(RwasmConfig {
-        state_router: None,
-        entrypoint_name: None,
-        import_linker: None,
-        wrap_import_functions: false,
-    });
-
-    let engine = Engine::new(&config);
-    let original_engine = &engine;
-    let original_module = Module::new(original_engine, &input_data[..]).unwrap();
-    let imports = original_module.imports().collect::<Vec<_>>();
-
-    let _rwasm_module = RwasmModule::from_module(&original_module);
-
-    println!("Imports: {:?} {:?}", original_module.imports, imports);
-
-    let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
+    let mut input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000").to_vec();
 
     println!("Only compile");
     let mut input_bytes = vec![0, input.len() as u8];
