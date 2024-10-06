@@ -11,3 +11,5 @@ fluentbase-types = { workspace = true, default-features = false }
 rwasm = { workspace = true, default-features = false }
 
 keccak-hash = { version = "0.10.0", default-features = false }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+
