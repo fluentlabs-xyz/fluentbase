@@ -21,6 +21,13 @@ keccak-hash = { version = "0.10.0" }
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
 hashbrown = { workspace = true }
 hex = { version = "0.4.3", optional = true }
+tiny-keccak = "2.0.2"
+num = "0.4.3"
+sp1-curves = { version = "2.0.0" }
+sp1-primitives = { version = "2.0.0" }
+tracing = "0.1.40"
+serde = { version = "1.0.209", features = ["derive"] }
+
 #chrono = "0.4.38"
 
 [dev-dependencies]

@@ -17,6 +17,8 @@ pub mod read_output;
 pub mod resume;
 pub mod state;
 pub mod write;
+mod sp1;
+
 
 use crate::{
     impl_runtime_handler,
