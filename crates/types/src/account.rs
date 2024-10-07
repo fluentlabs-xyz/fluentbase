@@ -7,7 +7,6 @@ use crate::{
     JournalCheckpoint,
     SovereignAPI,
     B256,
-    F254,
     KECCAK_EMPTY,
     NATIVE_TRANSFER_ADDRESS,
     NATIVE_TRANSFER_KECCAK,
@@ -19,16 +18,14 @@ use fluentbase_codec::Codec;
 use revm_primitives::AccountInfo;
 
 /// Number of fields
-pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 6;
+pub const JZKT_ACCOUNT_FIELDS_COUNT: u32 = 4;
 pub const JZKT_STORAGE_FIELDS_COUNT: u32 = 1;
 
 /// Account fields
 pub const JZKT_ACCOUNT_BALANCE_FIELD: u32 = 0;
 pub const JZKT_ACCOUNT_NONCE_FIELD: u32 = 1;
-pub const JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD: u32 = 2;
-pub const JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD: u32 = 3;
-pub const JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD: u32 = 4;
-pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
+pub const JZKT_ACCOUNT_CODE_SIZE_FIELD: u32 = 2;
+pub const JZKT_ACCOUNT_CODE_HASH_FIELD: u32 = 3;
 
 /// Compression flags for upper fields.
 ///
@@ -38,7 +35,7 @@ pub const JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD: u32 = 5;
 ///
 /// Mask is: 0b00001001
 pub const JZKT_ACCOUNT_COMPRESSION_FLAGS: u32 =
-    (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD);
+    (1 << JZKT_ACCOUNT_BALANCE_FIELD) + (1 << JZKT_ACCOUNT_CODE_HASH_FIELD);
 pub const JZKT_STORAGE_COMPRESSION_FLAGS: u32 = 0;
 
 pub type AccountCheckpoint = u64;
@@ -57,10 +54,8 @@ pub struct Account {
     pub address: Address,
     pub balance: U256,
     pub nonce: u64,
-    pub source_code_size: u64,
-    pub source_code_hash: B256,
-    pub rwasm_code_size: u64,
-    pub rwasm_code_hash: F254,
+    pub code_size: u64,
+    pub code_hash: B256,
 }
 
 impl Into<AccountInfo> for Account {
@@ -68,10 +63,8 @@ impl Into<AccountInfo> for Account {
         AccountInfo {
             balance: self.balance,
             nonce: self.nonce,
-            code_hash: self.source_code_hash,
-            rwasm_code_hash: self.rwasm_code_hash,
+            code_hash: self.code_hash,
             code: None,
-            rwasm_code: None,
         }
     }
 }
@@ -82,18 +75,12 @@ impl From<AccountInfo> for Account {
             address: Address::ZERO,
             balance: value.balance,
             nonce: value.nonce,
-            source_code_size: value
+            code_size: value
                 .code
                 .as_ref()
                 .map(|v| v.len() as u64)
                 .unwrap_or_default(),
-            source_code_hash: value.code_hash,
-            rwasm_code_size: value
-                .rwasm_code
-                .as_ref()
-                .map(|v| v.len() as u64)
-                .unwrap_or_default(),
-            rwasm_code_hash: value.rwasm_code_hash,
+            code_hash: value.code_hash,
         }
     }
 }
@@ -102,12 +89,10 @@ impl Default for Account {
     fn default() -> Self {
         Self {
             address: Address::ZERO,
-            rwasm_code_size: 0,
-            source_code_size: 0,
+            code_size: 0,
             nonce: 0,
             balance: U256::ZERO,
-            rwasm_code_hash: POSEIDON_EMPTY,
-            source_code_hash: KECCAK_EMPTY,
+            code_hash: KECCAK_EMPTY,
         }
     }
 }
@@ -134,25 +119,15 @@ impl Account {
                 .copy_from_slice(&fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]);
         }
         result.nonce = LittleEndian::read_u64(&fields[JZKT_ACCOUNT_NONCE_FIELD as usize]);
-        result.source_code_size =
-            LittleEndian::read_u64(&fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize]);
+        result.code_size = LittleEndian::read_u64(&fields[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize]);
         result
-            .source_code_hash
-            .copy_from_slice(&fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]);
-        result.rwasm_code_size =
-            LittleEndian::read_u64(&fields[JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD as usize]);
-        result
-            .rwasm_code_hash
-            .copy_from_slice(&fields[JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD as usize]);
+            .code_hash
+            .copy_from_slice(&fields[JZKT_ACCOUNT_CODE_HASH_FIELD as usize]);
         result
     }
 
     pub fn get_fields(&self) -> AccountFields {
         let mut account_fields: AccountFields = Default::default();
-        LittleEndian::write_u64(
-            &mut account_fields[JZKT_ACCOUNT_RWASM_CODE_SIZE_FIELD as usize][..],
-            self.rwasm_code_size,
-        );
         LittleEndian::write_u64(
             &mut account_fields[JZKT_ACCOUNT_NONCE_FIELD as usize][..],
             self.nonce,
@@ -160,13 +135,11 @@ impl Account {
         account_fields[JZKT_ACCOUNT_BALANCE_FIELD as usize]
             .copy_from_slice(&self.balance.as_le_slice());
 
-        account_fields[JZKT_ACCOUNT_SOURCE_CODE_HASH_FIELD as usize]
-            .copy_from_slice(self.source_code_hash.as_slice());
-        account_fields[JZKT_ACCOUNT_RWASM_CODE_HASH_FIELD as usize]
-            .copy_from_slice(self.rwasm_code_hash.as_slice());
+        account_fields[JZKT_ACCOUNT_CODE_HASH_FIELD as usize]
+            .copy_from_slice(self.code_hash.as_slice());
         LittleEndian::write_u64(
-            &mut account_fields[JZKT_ACCOUNT_SOURCE_CODE_SIZE_FIELD as usize][..],
-            self.source_code_size,
+            &mut account_fields[JZKT_ACCOUNT_CODE_SIZE_FIELD as usize][..],
+            self.code_size,
         );
         account_fields
     }
@@ -183,21 +156,14 @@ impl Account {
         sdk: &mut SDK,
         source_bytecode: Bytes,
         source_hash: Option<B256>,
-        rwasm_bytecode: Bytes,
-        rwasm_hash: Option<F254>,
     ) {
         // calc source code hash (we use keccak256 for backward compatibility)
-        self.source_code_hash =
-            source_hash.unwrap_or_else(|| SDK::keccak256(source_bytecode.as_ref()));
-        self.source_code_size = source_bytecode.len() as u64;
-        // calc rwasm code hash (we use poseidon function for rWASM bytecode)
-        self.rwasm_code_hash = rwasm_hash.unwrap_or_else(|| SDK::poseidon(rwasm_bytecode.as_ref()));
-        self.rwasm_code_size = rwasm_bytecode.len() as u64;
+        self.code_hash = source_hash.unwrap_or_else(|| SDK::hash256(source_bytecode.as_ref()));
+        self.code_size = source_bytecode.len() as u64;
         // write all changes to database
         sdk.write_account(self.clone(), AccountStatus::Modified);
         // make sure preimage of this hash is stored
-        sdk.write_preimage(self.address, self.source_code_hash, source_bytecode);
-        sdk.write_preimage(self.address, self.rwasm_code_hash, rwasm_bytecode);
+        sdk.write_preimage(self.address, self.code_hash, source_bytecode);
     }
 
     pub fn create_account_checkpoint<SDK: SovereignAPI>(
@@ -305,7 +271,7 @@ impl Account {
 
     #[inline(always)]
     pub fn is_empty_code_hash(&self) -> bool {
-        self.source_code_hash == KECCAK_EMPTY && self.rwasm_code_hash == POSEIDON_EMPTY
+        self.code_hash == KECCAK_EMPTY || self.code_hash == POSEIDON_EMPTY
     }
 
     #[inline(always)]
@@ -315,7 +281,7 @@ impl Account {
 
     #[inline(always)]
     pub fn is_zero_code_hash(&self) -> bool {
-        self.source_code_hash == B256::ZERO && self.rwasm_code_hash == B256::ZERO
+        self.code_hash == B256::ZERO
     }
 
     #[inline(always)]

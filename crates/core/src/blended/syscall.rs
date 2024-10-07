@@ -716,7 +716,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         context: &ContractContext,
         params: SyscallInvocationParams,
     ) -> NextAction {
-        let is_gas_free = is_gas_free_call(&context.bytecode_address);
+        let _is_gas_free = is_gas_free_call(&context.bytecode_address);
 
         if params.state != STATE_MAIN {
             return NextAction::from_exit_code(params.fuel_limit, ExitCode::MalformedSyscallParams);

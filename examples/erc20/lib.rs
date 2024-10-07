@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
+#![allow(dead_code)]
 extern crate alloc;
 extern crate fluentbase_sdk;
 

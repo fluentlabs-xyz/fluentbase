@@ -1,10 +1,10 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
+#![allow(unused)]
 
 use fluentbase_sdk::{
     basic_entrypoint,
-    derive::{function_id, router, signature, Contract},
+    derive::{router, signature, Contract},
     Address,
-    ExitCode,
     SharedAPI,
 };
 
@@ -34,7 +34,7 @@ impl<SDK: SharedAPI> RouterAPI for FvmLoaderEntrypoint<SDK> {
         self.sdk.write(msg);
     }
 
-    #[function_id("0x12345678")]
+    #[signature("0x12345678")]
     fn fvm_example(&mut self, msg: &[u8]) {
         self.sdk.write(msg);
     }
@@ -49,9 +49,7 @@ basic_entrypoint!(FvmLoaderEntrypoint);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::ops::Add;
     use fluentbase_sdk::{
-        address,
         journal::{JournalState, JournalStateBuilder},
         runtime::TestingContext,
         Address,

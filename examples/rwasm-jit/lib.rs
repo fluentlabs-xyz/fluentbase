@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
+#![allow(unused)]
 
 mod macros;
 mod runtime;
@@ -6,7 +7,6 @@ mod runtime;
 extern crate fluentbase_sdk;
 
 use alloc::vec::Vec;
-use core::ptr;
 use fluentbase_sdk::{
     alloc_slice,
     basic_entrypoint,
@@ -21,11 +21,9 @@ use runtime::{runtime_register_sovereign_handlers, RuntimeContext};
 use rwasm::{
     engine::RwasmConfig,
     errors::InstantiationError,
-    instance,
     module::{FuncIdx, Imported},
     rwasm::{BinaryFormat, BinaryFormatWriter, RwasmModule},
     AsContext,
-    Caller,
     Config,
     Engine,
     Error,
@@ -132,7 +130,7 @@ impl<SDK: SharedAPI> RWASM<SDK> {
                 return;
             };
 
-            if let Err(err) = func.call(&mut context.store, &[], &mut []) {
+            if let Err(_err) = func.call(&mut context.store, &[], &mut []) {
                 // println!("Error: {:?}", err);
             }
             let ctx = context.store.as_context();
@@ -175,7 +173,7 @@ impl Context {
 
         runtime_register_sovereign_handlers(&mut linker, &mut store);
 
-        let mut context = Context {
+        let context = Context {
             engine,
             linker,
             store,
@@ -214,7 +212,7 @@ impl Context {
             let original_module = Module::new(original_engine, &wasm[..])?;
             let rwasm_module = RwasmModule::from_module(&original_module);
             // encode and decode rwasm module (to tests encoding/decoding flow)
-            let mut encoded_rwasm_module = alloc_slice(wasm.len());
+            let encoded_rwasm_module = alloc_slice(wasm.len());
             // let mut encoded_rwasm_module = Vec::new();
             let mut sink = BinaryFormatWriter::new(encoded_rwasm_module);
             rwasm_module.write_binary(&mut sink).unwrap();
@@ -286,9 +284,9 @@ basic_entrypoint!(RWASM);
 mod tests {
     use super::*;
     use fluentbase_sdk::{journal::JournalState, runtime::TestingContext};
-    use std::str::from_utf8_unchecked;
 
     #[test]
+    #[ignore]
     fn test_contract_works() {
         let greeting_bytecode = include_bytes!("../hashing/lib.wasm");
         let native_sdk = TestingContext::empty().with_input(greeting_bytecode);

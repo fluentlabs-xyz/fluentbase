@@ -305,12 +305,7 @@ pub enum BytecodeType {
     EVM,
     WASM,
     ELF,
-    FVM,
 }
-
-/// Fuel asm signature (\00FASM)
-const FUEL_ASM_SIG_LEN: usize = 5;
-const FUEL_ASM_SIG: [u8; FUEL_ASM_SIG_LEN] = [0x00, 0x66, 0x61, 0x73, 0x6d];
 
 const WASM_SIG_LEN: usize = 4;
 /// WebAssembly signature (\00ASM)
@@ -339,10 +334,6 @@ impl BytecodeType {
         // case for rWASM contracts that are inside genesis
         if input.len() >= RWASM_SIG_LEN && input[0..RWASM_SIG_LEN] == RWASM_SIG {
             return Self::WASM;
-        }
-        // case for Fuel contracts that are inside genesis
-        if input.len() >= FUEL_ASM_SIG_LEN && input[0..FUEL_ASM_SIG_LEN] == FUEL_ASM_SIG {
-            return Self::FVM;
         }
         // all the rest are EVM bytecode
         Self::EVM

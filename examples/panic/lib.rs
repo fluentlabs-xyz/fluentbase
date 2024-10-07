@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
+#![allow(unused)]
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{basic_entrypoint, derive::Contract, SharedAPI};
