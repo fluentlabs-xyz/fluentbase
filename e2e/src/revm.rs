@@ -68,7 +68,7 @@ impl EvmTestingContext {
                         .map(|v| poseidon_hash(&v).into())
                         .unwrap_or(POSEIDON_EMPTY)
                 });
-            let keccak_hash = v
+            let _keccak_hash = v
                 .storage
                 .as_ref()
                 .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
@@ -84,14 +84,11 @@ impl EvmTestingContext {
                 nonce: v.nonce.unwrap_or_default(),
                 // it makes not much sense to fill these fields, but it reduces hash calculation
                 // time a bit
-                source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                source_code_hash: keccak_hash,
-                rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                rwasm_code_hash: poseidon_hash,
+                code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                code_hash: poseidon_hash,
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
-            info.rwasm_code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
         Self {
@@ -117,15 +114,12 @@ impl EvmTestingContext {
             balance: U256::ZERO,
             nonce: 0,
             // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
-            source_code_size: 0,
-            source_code_hash: KECCAK_EMPTY,
-            rwasm_code_size: rwasm_binary.len() as u64,
-            rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+            code_size: rwasm_binary.len() as u64,
+            code_hash: poseidon_hash(&rwasm_binary).into(),
         };
         let mut info: AccountInfo = account.into();
-        info.code = None;
         if !rwasm_binary.is_empty() {
-            info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+            info.code = Some(Bytecode::new_raw(rwasm_binary.into()));
         }
         self.db.insert_account_info(address, info.clone());
         info
@@ -627,8 +621,6 @@ fn test_bridge_contract() {
     let exec_result = tx_builder.exec();
     assert!(tx_builder.ctx.db.accounts.contains_key(&contract_address));
     let contract_account = tx_builder.ctx.db.accounts.get(&contract_address).unwrap();
-    assert!(contract_account.info.rwasm_code.is_some());
-    assert!(!contract_account.info.rwasm_code_hash.is_zero());
     assert_eq!(contract_account.info.nonce, 1);
     assert!(contract_account.info.code.is_some());
     assert!(!contract_account.info.code_hash.is_zero());
@@ -792,11 +784,6 @@ fn test_bridge_contract_with_call() {
     let erc20gateway_contract_db_account_info = erc20gateway_contract_db_account.info.clone();
     assert!(erc20gateway_contract_db_account_info.code.is_some());
     assert!(!erc20gateway_contract_db_account_info.code_hash.is_zero());
-    // assert!(erc20gateway_contract_db_account_info.code.unwrap().len() > 0);
-    assert!(erc20gateway_contract_db_account_info.rwasm_code.is_some());
-    assert!(!erc20gateway_contract_db_account_info
-        .rwasm_code_hash
-        .is_zero());
     let mut erc20gateway_factory_tx_builder = TxBuilder::call(
         &mut ctx,
         signer_l1_wallet_owner,

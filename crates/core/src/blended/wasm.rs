@@ -1,10 +1,21 @@
 use crate::{
     blended::BlendedRuntime,
     helpers::{evm_error_from_exit_code, wasm2rwasm},
+    types::{Frame, NextAction},
 };
 use alloc::boxed::Box;
-use fluentbase_sdk::{Address, Bytes, ContractContext, ExitCode, SovereignAPI, STATE_DEPLOY};
+use fluentbase_sdk::{
+    Account,
+    Address,
+    Bytes,
+    ContractContext,
+    ExitCode,
+    SovereignAPI,
+    SyscallInvocationParams,
+    STATE_DEPLOY,
+};
 use revm_interpreter::{gas, CreateInputs, Gas, InterpreterResult};
+use std::mem::take;
 
 impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
     pub fn deploy_wasm_contract(
@@ -35,7 +46,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         // write callee changes to a database (lets keep rWASM part empty for now since universal
         // loader is not ready yet)
         let (mut contract_account, _) = self.sdk.account(&target_address);
-        contract_account.update_bytecode(self.sdk, Bytes::new(), None, rwasm_bytecode.into(), None);
+        contract_account.update_bytecode(self.sdk, rwasm_bytecode.into(), None);
 
         // execute rWASM deploy function
         let context = ContractContext {
@@ -48,7 +59,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         let (output, exit_code) = self.exec_rwasm_bytecode(
             context,
             &contract_account,
-            &[],
+            Bytes::default(),
             &mut gas,
             STATE_DEPLOY,
             call_depth,
@@ -59,5 +70,104 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             output,
             gas,
         }
+    }
+
+    pub(crate) fn exec_rwasm_bytecode(
+        &mut self,
+        context: ContractContext,
+        bytecode_account: &Account,
+        input: Bytes,
+        gas: &mut Gas,
+        state: u32,
+        call_depth: u32,
+    ) -> (Bytes, i32) {
+        let mut call_stack: Vec<Frame> = vec![Frame::Execute {
+            params: SyscallInvocationParams {
+                code_hash: bytecode_account.code_hash,
+                input,
+                fuel_limit: gas.remaining(),
+                state,
+            },
+            call_id: 0,
+        }];
+
+        let mut stack_frame = call_stack.last_mut().unwrap();
+        let (output, fuel_used, exit_code) = loop {
+            let next_action = match stack_frame {
+                Frame::Execute { params, call_id } => {
+                    if *call_id > 0 {
+                        self.process_syscall(&context, take(params), call_depth)
+                    } else {
+                        self.process_exec(&context, take(params))
+                    }
+                }
+                Frame::Resume {
+                    call_id,
+                    output,
+                    exit_code,
+                    gas_used,
+                } => self.process_resume(*call_id, output.as_ref(), *exit_code, *gas_used),
+            };
+            match next_action {
+                NextAction::ExecutionResult {
+                    exit_code,
+                    output: return_data,
+                    gas_used,
+                } => {
+                    let _resumable_frame = call_stack.pop().unwrap();
+                    if call_stack.is_empty() {
+                        break (return_data, gas_used, exit_code);
+                    }
+                    // execution result can happen only after resume
+                    match call_stack.last_mut().unwrap() {
+                        Frame::Resume {
+                            output: return_data_result,
+                            exit_code: exit_code_result,
+                            gas_used: fuel_used_result,
+                            ..
+                        } => {
+                            *return_data_result = return_data;
+                            *exit_code_result = exit_code;
+                            *fuel_used_result += gas_used;
+                        }
+                        _ => unreachable!(),
+                    }
+                    stack_frame = call_stack.last_mut().unwrap();
+                }
+                NextAction::NestedCall {
+                    call_id,
+                    params,
+                    gas_used,
+                } => {
+                    let last_frame = call_stack.last_mut().unwrap();
+                    match last_frame {
+                        Frame::Execute { .. } => {
+                            *last_frame = Frame::Resume {
+                                call_id,
+                                output: Bytes::default(),
+                                exit_code: 0,
+                                gas_used,
+                            };
+                        }
+                        Frame::Resume {
+                            call_id: call_id_result,
+                            gas_used: gas_used_result,
+                            ..
+                        } => {
+                            *call_id_result = call_id;
+                            *gas_used_result = gas_used;
+                        }
+                    }
+                    call_stack.push(Frame::Execute { params, call_id });
+                    stack_frame = call_stack.last_mut().unwrap();
+                }
+            }
+        };
+
+        if !gas.record_cost(fuel_used) {
+            return (Bytes::default(), ExitCode::OutOfGas.into_i32());
+        }
+
+        (output, exit_code)
     }
 }
