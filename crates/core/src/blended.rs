@@ -8,7 +8,7 @@ use crate::{
     helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
     types::{Frame, NextAction},
 };
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, str::from_utf8, vec, vec::Vec};
 use core::mem::take;
 use fluentbase_sdk::{
     codec::Encoder,
@@ -462,6 +462,16 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         } else {
             self.sdk.rollback(checkpoint);
         }
+
+        #[cfg(feature = "std")]
+        println!(
+            "call_inner caller:{} target_address:{} bytecode_address:{} exit_code:{} output: {}",
+            &inputs.caller,
+            &inputs.target_address,
+            &inputs.bytecode_address,
+            exit_code,
+            from_utf8(&output).unwrap_or_default()
+        );
 
         (output, gas, exit_code)
     }
