@@ -13,7 +13,7 @@ categories.workspace = true
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
+revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
 byteorder = { workspace = true, default-features = false }

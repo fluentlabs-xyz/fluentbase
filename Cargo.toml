@@ -55,13 +55,12 @@ serde = { version = "1.0.203", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
 casey = { version = "0.4" }
 paste = { version = "1.0", default-features = false }
-revm-interpreter = { path = "revm/crates/interpreter", default-features = false, features = ["rwasm"] }
-revm-primitives = { path = "revm/crates/primitives", default-features = false, features = ["rwasm"] }
-revm-precompile = { path = "revm/crates/precompile", default-features = false, features = ["rwasm"] }
-revm = { package = "revm-fluent", path = "revm/crates/revm_fluent", default-features = false, features = [
+revm-interpreter = { path = "revm/crates/interpreter", default-features = false }
+revm-primitives = { path = "revm/crates/primitives", default-features = false }
+revm-precompile = { path = "revm/crates/precompile", default-features = false }
+revm = { path = "revm/crates/revm", default-features = false, features = [
     "hashbrown",
     "blst",
-    "rwasm",
     #    "secp256k1",
     #    "debug-print",
 ] }
