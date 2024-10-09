@@ -2,8 +2,6 @@
 extern crate alloc;
 extern crate core;
 
-// #[cfg(feature = "blended")]
-// mod blended;
 #[cfg(feature = "evm")]
 mod evm;
 #[cfg(any(
@@ -15,8 +13,3 @@ mod evm;
     feature = "ecrecover",
 ))]
 mod precompile;
-#[cfg(feature = "svm")]
-mod svm;
-mod utils;
-#[cfg(feature = "wasm")]
-mod wasm;
