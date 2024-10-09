@@ -2040,7 +2040,7 @@ dependencies = [
  "hex-literal",
  "keccak-hash",
  "paste",
- "revm-fluent",
+ "revm",
  "revm-interpreter",
  "rwasm",
  "serde_json",
@@ -4349,37 +4349,6 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "9.0.0"
-dependencies = [
- "alloy-provider",
- "alloy-sol-types",
- "alloy-transport-http",
- "anyhow",
- "auto_impl",
- "cfg-if",
- "criterion",
- "dyn-clone",
- "ethers-contract",
- "ethers-core",
- "ethers-providers",
- "fluentbase-core",
- "fluentbase-genesis",
- "fluentbase-poseidon",
- "fluentbase-runtime",
- "fluentbase-sdk 0.1.0",
- "indicatif",
- "reqwest 0.12.7",
- "revm-interpreter",
- "revm-precompile",
- "rstest 0.19.0",
- "rwasm",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "revm-fluent"
 version = "9.0.0"
 dependencies = [
  "alloy-provider",

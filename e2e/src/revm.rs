@@ -144,7 +144,7 @@ impl EvmTestingContext {
             RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
         ) -> (),
     {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
+        let mut evm = Evm::builder().with_db(&mut self.db).build_revm();
         let runtime_context = RuntimeContext::default().with_depth(0u32);
         let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
         f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
@@ -200,7 +200,7 @@ impl<'a> TxBuilder<'a> {
         let mut evm = Evm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_ref_db(&mut self.ctx.db)
-            .build();
+            .build_rwasm();
         evm.transact_commit().unwrap()
     }
 }
