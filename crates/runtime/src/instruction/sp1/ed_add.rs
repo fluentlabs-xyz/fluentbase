@@ -19,7 +19,7 @@ impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
 }
 
 impl<E: EllipticCurve + EdwardsParameters> SyscallEdwardsAddAssign<E> {
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let p_ptr = arg1;
         if p_ptr % 4 != 0 {
             panic!();

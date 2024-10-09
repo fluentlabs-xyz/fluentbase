@@ -22,7 +22,7 @@ impl<E: EdwardsParameters> SyscallEdwardsDecompress<E> {
     }
 
     #[allow(clippy::many_single_char_names)]
-    pub fn execute(mut caller: Caller<'_, RuntimeContext>, slice_ptr: u32, sign: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, slice_ptr: u32, sign: u32) -> Result<(), Trap> {
         assert!(slice_ptr % 4 == 0, "Pointer must be 4-byte aligned.");
         assert!(sign <= 1, "Sign bit must be 0 or 1.");
 

@@ -12,21 +12,15 @@ use serde::{Deserialize, Serialize};
 
 
 use crate::{RuntimeContext};
-use crate::instruction::sp1::{cast_u8_to_u32, FieldOperation};
+use crate::instruction::sp1::{cast_u8_to_u32, FieldOp};
 
-pub struct SyscallFpOp<P> {
-    op: FieldOperation,
+pub struct SyscallFpOp<P, OP> {
+    _op: PhantomData<OP>,
     _marker: PhantomData<P>,
 }
 
-impl<P> SyscallFpOp<P> {
-    pub const fn new(op: FieldOperation) -> Self {
-        Self { op, _marker: PhantomData }
-    }
-}
-
-impl<P: FpOpField> SyscallFpOp<P> {
-    fn fn_handler(&self, mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+impl<P: FpOpField, OP: FieldOp> SyscallFpOp<P, OP> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let x_ptr = arg1;
         if x_ptr % 4 != 0 {
             panic!();
@@ -48,12 +42,8 @@ impl<P: FpOpField> SyscallFpOp<P> {
         let a = BigUint::from_slice(&x) % modulus;
         let b = BigUint::from_slice(&y) % modulus;
 
-        let result = match self.op {
-            FieldOperation::Add => (a + b) % modulus,
-            FieldOperation::Sub => ((a + modulus) - b) % modulus,
-            FieldOperation::Mul => (a * b) % modulus,
-            _ => panic!("Unsupported operation"),
-        };
+        let result =  OP::execute(a, b, modulus);
+
         let mut result = result.to_u32_digits();
         result.resize(num_words, 0);
 
