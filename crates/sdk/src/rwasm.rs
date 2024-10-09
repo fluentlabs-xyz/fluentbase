@@ -15,7 +15,6 @@ pub use crate::{
         _preimage_copy,
         _preimage_size,
         _read,
-        _read_context,
         _read_output,
         _resume,
         _state,
@@ -133,11 +132,6 @@ impl NativeAPI for RwasmContext {
     #[inline(always)]
     fn state(&self) -> u32 {
         unsafe { _state() }
-    }
-
-    #[inline(always)]
-    fn read_context(&self, target: &mut [u8], offset: u32) {
-        unsafe { _read_context(target.as_mut_ptr(), offset, target.len() as u32) }
     }
 
     #[inline(always)]

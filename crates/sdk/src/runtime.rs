@@ -16,13 +16,11 @@ use fluentbase_runtime::{
         preimage_copy::SyscallPreimageCopy,
         preimage_size::SyscallPreimageSize,
         read::SyscallRead,
-        read_context::SyscallReadContext,
         read_output::SyscallReadOutput,
         resume::SyscallResume,
         state::SyscallState,
         write::SyscallWrite,
     },
-    DefaultEmptyRuntimeDatabase,
     RuntimeContext,
 };
 use fluentbase_types::{Bytes, ContextFreeNativeAPI, NativeAPI, UnwrapExitCode, B256, F254};
@@ -53,7 +51,7 @@ impl ContextFreeNativeAPI for RuntimeContextWrapper {
         SyscallKeccak256::fn_impl(data)
     }
 
-    fn sha256(data: &[u8]) -> B256 {
+    fn sha256(_data: &[u8]) -> B256 {
         todo!("not implemented")
     }
 
@@ -112,12 +110,6 @@ impl NativeAPI for RuntimeContextWrapper {
         SyscallState::fn_impl(&self.ctx.borrow())
     }
 
-    fn read_context(&self, target: &mut [u8], offset: u32) {
-        let result = SyscallReadContext::fn_impl(&self.ctx.borrow(), offset, target.len() as u32)
-            .unwrap_exit_code();
-        target.copy_from_slice(&result);
-    }
-
     #[inline(always)]
     fn fuel(&self) -> u64 {
         let ctx = self.ctx.borrow();
@@ -172,8 +164,7 @@ pub type TestingContext = RuntimeContextWrapper;
 
 impl TestingContext {
     pub fn empty() -> Self {
-        let ctx =
-            RuntimeContext::default().with_jzkt(Box::new(DefaultEmptyRuntimeDatabase::default()));
+        let ctx = RuntimeContext::default();
         Self {
             ctx: Rc::new(RefCell::new(ctx)),
         }
@@ -196,12 +187,6 @@ impl TestingContext {
 
     pub fn set_fuel(&mut self, fuel: u64) {
         self.ctx.replace_with(|ctx| take(ctx).with_fuel_limit(fuel));
-    }
-
-    pub fn with_context<I: Into<Vec<u8>>>(self, context: I) -> Self {
-        let context: Vec<u8> = context.into();
-        self.ctx.replace_with(|ctx| take(ctx).with_context(context));
-        self
     }
 
     pub fn take_output(&self) -> Vec<u8> {

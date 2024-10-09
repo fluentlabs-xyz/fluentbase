@@ -3139,6 +3139,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-example-fuel"
+version = "0.1.0"
+dependencies = [
+ "alloy-sol-types",
+ "fluentbase-sdk 0.1.0",
+ "hex",
+ "hex-literal",
+]
+
+[[package]]
 name = "fluentbase-example-greeting"
 version = "0.1.0"
 dependencies = [
@@ -3273,7 +3283,6 @@ dependencies = [
  "eth_trie",
  "fluentbase-poseidon",
  "fluentbase-types 0.1.0",
- "fluentbase-zktrie",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
  "hashbrown 0.14.5",
  "hex",
@@ -3318,6 +3327,7 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",
+ "regex",
  "serde",
  "syn 2.0.77",
  "syn-solidity",
