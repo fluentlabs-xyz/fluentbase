@@ -284,8 +284,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         if inputs.init_code.len()
             > match bytecode_type {
                 BytecodeType::EVM => MAX_INITCODE_SIZE,
-                BytecodeType::WASM => WASM_MAX_CODE_SIZE,
-                BytecodeType::FVM => MAX_INITCODE_SIZE,
+                _ => WASM_MAX_CODE_SIZE,
             }
         {
             return return_error(gas, ExitCode::ContractSizeLimit);
@@ -326,6 +325,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
             BytecodeType::FVM => unreachable!("FVM is not supported yet"),
+            BytecodeType::ELF => unreachable!("ELF is not supported yet"),
         };
 
         // commit all changes made

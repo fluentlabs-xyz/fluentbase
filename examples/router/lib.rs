@@ -21,7 +21,7 @@ pub trait RouterAPI {
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[signature("function greeting(string message) external returns (string)")]
+    #[signature("function greeting(string message) external returns (string);")]
     fn greeting(&self, message: String) -> String {
         message
     }
