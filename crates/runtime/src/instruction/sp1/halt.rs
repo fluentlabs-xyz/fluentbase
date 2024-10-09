@@ -9,7 +9,7 @@ use crate::{RuntimeContext};
 pub struct SyscallHalt;
 
 impl SyscallHalt {
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, exit_code: u32, _: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, exit_code: u32, _: u32) -> Result<(), Trap> {
         let mut ctx = caller.data_mut();
         ctx.execution_result.exit_code = exit_code as i32;
 

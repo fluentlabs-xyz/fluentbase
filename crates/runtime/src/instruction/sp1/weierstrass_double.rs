@@ -8,18 +8,18 @@ use sp1_primitives::consts::{words_to_bytes_le, words_to_bytes_le_vec};
 use crate::instruction::sp1::cast_u8_to_u32;
 use crate::RuntimeContext;
 
-pub struct SyscallWeierstrassAddAssign<E: EllipticCurve> {
+pub struct SyscallWeierstrassDoubleAssign<E: EllipticCurve> {
     _phantom: PhantomData<E>,
 }
 
-impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
-    /// Create a new instance of the [`SyscallWeierstrassAddAssign`].
+impl<E: EllipticCurve> SyscallWeierstrassDoubleAssign<E> {
+    /// Create a new instance of the [`SyscallWeierstrassDoubleAssign`].
     pub const fn new() -> Self {
         Self { _phantom: PhantomData }
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let p_ptr = arg1;
         if p_ptr % 4 != 0 {
             panic!();

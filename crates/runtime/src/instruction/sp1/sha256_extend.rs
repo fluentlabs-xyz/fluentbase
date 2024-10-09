@@ -6,7 +6,7 @@ pub(crate) struct SyscallSha256Extend;
 
 impl SyscallSha256Extend {
 
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let w_ptr = arg1;
         assert!(arg2 == 0, "arg2 must be 0");
 

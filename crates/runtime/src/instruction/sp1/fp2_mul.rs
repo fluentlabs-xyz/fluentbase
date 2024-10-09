@@ -11,22 +11,15 @@ use sp1_primitives::consts::words_to_bytes_le_vec;
 use serde::{Deserialize, Serialize};
 
 use crate::{RuntimeContext};
-use crate::instruction::sp1::{cast_u8_to_u32, FieldOperation};
+use crate::instruction::sp1::{cast_u8_to_u32};
 
 
 pub struct SyscallFp2Mul<P> {
-    op: FieldOperation,
     _marker: PhantomData<P>,
 }
 
-impl<P> SyscallFp2Mul<P> {
-    pub const fn new(op: FieldOperation) -> Self {
-        Self { op, _marker: PhantomData }
-    }
-}
-
 impl<P: FpOpField> SyscallFp2Mul<P> {
-    fn fn_handler(&self, mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let x_ptr = arg1;
         if x_ptr % 4 != 0 {
             panic!();

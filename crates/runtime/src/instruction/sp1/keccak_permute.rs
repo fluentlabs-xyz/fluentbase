@@ -12,7 +12,7 @@ pub struct SyscallKeccak256Permute;
 
 impl SyscallKeccak256Permute {
 
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
 
         let state_ptr = arg1;
         if arg2 != 0 {

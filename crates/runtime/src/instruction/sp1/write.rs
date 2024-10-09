@@ -2,9 +2,9 @@ use rwasm::Caller;
 use rwasm::core::Trap;
 use crate::RuntimeContext;
 
-pub struct SyscallWrite;
+pub struct SyscallWriteFd;
 
-impl SyscallWrite {
+impl SyscallWriteFd {
     pub fn fn_handler(
         mut caller: Caller<'_, RuntimeContext>,
         fd: u32,

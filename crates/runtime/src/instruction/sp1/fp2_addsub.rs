@@ -11,22 +11,16 @@ use sp1_primitives::consts::words_to_bytes_le_vec;
 use serde::{Deserialize, Serialize};
 
 use crate::{RuntimeContext};
-use crate::instruction::sp1::{cast_u8_to_u32, FieldOperation};
+use crate::instruction::sp1::{cast_u8_to_u32, FieldOp2};
 
 
-pub struct SyscallFp2AddSub<P> {
-    op: FieldOperation,
+pub struct SyscallFp2AddSub<P, OP> {
+    _op: PhantomData<OP>,
     _marker: PhantomData<P>,
 }
 
-impl<P> SyscallFp2AddSub<P> {
-    pub const fn new(op: FieldOperation) -> Self {
-        Self { op, _marker: PhantomData }
-    }
-}
-
-impl<P: FpOpField> SyscallFp2AddSub<P> {
-    fn fn_handler(&self, mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+impl<P: FpOpField, OP: FieldOp2> SyscallFp2AddSub<P, OP> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let x_ptr = arg1;
         if x_ptr % 4 != 0 {
             panic!();
@@ -53,13 +47,7 @@ impl<P: FpOpField> SyscallFp2AddSub<P> {
         let bc1 = &BigUint::from_slice(bc1);
         let modulus = &BigUint::from_bytes_le(P::MODULUS);
 
-        let (c0, c1) = match self.op {
-            FieldOperation::Add => ((ac0 + bc0) % modulus, (ac1 + bc1) % modulus),
-            FieldOperation::Sub => {
-                ((ac0 + modulus - bc0) % modulus, (ac1 + modulus - bc1) % modulus)
-            }
-            _ => panic!("Invalid operation"),
-        };
+        let (c0, c1) = OP::execute(ac0, ac1, bc0, bc1, modulus);
 
         let mut result =
             c0.to_u32_digits().into_iter().chain(c1.to_u32_digits()).collect::<Vec<u32>>();

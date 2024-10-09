@@ -9,7 +9,7 @@ use crate::{RuntimeContext};
 pub struct SyscallUint256Mul;
 
 impl SyscallUint256Mul {
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let x_ptr = arg1;
         if x_ptr % 4 != 0 {
             panic!();

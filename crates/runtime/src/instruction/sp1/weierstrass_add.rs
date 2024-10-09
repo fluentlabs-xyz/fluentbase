@@ -19,7 +19,7 @@ impl<E: EllipticCurve> SyscallWeierstrassAddAssign<E> {
     }
 
     /// Handles the syscall for point addition on a Weierstrass curve.
-    fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
+    pub fn fn_handler(mut caller: Caller<'_, RuntimeContext>, arg1: u32, arg2: u32) -> Result<(), Trap> {
         let p_ptr = arg1;
         let q_ptr = arg2;
 
