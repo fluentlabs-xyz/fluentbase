@@ -36,7 +36,7 @@ fluentbase-sdk = { workspace = true, default-features = false }
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std"]
+default = ["std", "evm-proxy"]
 std = [
     "fluentbase-sdk/std",
     "revm-interpreter/std",
@@ -47,3 +47,4 @@ debug-print = []
 elf = [
     "dep:sp1-core-executor"
 ]
+evm-proxy = []
