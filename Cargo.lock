@@ -2188,6 +2188,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "hex",
  "revm-primitives 4.0.0",
+ "rwasm",
  "serde",
  "serde_json",
 ]
