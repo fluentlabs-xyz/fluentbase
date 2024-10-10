@@ -51,7 +51,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b4f201b0ac8f81315fbdc55269965a8ddadbc04ab47fa65a1a468f9a40f7a5f"
 dependencies = [
  "num_enum 0.7.3",
- "strum 0.26.3",
+ "strum",
 ]
 
 [[package]]
@@ -320,7 +320,7 @@ checksum = "867a5469d61480fea08c7333ffeca52d5b621f5ca2e44f271b117ec1fc9a0525"
 dependencies = [
  "alloy-sol-macro-input",
  "const-hex",
- "heck 0.5.0",
+ "heck",
  "indexmap 2.5.0",
  "proc-macro-error",
  "proc-macro2",
@@ -338,7 +338,7 @@ checksum = "2e482dc33a32b6fadbc0f599adea520bd3aaa585c141a80b404d0a3e3fa72528"
 dependencies = [
  "const-hex",
  "dunce",
- "heck 0.5.0",
+ "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.77",
@@ -661,15 +661,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic-polyfill"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf2bce30dfe09ef0bfaef228b9d414faaf7e563035494d7fe092dba54b300f4"
-dependencies = [
- "critical-section",
-]
-
-[[package]]
 name = "aurora-engine-modexp"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -708,7 +699,6 @@ dependencies = [
  "miniz_oxide",
  "object",
  "rustc-demangle",
- "serde",
  "windows-targets 0.52.6",
 ]
 
@@ -1077,7 +1067,7 @@ version = "4.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "501d359d5f3dcaf6ecdeee48833ae73ec6e42723a1e52419c79abf9507eec0a0"
 dependencies = [
- "heck 0.5.0",
+ "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.77",
@@ -1215,12 +1205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "critical-section"
-version = "1.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f64009896348fc5af4222e9cf7d7d82a95a256c634ebcf61c53e4ea461422242"
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,7 +1297,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "curve25519-dalek-derive",
- "digest 0.10.7",
  "fiat-crypto",
  "rustc_version 0.4.1",
  "subtle",
@@ -1581,27 +1564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519"
-version = "2.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
-dependencies = [
- "signature",
-]
-
-[[package]]
-name = "ed25519-dalek"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a3daa8e81a3963a60642bcc1f90a670680bd4a77535faa384e9d1c79d620871"
-dependencies = [
- "curve25519-dalek",
- "ed25519",
- "sha2",
- "subtle",
-]
-
-[[package]]
 name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1687,26 +1649,6 @@ dependencies = [
  "serde",
  "sha3",
  "zeroize",
-]
-
-[[package]]
-name = "enum-iterator"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd242f399be1da0a5354aa462d57b4ab2b4ee0683cc552f7c007d2d12d36e94"
-dependencies = [
- "enum-iterator-derive",
-]
-
-[[package]]
-name = "enum-iterator-derive"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1ab991c1362ac86c61ab6f556cff143daa22e5a15e4e189df818b2fd19fe65b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.77",
 ]
 
 [[package]]
@@ -1909,7 +1851,7 @@ dependencies = [
  "rlp",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum",
  "tempfile",
  "thiserror",
  "tiny-keccak",
@@ -1953,12 +1895,6 @@ dependencies = [
  "web-sys",
  "ws_stream_wasm",
 ]
-
-[[package]]
-name = "ethnum"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90ca2580b73ab6a1f724b76ca11ab632df820fd6040c336200d2c1df7b3c82c"
 
 [[package]]
 name = "eyre"
@@ -2044,8 +1980,8 @@ dependencies = [
  "hex-literal",
  "paste",
  "serde",
- "strum 0.26.3",
- "strum_macros 0.26.4",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]
@@ -2063,20 +1999,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-codec"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
-dependencies = [
- "alloy-primitives",
- "byteorder",
- "casey",
- "fluentbase-codec-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "hashbrown 0.14.5",
- "paste",
- "serde",
-]
-
-[[package]]
 name = "fluentbase-codec-derive"
 version = "0.1.0"
 dependencies = [
@@ -2091,18 +2013,6 @@ dependencies = [
 name = "fluentbase-codec-derive"
 version = "0.1.0"
 source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel#9804e18f91a7c852fab3d7da90e593559f145884"
-dependencies = [
- "convert_case 0.6.0",
- "crypto-hashes",
- "quote",
- "serde",
- "syn 2.0.77",
-]
-
-[[package]]
-name = "fluentbase-codec-derive"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2168,7 +2078,6 @@ dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk 0.1.0",
  "fluentbase-types 0.1.0",
- "fuel-ee-core",
  "hashbrown 0.14.5",
  "hex",
  "hex-literal",
@@ -2389,17 +2298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-sdk"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
-dependencies = [
- "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "fluentbase-sdk-derive 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "fluentbase-types 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "hashbrown 0.14.5",
-]
-
-[[package]]
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
 dependencies = [
@@ -2426,23 +2324,6 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2",
  "quote",
- "serde",
- "syn 2.0.77",
- "syn-solidity",
-]
-
-[[package]]
-name = "fluentbase-sdk-derive"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
-dependencies = [
- "convert_case 0.6.0",
- "crypto-hashes",
- "hex",
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "regex",
  "serde",
  "syn 2.0.77",
  "syn-solidity",
@@ -2460,7 +2341,7 @@ dependencies = [
  "revm-primitives 4.0.0",
  "rwasm",
  "serde",
- "strum_macros 0.26.4",
+ "strum_macros",
 ]
 
 [[package]]
@@ -2475,22 +2356,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=devel)",
  "rwasm",
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "fluentbase-types"
-version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "byteorder",
- "fluentbase-codec 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "hashbrown 0.14.5",
- "revm-primitives 4.0.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "rwasm",
- "strum_macros 0.26.4",
+ "strum_macros",
 ]
 
 [[package]]
@@ -2506,198 +2372,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fuel-asm"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "bitflags 2.6.0",
- "fuel-types",
- "serde",
- "strum 0.24.1",
-]
-
-[[package]]
-name = "fuel-core-executor"
-version = "0.31.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#bbd9d38f82fc7448bc85e3cc0f573fef27e94d31"
-dependencies = [
- "anyhow",
- "fuel-core-storage",
- "fuel-core-types",
- "hex",
- "serde",
- "spin 0.9.8",
- "tracing",
-]
-
-[[package]]
-name = "fuel-core-storage"
-version = "0.31.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#bbd9d38f82fc7448bc85e3cc0f573fef27e94d31"
-dependencies = [
- "anyhow",
- "derive_more",
- "enum-iterator",
- "fuel-core-types",
- "fuel-vm",
- "impl-tools",
- "itertools 0.12.1",
- "num_enum 0.7.3",
- "paste",
- "postcard",
- "primitive-types 0.12.2",
- "serde",
- "strum 0.26.3",
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "fuel-core-types"
-version = "0.31.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-core?branch=feat/fuel-vm#bbd9d38f82fc7448bc85e3cc0f573fef27e94d31"
-dependencies = [
- "anyhow",
- "derivative",
- "derive_more",
- "fuel-vm",
- "hashbrown 0.14.5",
- "secrecy",
- "serde",
- "tai64",
- "thiserror-no-std",
- "zeroize",
-]
-
-[[package]]
-name = "fuel-crypto"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "ecdsa",
- "ed25519-dalek",
- "fuel-types",
- "k256",
- "p256",
- "serde",
- "sha2",
- "zeroize",
-]
-
-[[package]]
-name = "fuel-derive"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.77",
- "synstructure",
-]
-
-[[package]]
-name = "fuel-ee-core"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "byteorder",
- "fluentbase-sdk 0.1.0 (git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm)",
- "fuel-core-executor",
- "fuel-core-storage",
- "fuel-core-types",
- "hashbrown 0.14.5",
- "hex",
- "hex-literal",
- "keccak-hash 0.11.0",
- "paste",
- "phantom-type",
- "postcard",
- "rwasm",
-]
-
-[[package]]
-name = "fuel-merkle"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "derive_more",
- "digest 0.10.7",
- "fuel-storage",
- "hashbrown 0.13.2",
- "hex",
- "serde",
- "sha2",
-]
-
-[[package]]
-name = "fuel-storage"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-
-[[package]]
-name = "fuel-tx"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "bitflags 2.6.0",
- "derivative",
- "derive_more",
- "fuel-asm",
- "fuel-crypto",
- "fuel-merkle",
- "fuel-types",
- "hashbrown 0.14.5",
- "itertools 0.10.5",
- "postcard",
- "serde",
- "serde_json",
- "strum 0.26.3",
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "fuel-types"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "fuel-derive",
- "hex",
- "serde",
-]
-
-[[package]]
-name = "fuel-vm"
-version = "0.55.0"
-source = "git+https://github.com/fluentlabs-xyz/fuel-vm?branch=feat/fuel-vm#ea47cf55463749d11f3b8e26f6052fa1d1eb64ad"
-dependencies = [
- "async-trait",
- "backtrace",
- "bitflags 2.6.0",
- "derivative",
- "derive_more",
- "ethnum",
- "fuel-asm",
- "fuel-crypto",
- "fuel-merkle",
- "fuel-storage",
- "fuel-tx",
- "fuel-types",
- "hashbrown 0.14.5",
- "itertools 0.10.5",
- "libm",
- "paste",
- "percent-encoding",
- "primitive-types 0.12.2",
- "serde",
- "serde_with",
- "sha3",
- "static_assertions",
- "strum 0.24.1",
 ]
 
 [[package]]
@@ -2992,28 +2666,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash32"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
-
-[[package]]
-name = "hashbrown"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
-dependencies = [
- "ahash",
-]
 
 [[package]]
 name = "hashbrown"
@@ -3034,26 +2690,6 @@ checksum = "b2bca93b15ea5a746f220e56587f71e73c6165eab783df9e26590069953e3c30"
 dependencies = [
  "fxhash",
 ]
-
-[[package]]
-name = "heapless"
-version = "0.7.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
-dependencies = [
- "atomic-polyfill",
- "hash32",
- "rustc_version 0.4.1",
- "serde",
- "spin 0.9.8",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "heck"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
 name = "heck"
@@ -3312,30 +2948,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "impl-tools"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d82c305b1081f1a99fda262883c788e50ab57d36c00830bdd7e0a82894ad965c"
-dependencies = [
- "autocfg",
- "impl-tools-lib",
- "proc-macro-error",
- "syn 2.0.77",
-]
-
-[[package]]
-name = "impl-tools-lib"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85d3946d886eaab0702fa0c6585adcced581513223fa9df7ccfabbd9fa331a88"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 2.0.77",
 ]
 
 [[package]]
@@ -4457,7 +4069,6 @@ dependencies = [
  "cobs",
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
- "heapless",
  "serde",
 ]
 
@@ -4920,22 +4531,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-primitives"
-version = "4.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=feat/fuel-vm#e33bdd6a432afdb212cc335aa928153259bc53dd"
-dependencies = [
- "alloy-primitives",
- "auto_impl",
- "bitflags 2.6.0",
- "bitvec",
- "cfg-if",
- "dyn-clone",
- "enumn",
- "hashbrown 0.14.5",
- "hex",
-]
-
-[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5210,8 +4805,8 @@ dependencies = [
  "paste",
  "smallvec",
  "spin 0.9.8",
- "strum 0.26.3",
- "strum_macros 0.26.4",
+ "strum",
+ "strum_macros",
  "wasmparser-nostd",
 ]
 
@@ -5316,15 +4911,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1433bd67156263443f14d603720b082dd3121779323fce20cba2aa07b874bc1b"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "secrecy"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bd1c54ea06cfd2f6b63219704de0b9b4f72dcc2b8fdef820be6cd799780e91e"
-dependencies = [
- "zeroize",
 ]
 
 [[package]]
@@ -5654,8 +5240,8 @@ dependencies = [
  "sp1-derive",
  "sp1-primitives",
  "sp1-stark",
- "strum 0.26.3",
- "strum_macros 0.26.4",
+ "strum",
+ "strum_macros",
  "thiserror",
  "tiny-keccak",
  "tracing",
@@ -5752,9 +5338,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-dependencies = [
- "lock_api",
-]
 
 [[package]]
 name = "spki"
@@ -5765,12 +5348,6 @@ dependencies = [
  "base64ct",
  "der",
 ]
-
-[[package]]
-name = "stable_deref_trait"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "stark-platinum-prover"
@@ -5869,33 +5446,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
-dependencies = [
- "strum_macros 0.24.3",
-]
-
-[[package]]
-name = "strum"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros 0.26.4",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 1.0.109",
+ "strum_macros",
 ]
 
 [[package]]
@@ -5904,7 +5459,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
 dependencies = [
- "heck 0.5.0",
+ "heck",
  "proc-macro2",
  "quote",
  "rustversion",
@@ -5980,17 +5535,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synstructure"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8af7666ab7b6390ab78131fb5b0fce11d6b7a6951602017c35fa82800708971"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.77",
-]
-
-[[package]]
 name = "sysinfo"
 version = "0.30.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6024,15 +5568,6 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "tai64"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed7401421025f4132e6c1f7af5e7f8287383969f36e6628016cd509b8d3da9dc"
-dependencies = [
- "serde",
 ]
 
 [[package]]
