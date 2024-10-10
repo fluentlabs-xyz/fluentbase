@@ -56,8 +56,8 @@ fluentbase-genesis = { path = "./crates/genesis", default-features = false }
 #fuel-core-storage = { path = "../fuel-core/crates/storage", default-features = false, features = ["alloc"] }
 
 # fluent's fuel
-#fuel-ee-core = { git = "https://github.com/fluentlabs-xyz/fuel-vm", branch = "devel", default-features = false, features = [] }
-fuel-ee-core = { path = "../fuel-ee/crates/core", default-features = false, features = [] }
+#fuel-ee-core = { git = "https://github.com/fluentlabs-xyz/fuel-ee", branch = "feat/fuel-vm", default-features = false }
+#fuel-ee-core = { path = "../fuel-ee/crates/core", default-features = false, features = [] }
 
 rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm", branch = "devel", default-features = false }
 
