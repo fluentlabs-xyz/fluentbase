@@ -49,17 +49,13 @@ use crate::runtime::{
     // state::SyscallState,
     write::SyscallWrite,
 };
-use fluentbase_types::{Bytes, IJournaledTrie, SysFuncIdx, F254, POSEIDON_EMPTY};
+use fluentbase_types::{Bytes, SysFuncIdx, F254, POSEIDON_EMPTY};
 use rwasm::{Caller, Linker, ResumableInvocation, Store};
 
 extern crate alloc;
 
 use crate::impl_runtime_handler;
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::vec::Vec;
 
 pub struct RuntimeContext {
     // context inputs

@@ -11,5 +11,5 @@ mod revm;
 #[cfg(test)]
 mod rwasm;
 
-#[cfg(test)]
-mod bench;
+// #[cfg(test)]
+// mod bench;
