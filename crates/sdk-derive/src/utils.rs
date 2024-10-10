@@ -33,6 +33,7 @@ pub fn get_all_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn get_public_methods(ast: &ItemImpl) -> Vec<&ImplItemFn> {
     get_all_methods(ast)
         .into_iter()
@@ -96,6 +97,7 @@ pub fn parse_function_input_types(
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn sol_call_fn_name(method_name: &Ident) -> Ident {
     let method_name_sol = rust_name_to_sol(method_name);
     Ident::new(&(method_name_sol.to_string() + "Call"), method_name.span())
@@ -249,6 +251,7 @@ pub(crate) fn get_raw_signature<S: GetSignature>(func: &S) -> proc_macro2::Token
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_signature<S: GetSignature>(func: &S) -> proc_macro2::TokenStream {
     let sig: Option<LitStr> = func.attrs().iter().find_map(|attr| {
         if attr.path().is_ident("signature") {
@@ -304,6 +307,7 @@ pub(crate) fn get_signature<S: GetSignature>(func: &S) -> proc_macro2::TokenStre
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_signatures<S: GetSignature>(methods: &[&S]) -> proc_macro2::TokenStream {
     let mut signatures: Vec<proc_macro2::TokenStream> = vec![];
     for func in methods {

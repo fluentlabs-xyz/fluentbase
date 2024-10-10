@@ -37,12 +37,3 @@ pub(crate) enum Frame {
         gas_used: u64,
     },
 }
-
-impl Frame {
-    pub(crate) fn call_id(&self) -> u32 {
-        match self {
-            Frame::Execute { call_id, .. } => *call_id,
-            Frame::Resume { call_id, .. } => *call_id,
-        }
-    }
-}

@@ -107,7 +107,7 @@ impl JournalStateBuilder {
     pub fn add_genesis(&mut self, genesis: Genesis) {
         use fluentbase_types::{KECCAK_EMPTY, POSEIDON_EMPTY};
         for (address, account) in genesis.alloc.iter() {
-            let source_code_hash = account
+            let _source_code_hash = account
                 .storage
                 .as_ref()
                 .and_then(|storage| storage.get(&GENESIS_KECCAK_HASH_SLOT))
@@ -122,23 +122,16 @@ impl JournalStateBuilder {
             let mut account2 = Account::new(*address);
             account2.balance = account.balance;
             account2.nonce = account.nonce.unwrap_or_default();
-            account2.source_code_size = account
+            account2.code_size = account
                 .code
                 .as_ref()
                 .map(|v| v.len() as u64)
                 .unwrap_or_default();
-            account2.source_code_hash = source_code_hash;
-            account2.rwasm_code_size = account
-                .code
-                .as_ref()
-                .map(|v| v.len() as u64)
-                .unwrap_or_default();
-            account2.rwasm_code_hash = rwasm_code_hash;
+            account2.code_hash = rwasm_code_hash;
             // self.write_account(&account2, AccountStatus::NewlyCreated);
             let bytecode = account.code.clone().unwrap_or_default();
             // TODO(dmitry123): "is it true that source matches rwasm in genesis file?"
-            self.add_preimage(account2.source_code_hash, bytecode.clone());
-            self.add_preimage(account2.rwasm_code_hash, bytecode);
+            self.add_preimage(account2.code_hash, bytecode.clone());
         }
     }
 
@@ -638,7 +631,7 @@ impl<API: NativeAPI> SharedAPI for JournalState<API> {
         let (account, _) = self.account(&address);
         let (_, exit_code) =
             self.native_sdk
-                .exec(&account.rwasm_code_hash, input, fuel_limit, STATE_MAIN);
+                .exec(&account.code_hash, input, fuel_limit, STATE_MAIN);
         (self.native_sdk.return_data(), exit_code)
     }
 

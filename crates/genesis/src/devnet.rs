@@ -1,4 +1,12 @@
-use crate::{ChainConfig, Genesis, GenesisAccount};
+use crate::{
+    enable_rwasm_contract,
+    initial_balance,
+    storage_only,
+    ChainConfig,
+    Genesis,
+    GenesisAccount,
+    EXAMPLE_GREETING_ADDRESS,
+};
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
     address,
@@ -65,28 +73,6 @@ pub fn devnet_genesis_v0_1_0_dev1_from_file() -> Genesis {
 }
 
 pub fn devnet_genesis() -> Genesis {
-    macro_rules! initial_balance {
-        ($address:literal) => {
-            (
-                address!($address),
-                GenesisAccount {
-                    balance: U256::from(100000_000000000000000000_u128),
-                    ..Default::default()
-                },
-            )
-        };
-    }
-    macro_rules! storage_only {
-        ($address:literal) => {
-            (
-                address!($address),
-                GenesisAccount {
-                    ..Default::default()
-                },
-            )
-        };
-    }
-
     let mut alloc = BTreeMap::from([
         // default testing accounts
         initial_balance!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
@@ -112,34 +98,14 @@ pub fn devnet_genesis() -> Genesis {
         storage_only!("ba8ab429ff0aaa5f1bb8f19f1f9974ffc82ff161"),
     ]);
 
-    macro_rules! enable_rwasm_contract {
-        ($addr:ident, $file_path:literal) => {{
-            use std::io::Write;
-            let bytecode = Bytes::from(include_bytes!($file_path));
-            print!("creating genesis account (0x{})... ", hex::encode($addr));
-            std::io::stdout().flush().unwrap();
-            let poseidon_hash = poseidon_hash(&bytecode);
-            let keccak_hash = keccak256(&bytecode);
-            println!("{}", hex::encode(poseidon_hash));
-            alloc.insert(
-                $addr,
-                GenesisAccount {
-                    code: Some(bytecode),
-                    storage: Some(BTreeMap::from([
-                        (GENESIS_POSEIDON_HASH_SLOT, poseidon_hash.into()),
-                        (GENESIS_KECCAK_HASH_SLOT, keccak_hash.into()),
-                    ])),
-                    ..Default::default()
-                },
-            );
-        }};
-    }
     enable_rwasm_contract!(
+        alloc,
         PRECOMPILE_EVM,
         "../../contracts/assets/precompile_evm.rwasm"
     );
     #[cfg(feature = "fvm")]
     enable_rwasm_contract!(
+        alloc,
         PRECOMPILE_FVM,
         "../../contracts/assets/precompile_fvm.rwasm"
     );
@@ -171,10 +137,11 @@ pub fn devnet_genesis() -> Genesis {
     //     PRECOMPILE_SECP256K1_ADDRESS,
     //     "../../contracts/assets/precompile_secp256k1.rwasm"
     // );
-    // enable_rwasm_contract!(
-    //     EXAMPLE_GREETING_ADDRESS,
-    //     "../../../examples/greeting/lib.rwasm"
-    // );
+    enable_rwasm_contract!(
+        alloc,
+        EXAMPLE_GREETING_ADDRESS,
+        "../../../examples/greeting/lib.wasm"
+    );
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,

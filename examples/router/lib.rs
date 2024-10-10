@@ -21,7 +21,7 @@ pub trait RouterAPI {
 
 #[router(mode = "solidity")]
 impl<SDK: SharedAPI> RouterAPI for ROUTER<SDK> {
-    #[signature("function greeting(string message) external returns (string);")]
+    #[signature("greeting(string)")]
     fn greeting(&self, message: String) -> String {
         message
     }
@@ -50,7 +50,7 @@ mod tests {
     fn test_contract_method_works() {
         // form test input
         let input = hex!("f8194e480000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e2248656c6c6f2c20576f726c6422000000000000000000000000000000000000");
-        let msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
+        let _msg = greetingCall::abi_decode(&input, true).unwrap_or_else(|e| {
             panic!("Failed to decode input {:?} {:?}", "msg", e,);
         });
         let sdk = TestingContext::empty().with_input(input);

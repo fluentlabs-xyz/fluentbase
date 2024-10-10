@@ -38,13 +38,13 @@ use revm_interpreter::{
 use revm_precompile::Log;
 use revm_primitives::{Bytecode, CancunSpec, CreateScheme, Env, BLOCK_HASH_HISTORY, MAX_CODE_SIZE};
 
-pub struct EvmLoader2<'a, SDK> {
+pub struct EvmLoader<'a, SDK> {
     sdk: &'a mut SDK,
     env: Env,
     address: Address,
 }
 
-impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
+impl<'a, SDK: SharedAPI> Host for EvmLoader<'a, SDK> {
     fn env(&self) -> &Env {
         &self.env
     }
@@ -138,7 +138,7 @@ impl<'a, SDK: SharedAPI> Host for EvmLoader2<'a, SDK> {
 
 const EVM_CODE_HASH_SLOT: U256 = U256::from_le_bytes(derive_keccak256!("_evm_bytecode_hash"));
 
-impl<'a, SDK: SharedAPI> EvmLoader2<'a, SDK> {
+impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
     pub fn new(sdk: &'a mut SDK) -> Self {
         let address = sdk.contract_context().address;
         Self {
@@ -329,7 +329,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
 
     pub fn deploy_inner(&mut self) -> ExitCode {
         let contract_context = self.sdk.contract_context().clone();
-        EvmLoader2::new(&mut self.sdk).deploy(contract_context)
+        EvmLoader::new(&mut self.sdk).deploy(contract_context)
     }
 
     pub fn main(&mut self) {
@@ -339,7 +339,7 @@ impl<SDK: SharedAPI> EvmLoaderEntrypoint<SDK> {
 
     pub fn main_inner(&mut self) -> ExitCode {
         let contract_context = self.sdk.contract_context().clone();
-        let result = EvmLoader2::new(&mut self.sdk).call(contract_context);
+        let result = EvmLoader::new(&mut self.sdk).call(contract_context);
         self.sdk.write(result.output.as_ref());
         exit_code_from_evm_error(result.result)
     }
@@ -375,7 +375,7 @@ mod tests {
                 value: U256::ZERO,
             })
             .build(native_sdk.clone());
-        let mut evm_loader = EvmLoader2::new(&mut sdk);
+        let mut evm_loader = EvmLoader::new(&mut sdk);
         let bytecode = hex!("60806040526105ae806100115f395ff3fe608060405234801561000f575f80fd5b506004361061003f575f3560e0");
         let bytecode = Bytecode::new_raw(bytecode.into());
         evm_loader.store_evm_bytecode(bytecode.clone());

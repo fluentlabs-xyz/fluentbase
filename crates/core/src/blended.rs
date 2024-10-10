@@ -1,15 +1,11 @@
+#[cfg(feature = "elf")]
+mod elf;
 mod evm;
 mod syscall;
 mod util;
 mod wasm;
-
-use crate::{
-    debug_log,
-    helpers::{evm_error_from_exit_code, exit_code_from_evm_error},
-    types::{Frame, NextAction},
-};
-use alloc::{boxed::Box, str::from_utf8, vec, vec::Vec};
-use core::mem::take;
+use crate::{debug_log, helpers::evm_error_from_exit_code, types::NextAction};
+use alloc::{boxed::Box, str::from_utf8};
 use fluentbase_sdk::{
     codec::Encoder,
     env_from_context,
@@ -28,7 +24,6 @@ use fluentbase_sdk::{
 use revm_interpreter::{
     CallInputs,
     CallOutcome,
-    Contract,
     CreateInputs,
     CreateOutcome,
     Gas,
@@ -158,103 +153,33 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         self.process_exec_params(exit_code, fuel_spent)
     }
 
-    fn exec_rwasm_bytecode(
+    fn exec_bytecode(
         &mut self,
         context: ContractContext,
         bytecode_account: &Account,
-        input: &[u8],
+        input: Bytes,
         gas: &mut Gas,
         state: u32,
         call_depth: u32,
     ) -> (Bytes, i32) {
-        let mut call_stack: Vec<Frame> = vec![Frame::Execute {
-            params: SyscallInvocationParams {
-                code_hash: bytecode_account.rwasm_code_hash,
-                input: Bytes::copy_from_slice(input),
-                fuel_limit: gas.remaining(),
-                state,
-            },
-            call_id: 0,
-        }];
-
-        let mut stack_frame = call_stack.last_mut().unwrap();
-        let (output, fuel_used, exit_code) = loop {
-            let next_action = match stack_frame {
-                Frame::Execute { params, call_id } => {
-                    if *call_id > 0 {
-                        self.process_syscall(&context, take(params), call_depth)
-                    } else {
-                        self.process_exec(&context, take(params))
-                    }
-                }
-                Frame::Resume {
-                    call_id,
-                    output,
-                    exit_code,
-                    gas_used,
-                } => self.process_resume(*call_id, output.as_ref(), *exit_code, *gas_used),
-            };
-            match next_action {
-                NextAction::ExecutionResult {
-                    exit_code,
-                    output: return_data,
-                    gas_used,
-                } => {
-                    let _resumable_frame = call_stack.pop().unwrap();
-                    if call_stack.is_empty() {
-                        break (return_data, gas_used, exit_code);
-                    }
-                    // execution result can happen only after resume
-                    match call_stack.last_mut().unwrap() {
-                        Frame::Resume {
-                            output: return_data_result,
-                            exit_code: exit_code_result,
-                            gas_used: fuel_used_result,
-                            ..
-                        } => {
-                            *return_data_result = return_data;
-                            *exit_code_result = exit_code;
-                            *fuel_used_result += gas_used;
-                        }
-                        _ => unreachable!(),
-                    }
-                    stack_frame = call_stack.last_mut().unwrap();
-                }
-                NextAction::NestedCall {
-                    call_id,
-                    params,
-                    gas_used,
-                } => {
-                    let last_frame = call_stack.last_mut().unwrap();
-                    match last_frame {
-                        Frame::Execute { .. } => {
-                            *last_frame = Frame::Resume {
-                                call_id,
-                                output: Bytes::default(),
-                                exit_code: 0,
-                                gas_used,
-                            };
-                        }
-                        Frame::Resume {
-                            call_id: call_id_result,
-                            gas_used: gas_used_result,
-                            ..
-                        } => {
-                            *call_id_result = call_id;
-                            *gas_used_result = gas_used;
-                        }
-                    }
-                    call_stack.push(Frame::Execute { params, call_id });
-                    stack_frame = call_stack.last_mut().unwrap();
-                }
+        let bytecode = self
+            .sdk
+            .preimage(&bytecode_account.address, &bytecode_account.code_hash)
+            .unwrap_or_default();
+        let bytecode_type = BytecodeType::from_slice(bytecode.as_ref());
+        match bytecode_type {
+            BytecodeType::EVM => {
+                self.exec_evm_bytecode(context, bytecode_account, input, gas, state, call_depth)
             }
-        };
-
-        if !gas.record_cost(fuel_used) {
-            return (Bytes::default(), ExitCode::OutOfGas.into_i32());
+            BytecodeType::WASM => {
+                self.exec_rwasm_bytecode(context, bytecode_account, input, gas, state, call_depth)
+            }
+            #[cfg(feature = "elf")]
+            BytecodeType::ELF => {
+                self.exec_elf_bytecode(context, bytecode_account, input, gas, state, call_depth)
+            }
+            _ => unreachable!("not supported bytecode type"),
         }
-
-        (output, exit_code)
     }
 
     fn create_inner(&mut self, inputs: Box<CreateInputs>, call_depth: u32) -> CreateOutcome {
@@ -324,8 +249,12 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             BytecodeType::WASM => {
                 self.deploy_wasm_contract(contract_account.address, inputs, gas, call_depth)
             }
-            BytecodeType::FVM => unreachable!("FVM is not supported yet"),
-            BytecodeType::ELF => unreachable!("ELF is not supported yet"),
+            #[cfg(feature = "elf")]
+            BytecodeType::ELF => {
+                self.deploy_elf_contract(contract_account.address, inputs, gas, call_depth)
+            }
+            #[cfg(not(feature = "elf"))]
+            _ => unreachable!("not supported bytecode type"),
         };
 
         // commit all changes made
@@ -408,54 +337,21 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
         }
 
         let (bytecode_account, _) = self.sdk.account(&inputs.bytecode_address);
-        let (output, exit_code) = if !ENABLE_EVM_PROXY_CONTRACT
-            && bytecode_account.rwasm_code_size == 0
-        {
-            // take right bytecode depending on context params
-            let (evm_bytecode, code_hash) = self.load_evm_bytecode(&inputs.bytecode_address);
-
-            // if bytecode is empty, then commit result and return empty buffer
-            if evm_bytecode.is_empty() {
-                self.sdk.commit();
-                return return_error(gas, ExitCode::Ok);
-            }
-
-            // initiate contract instance and pass it to interpreter for and EVM transition
-            let call_value = inputs.call_value();
-            let contract = Contract {
-                input: inputs.input,
-                hash: Some(code_hash),
-                bytecode: evm_bytecode,
-                // we don't take contract callee, because callee refers to address with bytecode
-                target_address: inputs.target_address,
-                // inside the contract context, we pass "apparent" value that can be different to
-                // transfer value (it can happen for DELEGATECALL or CALLCODE opcodes)
-                call_value,
-                caller: caller_account.address,
-            };
-            let result = self.exec_evm_bytecode(contract, gas, inputs.is_static, call_depth);
-            gas = result.gas;
-            (
-                result.output,
-                exit_code_from_evm_error(result.result).into_i32(),
-            )
-        } else {
-            let contract_context = ContractContext {
-                address: inputs.target_address,
-                bytecode_address: bytecode_account.address,
-                caller: inputs.caller,
-                is_static: inputs.is_static,
-                value: inputs.value.get(),
-            };
-            self.exec_rwasm_bytecode(
-                contract_context,
-                &bytecode_account,
-                inputs.input.as_ref(),
-                &mut gas,
-                state,
-                call_depth,
-            )
+        let contract_context = ContractContext {
+            address: inputs.target_address,
+            bytecode_address: bytecode_account.address,
+            caller: inputs.caller,
+            is_static: inputs.is_static,
+            value: inputs.value.get(),
         };
+        let (output, exit_code) = self.exec_bytecode(
+            contract_context,
+            &bytecode_account,
+            inputs.input,
+            &mut gas,
+            state,
+            call_depth,
+        );
 
         if ExitCode::from(exit_code).is_ok() {
             self.sdk.commit();

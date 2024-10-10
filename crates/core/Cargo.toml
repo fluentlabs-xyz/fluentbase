@@ -13,13 +13,11 @@ categories.workspace = true
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-runtime = { workspace = true, default-features = false, optional = true }
 rwasm = { workspace = true, default-features = false }
-revm-interpreter = { workspace = true, default-features = false, features = ["rwasm"] }
+revm-interpreter = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
 byteorder = { workspace = true, default-features = false }
 alloy-rlp = { workspace = true }
-alloy-sol-types = { workspace = true }
-hashbrown = { workspace = true }
 paste = { workspace = true }
 hex.workspace = true
 anyhow = { workspace = true, default-features = false }
@@ -27,24 +25,18 @@ postcard = { workspace = true, default-features = false, features = ["alloc"] }
 keccak-hash = { version = "0.11.0", default-features = false }
 phantom-type = { workspace = true }
 
-fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc"] }
-fuel-core-storage = { workspace = true, default-features = false, features = ["alloc"] }
-fuel-core-executor = { workspace = true, default-features = false, features = ["alloc"] }
+# sp1 executor for ELF binaries
+sp1-core-executor = { version = "2.0.0", optional = true }
 
 [dev-dependencies]
 fluentbase-runtime = { workspace = true, default-features = false }
 fluentbase-sdk = { workspace = true, default-features = false }
-hex = { version = "0.4.3" }
-fuel-core = { workspace = true, features = ["test-helpers"] }
-fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc", "test-helpers"] }
-fuel-core-storage = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
-fuel-core-executor = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std"]
+default = ["std", "evm-proxy"]
 std = [
     "fluentbase-sdk/std",
     "revm-interpreter/std",
@@ -52,3 +44,7 @@ std = [
     "fluentbase-runtime/std",
 ]
 debug-print = []
+elf = [
+    "dep:sp1-core-executor"
+]
+evm-proxy = []

@@ -28,7 +28,7 @@ paste = { workspace = true }
 wasmi = "0.31.2"
 keccak-hash = "0.11.0"
 hex-literal = "0.4.1"
-sp1-sdk = "2.0.0"
+#sp1-sdk = "2.0.0"
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -39,12 +39,12 @@ alloy-rlp = { workspace = true }
 alloy-sol-types = { workspace = true }
 
 # fuel
-fuel-vm = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
-fuel-tx = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
-fuel-core = { workspace = true, features = ["test-helpers"] }
-fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc", "test-helpers"] }
-fuel-core-storage = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
-fuel-core-executor = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+#fuel-vm = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+#fuel-tx = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+#fuel-core = { workspace = true, features = ["test-helpers"] }
+#fuel-core-types = { workspace = true, default-features = false, features = ["serde", "alloc", "test-helpers"] }
+#fuel-core-storage = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
+#fuel-core-executor = { workspace = true, default-features = false, features = ["alloc", "test-helpers"] }
 
 # fluen's fuel
 fuel-ee-core = { workspace = true }

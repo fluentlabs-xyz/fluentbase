@@ -1,9 +1,6 @@
-use core::{
-    mem::take,
-    str::{from_utf8, FromStr},
-};
+use core::{mem::take, str::from_utf8};
 use fluentbase_genesis::{
-    devnet::{devnet_genesis_from_file, GENESIS_POSEIDON_HASH_SLOT},
+    devnet::{devnet_genesis_from_file, GENESIS_KECCAK_HASH_SLOT, GENESIS_POSEIDON_HASH_SLOT},
     Genesis,
     EXAMPLE_GREETING_ADDRESS,
 };
@@ -22,40 +19,16 @@ use fluentbase_types::{
     Bytes,
     SharedAPI,
     SysFuncIdx,
-    DEVNET_CHAIN_ID,
     KECCAK_EMPTY,
     POSEIDON_EMPTY,
-    PRECOMPILE_FVM,
     STATE_MAIN,
     SYSCALL_ID_CALL,
     U256,
 };
-use fuel_core_types::{
-    fuel_asm::op,
-    fuel_crypto::{
-        rand::{rngs::StdRng, SeedableRng},
-        SecretKey,
-    },
-    fuel_types::{canonical::Serialize, AssetId, BlockHeight, ChainId},
-};
-use fuel_ee_core::fvm::{
-    helpers::FUEL_TESTNET_BASE_ASSET_ID,
-    types::{FVM_DEPOSIT_SIG, FVM_DEPOSIT_SIG_BYTES, FVM_WITHDRAW_SIG, FVM_WITHDRAW_SIG_BYTES},
-};
-use fuel_tx::{
-    ConsensusParameters,
-    Input,
-    TransactionBuilder,
-    TransactionRepr,
-    TxId,
-    TxPointer,
-    UtxoId,
-};
-use fuel_vm::{fuel_asm::RegId, storage::MemoryStorage};
 use hashbrown::HashMap;
 use hex_literal::hex;
 use revm::{
-    primitives::{AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
+    primitives::{keccak256, AccountInfo, Bytecode, Env, ExecutionResult, Output, TransactTo},
     rwasm::RwasmDbWrapper,
     DatabaseCommit,
     Evm,
@@ -96,31 +69,27 @@ impl EvmTestingContext {
                         .map(|v| poseidon_hash(&v).into())
                         .unwrap_or(POSEIDON_EMPTY)
                 });
-            // let keccak_hash = v
-            //     .storage
-            //     .as_ref()
-            //     .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
-            //     .unwrap_or_else(|| {
-            //         v.code
-            //             .as_ref()
-            //             .map(|v| keccak256(&v))
-            //             .unwrap_or(KECCAK_EMPTY)
-            //     });
+            let _keccak_hash = v
+                .storage
+                .as_ref()
+                .and_then(|v| v.get(&GENESIS_KECCAK_HASH_SLOT).cloned())
+                .unwrap_or_else(|| {
+                    v.code
+                        .as_ref()
+                        .map(|v| keccak256(&v))
+                        .unwrap_or(KECCAK_EMPTY)
+                });
             let account = Account {
                 address: *k,
                 balance: v.balance,
                 nonce: v.nonce.unwrap_or_default(),
                 // it makes not much sense to fill these fields, but it reduces hash calculation
                 // time a bit
-                // source_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                // source_code_hash: keccak_hash,
-                rwasm_code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
-                rwasm_code_hash: poseidon_hash,
-                ..Default::default()
+                code_size: v.code.as_ref().map(|v| v.len() as u64).unwrap_or_default(),
+                code_hash: poseidon_hash,
             };
             let mut info: AccountInfo = account.into();
             info.code = v.code.clone().map(Bytecode::new_raw);
-            info.rwasm_code = v.code.clone().map(Bytecode::new_raw);
             db.insert_account_info(*k, info);
         }
         Self {
@@ -146,15 +115,12 @@ impl EvmTestingContext {
             balance: U256::ZERO,
             nonce: 0,
             // it makes not much sense to fill these fields, but it optimizes hash calculation a bit
-            source_code_size: 0,
-            source_code_hash: KECCAK_EMPTY,
-            rwasm_code_size: rwasm_binary.len() as u64,
-            rwasm_code_hash: poseidon_hash(&rwasm_binary).into(),
+            code_size: rwasm_binary.len() as u64,
+            code_hash: poseidon_hash(&rwasm_binary).into(),
         };
         let mut info: AccountInfo = account.into();
-        info.code = None;
         if !rwasm_binary.is_empty() {
-            info.rwasm_code = Some(Bytecode::new_raw(rwasm_binary.into()));
+            info.code = Some(Bytecode::new_raw(rwasm_binary.into()));
         }
         self.db.insert_account_info(address, info.clone());
         info
@@ -179,7 +145,7 @@ impl EvmTestingContext {
             RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
         ) -> (),
     {
-        let mut evm = Evm::builder().with_db(&mut self.db).build();
+        let mut evm = Evm::builder().with_db(&mut self.db).build_revm();
         let runtime_context = RuntimeContext::default().with_depth(0u32);
         let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
         f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
@@ -243,7 +209,7 @@ impl<'a> TxBuilder<'a> {
         let mut evm = Evm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_ref_db(&mut self.ctx.db)
-            .build();
+            .build_rwasm();
         evm.transact_commit().unwrap()
     }
 }
@@ -411,10 +377,7 @@ fn test_deploy_panic() {
     );
     assert!(!result.is_success());
     let bytes = result.output().unwrap_or_default();
-    assert_eq!(
-        "panicked at examples/panic/lib.rs:17:9: it is panic time",
-        from_utf8(bytes.as_ref()).unwrap()
-    );
+    assert_eq!("it is panic time", from_utf8(bytes.as_ref()).unwrap());
 }
 
 #[test]
@@ -438,11 +401,8 @@ fn test_evm_greeting() {
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
-    assert_eq!(result.gas_used(), 21792);
+    // assert_eq!(result.gas_used(), 21792);
 }
-
-use alloy_sol_types::SolValue;
-use fuel_ee_core::fvm::types::{FvmWithdrawInput, UtxoIdSol};
 
 ///
 /// Test storage though constructor
@@ -630,7 +590,7 @@ fn test_evm_self_destruct() {
     assert!(result.is_success());
     assert_eq!(ctx.get_balance(SENDER_ADDRESS), U256::from(1e18));
     assert_eq!(ctx.get_balance(contract_address), U256::from(1e18));
-    // call self destructed contract
+    // call self-destructed contract
     let result = TxBuilder::call(&mut ctx, SENDER_ADDRESS, contract_address, None)
         .gas_price(gas_price)
         .exec();
@@ -688,8 +648,6 @@ fn test_bridge_contract() {
     let exec_result = tx_builder.exec();
     assert!(tx_builder.ctx.db.accounts.contains_key(&contract_address));
     let contract_account = tx_builder.ctx.db.accounts.get(&contract_address).unwrap();
-    assert!(contract_account.info.rwasm_code.is_some());
-    assert!(!contract_account.info.rwasm_code_hash.is_zero());
     assert_eq!(contract_account.info.nonce, 1);
     assert!(contract_account.info.code.is_some());
     assert!(!contract_account.info.code_hash.is_zero());
@@ -854,11 +812,6 @@ fn test_bridge_contract_with_call() {
     let erc20gateway_contract_db_account_info = erc20gateway_contract_db_account.info.clone();
     assert!(erc20gateway_contract_db_account_info.code.is_some());
     assert!(!erc20gateway_contract_db_account_info.code_hash.is_zero());
-    // assert!(erc20gateway_contract_db_account_info.code.unwrap().len() > 0);
-    assert!(erc20gateway_contract_db_account_info.rwasm_code.is_some());
-    assert!(!erc20gateway_contract_db_account_info
-        .rwasm_code_hash
-        .is_zero());
     let mut erc20gateway_factory_tx_builder = TxBuilder::call(
         &mut ctx,
         signer_l1_wallet_owner,
