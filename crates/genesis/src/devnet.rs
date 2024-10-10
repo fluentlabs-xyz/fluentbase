@@ -137,11 +137,11 @@ pub fn devnet_genesis() -> Genesis {
     //     PRECOMPILE_SECP256K1_ADDRESS,
     //     "../../contracts/assets/precompile_secp256k1.rwasm"
     // );
-    enable_rwasm_contract!(
-        alloc,
-        EXAMPLE_GREETING_ADDRESS,
-        "../../../examples/greeting/lib.wasm"
-    );
+    // enable_rwasm_contract!(
+    //     alloc,
+    //     EXAMPLE_GREETING_ADDRESS,
+    //     "../../../examples/greeting/lib.wasm"
+    // );
     Genesis {
         config: devnet_chain_config(),
         nonce: 0,
