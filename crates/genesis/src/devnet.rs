@@ -140,7 +140,7 @@ pub fn devnet_genesis() -> Genesis {
     enable_rwasm_contract!(
         alloc,
         EXAMPLE_GREETING_ADDRESS,
-        "../../../examples/greeting/lib.wasm"
+        "../../examples/greeting/lib.wasm"
     );
     Genesis {
         config: devnet_chain_config(),
