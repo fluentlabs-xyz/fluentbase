@@ -32,6 +32,7 @@ use revm::{
     DatabaseCommit,
     Evm,
     InMemoryDB,
+    Rwasm,
 };
 use rwasm::{
     instruction_set,
@@ -144,7 +145,7 @@ impl EvmTestingContext {
             RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
         ) -> (),
     {
-        let mut evm = Evm::builder().with_db(&mut self.db).build_revm();
+        let mut evm = Evm::builder().with_db(&mut self.db).build();
         let runtime_context = RuntimeContext::default().with_depth(0u32);
         let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
         f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
@@ -197,10 +198,10 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
-        let mut evm = Evm::builder()
+        let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_ref_db(&mut self.ctx.db)
-            .build_rwasm();
+            .build();
         evm.transact_commit().unwrap()
     }
 }
@@ -375,7 +376,7 @@ fn test_evm_greeting() {
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
-    // assert_eq!(result.gas_used(), 21792);
+    assert_eq!(result.gas_used(), 21792);
 }
 
 #[test]

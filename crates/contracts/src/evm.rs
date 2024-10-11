@@ -289,7 +289,6 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
             call_value: contract_context.value,
         };
         let mut result = self.exec_evm_bytecode(contract);
-        // self.sdk.charge_fuel(result.gas.spent());
 
         if !result.is_ok() {
             // it might be an error message, have to return
@@ -310,6 +309,8 @@ impl<'a, SDK: SharedAPI> EvmLoader<'a, SDK> {
         if !result.gas.record_cost(gas_for_code) {
             return ExitCode::OutOfGas;
         }
+
+        self.sdk.charge_fuel(result.gas.spent());
 
         self.store_evm_bytecode(Bytecode::new_raw(result.output));
         ExitCode::Ok

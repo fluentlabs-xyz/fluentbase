@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(panic_info_message)]
+#![cfg_attr(not(feature = "more-panic"), feature(panic_info_message))]
 #![warn(unused_crate_dependencies)]
 
 extern crate alloc;
