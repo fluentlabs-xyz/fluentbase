@@ -322,7 +322,7 @@ impl<'a, SDK: SovereignAPI> BlendedRuntime<'a, SDK> {
             self.sdk
                 .precompile(&inputs.bytecode_address, &inputs.input, gas.remaining())
         {
-            // calculate total gas consumed by precompile call
+            // calculate total gas consumed by precompiled call
             if !gas.record_cost(gas.remaining() - result.gas_remaining) {
                 return return_error(gas, ExitCode::OutOfGas);
             };
