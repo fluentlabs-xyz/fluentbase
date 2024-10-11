@@ -21,9 +21,9 @@ revm-interpreter = { workspace = true, default-features = false, features = ["rw
 revm-precompile = { workspace = true, default-features = false }
 revm-primitives = { workspace = true, default-features = false }
 
-zeth-primitives = { workspace = true, default-features = false, features = [
-    "revm"
-] }
+#zeth-primitives = { workspace = true, default-features = false, features = [
+#    "revm"
+#] }
 alloy-rlp = { workspace = true, default-features = false }
 alloy-sol-types = { workspace = true }
 
