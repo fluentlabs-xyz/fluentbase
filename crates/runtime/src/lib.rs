@@ -1,7 +1,9 @@
 #![allow(dead_code, unreachable_patterns, unused_macros)]
 #![warn(unused_crate_dependencies)]
+extern crate core;
 
 pub mod instruction;
+
 mod macros;
 mod runtime;
 mod storage;

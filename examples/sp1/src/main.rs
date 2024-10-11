@@ -120,7 +120,7 @@ pub fn main() {
         };
 
         if let Err(err) = func.call(&mut context.store, &[], &mut []) {
-            sp1_zkvm::io::commit(&err.to_string());
+            println!("Err: {}", err.to_string());
         }
         let ctx = context.store.as_context();
         let runtime_context = ctx.data();
