@@ -20,7 +20,6 @@ pub fn devnet_chain_config() -> ChainConfig {
         dao_fork_block: Some(0u64),
         dao_fork_support: false,
         eip150_block: Some(0u64),
-        eip150_hash: None,
         eip155_block: Some(0u64),
         eip158_block: Some(0u64),
         byzantium_block: Some(0u64),

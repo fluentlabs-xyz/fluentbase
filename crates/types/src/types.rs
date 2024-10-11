@@ -315,11 +315,11 @@ const ELF_SIG_LEN: usize = 4;
 /// ELF signature (\7fELF)
 const ELF_SIG: [u8; ELF_SIG_LEN] = [0x7f, 0x45, 0x4c, 0x46];
 
-const RWASM_SIG_LEN: usize = 3;
+const RWASM_SIG_LEN: usize = 2;
 /// rWASM binary format signature:
 /// - 0xef 0x00 - EIP-3540 compatible prefix
 /// - 0x52 - rWASM version number (equal to 'R')
-const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x00, 0x52];
+const RWASM_SIG: [u8; RWASM_SIG_LEN] = [0xef, 0x52];
 
 impl BytecodeType {
     pub fn from_slice(input: &[u8]) -> Self {
