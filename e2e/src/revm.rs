@@ -33,6 +33,7 @@ use revm::{
     DatabaseCommit,
     Evm,
     InMemoryDB,
+    Rwasm,
 };
 use rwasm::{
     instruction_set,
@@ -145,7 +146,7 @@ impl EvmTestingContext {
             RwasmDbWrapper<'_, fluentbase_sdk::runtime::RuntimeContextWrapper, &mut InMemoryDB>,
         ) -> (),
     {
-        let mut evm = Evm::builder().with_db(&mut self.db).build_revm();
+        let mut evm = Evm::builder().with_db(&mut self.db).build();
         let runtime_context = RuntimeContext::default().with_depth(0u32);
         let native_sdk = fluentbase_sdk::runtime::RuntimeContextWrapper::new(runtime_context);
         f(RwasmDbWrapper::new(&mut evm.context.evm, native_sdk))
@@ -206,10 +207,10 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn exec(&mut self) -> ExecutionResult {
-        let mut evm = Evm::builder()
+        let mut evm = Rwasm::builder()
             .with_env(Box::new(take(&mut self.env)))
             .with_ref_db(&mut self.ctx.db)
-            .build_rwasm();
+            .build();
         evm.transact_commit().unwrap()
     }
 }
@@ -401,39 +402,9 @@ fn test_evm_greeting() {
     let bytes = result.output().unwrap_or_default();
     let bytes = &bytes[64..75];
     assert_eq!("Hello World", from_utf8(bytes.as_ref()).unwrap());
-    // assert_eq!(result.gas_used(), 21792);
+    assert_eq!(result.gas_used(), 21792);
 }
 
-///
-/// Test storage though constructor
-///
-/// ```solidity
-/// // SPDX-License-Identifier: MIT
-/// pragma solidity 0.8.24;
-///
-/// contract Storage {
-///     event Test(uint256);
-///     uint256 private value;
-///     mapping(address => uint256) private balances;
-///     mapping(address => mapping(address => uint256)) private allowances;
-///     constructor() payable {
-///         value = 100;
-///         balances[msg.sender] = 100;
-///         allowances[msg.sender][address(this)] = 100;
-///     }
-///     function setValue(uint256 newValue) public {
-///         value = newValue;
-///         balances[msg.sender] = newValue;
-///         allowances[msg.sender][address(this)] = newValue;
-///         emit Test(value);
-///     }
-///     function getValue() public view returns (uint256) {
-///         require(balances[msg.sender] == value, "value mismatch");
-///         require(allowances[msg.sender][address(this)] == value, "value mismatch");
-///         return value;
-///     }
-/// }
-/// ```
 #[test]
 fn test_evm_storage() {
     // deploy greeting EVM contract

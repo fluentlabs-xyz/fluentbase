@@ -82,6 +82,7 @@ pub struct RuntimeContext {
     pub(crate) call_depth: u32,
     pub(crate) trace: bool,
     pub(crate) input: Vec<u8>,
+    pub(crate) disable_fuel: bool,
     // context outputs
     pub(crate) execution_result: ExecutionResult,
     pub(crate) resumable_invocation: Option<ResumableInvocation>,
@@ -106,6 +107,7 @@ impl Default for RuntimeContext {
             execution_result: ExecutionResult::default(),
             resumable_invocation: None,
             preimage_resolver: Rc::new(EmptyPreimageResolver::default()),
+            disable_fuel: false,
         }
     }
 }
@@ -159,6 +161,16 @@ impl RuntimeContext {
         self
     }
 
+    pub fn with_fuel(mut self) -> Self {
+        self.disable_fuel = false;
+        self
+    }
+
+    pub fn without_fuel(mut self) -> Self {
+        self.disable_fuel = true;
+        self
+    }
+
     pub fn preimage_resolver(&self) -> &dyn PreimageResolver {
         self.preimage_resolver.as_ref()
     }
@@ -177,10 +189,6 @@ impl RuntimeContext {
 
     pub fn input_size(&self) -> u32 {
         self.input.len() as u32
-    }
-
-    pub fn argv_buffer(&self) -> Vec<u8> {
-        self.input().clone()
     }
 
     pub fn output(&self) -> &Vec<u8> {
@@ -269,7 +277,7 @@ impl CachingRuntime {
         }
     }
 
-    fn new_engine() -> Engine {
+    fn new_engine(disable_fuel: bool) -> Engine {
         // we can safely use sovereign import linker because all protected are filtered out during
         // a translation process
         let import_linker = Runtime::new_import_linker();
@@ -289,7 +297,7 @@ impl CachingRuntime {
         config
             .floats(false)
             .fuel_consumption_mode(FuelConsumptionMode::Eager)
-            .consume_fuel(true);
+            .consume_fuel(!disable_fuel);
         Engine::new(&config)
     }
 
@@ -378,7 +386,7 @@ impl Runtime {
             caching_runtime
                 .resolve_module(&rwasm_hash)
                 .map(|module| module.engine.clone())
-                .unwrap_or_else(|| CachingRuntime::new_engine())
+                .unwrap_or_else(|| CachingRuntime::new_engine(runtime_context.disable_fuel))
         });
 
         // create new linker and store (it shares the same engine resources)
@@ -389,7 +397,7 @@ impl Runtime {
         };
         let mut linker = Linker::<RuntimeContext>::new(&engine);
 
-        // add fuel if limit is specified
+        // add fuel if the limit is specified
         if store.engine().config().get_consume_fuel() {
             store
                 .add_fuel(store.data().fuel_limit)
