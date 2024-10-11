@@ -2667,6 +2667,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -4494,7 +4496,7 @@ dependencies = [
  "derive_more 0.99.18",
  "dyn-clone",
  "enumn",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "hex",
  "once_cell",
  "serde",
