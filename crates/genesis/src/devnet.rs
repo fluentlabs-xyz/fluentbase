@@ -5,7 +5,6 @@ use crate::{
     ChainConfig,
     Genesis,
     GenesisAccount,
-    EXAMPLE_GREETING_ADDRESS,
 };
 use fluentbase_poseidon::poseidon_hash;
 use fluentbase_types::{
