@@ -2655,6 +2655,7 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
  "allocator-api2",
+ "rayon",
  "serde",
 ]
 
@@ -2667,8 +2668,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
- "rayon",
- "serde",
 ]
 
 [[package]]
@@ -4496,7 +4495,7 @@ dependencies = [
  "derive_more 0.99.18",
  "dyn-clone",
  "enumn",
- "hashbrown 0.15.0",
+ "hashbrown 0.14.5",
  "hex",
  "once_cell",
  "serde",
